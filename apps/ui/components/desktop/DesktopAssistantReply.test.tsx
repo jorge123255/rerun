@@ -3,6 +3,7 @@ import type { UIMessage } from 'ai'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { publicDesktopHistory, type HistoryMessage } from '@/lib/chat/engine-history'
 import { desktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { DesktopAssistantReply } from './DesktopAssistantReply'
 
@@ -389,4 +390,88 @@ test('keeps an honest tool-result step for a malformed recorded file card', asyn
     expect(row).not.toBeUndefined()
     await act(async () => row.click())
     expect(container.textContent).toContain('../../escape.md')
+})
+
+test('a restored generic receipt keeps its status and does not render a secret or foreign receipt metadata', async () => {
+    const secret = 'sk-ABCDEFGHIJKLMNOPQRSTUVWX'
+    const password = 'hunter2secret'
+    const forbidden = [secret, password, 'foreign-agent', 'foreign-workspace', 'foreign-run']
+    const expectPrivate = () => {
+        const html = container.innerHTML
+        for (const token of forbidden) expect(html).not.toContain(token)
+    }
+    const show = async (id: string, parts: UIMessage['parts']) => {
+        await act(async () => root.render(<DesktopAssistantReply message={{ id, role: 'assistant', parts }} agentId="agent-1" />))
+    }
+
+    await show('engine-foreign', [{
+        type: 'dynamic-tool', toolName: 'fs_read', toolCallId: 'foreign-read', state: 'output-available',
+        input: { path: `notes/${secret}.md`, preview: secret }, output: `seen ${secret}\npassword=${password} foreign-agent`,
+        acknowledgement: 'lost', ownerId: 'foreign-agent', workspaceId: 'foreign-workspace', runId: 'foreign-run',
+        providerMetadata: { desktop: { ownerId: 'foreign-agent', workspaceId: 'foreign-workspace', runId: 'foreign-run', token: secret, acknowledgement: 'lost' } },
+    } as UIMessage['parts'][number]])
+    expect(container.textContent).toContain('Unknown')
+    expect(container.querySelector('[data-historical="group"]')).not.toBeNull()
+    expect(container.querySelector('[data-owner="foreign-agent"], [data-workspace="foreign-workspace"], [data-run="foreign-run"]')).toBeNull()
+    expect(container.querySelector('[data-owner]')?.getAttribute('data-owner')).toBe('')
+    expectPrivate()
+    await act(async () => container.querySelector('button')!.click())
+    expect(container.querySelector('[data-status="unknown"]')).not.toBeNull()
+    expect(container.querySelector('[data-status="running"]')).toBeNull()
+    expect(container.textContent).toContain('Unknown')
+    expectPrivate()
+
+    await show('engine-pending', [{
+        type: 'dynamic-tool', toolName: 'fs_read', toolCallId: 'pending-read', state: 'approval-requested',
+        input: { path: 'notes/plan.md' }, output: `seen ${secret} password=${password}`,
+    } as UIMessage['parts'][number]])
+    expect(container.textContent).toContain('Pending')
+    expect(container.querySelector('[data-historical="group"]')).not.toBeNull()
+    await act(async () => container.querySelector('button')!.click())
+    expect(container.querySelector('[data-status="pending"]')).not.toBeNull()
+    expect(container.querySelector('[data-status="running"]')).toBeNull()
+    expectPrivate()
+
+    const cancelled = {
+        type: 'tool-fs_read', toolName: 'fs_read', toolCallId: 'saved-read', state: 'output-available',
+        input: { path: `notes/${secret}.md` }, output: `seen ${secret}\npassword=${password} foreign-agent`,
+        acknowledgement: 'cancelled', ownerId: 'foreign-agent', workspaceId: 'foreign-workspace', runId: 'foreign-run',
+        providerMetadata: { desktop: { token: secret, ownerId: 'foreign-agent', workspaceId: 'foreign-workspace', runId: 'foreign-run', acknowledgement: 'cancelled' } },
+    }
+    const [saved] = publicDesktopHistory([{ id: 'engine-saved', role: 'assistant', parts: [cancelled] as HistoryMessage['parts'] }])
+    await show(saved.id, saved.parts as UIMessage['parts'])
+    expect(container.textContent).toContain('Cancelled')
+    expect(container.querySelector('[data-owner="foreign-agent"]')).toBeNull()
+    await act(async () => container.querySelector('button')!.click())
+    expect(container.querySelector('[data-status="cancelled"]')).not.toBeNull()
+    expect(container.querySelector('[data-status="running"]')).toBeNull()
+    expect(container.querySelector('[data-owner="agent-1"]')).not.toBeNull()
+    expectPrivate()
+
+    const [failed] = publicDesktopHistory([{
+        id: 'engine-failed', role: 'assistant',
+        parts: [{
+            type: 'tool-fs_read', toolName: 'fs_read', toolCallId: 'failed-read', state: 'output-available',
+            input: { path: `notes/${secret}.md` }, output: { type: 'error-text', value: `Denied ${secret} password=${password}` },
+            ownerId: 'foreign-agent', workspaceId: 'foreign-workspace', runId: 'foreign-run',
+            providerMetadata: { desktop: { token: secret, ownerId: 'foreign-agent' } },
+        }] as HistoryMessage['parts'],
+    }])
+    await show(failed.id, failed.parts as UIMessage['parts'])
+    expect(container.textContent).toContain('Read File')
+    expect(container.textContent).toContain('[redacted]')
+    expect(container.querySelector('[data-historical="group"]')).toBeNull()
+    expect(container.querySelector('[data-owner="foreign-agent"]')).toBeNull()
+    await act(async () => container.querySelector('button')!.click())
+    expect(container.textContent).toContain('Error')
+    expect(container.textContent).toContain('notes/[redacted].md')
+    expectPrivate()
+
+    await show('engine-open', [{
+        type: 'dynamic-tool', toolName: 'fs_read', toolCallId: 'open-read', state: 'input-available', input: { path: 'notes/plan.md' },
+    }])
+    expect(container.textContent).toContain('Read File')
+    expect(container.textContent).toContain('notes/plan.md')
+    expect(container.textContent).not.toContain('Unknown')
+    expect(container.querySelector('[data-historical="group"]')).toBeNull()
 })

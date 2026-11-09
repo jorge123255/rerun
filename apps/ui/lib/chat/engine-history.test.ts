@@ -493,3 +493,148 @@ it('desktop history preserves immutable coworker mention metadata without showin
     expect(row.metadata?.coworkerMentions).toEqual(mentions)
     expect(JSON.stringify(row.parts)).not.toContain('Selected coworker mentions')
 })
+
+const SECRET = 'sk-ABCDEFGHIJKLMNOPQRSTUVWX'
+const PASSWORD = 'hunter2secret'
+const FOREIGN_OWNER = 'foreign-agent'
+const FOREIGN_WORKSPACE = 'foreign-workspace'
+const FOREIGN_RUN = 'foreign-run'
+const preview = { preview: 'notes/[redacted].md' }
+const shell = { type: 'tool-fs_read', toolName: 'fs_read', toolCallId: 'read-1', desktopPreview: true }
+
+function receipt(overrides: Record<string, unknown> = {}): HistoryMessage {
+    const part = {
+        type: 'tool-fs_read', toolName: 'fs_read', toolCallId: 'read-1', state: 'output-available',
+        input: { path: `notes/${SECRET}.md` }, output: `seen ${SECRET}\npassword=${PASSWORD}`,
+        ownerId: FOREIGN_OWNER, workspaceId: FOREIGN_WORKSPACE, runId: FOREIGN_RUN,
+        providerMetadata: { desktop: { ownerId: FOREIGN_OWNER, workspaceId: FOREIGN_WORKSPACE, runId: FOREIGN_RUN, token: SECRET } },
+        ...overrides,
+    }
+    return { id: 'engine-receipt', role: 'assistant', parts: [part as HistoryMessage['parts'][number]] }
+}
+
+function expectNoReceiptLeak(value: unknown) {
+    const text = JSON.stringify(value)
+    for (const token of [SECRET, PASSWORD, FOREIGN_OWNER, FOREIGN_WORKSPACE, FOREIGN_RUN, 'providerMetadata', 'acknowledgement']) {
+        expect(text).not.toContain(token)
+    }
+}
+
+function published(overrides: Record<string, unknown> = {}) {
+    const [row] = publicDesktopHistory([receipt(overrides)])
+    expect(publicDesktopHistory([row])).toEqual([row])
+    expectNoReceiptLeak(row)
+    return row.parts[0]
+}
+
+describe('restored generic tool receipts', () => {
+    it('keeps a cancelled acknowledgement cancelled and drops the success body', () => {
+        expect(published({ acknowledgement: 'cancelled' })).toEqual({ ...shell, state: 'cancelled', input: preview })
+    })
+
+    it('keeps a canceled state spelling canceled', () => {
+        expect(published({ state: 'canceled' })).toEqual({ ...shell, state: 'canceled', input: preview })
+    })
+
+    it('keeps a metadata-only cancellation without copying the metadata', () => {
+        expect(published({
+            providerMetadata: { desktop: { acknowledgement: 'cancelled', token: SECRET, ownerId: FOREIGN_OWNER, workspaceId: FOREIGN_WORKSPACE, runId: FOREIGN_RUN } },
+        })).toEqual({ ...shell, state: 'cancelled', input: preview })
+    })
+
+    it('keeps a lost or null acknowledgement unknown', () => {
+        expect(published({ acknowledgement: 'lost' })).toEqual({ ...shell, state: 'unknown', input: preview })
+        expect(published({ acknowledgement: null })).toEqual({ ...shell, state: 'unknown', input: preview })
+        expect(published({
+            providerMetadata: { desktop: { acknowledgement: 'lost', token: SECRET, ownerId: FOREIGN_OWNER } },
+        })).toEqual({ ...shell, state: 'unknown', input: preview })
+    })
+
+    it('keeps a mystery state, a malformed owner, bad metadata, and an unrecorded restart unknown', () => {
+        expect(published({ state: 'mystery' })).toEqual({ ...shell, state: 'unknown', input: preview })
+        expect(published({ ownerId: 12 })).toEqual({ ...shell, state: 'unknown', input: preview })
+        expect(published({ providerMetadata: 'not-a-record' })).toEqual({ ...shell, state: 'unknown', input: preview })
+        expect(JSON.stringify(published({ providerMetadata: 'not-a-record' }))).not.toContain('not-a-record')
+        expect(published({ restarted: true })).toEqual({ ...shell, state: 'unknown', input: preview })
+    })
+
+    it('keeps approval pending and an open read running', () => {
+        expect(published({ state: 'approval-requested' })).toEqual({ ...shell, state: 'approval-requested', input: preview })
+        expect(published({ state: 'approval-responded' })).toEqual({ ...shell, state: 'approval-responded', input: preview })
+        expect(published({ state: 'input-available' })).toEqual({ ...shell, state: 'input-available', input: preview })
+        expect(published({ state: 'input-streaming' })).toEqual({ ...shell, state: 'input-streaming', input: preview })
+        expect(published({ preliminary: true })).toEqual({ ...shell, state: 'output-available', preliminary: true, input: preview })
+    })
+
+    it('redacts a failed text or json envelope and does not keep the raw output', () => {
+        expect(published({ output: { type: 'error-text', value: `Denied ${SECRET} password=${PASSWORD}` } })).toEqual({
+            ...shell, state: 'output-error', input: preview, errorText: 'Denied [redacted] password=[redacted]',
+        })
+        expect(published({
+            state: 'output-error', errorText: `Failed ${SECRET} password=${PASSWORD}`,
+            output: { type: 'json', value: { note: FOREIGN_OWNER, token: SECRET } },
+        })).toEqual({ ...shell, state: 'output-error', input: preview, errorText: 'Failed [redacted] password=[redacted]' })
+        expect(published({ output: { type: 'error-json', value: { message: `Unavailable ${SECRET}`, leak: 'foreign-receipt-blob' } } })).toEqual({
+            ...shell, state: 'output-error', input: preview, errorText: 'Unavailable [redacted]',
+        })
+        expect(JSON.stringify(published({ output: { type: 'error-json', value: { message: `Unavailable ${SECRET}`, leak: 'foreign-receipt-blob' } } }))).not.toContain('foreign-receipt-blob')
+    })
+
+    it('keeps a succeeded read as a redacted preview and body', () => {
+        expect(published()).toEqual({ ...shell, state: 'output-available', input: preview, output: 'seen [redacted]\npassword=[redacted]' })
+        expect(published({ acknowledgement: 'recorded' })).toEqual({ ...shell, state: 'output-available', input: preview, output: 'seen [redacted]\npassword=[redacted]' })
+    })
+
+    it('does not publish a raw secret string stored as generic input', () => {
+        expect(published({ state: 'input-available', input: `${SECRET} password=${PASSWORD}`, output: undefined })).toEqual({
+            ...shell, state: 'input-available', input: {},
+        })
+    })
+
+    it('keeps a stored cancelled read cancelled and drops the attached result', () => {
+        const call = {
+            type: 'tool-fs_read', toolCallId: 'c-cancel', toolName: 'fs_read', state: 'cancelled',
+            input: { path: `notes/${SECRET}.md` }, acknowledgement: 'cancelled', errorText: `nope ${SECRET} password=${PASSWORD}`,
+            ownerId: FOREIGN_OWNER, workspaceId: FOREIGN_WORKSPACE, runId: FOREIGN_RUN,
+            providerMetadata: { desktop: { token: SECRET, ownerId: FOREIGN_OWNER } },
+        }
+        const output = `done ${SECRET} ${FOREIGN_OWNER} password=${PASSWORD}`
+        const [transformed] = transformEngineMessages([
+            { id: 'a1', sessionId: 's1', role: 'assistant', contentJson: JSON.stringify([call]), toolCallsJson: null, createdAt: '2026-11-09T00:00:00.000Z' },
+            { id: 'r1', sessionId: 's1', role: 'tool', contentJson: JSON.stringify([{ type: 'tool-result', toolCallId: 'c-cancel', toolName: 'fs_read', output }]), toolCallsJson: null, createdAt: '2026-11-09T00:00:01.000Z' },
+        ])
+        expect(transformed.parts[0]).toMatchObject({ state: 'cancelled', acknowledgement: 'cancelled', output })
+        expect(transformed.parts[0]).not.toHaveProperty('ownerId')
+        expect(transformed.parts[0]).not.toHaveProperty('providerMetadata')
+        const [history] = publicDesktopHistory([transformed])
+        expect(history.parts[0]).toEqual({ type: 'tool-fs_read', toolName: 'fs_read', toolCallId: 'c-cancel', desktopPreview: true, state: 'cancelled', input: preview })
+        expectNoReceiptLeak(history)
+        expect(publicDesktopHistory([history])).toEqual([history])
+    })
+
+    it('keeps a malformed stored state unknown instead of running', () => {
+        const [transformed] = transformEngineMessages([{
+            id: 'a1', sessionId: 's1', role: 'assistant', toolCallsJson: null, createdAt: '2026-11-09T00:00:00.000Z',
+            contentJson: JSON.stringify([{ type: 'tool-fs_read', toolCallId: 'c-mystery', toolName: 'fs_read', state: 'mystery', input: { path: `notes/${SECRET}.md` }, ownerId: FOREIGN_OWNER }]),
+        }])
+        expect(transformed.parts[0]).toMatchObject({ state: 'mystery' })
+        expect(transformed.parts[0]).not.toHaveProperty('ownerId')
+        const [history] = publicDesktopHistory([transformed])
+        expect(history.parts[0]).toEqual({ type: 'tool-fs_read', toolName: 'fs_read', toolCallId: 'c-mystery', desktopPreview: true, state: 'unknown', input: preview })
+        expectNoReceiptLeak(history)
+    })
+
+    it('keeps an unresolved legacy call running when its args are not JSON', () => {
+        const args = `${SECRET} password=${PASSWORD}`
+        const [transformed] = transformEngineMessages([{
+            id: 'a1', sessionId: 's1', role: 'assistant', createdAt: '2026-11-09T00:00:00.000Z',
+            contentJson: JSON.stringify([{ type: 'text', text: 'Reading.' }]),
+            toolCallsJson: JSON.stringify([{ toolCallId: 'c-legacy', toolName: 'fs_read', args }]),
+        }])
+        expect(transformed.parts[1]).toMatchObject({ state: 'input-available', toolName: 'fs_read', input: args })
+        const [history] = publicDesktopHistory([transformed])
+        expect(history.parts[1]).toEqual({ type: 'tool-fs_read', toolName: 'fs_read', toolCallId: 'c-legacy', desktopPreview: true, state: 'input-available', input: {} })
+        expectNoReceiptLeak(history)
+        expect(publicDesktopHistory([history])).toEqual([history])
+    })
+})
