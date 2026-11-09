@@ -16,6 +16,7 @@ import { readDesktopDelegation } from '../delegation/binding.js'
 import { readDesktopCoworkerCallRuntime } from '../coworker-calls/bind.js'
 import { desktopCallAgentTools } from '../coworker-calls/tool.js'
 import { hasDesktopToolGrant } from '../tool-grants.js'
+import { readForemanWorkspaceReads } from '../foreman-workspace-reads/binding.js'
 type Binding = ReturnType<typeof createDesktopForemanBridge>
 let installed: Binding | undefined
 let installedDocs: ReturnType<typeof createDesktopForemanDocsBridge> | undefined
@@ -56,6 +57,10 @@ export async function desktopForemanTools(ctx: RunContext) {
     const docs = installedDocs
     Object.assign(tools, desktopForemanDocsTools({ binding, corpus: RERUN_PUBLIC_DOCS_CORPUS, assertCurrent: current, search: docs ? (input, requestSignal) => docs.search(input, requestSignal ?? signal) : null }))
     Object.assign(tools, askUserTool(ctx), foremanAgentFileTools(ctx))
+    const workspaceReads = readForemanWorkspaceReads()
+    let workspaceGranted = false
+    try { workspaceGranted = !!workspaceReads && await workspaceReads.grant(binding.workspaceId) === true } catch { workspaceGranted = false }
+    if (workspaceReads && workspaceGranted) Object.assign(tools, workspaceReads.tools({ binding, assertCurrent: current, signal }))
     const calls = readDesktopCoworkerCallRuntime()
     return {
         tools: { ...registerDesktopForemanTools(tools), ...readDesktopDelegation()?.tools(ctx),

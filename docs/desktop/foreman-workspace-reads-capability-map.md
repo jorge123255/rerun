@@ -86,7 +86,7 @@ Offline-read column values: `yes`, `needs new grant`, `needs remote service`, `n
 
 ## What was mounted
 
-Four read-only tools, added through `bindForemanWorkspaceReads` and merged inside `desktopForemanTools` before `registerDesktopForemanTools`. Names: `list_spaces`, `list_agents`, `list_schedules`, `list_triggers`.
+Four read-only tools, added through `bindForemanWorkspaceReads` and merged inside `desktopForemanTools` before `registerDesktopForemanTools` only when that call's grant check returns true. Names: `list_spaces`, `list_agents`, `list_schedules`, `list_triggers`. A grant that is false hides them. A grant that flips to false after they are on the belt is refused again inside each execute.
 
 Authority, re-checked on every call:
 
