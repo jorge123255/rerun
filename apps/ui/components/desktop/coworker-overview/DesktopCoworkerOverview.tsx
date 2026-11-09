@@ -64,8 +64,13 @@ export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor 
     if (phase === 'loading') return <div role="status" className="flex min-h-40 items-center justify-center p-4">{loadingSlot ?? <p className="text-sm text-muted-foreground">Loading this coworker…</p>}</div>
     if (phase === 'error') return <p role="alert" className="p-4 text-sm text-destructive">{error || 'This coworker could not be opened. Nothing was retried.'}</p>
     if (phase === 'empty' || box.status === 'unavailable') return <p role="status" className="p-4 text-sm text-muted-foreground">This coworker is not in this workspace.</p>
+    const returnToCard = () => {
+        setFocus(origin?.tab ?? focus)
+        setNavigation(closedDesktopOverview)
+        setOrigin(null)
+    }
     const screen = tab && (
-            <DesktopCoworkerOverviewScreen agentId={agent.id} name={agent.name} mood={enabled ? mood : 'asleep'} tab={tab} visibility={visibility} servicesNeedConfig={desktopOverviewServicesDot(servicesNeedConfig)} onTab={next => setNavigation(current => current.tab ? selectDesktopOverviewTab(current.tab, next, visibility) : current)} onBack={() => { setFocus(origin?.tab ?? 'services'); setNavigation(closedDesktopOverview); setOrigin(null) }} onClose={onClose} onOpenAcceptedPanel={onOpenAcceptedPanel}>
+            <DesktopCoworkerOverviewScreen agentId={agent.id} name={agent.name} mood={enabled ? mood : 'asleep'} tab={tab} visibility={visibility} servicesNeedConfig={desktopOverviewServicesDot(servicesNeedConfig)} onTab={next => setNavigation(current => current.tab ? selectDesktopOverviewTab(current.tab, next, visibility) : current)} onBack={returnToCard} onClose={onClose} onOpenAcceptedPanel={onOpenAcceptedPanel}>
             {renderTab?.(tab)}
         </DesktopCoworkerOverviewScreen>
     )
@@ -75,11 +80,11 @@ export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor 
             const target = event.target as HTMLElement
             if (target.closest('input, textarea, [role="dialog"]')) return
             event.preventDefault()
-            if (tab) { setNavigation(closedDesktopOverview); setOrigin(null) }
+            if (tab) returnToCard()
             else onClose()
         }}>
             <div className={tab ? 'invisible absolute inset-0 overflow-hidden' : 'min-h-0 flex-1'} aria-hidden={tab ? true : undefined}>
-                <DesktopCoworkerOverviewCard identity={identity} name={agent.name} boxName={box.name} enabled={enabled} canManage={canManage} mood={enabled ? mood : 'asleep'} servicesNeedConfig={desktopOverviewServicesDot(servicesNeedConfig)} needsMachineReason={needsMachineReason} settingsDisabledReason={settingsDisabledReason} computerEnabled={computerEnabled} computer={computer} working={working} loadingSlot={loadingSlot} focus={focus} onFocus={setFocus} onOpen={open} onClose={onClose} onShare={onShare} onDelete={onDelete} onOpenComputer={onOpenComputer} onRenamed={onRenamed} />
+                <DesktopCoworkerOverviewCard identity={identity} name={agent.name} boxName={box.name} enabled={enabled} canManage={canManage} mood={enabled ? mood : 'asleep'} servicesNeedConfig={desktopOverviewServicesDot(servicesNeedConfig)} needsMachineReason={needsMachineReason} settingsDisabledReason={settingsDisabledReason} computerEnabled={computerEnabled} computer={computer} working={working} loadingSlot={loadingSlot} visible={!tab} focus={focus} onFocus={setFocus} onOpen={open} onClose={onClose} onShare={onShare} onDelete={onDelete} onOpenComputer={onOpenComputer} onRenamed={onRenamed} />
             </div>
             <AnimatePresence>
                 {screen && origin && <AgentViewExpander key={tab} origin={origin} ghost={<CardDestinationGhost tab={origin.tab} shape={origin.shape} />}>{screen}</AgentViewExpander>}

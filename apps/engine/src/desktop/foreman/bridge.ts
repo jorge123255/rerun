@@ -1,8 +1,8 @@
 import { z } from 'zod'
-import { foremanBindingSchema, type DesktopForemanChatRef, type CompanyBriefModelRef, type DesktopForemanBinding, type ForemanBrief } from '@rerun/contracts'
+import { foremanBindingSchema, type DesktopForemanChatRef, type CompanyBriefModelRef, type DesktopForemanBinding, type DesktopForemanQuestionGuard, type ForemanBrief } from '@rerun/contracts'
 export type ForemanRuntime = { workspaceId?: number | string; launchNonce: string; app: { origin: string }; engine: { apiKey: string } }
 export type ForemanIdentity = { engineAgentId: 'foreman'; sessionId: string; runId: string }
-export type ForemanTurn = { binding: DesktopForemanBinding; sessionId: string; text: string; brief: ForemanBrief }
+export type ForemanTurn = { binding: DesktopForemanBinding; sessionId: string; text: string; brief: ForemanBrief; question?: DesktopForemanQuestionGuard }
 export type ForemanBridgeBody =
     | { action: 'brief_model'; chat: DesktopForemanChatRef; model: CompanyBriefModelRef }
     | { action: 'binding'; identity: ForemanIdentity }
@@ -19,7 +19,7 @@ export function createDesktopForemanBridge(runtime: ForemanRuntime, network: typ
         const signal = AbortSignal.any([closed.signal, ...(stop ? [stop] : []), AbortSignal.timeout(body.action === 'discover' ? 60_000 : 20_000)])
         signal.throwIfAborted()
         const encoded = JSON.stringify({ ...body, launchNonce: runtime.launchNonce })
-        if (Buffer.byteLength(encoded) > 32 * 1024) throw new Error('Foreman request exceeds limit.')
+        if (Buffer.byteLength(encoded) > (body.action === 'admit' ? 48 : 32) * 1024) throw new Error('Foreman request exceeds limit.')
         const response = await network(`${origin.origin}/api/desktop/internal/foreman`, { method: 'POST', headers: { authorization: `Bearer ${runtime.engine.apiKey}`, 'content-type': 'application/json' }, body: encoded, signal, redirect: 'error', credentials: 'omit' })
         const reader = response.body?.getReader()
         if (!reader) throw new Error('Foreman acknowledgement unavailable.')

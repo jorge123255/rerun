@@ -7,6 +7,9 @@ import type { DesktopRuntime } from '../runtime'
 import { createDesktopTemplateEngine } from '../../../../../engine/src/desktop/templates/service'
 import { readPortableArchive } from '../../../../../engine/src/desktop/templates/portable-package'
 import { renderMemoryMarkdown, serializeMemoryNote } from '../../../../../engine/src/desktop/coworker-share-memory/serialize'
+import { captureScopedPrivateDatabase } from '../../../../../engine/src/desktop/coworker-share-database/scoped'
+import { PORTABLE_DATABASE_MEMBER } from '../../../../../engine/src/desktop/coworker-share-database/member'
+import { listViews } from '../../../../../engine/src/db/tableViews'
 import { prepareSkillHelperFixture } from '../../../../../engine/src/desktop/skill-publication.test-support'
 import { desktopServicesSchema } from '../services/schema'
 import { serviceSkillMigrationSql } from '../services/skill-journal'
@@ -83,7 +86,7 @@ test('production capture publishes exact canonical memory counts; database, cred
     expect(source.members.some(member => /^(?:data|sessions)\//.test(member.path) || member.path === '.env')).toBe(false)
     const plan = binding.service.plan(source)
     expect(plan.sourceRevision).toBe(source.revision)
-    expect(plan.unavailable).toEqual({ database: expect.stringContaining('unavailable') })
+    expect(plan.unavailable).toEqual({ database: expect.stringContaining('safely included') })
     expect(plan.memoryPreview).toMatchObject({ available: true, contents: { count: 1, bytes: noteBytes().length }, digest: expect.stringMatching(/^[a-f0-9]{64}$/) })
     await expect(binding.service.review({ workspaceId: 1,agentId: sourceId,sourceRevision: source.revision,requestId: 'unsupported',include: { memories: false,database: true,files: false } },source)).rejects.toMatchObject({ status: 409 })
     const omitted = await binding.service.review({ workspaceId: 1,agentId: sourceId,sourceRevision: source.revision,requestId: 'default-off',include: { memories: false,database: false,files: false } },source)
@@ -130,3 +133,70 @@ test('real canonical package/install receipts survive a lost share ACK and file 
     expect((await readdir(join(engineRoot,'agents'))).filter(name => name.startsWith('i'))).toHaveLength(1)
     expect((await fixture.db.execute("SELECT COUNT(*) AS count FROM desktop_template_requests WHERE operation='install'")).rows[0]!.count).toBe(1)
 })
+
+
+test('exports only opted-in logical tables and restores the same disabled database after an interrupted roster commit', async () => {
+    const privateFolder = join(engineRoot, 'agents', 'source', 'data')
+    await mkdir(privateFolder)
+    const sourcePath = join(privateFolder, 'agent.db')
+    const sourceDb = createClient({ url: `file:${sourcePath}` })
+    try {
+        await sourceDb.executeMultiple(`
+            CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT, attachment BLOB);
+            INSERT INTO notes VALUES (1,'Original café',X'00FF'), (2,'Other row',NULL);
+            CREATE TABLE _rerun_internal (marker TEXT);
+            INSERT INTO _rerun_internal VALUES ('Do not share this');
+            CREATE TABLE _rerun_views (id TEXT PRIMARY KEY,table_name TEXT NOT NULL,name TEXT NOT NULL,position INTEGER NOT NULL,config TEXT NOT NULL,updated_at TEXT NOT NULL);
+            INSERT INTO _rerun_views VALUES ('saved-view','notes','Saved',3,'{"layout":"table"}','2026-01-01');
+        `)
+    } finally { sourceDb.close() }
+    const original = await readFile(sourcePath)
+    const engine = fixture.send
+    fixture.send = (path, init) => path === '/desktop/coworker-share-database/capture'
+        ? captureScopedPrivateDatabase({ ...JSON.parse(String(init.body)), engineRoot, assertCurrent: async () => {} })
+        : engine(path, init)
+    const runtime = fixture.runtime
+    const binding = await openDesktopCoworkerShareBinding(runtime, sourceId)
+    const first = await binding.source(1, sourceId)
+    const second = await binding.source(1, sourceId)
+    expect(second.revision).toBe(first.revision)
+    expect(binding.service.plan(first).databasePreview).toMatchObject({ available: true, contents: { count: 1 }, viewCount: 1 })
+    const common = { workspaceId: 1, agentId: sourceId, sourceRevision: first.revision }
+    const include = { memories: false, database: true, files: false }
+    const off = await binding.service.review({ ...common, requestId: 'db-off', include: { ...include, database: false } }, first)
+    expect(off.manifest.coworkers[0]!.members.map(member => member.path)).not.toContain(PORTABLE_DATABASE_MEMBER)
+    const review = await binding.service.review({ ...common, requestId: 'db-review', include }, first)
+    const exported = await binding.service.export({ ...common, requestId: 'db-export', include, reviewId: review.reviewId, expectedDigest: review.manifest.contentDigest }, second)
+    const archive = await binding.service.download(exported.manifest.packageKey)
+    const { members } = await readPortableArchive(archive.bytes)
+    expect(members.map(member => member.path)).toContain(PORTABLE_DATABASE_MEMBER)
+    expect(members.map(member => member.path)).not.toContain('data/agent.db')
+    expect(members.find(member => member.path === PORTABLE_DATABASE_MEMBER)!.bytes.toString()).not.toContain('Do not share this')
+    expect(await readFile(sourcePath)).toEqual(original)
+
+    const input = { requestId: 'db-import', snapshotId: exported.manifest.packageKey, expectedDigest: exported.manifest.contentDigest, targetWorkspaceId: 1 }
+    await fixture.db.execute("CREATE TRIGGER fixture_stop_roster BEFORE INSERT ON desktop_agents WHEN NEW.engine_agent_id != 'source' BEGIN SELECT RAISE(ABORT,'fixture stop after private database publication'); END")
+    expect(await binding.service.import(input)).toMatchObject({ status: 'uncertain', recoverable: true })
+    expect((await fixture.db.execute('SELECT count(*) AS n FROM desktop_agents')).rows[0]!.n).toBe(1)
+    const folders = (await readdir(join(engineRoot, 'agents'))).filter(name => name !== 'source')
+    expect(folders).toHaveLength(1)
+    const installed = join(engineRoot, 'agents', folders[0]!, 'data', 'agent.db')
+    const staged = await readFile(installed)
+    await fixture.db.execute('DROP TRIGGER fixture_stop_roster')
+    fixture.db.close()
+    fixture.db = createClient({ url: `file:${dbPath}` })
+    const reopened = await openDesktopCoworkerShareBinding(runtime, 'portable-import')
+    expect(await reopened.service.import({ ...input, requestId: 'different-attempt' })).toMatchObject({ status: 'uncertain' })
+    const result = await reopened.service.import(input)
+    expect(result).toMatchObject({ status: 'imported', importedAgentId: expect.any(String) })
+    const roster = (await fixture.db.execute("SELECT engine_agent_id,enabled FROM desktop_agents WHERE engine_agent_id != 'source'")).rows
+    expect(roster).toEqual([{ engine_agent_id: folders[0], enabled: 0 }])
+    expect(await readFile(installed)).toEqual(staged)
+    const target = createClient({ url: `file:${installed}` })
+    try {
+        const { rows } = await target.execute('SELECT id,title,hex(attachment) AS bytes FROM notes ORDER BY id')
+        expect(rows).toEqual([{ id: 1, title: 'Original café', bytes: '00FF' }, { id: 2, title: 'Other row', bytes: '' }])
+        expect(await listViews(target, 'notes')).toMatchObject([{ id: 'saved-view', name: 'Saved', position: 3, layout: 'table' }])
+        expect((await target.execute("SELECT name FROM sqlite_master WHERE name='_rerun_internal'")).rows).toHaveLength(0)
+    } finally { target.close() }
+}, 20_000)

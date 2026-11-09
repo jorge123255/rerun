@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { desktopPortablePackageManifestSchema } from './desktop-portable-templates.js'
 import { desktopTemplateRevisionSchema } from './desktop-templates.js'
+import { desktopCoworkerShareDatabasePreviewSchema } from './desktop-coworker-share-database.js'
 import { desktopCoworkerShareMemoryPreviewSchema } from './desktop-coworker-share-memory.js'
 
 export const desktopCoworkerShareIncludeSchema = z.strictObject({
@@ -9,6 +10,8 @@ export const desktopCoworkerShareIncludeSchema = z.strictObject({
     files: z.boolean(),
 })
 export type DesktopCoworkerShareInclude = z.infer<typeof desktopCoworkerShareIncludeSchema>
+
+export const DESKTOP_COWORKER_SHARE_FILES_NOT_SELECTED = 'Workspace files were left out of this export.'
 
 export const desktopCoworkerShareSourceSchema = z.strictObject({
     workspaceId: z.number().int().positive(),
@@ -53,6 +56,7 @@ export const desktopCoworkerSharePlanSchema = z.strictObject({
     sourceRevision: desktopTemplateRevisionSchema.optional(),
     /** Present only when the canonical capture/validation/fresh-install binding is mounted. */
     memoryPreview: desktopCoworkerShareMemoryPreviewSchema.optional(),
+    databasePreview: desktopCoworkerShareDatabasePreviewSchema.optional(),
     unavailable: z.strictObject({ memories: z.string().min(1).max(400).optional(), database: z.string().min(1).max(400).optional(), files: z.string().min(1).max(400).optional() }).optional(),
     warnings: z.array(z.string().min(1).max(400)).max(30),
     envKeyCount: z.number().int().nonnegative().max(100),

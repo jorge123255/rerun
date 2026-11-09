@@ -7,7 +7,7 @@ vi.mock('../../db/repos/runs.js', () => ({ getRun: async () => ({ id: 'run', age
 import { bindDesktopForeman, desktopForemanTools } from './binding.js'
 const runtime = { launchNonce: '00000000-0000-4000-8000-000000000001', app: { origin: 'http://127.0.0.1:44000' }, engine: { apiKey: 'a'.repeat(64) } }
 const binding = { workspaceId: '1', chatId: 'fmc_chat-0001', runId: 'run', model: { connectionId: 'conn', model: 'model' } }
-const context = () => ({ agent: { id: 'foreman', config: { kind: 'foreman' }, resolved: { connection: { id: 'conn' }, model: 'model' } }, sessionId: 'session', runId: 'run', model: 'model', abortSignal: new AbortController().signal }) as unknown as RunContext
+const context = () => ({ agent: { id: 'foreman', config: { kind: 'foreman', tools: { cards: false } }, resolved: { connection: { id: 'conn' }, model: 'model' } }, sessionId: 'session', runId: 'run', model: 'model', abortSignal: new AbortController().signal }) as unknown as RunContext
 let stop: (() => void) | undefined
 beforeEach(() => { vi.stubEnv('RERUN_DESKTOP_APP', '1'); state.running = true; state.owned = true })
 afterEach(() => { stop?.(); stop = undefined; vi.unstubAllEnvs() })
@@ -18,7 +18,7 @@ test('trusted server binding exposes only reviewed tools and ignores renderer-st
     connect(network)
     const ctx = { ...context(), binding: { ...binding, chatId: 'forged-chat' } }
     const tools = await desktopForemanTools(ctx)
-    expect(Object.keys(tools.tools)).toEqual(['show_plan', 'open_panel', 'search_docs'])
+    expect(Object.keys(tools.tools)).toEqual(['show_plan', 'open_panel', 'search_docs', 'ask_user'])
     await tools.tools.show_plan!.execute!({ title: 'A team', boxes: [], items: [] } as never, { toolCallId: 'call-exact', messages: [] })
     expect(actions[1]).toMatchObject({ action: 'show_plan', binding, toolCallId: 'call-exact', launchNonce: runtime.launchNonce })
 })

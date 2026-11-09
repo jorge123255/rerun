@@ -6,5 +6,5 @@ export { DesktopBrainHistory } from './DesktopBrainHistory'
 export { DesktopBrainSidebar } from './DesktopBrainSidebar'
 export type {
     DesktopBrainActions, DesktopBrainDeleteResult, DesktopBrainOverview, DesktopBrainRevision,
-    DesktopBrainSelection,
+    DesktopBrainRoute, DesktopBrainSelection,
 } from './types'

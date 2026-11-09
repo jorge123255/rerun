@@ -1,12 +1,26 @@
 'use client'
 
+import { BrainSidebar } from '@/components/brain/BrainSidebar'
+import { selectionDepth, selectionKey, type BrainSelection } from '@/components/brain/selection'
 import { BrainChromeContext, BrainTopBar } from '@/components/brain/BrainTopBar'
+import type { SharedFilesTree } from '@/components/brain/useSharedFilesTree'
+import { DataBrowser } from '@/components/data/DataBrowser'
 import { EmptyState } from '@/components/ui/empty-state'
 import { PanelSteps } from '@/components/ui/panel-steps'
 import { Button } from '@/components/ui/button'
 import { Skeleton, SkeletonList } from '@/components/ui/skeleton'
+import { DesktopBrainFile, DesktopBrainFolder } from '@/components/desktop/brain/files/DesktopBrainFiles'
+import { useDesktopSharedFilesTree } from '@/components/desktop/brain/files/useDesktopSharedFilesTree'
+import type { DataFocus } from '@/lib/data/source'
+import { humanizeTableName } from '@/lib/data/table-name'
+import { DesktopBrainRequestError, type DesktopBrainOverview as PagesOverview } from '@/lib/desktop/brain-pages'
+import { desktopDataSource } from '@/lib/desktop/data-source'
+import { holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { importDesktopSharedFile } from '@/lib/desktop/shared-workspace-files'
 import { flushDesktopBrainDrafts, forgetBrainDraft, brainDraftHash, type BrainPageDetail } from '@/lib/desktop/use-brain-page-draft'
-import { BrainIcon, PanelLeftIcon, RefreshCwIcon } from '@/lib/icons'
+import type { EngineDbTable } from '@/lib/engine/types'
+import type { UploadEntry } from '@/lib/files/upload'
+import { BrainIcon, DatabaseIcon, PanelLeftIcon, RefreshCwIcon, TableIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { BrainPageSummary } from '@rerun/contracts'
 import { useIsMobile } from '@rerun/ui/primitives/use-is-mobile'
@@ -16,10 +30,14 @@ import { brainMutationIntent, reserveBrainMutation, settleBrainMutation } from '
 import { DesktopBrainHistory } from './DesktopBrainHistory'
 import { DesktopBrainNewPage } from './DesktopBrainNewPage'
 import { DesktopBrainPage } from './DesktopBrainPage'
-import { DesktopBrainSidebar } from './DesktopBrainSidebar'
-import type { DesktopBrainActions, DesktopBrainOverview, DesktopBrainSelection } from './types'
+import type { DesktopBrainActions, DesktopBrainOverview, DesktopBrainRoute } from './types'
 
 type PageState = { slug: string; detail: BrainPageDetail | null; missing: boolean; error?: string; version: number }
+
+const SHARED_TABLES_EMPTY = {
+    title: 'No shared tables yet',
+    description: 'Every coworker of the workspace reads and writes this database. When they need a common record (a catalog, a queue, a list several coworkers work through), they create tables here that you can browse anytime.',
+}
 
 function PageSkeleton() {
     return (
@@ -46,54 +64,95 @@ function PageSkeleton() {
 
 const toSummary = ({ slug, title, type, hash, updatedAt, updatedBy }: BrainPageDetail['page']): BrainPageSummary => ({ slug, title, type, hash, updatedAt, updatedBy })
 
+function toOverview(loaded: unknown): DesktopBrainOverview {
+    if (loaded && typeof loaded === 'object' && 'available' in loaded && (loaded as { available: unknown }).available === false) {
+        const reason = (loaded as { reason?: unknown }).reason
+        if (reason === 'no_machine' || reason === 'outdated' || reason === 'unreachable') return { available: false, reason }
+    }
+    const success = loaded as PagesOverview
+    return { available: true, pages: success.pages, openProposals: success.openProposals }
+}
+
 /**
- * The Company Brain as one self-contained panel: the hosted sidebar and page column, over an
- * injected actions interface, with the shared folder, the shared database and website seeding left
- * out because this build does not own them.
+ * Company Brain as one panel: the original sidebar (proposals, pages, shared files, shared database)
+ * and the desktop body for whatever is selected.
  *
- * Every read is guarded against a slower earlier one landing on top, and every write is either
- * acknowledged by the store or shown as not saved. Root mounts this, decides where it opens and
- * owns cross-panel navigation; nothing here talks to an engine, a server action or an account.
+ * Page reads still wait for `flushDesktopBrainDrafts`. A selection made before the overview returns
+ * stays put. A route table wins over a page request. Root mounts the dialog; this panel does not
+ * wire Control Center, file-link authoring, or a hosted workspace.
  */
-export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug, onOpenConsumed, refreshKey, openProposalsKey }: {
+export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug, onOpenConsumed, refreshKey, openProposalsKey, route, onRouteConsumed, files: filesProp, onUpload }: {
     actions: DesktopBrainActions
     onClose: () => void
-    /** D's review panel, when root mounts it. Without a slot there is no Proposals row. */
+    /** D's review panel, when root mounts it. The Proposals row stays either way. */
     renderProposals?: () => ReactNode
-    /** A page another panel asked to open, consumed once. */
+    /** A page another panel asked to open, consumed once. A route table wins over this. */
     openSlug?: string | null
     onOpenConsumed?: () => void
     refreshKey?: number
     openProposalsKey?: number
+    route?: DesktopBrainRoute | null
+    onRouteConsumed?: () => void
+    /** Tests pass a tree. The panel otherwise lists the shared folder itself. */
+    files?: SharedFilesTree
+    /** Tests pass an upload. The panel otherwise calls `importDesktopSharedFile`. */
+    onUpload?: (entries: UploadEntry[], dir: string) => void
 }) {
     const isMobile = useIsMobile()
+    const listedFiles = useDesktopSharedFilesTree()
+    const files = filesProp ?? listedFiles
     const [overview, setOverview] = useState<DesktopBrainOverview | null>(null)
-    const [selection, setSelection] = useState<DesktopBrainSelection | null>(null)
+    const [selection, setSelection] = useState<BrainSelection | null>(null)
     const [pageState, setPageState] = useState<PageState | null>(null)
     const [sidebarOpen, setSidebarOpen] = useState(false)
+    const [dataFocus, setDataFocus] = useState<DataFocus | null>(null)
+    const [tables, setTables] = useState<EngineDbTable[] | null>(null)
+    const [tablesError, setTablesError] = useState<string | null>(null)
     const searchRef = useRef<HTMLInputElement>(null)
     const selectionRef = useRef(selection)
     useEffect(() => { selectionRef.current = selection })
+    const dataSource = useMemo(() => desktopDataSource({ kind: 'shared' }), [])
 
     const pages = useMemo(() => (overview?.available ? overview.pages : []), [overview])
     const titles = useMemo(() => new Map(pages.map(page => [page.slug, page.title])), [pages])
     const available = overview?.available ?? false
-    const offline = overview && !overview.available ? overview.reason : null
+    const offline = overview && !overview.available && overview.reason !== 'outdated' ? overview.reason : null
 
     const overviewSeq = useRef(0)
     const reloadOverview = useCallback(async (): Promise<DesktopBrainOverview> => {
         const seq = ++overviewSeq.current
-        const next: DesktopBrainOverview = await actions.load().then(value => ({ available: true as const, ...value })).catch(() => ({ available: false, reason: 'unreachable' } as const))
+        let loaded: unknown
+        try { loaded = await actions.load() }
+        catch (error) {
+            // A box from before the Brain answers 404 on the pages route. Files and the database still exist.
+            loaded = error instanceof DesktopBrainRequestError && error.status === 404
+                ? { available: false, reason: 'outdated' }
+                : { available: false, reason: 'unreachable' }
+        }
+        const next = toOverview(loaded)
         if (seq === overviewSeq.current) setOverview(next)
         return next
     }, [actions])
 
+    const reloadTables = useCallback(async () => {
+        try {
+            const list = await dataSource.listTables()
+            setTables(list)
+            setTablesError(null)
+            return list
+        } catch (error) {
+            setTables([])
+            setTablesError(error instanceof Error && error.message ? error.message : 'Could not reach the workspace database.')
+            return []
+        }
+    }, [dataSource])
+
     const readSeq = useRef(0)
-    const loadPage = useCallback(async (slug: string) => {
+    const loadPage = useCallback(async (slug: string, draftsFlushed = false) => {
         const seq = ++readSeq.current
         setPageState(current => (current?.slug === slug ? current : { slug, detail: null, missing: false, version: 0 }))
         // A page just left may still be writing: read after it lands, never before.
-        await flushDesktopBrainDrafts()
+        if (!draftsFlushed) await flushDesktopBrainDrafts()
         try {
             const detail = await actions.readPage(slug)
             if (seq !== readSeq.current) return
@@ -105,34 +164,70 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
         }
     }, [actions])
 
-    const select = useCallback((next: DesktopBrainSelection) => {
-        if (next.kind === 'page' && selectionRef.current?.kind === 'page' && selectionRef.current.slug === next.slug) {
+    const commitSelection = useCallback((next: BrainSelection | null) => {
+        selectionRef.current = next
+        setSelection(next)
+    }, [])
+
+    const navigation = useRef(0)
+    useEffect(() => () => { navigation.current++ }, [])
+    const select = useCallback((next: BrainSelection) => {
+        const previous = selectionRef.current
+        const request = ++navigation.current
+        if (next.kind === 'page' && previous?.kind === 'page' && previous.slug === next.slug) {
             setSidebarOpen(false)
             return
         }
-        selectionRef.current = next
-        setSelection(next)
-        setSidebarOpen(false)
-        if (next.kind === 'page') void loadPage(next.slug)
-    }, [loadPage])
+        const show = (draftsFlushed: boolean) => {
+            if (navigation.current !== request || selectionRef.current !== previous || isDesktopQuitting()) return
+            commitSelection(next)
+            setSidebarOpen(false)
+            if (next.kind === 'page') void loadPage(next.slug, draftsFlushed)
+        }
+        if (previous?.kind !== 'page') { show(false); return }
+        void flushDesktopBrainDrafts().catch(() => false).then(flushed => {
+            if (flushed) show(true)
+            else if (navigation.current === request && selectionRef.current === previous) {
+                toast.error('Some edits could not be saved. Resolve them before leaving this page.')
+            }
+        })
+    }, [commitSelection, loadPage])
 
-    const loadWorkspace = useCallback(() => reloadOverview().then(next => {
-        if (selectionRef.current) return next
-        if (next.available && next.pages[0]) select({ kind: 'page', slug: next.pages[0].slug })
-        return next
-    }), [reloadOverview, select])
+    const loadWorkspace = useCallback(() => {
+        void reloadTables()
+        return reloadOverview().then(next => {
+            if (selectionRef.current) return next
+            if (next.available && next.pages[0]) select({ kind: 'page', slug: next.pages[0].slug })
+            else if (!next.available && next.reason === 'outdated') select({ kind: 'folder', path: '' })
+            return next
+        })
+    }, [reloadTables, reloadOverview, select])
 
+    const consumeRoute = useCallback((incoming: DesktopBrainRoute) => {
+        setDataFocus(incoming.data ?? null)
+        if (incoming.data?.table) select({ kind: 'table', name: incoming.data.table })
+        else if (incoming.selection) select(incoming.selection)
+        onRouteConsumed?.()
+    }, [select, onRouteConsumed])
+
+    const mountRoute = useRef(route)
     useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
+        if (mountRoute.current && (mountRoute.current.data?.table || mountRoute.current.selection)) consumeRoute(mountRoute.current)
         void loadWorkspace()
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     useEffect(() => {
+        if (!route || route === mountRoute.current) return
+        consumeRoute(route)
+    }, [route, consumeRoute])
+
+    useEffect(() => {
         if (!openSlug) return
+        if (route?.data?.table) { onOpenConsumed?.(); return }
         select({ kind: 'page', slug: openSlug })
         onOpenConsumed?.()
-    }, [openSlug, select, onOpenConsumed])
+    }, [openSlug, route?.data?.table, select, onOpenConsumed])
 
     useEffect(() => {
         if (refreshKey === undefined) return
@@ -145,8 +240,9 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
     useEffect(() => {
         if (!openProposalsKey || !renderProposals || consumedProposalsKey.current === openProposalsKey) return
         consumedProposalsKey.current = openProposalsKey
+        if (route?.data?.table) return
         select({ kind: 'proposals' })
-    }, [openProposalsKey, select, renderProposals])
+    }, [openProposalsKey, select, renderProposals, route?.data?.table])
 
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
@@ -160,6 +256,27 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
         window.addEventListener('keydown', onKey, true)
         return () => window.removeEventListener('keydown', onKey, true)
     }, [])
+
+    useEffect(() => {
+        if (selection?.kind !== 'database' || !tables?.[0]) return
+        select({ kind: 'table', name: tables[0].name })
+    }, [selection, tables, select])
+
+    const refreshListed = files.refresh
+    const uploadFiles = useCallback(async (entries: UploadEntry[], dir: string) => {
+        if (onUpload) { onUpload(entries, dir); return }
+        if (isDesktopQuitting()) return
+        const release = holdDraftAdmission()
+        try {
+            for (const entry of entries) {
+                if (isDesktopQuitting()) break
+                const folder = [dir, entry.subDir].filter(Boolean).join('/')
+                try { await importDesktopSharedFile(folder, entry.file) }
+                catch (error) { toast.error(error instanceof Error && error.message ? error.message : `Could not import ${entry.file.name}.`) }
+            }
+            await refreshListed(dir)
+        } finally { release() }
+    }, [onUpload, refreshListed])
 
     const openPage = useCallback((slug: string) => select({ kind: 'page', slug }), [select])
 
@@ -176,9 +293,9 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
     const createdPage = useCallback((detail: BrainPageDetail) => {
         savedPage(detail)
         setPageState({ slug: detail.page.slug, detail, missing: false, version: 1 })
-        setSelection({ kind: 'page', slug: detail.page.slug })
+        commitSelection({ kind: 'page', slug: detail.page.slug })
         void reloadOverview()
-    }, [savedPage, reloadOverview])
+    }, [savedPage, reloadOverview, commitSelection])
 
     const deletePage = useCallback(async (slug: string) => {
         try {
@@ -195,16 +312,22 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
             const next = await reloadOverview()
             const fallback = next.available ? next.pages.find(page => page.slug !== slug)?.slug : undefined
             if (fallback) select({ kind: 'page', slug: fallback })
-            else { selectionRef.current = null; setSelection(null); setPageState(null) }
+            else { commitSelection(null); setPageState(null) }
         } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not delete this page. Try again.') }
-    }, [actions, pageState, reloadOverview, select])
+    }, [actions, pageState, reloadOverview, select, commitSelection])
 
     const restoredPage = useCallback((detail: BrainPageDetail) => {
         forgetBrainDraft(detail.page.slug)
         setPageState(current => ({ slug: detail.page.slug, detail, missing: false, version: (current?.version ?? 0) + 1 }))
-        setSelection({ kind: 'page', slug: detail.page.slug })
+        commitSelection({ kind: 'page', slug: detail.page.slug })
         void reloadOverview()
-    }, [reloadOverview])
+    }, [reloadOverview, commitSelection])
+
+    const tableDropped = useCallback(async (name: string) => {
+        const remaining = await reloadTables()
+        const next = remaining.find(table => table.name !== name)
+        select(next ? { kind: 'table', name: next.name } : { kind: 'database' })
+    }, [reloadTables, select])
 
     const chrome = useMemo(() => ({ onClose, onToggleSidebar: isMobile && !offline ? () => setSidebarOpen(true) : null }), [onClose, isMobile, offline])
 
@@ -220,18 +343,18 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
                             title="Your Brain comes with your first coworker"
                             description="It lives on the machine of this workspace, which exists once a coworker does. From then on, what every coworker knows about your company shows up here."
                         />
-                    ) : offline === 'outdated' ? (
-                        <EmptyState
-                            icon={BrainIcon}
-                            title="This machine does not have the Brain yet"
-                            description="The local engine answered, but without the Brain pages. Update the engine, then open this panel again."
-                        />
                     ) : (
                         <EmptyState
                             icon={BrainIcon}
                             title="Could not reach your workspace"
                             description="The local engine did not answer. It may still be starting."
-                            action={<Button size="sm" variant="outline" onClick={() => { void loadWorkspace() }}><RefreshCwIcon className="size-3.5" /> Retry</Button>}
+                            action={<Button size="sm" variant="outline" onClick={() => {
+                                void files.refresh('')
+                                void loadWorkspace().then(next => {
+                                    const current = selectionRef.current
+                                    if (next.available && current?.kind === 'page') void loadPage(current.slug)
+                                })
+                            }}><RefreshCwIcon className="size-3.5" /> Retry</Button>}
                         />
                     )}
                 </>
@@ -278,7 +401,7 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
                         actions={actions}
                         onOpenPage={openPage}
                         onSaved={savedPage}
-                        onHistory={() => setSelection({ kind: 'history', slug: detail.page.slug })}
+                        onHistory={() => commitSelection({ kind: 'history', slug: detail.page.slug })}
                         onDeleted={deletePage}
                     />
                 )
@@ -292,7 +415,7 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
                         revisions={detail.revisions}
                         titles={titles}
                         actions={actions}
-                        onBack={() => setSelection({ kind: 'page', slug: selection.slug })}
+                        onBack={() => commitSelection({ kind: 'page', slug: selection.slug })}
                         onOpenPage={openPage}
                         onRestored={restoredPage}
                     />
@@ -302,6 +425,52 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
                 return <DesktopBrainNewPage pages={pages} titles={titles} actions={actions} onOpenPage={openPage} onCreated={createdPage} />
             case 'proposals':
                 return renderProposals ? <>{renderProposals()}</> : <BrainTopBar crumbs={[{ label: 'Brain', icon: BrainIcon }]} />
+            case 'folder':
+                return <DesktopBrainFolder path={selection.path} files={files} onSelect={select} onUpload={uploadFiles} />
+            case 'file':
+                return <DesktopBrainFile path={selection.path} files={files} onSelect={select} />
+            case 'database':
+                if (!tables || tables.length > 0) return <PageSkeleton />
+                return (
+                    <>
+                        <BrainTopBar crumbs={[{ label: 'Database', icon: DatabaseIcon }]} />
+                        {tablesError ? (
+                            <EmptyState icon={DatabaseIcon} title="Database unavailable" description={tablesError} />
+                        ) : (
+                            <EmptyState icon={DatabaseIcon} title={SHARED_TABLES_EMPTY.title} description={SHARED_TABLES_EMPTY.description} />
+                        )}
+                    </>
+                )
+            case 'table': {
+                const name = selection.name
+                const crumbs = [
+                    { label: 'Database', icon: DatabaseIcon },
+                    { label: humanizeTableName(name), icon: TableIcon },
+                ]
+                if (tables && !tables.some(table => table.name === name)) {
+                    return (
+                        <>
+                            <BrainTopBar crumbs={crumbs} />
+                            <EmptyState icon={TableIcon} title={`No table "${name}"`} description="It may have been deleted, or the coworker that mentioned it has not created it yet." />
+                        </>
+                    )
+                }
+                return (
+                    <>
+                        <BrainTopBar crumbs={crumbs} />
+                        <div className="flex min-h-0 flex-1 flex-col border-t border-border">
+                            <DataBrowser
+                                key={name}
+                                source={dataSource}
+                                table={name}
+                                initial={dataFocus?.table === name ? dataFocus : null}
+                                onInitialConsumed={() => setDataFocus(null)}
+                                onTableDropped={() => void tableDropped(name)}
+                            />
+                        </div>
+                    </>
+                )
+            }
         }
     }
 
@@ -318,14 +487,17 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
                         )}
                     >
                         {overview ? (
-                            <DesktopBrainSidebar
+                            <BrainSidebar
                                 pages={pages}
                                 pagesAvailable={available}
                                 selection={selection}
                                 openProposals={overview.available ? overview.openProposals : 0}
+                                files={files}
+                                tables={tables}
                                 searchRef={searchRef}
                                 onSelect={select}
-                                proposalsAvailable={Boolean(renderProposals)}
+                                onUpload={uploadFiles}
+                                fileDrag={false}
                             />
                         ) : (
                             <div className="space-y-3 p-3">
@@ -345,7 +517,7 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
                             </Button>
                         </div>
                     )}
-                    <PanelSteps stepKey={selection ? JSON.stringify(selection) : 'brain'} depth={selection?.kind === 'history' ? 2 : 1}>
+                    <PanelSteps stepKey={selectionKey(selection)} depth={selectionDepth(selection)}>
                         {renderMain()}
                     </PanelSteps>
                 </main>

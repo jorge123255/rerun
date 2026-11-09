@@ -6,6 +6,7 @@ import { stopDesktopClaudeWorkers } from '../../desktop/claude-plan/runtime.js'
 import { createDesktopTriggerToolRuntime } from '../../desktop/trigger-tools/runtime.js'
 import { ensureForeman } from '../../agents/foreman.js'
 import { bindDesktopForeman } from '../../desktop/foreman/binding.js'
+import { createPrivateDatabaseShareRoutes } from '../../desktop/coworker-share-database/routes.js'
 import { createDesktopForemanRoutes } from '../../desktop/foreman/routes.js'
 import { createDesktopScheduleToolRuntime } from '../../desktop/schedule-tools/runtime.js'
 import { bindDesktopToolInstall } from '../../desktop/tool-install/binding.js'
@@ -157,6 +158,7 @@ export async function desktopRunCommand(): Promise<void> {
     installDesktopDelegation(delegation)
     app.route('/desktop/computer-panel', computerPanel.routes)
     app.route('/desktop/custom-providers', customProviders.routes)
+    app.route('/desktop/coworker-share-database', createPrivateDatabaseShareRoutes(runtime.workspaceId))
     app.route('/desktop/foreman', createDesktopForemanRoutes(undefined, { workspaceId: runtime.workspaceId, launchNonce: runtime.launchNonce }))
     app.route('/desktop/external-mcp', createDesktopExternalMcpRouter(getExternalMcpService))
     app.route('/desktop/tool-install', toolInstall.routes)

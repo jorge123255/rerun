@@ -198,3 +198,13 @@ test('admits the exact company shutdown route without exposing arbitrary workspa
     expect(desktopRouteAllowed('POST', '/desktop/workspace-admission')).toBe(true)
     expect(desktopRouteAllowed('GET', '/desktop/workspace-admission')).toBe(false)
 })
+
+
+test('desktop Foreman questions and logical database capture expose only their exact authenticated routes', () => {
+    for (const method of ['GET', 'POST', 'PATCH', 'PUT', 'DELETE']) {
+        expect(desktopRouteAllowed(method, '/desktop/foreman/question')).toBe(method === 'GET')
+        expect(desktopRouteAllowed(method, '/desktop/coworker-share-database/capture')).toBe(method === 'POST')
+        expect(desktopRouteAllowed(method, '/desktop/foreman/question/arbitrary')).toBe(false)
+        expect(desktopRouteAllowed(method, '/desktop/coworker-share-database/capture/arbitrary')).toBe(false)
+    }
+})

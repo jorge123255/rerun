@@ -29,7 +29,7 @@ export function DesktopCoworkerShareOptions({ plan, include, onChange, disabled,
     const filesReason = plan.unavailable?.files
     const rows = [
         { key: 'memories' as const, label: 'Memories', helper: memories.reason ?? bucketLabel(memories.contents, 'memory', 'Nothing remembered yet'), value: include.memories, enabled: memories.enabled },
-        { key: 'database' as const, label: 'Coworker database', helper: database.reason ?? (database.contents.count === 0 ? 'No tables yet' : `${formatBytes(database.contents.bytes)} · not scanned for secrets`), value: include.database, enabled: database.enabled },
+        { key: 'database' as const, label: 'Coworker database', helper: database.reason ?? (database.contents.count === 0 ? 'No tables yet' : `${bucketLabel(database.contents, 'table', 'No tables yet')}${database.viewCount ? ` · ${database.viewCount} saved view${database.viewCount === 1 ? '' : 's'}` : ''}`), value: include.database, enabled: database.enabled },
         { key: 'files' as const, label: 'Workspace files', helper: filesReason ?? bucketLabel(plan.contents.files, 'file', 'No files yet'), value: include.files, enabled: !filesReason },
     ]
     return <div className={CONTAINER}>

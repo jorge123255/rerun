@@ -71,7 +71,7 @@ it('recovers only an exact saved snapshot after a lost UI ACK and then advances 
 })
 it('refuses foreign state and hides context parts from restored transcript', async () => {
     server.messages = [{ id: 'one', role: 'user', parts: [{ type: 'text', text: 'Visible message' }, { type: 'text', text: 'private context', providerOptions: { rerun: { context: true } } }] }]
-    expect(desktopForemanMessages(await readDesktopForemanState())).toEqual([{ id: 'one', role: 'user', text: 'Visible message', docs: [] }])
+    expect(desktopForemanMessages(await readDesktopForemanState())).toEqual([{ id: 'one', role: 'user', text: 'Visible message', docs: [], history: [{ key: '["one",0,null]', kind: 'text', text: 'Visible message' }] }])
     server.view.chat = { ...chat, chatId: 'fmc_otherchat' }
     await expect(readDesktopForemanState()).rejects.toThrow()
 })
@@ -145,4 +145,24 @@ it('retains static and dynamic documentation parts while omitting unrelated rest
     state.messages = [{ id: 'docs', role: 'assistant', parts: [{ type: 'dynamic-tool', toolName: 'search_docs', toolCallId: 'docs-1', state: 'output-available', output: {} }, { type: 'tool-search_docs', toolCallId: 'docs-2', state: 'output-available', output: {} }, { type: 'tool-unrelated', output: 'private detail' }] }]
     expect(desktopForemanMessages(state)[0].docs).toHaveLength(2)
     expect(JSON.stringify(desktopForemanMessages(state))).not.toContain('private detail')
+})
+
+
+it('submits the authoritative Foreman card through the answer action and blocks an ordinary send', async () => {
+    const questionId = 'a'.repeat(64)
+    server.question = { id: questionId, messageId: 'm', toolCallId: 'c', questions: [{ question: 'Which?', options: ['One', 'Two'] }] }
+    const client = connect()
+    const answer = { questionId, requestId: randomUUID(), action: 'answer' as const, answers: [['One']] }
+    const transport = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : null
+        if (body?.action !== 'answer') return transport(url, init)
+        bodies.push(body)
+        server.question = null
+        return Response.json({ runId: answer.requestId })
+    })
+    expect(await client.ports.conversation.sendMessage('Ordinary text')).toBe(false)
+    await expect(client.answerQuestion({ ...answer, questionId: 'b'.repeat(64) })).rejects.toThrow('cannot be answered')
+    await client.answerQuestion(answer)
+    expect(bodies).toEqual([{ action: 'answer', chat, input: answer }])
 })

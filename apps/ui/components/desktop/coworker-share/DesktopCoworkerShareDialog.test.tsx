@@ -87,7 +87,7 @@ test('a bound preview shows its own counts rather than snapshot path counts', as
     root = createRoot(document.body.appendChild(document.createElement('div')))
     await act(async () => root!.render(<DesktopCoworkerShareOptions plan={sharePlan} include={{ memories: true, database: false, files: false }} sections={{ memories, database }} disabled={false} onChange={vi.fn()} />))
     expect(document.body.textContent).toContain('4 memorys · 80 B')
-    expect(document.body.textContent).toContain('40 B · not scanned for secrets')
+    expect(document.body.textContent).toContain('2 tables · 40 B · 3 saved views')
     expect(document.body.textContent).not.toContain('1 memory')
     expect((document.querySelector('[aria-label="Memories"]') as HTMLButtonElement).disabled).toBe(false)
     expect((document.querySelector('[aria-label="Memories"]') as HTMLButtonElement).getAttribute('aria-checked')).toBe('true')

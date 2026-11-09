@@ -8,14 +8,14 @@ import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/deskto
 import { useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { DesktopBrainPanel } from './DesktopBrainPanel'
-import type { DesktopBrainActions } from './types'
+import type { DesktopBrainActions, DesktopBrainRoute } from './types'
 
 /**
  * The panel in a dialog, with the close path this build already expects: a close flushes the page
  * that is being edited first, and refuses to close when a write could not land, so no keystroke is
  * dropped by a dismissal. Quit is covered by the same drafts through `subscribeDraftShutdown`.
  */
-export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false, renderProposals, triggerLabel = 'Company Brain', refreshKey, openProposalsKey, openSlug, onOpenConsumed }: {
+export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false, renderProposals, triggerLabel = 'Company Brain', refreshKey, openProposalsKey, openSlug, onOpenConsumed, route, onRouteConsumed }: {
     actions: DesktopBrainActions
     dialogControl?: DesktopDialogControl
     hideTrigger?: boolean
@@ -25,6 +25,9 @@ export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false
     openProposalsKey?: number
     openSlug?: string | null
     onOpenConsumed?: () => void
+    /** Root can pass a section or a table later. Absent until that wiring lands. */
+    route?: DesktopBrainRoute | null
+    onRouteConsumed?: () => void
 }) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     const [closing, setClosing] = useState(false)
@@ -63,7 +66,7 @@ export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false
                 <DialogTitle>Company Brain</DialogTitle>
                 <DialogDescription>What every coworker of this workspace reads about the company. Pages save as you type; version history keeps every change.</DialogDescription>
             </DialogHeader>
-            {ready ? <DesktopBrainPanel actions={actions} onClose={() => { void requestOpen(false) }} renderProposals={renderProposals} refreshKey={refreshKey} openProposalsKey={openProposalsKey} openSlug={openSlug} onOpenConsumed={onOpenConsumed} />
+            {ready ? <DesktopBrainPanel actions={actions} onClose={() => { void requestOpen(false) }} renderProposals={renderProposals} refreshKey={refreshKey} openProposalsKey={openProposalsKey} openSlug={openSlug} onOpenConsumed={onOpenConsumed} route={route} onRouteConsumed={onRouteConsumed} />
                 : <div className="p-6" role={restoreError ? 'alert' : 'status'}>{restoreError ?? 'Restoring saved Brain drafts…'}
                     {restoreError && <Button size="sm" onClick={() => setRestoreAttempt(value => value + 1)}>Retry</Button>}</div>}
         </DialogContent>}

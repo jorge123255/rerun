@@ -1,4 +1,5 @@
 import {
+    DESKTOP_COWORKER_SHARE_FILES_NOT_SELECTED,
     DESKTOP_PORTABLE_TEMPLATE_LIMITS,
     DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING,
     type DesktopCoworkerImportPlan,
@@ -13,6 +14,7 @@ import {
 import { sealPortableManifest, writePortableArchive, type PortablePackageMemberBytes } from '../templates/portable-package.ts'
 import { sha256 } from '../templates/hash.ts'
 import { scrubConfig } from '../templates/inspect.ts'
+import { PORTABLE_DATABASE_MEMBER, readPortableDatabaseMember } from '../coworker-share-database/member.ts'
 import { isReservedTemplateMetadataPath } from '../templates/files.ts'
 export type { DesktopCoworkerShareSource } from '@rerun/contracts'
 
@@ -26,7 +28,7 @@ export type DesktopCoworkerSnapshot = {
 function includeMember(path: string, ownership: string, include: DesktopCoworkerShareInclude, flagged: readonly string[] = []): boolean {
     if (ownership !== 'user' || isReservedTemplateMetadataPath(path) || scanPathForSecrets(path).length || path.split('/').some(part => part === '.rerun' || part === '.git' || part === 'node_modules')) return false
     if (path.startsWith('memory/')) return include.memories && flagged.length === 0 && /\.(?:md|txt|json)$/.test(path)
-    if (path === 'data/agent.db') return include.database
+    if (path === PORTABLE_DATABASE_MEMBER) return include.database && flagged.length === 0
     if (path.startsWith('workspace/')) return include.files
     return ['SOUL.md','INSTALL.md','config.json'].includes(path) || /^skills\/[^/]+\/.+/.test(path)
 }
@@ -34,7 +36,7 @@ function includeMember(path: string, ownership: string, include: DesktopCoworker
 function exclusionReason(path: string, ownership: string, flagged: readonly string[] = []): 'credentials' | 'history' | 'memory' | 'database' | 'connector-skill' | 'service-registry' | 'native-grant' | 'routine' | 'webhook' | 'system-skill' {
     if (path === '.env' || path === 'data/system.db' || scanPathForSecrets(path).length) return 'credentials'
     if (path.startsWith('memory/')) return flagged.length ? 'credentials' : 'memory'
-    if (path === 'data/agent.db') return 'database'
+    if (path === 'data/agent.db' || path === PORTABLE_DATABASE_MEMBER) return 'database'
     if (path.startsWith('schedules/')) return 'routine'
     if (path.startsWith('triggers/')) return 'webhook'
     if (ownership === 'connector') return 'connector-skill'
@@ -44,12 +46,23 @@ function exclusionReason(path: string, ownership: string, flagged: readonly stri
 
 export async function createDesktopCoworkerSnapshot(source: DesktopCoworkerShareSource, include: DesktopCoworkerShareInclude, workspaceId = source.workspaceId): Promise<DesktopCoworkerSnapshot> {
     const parsed = desktopCoworkerShareSourceSchema.parse(source)
+    const database = include.database ? parsed.members.find(member => member.path === PORTABLE_DATABASE_MEMBER && includeMember(member.path, member.ownership, include, member.flagged)) : undefined
+    if (include.database) {
+        if (!database) throw new Error('The reviewed logical private database is unavailable.')
+        const pkg = readPortableDatabaseMember(database.bytes)
+        if (pkg.sourceWorkspaceId !== workspaceId || pkg.sourceAgentId !== parsed.agentId) throw new Error('The private database belongs to another coworker.')
+    }
     const members: PortablePackageMemberBytes[] = []
     const exclusions: { path: string; reason: ReturnType<typeof exclusionReason> }[] = []
     const strippedConfigKeys: string[] = []
+    const withWorkspaceFiles = { ...include, files: true }
     for (const member of [...parsed.members].sort((a, b) => a.path.localeCompare(b.path))) {
         if (!includeMember(member.path, member.ownership, include, member.flagged)) {
-            exclusions.push({ path: member.path, reason: exclusionReason(member.path, member.ownership, member.flagged) })
+            // The Files choice is recorded once in the manifest. Keep paths and individual
+            // reasons for security exclusions, while leaving unselected user filenames private.
+            const omittedByChoice = !include.files && member.path.startsWith('workspace/')
+                && includeMember(member.path, member.ownership, withWorkspaceFiles, member.flagged)
+            if (!omittedByChoice) exclusions.push({ path: member.path, reason: exclusionReason(member.path, member.ownership, member.flagged) })
             continue
         }
         let bytes = Buffer.from(member.bytes)
@@ -94,10 +107,10 @@ export async function createDesktopCoworkerSnapshot(source: DesktopCoworkerShare
             binaryAssets: true,
             userSkillTrees: true,
             sourceKind: 'local-v1-export' as const,
-            notes: [DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING],
+            notes: [DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING, ...(!include.files ? [DESKTOP_COWORKER_SHARE_FILES_NOT_SELECTED] : [])],
         },
         excludedCategories: [
-            'credentials', 'history', ...(!include.memories ? ['memory', 'private-memory'] as const : []), 'database', 'connector-skill', 'system-skill', 'service-registry', 'native-grant', 'tool-permissions',
+            'credentials', 'history', ...(!include.memories ? ['memory', 'private-memory'] as const : []), ...(!include.database ? ['database'] as const : []), 'connector-skill', 'system-skill', 'service-registry', 'native-grant', 'tool-permissions',
             'active-schedule', 'active-trigger', 'browser-profile', 'paid-data', 'cached-pages', 'chat-transcript', 'tool-arguments', 'telemetry', 'marketplace', 'hosted-publish',
         ] as DesktopCoworkerSnapshotManifest['excludedCategories'],
     }
@@ -113,7 +126,6 @@ export function createDesktopCoworkerImportPlan(_manifest: DesktopCoworkerSnapsh
 export function createDesktopCoworkerSharePlan(source: DesktopCoworkerShareSource): DesktopCoworkerSharePlan {
     const eligible = source.members.filter(member => includeMember(member.path, member.ownership, { memories: true, database: true, files: true }, member.flagged))
     const count = (prefix: string) => eligible.filter(member => member.path.startsWith(prefix))
-    const sum = (paths: string[]) => eligible.filter(member => paths.includes(member.path)).reduce((total, member) => total + member.bytes.length, 0)
     return {
         agentName: source.name,
         warnings: ['Selected instructions, files, skills and binary assets are copied as written. Binary files are not text-scanned for secrets.', 'The Box database and the Box shared files stay here: a copy starts with an empty one.'],
@@ -121,7 +133,7 @@ export function createDesktopCoworkerSharePlan(source: DesktopCoworkerShareSourc
         mcpAuthCount: source.mcpAuth.length,
         contents: {
             memories: { count: count('memory/').length, bytes: count('memory/').reduce((total, member) => total + member.bytes.length, 0) },
-            database: { count: sum(['data/agent.db']) ? 1 : 0, bytes: sum(['data/agent.db']) },
+            database: { count: 0, bytes: 0 },
             files: { count: count('workspace/').length, bytes: count('workspace/').reduce((total, member) => total + member.bytes.length, 0) },
         },
     }

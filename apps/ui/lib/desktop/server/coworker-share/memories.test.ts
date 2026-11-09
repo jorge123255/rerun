@@ -1,7 +1,8 @@
 import { expect, test } from 'vitest'
 import type { DesktopCoworkerShareSource } from '@rerun/contracts'
 import { createDesktopCoworkerSnapshot } from '../../../../../engine/src/desktop/coworker-share/snapshot'
-import { readPortableArchive } from '../../../../../engine/src/desktop/templates/portable-package'
+import { createHash } from 'node:crypto'
+import { readPortableArchive, sealPortableManifest, writePortableArchive } from '../../../../../engine/src/desktop/templates/portable-package'
 import { serializeMemoryNote, renderMemoryMarkdown } from '../../../../../engine/src/desktop/coworker-share-memory/serialize'
 import { memoryPreviewFromSource, prepareMemoryShareImport } from './memories'
 
@@ -23,11 +24,20 @@ test('exact review counts/digest survive the canonical template-only projection 
     expect(snapshot.manifest.excludedCategories).not.toContain('private-memory')
 })
 
-test('database packages are still refused before the template installer or memory writer', async () => {
-    const current = source()
-    current.members.push({ path: 'data/agent.db', bytes: Buffer.from('private database'), kind: 'binary', binary: true, textScanned: false, flagged: [], ownership: 'user' })
-    const snapshot = await createDesktopCoworkerSnapshot(current,{ memories: true, database: true, files: false })
-    await expect(prepareMemoryShareImport(snapshot.archiveBytes,7,'database')).rejects.toMatchObject({ status: 409 })
+test('an externally assembled archive cannot send a raw SQLite file to the template installer', async () => {
+    const snapshot = await createDesktopCoworkerSnapshot(source(), { memories: false, database: false, files: false })
+    const raw = Buffer.from('SQLite format 3\0')
+    const member = { agentKey: 'c01', path: 'data/agent.db', bytes: raw, digest: createHash('sha256').update(raw).digest('hex') }
+    const { contentDigest: _digest, ...body } = snapshot.manifest
+    const manifest = sealPortableManifest({
+        ...body,
+        coworkers: body.coworkers.map(owner => ({ ...owner, members: [...owner.members, {
+            path: member.path, bytes: raw.length, contentDigest: member.digest,
+            kind: 'binary', binary: true, textScanned: false, flagged: [],
+        }] })),
+    })
+    const archive = await writePortableArchive({ title: manifest.title, packageKey: manifest.packageKey, manifest, members: [...snapshot.members, member], startedAt: Date.now() })
+    await expect(prepareMemoryShareImport(archive.archiveBytes, 7, 'database')).rejects.toMatchObject({ status: 409 })
 })
 
 test('flagged memories count as excluded; an external manifest cannot claim credential bytes are clean', async () => {

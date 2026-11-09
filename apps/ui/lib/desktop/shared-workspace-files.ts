@@ -39,3 +39,13 @@ export async function importDesktopSharedFile(folder: string, file: File, signal
     const response = await fetch(BASE, { method: 'POST', body, signal: deadline(signal) })
     return parse(response)
 }
+
+export type DesktopSharedImportResult = { name: string; folder?: string; status: 'created' | 'refused' | 'uncertain'; path?: string; message?: string }
+
+export async function importDesktopSharedFiles(folder: string, files: readonly File[], signal?: AbortSignal): Promise<DesktopSharedImportResult[]> {
+    const body = new FormData()
+    for (const file of files) body.append('file', file)
+    body.set('path', folder)
+    const response = await fetch(`${BASE}/batch`, { method: 'POST', body, signal: deadline(signal) })
+    return (await parse<{ results: DesktopSharedImportResult[] }>(response)).results
+}

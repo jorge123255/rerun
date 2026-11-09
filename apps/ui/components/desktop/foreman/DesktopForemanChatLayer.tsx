@@ -1,5 +1,8 @@
 'use client'
 
+import type { ForemanHistoryPart } from './transcript/parts'
+import { DesktopForemanHistoryMessage } from './transcript/DesktopForemanHistoryMessage'
+
 import { AnimatePresence, motion } from 'motion/react'
 import type { ReactNode } from 'react'
 import { Conversation, ConversationContent, ConversationScrollButton } from '@/components/ai-elements/conversation'
@@ -24,12 +27,14 @@ export type DesktopForemanMessage = {
     role: 'user' | 'assistant' | 'system'
     text: string
     docs?: UIMessage['parts']
+    history?: readonly ForemanHistoryPart[]
 }
 
 export function DesktopForemanChatLayer({
     messages,
     streaming,
     restored,
+    question,
     emptyWelcome,
     planSnapshot,
     decisionStatus,
@@ -53,6 +58,7 @@ export function DesktopForemanChatLayer({
     messages: DesktopForemanMessage[]
     streaming?: boolean
     restored: boolean
+    question?: ReactNode
     emptyWelcome?: boolean
     planSnapshot: DesktopTrustedPlanSnapshot | null
     decisionStatus: DesktopPlanDecisionStatus
@@ -75,7 +81,7 @@ export function DesktopForemanChatLayer({
     className?: string
 }) {
     const plan = projectPlanCard(planSnapshot)
-    const empty = messages.length === 0 && !error && !plan.view && !build
+    const empty = messages.length === 0 && !error && !plan.view && !build && !question
 
     return (
         <div className={cn('pointer-events-auto relative flex min-h-0 w-full flex-1 flex-col', className)}>
@@ -100,10 +106,13 @@ export function DesktopForemanChatLayer({
                                 message.role === 'user' ? 'ml-auto bg-secondary' : 'bg-transparent text-foreground',
                             )}
                         >
-                            {message.text}
-                            {message.docs?.map((part, index) => <DesktopForemanDocsTool key={index} part={part as import('ai').ToolUIPart} restored={restored} />)}
+                            {restored && message.history ? <DesktopForemanHistoryMessage history={message.history} /> : <>
+                                {message.text}
+                                {message.docs?.map((part, index) => <DesktopForemanDocsTool key={index} part={part as import('ai').ToolUIPart} restored={restored} />)}
+                            </>}
                         </div>
                     ))}
+                    {question}
                     {plan.view && plan.revisionId && (
                         <DesktopPlanCard
                             plan={plan.view}

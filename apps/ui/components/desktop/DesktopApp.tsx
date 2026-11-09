@@ -44,6 +44,7 @@ import { useBoardActivity } from './useBoardActivity'
 import { DesktopTemplateNavigation } from './templates/DesktopTemplateNavigation'
 import { DesktopControlCenter } from './DesktopControlCenter'
 import { DesktopShortcutsDialog } from './DesktopShortcutsDialog'
+import { DesktopHelpDialog } from './help'
 import { DesktopNotificationsDialog } from './DesktopNotificationsDialog'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import type { GridPosition } from '@rerun/ui/iso-grid'
@@ -91,6 +92,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [boardInteraction, setBoardInteraction] = useState(false)
     const [controlCenterOpen, setControlCenterOpen] = useState(false)
     const [shortcutsOpen, setShortcutsOpen] = useState(false)
+    const [helpOpen, setHelpOpen] = useState(false)
     const [notificationsTarget, setNotificationsTarget] = useState<{ agentId: string | null } | null>(null)
     const notificationReturnFocus = useRef<HTMLElement | null>(null)
     const [sharedDataOpen, setSharedDataOpen] = useState(false)
@@ -230,11 +232,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const templatesActive = templatesOpen || templateFlowActive
     useEffect(() => {
         const openSettings = (event: KeyboardEvent) => {
-            if (event.metaKey && event.key === ',' && creationAdmission.current.settingsAllowed && !workspaceDialogActive && !templatesActive && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !workspaceSettings && !boardInteraction && !boardState.saving && !themeSavingRef.current && !isDesktopQuitting()) { event.preventDefault(); setSettings(true) }
+            if (event.metaKey && event.key === ',' && creationAdmission.current.settingsAllowed && !workspaceDialogActive && !templatesActive && !shortcutsOpen && !helpOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !workspaceSettings && !boardInteraction && !boardState.saving && !themeSavingRef.current && !isDesktopQuitting()) { event.preventDefault(); setSettings(true) }
         }
         window.addEventListener('keydown', openSettings)
         return () => window.removeEventListener('keydown', openSettings)
-    }, [workspaceDialogActive, templatesActive, workspaceSettings, shortcutsOpen, notificationsTarget, sharedDataOpen, sharedFilesOpen, brainOpen, boardInteraction, boardState.saving])
+    }, [workspaceDialogActive, templatesActive, workspaceSettings, shortcutsOpen, helpOpen, notificationsTarget, sharedDataOpen, sharedFilesOpen, brainOpen, boardInteraction, boardState.saving])
     const [agents, setAgents] = useState(initialData.agents)
     const boardActivity = useBoardActivity(agents.map(agent => agent.id))
     // Responses already in flight cannot reintroduce a coworker after its confirmed deletion.
@@ -297,7 +299,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const selectedAgent = agents.find(agent => agent.id === selectedAgentId) ?? null
     const currentAgents = useRef(agents)
     currentAgents.current = agents
-    const controlCenterDisabled = workspaceDialogActive || templatesActive || settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || !!busy || placingCopy || quitting || themeSaving || boardInteraction || boardState.saving || creationNavigationBlocked
+    const controlCenterDisabled = workspaceDialogActive || templatesActive || settings || workspaceSettings || shortcutsOpen || helpOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || !!busy || placingCopy || quitting || themeSaving || boardInteraction || boardState.saving || creationNavigationBlocked
 
     useEffect(() => {
         if (panelOpen && !settings && !requestedPanel && !workspaceDialogLease.current.active) panelContent.current?.focus({ preventScroll: true })
@@ -659,6 +661,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         } catch (cause) { if (current()) toast.error('The fresh copy is saved, but could not be opened.', { description: cause instanceof Error ? cause.message : 'Try again.' }) }
     }
     const openShortcuts = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setShortcutsOpen(true) }
+    const openHelp = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setHelpOpen(true) }
     const openNotifications = (agentId?: string) => {
         if (creationAdmission.current.blocked || controlCenterDisabled || isDesktopQuitting() || (agentId && !currentAgents.current.some(owner => owner.id === agentId))) return
         notificationReturnFocus.current = panelOpen
@@ -674,6 +677,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         onWorkspaceSettings={() => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting()) setWorkspaceSettings(true) }}
         onTemplates={() => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting()) setTemplatesOpen(true) }}
         onShortcuts={openShortcuts}
+        onHelp={openHelp}
         onExternalMcp={openExternalMcp} onServers={openServers} onImportCoworker={openImportCoworker}
         onSharedData={() => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setSharedDataOpen(true) }}
         onSharedFiles={() => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setSharedFilesOpen(true) }}
@@ -798,6 +802,13 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 const target = boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                 if (target && !isDesktopQuitting()) { event.preventDefault(); target.focus({ preventScroll: true }) }
             }} />
+            <DesktopHelpDialog open={helpOpen} onOpenChange={setHelpOpen} workspaceId={runtimeWorkspaceId}
+                onGettingStarted={() => { showBoard(); requestDesktopGettingStartedReopen() }}
+                onShortcuts={() => { if (!creationAdmission.current.blocked && !isDesktopQuitting()) setShortcutsOpen(true) }}
+                onCloseAutoFocus={event => {
+                    const target = boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
+                    if (target && !isDesktopQuitting()) { event.preventDefault(); target.focus({ preventScroll: true }) }
+                }} />
             <DesktopNotificationsDialog open={!!notificationsTarget} pinnedCoworkerId={notificationsTarget?.agentId}
                 onOpenChange={open => { if (!open) setNotificationsTarget(null) }} onCloseAutoFocus={event => {
                     event.preventDefault()
@@ -831,7 +842,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 onTemplates={() => { if (!creationAdmission.current.blocked && !isDesktopQuitting()) setTemplatesOpen(true) }}
                 onOpenDesktop={agentId => { if (creationAdmission.current.blocked || isDesktopQuitting() || !currentAgents.current.some(agent => agent.id === agentId && agent.enabled !== false)) return; focusFromControlCenter(agentId); selectCoworker(agentId); setRequestedPanel({ agentId, panel: 'desktop', nonce: ++panelRequestNonce.current }) }}
                 onAskAssistant={askForeman}
-                onShortcuts={openShortcuts} onNotifications={openNotifications}
+                onShortcuts={openShortcuts} onHelp={openHelp} onNotifications={openNotifications}
                 onGettingStarted={runtimeWorkspaceId !== null && initialData.runtimeLaunchNonce ? () => {
                     showBoard()
                     requestDesktopGettingStartedReopen()

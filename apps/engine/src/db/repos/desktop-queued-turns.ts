@@ -1,6 +1,6 @@
 import type { InStatement } from '@libsql/client'
 import { FOREMAN_AGENT_ID, desktopDocumentContextParts, type DesktopDocumentSendSelection, type DesktopResolvedDocument, type DesktopMcpSignInGuard } from '@rerun/contracts'
-import type { DesktopForemanBinding, ForemanBrief, DesktopSecretRequestGuard, DesktopServiceRequestGuard, DesktopTakeoverGuard } from '@rerun/contracts'
+import type { DesktopForemanBinding, DesktopForemanQuestionGuard, ForemanBrief, DesktopSecretRequestGuard, DesktopServiceRequestGuard, DesktopTakeoverGuard } from '@rerun/contracts'
 import { createHash } from 'node:crypto'
 import { desktopCoworkerMentionContextParts, type DesktopCoworkerMention, desktopAttachmentFingerprintOf, desktopAttachmentSelectionsOf, workspaceAttachmentParts, desktopResolvedAttachmentParts, type DesktopResolvedAttachment, type DesktopAttachmentItem, type DesktopApprovalGuard, type DesktopQuestionGuard, type DesktopWorkspaceAttachment, type MessageAuthor } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
@@ -8,7 +8,7 @@ import type { MessageRow } from '../schema.js'
 import { HttpError } from '../../lib/errors.js'
 import { newId, nowIso } from '../../lib/ids.js'
 
-export type QueuedTurn = { runId: string; sessionId: string; message: string; documents?: DesktopDocumentSendSelection; mcpSignIn?: DesktopMcpSignInGuard; coworkerMentions?: DesktopCoworkerMention[]; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard; service?: DesktopServiceRequestGuard; secret?: DesktopSecretRequestGuard; foreman?: { binding: DesktopForemanBinding; brief: ForemanBrief } }
+export type QueuedTurn = { runId: string; sessionId: string; message: string; documents?: DesktopDocumentSendSelection; mcpSignIn?: DesktopMcpSignInGuard; coworkerMentions?: DesktopCoworkerMention[]; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard; service?: DesktopServiceRequestGuard; secret?: DesktopSecretRequestGuard; foreman?: { binding: DesktopForemanBinding; brief: ForemanBrief; question?: DesktopForemanQuestionGuard } }
 
 function fingerprint(turn: QueuedTurn) {
     const parts: unknown[] = [turn.sessionId, turn.message, desktopAttachmentFingerprintOf(desktopAttachmentSelectionsOf(turn))]

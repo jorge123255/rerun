@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { DesktopGettingStartedPopover } from '@/components/desktop/getting-started/DesktopGettingStartedPopover'
 import { desktopGettingStartedResponseSchema, type DesktopGettingStartedResponse, type DesktopGettingStartedStepId } from '@/lib/desktop/getting-started/progress'
+import { publishDesktopGettingStartedAvailability } from '@/lib/desktop/help/availability'
 import { onDesktopGettingStartedReopen } from '@/lib/desktop/getting-started/reopen'
 
 type DesktopGettingStartedPillProps = {
@@ -55,6 +56,10 @@ export function DesktopGettingStartedPill({ workspaceId, onAddCoworker, onModelS
         const stop = onDesktopGettingStartedReopen(() => { void refresh('reopen') })
         return () => { stop(); pending.current?.abort() }
     }, [refresh])
+    useEffect(() => {
+        publishDesktopGettingStartedAvailability(snapshot?.workspaceId === workspaceId ? workspaceId : null)
+    }, [snapshot, workspaceId])
+    useEffect(() => () => publishDesktopGettingStartedAvailability(null), [])
 
     if (snapshot?.workspaceId !== workspaceId || snapshot.dismissed) return null
 

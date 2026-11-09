@@ -37,12 +37,13 @@ test('share review file counts match the eligible archive members', async () => 
 })
 
 test('selects only reviewed content and preserves selected binary bytes', async () => {
-    const snapshot = await createDesktopCoworkerSnapshot(source(), { memories: true, database: true, files: true })
+    const snapshot = await createDesktopCoworkerSnapshot(source(), { memories: true, database: false, files: true })
     expect(snapshot.manifest.coworkers).toHaveLength(1)
     expect(snapshot.manifest.packageKey).toMatch(/^[a-f0-9]{32}$/)
     expect(snapshot.manifest.fidelity).toMatchObject({ binaryAssets: true, userSkillTrees: true, sourceKind: 'local-v1-export' })
     expect(snapshot.manifest.excludedCategories).toEqual(expect.arrayContaining(['credentials', 'history', 'active-schedule', 'active-trigger', 'connector-skill', 'native-grant']))
     const member = snapshot.members.find(member => member.path === 'workspace/image.bin')!
+    expect(snapshot.manifest.fidelity.notes).not.toContain('Workspace files were left out of this export.')
     expect(member.bytes).toEqual(binary)
     expect(member.digest).toHaveLength(64)
     expect(snapshot.manifest.coworkers[0]?.setup.answered).toBe(false)
@@ -56,12 +57,32 @@ test('data buckets are opt-in and imported capabilities are off with empty histo
     expect(snapshot.members.some(member => member.path.startsWith('memory/'))).toBe(false)
     expect(snapshot.members.some(member => member.path === 'data/agent.db')).toBe(false)
     expect(snapshot.members.some(member => member.path.startsWith('workspace/'))).toBe(false)
+    expect(snapshot.manifest.coworkers[0]!.exclusions.map(item => item.path)).not.toContain('workspace/image.bin')
+    expect(snapshot.manifest.fidelity.notes).toContain('Workspace files were left out of this export.')
     const plan = createDesktopCoworkerImportPlan(snapshot.manifest)
     expect(plan.capabilities).toMatchObject({ enabled: false, history: 'empty', connectionId: null, provider: null, model: null, grants: 'off' })
 })
 
+test('unselected workspace files do not exhaust the archive exclusions or disclose their names', async () => {
+    const current = source()
+    const ordinary = current.members.find(member => member.path === 'workspace/image.bin')!
+    for (let index = 0; index < 501; index++) {
+        current.members.push({ ...ordinary, path: `workspace/opted-out-${index}.bin` })
+    }
+    current.members.push({ ...ordinary, path: 'workspace/key.pem' })
+
+    const snapshot = await createDesktopCoworkerSnapshot(current, { memories: false, database: false, files: false })
+    const restored = await readPortableArchive(snapshot.archiveBytes)
+
+    expect(restored.manifest.formatVersion).toBe(1)
+    expect(restored.manifest.fidelity.notes).toContain('Workspace files were left out of this export.')
+    expect(JSON.stringify(restored.manifest)).not.toContain('opted-out-')
+    expect(restored.manifest.coworkers[0]!.exclusions).toContainEqual({ path: 'workspace/key.pem', reason: 'credentials' })
+    expect(restored.members.some(member => member.path.startsWith('workspace/'))).toBe(false)
+})
+
 test('archive round-trip validates byte fidelity and manifest tampering', async () => {
-    const snapshot = await createDesktopCoworkerSnapshot(source(), { memories: true, database: true, files: true })
+    const snapshot = await createDesktopCoworkerSnapshot(source(), { memories: true, database: false, files: true })
     const restored = await readPortableArchive(snapshot.archiveBytes)
     expect(restored.manifest.contentDigest).toBe(snapshot.manifest.contentDigest)
     expect(restored.members.find(member => member.path === 'workspace/image.bin')?.bytes).toEqual(binary)
@@ -101,4 +122,10 @@ test('Files off still excludes internal skill backups and nested assets while ke
         expect(snapshot.manifest.coworkers[0]!.members.some(member => member.path === path)).toBe(false)
     }
     expect(restored.members.some(member => member.bytes.includes(Buffer.from('OLD_PRIVATE_SKILL_BACKUP_SENTINEL')))).toBe(false)
+})
+
+
+test('refuses raw SQLite bytes even when database export is explicitly selected', async () => {
+    await expect(createDesktopCoworkerSnapshot(source(), { memories: false, database: true, files: false }))
+        .rejects.toThrow('logical private database is unavailable')
 })

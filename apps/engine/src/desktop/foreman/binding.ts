@@ -5,6 +5,7 @@ import { getAgent } from '../../agents/registry.js'
 import { getRun } from '../../db/repos/runs.js'
 import { getSession } from '../../db/repos/sessions.js'
 import { desktopApp } from '../policy.js'
+import { askUserTool } from '../../tools/builtin/hitl.js'
 import { foremanTools } from './tools.js'
 import { registerDesktopForemanTools } from './tool-identity.js'
 import { createDesktopForemanBridge, type ForemanRuntime } from './bridge.js'
@@ -54,7 +55,7 @@ export async function desktopForemanTools(ctx: RunContext) {
     })
     const docs = installedDocs
     Object.assign(tools, desktopForemanDocsTools({ binding, corpus: RERUN_PUBLIC_DOCS_CORPUS, assertCurrent: current, search: docs ? (input, requestSignal) => docs.search(input, requestSignal ?? signal) : null }))
-    Object.assign(tools, foremanAgentFileTools(ctx))
+    Object.assign(tools, askUserTool(ctx), foremanAgentFileTools(ctx))
     const calls = readDesktopCoworkerCallRuntime()
     return {
         tools: { ...registerDesktopForemanTools(tools), ...readDesktopDelegation()?.tools(ctx),

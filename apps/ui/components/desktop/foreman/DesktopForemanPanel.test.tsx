@@ -33,7 +33,7 @@ it('keeps a usable exact-chat adapter through StrictMode and closes every live s
     const onClose = vi.fn(), onOpenCoworker = vi.fn(), onOpenBox = vi.fn()
     root = createRoot(document.body.appendChild(document.createElement('div')))
     await act(async () => root!.render(<StrictMode><DesktopForemanPanel onClose={onClose} onOpenCoworker={onOpenCoworker} onOpenBox={onOpenBox} agentNameOf={id => id} /></StrictMode>))
-    expect(column.messages).toEqual([{ id: 'message', role: 'user', text: 'A saved message', docs: [] }])
+    expect(column.messages).toEqual([{ id: 'message', role: 'user', text: 'A saved message', docs: [], history: [{ key: '["message",0,null]', kind: 'text', text: 'A saved message' }] }])
     await act(async () => { expect(await column.ports.conversation.sendMessage('hello')).toBe(true) })
     expect(sends).toHaveLength(1); expect(onOpenCoworker).not.toHaveBeenCalled(); expect(onOpenBox).not.toHaveBeenCalled()
     await act(async () => document.querySelector<HTMLButtonElement>('button')!.click())

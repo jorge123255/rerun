@@ -4,6 +4,7 @@ import { DesktopHttpError } from './auth'
 import type { DesktopRuntime } from './runtime'
 export { SHARED_IMPORT_BYTES } from '../../../../engine/src/desktop/shared-workspace-files'
 import {
+    importSharedFile,
     importSharedText,
     listSharedDirectory,
     readSharedText,
@@ -47,5 +48,10 @@ export async function readDesktopSharedFile(runtime: DesktopRuntime, path: strin
 
 export async function importDesktopSharedFile(runtime: DesktopRuntime, folder: string, name: string, bytes: Uint8Array, access?: SharedFileAccess): Promise<SharedImportResult> {
     try { return await importSharedText(await desktopSharedDirectory(runtime, access?.signal), folder, name, bytes, access) }
+    catch (error) { rethrowDesktopSharedFileError(error) }
+}
+
+export async function importDesktopSharedOrdinaryFile(runtime: DesktopRuntime, folder: string, name: string, bytes: Uint8Array, access?: SharedFileAccess & { maxBytes?: number }): Promise<SharedImportResult> {
+    try { return await importSharedFile(await desktopSharedDirectory(runtime, access?.signal), folder, name, bytes, access) }
     catch (error) { rethrowDesktopSharedFileError(error) }
 }

@@ -29,6 +29,9 @@ import { createDesktopCoworkerShareService } from './service'
 import { createDesktopCoworkerShareApi } from './api'
 import { createDesktopCoworkerShareAttemptStore } from './attempts'
 import { memoryPreviewFromSource, prepareMemoryShareImport } from './memories'
+import { databasePreviewFromSource, readShareDatabaseMember } from './database'
+import { PORTABLE_DATABASE_MEMBER } from '../../../../../engine/src/desktop/coworker-share-database/member'
+import { restoreScopedPrivateDatabase } from '../../../../../engine/src/desktop/coworker-share-database/install'
 
 const stableId = (parts: unknown[]) => {
     const hex = shareFingerprint(parts)
@@ -59,6 +62,7 @@ export async function readCurrentDesktopCoworkerShareSource(runtime: DesktopRunt
         await assertCoworkerNotDeleting(db,agentId)
         if ((await findDesktopAgent(db,agentId))?.engineAgentId !== owner.engineAgentId) throw new DesktopHttpError(409,'The coworker was replaced during memory review.')
     } })
+    const database = await readShareDatabaseMember(runtime, join(agentsRoot, owner.engineAgentId), agentId, owner.engineAgentId, signal)
     await current(runtime,false,signal)
     await assertCoworkerNotDeleting(db,agentId)
     const fresh = await findDesktopAgent(db,agentId)
@@ -66,8 +70,9 @@ export async function readCurrentDesktopCoworkerShareSource(runtime: DesktopRunt
     const files = [inspected.soul,inspected.install,inspected.config,...inspected.selectableFiles,...inspected.selectableSkills.flatMap(skill => skill.files)].filter((file): file is NonNullable<typeof file> => file !== null)
     const members = [...files.map(file => ({ path: file.path,bytes: Buffer.from(file.raw),kind: file.path === 'config.json' ? 'config' as const : ['SOUL.md','INSTALL.md'].includes(file.path) ? 'instruction' as const : file.path.startsWith('skills/') ? 'skill' as const : file.binary ? 'binary' as const : 'text' as const,binary: file.binary,textScanned: file.textScanned,flagged: file.flagged,ownership: 'user' as const })),
         ...memoryPackageToArchiveMembers(memory).map(file => ({ ...file, kind: 'text' as const, binary: false, textScanned: true, flagged: scanTextForSecrets(file.bytes.toString('utf8')), ownership: 'user' as const }))]
+    if (database) members.push(database.member)
     const body = { workspaceId,agentId,name: inspected.name,description: inspected.description,setup: inspected.setup,config: inspected.config?.text ? JSON.parse(inspected.config.text) : {},envKeys: inspected.envKeys,mcpAuth: inspected.mcpAuth,members }
-    return desktopCoworkerShareSourceSchema.parse({ ...body,revision: shareFingerprint([body.workspaceId,body.agentId,body.name,body.description,body.setup,body.config,body.envKeys,body.mcpAuth,members.map(file => [file.path,createHash('sha256').update(file.bytes).digest('hex'),file.ownership,file.flagged])]) })
+    return desktopCoworkerShareSourceSchema.parse({ ...body,revision: shareFingerprint([body.workspaceId,body.agentId,body.name,body.description,body.setup,body.config,body.envKeys,body.mcpAuth,members.map(file => [file.path,file.path === PORTABLE_DATABASE_MEMBER ? database!.digest : createHash('sha256').update(file.bytes).digest('hex'),file.ownership,file.flagged])]) })
 }
 
 /** Verify immutable native-picked bytes before persisting them; picking alone never installs. */
@@ -104,17 +109,21 @@ export async function openDesktopCoworkerShareBinding(runtime: DesktopRuntime, r
             initializeImportedSetup: async input => { await current(runtime,true); return canonical.initializeImportedSetup(input) },
             commitInstalled: async input => {
                 await current(runtime,true,input.signal)
-                if (prepared.memories) {
-                    if (input.coworkers.length !== 1) throw new DesktopHttpError(409,'Memory import requires one fresh coworker.')
+                if (prepared.memories || prepared.database) {
+                    if (input.coworkers.length !== 1) throw new DesktopHttpError(409,'Private content requires one fresh coworker.')
                     const target = input.coworkers[0]!
-                    await restoreScopedCoworkerMemories({ agentRoot: join(engineRoot,'agents',target.engineAgentId), workspaceId: runtime.workspaceId, destinationAgentId: target.agentId, importReceiptId: input.receiptId, pkg: prepared.memories, assertFreshImport: async () => {
+                    const agentRoot = join(engineRoot,'agents',target.engineAgentId)
+                    const assertFreshImport = async () => {
                         await current(runtime,true,input.signal)
                         const proof = await readForemanTemplateImport(join(engineRoot,'agents'),target.engineAgentId,input.receiptId)
-                        if (proof.state !== 'present' || proof.templateId !== input.templateId || proof.revision !== input.revision || await findDesktopAgent(db,target.agentId)) throw new DesktopHttpError(409,'Memory transfer requires the exact unpublished fresh coworker import.')
+                        if (proof.state !== 'present' || proof.templateId !== input.templateId || proof.revision !== input.revision || await findDesktopAgent(db,target.agentId)) throw new DesktopHttpError(409,'Private content requires the exact unpublished fresh coworker import.')
                         const config = await readConfined(join(engineRoot,'agents',target.engineAgentId),'config.json',DESKTOP_TEMPLATE_LIMITS.maxFileBytes)
-                        if (!config.ok || JSON.parse(config.text).enabled !== false) throw new DesktopHttpError(409,'Memory transfer requires a fresh disabled coworker.')
+                        if (!config.ok || JSON.parse(config.text).enabled !== false) throw new DesktopHttpError(409,'Private content requires a fresh disabled coworker.')
                         await current(runtime,true,input.signal)
-                    } })
+                    }
+                    const scope = { agentRoot, workspaceId: runtime.workspaceId, destinationAgentId: target.agentId, importReceiptId: input.receiptId, assertFreshImport }
+                    if (prepared.memories) await restoreScopedCoworkerMemories({ ...scope, pkg: prepared.memories })
+                    if (prepared.database) await restoreScopedPrivateDatabase({ ...scope, pkg: prepared.database, signal: input.signal })
                 }
                 await current(runtime,true,input.signal)
                 return commitDesktopTemplateInstall(db,input,{ enabled: false })
@@ -126,7 +135,7 @@ export async function openDesktopCoworkerShareBinding(runtime: DesktopRuntime, r
         return parsed.data.coworkers[0]!.id
     }
     const service = createDesktopCoworkerShareService(store,{
-        unavailable: { database: 'Database transfer is unavailable in this version. Existing tables stay on this Mac.' },
+        databasePreview: databasePreviewFromSource,
         memoryPreview: memoryPreviewFromSource,
         assertCurrent: async input => {
             await current(runtime,input.operation !== 'read')

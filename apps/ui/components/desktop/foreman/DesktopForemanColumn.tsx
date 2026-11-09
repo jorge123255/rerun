@@ -21,6 +21,8 @@ import { useDesktopForemanUi } from './useDesktopForemanUi'
 import type { DesktopForemanIntakeController } from '@/lib/desktop/foreman-intake'
 import { DesktopForemanIntakeCard, DesktopForemanIntakeHeader } from './intake'
 import { DesktopStarterPack } from './starter-pack'
+import { DesktopQuestionCard } from '@/components/desktop/DesktopQuestionCard'
+import type { DesktopPendingQuestion, DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import type { DesktopTemplateIdentity } from '@/components/desktop/templates/types'
 
 function anchorOf(placement: DesktopForemanPlacement): ForemanAnchor {
@@ -34,6 +36,8 @@ export type DesktopForemanColumnProps = {
     live: { runId: string } | null
     messages: DesktopForemanMessage[]
     streaming?: boolean
+    question?: DesktopPendingQuestion | null
+    onAnswerQuestion?: (answer: DesktopQuestionAnswer) => Promise<void>
     agentNameOf: (agentId: string) => string
     orbState?: OrbActivity
     headerActions?: ReactNode
@@ -67,6 +71,7 @@ export function DesktopForemanColumn({
     live,
     messages,
     streaming,
+    question, onAnswerQuestion,
     agentNameOf,
     orbState = 'idle',
     headerActions,
@@ -142,6 +147,8 @@ export function DesktopForemanColumn({
                         messages={messages}
                         streaming={streaming}
                         restored={foreman.restored}
+                        question={foreman.restored && !streaming && question && onAnswerQuestion
+                            ? <DesktopQuestionCard question={question} disabled={hidden || !!foreman.blocked} onAnswer={onAnswerQuestion} /> : null}
                         emptyWelcome={!starterPack}
                         planSnapshot={foreman.planSnapshot}
                         decisionStatus={ui.decision}
@@ -173,7 +180,7 @@ export function DesktopForemanColumn({
                         draft={ui.draft}
                         onDraftChange={foreman.setDraft}
                         busy={!!streaming}
-                        disabled={!foreman.restored || !!foreman.blocked || ui.decision.status === 'pending'}
+                        disabled={!!question || !foreman.restored || !!foreman.blocked || ui.decision.status === 'pending'}
                         onSend={text => { void foreman.sendMessage(text) }}
                         onStop={() => void foreman.stop()}
                     />
