@@ -82,11 +82,14 @@ function stamp(mtimeNs: bigint): string {
     return new Date(Number(mtimeNs / BigInt(1_000_000))).toISOString()
 }
 
-function validImportName(name: string) {
+const ORDINARY_IMPORT_NAME = /\.(txt|md|png|jpe?g|gif|webp|wav|mp3|m4a|ogg|flac|mp4|webm|mov|m4v|pdf)$/i
+
+function validImportName(name: string, textOnly: boolean) {
     if (!name || name.length > 255 || /[/\\\0]/.test(name) || name.startsWith('.') || !PART.test(name)) {
         throw new SharedWorkspaceFileError(400, 'That file name can’t be imported.')
     }
-    if (!TEXT_NAME.test(name)) throw new SharedWorkspaceFileError(415, 'Only .txt and .md files can be imported.')
+    if (textOnly && !TEXT_NAME.test(name)) throw new SharedWorkspaceFileError(415, 'Only .txt and .md files can be imported.')
+    if (!textOnly && !ORDINARY_IMPORT_NAME.test(name)) throw new SharedWorkspaceFileError(415, 'Choose a supported shared file type.')
 }
 
 function rethrow(error: unknown, folder = false): never {
@@ -395,12 +398,16 @@ async function mkdirChild(parent: Pin, root: string, rel: string, name: string, 
     return pin
 }
 
-export async function importSharedText(root: string, folder: string, name: string, bytes: Uint8Array, access?: SharedFileAccess): Promise<SharedImportResult> {
-    validImportName(name)
-    if (bytes.byteLength > SHARED_IMPORT_BYTES) throw new SharedWorkspaceFileError(413, 'Files can be up to 1 MB.')
-    if (bytes.includes(0)) throw new SharedWorkspaceFileError(415, 'Only text files can be imported.')
-    try { new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }
-    catch { throw new SharedWorkspaceFileError(415, 'Only text files can be imported.') }
+export async function importSharedFile(root: string, folder: string, name: string, bytes: Uint8Array, access?: SharedFileAccess & { textOnly?: boolean; maxBytes?: number }): Promise<SharedImportResult> {
+    const textOnly = access?.textOnly === true
+    const maxBytes = access?.maxBytes ?? 16 * 1024 * 1024
+    validImportName(name, textOnly)
+    if (bytes.byteLength > maxBytes) throw new SharedWorkspaceFileError(413, `Files can be up to ${maxBytes} bytes.`)
+    if (textOnly) {
+        if (bytes.includes(0)) throw new SharedWorkspaceFileError(415, 'Only text files can be imported.')
+        try { new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }
+        catch { throw new SharedWorkspaceFileError(415, 'Only text files can be imported.') }
+    }
     const folders = partsOf(folder, 'root')
     const rel = folders.length ? `${folders.join('/')}/${name}` : name
     const kept = () => new SharedWorkspaceFileError(409, `This folder already has a file named “${name}”. The existing file was kept; rename yours and import it again.`)
@@ -479,4 +486,8 @@ export async function importSharedText(root: string, folder: string, name: strin
             return { path: rel, name }
         } finally { if (closeParent) await parent.handle.close(); await lease.release() }
     }, false, true)
+}
+
+export async function importSharedText(root: string, folder: string, name: string, bytes: Uint8Array, access?: SharedFileAccess): Promise<SharedImportResult> {
+    return importSharedFile(root, folder, name, bytes, { ...access, textOnly: true, maxBytes: SHARED_IMPORT_BYTES })
 }

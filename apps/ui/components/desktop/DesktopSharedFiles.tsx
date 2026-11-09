@@ -4,11 +4,12 @@ import { BrainChromeContext, BrainTopBar, type BrainCrumb } from '@/components/b
 import { FileList } from '@/components/files/FileList'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { importDesktopSharedFile, listDesktopSharedFolder, type DesktopSharedEntry } from '@/lib/desktop/shared-workspace-files'
+import { importDesktopSharedFiles, listDesktopSharedFolder, type DesktopSharedEntry, type DesktopSharedImportResult } from '@/lib/desktop/shared-workspace-files'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { UploadEntry } from '@/lib/files/upload'
 import { FolderIcon } from '@/lib/icons'
 import { DesktopSharedFilePreview } from './shared-files/DesktopSharedFilePreview'
+import { DesktopSharedImportResults } from './shared-files/DesktopSharedImportResults'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
@@ -38,10 +39,12 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
     const [truncated, setTruncated] = useState(false)
     const [failed, setFailed] = useState<string | null>(null)
     const [uploading, setUploading] = useState(false)
+    const [results, setResults] = useState<DesktopSharedImportResult[]>([])
     const [attempt, setAttempt] = useState(0)
     const current = useRef({ mounted: true, path })
     current.current.path = path
     const importing = useRef<AbortController | null>(null)
+    const originalFiles = useRef(new WeakMap<DesktopSharedImportResult, File>())
 
     useEffect(() => {
         current.current.mounted = true
@@ -70,18 +73,36 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
 
     const upload = async (picked: UploadEntry[]) => {
         if (importing.current || !current.current.mounted || isDesktopQuitting()) return
-        if (picked.length > 100) { toast.error('Import at most 100 files at a time.'); return }
+        if (picked.length > 16) { toast.error('Import at most 16 files at a time.'); return }
+        if (picked.reduce((total, entry) => total + entry.file.size, 0) > 32 * 1024 * 1024) { toast.error('Import at most 32 MB at a time.'); return }
         const controller = new AbortController()
         importing.current = controller
         const release = holdDraftAdmission()
         setUploading(true)
         const active = () => current.current.mounted && current.current.path === path && !controller.signal.aborted && !isDesktopQuitting()
         try {
+            const groups = new Map<string, File[]>()
             for (const entry of picked) {
-                if (!active()) break
-                const folder = [path, entry.subDir].filter(Boolean).join('/')
-                try { await importDesktopSharedFile(folder, entry.file, controller.signal) }
-                catch (error) { if (active()) toast.error(messageOf(error, `Could not confirm import of ${entry.file.name}. Refresh before retrying.`)) }
+                const folder = joinPath(path, entry.subDir)
+                const files = groups.get(folder) ?? []
+                files.push(entry.file)
+                groups.set(folder, files)
+            }
+            const imported: DesktopSharedImportResult[] = []
+            for (const [folder, files] of groups) {
+                let groupResults: DesktopSharedImportResult[]
+                try {
+                    groupResults = await importDesktopSharedFiles(folder, files, controller.signal)
+                } catch (error) {
+                    if (!active()) return
+                    groupResults = files.map(file => ({ name: file.name, folder, status: 'uncertain', message: messageOf(error, 'This import could not be confirmed. Inspect Shared files before trying again.') }))
+                }
+                groupResults.forEach((result, index) => {
+                    const file = files[index]
+                    if (file) originalFiles.current.set(result, file)
+                })
+                imported.push(...groupResults)
+                if (active()) setResults([...imported])
             }
             if (active()) {
                 try {
@@ -96,15 +117,50 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
         }
     }
 
+    const retry = async (result: DesktopSharedImportResult) => {
+        if (importing.current || result.status !== 'refused' || !current.current.mounted || isDesktopQuitting()) return
+        const folder = result.folder ?? path
+        const file = originalFiles.current.get(result)
+        if (!file) return
+        const controller = new AbortController()
+        importing.current = controller
+        const release = holdDraftAdmission()
+        setUploading(true)
+        const active = () => current.current.mounted && current.current.path === path && !controller.signal.aborted && !isDesktopQuitting()
+        try {
+            const imported = await importDesktopSharedFiles(folder, [file], controller.signal)
+            const next = imported[0]
+            if (active() && next) {
+                originalFiles.current.set(next, file)
+                setResults(current => current.map(item => item === result ? next : item))
+            }
+            if (active() && imported.some(item => item.status === 'created')) {
+                try {
+                    const listing = await listDesktopSharedFolder(path, controller.signal)
+                    if (active()) { setEntries(listing.entries); setTruncated(listing.truncated); setFailed(null) }
+                } catch (error) { if (active()) setFailed(messageOf(error, 'The shared folder could not be listed.')) }
+            }
+        } catch (error) {
+            if (active()) setResults(current => current.map(item => item === result
+                ? { ...item, status: 'uncertain', message: messageOf(error, 'This import could not be confirmed. Inspect Shared files before trying again.') }
+                : item))
+        } finally {
+            if (importing.current === controller) importing.current = null
+            if (current.current.mounted) setUploading(false)
+            release()
+        }
+    }
+
     return (
         <div className="flex min-h-0 flex-1 flex-col">
             <BrainTopBar crumbs={folderCrumbs(path, next => onOpen(next, true))} status={truncated ? 'Showing the first 512 entries' : undefined} />
+            <DesktopSharedImportResults results={results} disabled={uploading} onRetry={result => void retry(result)} onOpen={path => onOpen(path, false)} />
             {uploading && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">Importing files…</p>}
             {failed ? <div className="space-y-2 px-6 py-6"><p role="alert" className="text-sm text-destructive">{failed}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>Retry</Button></div> : <FileList
                 title={path.split('/').filter(Boolean).pop() ?? ROOT}
                 entries={entries}
                 onOpen={entry => onOpen(joinPath(path, entry.name), entry.type === 'dir')}
-                emptyDescription="Nothing here yet. Import a text or Markdown file to share it with coworkers that have Read shared files enabled."
+                emptyDescription="Nothing here yet. Import supported documents, images, audio, video, or PDFs to share them with coworkers that have Read shared files enabled."
                 uploadDisabled={uploading || !entries}
                 onUpload={picked => void upload(picked)}
             />}
@@ -150,7 +206,7 @@ export function DesktopSharedFiles({ dialogControl, hideTrigger = false, onClose
             {open && <DialogContent onCloseAutoFocus={onCloseAutoFocus} className="flex h-[80dvh] flex-col sm:max-w-5xl">
                 <DialogHeader>
                     <DialogTitle>Shared files</DialogTitle>
-                    <DialogDescription>The workspace shared folder. Import a .txt or .md file. Coworkers with shared files permission read the same documents. Their private Files stay separate.</DialogDescription>
+                    <DialogDescription>The workspace shared folder. Import supported documents, images, audio, video, or PDFs. Coworkers with shared files permission read the same files. Their private Files stay separate.</DialogDescription>
                 </DialogHeader>
                 <SharedFilesPanel onClose={() => setOpen(false)} />
             </DialogContent>}
