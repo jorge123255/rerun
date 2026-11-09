@@ -5,6 +5,7 @@ import type { ConnectionGroup } from '@/lib/engine/model-groups'
 import { desktopModelViewSchema, type DesktopModelView } from '@/lib/desktop/chat-model'
 import { desktopProvider } from '@/lib/desktop/settings'
 import { RunModelField, type RunModelPick } from '@/components/agent/RunModelField'
+import { DesktopScheduleDescription } from './DesktopScheduleDescription'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Field } from '@/components/ui/field'
@@ -74,7 +75,7 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
 }
 function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,stale=false}:{stale?:boolean;agentId:string;task?:Task;onBack:()=>void;onSave:(input:DesktopScheduleInput)=>Promise<void>;onDelete?:()=>Promise<void>;onRun?:(requestId:string)=>Promise<void>}) {
     const [name,setName]=useState(task?.name ?? ''),[description,setDescription]=useState(task?.description ?? ''),[body,setBody]=useState(task?.body ?? '')
-    const [mode,setMode]=useState(task?.runAt ? 'runAt' : 'cron'),[cron,setCron]=useState(task?.cron ?? '0 8 * * *'),[runAt,setRunAt]=useState(task?.runAt ?? '')
+    const [mode,setMode]=useState<'cron'|'runAt'>(task?.runAt ? 'runAt' : 'cron'),[cron,setCron]=useState(task?.cron ?? '0 8 * * *'),[runAt,setRunAt]=useState(task?.runAt ?? '')
     const [timezone,setTimezone]=useState(task?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone),[enabled,setEnabled]=useState(task?.enabled ?? true),[busy,setBusy]=useState(false),[error,setError]=useState('')
     const pending=useRef(false),alive=useRef(true),manual=useRef<string|null>(null)
     const [pick,setPick]=useState<RunModelPick>({connectionId:task?.connectionId ?? null,model:task?.model ?? null})
@@ -102,10 +103,11 @@ function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,stale=false}:
         {stale && <p role="alert" className="text-xs text-destructive">This routine changed while you were editing. Your text is kept here. Go back and reopen the latest task before saving.</p>}
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
         <Field label="Name"><Input aria-label="Name" value={name} onChange={e=>setName(e.target.value)} maxLength={120} disabled={busy}/></Field><Field label="Description"><Input aria-label="Description" value={description} onChange={e=>setDescription(e.target.value)} disabled={busy}/></Field>
-        <Field label="When"><select aria-label="Schedule type" value={mode} disabled={busy} onChange={e=>setMode(e.target.value)}><option value="cron">Recurring</option><option value="runAt">Once</option></select></Field>
+        <DesktopScheduleDescription mode={mode} cron={cron} runAt={runAt} timezone={timezone} disabled={busy} onChange={next=>{setMode(next.mode);setCron(next.cron ?? '');setRunAt(next.runAt ?? '');setTimezone(next.timezone)}}/>
+        <Field label="Schedule type"><select aria-label="Schedule type" value={mode} disabled={busy} onChange={e=>setMode(e.target.value as 'cron'|'runAt')}><option value="cron">Recurring</option><option value="runAt">Once</option></select></Field>
         {mode==='cron'?<Field label="Cron expression"><Input aria-label="Cron expression" value={cron} onChange={e=>setCron(e.target.value)} disabled={busy}/></Field>:<Field label="Run at (ISO timestamp with timezone)"><Input aria-label="Run at (ISO timestamp with timezone)" value={runAt} onChange={e=>setRunAt(e.target.value)} placeholder="2026-12-01T08:00:00-06:00" disabled={busy}/></Field>}
         <Field label="Timezone"><TimezoneCombobox value={timezone} onChange={setTimezone}/></Field>
-        <p className="text-xs text-muted-foreground">Raw cron and ISO time are the local fallback. Natural-language schedule parsing is unavailable.</p>
+        <p className="text-xs text-muted-foreground">Raw cron and ISO time remain available when schedule parsing is unavailable.</p>
         <RunModelField id="routine-model" value={pick} onChange={setPick} availableGroups={availableGroups} agentModel={modelView?.coworker?.model ?? modelView?.effective.model} disabled={busy} helperText="The exact model this task runs under, or follow the coworker default."/>
         {modelError && <p className="text-xs text-destructive">{modelError}</p>}
         {unavailablePin && <p className="text-xs text-muted-foreground">This saved model is no longer offered. Test Run is unavailable; choose another model or Coworker default. Saving does not replace it automatically.</p>}

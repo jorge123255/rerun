@@ -178,3 +178,35 @@ test('an unavailable saved pin stays exact blocks Test Run and permits non-subst
     expect(putBodies).toHaveLength(1)
     expect(putBodies[0].input).toMatchObject({ connectionId: 'deleted', provider: 'openai', model: 'removed-model' })
 })
+
+
+test('describe preview is truthfully unavailable and preserves timezone model and manual editing', async () => {
+    exactModelResponses([task('saved', { timezone: 'Europe/Paris', connectionId: 'conn-b', provider: 'openai', model: 'gpt-exact' })])
+    await render()
+    await act(async () => { row('Saved saved').click() })
+
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="Cron expression"]')?.value).toBe('0 8 * * *')
+    expect(container.textContent).toContain('Europe/Paris')
+    expect(container.querySelector('[data-testid="routine-model"]')?.getAttribute('data-connection')).toBe('conn-b')
+    expect(container.querySelector('[data-testid="routine-model"]')?.getAttribute('data-model')).toBe('gpt-exact')
+
+    await act(async () => { button('Describe schedule').click() })
+    const input = document.body.querySelector<HTMLInputElement>('input[aria-label="Describe the schedule"]')!
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'every weekday at 8am')
+    await act(async () => { input.dispatchEvent(new Event('input', { bubbles: true })) })
+    const preview = [...document.body.querySelectorAll('button')].find(node => node.textContent?.trim() === 'Preview schedule')!
+    await act(async () => { preview.click() })
+
+    expect(document.body.textContent).toContain('Natural-language schedule parsing is unavailable in this build. Enter cron or an ISO time manually.')
+    expect(document.body.textContent).not.toContain('Use schedule')
+    expect(putBodies).toHaveLength(0)
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="Cron expression"]')?.value).toBe('0 8 * * *')
+    expect(container.textContent).toContain('Europe/Paris')
+    expect(container.querySelector('[data-testid="routine-model"]')?.getAttribute('data-connection')).toBe('conn-b')
+    expect(container.querySelector('[data-testid="routine-model"]')?.getAttribute('data-model')).toBe('gpt-exact')
+
+    const cancel = [...document.body.querySelectorAll('button')].find(node => node.textContent?.trim() === 'Cancel')!
+    await act(async () => { cancel.click() })
+    await setControlValue('input[aria-label="Cron expression"]', '0 9 * * *')
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="Cron expression"]')?.value).toBe('0 9 * * *')
+})
