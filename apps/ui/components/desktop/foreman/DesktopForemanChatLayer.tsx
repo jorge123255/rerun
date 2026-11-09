@@ -1,5 +1,7 @@
 'use client'
 
+import { DesktopForemanHistoryMessage } from './transcript/DesktopForemanHistoryMessage'
+
 import { AnimatePresence, motion } from 'motion/react'
 import type { ReactNode } from 'react'
 import { Conversation, ConversationContent, ConversationScrollButton } from '@/components/ai-elements/conversation'
@@ -24,6 +26,7 @@ export type DesktopForemanMessage = {
     role: 'user' | 'assistant' | 'system'
     text: string
     docs?: UIMessage['parts']
+    parts?: readonly unknown[]
 }
 
 export function DesktopForemanChatLayer({
@@ -100,8 +103,10 @@ export function DesktopForemanChatLayer({
                                 message.role === 'user' ? 'ml-auto bg-secondary' : 'bg-transparent text-foreground',
                             )}
                         >
-                            {message.text}
-                            {message.docs?.map((part, index) => <DesktopForemanDocsTool key={index} part={part as import('ai').ToolUIPart} restored={restored} />)}
+                            {restored && message.parts ? <DesktopForemanHistoryMessage messageId={message.id} parts={message.parts} /> : <>
+                                {message.text}
+                                {message.docs?.map((part, index) => <DesktopForemanDocsTool key={index} part={part as import('ai').ToolUIPart} restored={restored} />)}
+                            </>}
                         </div>
                     ))}
                     {plan.view && plan.revisionId && (
