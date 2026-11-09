@@ -20,7 +20,7 @@ export function buildDesktopControlCoworkerTabs({ panels, setup, actions }: {
         : panels && isDesktopCoworkerPanel(tab.id) && (tab.id !== 'actions' || actions)).map(tab => tab.id === 'triggers' ? { ...tab, description: 'URLs that start a run when called on this Mac' } : tab)
 }
 
-export const DESKTOP_CONTROL_COMMAND_IDS = ['add_coworker', 'new_box', 'shared_files', 'company_brain', 'team_board', 'model_settings', 'workspace_settings', 'recenter_board', 'toggle_theme', 'notifications', 'shortcuts', 'getting_started'] as const
+export const DESKTOP_CONTROL_COMMAND_IDS = ['add_coworker', 'new_box', 'shared_files', 'company_brain', 'team_board', 'model_settings', 'workspace_settings', 'recenter_board', 'toggle_theme', 'notifications', 'shortcuts', 'getting_started', 'help'] as const
 
 export type DesktopControlCommandId = (typeof DESKTOP_CONTROL_COMMAND_IDS)[number]
 
@@ -41,6 +41,7 @@ export type DesktopControlCommandOptions = {
     brain?: boolean
     addBox?: boolean
     shortcuts?: boolean
+    help?: boolean
     notifications?: boolean
     workspaceSettings?: boolean
     recenterBoard?: boolean
@@ -63,6 +64,7 @@ export function buildDesktopControlCommands(options: DesktopControlCommandOption
     if (options.workspaceSettings) commands.push({ id: 'workspace_settings', group: 'settings', label: 'Workspace settings', keywords: ['name', 'logo', 'rename'] })
     if (options.notifications) commands.push({ id: 'notifications', group: 'settings', label: 'Notifications', keywords: ['alerts', 'push', 'sound'] })
     if (options.shortcuts) commands.push({ id: 'shortcuts', group: 'settings', label: 'Keyboard shortcuts', keywords: ['keys', 'hotkeys'] })
+    if (options.help) commands.push({ id: 'help', group: 'settings', label: 'Help', keywords: ['docs', 'documentation', 'community', 'getting started', 'checklist'] })
     return commands
 }
 

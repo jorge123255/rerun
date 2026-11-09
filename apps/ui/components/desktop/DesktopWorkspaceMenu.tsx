@@ -1,6 +1,6 @@
 'use client'
 
-import { Brain, Database, Folder, Import, KeyRound, Package, Keyboard, LayoutGrid, Search, Server, Settings } from 'lucide-react'
+import { Brain, Database, Folder, Import, KeyRound, LifeBuoy, Package, Keyboard, LayoutGrid, Search, Server, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import type { DesktopAgentView } from './DesktopApp'
@@ -10,7 +10,7 @@ import { createDesktopWorkspaceClient } from '@/lib/desktop/workspaces'
 import { DesktopWorkspaceSwitcher } from './workspaces/DesktopWorkspaceSwitcher'
 import { DesktopWorkspaceSwitchLoader } from './workspaces/DesktopWorkspaceSwitchLoader'
 
-export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onWorkspaceSettings, onControlCenter, onShortcuts, onSharedData, onSharedFiles, onBrain, onTemplates, onExternalMcp, onServers, onImportCoworker, navigationDisabled = false, settingsDisabled = false }: {
+export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onWorkspaceSettings, onControlCenter, onShortcuts, onHelp, onSharedData, onSharedFiles, onBrain, onTemplates, onExternalMcp, onServers, onImportCoworker, navigationDisabled = false, settingsDisabled = false }: {
     workspaceName: string
     iconCatalogId?: string | null
     iconUploadId?: string | null
@@ -25,6 +25,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     onWorkspaceSettings?: () => void
     onControlCenter?: () => void
     onShortcuts?: () => void
+    onHelp?: () => void
     onSharedData?: () => void
     onSharedFiles?: () => void
     onBrain?: () => void
@@ -58,6 +59,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
                 {onServers && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onServers() }}><Server /> Servers</DropdownMenuItem>}
                 {onWorkspaceSettings && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onWorkspaceSettings() }}><Settings /> Workspace settings</DropdownMenuItem>}
                 {onShortcuts && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onShortcuts() }}><Keyboard /> Keyboard shortcuts</DropdownMenuItem>}
+                {onHelp && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onHelp() }}><LifeBuoy /> Help</DropdownMenuItem>}
                 {agents.length > 0 && <><DropdownMenuSeparator /><DropdownMenuLabel>Coworkers</DropdownMenuLabel></>}
                 {agents.map(agent => <DropdownMenuItem key={agent.id} disabled={navigationDisabled} aria-current={selected === agent.id ? 'true' : undefined} onSelect={() => onCoworker(agent.id)}>
                     <span className="truncate">{agent.name}</span>
