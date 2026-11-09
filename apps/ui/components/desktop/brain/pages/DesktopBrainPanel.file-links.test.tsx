@@ -31,7 +31,10 @@ const shared = vi.hoisted(() => ({
 vi.mock('@/lib/desktop/use-brain-page-draft', () => ({ flushDesktopBrainDrafts: drafts.flush, forgetBrainDraft: vi.fn(), brainDraftHash: vi.fn(() => null) }))
 vi.mock('@/lib/desktop/shared-workspace-files', () => ({ listDesktopSharedFolder: shared.list, importDesktopSharedFile: shared.importFile }))
 vi.mock('@/lib/desktop/data-source', () => ({ desktopDataSource: () => ({ listTables: vi.fn(async () => []) }) }))
-vi.mock('@/components/brain/editor/file-link', () => ({ SHARED_FILE_DRAG_TYPE: 'application/x-rerun-shared-file' }))
+vi.mock('@/components/brain/editor/file-link', () => ({
+    SHARED_FILE_DRAG_TYPE: 'application/x-rerun-shared-file',
+    sharedFileDragData: (file: { path: string; name: string }, workspace?: string) => JSON.stringify(workspace ? { path: file.path, name: file.name, workspace } : { path: file.path, name: file.name }),
+}))
 vi.mock('@/components/ui/panel-steps', () => ({ PanelSteps: ({ children }: { children: ReactNode }) => <div>{children}</div> }))
 vi.mock('@/components/data/DataBrowser', () => ({ DataBrowser: () => null }))
 vi.mock('@/components/desktop/shared-files/DesktopSharedFilePreview', () => ({

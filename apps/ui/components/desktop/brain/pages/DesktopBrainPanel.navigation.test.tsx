@@ -17,7 +17,10 @@ const tables = vi.hoisted(() => ({ list: vi.fn(async () => [{ name: 'alpha', col
 vi.mock('@/lib/desktop/use-brain-page-draft', () => ({ flushDesktopBrainDrafts: drafts.flush, forgetBrainDraft: vi.fn(), brainDraftHash: vi.fn(() => null) }))
 vi.mock('@/lib/desktop/shared-workspace-files', () => ({ listDesktopSharedFolder: shared.list, importDesktopSharedFile: shared.importFile }))
 vi.mock('@/lib/desktop/data-source', () => ({ desktopDataSource: () => ({ listTables: tables.list }) }))
-vi.mock('@/components/brain/editor/file-link', () => ({ SHARED_FILE_DRAG_TYPE: 'application/x-rerun-shared-file' }))
+vi.mock('@/components/brain/editor/file-link', () => ({
+    SHARED_FILE_DRAG_TYPE: 'application/x-rerun-shared-file',
+    sharedFileDragData: (file: { path: string; name: string }, workspace?: string) => JSON.stringify(workspace ? { path: file.path, name: file.name, workspace } : { path: file.path, name: file.name }),
+}))
 vi.mock('@/components/ui/panel-steps', () => ({ PanelSteps: ({ stepKey, depth, children }: { stepKey: string; depth: number; children: ReactNode }) => <div data-testid="steps" data-step={stepKey} data-depth={String(depth)}>{children}</div> }))
 vi.mock('@/components/data/DataBrowser', () => ({ DataBrowser: ({ table, initial }: { table?: string; initial?: { view?: string } | null }) => <div data-testid="data-browser" data-table={table ?? ''} data-view={initial?.view ?? ''} /> }))
 vi.mock('@/components/desktop/shared-files/DesktopSharedFilePreview', () => ({
@@ -101,7 +104,8 @@ it('lists proposals, a page, a folder and a table in the original sidebar order'
     expect(at('Files')).toBeLessThan(at('readme.md'))
     expect(at('readme.md')).toBeLessThan(at('Database'))
     expect(at('Database')).toBeLessThan(at('Alpha'))
-    expect(document.querySelector('aside [draggable="true"]')).toBeNull()
+    expect([...document.querySelectorAll('aside [draggable="true"]')].map(node => (node.textContent || '').replace(/\s+/g, ' ').trim())).toEqual(['readme.md'])
+    expect([...document.querySelectorAll('aside [role="button"]')].some(node => (node.textContent || '').includes('notes') && node.getAttribute('draggable') !== 'true')).toBe(true)
 })
 
 it('does not read a page again when that page is already open, and flushes the draft first', async () => {

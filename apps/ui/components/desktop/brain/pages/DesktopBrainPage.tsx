@@ -28,6 +28,7 @@ type DesktopBrainPageProps = {
     files?: SharedFileRef[]
     onOpenPage: (slug: string) => void
     onOpenFile?: (path: string) => void
+    onAcceptFileDrop?: (raw: string) => SharedFileRef | null
     onSaved: (detail: BrainPageDetail) => void
     onHistory: () => void
     onDeleted: (slug: string) => Promise<void> | void
@@ -69,7 +70,7 @@ function Backlinks({ links, onOpenPage }: { links: BrainPageData['backlinks']; o
  * whatever store root injected, and a refused or failed write is shown as such.
  *
  */
-export function DesktopBrainPage({ detail, pages, titles, actions, files = [], onOpenPage, onOpenFile, onSaved, onHistory, onDeleted }: DesktopBrainPageProps) {
+export function DesktopBrainPage({ detail, pages, titles, actions, files = [], onOpenPage, onOpenFile, onAcceptFileDrop, onSaved, onHistory, onDeleted }: DesktopBrainPageProps) {
     const page = detail.page
     const initial = brainDraftFor(page)
     const autosave = useBrainPageDraft({ page, actions, onSaved })
@@ -234,6 +235,7 @@ export function DesktopBrainPage({ detail, pages, titles, actions, files = [], o
                         handleRef={editorHandle}
                         onOpenPage={onOpenPage}
                         onOpenFile={onOpenFile}
+                        onAcceptFileDrop={onAcceptFileDrop}
                         onChange={markdown => {
                             setContent(markdown)
                             autosave.edit({ content: markdown })

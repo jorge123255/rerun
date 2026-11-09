@@ -30,7 +30,7 @@ import { brainMutationIntent, reserveBrainMutation, settleBrainMutation } from '
 import { DesktopBrainHistory } from './DesktopBrainHistory'
 import { DesktopBrainNewPage } from './DesktopBrainNewPage'
 import { DesktopBrainPage } from './DesktopBrainPage'
-import { authorizedSharedFilePath, linkableSharedFiles } from './shared-file-link'
+import { acceptedSharedFileDrop, authorizedSharedFilePath, linkableSharedFiles, sharedFileDropWorkspace } from './shared-file-link'
 import type { DesktopBrainActions, DesktopBrainOverview, DesktopBrainRoute } from './types'
 
 type PageState = { slug: string; detail: BrainPageDetail | null; missing: boolean; error?: string; version: number }
@@ -81,9 +81,10 @@ function toOverview(loaded: unknown): DesktopBrainOverview {
  * Page reads still wait for `flushDesktopBrainDrafts`. A selection made before the overview returns
  * stays put. A route table wins over a page request. Root mounts the dialog; this panel does not
  * wire Control Center or a hosted workspace. Page editors receive the files listed so far, and a
- * file link opens only when that path is one of them.
+ * file link opens only when that path is one of them. A drag from the sidebar inserts that same
+ * link only when the drop is one of those files in the active workspace.
  */
-export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug, onOpenConsumed, refreshKey, openProposalsKey, route, onRouteConsumed, files: filesProp, onUpload }: {
+export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug, onOpenConsumed, refreshKey, openProposalsKey, route, onRouteConsumed, files: filesProp, onUpload, workspaceId }: {
     actions: DesktopBrainActions
     onClose: () => void
     /** D's review panel, when root mounts it. The Proposals row stays either way. */
@@ -99,6 +100,11 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
     files?: SharedFilesTree
     /** Tests pass an upload. The panel otherwise calls `importDesktopSharedFiles`. */
     onUpload?: (entries: UploadEntry[], dir: string) => void
+    /**
+     * Active workspace. Root passes `runtimeWorkspaceId` on the dialog.
+     * Null keeps the drag off. Omitted uses a token for this mount.
+     */
+    workspaceId?: number | null
 }) {
     const isMobile = useIsMobile()
     const listedFiles = useDesktopSharedFilesTree()
@@ -353,11 +359,17 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
 
     const openPage = useCallback((slug: string) => select({ kind: 'page', slug }), [select])
     const linkableFiles = useMemo(() => linkableSharedFiles(files.knownFiles), [files.knownFiles])
+    const [omittedWorkspace] = useState(() => globalThis.crypto.randomUUID())
+    const dropWorkspace = sharedFileDropWorkspace(workspaceId, omittedWorkspace)
     const openListedFile = useCallback((path: string) => {
         const allowed = authorizedSharedFilePath(path, linkableFiles)
         if (!allowed) return
         select({ kind: 'file', path: allowed })
     }, [linkableFiles, select])
+    const acceptFileDrop = useCallback((raw: string) => {
+        if (!dropWorkspace) return null
+        return acceptedSharedFileDrop(raw, linkableFiles, dropWorkspace)
+    }, [dropWorkspace, linkableFiles])
 
     const savedPage = useCallback((detail: BrainPageDetail) => {
         setPageState(current => (current?.slug === detail.page.slug ? { ...current, detail, missing: false } : current))
@@ -481,6 +493,7 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
                         actions={actions}
                         onOpenPage={openPage}
                         onOpenFile={openListedFile}
+                        onAcceptFileDrop={acceptFileDrop}
                         onSaved={savedPage}
                         onHistory={() => commitSelection({ kind: 'history', slug: detail.page.slug })}
                         onDeleted={deletePage}
@@ -504,7 +517,7 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
                 )
             }
             case 'new-page':
-                return <DesktopBrainNewPage pages={pages} titles={titles} files={linkableFiles} actions={actions} onOpenPage={openPage} onOpenFile={openListedFile} onCreated={createdPage} />
+                return <DesktopBrainNewPage pages={pages} titles={titles} files={linkableFiles} actions={actions} onOpenPage={openPage} onOpenFile={openListedFile} onAcceptFileDrop={acceptFileDrop} onCreated={createdPage} />
             case 'proposals':
                 return renderProposals ? <>{renderProposals()}</> : <BrainTopBar crumbs={[{ label: 'Brain', icon: BrainIcon }]} />
             case 'folder':
@@ -579,7 +592,8 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
                                 searchRef={searchRef}
                                 onSelect={select}
                                 onUpload={uploadFiles}
-                                fileDrag={false}
+                                fileDrag={dropWorkspace !== null}
+                                fileDropWorkspace={dropWorkspace ?? undefined}
                             />
                         ) : (
                             <div className="space-y-3 p-3">

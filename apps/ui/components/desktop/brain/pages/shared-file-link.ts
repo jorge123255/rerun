@@ -1,3 +1,4 @@
+import { readSharedFileDrag } from '@/components/brain/editor/file-link'
 import type { SharedFileRef } from '@/components/brain/useSharedFilesTree'
 import { invalidDir } from '@/lib/files/path-guards'
 
@@ -50,4 +51,29 @@ export function authorizedSharedFilePath(path: string, knownFiles: readonly Pick
 /** Listed files the page picker may cite. An unsafe listing is left out. */
 export function linkableSharedFiles(knownFiles: readonly SharedFileRef[]): SharedFileRef[] {
     return knownFiles.filter(file => authorizedSharedFilePath(file.path, knownFiles) === file.path)
+}
+
+/**
+ * A drop of a listed file in this workspace, or null.
+ * Forged payloads, directories, traversal, and another workspace are null. This does not look anything up.
+ */
+export function acceptedSharedFileDrop(raw: string, knownFiles: readonly SharedFileRef[], workspace: string): SharedFileRef | null {
+    if (!workspace) return null
+    const parsed = readSharedFileDrag(raw)
+    if (!parsed || parsed.workspace !== workspace) return null
+    const path = authorizedSharedFilePath(parsed.path, knownFiles)
+    if (!path) return null
+    const listed = knownFiles.find(file => file.path === path)
+    if (!listed || listed.name !== parsed.name) return null
+    return { path: listed.path, name: listed.name }
+}
+
+/**
+ * Workspace string a desktop file drop must carry, or null when the drag stays off.
+ * A positive id is that workspace. Null is not confirmed yet. Omitted uses the mount token.
+ */
+export function sharedFileDropWorkspace(workspaceId: number | null | undefined, omittedToken: string): string | null {
+    if (typeof workspaceId === 'number') return Number.isSafeInteger(workspaceId) && workspaceId > 0 ? String(workspaceId) : null
+    if (workspaceId === null) return null
+    return omittedToken || null
 }

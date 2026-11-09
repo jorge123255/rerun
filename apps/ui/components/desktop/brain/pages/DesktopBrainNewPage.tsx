@@ -24,6 +24,7 @@ type DesktopBrainNewPageProps = {
     files?: SharedFileRef[]
     onOpenPage: (slug: string) => void
     onOpenFile?: (path: string) => void
+    onAcceptFileDrop?: (raw: string) => SharedFileRef | null
     onCreated: (detail: BrainPageDetail) => void
 }
 
@@ -32,7 +33,7 @@ type DesktopBrainNewPageProps = {
  * the first blur with a title creates the page under the slug that title gives, and that slug stays
  * so the [[links]] other pages hold keep working.
  */
-export function DesktopBrainNewPage({ pages, titles, actions, files = [], onOpenPage, onOpenFile, onCreated }: DesktopBrainNewPageProps) {
+export function DesktopBrainNewPage({ pages, titles, actions, files = [], onOpenPage, onOpenFile, onAcceptFileDrop, onCreated }: DesktopBrainNewPageProps) {
     const [pendingCreate, setPendingCreate] = useState(() => { try { return brainMutationIntent('create') } catch { return null } })
     const [formSaved] = useState(() => {
         try {
@@ -147,6 +148,7 @@ export function DesktopBrainNewPage({ pages, titles, actions, files = [], onOpen
                         placeholder="Give the page a title, then type / for commands"
                         onOpenPage={onOpenPage}
                         onOpenFile={onOpenFile}
+                        onAcceptFileDrop={onAcceptFileDrop}
                         onChange={markdown => { content.current = markdown; saveFormEdit({ content: markdown }) }}
                         onBlur={() => void create()}
                     />
