@@ -10,6 +10,8 @@ import { ensureCodexAuth, syncCodexAuth } from './codex-auth.js'
 import { planLimitWindowsFromCodex, recordPlanLimits, type CodexRateLimits } from './plan-limits.js'
 import type { LoadedConnection } from './types.js'
 import { desktopApp } from '../desktop/policy.js'
+import { DESKTOP_CODEX_ID, signedInFlag } from '../desktop/codex-runtime.js'
+import { readDesktopCodexRateLimits } from '../desktop/codex-plan-limits.js'
 
 const READ_TIMEOUT_MS = 8000
 const STALE_AFTER_MS = 5 * 60_000
@@ -37,7 +39,7 @@ function codexCommand(): Command {
 // send a request of our own, so the reading takes a short app-server session: handshake, one
 // read, gone. Resolves to null on any failure — a missing gauge is never worth an error.
 export function readCodexRateLimits(connectionId: string): Promise<CodexRateLimits | null> {
-    if (desktopApp()) return Promise.resolve(null)
+    if (desktopApp()) return connectionId === DESKTOP_CODEX_ID ? readDesktopCodexRateLimits() : Promise.resolve(null)
     return new Promise(resolve => {
         const { cmd, args } = codexCommand()
         const home = codexHomeDir(connectionId)
@@ -89,14 +91,20 @@ const inFlight = new Map<string, Promise<void>>()
 const attemptedAt = new Map<string, number>()
 
 export function refreshCodexPlanLimits(connection: LoadedConnection | null): Promise<void> {
-    if (desktopApp()) return Promise.resolve()
-    if (!connection || connection.config.provider !== 'codex' || !connection.env[CONNECTION_TOKEN_KEY.codex]) return Promise.resolve()
+    if (!connection || connection.config.provider !== 'codex') return Promise.resolve()
+    const desktop = desktopApp()
+    if (desktop ? connection.id !== DESKTOP_CODEX_ID || connection.env[signedInFlag] !== '1' : !connection.env[CONNECTION_TOKEN_KEY.codex]) return Promise.resolve()
 
     const pending = inFlight.get(connection.id)
     if (pending) return pending
 
     attemptedAt.set(connection.id, Date.now())
     const task = (async () => {
+        if (desktop) {
+            const response = await readCodexRateLimits(connection.id)
+            recordPlanLimits(connection.id, planLimitWindowsFromCodex(response))
+            return
+        }
         await ensureCodexAuth(connection)
         const response = await readCodexRateLimits(connection.id)
         // The CLI may have rotated the token while it was up, exactly as it does during a run.
@@ -114,7 +122,6 @@ export function refreshCodexPlanLimits(connection: LoadedConnection | null): Pro
 // has, and the fresh one is there for the next ask. Paced on the last attempt rather than the last
 // reading, so a connection that cannot be read is not respawned on every list.
 export function refreshStaleCodexPlanLimits(connections: LoadedConnection[]): void {
-    if (desktopApp()) return
     for (const connection of connections) {
         if (Date.now() - (attemptedAt.get(connection.id) ?? 0) < STALE_AFTER_MS) continue
         void refreshCodexPlanLimits(connection)

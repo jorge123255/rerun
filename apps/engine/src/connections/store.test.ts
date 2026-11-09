@@ -13,6 +13,8 @@ const { readEnvFile } = await import('../lib/env-file.js')
 const { getConnection, listConnections, unloadConnection } = await import('./registry.js')
 const { createConnection, deleteConnection, ensureRerunConnection, patchConnection, updateConnectionKeys } = await import('./store.js')
 const { isCredentialRejected, recordCredentialRejected } = await import('./credential-rejections.js')
+const { DESKTOP_CODEX_ID, signedInFlag } = await import('../desktop/codex-runtime.js')
+const { forgetPlanLimits, readPlanLimits, recordPlanLimits } = await import('./plan-limits.js')
 
 beforeEach(async () => {
     unloadConnection(RERUN_CONNECTION_ID)
@@ -56,6 +58,27 @@ describe('updateConnectionKeys', () => {
         recordCredentialRejected(cnx.id)
         await updateConnectionKeys(cnx.id, { set: { CLAUDE_CODE_OAUTH_TOKEN: 'fresh' }, remove: [] })
         expect(isCredentialRejected(cnx.id)).toBe(false)
+    })
+
+    it('clears only the ChatGPT singleton reading across disconnect and reconnect', async () => {
+        const mac = await createConnection({ name: 'ChatGPT (Codex)', provider: 'codex', models: ['synthetic-model'], extraModels: [], keys: { [signedInFlag]: '1' } }, DESKTOP_CODEX_ID)
+        const other = await claude({ CLAUDE_CODE_OAUTH_TOKEN: 'synthetic-token' })
+        try {
+            recordPlanLimits(mac.id, [{ kind: 'session', label: null, usedPercent: 17, resetsAt: null }])
+            recordPlanLimits(other.id, [{ kind: 'session', label: null, usedPercent: 88, resetsAt: null }])
+
+            await updateConnectionKeys(mac.id, { set: {}, remove: [signedInFlag] })
+            expect(readPlanLimits(mac.id)).toBeNull()
+            expect(readPlanLimits(other.id)?.windows[0]?.usedPercent).toBe(88)
+
+            await updateConnectionKeys(mac.id, { set: { [signedInFlag]: '1' }, remove: [] })
+            expect(readPlanLimits(mac.id)).toBeNull()
+            expect(readPlanLimits(other.id)?.windows[0]?.usedPercent).toBe(88)
+        } finally {
+            unloadConnection(mac.id)
+            forgetPlanLimits(mac.id)
+            forgetPlanLimits(other.id)
+        }
     })
 
     it('refuses the keyless Rerun connection', async () => {
