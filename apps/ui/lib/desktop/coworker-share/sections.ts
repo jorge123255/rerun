@@ -73,15 +73,16 @@ export function sectionTransferReady(section: 'memories' | 'database', unavailab
     return { enabled: true, reason: null, contents: bucket, digest, viewCount: null }
 }
 
-type SectionPlan = Pick<DesktopCoworkerSharePlan, 'unavailable' | 'memoryPreview'>
+type SectionPlan = Pick<DesktopCoworkerSharePlan, 'unavailable' | 'memoryPreview' | 'databasePreview'>
 
 export function shareSectionReadiness(plan: SectionPlan | null, bindings: DesktopCoworkerShareSectionBindings | null): { memories: DesktopCoworkerShareSectionReadiness; database: DesktopCoworkerShareSectionReadiness } {
     // A server preview is emitted only by the bound canonical implementation. Legacy plans
     // remain disabled. The authenticated server rechecks revision/ownership before effects.
     const memories = bindings?.memories ?? (plan?.memoryPreview ? { authorities: { capture: true, validation: true, install: true }, preview: plan.memoryPreview } : null)
+    const database = bindings?.database ?? (plan?.databasePreview ? { authorities: { capture: true, validation: true, install: true }, preview: plan.databasePreview } : null)
     return {
         memories: sectionTransferReady('memories', plan?.unavailable?.memories, memories),
-        database: sectionTransferReady('database', plan?.unavailable?.database, bindings?.database ?? null),
+        database: sectionTransferReady('database', plan?.unavailable?.database, database),
     }
 }
 

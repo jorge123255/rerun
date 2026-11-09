@@ -2,12 +2,13 @@ import 'server-only'
 import { createHash } from 'node:crypto'
 import { readPortableArchive, type PortablePackageMemberBytes } from '../../../../../engine/src/desktop/templates/portable-package'
 import { createDesktopCoworkerSharePlan, createDesktopCoworkerSnapshot } from '../../../../../engine/src/desktop/coworker-share/snapshot'
-import { desktopCoworkerShareExportInputSchema, desktopCoworkerShareImportInputSchema, desktopCoworkerShareReviewInputSchema, desktopCoworkerShareRevokeInputSchema, desktopCoworkerShareSourceSchema, type DesktopCoworkerShareMemoryPreview, type DesktopCoworkerShareSource, type DesktopCoworkerSnapshotManifest } from '@rerun/contracts'
+import { desktopCoworkerShareExportInputSchema, desktopCoworkerShareImportInputSchema, desktopCoworkerShareReviewInputSchema, desktopCoworkerShareRevokeInputSchema, desktopCoworkerShareSourceSchema, type DesktopCoworkerShareMemoryPreview, type DesktopCoworkerShareDatabasePreview, type DesktopCoworkerShareSource, type DesktopCoworkerSnapshotManifest } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import type { DesktopCoworkerShareStore } from './store'
 
 export type DesktopCoworkerShareInstallAuthority = {
     unavailable?: { memories?: string; database?: string; files?: string }
+    databasePreview?: (source: DesktopCoworkerShareSource) => DesktopCoworkerShareDatabasePreview | null
     memoryPreview?: (source: DesktopCoworkerShareSource) => DesktopCoworkerShareMemoryPreview
     /** Root binds the canonical template installer; this exact request must remain idempotent. */
     install(input: { manifest: DesktopCoworkerSnapshotManifest; members: PortablePackageMemberBytes[]; targetWorkspaceId: number; requestId: string; archiveBytes: Buffer }): Promise<string>
@@ -80,19 +81,26 @@ export function createDesktopCoworkerShareService(store: DesktopCoworkerShareSto
         if (current.workspaceId !== input.workspaceId || current.agentId !== input.agentId || current.revision !== input.sourceRevision) throw new DesktopHttpError(409,'The coworker changed. Review the current content before exporting.')
         return current
     }
+    const unavailableDatabase = 'This coworker has no private tables that can be safely included.'
     const supported = (include: { memories: boolean; database: boolean; files: boolean }) => {
         for (const key of ['memories','database','files'] as const) if (include[key] && authority.unavailable?.[key]) throw new DesktopHttpError(409,authority.unavailable[key])
     }
     return {
         plan(source: DesktopCoworkerShareSource) {
             const parsed = desktopCoworkerShareSourceSchema.parse(source)
-            return { ...createDesktopCoworkerSharePlan(parsed), sourceRevision: parsed.revision, ...(authority.unavailable ? { unavailable: authority.unavailable } : {}), ...(authority.memoryPreview ? { memoryPreview: authority.memoryPreview(parsed) } : {}) }
+            const plan = createDesktopCoworkerSharePlan(parsed)
+            const database = authority.databasePreview?.(parsed)
+            const unavailable = authority.databasePreview && !database ? { ...authority.unavailable, database: unavailableDatabase } : authority.unavailable
+            return { ...plan, sourceRevision: parsed.revision, ...(unavailable && { unavailable }),
+                ...(database && { databasePreview: database, contents: { ...plan.contents, database: database.contents } }),
+                ...(authority.memoryPreview && { memoryPreview: authority.memoryPreview(parsed) }) }
         },
         async review(raw: unknown, source: DesktopCoworkerShareSource | (() => Promise<DesktopCoworkerShareSource>)) {
             const input = desktopCoworkerShareReviewInputSchema.parse(raw)
             supported(input.include)
             await guard('read',input.workspaceId,input.agentId)
             const current = await sourceOf(source,input), reviewId = reviewIdOf(input)
+            if (input.include.database && !authority.databasePreview?.(current)?.available) throw new DesktopHttpError(409, unavailableDatabase)
             const persisted = await saved(reviewId.slice(0,32))
             if (persisted) return { ...summary(persisted,true), reviewId }
             pruneReviews()

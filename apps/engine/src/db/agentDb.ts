@@ -7,7 +7,8 @@ import { beginDesktopAgentWork } from '../desktop/agent-lifecycle.js'
 
 const storeKey = (id: string) => `agent:${id}`
 
-export const AGENT_HIDDEN_TABLES = [VIEWS_TABLE]
+export const PORTABLE_DATABASE_RECEIPT_TABLE = '_rerun_portable_database_receipt'
+export const AGENT_HIDDEN_TABLES = [VIEWS_TABLE, PORTABLE_DATABASE_RECEIPT_TABLE]
 
 export async function getAgentDb(id: string): Promise<Client> {
     const release = beginDesktopAgentWork(id)

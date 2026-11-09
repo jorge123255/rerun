@@ -37,7 +37,7 @@ test('share review file counts match the eligible archive members', async () => 
 })
 
 test('selects only reviewed content and preserves selected binary bytes', async () => {
-    const snapshot = await createDesktopCoworkerSnapshot(source(), { memories: true, database: true, files: true })
+    const snapshot = await createDesktopCoworkerSnapshot(source(), { memories: true, database: false, files: true })
     expect(snapshot.manifest.coworkers).toHaveLength(1)
     expect(snapshot.manifest.packageKey).toMatch(/^[a-f0-9]{32}$/)
     expect(snapshot.manifest.fidelity).toMatchObject({ binaryAssets: true, userSkillTrees: true, sourceKind: 'local-v1-export' })
@@ -82,7 +82,7 @@ test('unselected workspace files do not exhaust the archive exclusions or disclo
 })
 
 test('archive round-trip validates byte fidelity and manifest tampering', async () => {
-    const snapshot = await createDesktopCoworkerSnapshot(source(), { memories: true, database: true, files: true })
+    const snapshot = await createDesktopCoworkerSnapshot(source(), { memories: true, database: false, files: true })
     const restored = await readPortableArchive(snapshot.archiveBytes)
     expect(restored.manifest.contentDigest).toBe(snapshot.manifest.contentDigest)
     expect(restored.members.find(member => member.path === 'workspace/image.bin')?.bytes).toEqual(binary)
@@ -122,4 +122,10 @@ test('Files off still excludes internal skill backups and nested assets while ke
         expect(snapshot.manifest.coworkers[0]!.members.some(member => member.path === path)).toBe(false)
     }
     expect(restored.members.some(member => member.bytes.includes(Buffer.from('OLD_PRIVATE_SKILL_BACKUP_SENTINEL')))).toBe(false)
+})
+
+
+test('refuses raw SQLite bytes even when database export is explicitly selected', async () => {
+    await expect(createDesktopCoworkerSnapshot(source(), { memories: false, database: true, files: false }))
+        .rejects.toThrow('logical private database is unavailable')
 })
