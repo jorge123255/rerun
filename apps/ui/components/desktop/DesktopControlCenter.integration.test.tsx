@@ -7,6 +7,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { hashText } from '@/lib/files/editable'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
+import { generalTabUid, isGeneralTab } from '@/lib/desktop/general-threads'
 import type { DesktopCompletionItem } from '@/lib/desktop/completed-actions'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { resetDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
@@ -166,7 +167,10 @@ async function mount(completed: DesktopCompletionItem[] = [], lateShared = false
             const [, owner, resource] = ownerRoute
             if (resource === 'sessions') return Response.json({ sessions: sessionsFor(owner), tabs: layouts.get(owner) ?? null })
             if (resource === 'control-center-chats') {
-                const openChats = (layouts.get(owner)?.tabs ?? []).map(tab => ({ agentId: owner, tabUid: tab.uid, sessionId: tab.id, title: tab.title }))
+                const openChats = (layouts.get(owner)?.tabs ?? []).map(tab => ({
+                    agentId: owner, tabUid: tab.uid, sessionId: tab.id, title: isGeneralTab(tab) ? 'General' : tab.title,
+                    kind: isGeneralTab(tab) ? 'general' : 'thread', firstMessage: null,
+                }))
                 const recentChats = sessionsFor(owner).filter(session => !openChats.some(tab => tab.sessionId === session.id))
                     .map(session => ({ id: session.id, agentId: owner, agentName: agents.find(agent => agent.id === owner)!.name, title: session.title }))
                 return Response.json({ agentId: owner, openChats, recentChats, recentStatus: 'ok', hasMore: false })
@@ -215,7 +219,7 @@ test('opening a newly adopted background chat refreshes sessions without remount
     await shortcut('k', composer())
     await enterText(composer(), 'Keep the newer unsent tab')
     const blank = composer()
-    const blankUid = app.layouts.get('alice')!.tabs.find(tab => tab.id === null)!.uid
+    const blankUid = app.layouts.get('alice')!.tabs.find(tab => tab.id === null && !isGeneralTab(tab))!.uid
     const revision = app.layouts.get('alice')!.revision
     app.publishShared()
     await shortcut('f'); await query('Shared'); await pick('conversations-conversation-alice-shared')
@@ -244,7 +248,9 @@ test('an unavailable saved target reports the refreshed result without discardin
     expect(reads()).toBe(2)
     await settle(30)
     expect(reads()).toBe(2)
-    expect(app.layouts.get('alice')!.tabs.map(tab => tab.id)).toEqual(['alice-draft'])
+    expect(app.layouts.get('alice')!.tabs.map(({ uid, id }) => [uid, id])).toEqual([
+        [generalTabUid('alice'), null], ['alice-draft-tab', 'alice-draft'],
+    ])
 })
 
 test('the actual visible saved tab acknowledges only its completions while the inbox is closed, and a Done row opens its own coworker', async () => {
@@ -321,7 +327,7 @@ test('Enter opens the coworker and Cmd K inside its chat creates a separate draf
     await shortcut('k', composer())
     expect(center()).toBeUndefined()
     expect(composer().value).toBe('')
-    expect(app.layouts.get('alice')?.tabs).toHaveLength(2)
+    expect(app.layouts.get('alice')?.tabs).toHaveLength(3)
     expect(app.layouts.get('alice')?.tabs[app.layouts.get('alice')!.activeIndex].id).toBeNull()
     await enterText(composer(), 'The new chat has another draft')
     await click('Draft chat', app.container.querySelector('[aria-label="Open conversations"]')!)
@@ -343,7 +349,7 @@ test('coworker drill opens the exact unsent draft and moves recent chats into op
     await openCoworker()
     await enterText(composer(), 'Alice saved chat draft')
     await shortcut('k', composer())
-    const blankUid = app.layouts.get('alice')!.tabs.find(tab => tab.id === null)!.uid
+    const blankUid = app.layouts.get('alice')!.tabs.find(tab => tab.id === null && !isGeneralTab(tab))!.uid
     await enterText(composer(), 'Alice unsent new chat draft')
     await click('Draft chat', app.container.querySelector('[aria-label="Open conversations"]')!)
     await drill('Alice')
@@ -353,18 +359,18 @@ test('coworker drill opens the exact unsent draft and moves recent chats into op
     await until(() => !center())
     expect(composer().value).toBe('Alice unsent new chat draft')
     expect(activeChat().textContent).not.toContain('Reply for alice-draft')
-    expect(app.layouts.get('alice')!.tabs).toHaveLength(2)
+    expect(app.layouts.get('alice')!.tabs).toHaveLength(3)
     await drill('Alice')
     await pick('recent-chat-alice-shared')
     await until(() => activeChat()?.textContent?.includes('Reply for alice-shared'))
     expect(composer().value).toBe('')
-    expect(app.layouts.get('alice')!.tabs).toHaveLength(3)
+    expect(app.layouts.get('alice')!.tabs).toHaveLength(4)
     await drill('Alice')
     expect(center()!.querySelector('[data-value="recent-chat-alice-shared"]')).toBeNull()
     const shared = app.layouts.get('alice')!.tabs.find(tab => tab.id === 'alice-shared')!
     await pick(`open-chat-${shared.uid}`)
     await until(() => !center())
-    expect(app.layouts.get('alice')!.tabs).toHaveLength(3)
+    expect(app.layouts.get('alice')!.tabs).toHaveLength(4)
     await drill('Bob')
     await pick('recent-chat-bob-shared')
     await until(() => activeChat()?.textContent?.includes('Reply for bob-shared'))

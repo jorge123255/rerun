@@ -66,6 +66,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
     const activityRef = useRef(activity)
     const [drafts, setDrafts] = useState<Record<string, ComposerDraft>>({})
     const pendingForks = useRef(new Set<string>())
+    const generalFork = useRef<{ sourceUid: string; sessionId: string } | null>(null)
     const active = layout.tabs[layout.activeIndex]
     const [visited, setVisited] = useState<string[]>([active.uid])
     const lastRequest = useRef(requested)
@@ -222,6 +223,12 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
         const previous = current.current
         const source = previous.tabs.find(t => t.uid === uid)
         if (!source) { void refreshSessions(); return false }
+        // Keep General's UID and draft tied to the original. The live stream stays in its
+        // existing renderer until it finishes, then the alternate opens as a thread.
+        if (source.id && source.id !== id && sourceDraft && isGeneralTab(source)) {
+            generalFork.current = { sourceUid: uid, sessionId: id }
+            return true
+        }
         if (source.id !== id) {
             setNotice('')
             let tabs = previous.tabs.map(tab => tab.uid === uid ? { ...tab, id } : tab)
@@ -264,6 +271,29 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
         return true
     }
 
+    function finishFork(uid: string) {
+        pendingForks.current.delete(uid)
+        const fork = generalFork.current
+        if (fork?.sourceUid !== uid) return
+        generalFork.current = null
+        const previous = current.current
+        const next = openSessionTab(previous, fork.sessionId, 'Alternate · General', protectedUids())
+        if (next === previous && !previous.tabs.some(tab => tab.id === fork.sessionId)) {
+            setNotice('The alternate was saved. Close an idle tab and open it from chat history.')
+        } else {
+            const activeUid = previous.tabs[previous.activeIndex]?.uid
+            const activeIndex = activeUid !== uid ? next.tabs.findIndex(tab => tab.uid === activeUid) : next.activeIndex
+            const selection = activeIndex >= 0 && activeIndex !== next.activeIndex ? { ...next, activeIndex } : next
+            void change(selection).then(saved => {
+                if (!saved && current.current === selection) {
+                    current.current = previous
+                    setLayout(previous)
+                }
+            })
+        }
+        void refreshSessions()
+    }
+
     useEffect(() => {
         const general = sessions.find(session => session.agentId === agent.id && session.kind === 'general')
         if (!general) return
@@ -295,7 +325,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
             return <div key={tab.uid} data-desktop-tab-active={visible} hidden={!visible} className={visible ? 'flex h-full min-h-0 flex-col' : 'hidden'}>
                 <DesktopConversation overview={overview} agent={agent} sessionId={tab.id} sessions={sessions} tabUid={tab.uid} active={selected && visible}
                     requestedPanel={selected && visible ? requestedPanel : null} onPanelRequestHandled={onPanelRequestHandled}
-                    tabStrip={visible ? strip : false} onTabActivity={report} initialDraft={drafts[tab.uid]} onStartFork={startFork} onFinishFork={uid => pendingForks.current.delete(uid)}
+                    tabStrip={visible ? strip : false} onTabActivity={report} initialDraft={drafts[tab.uid]} onStartFork={startFork} onFinishFork={finishFork}
                     onSelectSession={(id, title) => {
                         open(id, title ?? sessions.find(s => s.id === id)?.title ?? 'New conversation')
                         if (id && !sessions.some(session => session.id === id)) void refreshSessions().catch(() => setNotice('Chat opened. Could not refresh the chat list. Reopen the coworker to retry.'))

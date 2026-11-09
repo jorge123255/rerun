@@ -4,7 +4,7 @@ import type { Client, Row } from '@libsql/client'
 import { desktopAttachmentPathsSchema, desktopAttachmentItemsSchema, desktopAttachmentSelectionsOf, desktopAttachmentFieldsOf, type DesktopAttachmentSelection } from '@rerun/contracts'
 import type { DesktopTabLayout, DesktopTabWrite } from '../session-tabs'
 import { DesktopHttpError } from './auth'
-import { generalTabUid, isGeneralTabFor } from '../general-threads'
+import { GENERAL_SESSION_TITLE, generalTabUid, isGeneralTab, isGeneralTabFor } from '../general-threads'
 import { desktopSessionsQuery, sessionOf } from './store'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { withRosterWrite } from './roster-writes'
@@ -18,14 +18,15 @@ export function layoutOf(row: Row, sessions: Row[]): DesktopTabLayout {
     const active = stored.tabs[stored.activeIndex]
     const resolved = stored.tabs.map(tab => ({ ...tab, id: tab.id ?? first.get(tab.uid) ?? null }))
     const tabs = resolved.flatMap((tab, index) => {
-        if (resolved.findIndex(t => t.id === tab.id) !== index) return []
-        if (!tab.id) return [{ ...tab, title: 'New conversation' }]
+        if (resolved.findIndex(t => t.id === tab.id && (tab.id !== null || isGeneralTab(t) === isGeneralTab(tab))) !== index) return []
+        if (!tab.id) return [{ ...tab, title: isGeneralTab(tab) ? GENERAL_SESSION_TITLE : 'New conversation' }]
         const title = titles.get(tab.id)
         return title === undefined ? [] : [{ ...tab, title }]
     })
     // Old layouts can outlive a conversation. Keep a usable blank if every saved tab disappeared.
     if (!tabs.length) tabs.push({ uid: active.uid, id: null, title: 'New conversation' })
-    const position = tabs.findIndex(tab => tab.uid === active.uid || tab.id === resolved[stored.activeIndex].id)
+    const activeId = resolved[stored.activeIndex].id
+    const position = tabs.findIndex(tab => tab.uid === active.uid || (activeId !== null && tab.id === activeId))
     const activeIndex = position < 0 ? Math.min(stored.activeIndex, tabs.length - 1) : position
     return { revision: Number(row.revision), tabs, activeIndex }
 }

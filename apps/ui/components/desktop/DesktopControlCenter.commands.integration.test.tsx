@@ -391,7 +391,7 @@ test('the /hotkeys command opens the original help view with the eight supported
     await closeShortcutsWithEscape(dialog)
     expect(commandField()).toBeNull()
     view.unchanged()
-    expect(openTabButtons()).toHaveLength(1)
+    expect(openTabButtons().map(tab => tab.textContent?.trim())).toEqual(['General', 'Saved review'])
     expect(app.reads).toEqual(readsBefore)
     expect(app.writes).toEqual([])
 })
@@ -403,7 +403,7 @@ test('workspace help blocks chat and settings shortcuts until Escape closes only
     const readsBefore = [...app.reads]
     const dialog = await openShortcutsFromMenu()
     await until(() => !document.querySelector('[role="menu"]'))
-    expect(openTabButtons()).toHaveLength(1)
+    expect(openTabButtons().map(tab => tab.textContent?.trim())).toEqual(['General', 'Saved review'])
     for (const key of ['k', 'f', ',']) {
         await act(async () => {
             const target = dialog.querySelector<HTMLButtonElement>('button') ?? dialog
@@ -416,7 +416,7 @@ test('workspace help blocks chat and settings shortcuts until Escape closes only
         expect(commandField()).toBeNull()
         expect(document.querySelector('#desktop-api-key')).toBeNull()
         expect([...document.querySelectorAll('button')].some(button => button.textContent?.trim() === 'Back to chat')).toBe(false)
-        expect(openTabButtons()).toHaveLength(1)
+        expect(openTabButtons().map(tab => tab.textContent?.trim())).toEqual(['General', 'Saved review'])
         view.unchanged(true)
     }
     await closeShortcutsWithEscape(dialog)
@@ -426,7 +426,7 @@ test('workspace help blocks chat and settings shortcuts until Escape closes only
         view.input.focus()
         view.input.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true, cancelable: true }))
     })
-    await until(() => openTabButtons().length === 2)
+    await until(() => openTabButtons().length === 3)
     expect(commandField()).toBeNull()
     expect(shortcutsDialog()).toBeUndefined()
     expect(composer()).not.toBe(view.input)
@@ -461,7 +461,7 @@ test('help is transient on remount and reopens from the workspace menu beside th
     await closeShortcutsWithEscape(dialog)
     expect(composer()).toBe(restored)
     expect(document.activeElement).toBe(workspacePill())
-    expect(openTabButtons()).toHaveLength(1)
+    expect(openTabButtons().map(tab => tab.textContent?.trim())).toEqual(['General', 'Saved review'])
     expect(chat.textContent).toContain('This coworker keeps its saved answer.')
     expect(app.writes).toEqual([])
 })

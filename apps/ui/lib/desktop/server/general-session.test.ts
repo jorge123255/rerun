@@ -14,7 +14,7 @@ vi.mock('./chat-model', () => ({ resolveDesktopChatModel: mocks.model, savedChoi
 import { GENERAL_ALREADY_OPEN, generalTabUid } from '../general-threads'
 import { closeDesktopDatabase, openDesktopDatabase } from './database'
 import { startDesktopChat } from './engine'
-import { writeDesktopTabs } from './session-tabs'
+import { readDesktopChats, writeDesktopTabs } from './session-tabs'
 import { GeneralAlreadyOpenError, createDesktopAgent, createDesktopSession, findDesktopGeneralSession, listDesktopSessions } from './store'
 import type { DesktopRuntime } from './runtime'
 
@@ -68,6 +68,20 @@ test('one General per coworker, and a saved chat keeps its id, title and thread 
     expect(await findDesktopGeneralSession(db, bea.id)).toMatchObject({ id: beaGeneral.id })
     expect((await listDesktopSessions(db, ada.id)).find(session => session.id === notes.id)).toMatchObject({ title: 'Daily notes', kind: 'thread' })
     expect(await findDesktopGeneralSession(db, 'missing-coworker')).toBeNull()
+})
+
+test('restores an unsent General and a separate active thread draft after reopening SQLite', async () => {
+    const ada = await coworker('Ada', 'engine-ada')
+    const db = await openDesktopDatabase(root)
+    const tabs = [{ uid: generalTabUid(ada.id), id: null }, { uid: 'thread-draft', id: null }]
+    await writeDesktopTabs(db, ada.id, { baseRevision: 0, activeIndex: 1, tabs })
+    await closeDesktopDatabase(root)
+
+    const restored = await readDesktopChats(await openDesktopDatabase(root), ada.id)
+    expect(restored.tabs).toMatchObject({
+        activeIndex: 1,
+        tabs: [{ ...tabs[0], title: 'General' }, { ...tabs[1], title: 'New conversation' }],
+    })
 })
 
 test('concurrent first sends share one General receipt and a different first message waits', async () => {

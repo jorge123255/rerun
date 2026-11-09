@@ -45,10 +45,11 @@ function openChatsOf(agentId: string, row: Row | undefined, sessions: Row[]): De
     // It also manufactures a usable blank for an otherwise empty panel; that fallback is NOT
     // an actually open chat and must never appear as a selectable Control Center result.
     const eligible = new Set(raw.tabs.filter(tab => tab.id === null || owned.has(tab.id)).map(tab => tab.uid))
-    const seenUids = new Set<string>(), seenSessions = new Set<string | null>()
+    const seenUids = new Set<string>(), seenSessions = new Set<string>()
     return layoutOf(row, sessions).tabs.flatMap(tab => {
-        if (!eligible.has(tab.uid) || seenUids.has(tab.uid) || seenSessions.has(tab.id) || (tab.id !== null && !owned.has(tab.id))) return []
-        seenUids.add(tab.uid); seenSessions.add(tab.id)
+        if (!eligible.has(tab.uid) || seenUids.has(tab.uid) || (tab.id !== null && (seenSessions.has(tab.id) || !owned.has(tab.id)))) return []
+        seenUids.add(tab.uid)
+        if (tab.id !== null) seenSessions.add(tab.id)
         const session = tab.id === null ? undefined : sessions.find(row => String(row.id) === tab.id)
         const firstMessage = session?.first_message == null || session.first_message === '' ? null : String(session.first_message)
         const kind = session && String(session.kind) === 'general' ? 'general' as const : 'thread' as const

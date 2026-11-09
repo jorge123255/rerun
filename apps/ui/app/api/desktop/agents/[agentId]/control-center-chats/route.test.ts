@@ -96,6 +96,15 @@ test('lists genuine open tabs in strip order and recent chats by engine activity
     expect(calls).toEqual(['GET /agents/engine-alice/sessions'])
 })
 
+test('lists a pinned unsent General and a separate unsent thread', async () => {
+    const tabs = [{ uid: `general:${alice.id}`, id: null }, { uid: 'draft-thread', id: null }]
+    await writeDesktopTabs(await openDesktopDatabase(root), alice.id, { baseRevision: 1, activeIndex: 1, tabs })
+    expect((await read()).openChats).toEqual([
+        { agentId: alice.id, tabUid: tabs[0].uid, sessionId: null, title: 'General', kind: 'general', firstMessage: null },
+        { agentId: alice.id, tabUid: tabs[1].uid, sessionId: null, title: 'New conversation', kind: 'thread', firstMessage: null },
+    ])
+})
+
 test('does not manufacture a blank when no layout exists, and preserves disabled owners through store restart', async () => {
     const db = await openDesktopDatabase(root)
     await db.execute({ sql: 'DELETE FROM desktop_agent_tabs WHERE agent_id = ?', args: [alice.id] })
