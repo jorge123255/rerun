@@ -9,7 +9,7 @@ import { scheduleSummary } from '@/lib/schedules/cron'
 import { createDesktopScheduleParser, validateDesktopSchedulePreview, type DesktopScheduleParser, type DesktopSchedulePreview, type DesktopScheduleSelection } from '@/lib/desktop/schedule-description'
 import type { DesktopProvider } from '@/lib/desktop/settings'
 
-export function DesktopScheduleDescription({mode,cron,runAt,timezone,agentId,connectionId,provider,model,disabled=false,onChange,parser}: {
+export function DesktopScheduleDescription({mode,cron,runAt,timezone,agentId,connectionId,provider,model,routine,disabled=false,onChange,parser}: {
     mode:'cron'|'runAt'
     cron:string
     runAt:string
@@ -18,20 +18,21 @@ export function DesktopScheduleDescription({mode,cron,runAt,timezone,agentId,con
     connectionId:string|null
     provider:DesktopProvider|null
     model:string|null
+    routine?:{slug:string;revision:string}
     disabled?:boolean
     onChange:(next:DesktopScheduleSelection)=>void
     parser?:DesktopScheduleParser
 }) {
-    const effectiveParser=parser??createDesktopScheduleParser({agentId,connectionId,provider,model})
+    const effectiveParser=parser??createDesktopScheduleParser({agentId,connectionId,provider,model,slug:routine?.slug,expectedRevision:routine?.revision})
     const [open,setOpen]=useState(false),[description,setDescription]=useState(''),[busy,setBusy]=useState(false)
     const [error,setError]=useState(''),[preview,setPreview]=useState<DesktopSchedulePreview|null>(null)
     const epoch=useRef(0),request=useRef<AbortController|undefined>(undefined)
     const abortRequest=useCallback(()=>{epoch.current++;request.current?.abort();request.current=undefined},[])
     useEffect(()=>()=>abortRequest(),[abortRequest])
-    useEffect(()=>{abortRequest();setBusy(false);setPreview(null);setError('')},[mode,cron,runAt,timezone,abortRequest])
+    useEffect(()=>{abortRequest();setBusy(false);setPreview(null);setError('')},[mode,cron,runAt,timezone,agentId,connectionId,provider,model,routine?.slug,routine?.revision,disabled,abortRequest])
     function changeOpen(next:boolean){if(!next){abortRequest();setBusy(false);setPreview(null);setError('')}setOpen(next)}
     async function previewSchedule(){
-        if(!description.trim()||busy)return
+        if(!description.trim()||busy||disabled)return
         const own=++epoch.current,controller=new AbortController()
         request.current=controller
         setBusy(true);setError('');setPreview(null)
@@ -65,7 +66,7 @@ export function DesktopScheduleDescription({mode,cron,runAt,timezone,agentId,con
                     </div>}
                     <div className="flex justify-end gap-2">
                         <Button type="button" size="sm" variant="ghost" onClick={()=>changeOpen(false)}>Cancel</Button>
-                        {preview ? <Button type="button" size="sm" onClick={()=>{onChange(preview.selection);setDescription('');changeOpen(false)}}>Use schedule</Button> : <Button type="button" size="sm" loading={busy} disabled={busy||!description.trim()} onClick={()=>void previewSchedule()}>Preview schedule</Button>}
+                        {preview ? <Button type="button" size="sm" disabled={disabled} onClick={()=>{onChange(preview.selection);setDescription('');changeOpen(false)}}>Use schedule</Button> : <Button type="button" size="sm" loading={busy} disabled={disabled||busy||!description.trim()} onClick={()=>void previewSchedule()}>Preview schedule</Button>}
                     </div>
                 </PopoverContent>
             </Popover>

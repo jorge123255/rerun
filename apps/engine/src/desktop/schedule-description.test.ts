@@ -5,15 +5,19 @@ const state = vi.hoisted(() => ({
     noObjectText: null as string | null,
     usable: true,
     sameConnection: true,
+    currentRevision: 'a'.repeat(64),
 }))
 const mocks = vi.hoisted(() => ({
     authorize: vi.fn(), resolvePin: vi.fn(), resolveDefault: vi.fn(), resolveRunModel: vi.fn(), isUsable: vi.fn(), assertProvider: vi.fn(),
+    readSchedule: vi.fn(), revision: vi.fn(),
     getAgent: vi.fn(), modelFor: vi.fn(), findConnection: vi.fn(), beginWork: vi.fn(), ensureAuth: vi.fn(), generateText: vi.fn(),
     releaseWork: vi.fn(), releaseAuth: vi.fn(),
 }))
 
 vi.mock('./schedule-binding.js', () => ({ authorizeDesktopSchedule: mocks.authorize }))
 vi.mock('./schedule-model.js', () => ({ resolveDesktopScheduleModel: mocks.resolvePin }))
+vi.mock('../schedules/loader.js', () => ({ readSchedule: mocks.readSchedule }))
+vi.mock('./schedule-tools/revision.js', () => ({ desktopScheduleDefinitionRevision: mocks.revision }))
 vi.mock('../agents/availability.js', () => ({ resolveConfiguredModel: mocks.resolveDefault, resolveRunModel: mocks.resolveRunModel, isUsable: mocks.isUsable }))
 vi.mock('./policy.js', () => ({ assertDesktopProvider: mocks.assertProvider }))
 vi.mock('../agents/registry.js', () => ({ getAgent: mocks.getAgent }))
@@ -46,6 +50,9 @@ beforeEach(() => {
     state.noObjectText = null
     state.usable = true
     state.sameConnection = true
+    state.currentRevision = 'a'.repeat(64)
+    mocks.readSchedule.mockResolvedValue({ connectionId: 'conn-b', provider: 'openai', model: 'gpt-exact' })
+    mocks.revision.mockImplementation(() => state.currentRevision)
     mocks.authorize.mockResolvedValue(undefined)
     mocks.getAgent.mockResolvedValue(agent)
     mocks.resolveDefault.mockImplementation(async () => ({ ...defaultResolution, connection: connectionFor('default') }))
@@ -170,4 +177,47 @@ it('rejects an invalid editor timezone before authorization or model work', asyn
     await expect(describeDesktopSchedule('agent-a', { ...input, timezone: 'Not/AZone' })).rejects.toThrow()
     expect(mocks.authorize).not.toHaveBeenCalled()
     expect(mocks.generateText).not.toHaveBeenCalled()
+})
+
+
+describe('saved Foreman routine model and revision', () => {
+    const revision = 'a'.repeat(64)
+    const foremanInput = { ...input, slug: 'daily', expectedRevision: revision }
+
+    it('uses the stored exact model and rechecks the same revision after generation', async () => {
+        await expect(describeDesktopSchedule('agent-a', foremanInput)).resolves.toMatchObject({ status: 'ok' })
+
+        expect(mocks.resolvePin).toHaveBeenCalledWith(agent, expect.objectContaining({ connectionId: 'conn-b', provider: 'openai', model: 'gpt-exact' }))
+        expect(mocks.resolveDefault).not.toHaveBeenCalled()
+        expect(mocks.readSchedule).toHaveBeenCalledTimes(2)
+    })
+
+    it('rejects a stale routine revision before loading the agent or model', async () => {
+        state.currentRevision = 'b'.repeat(64)
+
+        await expect(describeDesktopSchedule('agent-a', foremanInput)).resolves.toMatchObject({ status: 'invalid' })
+        expect(mocks.getAgent).not.toHaveBeenCalled()
+        expect(mocks.generateText).not.toHaveBeenCalled()
+        expect(mocks.resolveDefault).not.toHaveBeenCalled()
+    })
+
+    it('rejects a revision that changes during generation', async () => {
+        mocks.revision.mockImplementationOnce(() => revision).mockImplementationOnce(() => 'b'.repeat(64))
+
+        await expect(describeDesktopSchedule('agent-a', foremanInput)).resolves.toMatchObject({ status: 'invalid' })
+        expect(mocks.readSchedule).toHaveBeenCalledTimes(2)
+        expect(mocks.generateText).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+        [{ slug: 'daily' }],
+        [{ expectedRevision: revision }],
+        [{ slug: 'daily', expectedRevision: revision, connectionId: 'client-connection' }],
+        [{ slug: 'daily', expectedRevision: revision, provider: 'openai' }],
+        [{ slug: 'daily', expectedRevision: revision, model: 'client-model' }],
+    ])('rejects unauthorized or incomplete routine identity: %j', async identity => {
+        await expect(describeDesktopSchedule('agent-a', { ...input, ...identity })).rejects.toThrow()
+        expect(mocks.authorize).not.toHaveBeenCalled()
+        expect(mocks.generateText).not.toHaveBeenCalled()
+    })
 })

@@ -10,9 +10,11 @@ import { ensureCliAuth } from '../connections/cli-auth.js'
 import { findConnection } from '../connections/registry.js'
 import { HttpError } from '../lib/errors.js'
 import { isValidTimezone } from '../schedules/next-run.js'
+import { readSchedule } from '../schedules/loader.js'
 import { beginDesktopApiConnectionWork } from './api-connections/admission.js'
 import { assertDesktopProvider } from './policy.js'
 import { authorizeDesktopSchedule } from './schedule-binding.js'
+import { desktopScheduleDefinitionRevision } from './schedule-tools/revision.js'
 import { resolveDesktopScheduleModel } from './schedule-model.js'
 
 export const desktopScheduleDescriptionInputSchema = z.object({
@@ -22,8 +24,16 @@ export const desktopScheduleDescriptionInputSchema = z.object({
     connectionId: z.string().trim().min(1).max(256).nullable().default(null),
     provider: providerSchema.nullable().default(null),
     model: z.string().trim().min(1).max(256).nullable().default(null),
+    slug: z.string().regex(/^[a-zA-Z0-9_-]{1,160}$/).optional(),
+    expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict().superRefine((value, ctx) => {
     const fields = [value.connectionId, value.provider, value.model]
+    if (value.slug || value.expectedRevision) {
+        if (!value.slug || !value.expectedRevision || fields.some(field => field !== null)) {
+            ctx.addIssue({ code: 'custom', message: 'Choose the saved routine revision without a model override' })
+        }
+        return
+    }
     if (fields.every(field => field === null) || fields.every(field => field !== null)) return
     ctx.addIssue({ code: 'custom', message: 'Choose a connected provider and model, or follow the coworker default' })
 })
@@ -40,6 +50,9 @@ const modelOutputSchema = z.object({
 
 function invalid(): DesktopScheduleDescriptionResult {
     return { status: 'invalid', message: 'The model returned an invalid schedule. Edit the description or enter cron or an ISO time manually.' }
+}
+function changed(): DesktopScheduleDescriptionResult {
+    return { status: 'invalid', message: 'This routine changed. Refresh the editor before previewing again.' }
 }
 function unavailable(): DesktopScheduleDescriptionResult {
     return { status: 'unavailable', message: 'The selected local model is unavailable. Enter cron or an ISO time manually.' }
@@ -89,7 +102,7 @@ async function completeDesktopScheduleDescription(agent: LoadedAgent, input: Des
     const releaseWork = beginDesktopApiConnectionWork()
     if (!releaseWork) throw new HttpError(409, 'A provider connection is being removed. Nothing new was started.')
     try {
-        const requested = input.model ? await resolveDesktopScheduleModel(agent, input) : undefined
+        const requested = input.slug || input.model ? await resolveDesktopScheduleModel(agent, input) : undefined
         const resolved = requested ? await resolveRunModel(agent, requested) : await resolveConfiguredModel(agent.config)
         const connection = resolved.connection
         if (!connection || !isUsable(connection, resolved.model)) throw new HttpError(409, 'The selected local model is unavailable.')
@@ -126,11 +139,20 @@ export async function describeDesktopSchedule(agentId: string, input: DesktopSch
     await authorizeDesktopSchedule(agentId)
     signal.throwIfAborted()
     try {
+        const current = parsed.slug ? await readSchedule(agentId, parsed.slug) : null
+        signal.throwIfAborted()
+        if (parsed.slug && desktopScheduleDefinitionRevision(current) !== parsed.expectedRevision) return changed()
+        const selection = current ? { ...parsed, connectionId: current.connectionId, provider: current.provider, model: current.model } : parsed
         const agent = await getAgent(agentId)
-        const text = await completeDesktopScheduleDescription(agent, parsed, signal)
+        const text = await completeDesktopScheduleDescription(agent, selection, signal)
         signal.throwIfAborted()
         await authorizeDesktopSchedule(agentId)
         signal.throwIfAborted()
+        if (parsed.slug) {
+            const latest = await readSchedule(agentId, parsed.slug)
+            signal.throwIfAborted()
+            if (desktopScheduleDefinitionRevision(latest) !== parsed.expectedRevision) return changed()
+        }
         return parseModelSchedule(text)
     } catch (error) {
         if (signal.aborted) throw error

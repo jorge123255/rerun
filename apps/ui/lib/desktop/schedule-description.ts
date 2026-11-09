@@ -51,8 +51,16 @@ export const desktopScheduleDescriptionRequestSchema = z.object({
     connectionId: z.string().trim().min(1).max(256).nullable().default(null),
     provider: desktopProvider.nullable().default(null),
     model: z.string().trim().min(1).max(256).nullable().default(null),
+    slug: z.string().regex(/^[a-zA-Z0-9_-]{1,160}$/).optional(),
+    expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict().superRefine((value, ctx) => {
     const fields = [value.connectionId, value.provider, value.model]
+    if (value.slug || value.expectedRevision) {
+        if (!value.slug || !value.expectedRevision || fields.some(field => field !== null)) {
+            ctx.addIssue({ code: 'custom', message: 'Choose the saved routine revision without a model override' })
+        }
+        return
+    }
     if (fields.every(field => field === null) || fields.every(field => field !== null)) return
     ctx.addIssue({ code: 'custom', message: 'Choose a connected provider and model, or follow the coworker default' })
 })
@@ -64,13 +72,13 @@ export const desktopScheduleParseResultSchema = z.union([
 export const DESKTOP_SCHEDULE_PARSER_UNAVAILABLE = 'The local schedule parser is unavailable. Enter cron or an ISO time manually.'
 export const DESKTOP_SCHEDULE_PARSER_INVALID = 'The local schedule parser returned an invalid response. Enter cron or an ISO time manually.'
 
-export function createDesktopScheduleParser(selection: { agentId: string; connectionId: string | null; provider: z.infer<typeof desktopProvider> | null; model: string | null }): DesktopScheduleParser {
+export function createDesktopScheduleParser(selection: { agentId: string; connectionId: string | null; provider: z.infer<typeof desktopProvider> | null; model: string | null; slug?: string; expectedRevision?: string }): DesktopScheduleParser {
     return async input => {
         try {
             const response = await fetch(`/api/desktop/coworkers/${encodeURIComponent(selection.agentId)}/schedule-description`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store', redirect: 'error',
                 body: JSON.stringify({ description: input.description, nowIso: input.nowIso, timezone: input.timezone,
-                    connectionId: selection.connectionId, provider: selection.provider, model: selection.model }),
+                    connectionId: selection.connectionId, provider: selection.provider, model: selection.model, slug: selection.slug, expectedRevision: selection.expectedRevision }),
                 signal: AbortSignal.any([input.signal, AbortSignal.timeout(20_000)]),
             })
             const body = await response.json().catch(() => null)
