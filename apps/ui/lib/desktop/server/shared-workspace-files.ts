@@ -2,12 +2,14 @@ import { canonicalDesktopEngineRoot } from './runtime'
 import 'server-only'
 import { DesktopHttpError } from './auth'
 import type { DesktopRuntime } from './runtime'
+import { assertDesktopWorkspaceAdmission } from './workspace-admission'
 export { SHARED_IMPORT_BYTES } from '../../../../engine/src/desktop/shared-workspace-files'
 import {
     importSharedFile,
     importSharedText,
     listSharedDirectory,
     readSharedText,
+    renameSharedFile,
     resolveEngineSharedDirectory,
     SharedWorkspaceFileError,
     type SharedDirectoryListing,
@@ -54,4 +56,12 @@ export async function importDesktopSharedFile(runtime: DesktopRuntime, folder: s
 export async function importDesktopSharedOrdinaryFile(runtime: DesktopRuntime, folder: string, name: string, bytes: Uint8Array, access?: SharedFileAccess & { maxBytes?: number }): Promise<SharedImportResult> {
     try { return await importSharedFile(await desktopSharedDirectory(runtime, access?.signal), folder, name, bytes, access) }
     catch (error) { rethrowDesktopSharedFileError(error) }
+}
+
+export async function renameDesktopSharedFile(runtime: DesktopRuntime, path: string, name: string, signal?: AbortSignal): Promise<SharedImportResult> {
+    try {
+        return await renameSharedFile(await desktopSharedDirectory(runtime, signal), path, name, {
+            signal, beforeCommit: () => assertDesktopWorkspaceAdmission(runtime),
+        })
+    } catch (error) { rethrowDesktopSharedFileError(error) }
 }

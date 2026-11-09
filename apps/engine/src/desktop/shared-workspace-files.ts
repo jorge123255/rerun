@@ -491,3 +491,66 @@ export async function importSharedFile(root: string, folder: string, name: strin
 export async function importSharedText(root: string, folder: string, name: string, bytes: Uint8Array, access?: SharedFileAccess): Promise<SharedImportResult> {
     return importSharedFile(root, folder, name, bytes, { ...access, textOnly: true, maxBytes: SHARED_IMPORT_BYTES })
 }
+
+/** Rename a listed ordinary file in the same shared directory without replacing an arrival. */
+export async function renameSharedFile(root: string, path: string, nextName: string, access?: SharedFileAccess): Promise<SharedImportResult> {
+    const parts = partsOf(path, 'reject')
+    if (!PART.test(nextName)) throw new SharedWorkspaceFileError(400, 'Choose a file name in this folder.')
+    const name = parts.pop()!
+    const kept = () => new SharedWorkspaceFileError(409, 'This folder already has something with that name. The existing file was kept.')
+    return withRoot(root, access, openSharedRoot, async rootPin => {
+        const lease = await acquireSkillLease(rootPin.path, rootPin, access?.signal)
+        try {
+            const { pin, close, rel } = await descend(root, rootPin, parts, access?.signal)
+            const lookup = (entry: string) => lstat(join(/* turbopackIgnore: true */ pin.pinned, entry), { bigint: true })
+                .catch(error => { if (missing(error)) return null; throw error })
+            const guard = async () => {
+                await commit(access)
+                lease.assertCurrent()
+                await assertPin(rootPin, true)
+                await assertPin(pin, true)
+            }
+            try {
+                const source = await lookup(name)
+                if (!source) throw new SharedWorkspaceFileError(404, 'File not found')
+                if (source.isSymbolicLink() || !source.isFile()) throw new SharedWorkspaceFileError(400, 'Choose a file, not a folder or symlink.')
+                if (source.uid !== currentUid()) throw otherUser()
+                if (source.nlink !== BigInt(1)) throw new SharedWorkspaceFileError(400, 'This shared file is linked elsewhere. It was left unopened.')
+                const matches = (entry: Awaited<ReturnType<typeof lookup>>) => entry?.dev === source.dev && entry.ino === source.ino
+                if (name === nextName) return { path, name }
+                const destination = await lookup(nextName)
+                if (destination && (!matches(destination) || (await readdir(/* turbopackIgnore: true */ pin.pinned)).includes(nextName))) throw kept()
+                await guard()
+                const exact = await lookup(name)
+                if (!matches(exact) || exact?.nlink !== BigInt(1) || exact.uid !== currentUid()) throw outside()
+
+                // Case/Unicode aliases need a hop on case-insensitive disks. The intermediate
+                // name is visible so an interrupted move never hides the only copy of the file.
+                let from = name
+                if (destination) {
+                    from = `rename-recovery-${randomBytes(12).toString('hex')}${name.match(/\.[^.]+$/)?.[0]?.slice(0, 32) ?? ''}`
+                    await renameSkillEntry(pin.path, pin, name, source, from)
+                }
+                try {
+                    if (from !== name) await guard()
+                    await renameSkillEntry(pin.path, pin, from, source, nextName)
+                } catch (error) {
+                    const occupied = await lookup(nextName)
+                    if (from !== name && matches(await lookup(from))) {
+                        try { await guard(); await renameSkillEntry(pin.path, pin, from, source, name) }
+                        catch { throw new SharedWorkspaceFileError(409, `The rename was interrupted. Refresh Shared files to find “${from}”.`) }
+                    }
+                    if (occupied && !matches(occupied)) throw kept()
+                    throw error
+                }
+
+                await guard()
+                const names = await readdir(/* turbopackIgnore: true */ pin.pinned)
+                const actual = names.find(entry => entry === nextName || entry.normalize('NFC') === nextName.normalize('NFC'))
+                const final = actual ? await lookup(actual) : null
+                if (!actual || !matches(final) || final?.nlink !== BigInt(1)) throw outside()
+                return { path: rel ? `${rel}/${actual}` : actual, name: actual }
+            } finally { if (close) await pin.handle.close() }
+        } finally { await lease.release() }
+    }, false, true)
+}
