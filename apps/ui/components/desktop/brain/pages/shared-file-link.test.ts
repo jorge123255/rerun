@@ -48,7 +48,7 @@ describe('authorizedSharedFilePath', () => {
 
     it('does not treat another workspace absolute path as the listed file with the same name', () => {
         expect(authorizedSharedFilePath('/data/shared/readme.md', listed)).toBeNull()
-        expect(authorizedSharedFilePath('/data/agents/other/workspace/readme.md', [{ path: 'readme.md', name: 'readme.md' }])).toBeNull()
+        expect(authorizedSharedFilePath('/data/agents/other/workspace/readme.md', [{ path: 'readme.md' }])).toBeNull()
     })
 })
 

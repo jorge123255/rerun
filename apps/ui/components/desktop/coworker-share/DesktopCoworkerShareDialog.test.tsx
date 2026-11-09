@@ -16,7 +16,7 @@ afterEach(async () => { if (root) await act(async () => root!.unmount()); root =
 const button = (label: string) => [...document.querySelectorAll('button')].find(item => item.textContent?.trim() === label)
 
 function client(): DesktopCoworkerShareClient {
-    return { plan: vi.fn(async () => sharePlan), review: vi.fn(async () => shareReview), export: vi.fn(async () => shareReview), preview: vi.fn(), downloadUrl: vi.fn(() => '/download'), import: vi.fn(), revoke: vi.fn(), dispose: vi.fn() } as DesktopCoworkerShareClient
+    return { plan: vi.fn(async () => sharePlan), review: vi.fn(async () => shareReview), export: vi.fn(async () => shareReview), preview: vi.fn(), inspect: vi.fn(), downloadUrl: vi.fn(() => '/download'), import: vi.fn(), revoke: vi.fn(), dispose: vi.fn() } as DesktopCoworkerShareClient
 }
 
 test('all controls are non-submit and Escape closes without creating a share', async () => {
