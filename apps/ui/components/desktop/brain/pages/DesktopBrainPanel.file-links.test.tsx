@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, type ComponentProps, type ReactNode } from 'react'
+import { act, createElement, type ComponentProps, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { SharedFilesTree } from '@/components/brain/useSharedFilesTree'
@@ -7,7 +7,6 @@ import { DesktopBrainPanel } from './DesktopBrainPanel'
 import type { DesktopBrainActions } from './types'
 
 const harness = vi.hoisted(() => {
-    const { createElement } = require('react') as typeof import('react')
     const paths = ['readme.md', '../secret.md', '/data/agents/other/workspace/notes.md', 'missing.md', '', '%2e%2e/readme.md', 'shared:readme.md']
     const seen: {
         page: null | { files?: { path: string }[]; onOpenFile?: (path: string) => void }
