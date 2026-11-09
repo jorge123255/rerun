@@ -48,7 +48,7 @@ export function DesktopCoworkerOverviewCard({ identity, name, boxName, enabled, 
     onOpen: (tab: DesktopOverviewDestination, from: HTMLElement) => void
     onClose: () => void
     onShare?: () => void
-    onDelete?: (identity: DesktopOverviewIdentity, confirmationName: string) => void
+    onDelete?: (identity: DesktopOverviewIdentity, confirmationName: string) => void | Promise<void>
     onOpenComputer?: () => void
     onRenamed: (identity: DesktopOverviewIdentity, name: string) => void
 }) {

@@ -31,7 +31,7 @@ afterEach(async () => {
 
 test('previews supported shared media and saves exact reviewed bytes with sibling navigation intact', async () => {
     const png = onePixelPng()
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(png, { status: 200, headers: { 'content-type': 'image/png', 'x-rerun-shared-sha256': 'a'.repeat(64) } }))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(png, { status: 200, headers: { 'content-type': 'image/png', 'x-rerun-shared-sha256': 'a'.repeat(64) } })))
     await act(async () => {
         root = createRoot(document.body.appendChild(document.createElement('div'))
         root!.render(<DesktopSharedFiles />)

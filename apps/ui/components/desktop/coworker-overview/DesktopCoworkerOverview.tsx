@@ -35,7 +35,7 @@ export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor 
     loadingSlot?: ReactNode
     onClose: () => void
     onShare?: () => void
-    onDelete?: (identity: DesktopOverviewIdentity, confirmationName: string) => void
+    onDelete?: (identity: DesktopOverviewIdentity, confirmationName: string) => void | Promise<void>
     onOpenComputer?: () => void
     onRenamed: (identity: DesktopOverviewIdentity, name: string) => void
     onOpenAcceptedPanel?: (tab: 'files' | 'memories' | 'data' | 'settings' | 'tools' | 'logs') => void

@@ -57,7 +57,7 @@ export async function readSharedBytes(runtime: DesktopRuntime, path: string, kin
     const handles: FileHandle[] = [rootHandle]
     try {
         let current = root
-        for (const part of parts.slice(0, -1) {
+        for (const part of parts.slice(0, -1)) {
             current = join(current, part)
             contained(root, current)
             handles.push(await directory(current))

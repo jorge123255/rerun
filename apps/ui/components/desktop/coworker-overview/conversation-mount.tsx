@@ -43,7 +43,7 @@ export function DesktopConversationOverview(props: Props) {
         onOpenSession={(id, title) => { if (current()) latest.current.onOpenSession(id, title) }}
         onOpenAcceptedPanel={tab => { if (current()) latest.current.onOpenAcceptedPanel(tab) }}
         onShare={props.authority.onShare ? () => { if (current()) latest.current.authority.onShare?.() } : undefined}
-        onDelete={props.authority.onDelete ? (source, name) => { if (current() && sameDesktopOverviewIdentity(source, identity)) latest.current.authority.onDelete?.(source, name) } : undefined}
+        onDelete={props.authority.onDelete ? (source, name) => { if (current() && sameDesktopOverviewIdentity(source, identity)) return latest.current.authority.onDelete?.(source, name) } : undefined}
         onOpenComputer={props.authority.onOpenComputer ? () => { if (current()) latest.current.authority.onOpenComputer?.() } : undefined}
     />
 }

@@ -32,7 +32,7 @@ export function onePixelPng(): Buffer {
     return Buffer.concat([
         Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
         chunk('IHDR', ihdr),
-        chunk('IDAT', deflateSync(Buffer.from([0, 0, 0, 0])),
+        chunk('IDAT', deflateSync(Buffer.from([0, 0, 0, 0, 0]))),
         chunk('IEND', new Uint8Array()),
     ])
 }

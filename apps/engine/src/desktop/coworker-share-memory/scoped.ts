@@ -59,7 +59,7 @@ export async function captureScopedCoworkerMemories(input: { agentRoot: string; 
                 for (const name of names) {
                     await input.assertCurrent()
                     await assertPinnedRoot(input.agentRoot,pin.pinned)
-                    const file = await readConfined(pin.pinned, `memory/${name}`, LIMITS.maxNoteBytes)
+                    const file = await readConfined(pin.pinned, `memory/${name}`, LIMITS.maxNoteBytes, input.agentRoot)
                     if (!file.ok) return fail()
                     bytes += file.bytes.length
                     if (bytes > LIMITS.maxTotalBytes) return fail()
@@ -93,7 +93,7 @@ export async function restoreScopedCoworkerMemories(input: { agentRoot: string; 
             for (const name of await noteFiles(pin.pinned, true)) {
                 const bytes = expected.get(name)
                 if (!bytes) return fail()
-                const file = await readConfined(pin.pinned, `memory/${name}`, LIMITS.maxNoteBytes)
+                const file = await readConfined(pin.pinned, `memory/${name}`, LIMITS.maxNoteBytes, input.agentRoot)
                 if (!file.ok || !file.bytes.equals(bytes)) return fail()
             }
         }
@@ -101,20 +101,20 @@ export async function restoreScopedCoworkerMemories(input: { agentRoot: string; 
             workspaceId: input.workspaceId, destinationAgentId: input.destinationAgentId,
             assertFreshDestination: async () => {
                 await assertCurrent()
-                const saved = await readOwnJson(pin.pinned, RECEIPT)
+                const saved = await readOwnJson(pin.pinned, RECEIPT, input.agentRoot)
                 if (saved === null) {
                     // Never adopt notes which were not reserved by this exact import.
                     if ((await noteFiles(pin.pinned, true)).length) return fail()
                     await assertCurrent()
-                    await writeOwnJson(pin.pinned, RECEIPT, reservation)
+                    await writeOwnJson(pin.pinned, RECEIPT, reservation, input.agentRoot)
                 }
-                const persisted = await readOwnJson(pin.pinned, RECEIPT)
+                const persisted = await readOwnJson(pin.pinned, RECEIPT, input.agentRoot)
                 if (JSON.stringify(persisted) !== JSON.stringify(reservation)) return fail()
                 await validateSubset()
             },
             installNote: async ({ note }) => {
                 await assertCurrent()
-                const outcome = await writeExclusiveFile(pin.pinned, memoryMemberPath(note.id), Buffer.from(renderMemoryMarkdown(note)))
+                const outcome = await writeExclusiveFile(pin.pinned, memoryMemberPath(note.id), Buffer.from(renderMemoryMarkdown(note)), input.agentRoot)
                 await assertCurrent()
                 return outcome === 'created' ? 'installed' : 'reused'
             },
