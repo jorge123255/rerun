@@ -1,4 +1,4 @@
-import type { EngineMessage } from '@rerun/contracts'
+import type { EngineMessage } from '@/lib/engine/types'
 import { describe, expect, it } from 'vitest'
 import { RERUN_PUBLIC_DOCS_CORPUS, workspaceAttachmentPart, desktopCoworkerMentionContextParts } from '@rerun/contracts'
 import { buildAttachmentsRef } from '@/lib/chat/attachments-marker'

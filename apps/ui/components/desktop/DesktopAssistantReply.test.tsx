@@ -401,7 +401,7 @@ test('a restored generic receipt keeps its status and does not render a secret o
         for (const token of forbidden) expect(html).not.toContain(token)
     }
     const show = async (id: string, parts: UIMessage['parts']) => {
-        await act(async () => root.render(<DesktopAssistantReply message={{ id, role: 'assistant', parts }} agentId="agent-1" />))
+        await act(async () => root.render(<DesktopAssistantReply message={{ id, role: 'assistant', parts }} streaming={false} agentId="agent-1" />))
     }
 
     await show('engine-foreign', [{
@@ -424,7 +424,7 @@ test('a restored generic receipt keeps its status and does not render a secret o
     await show('engine-pending', [{
         type: 'dynamic-tool', toolName: 'fs_read', toolCallId: 'pending-read', state: 'approval-requested',
         input: { path: 'notes/plan.md' }, output: `seen ${secret} password=${password}`,
-    } as UIMessage['parts'][number]])
+    } as unknown as UIMessage['parts'][number]])
     expect(container.textContent).toContain('1 pending')
     expect(container.querySelector('[data-historical="group"]')).not.toBeNull()
     await act(async () => container.querySelector('button')!.click())
