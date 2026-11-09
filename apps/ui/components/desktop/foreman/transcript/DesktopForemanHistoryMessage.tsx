@@ -12,7 +12,7 @@ export function DesktopForemanHistoryMessage({ messageId, parts }: { messageId: 
                 case 'text': return <div key={part.key} className="whitespace-pre-wrap break-words">{part.text}</div>
                 case 'reasoning': return <details key={part.key} className="text-xs text-muted-foreground"><summary>Thinking</summary><p className="whitespace-pre-wrap break-words">{part.text}</p></details>
                 case 'link': return <a key={part.key} href={part.url} target="_blank" rel="noopener noreferrer" className="break-all text-sm underline">{part.title}</a>
-                case 'docs': return <div key={part.key} className="flex flex-col gap-1">{part.links.map((link, index) => <a key={`${index}:${link.url}`} href={link.url} target="_blank" rel="noopener noreferrer" className="break-all text-xs underline">{link.title}</a>)}</div>
+                case 'docs': return <div key={part.key} className="flex flex-col gap-1">{part.note && <p className="whitespace-pre-wrap text-xs">{part.note}</p>}{part.links.map((link, index) => <div key={`${index}:${link.url}`}><a href={link.url} target="_blank" rel="noopener noreferrer" className="break-all text-xs underline">{link.title}</a>{link.text && <p className="max-h-48 overflow-auto whitespace-pre-wrap text-xs">{link.text}</p>}</div>)}</div>
                 case 'card': return <DesktopHistoricalCardView key={part.key} card={part.card} />
                 case 'tool': return <DesktopHistoricalStepGroup key={part.key} items={[part.item]} />
                 case 'unknown': return <p key={part.key} className="text-xs text-muted-foreground" role="note">{part.label}</p>

@@ -9,7 +9,7 @@ export type ForemanHistoryPart =
     | { key: string; kind: 'reasoning'; text: string }
     | { key: string; kind: 'link'; url: string; title: string }
     | { key: string; kind: 'card'; card: DesktopHistoricalCard }
-    | { key: string; kind: 'docs'; links: { url: string; title: string }[] }
+    | { key: string; kind: 'docs'; links: { url: string; title: string; text?: string }[]; note?: string }
     | { key: string; kind: 'tool'; item: DesktopHistoricalGenericItem }
     | { key: string; kind: 'unknown'; label: string }
 
@@ -40,8 +40,8 @@ export function foremanHistoryParts(messageId: string, parts: readonly unknown[]
                 if (parsed.success) {
                     const result = parsed.data
                     const entries = result.passages.length ? result.passages : result.pages?.length ? result.pages : [{ url: result.documentation, title: 'Rerun documentation' }]
-                    const links = entries.flatMap(entry => { const url = safeForemanHistoryLink(entry.url); return url ? [{ url, title: entry.title }] : [] })
-                    if (links.length) return { key, kind: 'docs', links }
+                    const links = entries.flatMap(entry => { const url = safeForemanHistoryLink(entry.url); return url ? [{ url, title: entry.title, ...('text' in entry && typeof entry.text === 'string' ? { text: entry.text } : {}) }] : [] })
+                    if (links.length) return { key, kind: 'docs', links, ...(result.note ? { note: result.note } : {}) }
                 }
             }
             const card = selectDesktopHistoricalCard(tool)
