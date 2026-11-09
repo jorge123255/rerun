@@ -70,8 +70,12 @@ test('a browser session cannot publish a coworker file', async () => {
     expect(fetches).toEqual([])
 })
 
-test('publication composes with native route policy while generic managed-Foreman reads remain closed', async () => {
-    expect(desktopRouteAllowed('GET', '/agents/foreman')).toBe(false)
+test('file publication uses scoped permissions without reading Foreman details', async () => {
+    // The delegation bridge may read the exact authenticated details route.
+    // File publication neither calls that route nor opens a generic Foreman file read.
+    expect(desktopRouteAllowed('GET', '/agents/foreman')).toBe(true)
+    expect(desktopRouteAllowed('PATCH', '/agents/foreman')).toBe(false)
+    expect(desktopRouteAllowed('GET', '/agents/foreman/files')).toBe(false)
     expect(desktopRouteAllowed('GET', '/desktop/foreman/file-permissions')).toBe(true)
     const response = await handleDesktopForemanAgentFilePublication(request())
     expect(await response.json()).toMatchObject({ status: 'saved', path: 'note.md' })

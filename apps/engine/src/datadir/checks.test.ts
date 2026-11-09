@@ -12,6 +12,9 @@ const { agentDir, agentsDir, configPath, connectionConfigPath, dataVersionPath, 
 const { raw } = await import('../db/client.js')
 const { insertAgentIndex } = await import('../db/repos/agents.js')
 const { getSystemDb, closeSystemDb } = await import('../db/systemDb.js')
+const { latestVersion } = await import('../db/ladder.js')
+const { DATA_DIR_MIGRATIONS } = await import('./migrations.js')
+const dataVersionTarget = latestVersion(DATA_DIR_MIGRATIONS)
 const { prepareDataDir } = await import('./ladder.js')
 const { runDataDirChecks } = await import('./checks.js')
 const { createServer } = await import('../http/server.js')
@@ -41,7 +44,7 @@ describe('runDataDirChecks', () => {
         const report = await runDataDirChecks()
 
         expect(failing(report)).toEqual([])
-        expect(report).toMatchObject({ ok: true, dataVersion: 8, dataVersionTarget: 8, agentIds: ['alpha'] })
+        expect(report).toMatchObject({ ok: true, dataVersion: dataVersionTarget, dataVersionTarget, agentIds: ['alpha'] })
     })
 
     it('flags a data-dir the ladder has not reached', async () => {
@@ -106,6 +109,6 @@ describe('GET /doctor', () => {
     it('returns the report', async () => {
         const res = await app.request('/doctor', { headers: { Authorization: 'Bearer secret' } })
         expect(res.status).toBe(200)
-        expect(await res.json()).toMatchObject({ ok: true, dataVersion: 8 })
+        expect(await res.json()).toMatchObject({ ok: true, dataVersion: dataVersionTarget })
     })
 })
