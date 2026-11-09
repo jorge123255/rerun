@@ -1,3 +1,4 @@
+import { readAnsweredQuestionRecaps } from './answered-question-recap'
 import 'server-only'
 import { createHash } from 'node:crypto'
 import type { CompanyBriefModelRef, DesktopForemanBinding, DesktopForemanChatRef, DesktopForemanLiveEvent, DesktopForemanModelRef } from '@rerun/contracts'
@@ -240,7 +241,9 @@ async function createBinding(runtime: DesktopRuntime) {
             const pending = view.live ? null : await readPendingForemanQuestion(runtime, owner)
             const saved = pending ? await savedQuestionAttempt(owner.chat) : undefined
             const attempt = saved?.questionId === pending?.view.id && saved
-            return { ...owner, view, messages: await hideDesktopForemanIntakeKickoff(runtime, db, owner, publicDesktopHistory(transformEngineMessages(messages))),
+            const history = await hideDesktopForemanIntakeKickoff(runtime, db, owner, publicDesktopHistory(transformEngineMessages(messages)))
+            const answeredQuestions = await readAnsweredQuestionRecaps(db, owner.chat.chatId, history)
+            return { ...owner, view, messages: history, answeredQuestions,
                 question: pending ? { ...pending.view, ...(attempt && { attempt: attempt.action === 'cancel'
                     ? { action: 'cancel' as const, requestId: attempt.requestId }
                     : { action: 'answer' as const, requestId: attempt.requestId, answers: attempt.answers } }) } : null }

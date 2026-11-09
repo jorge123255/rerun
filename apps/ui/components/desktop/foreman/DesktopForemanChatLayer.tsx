@@ -1,5 +1,7 @@
 'use client'
 
+import type { DesktopAnsweredQuestionRecap } from '@/lib/desktop/foreman/answered-question-recap'
+import { DesktopForemanAnsweredQuestion } from './transcript/DesktopForemanAnsweredQuestion'
 import type { ForemanHistoryPart } from './transcript/parts'
 import { DesktopForemanHistoryMessage } from './transcript/DesktopForemanHistoryMessage'
 
@@ -28,6 +30,7 @@ export type DesktopForemanMessage = {
     text: string
     docs?: UIMessage['parts']
     history?: readonly ForemanHistoryPart[]
+    answeredQuestions?: readonly DesktopAnsweredQuestionRecap[]
 }
 
 export function DesktopForemanChatLayer({
@@ -106,7 +109,10 @@ export function DesktopForemanChatLayer({
                                 message.role === 'user' ? 'ml-auto bg-secondary' : 'bg-transparent text-foreground',
                             )}
                         >
-                            {restored && message.history ? <DesktopForemanHistoryMessage history={message.history} /> : <>
+                            {restored && message.history ? <>
+                                <DesktopForemanHistoryMessage history={message.history} />
+                                <DesktopForemanAnsweredQuestion recaps={message.answeredQuestions ?? []} />
+                            </> : <>
                                 {message.text}
                                 {message.docs?.map((part, index) => <DesktopForemanDocsTool key={index} part={part as import('ai').ToolUIPart} restored={restored} />)}
                             </>}
