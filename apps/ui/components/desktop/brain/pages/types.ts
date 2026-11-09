@@ -1,5 +1,7 @@
+import type { BrainSelection } from '@/components/brain/selection'
 import type { BrainDraftWriteResult, BrainPageDetail } from '@/lib/desktop/use-brain-page-draft'
 import type { DesktopBrainPagesActions, BrainDeleteResult, DesktopBrainOverview as PagesOverview } from '@/lib/desktop/brain-pages'
+import type { DataFocus } from '@/lib/data/source'
 import type { BrainRevision } from '@rerun/contracts'
 
 /**
@@ -11,8 +13,14 @@ import type { BrainRevision } from '@rerun/contracts'
  */
 export type DesktopBrainOverview =
     | ({ available: true } & PagesOverview)
-    /** `outdated` means the box answers but predates the Brain; the panel says so instead of guessing. */
+    /** `outdated` means the box answers but predates Brain pages. Files and the database stay. */
     | { available: false; reason: 'no_machine' | 'outdated' | 'unreachable' }
+
+/** What another panel can ask this Brain to open. A table in `data` wins over `selection`. */
+export type DesktopBrainRoute = {
+    selection?: BrainSelection | null
+    data?: DataFocus | null
+}
 
 export type DesktopBrainDeleteResult = BrainDeleteResult
 
