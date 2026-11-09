@@ -3,11 +3,11 @@ import type { Client } from '@libsql/client'
 import { agentDataDir, agentDataDbPath } from '../config/paths.js'
 import { checkpointStore, closeStore, formatSchema, listTables, openStore } from './sqlStore.js'
 import { VIEWS_TABLE, viewNamesByTable } from './tableViews.js'
+import { PORTABLE_DATABASE_RECEIPT_TABLE } from './private-data-schema.js'
 import { beginDesktopAgentWork } from '../desktop/agent-lifecycle.js'
 
 const storeKey = (id: string) => `agent:${id}`
 
-export const PORTABLE_DATABASE_RECEIPT_TABLE = '_rerun_portable_database_receipt'
 export const AGENT_HIDDEN_TABLES = [VIEWS_TABLE, PORTABLE_DATABASE_RECEIPT_TABLE]
 
 export async function getAgentDb(id: string): Promise<Client> {
