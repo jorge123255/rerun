@@ -377,9 +377,9 @@ export async function finishDesktopNotificationAttempt(db: Client, input: Deskto
         try {
             const owned = await tx.execute({ sql: 'SELECT 1 FROM desktop_notification_attempts WHERE event_key=? AND attempt_id=?', args: [input.key, input.attemptId] })
             if (owned.rows.length && input.status !== 'unknown') {
-                if (input.status === 'shown') await tx.execute({
+                if (input.status === 'shown' || input.status === 'accepted') await tx.execute({
                     sql: 'INSERT INTO desktop_notifications_seen (event_key,notified_at,native_status) VALUES (?,?,?) ON CONFLICT(event_key) DO NOTHING',
-                    args: [input.key, new Date().toISOString(), input.nativeStatus ?? null],
+                    args: [input.key, new Date().toISOString(), input.nativeStatus === 'accepted' ? 'shown' : input.nativeStatus ?? null],
                 })
                 await tx.execute({ sql: 'DELETE FROM desktop_notification_attempts WHERE event_key=? AND attempt_id=?', args: [input.key, input.attemptId] })
             }

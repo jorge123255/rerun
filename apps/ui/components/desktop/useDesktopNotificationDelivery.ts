@@ -72,44 +72,50 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
                 for (const event of admitted.events) {
                     if (event.kind === 'info') {
                         const looking = document.visibilityState === 'visible' && event.sessionId === visible.current
-                        let status: DesktopNotificationDeliveryResult['status'] = 'unavailable'
+                        let status: DesktopNotificationDeliveryResult['status'] | 'shown' = 'unavailable'
+                        let inAppStatus: 'shown' | 'unavailable' = 'unavailable'
                         let nativeStatus: DesktopNotificationDeliveryResult['status'] = 'unavailable'
                         if (!signal.aborted && !isDesktopQuitting() && !looking && admitted.channels.toast) {
                             showDesktopNotificationToast(event, openTarget)
                             status = 'shown'
+                            inAppStatus = 'shown'
                             if (bridge.available) {
                                 const native = await boundedDelivery(bridge.notify({ key: event.key, kind: event.kind, agentId: event.agentId, sessionId: event.sessionId,
                                     groupId: event.groupId ?? null, terminalId: event.terminalId ?? null, requestId: event.requestId ?? null,
                                     title: event.title, subtitle: event.subtitle, silent: true, body: event.body ?? undefined }))
                                 nativeStatus = native.status
+                                if (nativeStatus === 'accepted') status = 'accepted'
                             }
                         }
                         if (!signal.aborted && !isDesktopQuitting() && !looking && admitted.channels.sound) await playSound(signal)
                         await fetch(DESKTOP_NOTIFICATION_DELIVERY_URL, { method: 'POST', headers: { 'content-type': 'application/json' },
-                            body: JSON.stringify({ key: event.key, attemptId: event.attemptId, status, nativeStatus }), cache: 'no-store', signal: AbortSignal.timeout(5000) }).catch(() => {})
+                            body: JSON.stringify({ key: event.key, attemptId: event.attemptId, status, inAppStatus, nativeStatus }), cache: 'no-store', signal: AbortSignal.timeout(5000) }).catch(() => {})
                         continue
                     }
-                    let status: DesktopNotificationDeliveryResult['status'] = 'unavailable'
-                    let nativeStatus: DesktopNotificationDeliveryResult['status'] | null = null
+                    let status: DesktopNotificationDeliveryResult['status'] | 'shown' = 'unavailable'
+                    let inAppStatus: 'shown' | 'unavailable' = 'unavailable'
+                    let nativeStatus: DesktopNotificationDeliveryResult['status'] = 'unavailable'
                     if (!signal.aborted && !isDesktopQuitting()) {
                         if (admitted.channels.toast) {
                             // The in-app card needs no bridge; the native alert is silent because
                             // the original sound asset below is the sole sound, avoiding a double ring.
                             showDesktopNotificationToast(event, openTarget)
                             status = 'shown'
+                            inAppStatus = 'shown'
                             if (bridge.available) {
                                 const native = await boundedDelivery(bridge.notify({ key: event.key, kind: event.kind, agentId: event.agentId, sessionId: event.sessionId,
                                     groupId: event.groupId ?? null, terminalId: event.terminalId ?? null, requestId: event.requestId ?? null,
                                     title: event.title, subtitle: event.subtitle, silent: true, body: event.body ?? undefined }))
                                 nativeStatus = native.status
+                                if (nativeStatus === 'accepted') status = 'accepted'
                             }
                         }
-                        if (admitted.channels.sound && event.kind !== 'done' && await playSound(signal)) status = 'shown'
+                        if (admitted.channels.sound && event.kind !== 'done' && await playSound(signal) && status === 'unavailable') status = 'shown'
                     }
                     // Receipt loss preserves admission. Only definite nondelivery with the exact
                     // token may release it; an old response cannot clear a newer attempt.
                     await fetch(DESKTOP_NOTIFICATION_DELIVERY_URL, { method: 'POST', headers: { 'content-type': 'application/json' },
-                        body: JSON.stringify({ key: event.key, attemptId: event.attemptId, status, nativeStatus }), cache: 'no-store', signal: AbortSignal.timeout(5000) }).catch(() => {})
+                        body: JSON.stringify({ key: event.key, attemptId: event.attemptId, status, inAppStatus, nativeStatus }), cache: 'no-store', signal: AbortSignal.timeout(5000) }).catch(() => {})
                 }
             } catch { /* Next poll retries unadmitted events; admitted ambiguity never replays. */ }
             finally { busy = false }

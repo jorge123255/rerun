@@ -14,7 +14,7 @@ export function desktopNotifyTools(ctx: RunContext, ports: { deliver: (input: De
     return {
         notify_user: tool({
             description:
-                'Ask the user to look at a result, risk, or decision while you keep working. This does not pause you and does not wait for a reply. The inboxStatus field confirms whether the notice was recorded. Report a native alert only when nativeStatus is shown. Make at most one attempt for each notification. Use ask_user for an answer, request_approval for a go-ahead, suggest_service for a service, or request_secret for a credential.',
+                'Ask the user to look at a result, risk, or decision while you keep working. This does not pause you and does not wait for a reply. The inboxStatus field confirms whether the notice was recorded. When nativeStatus is accepted, report that macOS accepted the request. That does not confirm a visible alert or that the user saw it. Make at most one attempt for each notification. Use ask_user for an answer, request_approval for a go-ahead, suggest_service for a service, or request_secret for a credential.',
             inputSchema: z.object({
                 message: z.string().max(MAX_MESSAGE_LENGTH).describe('The human-readable message to show the user.'),
                 kind: z.enum(['info']).default('info').describe('Always info: this tool has exactly one purpose, asking the user to look at something.'),

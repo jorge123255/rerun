@@ -28,11 +28,11 @@ test('only bounded exact notification copy and target fields cross into native n
     assert.equal(info.body,'Look here')
     assert.equal('title' in info && info.silent,true)
 })
-test('show acknowledgement and duplicate keys share one OS attempt; clicks contain identity only',async()=>{
+test('OS acceptance and duplicate keys share one attempt without claiming a visible banner; clicks contain identity only',async()=>{
     const {notices,clicks,bridge}=fixture()
     const result=bridge.notify(payload),duplicate=bridge.notify(payload)
     assert.equal(result,duplicate);assert.equal(notices.length,1)
-    notices[0].emit('show');assert.deepEqual(await result,{status:'shown'})
+    notices[0].emit('show');assert.deepEqual(await result,{status:'accepted'})
     notices[0].emit('click');assert.deepEqual(clicks,[{key:'event:1',kind:'done',agentId:'owner',sessionId:'chat',groupId:'group'}])
     bridge.close();notices[0].emit('click');assert.equal(clicks.length,1)
     assert.deepEqual(await bridge.notify({...payload,key:'second'}),{status:'unavailable'})
@@ -62,13 +62,13 @@ test('capacity evicts a settled notice and retains current click routing', async
     for (let i=0; i<128; i++) {
         const result=bridge.notify({...payload,key:`event:${i}`})
         notices.at(-1).emit('show')
-        assert.deepEqual(await result,{status:'shown'})
+        assert.deepEqual(await result,{status:'accepted'})
     }
     const next=bridge.notify({...payload,key:'event:128'})
     assert.equal(notices.length,129)
     notices[0].emit('click')
     notices.at(-1).emit('show')
-    assert.deepEqual(await next,{status:'shown'})
+    assert.deepEqual(await next,{status:'accepted'})
     notices.at(-1).emit('click')
     assert.deepEqual(clicks.map(target=>target.key),['event:128'])
     bridge.close()

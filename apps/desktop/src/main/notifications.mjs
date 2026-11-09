@@ -45,7 +45,7 @@ export function createDesktopNotifications({ Notification, onClick, timeoutMs = 
         }
         const timer = setTimeout(() => finish('unknown'), timeoutMs)
         timer.unref?.()
-        notice.once('show', () => finish('shown'))
+        notice.once('show', () => finish('accepted'))
         notice.once('failed', () => {
             if (active.get(payload.key) !== entry) return
             retryAfter = now() + 30_000

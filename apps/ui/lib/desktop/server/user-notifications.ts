@@ -165,6 +165,7 @@ async function readPrefs(db: Client): Promise<NotificationPrefs> {
 }
 
 function nativeOf(input: DesktopNotificationReceipt): DesktopNotifyUserNativeResult['status'] {
+    if (input.nativeStatus === 'accepted') return 'shown'
     if (input.nativeStatus === 'shown' || input.nativeStatus === 'unavailable' || input.nativeStatus === 'failed' || input.nativeStatus === 'unknown') return input.nativeStatus
     return 'unknown'
 }
@@ -178,7 +179,7 @@ function receiptFromRow(row: Row): DesktopNotifyUserReceipt {
         message: String(row.message), metadata: null, createdAt: String(row.created_at),
     }, { status })
     const reason = row.reason == null ? undefined : String(row.reason).slice(0, 400)
-    return reason && receipt.status !== 'shown' ? { ...receipt, reason } : receipt
+    return reason && receipt.status !== 'accepted' ? { ...receipt, reason } : receipt
 }
 
 async function readStored(db: Client, eventKey: string): Promise<DesktopNotifyUserReceipt> {

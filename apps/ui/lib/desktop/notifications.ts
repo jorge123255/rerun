@@ -34,11 +34,12 @@ export const desktopNotificationEventSchema = z.object({
 })
 export type DesktopNotificationEvent = z.infer<typeof desktopNotificationEventSchema>
 
-export const desktopNotificationStatusSchema = z.enum(['shown', 'unavailable', 'failed', 'unknown'])
+export const desktopNotificationStatusSchema = z.enum(['shown', 'accepted', 'unavailable', 'failed', 'unknown'])
 export const desktopNotificationReceiptSchema = z.strictObject({
     key: z.string().min(8).max(600),
     attemptId: z.string().uuid(),
     status: desktopNotificationStatusSchema,
+    inAppStatus: z.enum(['shown', 'unavailable']).optional(),
     nativeStatus: desktopNotificationStatusSchema.nullable().optional(),
 })
 export type DesktopNotificationReceipt = z.infer<typeof desktopNotificationReceiptSchema>

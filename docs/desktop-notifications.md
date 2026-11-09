@@ -18,8 +18,8 @@ Successful runs say **Done** and are silent. Failures say **Failed**; questions 
 their original urgent labels. Canceled or contradictory terminals never become notifications.
 The original sound asset is `/sounds/notification.mp3`. `useInboxAnnouncer`,
 `lib/notifications/announcement.ts` and `WorkspaceInbox` are the original delivery/navigation
-references. This Mac slice uses the native notification surface; it does not implement the hosted
-in-app toast. The channel is therefore labeled **Desktop notification**.
+references. This Mac slice pairs the native notification surface with a local in-app toast; their
+receipts remain separate. The native channel is labeled **Desktop notification**.
 
 The settings keep the original scopes, channel rows and per-coworker rules, with a local roster
 picker. Hosted email, cloud push and account-email settings are omitted. Preference patches merge
@@ -58,17 +58,24 @@ The authenticated routes use `desktopRoute`:
 - `GET /api/desktop/notifications/events`: eligible event snapshot and channel flags.
 - `POST /api/desktop/notifications/admit`, `{keys}`: at most 50 eligible identities; returns
   `{events:[{...event,attemptId}],channels}` after atomic durable admission.
-- `POST /api/desktop/notifications/delivery`, `{key,attemptId,status}`: settles the exact token.
+- `POST /api/desktop/notifications/delivery`, `{key,attemptId,status,inAppStatus,nativeStatus}`:
+  settles the exact token and keeps the local toast result separate from OS acceptance. Older
+  receipts containing only `{key,attemptId,status}`, including aggregate `shown`, remain valid.
 - `GET /api/desktop/notifications/terminals/[id]`: live, exact failure owner/chat binding.
 - The existing `/seen` endpoint remains a compatibility acknowledgment adapter; new delivery
   uses admission and exact token receipts.
 
-Mutation bodies are byte bounded (40,000 bytes) and time bounded. `shown` moves an owned attempt
-to the seen ledger. Definite `unavailable` / `failed` removes only that attempt for retry. `unknown`
-retains admission. A lost receipt, process exit or ambiguous IPC result also retains admission.
-This is deliberate at-most-once admission across restart; it cannot guarantee exactly-once OS
-display. An interrupted attempt can remain unshown. No unavailable/no-op response is recorded as
-successful delivery. Sound counts as delivered only after playback starts; Done never rings.
+Mutation bodies are byte bounded (40,000 bytes) and time bounded. Aggregate `accepted` or legacy
+`shown` moves an owned attempt to the seen ledger. Definite aggregate `unavailable` / `failed`
+removes only that attempt for retry. Aggregate `unknown` retains admission. A lost receipt, process
+exit or ambiguous IPC result also retains admission. A failed or unknown `nativeStatus` does not
+erase a separately successful in-app toast. Sound counts as delivered only after playback starts;
+Done never rings.
+
+Native `accepted` means only that macOS accepted the notification for presentation. It is not proof
+of a visible banner, Notification Center entry, human acknowledgement or click; screen sharing,
+Focus and other final OS filtering remain outside this receipt. This is deliberate at-most-once
+admission across restart, not exactly-once OS display. An interrupted attempt can remain unshown.
 
 The mounted delivery polls every three seconds, admits only events with an available requested
 channel, and suppresses the open conversation only while the document is visible. A hidden Mac
@@ -98,17 +105,18 @@ The narrow native bridge contract is:
 
 ```ts
 notifications: {
-  notify(payload): Promise<{status: 'shown' | 'unavailable' | 'failed' | 'unknown'}>
+  notify(payload): Promise<{status: 'accepted' | 'unavailable' | 'failed' | 'unknown'}>
   onNotificationClick(listener): () => void
 }
 ```
 
 The payload is `{key,kind,agentId,sessionId,groupId?,terminalId?,requestId?,title,subtitle?,body?,silent}`.
 The main process must verify the trusted owned window/frame/origin, validate bounded fields, and
-construct Electron `new Notification({title, subtitle, body, silent:true})`. `shown` requires the
-native show event; unsupported means `unavailable`; definite nondelivery means `failed`; timeouts
-and IPC ambiguity mean `unknown`. Root's native bridge deduplicates by key as an additional guard,
-routes clicks only to the trusted current app window, shows/focuses it, and refuses Quit-time
+construct Electron `new Notification({title, subtitle, body, silent:true})`. `accepted` requires the
+native show event and reports OS acceptance only; an older bridge's `shown` response normalizes to
+`accepted`. Unsupported means `unavailable`; definite nondelivery means `failed`; timeouts and IPC
+ambiguity mean `unknown`. Root's native bridge deduplicates by key as an additional guard, routes
+clicks only to the trusted current app window, shows/focuses it, and refuses Quit-time
 delivery/clicks. Blanket renderer permission denial remains unchanged.
 
 ## Authored coverage and limits
@@ -116,14 +124,16 @@ delivery/clicks. Blanket renderer permission denial remains unchanged.
 `app/api/desktop/notifications/route.test.ts` covers preference merging, scope/follow/cutoff,
 error/canceled classification, owner-pinned terminals, concurrent admission, exact-token retry,
 restart suppression, old seen keys, authentication and actual body limits.
-`DesktopNotificationDelivery.test.tsx` covers lost receipts/remount, unavailable and ambiguous
-bridge results, sound-only delivery, visible/hidden behavior and stale/cross-owner click guards.
+`DesktopNotificationDelivery.test.tsx` covers lost receipts/remount, separate in-app/native results,
+accepted, failed, unavailable and ambiguous bridge results, legacy native `shown`, sound-only
+delivery, visible/hidden behavior and stale/cross-owner click guards.
 `DesktopNotificationSettings.test.tsx` covers original composition, authoritative saves, failed
 saves and Quit admission. Attention's route regression covers request age independent of session age.
 Root must run these and the shell tests, then verify real notification permission, actual native
 display/sound/click behavior, settings persistence and no replay after a full restart.
 
-This slice does not add hosted email/cloud push, the in-app inbox toast, a coworker-tile bell or
-a task-level “Notify me” editor. It consumes the existing bounded completion/attention projections;
-it is not a historical notification backfill. Seen/admission identities are retained while their
-sources can remain; no unsupported exactly-once delivery guarantee is made.
+This slice does not add hosted email/cloud push, a coworker-tile bell or a task-level “Notify me”
+editor. The local in-app toast is not evidence of OS banner visibility. The delivery consumes the
+existing bounded completion/attention projections; it is not a historical notification backfill.
+Seen/admission identities are retained while their sources can remain; no unsupported exactly-once
+delivery guarantee is made.
