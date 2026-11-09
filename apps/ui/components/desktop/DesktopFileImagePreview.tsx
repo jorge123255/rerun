@@ -107,7 +107,7 @@ function isDesktopImageRoute(srcUrl: string, path: string, identity?: string): b
     if (!srcUrl.startsWith('/api/desktop/agents/') || srcUrl.includes('://') || srcUrl.includes('\\')) return false
     try {
         const url = new URL(srcUrl, 'http://127.0.0.1')
-        return /^\/api\/desktop\/agents\/[^/]+\/files\/image$/.test(url.pathname)
+        return (/^\/api\/desktop\/agents\/[^/]+\/files\/image$/.test(url.pathname) || url.pathname === '/api/desktop/shared-files/media')
             && url.searchParams.get('path') === path
             && (url.searchParams.get('identity') ?? undefined) === identity
     } catch { return false }

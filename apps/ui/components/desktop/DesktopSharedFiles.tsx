@@ -2,15 +2,13 @@
 
 import { BrainChromeContext, BrainTopBar, type BrainCrumb } from '@/components/brain/BrainTopBar'
 import { FileList } from '@/components/files/FileList'
-import { FilePreview } from '@/components/files/FilePreview'
-import { useSiblingFiles } from '@/components/files/useSiblingFiles'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { importDesktopSharedFile, listDesktopSharedFolder, readDesktopSharedPreview, type DesktopSharedEntry } from '@/lib/desktop/shared-workspace-files'
+import { importDesktopSharedFile, listDesktopSharedFolder, type DesktopSharedEntry } from '@/lib/desktop/shared-workspace-files'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { UploadEntry } from '@/lib/files/upload'
-import { ChevronLeftIcon, ChevronRightIcon, FileIcon, FolderIcon } from '@/lib/icons'
-import { Badge } from '@rerun/ui/primitives'
+import { FolderIcon } from '@/lib/icons'
+import { DesktopSharedFilePreview } from './shared-files/DesktopSharedFilePreview'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
@@ -20,7 +18,6 @@ import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@
 // Optional FileList actions keep the original layout without advertising unavailable mutations.
 
 const ROOT = 'Files'
-const TEXT = /\.(txt|md)$/i
 const joinPath = (dir: string, name: string) => (dir ? `${dir}/${name}` : name)
 const parentPath = (path: string) => path.split('/').filter(Boolean).slice(0, -1).join('/')
 
@@ -115,50 +112,7 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
     )
 }
 
-function SharedFile({ path, entries, onOpen }: { path: string; entries: DesktopSharedEntry[] | undefined; onOpen: (path: string, directory: boolean) => void }) {
-    const dir = parentPath(path)
-    const name = path.split('/').pop() ?? path
-    const text = TEXT.test(name)
-    const [preview, setPreview] = useState<{ path: string; content: string | null; truncated: boolean; error: string | null } | null>(null)
-    const [attempt, setAttempt] = useState(0)
-
-    useEffect(() => {
-        if (!text) return
-        const controller = new AbortController()
-        setPreview(null)
-        void readDesktopSharedPreview(path, controller.signal)
-            .then(page => { if (!controller.signal.aborted) setPreview({ path, content: page.content, truncated: page.truncated, error: null }) })
-            .catch(error => { if (!controller.signal.aborted) setPreview({ path, content: null, truncated: false, error: messageOf(error, 'This file could not be read') }) })
-        return () => controller.abort()
-    }, [path, text, attempt])
-
-    const siblings = useSiblingFiles({
-        entries: (entries ?? []).filter(entry => entry.type !== 'dir' && TEXT.test(entry.name)),
-        openName: name,
-        onOpen: next => onOpen(joinPath(dir, next), false),
-    })
-    const ready = preview?.path === path ? preview : null
-
-    return (
-        <div className="flex min-h-0 flex-1 flex-col">
-            <BrainTopBar crumbs={[...folderCrumbs(dir, next => onOpen(next, true)), { label: name, icon: FileIcon }]}>
-                {siblings && <>
-                    <Button size="icon-sm" variant="ghost" onClick={siblings.previous} title="Previous file" aria-label="Previous file"><ChevronLeftIcon className="size-4" /></Button>
-                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{siblings.index + 1} / {siblings.total}</span>
-                    <Button size="icon-sm" variant="ghost" onClick={siblings.next} title="Next file" aria-label="Next file"><ChevronRightIcon className="size-4" /></Button>
-                </>}
-                {ready?.truncated && <Badge size="xs" tone="orange" glow={false}>Truncated</Badge>}
-            </BrainTopBar>
-            <div className="flex min-h-0 flex-1 flex-col border-t border-border">
-                {text ? (
-                    ready?.error ? <div className="space-y-2 p-3"><p role="alert" className="text-xs text-destructive">{ready.error}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>Retry</Button></div> : <FilePreview fileName={name} content={ready?.content ?? null} rawUrl="" loading={!ready} />
-                ) : (
-                    <p className="p-3 text-xs text-muted-foreground">Only .txt and .md files can be previewed.</p>
-                )}
-            </div>
-        </div>
-    )
-}
+const SharedFile = DesktopSharedFilePreview
 
 function SharedFilesPanel({ onClose }: { onClose: () => void }) {
     const [selection, setSelection] = useState<{ kind: 'folder' | 'file'; path: string }>({ kind: 'folder', path: '' })

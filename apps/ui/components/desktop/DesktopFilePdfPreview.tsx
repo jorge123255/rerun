@@ -215,7 +215,7 @@ function pdfRoute(srcUrl: string, path: string, identity?: string): URL | null {
     if (!srcUrl.startsWith('/api/desktop/agents/') || srcUrl.includes('://') || srcUrl.includes('\\')) return null
     try {
         const url = new URL(srcUrl, 'http://127.0.0.1')
-        if (!/^\/api\/desktop\/agents\/[^/]+\/files\/pdf$/.test(url.pathname)
+        if (!/^\/api\/desktop\/agents\/[^/]+\/files\/pdf$/.test(url.pathname) && url.pathname !== '/api/desktop/shared-files/pdf'
             || url.searchParams.getAll('path').length !== 1 || url.searchParams.get('path') !== path
             || url.searchParams.getAll('identity').length > 1 || (url.searchParams.get('identity') ?? undefined) !== identity
             || [...url.searchParams.keys()].some(key => key !== 'path' && key !== 'identity')) return null
