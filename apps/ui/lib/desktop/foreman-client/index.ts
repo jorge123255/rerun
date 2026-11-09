@@ -42,6 +42,14 @@ export {
 } from './decision'
 
 export {
+    checkForemanRegenerate,
+    FOREMAN_REGENERATE_REFUSAL,
+    type ForemanRegenerateCheck,
+    type ForemanRegenerateInput,
+    type ForemanRegenerateRefusal,
+} from './regenerate'
+
+export {
     type DesktopForemanBuildItemStatus,
     type DesktopForemanBuildItemView,
     type DesktopForemanBuildProgressView,
