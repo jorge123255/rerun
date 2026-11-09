@@ -3,6 +3,7 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, type ConnectionsList } from '@rerun/contracts'
 import { ThemeToggle } from '@rerun/ui/theme'
 import { DesktopCodexLogin } from './DesktopCodexLogin'
+import { DesktopPlanLimitsBlock } from './usage/DesktopPlanLimitsBlock'
 import { DesktopClaudeLogin } from './claude-plan/DesktopClaudeLogin'
 import { DesktopNotificationSettings } from './DesktopNotificationSettings'
 import { DesktopAuxiliarySettings } from './DesktopAuxiliarySettings'
@@ -143,7 +144,10 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                 defaultModel={providers.default}
                                 onBack={() => setSource(providers.connections.find(item => item.provider !== 'custom')?.id ?? 'add:openai')}
                                 onReceipt={receipt => { if (receipt.status === 'recorded') onConnectionsChanged?.() }}
-                            /> : <p role="status">Custom endpoint settings are unavailable.</p> : provider === 'codex' ? <DesktopCodexLogin connected={!!connection?.connected} modelCount={connection?.models.length ?? 0} onProviders={onProviders} /> : provider === 'claude' ? <DesktopClaudeLogin connected={!!connection?.connected} rejected={connection?.credentialRejected} onProviders={onProviders} /> : <form onSubmit={saveKey} className="space-y-2">
+                            /> : <p role="status">Custom endpoint settings are unavailable.</p> : provider === 'codex' ? <>
+                                <DesktopCodexLogin connected={!!connection?.connected} modelCount={connection?.models.length ?? 0} onProviders={onProviders} />
+                                {connection?.provider === 'codex' && connection.connected && <DesktopPlanLimitsBlock connection={connection} />}
+                            </> : provider === 'claude' ? <DesktopClaudeLogin connected={!!connection?.connected} rejected={connection?.credentialRejected} onProviders={onProviders} /> : <form onSubmit={saveKey} className="space-y-2">
                                 <label htmlFor="desktop-api-key" className="text-sm font-medium">{connection ? 'Replacement API key' : 'API key'}</label>
                                 <div className="flex gap-2">
                                     <Input id="desktop-api-key" type="password" autoComplete="off" placeholder={CONNECTION_TOKEN_KEY[provider]} value={key} onChange={e => setKey(e.target.value)} />
