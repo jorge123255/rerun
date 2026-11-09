@@ -99,7 +99,7 @@ scheduleRoutes.post('/describe', async c => {
     const agentId = c.req.param('id')!
     const input = desktopScheduleDescriptionInputSchema.parse(await c.req.json())
     const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(20_000)])
-    return c.json(await describeDesktopSchedule(agentId, input, signal)
+    return c.json(await describeDesktopSchedule(agentId, input, signal))
 })
 
 scheduleRoutes.post('/:slug/run', async c => {

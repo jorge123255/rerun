@@ -11,6 +11,7 @@ import { planLimitWindowsFromCodex, recordPlanLimits, type CodexRateLimits } fro
 import type { LoadedConnection } from './types.js'
 import { desktopApp } from '../desktop/policy.js'
 import { DESKTOP_CODEX_ID, signedInFlag } from '../desktop/codex-runtime.js'
+import { findConnection } from './registry.js'
 import { readDesktopCodexRateLimits } from '../desktop/codex-plan-limits.js'
 
 const READ_TIMEOUT_MS = 8000
@@ -89,6 +90,7 @@ export function readCodexRateLimits(connectionId: string): Promise<CodexRateLimi
 
 const inFlight = new Map<string, Promise<void>>()
 const attemptedAt = new Map<string, number>()
+const desktopAttemptedAt = new WeakMap<LoadedConnection, number>()
 
 export function refreshCodexPlanLimits(connection: LoadedConnection | null): Promise<void> {
     if (!connection || connection.config.provider !== 'codex') return Promise.resolve()
@@ -98,11 +100,14 @@ export function refreshCodexPlanLimits(connection: LoadedConnection | null): Pro
     const pending = inFlight.get(connection.id)
     if (pending) return pending
 
-    attemptedAt.set(connection.id, Date.now())
+    if (desktop) desktopAttemptedAt.set(connection, Date.now())
+    else attemptedAt.set(connection.id, Date.now())
     const task = (async () => {
         if (desktop) {
             const response = await readCodexRateLimits(connection.id)
-            recordPlanLimits(connection.id, planLimitWindowsFromCodex(response))
+            if (await findConnection(connection.id) === connection && connection.env[signedInFlag] === '1') {
+                recordPlanLimits(connection.id, planLimitWindowsFromCodex(response))
+            }
             return
         }
         await ensureCodexAuth(connection)
@@ -123,7 +128,8 @@ export function refreshCodexPlanLimits(connection: LoadedConnection | null): Pro
 // reading, so a connection that cannot be read is not respawned on every list.
 export function refreshStaleCodexPlanLimits(connections: LoadedConnection[]): void {
     for (const connection of connections) {
-        if (Date.now() - (attemptedAt.get(connection.id) ?? 0) < STALE_AFTER_MS) continue
+        const lastAttempt = desktopApp() ? desktopAttemptedAt.get(connection) : attemptedAt.get(connection.id)
+        if (Date.now() - (lastAttempt ?? 0) < STALE_AFTER_MS) continue
         void refreshCodexPlanLimits(connection)
     }
 }

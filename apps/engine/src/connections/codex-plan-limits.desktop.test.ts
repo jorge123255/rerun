@@ -8,11 +8,14 @@ import { toSummary } from './loader.js'
 import type { LoadedConnection } from './types.js'
 
 const rpc = vi.hoisted(() => ({
+    current: null as LoadedConnection | null,
     requests: [] as { method: string; params: object }[],
     account: { type: 'chatgpt' } as unknown,
     response: null as unknown,
     closeCount: 0,
 }))
+
+vi.mock('./registry.js', () => ({ findConnection: async () => rpc.current }))
 
 vi.mock('../desktop/codex-rpc.js', () => ({
     CodexAuthClient: class {
@@ -42,12 +45,14 @@ const windows = [
 ]
 
 function connection(patch: Partial<LoadedConnection> = {}): LoadedConnection {
-    return {
+    const current: LoadedConnection = {
         id: DESKTOP_CODEX_ID,
         config: { name: 'ChatGPT (Codex)', provider: 'codex', models: ['synthetic-model'], extraModels: [], createdAt: '2026-11-09T00:00:00.000Z' },
         env: { [signedInFlag]: '1' },
         ...patch,
     }
+    rpc.current = current
+    return current
 }
 
 const DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-cx-desktop-plan-'))
@@ -124,4 +129,19 @@ test('an absent response retains the prior reading without manufacturing fresh v
     expect(readPlanLimits(DESKTOP_CODEX_ID)).toBe(before)
     expect(readPlanLimits(DESKTOP_CODEX_ID)?.windows).toEqual([{ kind: 'session', label: null, usedPercent: 41, resetsAt: null }])
     expect(readPlanLimits('another-connection')).toBeNull()
+})
+
+
+test('a delayed reading for the previous login cannot overwrite the singleton after reconnect', async () => {
+    let resolveRead!: (value: unknown) => void
+    rpc.response = new Promise(resolve => { resolveRead = resolve })
+    const first = refreshCodexPlanLimits(connection())
+    const replacement = connection()
+    forgetPlanLimits(DESKTOP_CODEX_ID)
+    resolveRead(fixture)
+    await first
+    expect(readPlanLimits(DESKTOP_CODEX_ID)).toBeNull()
+    rpc.response = fixture
+    await refreshCodexPlanLimits(replacement)
+    expect(readPlanLimits(DESKTOP_CODEX_ID)?.windows).toEqual(windows)
 })
