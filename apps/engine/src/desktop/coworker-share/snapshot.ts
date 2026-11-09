@@ -1,4 +1,5 @@
 import {
+    DESKTOP_COWORKER_SHARE_FILES_NOT_SELECTED,
     DESKTOP_PORTABLE_TEMPLATE_LIMITS,
     DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING,
     type DesktopCoworkerImportPlan,
@@ -47,9 +48,14 @@ export async function createDesktopCoworkerSnapshot(source: DesktopCoworkerShare
     const members: PortablePackageMemberBytes[] = []
     const exclusions: { path: string; reason: ReturnType<typeof exclusionReason> }[] = []
     const strippedConfigKeys: string[] = []
+    const withWorkspaceFiles = { ...include, files: true }
     for (const member of [...parsed.members].sort((a, b) => a.path.localeCompare(b.path))) {
         if (!includeMember(member.path, member.ownership, include, member.flagged)) {
-            exclusions.push({ path: member.path, reason: exclusionReason(member.path, member.ownership, member.flagged) })
+            // The Files choice is recorded once in the manifest. Keep paths and individual
+            // reasons for security exclusions, while leaving unselected user filenames private.
+            const omittedByChoice = !include.files && member.path.startsWith('workspace/')
+                && includeMember(member.path, member.ownership, withWorkspaceFiles, member.flagged)
+            if (!omittedByChoice) exclusions.push({ path: member.path, reason: exclusionReason(member.path, member.ownership, member.flagged) })
             continue
         }
         let bytes = Buffer.from(member.bytes)
@@ -94,7 +100,7 @@ export async function createDesktopCoworkerSnapshot(source: DesktopCoworkerShare
             binaryAssets: true,
             userSkillTrees: true,
             sourceKind: 'local-v1-export' as const,
-            notes: [DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING],
+            notes: [DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING, ...(!include.files ? [DESKTOP_COWORKER_SHARE_FILES_NOT_SELECTED] : [])],
         },
         excludedCategories: [
             'credentials', 'history', ...(!include.memories ? ['memory', 'private-memory'] as const : []), 'database', 'connector-skill', 'system-skill', 'service-registry', 'native-grant', 'tool-permissions',

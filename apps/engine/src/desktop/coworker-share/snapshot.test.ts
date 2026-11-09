@@ -43,6 +43,7 @@ test('selects only reviewed content and preserves selected binary bytes', async 
     expect(snapshot.manifest.fidelity).toMatchObject({ binaryAssets: true, userSkillTrees: true, sourceKind: 'local-v1-export' })
     expect(snapshot.manifest.excludedCategories).toEqual(expect.arrayContaining(['credentials', 'history', 'active-schedule', 'active-trigger', 'connector-skill', 'native-grant']))
     const member = snapshot.members.find(member => member.path === 'workspace/image.bin')!
+    expect(snapshot.manifest.fidelity.notes).not.toContain('Workspace files were left out of this export.')
     expect(member.bytes).toEqual(binary)
     expect(member.digest).toHaveLength(64)
     expect(snapshot.manifest.coworkers[0]?.setup.answered).toBe(false)
@@ -56,8 +57,28 @@ test('data buckets are opt-in and imported capabilities are off with empty histo
     expect(snapshot.members.some(member => member.path.startsWith('memory/'))).toBe(false)
     expect(snapshot.members.some(member => member.path === 'data/agent.db')).toBe(false)
     expect(snapshot.members.some(member => member.path.startsWith('workspace/'))).toBe(false)
+    expect(snapshot.manifest.coworkers[0]!.exclusions.map(item => item.path)).not.toContain('workspace/image.bin')
+    expect(snapshot.manifest.fidelity.notes).toContain('Workspace files were left out of this export.')
     const plan = createDesktopCoworkerImportPlan(snapshot.manifest)
     expect(plan.capabilities).toMatchObject({ enabled: false, history: 'empty', connectionId: null, provider: null, model: null, grants: 'off' })
+})
+
+test('unselected workspace files do not exhaust the archive exclusions or disclose their names', async () => {
+    const current = source()
+    const ordinary = current.members.find(member => member.path === 'workspace/image.bin')!
+    for (let index = 0; index < 501; index++) {
+        current.members.push({ ...ordinary, path: `workspace/opted-out-${index}.bin` })
+    }
+    current.members.push({ ...ordinary, path: 'workspace/key.pem' })
+
+    const snapshot = await createDesktopCoworkerSnapshot(current, { memories: false, database: false, files: false })
+    const restored = await readPortableArchive(snapshot.archiveBytes)
+
+    expect(restored.manifest.formatVersion).toBe(1)
+    expect(restored.manifest.fidelity.notes).toContain('Workspace files were left out of this export.')
+    expect(JSON.stringify(restored.manifest)).not.toContain('opted-out-')
+    expect(restored.manifest.coworkers[0]!.exclusions).toContainEqual({ path: 'workspace/key.pem', reason: 'credentials' })
+    expect(restored.members.some(member => member.path.startsWith('workspace/'))).toBe(false)
 })
 
 test('archive round-trip validates byte fidelity and manifest tampering', async () => {

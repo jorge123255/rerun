@@ -1,6 +1,6 @@
 'use client'
 
-import type { DesktopCoworkerSnapshotManifest } from '@rerun/contracts'
+import { DESKTOP_COWORKER_SHARE_FILES_NOT_SELECTED, type DesktopCoworkerSnapshotManifest } from '@rerun/contracts'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Field } from '@/components/ui/field'
 import type { DesktopCoworkerShareReviewedSections } from '@/lib/desktop/coworker-share/state'
@@ -49,6 +49,8 @@ export function DesktopCoworkerManifestReview({ manifest, archiveBytes, archiveS
                 </li>)}
             </ul>
         </details>
+
+        {manifest.fidelity.notes.includes(DESKTOP_COWORKER_SHARE_FILES_NOT_SELECTED) && <p className="text-xs text-muted-foreground">{DESKTOP_COWORKER_SHARE_FILES_NOT_SELECTED}</p>}
 
         {(coworker.exclusions.length > 0 || coworker.redactions.length > 0) && <details className="rounded-lg border border-border/60 p-3">
             <summary className="cursor-pointer text-xs font-medium">Excluded and redacted content</summary>

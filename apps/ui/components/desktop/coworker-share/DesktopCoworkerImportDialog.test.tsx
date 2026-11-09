@@ -29,6 +29,16 @@ test('fresh-copy navigation happens only after an acknowledged import and an exp
     expect(onOpenCoworker).toHaveBeenCalledExactlyOnceWith('fresh-a')
 })
 
+test('the exact archive review explains when the exporter left Files off', async () => {
+    const note = 'Workspace files were left out of this export.'
+    const manifest = { ...shareManifest, fidelity: { ...shareManifest.fidelity, notes: [...shareManifest.fidelity.notes, note] } }
+    const api = { preview: vi.fn(async () => manifest), import: vi.fn(), dispose: vi.fn() } as unknown as DesktopCoworkerShareClient
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopCoworkerImportDialog open onOpenChange={() => {}} client={api} attempts={createDesktopCoworkerShareAttempts()} targetWorkspaceId={2} snapshotId={manifest.packageKey} />))
+    expect(document.body.textContent).toContain(note)
+    expect(api.import).not.toHaveBeenCalled()
+})
+
 test('Cancel preserves the source and never imports', async () => {
     const api = { preview: vi.fn(async () => shareManifest), import: vi.fn(), dispose: vi.fn() } as unknown as DesktopCoworkerShareClient
     const onOpenChange = vi.fn(), onImported = vi.fn(), onOpenCoworker = vi.fn()

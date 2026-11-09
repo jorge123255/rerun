@@ -10,6 +10,8 @@ export const desktopCoworkerShareIncludeSchema = z.strictObject({
 })
 export type DesktopCoworkerShareInclude = z.infer<typeof desktopCoworkerShareIncludeSchema>
 
+export const DESKTOP_COWORKER_SHARE_FILES_NOT_SELECTED = 'Workspace files were left out of this export.'
+
 export const desktopCoworkerShareSourceSchema = z.strictObject({
     workspaceId: z.number().int().positive(),
     agentId: z.string().min(1).max(160),
