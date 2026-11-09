@@ -148,11 +148,11 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
     }, [dataSource])
 
     const readSeq = useRef(0)
-    const loadPage = useCallback(async (slug: string) => {
+    const loadPage = useCallback(async (slug: string, draftsFlushed = false) => {
         const seq = ++readSeq.current
         setPageState(current => (current?.slug === slug ? current : { slug, detail: null, missing: false, version: 0 }))
         // A page just left may still be writing: read after it lands, never before.
-        await flushDesktopBrainDrafts()
+        if (!draftsFlushed) await flushDesktopBrainDrafts()
         try {
             const detail = await actions.readPage(slug)
             if (seq !== readSeq.current) return
@@ -169,14 +169,28 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
         setSelection(next)
     }, [])
 
+    const navigation = useRef(0)
+    useEffect(() => () => { navigation.current++ }, [])
     const select = useCallback((next: BrainSelection) => {
-        if (next.kind === 'page' && selectionRef.current?.kind === 'page' && selectionRef.current.slug === next.slug) {
+        const previous = selectionRef.current
+        const request = ++navigation.current
+        if (next.kind === 'page' && previous?.kind === 'page' && previous.slug === next.slug) {
             setSidebarOpen(false)
             return
         }
-        commitSelection(next)
-        setSidebarOpen(false)
-        if (next.kind === 'page') void loadPage(next.slug)
+        const show = (draftsFlushed: boolean) => {
+            if (navigation.current !== request || selectionRef.current !== previous || isDesktopQuitting()) return
+            commitSelection(next)
+            setSidebarOpen(false)
+            if (next.kind === 'page') void loadPage(next.slug, draftsFlushed)
+        }
+        if (previous?.kind !== 'page') { show(false); return }
+        void flushDesktopBrainDrafts().catch(() => false).then(flushed => {
+            if (flushed) show(true)
+            else if (navigation.current === request && selectionRef.current === previous) {
+                toast.error('Some edits could not be saved. Resolve them before leaving this page.')
+            }
+        })
     }, [commitSelection, loadPage])
 
     const loadWorkspace = useCallback(() => {

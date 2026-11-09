@@ -116,6 +116,16 @@ it('does not read a page again when that page is already open, and flushes the d
     expect(order).toEqual(['flush', 'read'])
 })
 
+it('keeps the current page open when saving its draft fails before switching to Files', async () => {
+    await mount(actionsFor())
+    drafts.flush.mockResolvedValueOnce(false)
+    await click('aside', 'Files')
+    expect(document.querySelector('main')?.textContent).toContain('Open history')
+    drafts.flush.mockResolvedValueOnce(true)
+    await click('aside', 'Files')
+    expect(document.querySelector('main')?.textContent).not.toContain('Open history')
+})
+
 it('keeps a selection that was made before the overview arrives', async () => {
     let release: (value: { pages: typeof summary[]; openProposals: number }) => void = () => {}
     const actions = actionsFor(() => new Promise(resolve => { release = resolve }))
