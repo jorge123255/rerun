@@ -30,6 +30,7 @@ import { brainMutationIntent, reserveBrainMutation, settleBrainMutation } from '
 import { DesktopBrainHistory } from './DesktopBrainHistory'
 import { DesktopBrainNewPage } from './DesktopBrainNewPage'
 import { DesktopBrainPage } from './DesktopBrainPage'
+import { authorizedSharedFilePath, linkableSharedFiles } from './shared-file-link'
 import type { DesktopBrainActions, DesktopBrainOverview, DesktopBrainRoute } from './types'
 
 type PageState = { slug: string; detail: BrainPageDetail | null; missing: boolean; error?: string; version: number }
@@ -79,7 +80,8 @@ function toOverview(loaded: unknown): DesktopBrainOverview {
  *
  * Page reads still wait for `flushDesktopBrainDrafts`. A selection made before the overview returns
  * stays put. A route table wins over a page request. Root mounts the dialog; this panel does not
- * wire Control Center, file-link authoring, or a hosted workspace.
+ * wire Control Center or a hosted workspace. Page editors receive the files listed so far, and a
+ * file link opens only when that path is one of them.
  */
 export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug, onOpenConsumed, refreshKey, openProposalsKey, route, onRouteConsumed, files: filesProp, onUpload }: {
     actions: DesktopBrainActions
@@ -279,6 +281,12 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
     }, [onUpload, refreshListed])
 
     const openPage = useCallback((slug: string) => select({ kind: 'page', slug }), [select])
+    const linkableFiles = useMemo(() => linkableSharedFiles(files.knownFiles), [files.knownFiles])
+    const openListedFile = useCallback((path: string) => {
+        const allowed = authorizedSharedFilePath(path, linkableFiles)
+        if (!allowed) return
+        select({ kind: 'file', path: allowed })
+    }, [linkableFiles, select])
 
     const savedPage = useCallback((detail: BrainPageDetail) => {
         setPageState(current => (current?.slug === detail.page.slug ? { ...current, detail, missing: false } : current))
@@ -398,8 +406,10 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
                         detail={detail}
                         pages={pages}
                         titles={titles}
+                        files={linkableFiles}
                         actions={actions}
                         onOpenPage={openPage}
+                        onOpenFile={openListedFile}
                         onSaved={savedPage}
                         onHistory={() => commitSelection({ kind: 'history', slug: detail.page.slug })}
                         onDeleted={deletePage}
@@ -417,12 +427,13 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
                         actions={actions}
                         onBack={() => commitSelection({ kind: 'page', slug: selection.slug })}
                         onOpenPage={openPage}
+                        onOpenFile={openListedFile}
                         onRestored={restoredPage}
                     />
                 )
             }
             case 'new-page':
-                return <DesktopBrainNewPage pages={pages} titles={titles} actions={actions} onOpenPage={openPage} onCreated={createdPage} />
+                return <DesktopBrainNewPage pages={pages} titles={titles} files={linkableFiles} actions={actions} onOpenPage={openPage} onOpenFile={openListedFile} onCreated={createdPage} />
             case 'proposals':
                 return renderProposals ? <>{renderProposals()}</> : <BrainTopBar crumbs={[{ label: 'Brain', icon: BrainIcon }]} />
             case 'folder':
