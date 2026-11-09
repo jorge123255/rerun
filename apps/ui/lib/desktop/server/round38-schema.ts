@@ -1,7 +1,10 @@
 import 'server-only'
 import type { Client } from '@libsql/client'
 
-const STEP = { version: 36, id: 'coworker-general-threads' }
+import { desktopMcpDeviceCustodySchema } from './mcp-device-custody/store'
+
+const GENERAL = { version: 36, id: 'coworker-general-threads' }
+const CUSTODY = { version: 37, id: 'mcp-device-attempt-custody' }
 
 async function ensureGeneralColumns(db: Pick<Client, 'execute'>) {
     const names = new Set((await db.execute('PRAGMA table_info(desktop_sessions)')).rows.map(row => String(row.name)))
@@ -13,11 +16,17 @@ async function ensureGeneralColumns(db: Pick<Client, 'execute'>) {
 export async function initializeDesktopRound38(db: Client) {
     const tx = await db.transaction('write')
     try {
-        const previous = (await tx.execute({ sql: 'SELECT id FROM desktop_schema_migrations WHERE version = ?', args: [STEP.version] })).rows[0]
-        if (previous && previous.id !== STEP.id) throw new Error('Desktop migration identity mismatch')
+        const previous = (await tx.execute({ sql: 'SELECT id FROM desktop_schema_migrations WHERE version = ?', args: [GENERAL.version] })).rows[0]
+        if (previous && previous.id !== GENERAL.id) throw new Error('Desktop migration identity mismatch')
         if (!previous) {
             await ensureGeneralColumns(tx)
-            await tx.execute({ sql: 'INSERT INTO desktop_schema_migrations(version, id) VALUES(?, ?)', args: [STEP.version, STEP.id] })
+            await tx.execute({ sql: 'INSERT INTO desktop_schema_migrations(version, id) VALUES(?, ?)', args: [GENERAL.version, GENERAL.id] })
+        }
+        const custody = (await tx.execute({ sql: 'SELECT id FROM desktop_schema_migrations WHERE version = ?', args: [CUSTODY.version] })).rows[0]
+        if (custody && custody.id !== CUSTODY.id) throw new Error('Desktop migration identity mismatch')
+        if (!custody) {
+            await tx.execute(desktopMcpDeviceCustodySchema)
+            await tx.execute({ sql: 'INSERT INTO desktop_schema_migrations(version, id) VALUES(?, ?)', args: [CUSTODY.version, CUSTODY.id] })
         }
         await tx.commit()
     } catch (error) {

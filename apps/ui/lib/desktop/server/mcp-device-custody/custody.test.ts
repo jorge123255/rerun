@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApprovedMcpDeviceCustody, type DeviceCustodyPorts } from './custody'
@@ -6,7 +9,11 @@ import { remoteMcpLifecycle } from '../mcp/lifecycle'
 import { slotOf, type DeviceApproval, type DeviceTarget } from './model'
 
 const databases: Client[] = []
-afterEach(() => { databases.splice(0).forEach(db => db.close()) })
+const roots: string[] = []
+afterEach(async () => {
+    databases.splice(0).forEach(db => db.close())
+    await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+})
 const identity = { engineAgentId: 'engine-a', sessionId: 'chat-a', runId: 'run-a' }
 const target: DeviceTarget = { owner: 'agent-a', identity, name: 'docs', revision: 'revision-a', url: 'https://docs.example/mcp', approvalId: 'human-approved-a', requestId: 'start-a' }
 const initialApproval: DeviceApproval = {
@@ -22,7 +29,9 @@ const authorized = { state: 'authorized', token: { accessToken: 'FIXTURE_ACCESS_
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done }); return { promise, resolve } }
 
 async function fixture() {
-    const db = createClient({ url: ':memory:' }); databases.push(db)
+    const root = await mkdtemp(join(tmpdir(), 'rerun-device-custody-'))
+    roots.push(root)
+    const db = createClient({ url: `file:${join(root, 'app.db')}` }); databases.push(db)
     await db.executeMultiple(`PRAGMA foreign_keys=ON; CREATE TABLE desktop_agents(id TEXT PRIMARY KEY); INSERT INTO desktop_agents VALUES ('agent-a'); ${desktopMcpDeviceCustodySchema}`)
     const store = createEncryptedDeviceCustodyStore(db, () => Buffer.alloc(32, 17))
     let approval: unknown = structuredClone(initialApproval), time = 1_000_000, allowed = true

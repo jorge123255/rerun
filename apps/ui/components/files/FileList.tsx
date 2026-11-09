@@ -181,7 +181,8 @@ export function FileList({ title, entries, onOpen, onRename, canRename, onDelete
                                                 <EllipsisIcon />
                                             </Button>
                                         </DropdownMenuTrigger>
-                                        <DropdownMenuContent align="end" onClick={event => event.stopPropagation()}>
+                                        <DropdownMenuContent align="end" onClick={event => event.stopPropagation()}
+                                            onCloseAutoFocus={event => { if (renaming === entry.name) event.preventDefault() }}>
                                             {entry.type !== 'dir' && onDownload && (
                                                 <DropdownMenuItem onSelect={() => onDownload(entry.name)}>
                                                     <DownloadIcon /> Download

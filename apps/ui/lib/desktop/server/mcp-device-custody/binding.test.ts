@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import { bindApprovedMcpDeviceCustody } from './binding'
@@ -6,9 +9,15 @@ import type { DeviceApproval } from './model'
 import { remoteMcpStore, remoteMcpOAuthSchema } from '../mcp/store'
 
 const databases: Client[] = []
-afterEach(() => databases.splice(0).forEach(db => db.close()))
+const roots: string[] = []
+afterEach(async () => {
+    databases.splice(0).forEach(db => db.close())
+    await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+})
 async function fixture() {
-    const db = createClient({ url: ':memory:' }); databases.push(db)
+    const root = await mkdtemp(join(tmpdir(), 'rerun-device-custody-'))
+    roots.push(root)
+    const db = createClient({ url: `file:${join(root, 'app.db')}` }); databases.push(db)
     await db.executeMultiple(`CREATE TABLE desktop_agents(id TEXT PRIMARY KEY); INSERT INTO desktop_agents VALUES('agent');
         CREATE TABLE desktop_remote_mcp(id TEXT,transport TEXT,agent_id TEXT,name TEXT,url TEXT,revision TEXT,bearer TEXT, PRIMARY KEY(agent_id,name));
         INSERT INTO desktop_remote_mcp VALUES('registration','http','agent','docs','https://docs.example/mcp','r1',NULL);

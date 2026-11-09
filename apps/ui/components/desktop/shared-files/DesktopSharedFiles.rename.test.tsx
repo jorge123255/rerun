@@ -11,7 +11,7 @@ vi.mock('sonner', () => ({ toast: { error: api.error } }))
 
 let root: Root | undefined
 const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
-const button = (name: string) => [...document.querySelectorAll<HTMLElement>('[role="button"],button')].find(node => node.textContent?.trim() === name || node.getAttribute('aria-label') === name)
+const button = (name: string) => [...document.querySelectorAll<HTMLElement>('[role="button"] span.truncate,button')].find(node => node.textContent?.trim() === name || node.getAttribute('aria-label') === name)
 async function click(name: string) { await act(async () => { button(name)!.click() }); await flush() }
 async function change(field: HTMLInputElement, value: string) {
     await act(async () => {
@@ -56,7 +56,12 @@ async function mount(names = ['brief.md', 'taken.md']) {
 }
 
 async function rename(name: string, next: string) {
-    await click(`Actions for ${name}`)
+    await act(async () => {
+        const trigger = button(`Actions for ${name}`)!
+        trigger.focus()
+        trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    })
+    await flush()
     const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(node => node.textContent?.trim() === 'Rename')
     expect(item).toBeDefined()
     await act(async () => { item!.click() })

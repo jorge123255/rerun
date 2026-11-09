@@ -60,3 +60,16 @@ test('a conflicting migration identity leaves saved chats untouched', async () =
     expect((await db.execute('PRAGMA table_info(desktop_sessions)')).rows.map(row => row.name)).not.toContain('kind')
     expect((await db.execute('SELECT title FROM desktop_sessions WHERE id = \'notes\'')).rows[0].title).toBe('Daily notes')
 })
+
+test('adds empty device custody on an already migrated General database', async () => {
+    const db = await fixture()
+    await initializeDesktopRound38(db)
+    await db.execute('DROP TABLE desktop_mcp_device_custody')
+    await db.execute('DELETE FROM desktop_schema_migrations WHERE version = 37')
+    await initializeDesktopRound38(db)
+    await initializeDesktopRound38(db)
+    expect((await db.execute('SELECT id FROM desktop_schema_migrations WHERE version = 37')).rows)
+        .toEqual([{ id: 'mcp-device-attempt-custody' }])
+    expect((await db.execute('SELECT * FROM desktop_mcp_device_custody')).rows).toEqual([])
+    expect((await db.execute("SELECT title FROM desktop_sessions WHERE id = 'notes'")).rows[0].title).toBe('Daily notes')
+})

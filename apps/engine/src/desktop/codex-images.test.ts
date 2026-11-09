@@ -17,7 +17,8 @@ const { workspaceDir } = await import('../config/paths.js')
 const { agentConfigSchema } = await import('../agents/types.js')
 const { writeAgentConfig } = await import('../agents/config-write.js')
 const { claimSession, releaseSession } = await import('../runtime/run-control.js')
-const { rewriteDesktopCodexImagePart, type DesktopCodexImageContext } = await import('./codex-images.js')
+import type { DesktopCodexImageContext } from './codex-images.js'
+const { rewriteDesktopCodexImagePart } = await import('./codex-images.js')
 
 const alpha = 'codex-image-alpha'
 const sessionId = 'codex-image-session'
