@@ -66,7 +66,7 @@ export const MODEL_SOURCE_LABEL: Record<DesktopModelSource, string> = {
     workspace: 'Workspace default',
 }
 
-type CatalogConnection = Pick<ConnectionSummary, 'id' | 'name' | 'provider' | 'connected' | 'models' | 'extraModels' | 'codexReasoning'>
+type CatalogConnection = Pick<ConnectionSummary, 'id' | 'name' | 'provider' | 'connected' | 'models' | 'extraModels' | 'codexReasoning'> & Partial<Pick<ConnectionSummary, 'credentialRejected'>>
 
 export function offeredModelIds(connection: { models: string[]; extraModels?: string[] }): string[] {
     return [...connection.models, ...(connection.extraModels ?? [])]
@@ -80,7 +80,7 @@ export function desktopConnections(connections: ConnectionSummary[]): Connection
 export function usableConnection(connections: CatalogConnection[], pick: DesktopModelPick | null): CatalogConnection | null {
     if (!pick) return null
     const connection = connections.find(item => item.id === pick.connectionId)
-    if (!connection?.connected || !offeredModelIds(connection).includes(pick.model)) return null
+    if (!connection?.connected || (connection.provider === 'claude' && connection.credentialRejected) || !offeredModelIds(connection).includes(pick.model)) return null
     return connection
 }
 
