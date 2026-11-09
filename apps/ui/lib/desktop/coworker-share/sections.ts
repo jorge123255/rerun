@@ -73,14 +73,19 @@ export function sectionTransferReady(section: 'memories' | 'database', unavailab
     return { enabled: true, reason: null, contents: bucket, digest, viewCount: null }
 }
 
-export function shareSectionReadiness(plan: Pick<DesktopCoworkerSharePlan, 'unavailable'> | null, bindings: DesktopCoworkerShareSectionBindings | null): { memories: DesktopCoworkerShareSectionReadiness; database: DesktopCoworkerShareSectionReadiness } {
+type SectionPlan = Pick<DesktopCoworkerSharePlan, 'unavailable' | 'memoryPreview'>
+
+export function shareSectionReadiness(plan: SectionPlan | null, bindings: DesktopCoworkerShareSectionBindings | null): { memories: DesktopCoworkerShareSectionReadiness; database: DesktopCoworkerShareSectionReadiness } {
+    // A server preview is emitted only by the bound canonical implementation. Legacy plans
+    // remain disabled. The authenticated server rechecks revision/ownership before effects.
+    const memories = bindings?.memories ?? (plan?.memoryPreview ? { authorities: { capture: true, validation: true, install: true }, preview: plan.memoryPreview } : null)
     return {
-        memories: sectionTransferReady('memories', plan?.unavailable?.memories, bindings?.memories ?? null),
+        memories: sectionTransferReady('memories', plan?.unavailable?.memories, memories),
         database: sectionTransferReady('database', plan?.unavailable?.database, bindings?.database ?? null),
     }
 }
 
-export function gateShareInclude(include: DesktopCoworkerShareInclude, plan: Pick<DesktopCoworkerSharePlan, 'unavailable'> | null, bindings: DesktopCoworkerShareSectionBindings | null): DesktopCoworkerShareInclude {
+export function gateShareInclude(include: DesktopCoworkerShareInclude, plan: SectionPlan | null, bindings: DesktopCoworkerShareSectionBindings | null): DesktopCoworkerShareInclude {
     const sections = shareSectionReadiness(plan, bindings)
     return {
         memories: include.memories && sections.memories.enabled,

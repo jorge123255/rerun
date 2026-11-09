@@ -23,17 +23,17 @@ export type DesktopCoworkerSnapshot = {
     archiveSha256: string
 }
 
-function includeMember(path: string, ownership: string, include: DesktopCoworkerShareInclude): boolean {
+function includeMember(path: string, ownership: string, include: DesktopCoworkerShareInclude, flagged: readonly string[] = []): boolean {
     if (ownership !== 'user' || isReservedTemplateMetadataPath(path) || scanPathForSecrets(path).length || path.split('/').some(part => part === '.rerun' || part === '.git' || part === 'node_modules')) return false
-    if (path.startsWith('memory/')) return include.memories && /\.(?:md|txt|json)$/.test(path)
+    if (path.startsWith('memory/')) return include.memories && flagged.length === 0 && /\.(?:md|txt|json)$/.test(path)
     if (path === 'data/agent.db') return include.database
     if (path.startsWith('workspace/')) return include.files
     return ['SOUL.md','INSTALL.md','config.json'].includes(path) || /^skills\/[^/]+\/.+/.test(path)
 }
 
-function exclusionReason(path: string, ownership: string): 'credentials' | 'history' | 'memory' | 'database' | 'connector-skill' | 'service-registry' | 'native-grant' | 'routine' | 'webhook' | 'system-skill' {
+function exclusionReason(path: string, ownership: string, flagged: readonly string[] = []): 'credentials' | 'history' | 'memory' | 'database' | 'connector-skill' | 'service-registry' | 'native-grant' | 'routine' | 'webhook' | 'system-skill' {
     if (path === '.env' || path === 'data/system.db' || scanPathForSecrets(path).length) return 'credentials'
-    if (path.startsWith('memory/')) return 'memory'
+    if (path.startsWith('memory/')) return flagged.length ? 'credentials' : 'memory'
     if (path === 'data/agent.db') return 'database'
     if (path.startsWith('schedules/')) return 'routine'
     if (path.startsWith('triggers/')) return 'webhook'
@@ -48,8 +48,8 @@ export async function createDesktopCoworkerSnapshot(source: DesktopCoworkerShare
     const exclusions: { path: string; reason: ReturnType<typeof exclusionReason> }[] = []
     const strippedConfigKeys: string[] = []
     for (const member of [...parsed.members].sort((a, b) => a.path.localeCompare(b.path))) {
-        if (!includeMember(member.path, member.ownership, include)) {
-            exclusions.push({ path: member.path, reason: exclusionReason(member.path, member.ownership) })
+        if (!includeMember(member.path, member.ownership, include, member.flagged)) {
+            exclusions.push({ path: member.path, reason: exclusionReason(member.path, member.ownership, member.flagged) })
             continue
         }
         let bytes = Buffer.from(member.bytes)
@@ -78,7 +78,7 @@ export async function createDesktopCoworkerSnapshot(source: DesktopCoworkerShare
         coworkers: [{
             agentKey: 'c01', name: parsed.name, description: parsed.description,
             setup: { required: parsed.setup.required, prompt: parsed.setup.prompt, answered: false },
-            members: parsed.members.filter(member => includeMember(member.path, member.ownership, include)).map(member => ({
+            members: parsed.members.filter(member => includeMember(member.path, member.ownership, include, member.flagged)).map(member => ({
                 path: member.path, bytes: members.find(candidate => candidate.path === member.path)!.bytes.length,
                 kind: member.kind, contentDigest: members.find(candidate => candidate.path === member.path)!.digest,
                 flagged: member.flagged, binary: member.binary, textScanned: member.textScanned,
@@ -97,8 +97,8 @@ export async function createDesktopCoworkerSnapshot(source: DesktopCoworkerShare
             notes: [DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING],
         },
         excludedCategories: [
-            'credentials', 'history', 'memory', 'database', 'connector-skill', 'system-skill', 'service-registry', 'native-grant', 'tool-permissions',
-            'active-schedule', 'active-trigger', 'browser-profile', 'private-memory', 'paid-data', 'cached-pages', 'chat-transcript', 'tool-arguments', 'telemetry', 'marketplace', 'hosted-publish',
+            'credentials', 'history', ...(!include.memories ? ['memory', 'private-memory'] as const : []), 'database', 'connector-skill', 'system-skill', 'service-registry', 'native-grant', 'tool-permissions',
+            'active-schedule', 'active-trigger', 'browser-profile', 'paid-data', 'cached-pages', 'chat-transcript', 'tool-arguments', 'telemetry', 'marketplace', 'hosted-publish',
         ] as DesktopCoworkerSnapshotManifest['excludedCategories'],
     }
     const manifest = sealPortableManifest(body)
@@ -111,7 +111,7 @@ export function createDesktopCoworkerImportPlan(_manifest: DesktopCoworkerSnapsh
 }
 
 export function createDesktopCoworkerSharePlan(source: DesktopCoworkerShareSource): DesktopCoworkerSharePlan {
-    const eligible = source.members.filter(member => includeMember(member.path, member.ownership, { memories: true, database: true, files: true }))
+    const eligible = source.members.filter(member => includeMember(member.path, member.ownership, { memories: true, database: true, files: true }, member.flagged))
     const count = (prefix: string) => eligible.filter(member => member.path.startsWith(prefix))
     const sum = (paths: string[]) => eligible.filter(member => paths.includes(member.path)).reduce((total, member) => total + member.bytes.length, 0)
     return {

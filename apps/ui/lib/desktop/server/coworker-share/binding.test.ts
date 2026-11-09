@@ -2,10 +2,11 @@ import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test as baseTest, vi } from 'vitest'
 import type { DesktopRuntime } from '../runtime'
 import { createDesktopTemplateEngine } from '../../../../../engine/src/desktop/templates/service'
 import { readPortableArchive } from '../../../../../engine/src/desktop/templates/portable-package'
+import { renderMemoryMarkdown, serializeMemoryNote } from '../../../../../engine/src/desktop/coworker-share-memory/serialize'
 import { prepareSkillHelperFixture } from '../../../../../engine/src/desktop/skill-publication.test-support'
 import { desktopServicesSchema } from '../services/schema'
 import { serviceSkillMigrationSql } from '../services/skill-journal'
@@ -21,11 +22,12 @@ vi.mock('../coworker-delete', () => ({ assertCoworkerNotDeleting: async () => {}
 
 const sourceId = '11111111-1111-4111-8111-111111111111'
 const boxId = '44444444-4444-4444-8444-444444444444'
+const test = baseTest.skipIf(process.platform !== 'darwin')
 let directory = '', engineRoot = '', dbPath = ''
 let helper: Awaited<ReturnType<typeof prepareSkillHelperFixture>>
 const previousHelper = process.env.RERUN_DESKTOP_RENAME_HELPER
-beforeAll(async () => { helper = await prepareSkillHelperFixture(); process.env.RERUN_DESKTOP_RENAME_HELPER = helper.path })
-afterAll(async () => { if (previousHelper === undefined) delete process.env.RERUN_DESKTOP_RENAME_HELPER; else process.env.RERUN_DESKTOP_RENAME_HELPER = previousHelper; await helper.close() })
+beforeAll(async () => { if (process.platform !== 'darwin') return; helper = await prepareSkillHelperFixture(); process.env.RERUN_DESKTOP_RENAME_HELPER = helper.path })
+afterAll(async () => { if (process.platform !== 'darwin') return; if (previousHelper === undefined) delete process.env.RERUN_DESKTOP_RENAME_HELPER; else process.env.RERUN_DESKTOP_RENAME_HELPER = previousHelper; await helper.close() })
 beforeEach(async () => {
     vi.stubEnv('RERUN_DATA_DIR','');vi.stubEnv('RERUN_HUB_BASE_URL','');vi.stubEnv('RERUN_API_KEY','')
     directory = await realpath(await mkdtemp(join(tmpdir(),'rerun-share-binding-')))
@@ -62,33 +64,49 @@ beforeEach(async () => {
 })
 afterEach(async () => { fixture.db.close(); await rm(directory,{ recursive: true,force: true }); vi.restoreAllMocks();vi.unstubAllEnvs() })
 
-test('production capture uses canonical confinement, omits credentials/history, and describes unsupported memory/database truthfully', async () => {
+const noteBytes = (id = 'note', content = 'Remember the project conventions.') => Buffer.from(renderMemoryMarkdown(serializeMemoryNote({ id, content, kind: 'preference', tags: ['project'], createdAt: '2026-01-02T03:04:05Z' })))
+
+test('production capture publishes exact canonical memory counts; database, credentials, history and indexes remain excluded', async () => {
     const folder = join(engineRoot,'agents','source')
     for (const name of ['memory','data','sessions']) await mkdir(join(folder,name))
     await writeFile(join(folder,'.env'),'KEY=SECRET_ENV')
-    await writeFile(join(folder,'memory','note.md'),'SECRET_MEMORY')
+    await writeFile(join(folder,'memory','note.md'),noteBytes())
+    await writeFile(join(folder,'memory','recall.md'),'PRIVATE_RECALL')
+    await writeFile(join(folder,'memory','.RERUN-private.md'),'PRIVATE_METADATA')
+    await writeFile(join(folder,'memory','index.sqlite'),'PRIVATE_INDEX')
     await writeFile(join(folder,'data','agent.db'),'SECRET_DATABASE')
     await writeFile(join(folder,'sessions','chat.json'),'SECRET_HISTORY')
     const runtime = fixture.runtime, binding = await openDesktopCoworkerShareBinding(runtime,sourceId)
     const source = await binding.source(1,sourceId)
     expect(source.members.map(member => member.path)).toEqual(expect.arrayContaining(['SOUL.md','config.json','workspace/notes.txt']))
-    expect(source.members.some(member => /^(?:memory|data|sessions)\//.test(member.path) || member.path === '.env')).toBe(false)
+    expect(source.members.filter(member => member.path.startsWith('memory/')).map(member => member.path)).toEqual(['memory/note.md'])
+    expect(source.members.some(member => /^(?:data|sessions)\//.test(member.path) || member.path === '.env')).toBe(false)
     const plan = binding.service.plan(source)
     expect(plan.sourceRevision).toBe(source.revision)
-    expect(plan.unavailable).toMatchObject({ memories: expect.stringContaining('unavailable'),database: expect.stringContaining('unavailable') })
-    await expect(binding.service.review({ workspaceId: 1,agentId: sourceId,sourceRevision: source.revision,requestId: 'unsupported',include: { memories: true,database: false,files: false } },source)).rejects.toMatchObject({ status: 409 })
+    expect(plan.unavailable).toEqual({ database: expect.stringContaining('unavailable') })
+    expect(plan.memoryPreview).toMatchObject({ available: true, contents: { count: 1, bytes: noteBytes().length }, digest: expect.stringMatching(/^[a-f0-9]{64}$/) })
+    await expect(binding.service.review({ workspaceId: 1,agentId: sourceId,sourceRevision: source.revision,requestId: 'unsupported',include: { memories: false,database: true,files: false } },source)).rejects.toMatchObject({ status: 409 })
+    const omitted = await binding.service.review({ workspaceId: 1,agentId: sourceId,sourceRevision: source.revision,requestId: 'default-off',include: { memories: false,database: false,files: false } },source)
+    expect(omitted.manifest.coworkers[0]!.members.some(member => member.path.startsWith('memory/'))).toBe(false)
+    await writeFile(join(folder,'memory','note.md'),noteBytes('note','Changed after review.'))
+    expect((await binding.source(1,sourceId)).revision).not.toBe(source.revision)
+    await expect(binding.service.review({ workspaceId: 1,agentId: sourceId,sourceRevision: source.revision,requestId: 'stale',include: { memories: true,database: false,files: false } },() => binding.source(1,sourceId))).rejects.toMatchObject({ status: 409 })
     await expect(readCurrentDesktopCoworkerShareSource(runtime,fixture.db,2,sourceId)).rejects.toMatchObject({ status: 404 })
     fixture.runtime = { ...runtime,launchNonce: 'replacement' }
     await expect(binding.source(1,sourceId)).rejects.toMatchObject({ status: 409 })
 })
 
 test('real canonical package/install receipts survive a lost share ACK and file DB reopen without another coworker', async () => {
+    await mkdir(join(engineRoot,'agents','source','memory'))
+    await writeFile(join(engineRoot,'agents','source','memory','note.md'),noteBytes())
     const runtime = fixture.runtime, binding = await openDesktopCoworkerShareBinding(runtime,sourceId)
-    const source = await binding.source(1,sourceId), include = { memories: false,database: false,files: true }
+    const source = await binding.source(1,sourceId), include = { memories: true,database: false,files: true }
     const review = await binding.service.review({ workspaceId: 1,agentId: sourceId,sourceRevision: source.revision,requestId: 'review',include },source)
     const exported = await binding.service.export({ workspaceId: 1,agentId: sourceId,sourceRevision: source.revision,requestId: 'export',include,reviewId: review.reviewId,expectedDigest: review.manifest.contentDigest },source)
     const downloaded = await binding.service.download(exported.manifest.packageKey)
     const archive = await readPortableArchive(downloaded.bytes)
+    expect(archive.members.find(member => member.path === 'memory/note.md')?.bytes).toEqual(noteBytes())
+    expect(exported.manifest.excludedCategories).not.toContain('memory')
     expect(archive.members.some(member => member.bytes.includes(Buffer.from('PRIVATE_CONNECTION')))).toBe(false)
     expect(await ingestDesktopCoworkerShareArchive(runtime,downloaded.bytes)).toEqual({ snapshotId: exported.manifest.packageKey })
     const input = { requestId: 'import-once',snapshotId: exported.manifest.packageKey,expectedDigest: exported.manifest.contentDigest,targetWorkspaceId: 1 }
@@ -106,6 +124,8 @@ test('real canonical package/install receipts survive a lost share ACK and file 
     expect(rows).toHaveLength(1); expect(rows[0]!.id).toBe(result.importedAgentId); expect(rows[0]!.enabled).toBe(0)
     const installed = join(engineRoot,'agents',String(rows[0]!.engine_agent_id))
     expect(await readFile(join(installed,'workspace','notes.txt'),'utf8')).toBe('A portable note.')
+    expect(await readFile(join(installed,'memory','note.md'))).toEqual(noteBytes())
+    expect(await readdir(join(installed,'memory'))).toEqual(['note.md'])
     expect(JSON.parse(await readFile(join(installed,'config.json'),'utf8')).enabled).toBe(false)
     expect((await readdir(join(engineRoot,'agents'))).filter(name => name.startsWith('i'))).toHaveLength(1)
     expect((await fixture.db.execute("SELECT COUNT(*) AS count FROM desktop_template_requests WHERE operation='install'")).rows[0]!.count).toBe(1)

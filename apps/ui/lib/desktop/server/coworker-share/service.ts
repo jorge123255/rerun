@@ -2,12 +2,13 @@ import 'server-only'
 import { createHash } from 'node:crypto'
 import { readPortableArchive, type PortablePackageMemberBytes } from '../../../../../engine/src/desktop/templates/portable-package'
 import { createDesktopCoworkerSharePlan, createDesktopCoworkerSnapshot } from '../../../../../engine/src/desktop/coworker-share/snapshot'
-import { desktopCoworkerShareExportInputSchema, desktopCoworkerShareImportInputSchema, desktopCoworkerShareReviewInputSchema, desktopCoworkerShareRevokeInputSchema, desktopCoworkerShareSourceSchema, type DesktopCoworkerShareSource, type DesktopCoworkerSnapshotManifest } from '@rerun/contracts'
+import { desktopCoworkerShareExportInputSchema, desktopCoworkerShareImportInputSchema, desktopCoworkerShareReviewInputSchema, desktopCoworkerShareRevokeInputSchema, desktopCoworkerShareSourceSchema, type DesktopCoworkerShareMemoryPreview, type DesktopCoworkerShareSource, type DesktopCoworkerSnapshotManifest } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import type { DesktopCoworkerShareStore } from './store'
 
 export type DesktopCoworkerShareInstallAuthority = {
     unavailable?: { memories?: string; database?: string; files?: string }
+    memoryPreview?: (source: DesktopCoworkerShareSource) => DesktopCoworkerShareMemoryPreview
     /** Root binds the canonical template installer; this exact request must remain idempotent. */
     install(input: { manifest: DesktopCoworkerSnapshotManifest; members: PortablePackageMemberBytes[]; targetWorkspaceId: number; requestId: string; archiveBytes: Buffer }): Promise<string>
     recoverImport?: (input: { snapshotId: string; targetWorkspaceId: number; requestId: string }) => Promise<string>
@@ -83,7 +84,10 @@ export function createDesktopCoworkerShareService(store: DesktopCoworkerShareSto
         for (const key of ['memories','database','files'] as const) if (include[key] && authority.unavailable?.[key]) throw new DesktopHttpError(409,authority.unavailable[key])
     }
     return {
-        plan(source: DesktopCoworkerShareSource) { return { ...createDesktopCoworkerSharePlan(desktopCoworkerShareSourceSchema.parse(source)), sourceRevision: source.revision, ...(authority.unavailable ? { unavailable: authority.unavailable } : {}) } },
+        plan(source: DesktopCoworkerShareSource) {
+            const parsed = desktopCoworkerShareSourceSchema.parse(source)
+            return { ...createDesktopCoworkerSharePlan(parsed), sourceRevision: parsed.revision, ...(authority.unavailable ? { unavailable: authority.unavailable } : {}), ...(authority.memoryPreview ? { memoryPreview: authority.memoryPreview(parsed) } : {}) }
+        },
         async review(raw: unknown, source: DesktopCoworkerShareSource | (() => Promise<DesktopCoworkerShareSource>)) {
             const input = desktopCoworkerShareReviewInputSchema.parse(raw)
             supported(input.include)
