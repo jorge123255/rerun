@@ -4,6 +4,7 @@ import type { DesktopAnsweredQuestionRecap } from '@/lib/desktop/foreman/answere
 import { DesktopForemanAnsweredQuestion } from './transcript/DesktopForemanAnsweredQuestion'
 import type { ForemanHistoryPart } from './transcript/parts'
 import { DesktopForemanHistoryMessage } from './transcript/DesktopForemanHistoryMessage'
+import { DesktopForemanAnswerActions } from './DesktopForemanAnswerActions'
 
 import { AnimatePresence, motion } from 'motion/react'
 import type { ReactNode } from 'react'
@@ -23,6 +24,7 @@ import { DesktopForemanWelcome } from './DesktopForemanWelcome'
 import { DesktopPlanCard } from './plan/DesktopPlanCard'
 import { DesktopForemanBuildProgress } from './DesktopForemanBuildProgress'
 import { DesktopForemanNextSteps } from './DesktopForemanNextSteps'
+import type { MessageFeedbackRating } from '@rerun/contracts'
 
 export type DesktopForemanMessage = {
     id: string
@@ -55,6 +57,7 @@ export function DesktopForemanChatLayer({
     onOpenCreated,
     onOpenCoworker,
     onOpenBox,
+    answerFeedback,
     children,
     className,
 }: {
@@ -80,6 +83,8 @@ export function DesktopForemanChatLayer({
     onOpenCreated: (step: Extract<DesktopForemanNextStep, { kind: 'open_created' }>) => void
     onOpenCoworker?: (input: { agentId: string; sessionId: string | null }) => void
     onOpenBox?: (spaceId: string) => void
+    /** Local thumbs for a restored saved answer; absent on read-only or still-live transcripts. */
+    answerFeedback?: { ratingOf: (messageId: string) => MessageFeedbackRating | null; onRate: (messageId: string, rating: MessageFeedbackRating) => void; disabled?: boolean } | null
     children?: ReactNode
     className?: string
 }) {
@@ -112,6 +117,13 @@ export function DesktopForemanChatLayer({
                             {restored && message.history ? <>
                                 <DesktopForemanHistoryMessage history={message.history} />
                                 <DesktopForemanAnsweredQuestion recaps={message.answeredQuestions ?? []} />
+                                {message.role === 'assistant' && message.text.trim() && answerFeedback && (
+                                    <DesktopForemanAnswerActions
+                                        rating={answerFeedback.ratingOf(message.id)}
+                                        disabled={!!streaming || answerFeedback.disabled}
+                                        onRate={rating => answerFeedback.onRate(message.id, rating)}
+                                    />
+                                )}
                             </> : <>
                                 {message.text}
                                 {message.docs?.map((part, index) => <DesktopForemanDocsTool key={index} part={part as import('ai').ToolUIPart} restored={restored} />)}

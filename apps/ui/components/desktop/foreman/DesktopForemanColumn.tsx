@@ -9,6 +9,7 @@ import type { ForemanPlacement } from '@/lib/foreman-layout'
 import { useIsMobile as useMediaQuery } from '@rerun/ui/primitives/use-is-mobile'
 import type { DesktopForemanActionPorts, DesktopForemanChatRef, DesktopForemanPlacement } from '@/lib/desktop/foreman-client'
 import { DesktopForemanChatLayer, type DesktopForemanMessage } from './DesktopForemanChatLayer'
+import { useDesktopForemanFeedback } from '@/lib/desktop/use-foreman-feedback'
 import { DesktopForemanComposer } from './DesktopForemanComposer'
 import { DesktopForemanHeader } from './DesktopForemanHeader'
 import { DesktopForemanRoutines } from './DesktopForemanRoutines'
@@ -79,6 +80,8 @@ export function DesktopForemanColumn({
     className, onClose, openOnMount, refreshKey, composerTrailing, focusRequest, controlledOpen, hidden, centerOpen, dockFeed, voiceSlot, intake, onReviewTemplate, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
+    const savedAnswers = messages.some(message => message.role === 'assistant' && !!message.text.trim())
+    const answerFeedback = useDesktopForemanFeedback(chat, !hidden && foreman.restored && savedAnswers)
     const opened = useRef(false)
     const column = useRef<HTMLDivElement>(null)
     useEffect(() => {
@@ -167,6 +170,7 @@ export function DesktopForemanColumn({
                         onOpenCreated={step => foreman.navigate({ kind: 'open_coworker', agentId: step.agentId, sessionId: step.sessionId })}
                         onOpenCoworker={input => foreman.navigate({ kind: 'open_coworker', agentId: input.agentId, sessionId: input.sessionId })}
                         onOpenBox={spaceId => foreman.navigate({ kind: 'open_box', spaceId })}
+                        answerFeedback={{ ratingOf: answerFeedback.ratingOf, onRate: answerFeedback.rate, disabled: hidden }}
                         className="min-h-0 flex-1"
                     >
                         {starterPack && onReviewTemplate && <DesktopStarterPack
