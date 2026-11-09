@@ -109,9 +109,10 @@ test('desktop Routines allow only the bounded coworker schedule routes', () => {
     for (const [path, allowed] of [
         ['/agents/a/schedules', ['GET', 'POST']],
         ['/agents/a/schedules/morning', ['GET', 'PATCH', 'DELETE']],
+        ['/agents/a/schedules/describe', ['GET', 'POST', 'PATCH', 'DELETE']],
         ['/agents/a/schedules/morning/run', ['POST']],
     ] as const) for (const method of methods) expect(desktopRouteAllowed(method, path)).toBe((allowed as readonly string[]).includes(method))
-    for (const path of ['/agents/foreman/schedules', '/agents/a/schedules/../other', '/agents/a/schedules/morning/run/more', '/agents/a%2Fb/schedules', '/schedules']) {
+    for (const path of ['/agents/foreman/schedules', '/agents/foreman/schedules/describe', '/agents/a/schedules/../other', '/agents/a/schedules/morning/run/more', '/agents/a%2Fb/schedules', '/schedules']) {
         for (const method of methods) expect(desktopRouteAllowed(method, path)).toBe(false)
     }
 })
