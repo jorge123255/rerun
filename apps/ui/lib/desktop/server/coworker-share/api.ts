@@ -14,6 +14,7 @@ export function createDesktopCoworkerShareApi(service: DesktopCoworkerShareServi
                 return Response.json(await attempts({ mode: 'list',kind: url.searchParams.get('attempts'),...(url.searchParams.get('forSnapshot') ? { snapshotId: url.searchParams.get('forSnapshot') } : {}),workspaceWide: url.searchParams.get('workspaceWide') === '1' }),{ headers: { 'Cache-Control': 'no-store' } })
             }
             const snapshotId = z.string().regex(/^[a-f0-9]{32}$/).parse(url.searchParams.get('snapshotId'))
+            if (url.searchParams.get('preview') === '1' && url.searchParams.get('inspection') === '1') return Response.json(await service.inspect(snapshotId,request.signal), { headers: { 'Cache-Control': 'no-store' } })
             if (url.searchParams.get('preview') === '1') return Response.json({ manifest: await service.preview(snapshotId) }, { headers: { 'Cache-Control': 'no-store' } })
             const archive = await service.download(snapshotId)
             return new Response(Uint8Array.from(archive.bytes), { headers: { 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="coworker-${snapshotId.slice(0, 8)}.tar.gz"`, 'Content-Length': String(archive.bytes.length), 'Cache-Control': 'no-store' } })

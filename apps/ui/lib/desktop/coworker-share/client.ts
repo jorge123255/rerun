@@ -13,6 +13,7 @@ import {
     type DesktopCoworkerShareRevokeInput,
 } from '@rerun/contracts'
 import { refusedDestinationReason } from './sections'
+import { readDesktopCoworkerImportInspection } from './import-review'
 
 const UNKNOWN = 'Local share acknowledgement is unknown. Retry the same attempt.'
 
@@ -89,6 +90,10 @@ export function createDesktopCoworkerShareClient({ workspaceId, routeAgentId }: 
             const query = new URLSearchParams({ snapshotId, preview: '1' })
             const result = z.strictObject({ manifest: desktopCoworkerSnapshotManifestSchema }).parse(await fetchResponse(`${base}?${query}`, { method: 'GET' }))
             return result.manifest
+        },
+        async inspect(snapshotId: string) {
+            const query = new URLSearchParams({ snapshotId, preview: '1', inspection: '1' })
+            return readDesktopCoworkerImportInspection(await fetchResponse(`${base}?${query}`, { method: 'GET' }),snapshotId)
         },
         downloadUrl(snapshotId: string) {
             return `${base}?${new URLSearchParams({ snapshotId })}`

@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest'
-import { exportInput, shareManifest, sharePlan, shareReview } from '@/components/desktop/coworker-share/test-fixtures'
+import { exportInput, importInspection, shareManifest, sharePlan, shareReview } from '@/components/desktop/coworker-share/test-fixtures'
 import { createDesktopCoworkerShareClient } from './client'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -7,6 +7,20 @@ afterEach(() => vi.unstubAllGlobals())
 function response(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
+
+test('receiver inspection is a read-only opt-in query and keeps counts bound to its manifest', async () => {
+    const inspected = importInspection(shareManifest,{ status: 'verified',contents: { count: 2,bytes: 540 },viewCount: 3,digest: '1'.repeat(64) })
+    const fetcher = vi.fn().mockResolvedValueOnce(response(inspected)).mockResolvedValueOnce(response({ manifest: shareManifest }))
+    vi.stubGlobal('fetch',fetcher)
+    const client = createDesktopCoworkerShareClient({ workspaceId: 2,routeAgentId: 'portable-import' })
+    expect(await client.inspect(shareManifest.packageKey)).toEqual(inspected)
+    const [url,init] = fetcher.mock.calls[0]!
+    expect(String(url)).toContain('preview=1'); expect(String(url)).toContain('inspection=1')
+    expect(init).toMatchObject({ method: 'GET',cache: 'no-store' }); expect(init?.body).toBeUndefined()
+    expect((await client.inspect(shareManifest.packageKey)).importReview.database).toEqual({ status: 'unavailable' })
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    client.dispose()
+})
 
 test('plan, review and export use E’s exact scoped operations and reviewed digest', async () => {
     const fetcher = vi.fn()

@@ -4,6 +4,7 @@ import { readPortableArchive, type PortablePackageMemberBytes } from '../../../.
 import { createDesktopCoworkerSharePlan, createDesktopCoworkerSnapshot } from '../../../../../engine/src/desktop/coworker-share/snapshot'
 import { desktopCoworkerShareExportInputSchema, desktopCoworkerShareImportInputSchema, desktopCoworkerShareReviewInputSchema, desktopCoworkerShareRevokeInputSchema, desktopCoworkerShareSourceSchema, type DesktopCoworkerShareMemoryPreview, type DesktopCoworkerShareDatabasePreview, type DesktopCoworkerShareSource, type DesktopCoworkerSnapshotManifest } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
+import { inspectCoworkerImportDatabase } from './import-inspection'
 import type { DesktopCoworkerShareStore } from './store'
 
 export type DesktopCoworkerShareInstallAuthority = {
@@ -142,6 +143,17 @@ export function createDesktopCoworkerShareService(store: DesktopCoworkerShareSto
                 if (released) dropReview(reviewId,released)
                 return summary(snapshot,result.reused)
             } finally { if (review) { review.users--; expireReview(reviewId,review) } }
+        },
+        async inspect(snapshotId: string, signal?: AbortSignal) {
+            signal?.throwIfAborted()
+            await guard('read')
+            const snapshot = await saved(snapshotId)
+            if (!snapshot) throw new DesktopHttpError(404,'Local share not found.')
+            signal?.throwIfAborted()
+            const importReview = inspectCoworkerImportDatabase(snapshot)
+            await guard('read')
+            signal?.throwIfAborted()
+            return { manifest: snapshot.manifest, importReview }
         },
         async preview(snapshotId: string) {
             await guard('read')

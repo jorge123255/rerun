@@ -1,4 +1,9 @@
 import { DESKTOP_PORTABLE_TEMPLATE_LIMITS, DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING, type DesktopCoworkerSharePlan, type DesktopCoworkerShareReviewResult, type DesktopCoworkerSnapshotManifest } from '@rerun/contracts'
+import type { DesktopCoworkerImportDatabase, DesktopCoworkerImportInspection } from '@/lib/desktop/coworker-share/import-review'
+
+export function importInspection(manifest: DesktopCoworkerSnapshotManifest = shareManifest, database: DesktopCoworkerImportDatabase = { status: 'absent' }): DesktopCoworkerImportInspection {
+    return { manifest, importReview: { manifestDigest: manifest.contentDigest, database } }
+}
 
 export const shareManifest: DesktopCoworkerSnapshotManifest = {
     format: 'desktop-portable-template',

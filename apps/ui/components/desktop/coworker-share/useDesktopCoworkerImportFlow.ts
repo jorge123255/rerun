@@ -1,10 +1,11 @@
 'use client'
 
 import * as React from 'react'
-import type { DesktopCoworkerShareImportInput, DesktopCoworkerSnapshotManifest } from '@rerun/contracts'
+import type { DesktopCoworkerShareImportInput } from '@rerun/contracts'
 import type { DesktopCoworkerShareAttempts } from '@/lib/desktop/coworker-share/attempts'
 import type { DesktopCoworkerShareClient } from '@/lib/desktop/coworker-share/client'
 import { classifyShareDestination } from '@/lib/desktop/coworker-share/sections'
+import { desktopCoworkerImportReviewState, readDesktopCoworkerImportInspection, type DesktopCoworkerImportInspection } from '@/lib/desktop/coworker-share/import-review'
 
 export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspaceId, snapshotId, onImported, active = true }: {
     client: DesktopCoworkerShareClient
@@ -17,6 +18,8 @@ export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspace
     const scope = React.useMemo(() => ({ targetWorkspaceId, snapshotId }), [targetWorkspaceId, snapshotId])
     const currentScope = React.useRef(scope)
     currentScope.current = scope
+    const currentClient = React.useRef(client)
+    currentClient.current = client
     const importedCallback = React.useRef(onImported)
     importedCallback.current = onImported
     const notified = React.useRef(new Set<string>())
@@ -24,11 +27,16 @@ export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspace
     activeRef.current = active
     const epoch = React.useRef(0)
     const running = React.useRef(false)
-    const [manifest, setManifest] = React.useState<DesktopCoworkerSnapshotManifest | null>(null)
+    const [inspected, setInspected] = React.useState<{ scope: typeof scope; client: DesktopCoworkerShareClient; value: DesktopCoworkerImportInspection } | null>(null)
+    const inspection = active && inspected?.scope === scope && inspected.client === client ? inspected.value : null
+    const manifest = inspection?.manifest ?? null
+    const review = inspection ? desktopCoworkerImportReviewState(inspection) : null
     const [loading, setLoading] = React.useState(true)
-    const [approved, setApproved] = React.useState(false)
+    const [approval, setApproval] = React.useState<DesktopCoworkerImportInspection | null>(null)
+    const approved = inspection !== null && approval === inspection
     const [pendingImports, setPendingImports] = React.useState<DesktopCoworkerShareImportInput[]>([])
-    const [importedAgentId, setImportedAgentId] = React.useState<string | null>(null)
+    const [imported, setImported] = React.useState<{ scope: typeof scope; client: DesktopCoworkerShareClient; agentId: string } | null>(null)
+    const importedAgentId = active && imported?.scope === scope && imported.client === client ? imported.agentId : null
     const [busy, setBusy] = React.useState(false)
     const [error, setError] = React.useState<string | null>(null)
 
@@ -37,22 +45,22 @@ export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspace
         try {
             const pending = await attempts.listImport(scope)
             if (activeRef.current && generation === epoch.current && currentScope.current === scope) setPendingImports(pending)
-        } catch { if (activeRef.current) setError('Durable import recovery is unavailable. Reopen the panel before importing.') }
+        } catch { if (activeRef.current && generation === epoch.current && currentScope.current === scope) setError('Durable import recovery is unavailable. Reopen the panel before importing.') }
     }, [attempts, scope])
 
     React.useEffect(() => {
         if (!active) return
         const request = ++epoch.current
-        setManifest(null)
-        setApproved(false)
-        setImportedAgentId(null)
+        setInspected(null)
+        setApproval(null)
+        setImported(null)
         setLoading(true)
+        setBusy(false)
         setError(null)
         refreshAttempts()
-        void client.preview(snapshotId).then(result => {
+        void client.inspect(snapshotId).then(result => {
             if (!activeRef.current || request !== epoch.current) return
-            if (result.packageKey !== snapshotId) throw new Error('This preview belongs to another portable file.')
-            setManifest(result)
+            setInspected({ scope, client, value: readDesktopCoworkerImportInspection(result,snapshotId) })
         }).catch((cause: unknown) => {
             if (activeRef.current && request === epoch.current) setError(cause instanceof Error ? cause.message : 'The portable file could not be previewed.')
         }).finally(() => {
@@ -70,7 +78,9 @@ export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspace
     }, [active])
 
     async function importFresh(recovery?: DesktopCoworkerShareImportInput): Promise<boolean> {
+        if (!activeRef.current || currentScope.current !== scope || currentClient.current !== client) return false
         if (running.current || importedAgentId) return importedAgentId !== null
+        if (!manifest || !review?.canImport) return false
         if (!recovery && (!manifest || !approved)) return false
         const pending = recovery ?? pendingImports.find(candidate => !manifest || candidate.expectedDigest === manifest.contentDigest)
         if (pending && manifest && pending.expectedDigest !== manifest.contentDigest) {
@@ -91,7 +101,7 @@ export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspace
             return false
         }
         const request = ++epoch.current
-        const owns = () => activeRef.current && request === epoch.current && currentScope.current.targetWorkspaceId === input.targetWorkspaceId && currentScope.current.snapshotId === input.snapshotId
+        const owns = () => activeRef.current && request === epoch.current && currentClient.current === client && currentScope.current === scope && currentScope.current.targetWorkspaceId === input.targetWorkspaceId && currentScope.current.snapshotId === input.snapshotId
         running.current = true
         setBusy(true)
         setError(null)
@@ -118,7 +128,7 @@ export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspace
             }
             await attempts.forgetImport(input)
             if (!owns()) return false
-            setImportedAgentId(outcome.importedAgentId)
+            setImported({ scope,client,agentId: outcome.importedAgentId })
             refreshAttempts()
             return true
         } catch (cause) {
@@ -135,16 +145,22 @@ export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspace
 
     function cancel() {
         epoch.current++
-        setApproved(false)
+        setApproval(null)
         setBusy(false)
         setError(null)
     }
 
     return {
         manifest,
+        inspection,
+        databaseReview: review?.database ?? null,
+        sectionReview: review?.sectionReview,
+        canImport: review?.canImport ?? false,
         loading,
         approved,
-        setApproved,
+        setApproved: (value: boolean) => {
+            if (activeRef.current && currentScope.current === scope && currentClient.current === client) setApproval(value && review?.canImport ? inspection : null)
+        },
         pendingImports,
         importedAgentId,
         busy,
