@@ -6,10 +6,12 @@ import { joinPath, parentPath, type SharedFilesTree } from '@/components/brain/u
 import { DesktopSharedFilePreview } from '@/components/desktop/shared-files/DesktopSharedFilePreview'
 import { DesktopSharedImportResults } from '@/components/desktop/shared-files/DesktopSharedImportResults'
 import { FileList } from '@/components/files/FileList'
-import type { DesktopSharedEntry, DesktopSharedImportResult } from '@/lib/desktop/shared-workspace-files'
+import { renameDesktopSharedFile, type DesktopSharedEntry, type DesktopSharedImportResult } from '@/lib/desktop/shared-workspace-files'
 import type { UploadEntry } from '@/lib/files/upload'
 import { FolderIcon } from '@/lib/icons'
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
+import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 
 const ROOT = 'Files'
 
@@ -26,7 +28,7 @@ function truncatedOf(files: SharedFilesTree, dir: string): boolean {
     return tree.truncatedOf?.(dir) ?? false
 }
 
-/** The shared folder, through the same list the sidebar already loaded. Rename, delete, and download stay out. */
+/** The shared folder, through the same list the sidebar already loaded. Rename reuses the authorized file-only API and inline menu. */
 export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResults, importing, onRetryImport }: {
     path: string
     files: SharedFilesTree
@@ -37,6 +39,33 @@ export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResu
     onRetryImport: (result: DesktopSharedImportResult) => void
 }) {
     const { expand } = files
+    const pending = useRef<AbortController | null>(null)
+    const scope = useRef(path)
+    scope.current = path
+    const [renaming, setRenaming] = useState(false)
+    useEffect(() => {
+        const unsubscribe = subscribeDraftShutdown(() => pending.current?.abort())
+        return () => { pending.current?.abort(); unsubscribe() }
+    }, [])
+    useEffect(() => { pending.current?.abort(); setRenaming(false) }, [path])
+    const rename = async (name: string, next: string) => {
+        if (pending.current || importing || isDesktopQuitting() || !files.entriesOf(path)?.some(entry => entry.name === name && entry.type !== 'dir')) return
+        const controller = new AbortController()
+        pending.current = controller
+        setRenaming(true)
+        const release = holdDraftAdmission()
+        const active = () => !controller.signal.aborted && scope.current === path && !isDesktopQuitting()
+        try {
+            await renameDesktopSharedFile(joinPath(path, name), next, controller.signal)
+            if (active()) await files.refresh(path)
+        } catch {
+            if (active()) toast.error('The rename was not confirmed. Refresh this folder before retrying.')
+        } finally {
+            if (pending.current === controller) pending.current = null
+            if (active()) setRenaming(false)
+            release()
+        }
+    }
     useEffect(() => { if (path) expand(path) }, [path, expand])
     const results = importResults.filter(result => {
         const folder = result.folder ?? ''
@@ -52,8 +81,10 @@ export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResu
                 title={path.split('/').filter(Boolean).pop() ?? ROOT}
                 entries={files.entriesOf(path)}
                 onOpen={entry => onSelect({ kind: entry.type === 'dir' ? 'folder' : 'file', path: joinPath(path, entry.name) })}
+                onRename={(name, next) => void rename(name, next)}
+                canRename={entry => entry.type !== 'dir' && !importing && !renaming}
                 onUpload={entries => onUpload(entries, path)}
-                uploadDisabled={importing}
+                uploadDisabled={importing || renaming}
                 emptyDescription="Nothing here yet. Import supported documents, images, audio, video, or PDFs to share them with coworkers that have Read shared files enabled."
             />
         </div>
