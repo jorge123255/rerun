@@ -25,6 +25,14 @@ describe('createDesktopScheduleParser', () => {
         })
     })
 
+    it('forwards a saved routine revision without a client-selected model', async () => {
+        const expectedRevision = 'a'.repeat(64)
+        await createDesktopScheduleParser({ agentId: 'alice', connectionId: null, provider: null, model: null, slug: 'daily', expectedRevision })(input)
+        expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toMatchObject({
+            slug: 'daily', expectedRevision, connectionId: null, provider: null, model: null,
+        })
+    })
+
     it('returns a one-time result without changing its shape', async () => {
         fetchMock.mockResolvedValueOnce(Response.json({ status: 'ok', value: { mode: 'runAt', runAt: '2026-11-10T08:00:00-06:00' } }))
         await expect(createDesktopScheduleParser(selection)(input)).resolves.toEqual({
