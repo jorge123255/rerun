@@ -84,8 +84,8 @@ export const DESKTOP_FOREMAN_INTAKE_COMPLETION_STATES = ['pending', 'uncertain',
 export const desktopForemanIntakeCompletionStateSchema = z.enum(DESKTOP_FOREMAN_INTAKE_COMPLETION_STATES)
 export type DesktopForemanIntakeCompletionState = z.infer<typeof desktopForemanIntakeCompletionStateSchema>
 
-export const desktopForemanIntakeAnswersSchema = foremanIntakeSchema
-export type DesktopForemanIntakeAnswers = ForemanIntakeRequest
+export const desktopForemanIntakeAnswersSchema = foremanIntakeSchema.extend({ ownAsk: z.string().trim().min(1).max(4000).optional() })
+export type DesktopForemanIntakeAnswers = z.infer<typeof desktopForemanIntakeAnswersSchema>
 
 export const desktopForemanIntakeCompleteInputSchema = z.strictObject({
     chat: foremanChatRefSchema,
@@ -171,7 +171,7 @@ export type DesktopForemanIntakeCompletionAuthority = {
         chat: DesktopForemanChatRef
         requestId: string
         fingerprint: string
-        answers: ForemanIntakeRequest
+        answers: DesktopForemanIntakeAnswers
     }): Promise<{
         conversationId: string | null
         runId: string | null

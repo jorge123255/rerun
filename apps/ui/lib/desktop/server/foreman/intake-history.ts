@@ -45,5 +45,8 @@ export async function hideDesktopForemanIntakeKickoff(runtime: DesktopRuntime, d
         // A later successful poll recovers the conversation without resending the intake.
         throw new DesktopHttpError(503, 'The Foreman conversation could not be loaded. Please retry.')
     }
-    return messages.filter(message => !(message.role === 'user' && message.id === `engine-${run.queuedUserMessageId}` && visibleText(message.parts, '') === text))
+    const isKickoff = (message: HistoryMessage) => message.role === 'user' && message.id === `engine-${run.queuedUserMessageId}` && visibleText(message.parts, '') === text
+    const ownAsk = receipt.answers.ownAsk
+    if (ownAsk) return messages.map(message => isKickoff(message) ? { ...message, parts: [{ type: 'text', text: ownAsk }] } : message)
+    return messages.filter(message => !isKickoff(message))
 }

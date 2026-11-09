@@ -182,7 +182,7 @@ export function saveIntake(record: IntakeRecord): Promise<boolean> {
     return work
 }
 
-export function submitIntake(record: IntakeRecord): Promise<void> {
+export function submitIntake(record: IntakeRecord, ownAsk?: string): Promise<void> {
     if (record.submitWork) return record.submitWork
     if (isDesktopQuitting() || !record.snapshot.restored || record.snapshot.completion?.state === 'acknowledged') return Promise.resolve()
     const release = holdDraftAdmission()
@@ -194,7 +194,7 @@ export function submitIntake(record: IntakeRecord): Promise<void> {
             if (!await saveIntake(record) || record.dirty || record.attempt) throw new Error('Save these answers before submitting the intake.')
             if (isDesktopQuitting()) return
             const machine = record.snapshot.machine
-            const input = record.completionAttempt ?? { chat: record.chat, requestId: crypto.randomUUID(), expectedRevision: record.savedRevision, answers: toIntake(machine.draft, machine.knownFirstName, machine.decided) }
+            const input = record.completionAttempt ?? { chat: record.chat, requestId: crypto.randomUUID(), expectedRevision: record.savedRevision, answers: { ...toIntake(machine.draft, machine.knownFirstName, machine.decided), ...(ownAsk ? { ownAsk } : {}) } }
             record.completionAttempt = input
             // Once admitted, this payload is immutable until a definite no-effect refusal or ACK.
             publishIntake(record, { completionUncertain: true })
