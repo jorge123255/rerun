@@ -25,6 +25,8 @@ export type DesktopForemanPanelProps = {
     onOpenBox: (spaceId: string) => void | Promise<void>
     onClose: () => void
     agentNameOf: (agentId: string) => string
+    /** Opens the template library on one local template's review. Nothing is installed from it. */
+    onReviewTemplate?: (template: { templateId: string; revision: string }) => void
     workspaceModel?: string
     modelChoice?: DesktopForemanModelRef
     workspaceModelChoice?: DesktopForemanModelRef
@@ -139,7 +141,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     <DesktopForemanColumn
         controlledOpen={props.controlledOpen} hidden={props.hidden} centerOpen={props.centerOpen} onOpenChange={props.onOpenChange} onLayout={props.onLayout}
         dockFeed={dockFeed} voiceSlot={voiceSlot} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)}
-        streaming={!!state.view.live} orbState={state.view.live ? 'thinking' : 'idle'} agentNameOf={props.agentNameOf}
+        streaming={!!state.view.live} orbState={state.view.live ? 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
         headerActions={<><DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} />{error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}</>}
         composerTrailing={props.composerTrailing ?? <span className="truncate text-xs text-muted-foreground">{state.model?.model ?? props.workspaceModel ?? 'Workspace default'}</span>}

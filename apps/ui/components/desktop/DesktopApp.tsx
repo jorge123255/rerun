@@ -437,6 +437,12 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         showBoard()
     }
 
+    function reviewTemplate(template: { templateId: string; revision: string }) {
+        if (creationAdmission.current.blocked || workspaceDialogActive || isDesktopQuitting()) return
+        setTemplateToReview(template)
+        setTemplatesOpen(true)
+    }
+
     function reviewTemplatePlacement() {
         const target = templatePlacement.review()
         if (!target) return
@@ -682,7 +688,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     <DesktopForemanPanel controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout}
                         hidden={controlCenterDisabled || controlCenterOpen || panelOpen || settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
                         centerOpen={controlCenterOpen} onOpenTranscriptionSettings={() => { setSettingsTab('Tool services'); setSettings(true) }} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('Foreman was closed.')); setForemanOpen(false) }}
-                        onOpenCoworker={openForemanCoworker} onOpenBox={openForemanBox} workspaceModel={modelLabel} workspaceModelChoice={defaultProvider && providers.default ? { connectionId: defaultProvider.id, model: providers.default.model } : undefined}
+                        onOpenCoworker={openForemanCoworker} onOpenBox={openForemanBox} onReviewTemplate={reviewTemplate} workspaceModel={modelLabel} workspaceModelChoice={defaultProvider && providers.default ? { connectionId: defaultProvider.id, model: providers.default.model } : undefined}
                         agentNameOf={id => currentAgents.current.find(agent => agent.id === id)?.name ?? 'Coworker'} />
                 </div>}
                 {selectedAgent && <div inert={!panelOpen || boardInteraction || workspaceDialogActive} aria-hidden={!panelOpen || boardInteraction || workspaceDialogActive || undefined}>
