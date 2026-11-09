@@ -10,6 +10,7 @@ import { getAgent } from '../../agents/registry.js'
 import { hasPendingSetup } from '../../agents/setup.js'
 import { setupPending } from '../../lib/errors.js'
 import { authorizeDesktopSchedule } from '../../desktop/schedule-binding.js'
+import { describeDesktopSchedule, desktopScheduleDescriptionInputSchema } from '../../desktop/schedule-description.js'
 
 export const scheduleRoutes = new Hono()
 const authorize = async (agentId: string) => { if (desktopApp()) await authorizeDesktopSchedule(agentId) }
@@ -92,6 +93,13 @@ scheduleRoutes.patch('/:slug', async c => {
         if (error instanceof ScheduleTimingError) return c.json({ error: error.message }, 400)
         throw error
     }
+})
+
+scheduleRoutes.post('/describe', async c => {
+    const agentId = c.req.param('id')!
+    const input = desktopScheduleDescriptionInputSchema.parse(await c.req.json())
+    const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(20_000)])
+    return c.json(await describeDesktopSchedule(agentId, input, signal)
 })
 
 scheduleRoutes.post('/:slug/run', async c => {
