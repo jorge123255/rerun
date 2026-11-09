@@ -26,7 +26,7 @@ afterEach(async () => { process.env = { ...env }; await rm(root, { recursive: tr
 function form(entries: { name: string; body?: Uint8Array }[]) {
     const body = new FormData()
     for (const entry of entries) {
-        body.append('file', new File([entry.body ?? Buffer.from('body')], entry.name))
+        body.append('file', new File([entry.body ? new Uint8Array(entry.body) : 'body'], entry.name))
     }
     body.set('path', 'nested')
     return new Request(`${origin}/api/desktop/shared-files/batch`, { method: 'POST', headers: { host: new URL(origin).host, origin, cookie: `rerun-desktop-session=${token}` }, body })
@@ -45,7 +45,7 @@ test('admits a mixed batch with per-file outcomes and no overwrite', async () =>
         { name: 'run.exe', folder: 'nested', status: 'refused', message: expect.stringContaining('supported shared file') },
     ])
     expect(await readFile(join(root, 'workspaces', '1', 'engine', 'shared', 'nested', 'image.png'))).toEqual(Buffer.from([0, 255, 1]))
-    expect(await readFile(join(root, 'workspaces', '1', 'engine', 'shared', 'nested', 'existing.txt'))).toBe('original')
+    expect(await readFile(join(root, 'workspaces', '1', 'engine', 'shared', 'nested', 'existing.txt'), 'utf8')).toBe('original')
 })
 
 test('enforces text and image caps while admitting an ordinary PDF', async () => {

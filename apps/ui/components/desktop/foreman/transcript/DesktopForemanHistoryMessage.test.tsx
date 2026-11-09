@@ -1,8 +1,10 @@
-// @vitest-environment jsdom
+// @vitest-environment happy-dom
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { DesktopForemanHistoryMessage } from './DesktopForemanHistoryMessage'
+
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 it('reopening saved history and expanding recorded steps never dispatches an action', async () => {
     const network = vi.fn(() => { throw new Error('No history effects permitted') })
