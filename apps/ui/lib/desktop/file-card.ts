@@ -133,6 +133,20 @@ export function desktopFileCardOf(value: unknown): FileCard | undefined {
     return { kind: 'file', files: normalized }
 }
 
+const IMAGE_GENERATION_UNAVAILABLE = 'Image generation is not available.'
+
+const IMAGE_GENERATION_PLAN_LIMIT = 'Image generation is not available on this plan'
+
+/** Project verified private image cards and a known plan notice without exposing provider errors. */
+export function desktopImageGenerationOutput(value: unknown): string {
+    const card = desktopFileCardOf(value)
+    if (card?.files.every(file => file.scope === 'agent' && imagePath(file.path) && file.identity)) return JSON.stringify(card)
+    if (value === IMAGE_GENERATION_PLAN_LIMIT || (
+        value && typeof value === 'object' && 'error' in value && value.error === IMAGE_GENERATION_PLAN_LIMIT
+    )) return IMAGE_GENERATION_PLAN_LIMIT
+    return IMAGE_GENERATION_UNAVAILABLE
+}
+
 /** A route or validation error safe to show in the card's preview. */
 export class DesktopCardError extends Error {}
 

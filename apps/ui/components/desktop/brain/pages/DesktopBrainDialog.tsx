@@ -15,7 +15,7 @@ import type { DesktopBrainActions, DesktopBrainRoute } from './types'
  * that is being edited first, and refuses to close when a write could not land, so no keystroke is
  * dropped by a dismissal. Quit is covered by the same drafts through `subscribeDraftShutdown`.
  */
-export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false, renderProposals, triggerLabel = 'Company Brain', refreshKey, openProposalsKey, openSlug, onOpenConsumed, route, onRouteConsumed }: {
+export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false, renderProposals, triggerLabel = 'Company Brain', refreshKey, openProposalsKey, openSlug, onOpenConsumed, route, onRouteConsumed, workspaceId }: {
     actions: DesktopBrainActions
     dialogControl?: DesktopDialogControl
     hideTrigger?: boolean
@@ -28,6 +28,8 @@ export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false
     /** Root can pass a section or a table later. Absent until that wiring lands. */
     route?: DesktopBrainRoute | null
     onRouteConsumed?: () => void
+    /** Active workspace. Root passes `runtimeWorkspaceId`. Absent until that one line lands. */
+    workspaceId?: number | null
 }) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     const [closing, setClosing] = useState(false)
@@ -66,7 +68,7 @@ export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false
                 <DialogTitle>Company Brain</DialogTitle>
                 <DialogDescription>What every coworker of this workspace reads about the company. Pages save as you type; version history keeps every change.</DialogDescription>
             </DialogHeader>
-            {ready ? <DesktopBrainPanel actions={actions} onClose={() => { void requestOpen(false) }} renderProposals={renderProposals} refreshKey={refreshKey} openProposalsKey={openProposalsKey} openSlug={openSlug} onOpenConsumed={onOpenConsumed} route={route} onRouteConsumed={onRouteConsumed} />
+            {ready ? <DesktopBrainPanel actions={actions} onClose={() => { void requestOpen(false) }} renderProposals={renderProposals} refreshKey={refreshKey} openProposalsKey={openProposalsKey} openSlug={openSlug} onOpenConsumed={onOpenConsumed} route={route} onRouteConsumed={onRouteConsumed} workspaceId={workspaceId} />
                 : <div className="p-6" role={restoreError ? 'alert' : 'status'}>{restoreError ?? 'Restoring saved Brain drafts…'}
                     {restoreError && <Button size="sm" onClick={() => setRestoreAttempt(value => value + 1)}>Retry</Button>}</div>}
         </DialogContent>}

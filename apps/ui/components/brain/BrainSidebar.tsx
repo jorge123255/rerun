@@ -1,7 +1,7 @@
 'use client'
 
 import type { FileEntry } from '@/app/api/_actions/workspace-file.actions'
-import { SHARED_FILE_DRAG_TYPE } from '@/components/brain/editor/file-link'
+import { SHARED_FILE_DRAG_TYPE, sharedFileDragData } from '@/components/brain/editor/file-link'
 import type { BrainSelection } from '@/components/brain/selection'
 import { joinPath, type SharedFileRef, type SharedFilesTree } from '@/components/brain/useSharedFilesTree'
 import { Button } from '@/components/ui/button'
@@ -30,8 +30,10 @@ type BrainSidebarProps = {
     searchRef: Ref<HTMLInputElement>
     onSelect: (selection: BrainSelection) => void
     onUpload: (entries: UploadEntry[], dir: string) => void
-    // The hosted Brain drags a file onto a page. Desktop leaves that off.
+    // Hosted drags a file onto a page. Desktop turns this on for a listed file only.
     fileDrag?: boolean
+    // Set on desktop so a drop can tell this workspace from another. Hosted omits it.
+    fileDropWorkspace?: string
 }
 
 function SidebarRow({
@@ -42,6 +44,7 @@ function SidebarRow({
     leading,
     trailing,
     draggableFile,
+    dragWorkspace,
     tooltip,
     expanded,
     onClick,
@@ -54,6 +57,7 @@ function SidebarRow({
     leading?: ReactNode
     trailing?: ReactNode
     draggableFile?: SharedFileRef
+    dragWorkspace?: string
     expanded?: boolean
     onClick: () => void
 }) {
@@ -72,7 +76,7 @@ function SidebarRow({
             onDragStart={
                 draggableFile
                     ? event => {
-                          event.dataTransfer.setData(SHARED_FILE_DRAG_TYPE, JSON.stringify(draggableFile))
+                          event.dataTransfer.setData(SHARED_FILE_DRAG_TYPE, sharedFileDragData(draggableFile, dragWorkspace))
                           event.dataTransfer.effectAllowed = 'copy'
                       }
                     : undefined
@@ -107,7 +111,7 @@ function SectionHeader({ label, action, active, onClick }: { label: string; acti
     )
 }
 
-function FolderRows({ dir, depth, files, selection, onSelect, fileDrag }: { dir: string; depth: number; files: SharedFilesTree; selection: BrainSelection | null; onSelect: (selection: BrainSelection) => void; fileDrag: boolean }) {
+function FolderRows({ dir, depth, files, selection, onSelect, fileDrag, fileDropWorkspace }: { dir: string; depth: number; files: SharedFilesTree; selection: BrainSelection | null; onSelect: (selection: BrainSelection) => void; fileDrag: boolean; fileDropWorkspace?: string }) {
     const entries = files.entriesOf(dir)
     const indent = `${(dir ? 1.5 : 0.5) + depth * 0.875}rem`
     if (!entries) return (
@@ -117,14 +121,14 @@ function FolderRows({ dir, depth, files, selection, onSelect, fileDrag }: { dir:
         )
     if (entries.length === 0) return <p style={{ paddingLeft: indent }} className="py-1 text-xs text-muted-foreground/70">{dir ? 'Empty folder' : 'No files yet'}</p>
 
-    return entries.map(entry => <FileTreeRow key={entry.name} dir={dir} entry={entry} depth={depth} files={files} selection={selection} onSelect={onSelect} fileDrag={fileDrag} />)
+    return entries.map(entry => <FileTreeRow key={entry.name} dir={dir} entry={entry} depth={depth} files={files} selection={selection} onSelect={onSelect} fileDrag={fileDrag} fileDropWorkspace={fileDropWorkspace} />)
 }
 
-function FileTreeRow({ dir, entry, depth, files, selection, onSelect, fileDrag }: { dir: string; entry: FileEntry; depth: number; files: SharedFilesTree; selection: BrainSelection | null; onSelect: (selection: BrainSelection) => void; fileDrag: boolean }) {
+function FileTreeRow({ dir, entry, depth, files, selection, onSelect, fileDrag, fileDropWorkspace }: { dir: string; entry: FileEntry; depth: number; files: SharedFilesTree; selection: BrainSelection | null; onSelect: (selection: BrainSelection) => void; fileDrag: boolean; fileDropWorkspace?: string }) {
     const path = joinPath(dir, entry.name)
 
     if (entry.type !== 'dir') {
-        return <SidebarRow icon={FileIcon} label={entry.name} depth={depth} leading={<span className="w-3.5 shrink-0" />} active={selection?.kind === 'file' && selection.path === path} draggableFile={fileDrag ? { path, name: entry.name } : undefined} onClick={() => onSelect({ kind: 'file', path })} />
+        return <SidebarRow icon={FileIcon} label={entry.name} depth={depth} leading={<span className="w-3.5 shrink-0" />} active={selection?.kind === 'file' && selection.path === path} draggableFile={fileDrag ? { path, name: entry.name } : undefined} dragWorkspace={fileDropWorkspace} onClick={() => onSelect({ kind: 'file', path })} />
     }
 
     const open = files.expanded.has(path)
@@ -153,14 +157,14 @@ function FileTreeRow({ dir, entry, depth, files, selection, onSelect, fileDrag }
                     onSelect({ kind: 'folder', path })
                 }}
             />
-            {open && <FolderRows dir={path} depth={depth + 1} files={files} selection={selection} onSelect={onSelect} fileDrag={fileDrag} />}
+            {open && <FolderRows dir={path} depth={depth + 1} files={files} selection={selection} onSelect={onSelect} fileDrag={fileDrag} fileDropWorkspace={fileDropWorkspace} />}
         </>
     )
 }
 
 // One tree for everything the workspace shares, as Notion keeps its pages and databases side by
 // side: what agents proposed, the company pages, the shared folder and the shared database.
-export function BrainSidebar({ pages, pagesAvailable, selection, openProposals, files, tables, searchRef, onSelect, onUpload, fileDrag = true }: BrainSidebarProps) {
+export function BrainSidebar({ pages, pagesAvailable, selection, openProposals, files, tables, searchRef, onSelect, onUpload, fileDrag = true, fileDropWorkspace }: BrainSidebarProps) {
     const [query, setQuery] = useState('')
     const card = pages.filter(page => isCardType(page.type))
     const products = pages.filter(page => page.type === 'product')
@@ -235,7 +239,7 @@ export function BrainSidebar({ pages, pagesAvailable, selection, openProposals, 
                         <SectionHeader label="Files" />
                         {results.files.length ? (
                             results.files.map(file => (
-                                <SidebarRow key={file.path} icon={FileIcon} label={file.path} active={selection?.kind === 'file' && selection.path === file.path} draggableFile={fileDrag ? file : undefined} onClick={() => onSelect({ kind: 'file', path: file.path })} />
+                                <SidebarRow key={file.path} icon={FileIcon} label={file.path} active={selection?.kind === 'file' && selection.path === file.path} draggableFile={fileDrag ? file : undefined} dragWorkspace={fileDropWorkspace} onClick={() => onSelect({ kind: 'file', path: file.path })} />
                             ))
                         ) : (
                             <p className="px-2 py-1 text-xs text-muted-foreground/70">No file opened so far matches</p>
@@ -293,7 +297,7 @@ export function BrainSidebar({ pages, pagesAvailable, selection, openProposals, 
                             onClick={() => onSelect({ kind: 'folder', path: '' })}
                             action={<FileUploadMenu onPick={entries => onUpload(entries, '')} />}
                         />
-                        <FolderRows dir="" depth={0} files={files} selection={selection} onSelect={onSelect} fileDrag={fileDrag} />
+                        <FolderRows dir="" depth={0} files={files} selection={selection} onSelect={onSelect} fileDrag={fileDrag} fileDropWorkspace={fileDropWorkspace} />
 
                         <SectionHeader label="Database" active={selection?.kind === 'database'} onClick={() => onSelect({ kind: 'database' })} />
                         {tables === null ? (

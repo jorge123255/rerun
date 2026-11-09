@@ -7,6 +7,7 @@ import {
     foremanDecisionSchema, foremanBuildSchema, foremanLiveEventSchema, visibleText,
     type DesktopForemanModelRef, type DesktopForemanLiveEvent,
 } from '@rerun/contracts'
+import { answeredQuestionRecapsForMessage, desktopAnsweredQuestionRecapSchema } from '@/lib/desktop/foreman/answered-question-recap'
 import { foremanHistoryParts } from '@/components/desktop/foreman/transcript/parts'
 import { desktopPendingQuestionSchema, type DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
@@ -23,6 +24,7 @@ const stateSchema = z.strictObject({
     chat: foremanChatRefSchema, sessionId: z.string().min(1).max(128), model: foremanModelRefSchema.nullable(),
     view: foremanConversationViewSchema,
     question: desktopPendingQuestionSchema.nullable().optional(),
+    answeredQuestions: z.array(desktopAnsweredQuestionRecapSchema).max(2048).optional(),
     messages: z.array(z.object({ id: z.string().max(256), role: z.enum(['user', 'assistant']), parts: z.array(z.unknown()).max(4096) })).max(5000),
     ui: z.strictObject({ snapshot: desktopForemanSavedUiSchema.nullable(), revision: z.number().int().nonnegative() }),
 }).refine(value => sameForemanChat(value.chat, value.view.chat) && (!value.ui.snapshot || sameForemanChat(value.chat, value.ui.snapshot)), 'Foreman state belongs to another chat.')
@@ -53,16 +55,20 @@ export async function readDesktopForemanState(signal?: AbortSignal): Promise<Des
 }
 const post = async (input: unknown, signal?: AbortSignal) => json(await fetch('/api/desktop/foreman', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input), signal }))
 export function desktopForemanMessages(state: DesktopForemanClientState) {
-    return state.messages.map(({ id, role, parts }) => ({
-        id,
-        role,
-        history: foremanHistoryParts(id, parts),
-        text: visibleText(parts, '\n'),
-        docs: parts.filter(part => part && typeof part === 'object' && (
-            (part as { type?: string }).type === 'tool-search_docs' ||
-            (part as { type?: string; toolName?: string }).type === 'dynamic-tool' && (part as { toolName?: string }).toolName === 'search_docs'
-        )) as UIMessage['parts'],
-    })).filter(message => message.history.length > 0)
+    return state.messages.map(({ id, role, parts }) => {
+        const answeredQuestions = answeredQuestionRecapsForMessage(state.answeredQuestions ?? [], id)
+        return {
+            id,
+            role,
+            history: foremanHistoryParts(id, parts),
+            ...(answeredQuestions.length > 0 && { answeredQuestions }),
+            text: visibleText(parts, '\n'),
+            docs: parts.filter(part => part && typeof part === 'object' && (
+                (part as { type?: string }).type === 'tool-search_docs' ||
+                (part as { type?: string; toolName?: string }).type === 'dynamic-tool' && (part as { toolName?: string }).toolName === 'search_docs'
+            )) as UIMessage['parts'],
+        }
+    }).filter(message => message.history.length > 0)
 }
 function emptyUi(chat: DesktopForemanChatRef): DesktopForemanPersistedUi {
     return { ...chat, open: true, tab: 'assistant', draft: '', pendingPlanRevisionId: null, decision: { status: 'idle' }, build: null, discoveries: null, placement: DEFAULT_DESKTOP_FOREMAN_PLACEMENT }

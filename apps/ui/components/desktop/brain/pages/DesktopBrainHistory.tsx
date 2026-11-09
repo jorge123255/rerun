@@ -24,6 +24,7 @@ type DesktopBrainHistoryProps = {
     actions: Pick<DesktopBrainActions, 'readRevision' | 'revertPage'>
     onBack: () => void
     onOpenPage: (slug: string) => void
+    onOpenFile?: (path: string) => void
     onRestored: (detail: BrainPageDetail) => void
 }
 
@@ -45,7 +46,7 @@ function PreviewSkeleton() {
  * and when on the right. Restore asks first, and a refused restore is reported instead of closing
  * on a version that was not written.
  */
-export function DesktopBrainHistory({ page, revisions, titles, actions, onBack, onOpenPage, onRestored }: DesktopBrainHistoryProps) {
+export function DesktopBrainHistory({ page, revisions, titles, actions, onBack, onOpenPage, onOpenFile, onRestored }: DesktopBrainHistoryProps) {
     const [selectedId, setSelectedId] = useState<string | null>(() => { try { const pending = brainMutationIntent('revert:' + page.slug); return pending?.input.kind === 'revert' ? pending.input.revisionId : revisions[0]?.id ?? null } catch { return revisions[0]?.id ?? null } })
     const [preview, setPreview] = useState<{ id: string; content: string } | null>(null)
     const [previewError, setPreviewError] = useState<string | null>(null)
@@ -144,7 +145,7 @@ export function DesktopBrainHistory({ page, revisions, titles, actions, onBack, 
                         ) : (
                             <PageColumn>
                                 <h1 className="text-[2rem] font-semibold leading-tight tracking-tight">{selected.title}</h1>
-                                <BrainEditor key={selected.id} className="mt-6" content={preview.content} editable={false} titles={titles} onOpenPage={onOpenPage} />
+                                <BrainEditor key={selected.id} className="mt-6" content={preview.content} editable={false} titles={titles} onOpenPage={onOpenPage} onOpenFile={onOpenFile} />
                             </PageColumn>
                         )}
                     </div>

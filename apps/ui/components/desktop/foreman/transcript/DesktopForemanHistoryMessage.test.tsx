@@ -27,3 +27,55 @@ it('reopening saved history and expanding recorded steps never dispatches an act
         expect(network).not.toHaveBeenCalled()
     } finally { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals() }
 })
+
+it('rehydrates Markdown answers, reasoning and documentation at their saved positions', async () => {
+    const host = document.createElement('div'); document.body.append(host)
+    const root = createRoot(host)
+    const history: import('./parts').ForemanHistoryPart[] = [
+        { key: 'answer', kind: 'text', text: '## Saved heading\n\n**Bold answer**\n\n- First item\n- Second item\n\n```text\nliteral code\n```' },
+        { key: 'reason', kind: 'reasoning', text: '**Saved reasoning** with `inline code`' },
+        { key: 'sources', kind: 'docs', note: '*Recorded note*', links: [{ url: 'https://example.com/docs', title: 'Recorded source', text: '**Passage text**' }] },
+        { key: 'last', kind: 'text', text: 'Last answer [unfinished' },
+    ]
+    const render = () => <DesktopForemanHistoryMessage history={JSON.parse(JSON.stringify(history))} />
+    try {
+        await act(async () => root.render(render()))
+        expect(host.querySelector('h2')?.textContent).toBe('Saved heading')
+        expect(host.querySelectorAll('li')).toHaveLength(2)
+        expect(host.querySelector('pre')?.textContent).toContain('literal code')
+        expect(host.querySelector('details [data-streamdown=strong]')?.textContent).toBe('Saved reasoning')
+        expect(host.querySelector('a')?.textContent).toContain('Recorded source')
+        const before = host.textContent!
+        expect(before.indexOf('Saved heading')).toBeLessThan(before.indexOf('Saved reasoning'))
+        expect(before.indexOf('Passage text')).toBeLessThan(before.indexOf('Last answer'))
+        expect(before).toContain('[unfinished')
+        await act(async () => root.render(null))
+        await act(async () => root.render(render()))
+        expect(host.textContent).toBe(before)
+    } finally { await act(async () => root.unmount()); host.remove() }
+})
+
+it('keeps active URLs, embedded content and forged source links inert while retaining cards', async () => {
+    const fetchSpy = vi.fn(() => { throw new Error('No network') })
+    vi.stubGlobal('fetch', fetchSpy)
+    const host = document.createElement('div'); document.body.append(host)
+    const root = createRoot(host)
+    const history = foremanHistoryParts('saved', [
+        { type: 'text', text: '**Safe** [external](https://example.com/ok) [bad](javascript:alert) [relative](/api/desktop/send)\n\n![Remote image](https://example.com/tracker.png)\n\n<iframe src="https://example.com/embed"></iframe>' },
+        { type: 'tool-notify_user', toolCallId: 'notice', state: 'output-available', input: { message: 'Recorded notification' }, output: 'Notification sent to the user.' },
+    ])
+    history.push({ key: 'forged-source', kind: 'link', url: 'javascript:alert(1)', title: 'Inert source' })
+    try {
+        await act(async () => root.render(<DesktopForemanHistoryMessage history={history} />))
+        expect(host.querySelectorAll('img,iframe,video,audio,script')).toHaveLength(0)
+        for (const a of host.querySelectorAll('a')) {
+            expect(a.getAttribute('href')).toBe('https://example.com/ok')
+            expect(a.getAttribute('rel')).toContain('noopener')
+        }
+        expect(host.querySelector('[data-streamdown=strong]')?.textContent).toBe('Safe')
+        expect(host.textContent).toContain('Remote image')
+        expect(host.textContent).toContain('Inert source')
+        expect(host.querySelector('[data-historical="notification"]')).not.toBeNull()
+        expect(fetchSpy).not.toHaveBeenCalled()
+    } finally { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals() }
+})

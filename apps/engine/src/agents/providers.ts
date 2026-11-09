@@ -40,6 +40,7 @@ import { hubCallerHeaders } from '../runtime/hub.js'
 import { desktopClaudeRuntime } from '../desktop/claude-plan/runtime.js'
 import { desktopCodexRuntime, signedInFlag } from '../desktop/codex-runtime.js'
 import type { DesktopNativeWorker } from '../desktop/native-worker.js'
+import { createDesktopCodexImageMiddleware, type DesktopCodexImageRun } from '../desktop/codex-images.js'
 import { assertDesktopProvider, desktopApp } from '../desktop/policy.js'
 import { isDesktopMcpLoginTool } from '../desktop/mcp-login-tools/admission.js'
 import { isDesktopMcpTool } from '../desktop/mcp-tools.js'
@@ -548,7 +549,7 @@ export type ResolvedModel = { model: LanguageModel; close: () => Promise<void>; 
 
 const noClose = async (): Promise<void> => {}
 
-export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: RunMcpServer[], system?: string, screenshots?: ScreenshotLookup, nativeWorker?: DesktopNativeWorker): ResolvedModel {
+export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: RunMcpServer[], system?: string, screenshots?: ScreenshotLookup, nativeWorker?: DesktopNativeWorker, imageRun?: DesktopCodexImageRun): ResolvedModel {
     const { provider, model } = pairFor(agent, override)
     // `wrapLanguageModel` runs the list from the end: the guard sits nearest the model, so no other
     // middleware ever reads a fake tool call, the card tags go next, and the quick replies read the
@@ -562,7 +563,13 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
     }
     if (provider === 'codex') {
         const codex = codexAppServerProvider(agent, tools, mcpServers, { system, screenshots, nativeWorker })
-        return { model: wrapLanguageModel({ model: codex(model), middleware: [codexMcpCompatibilityMiddleware, replies.middleware, cardTags, guard] }), close: () => codex.close(), quickReplies: replies.read }
+        // Accepts an already-named image_generation result for this run. The 0.166 CLI patch is not
+        // changed here, so a live ChatGPT image turn stays a root gate. Other adapters never get this.
+        const image = imageRun && desktopApp()
+            ? createDesktopCodexImageMiddleware({ provider, agent, ...imageRun })
+            : undefined
+        const middleware = [codexMcpCompatibilityMiddleware, replies.middleware, cardTags, ...(image ? [image] : []), guard]
+        return { model: wrapLanguageModel({ model: codex(model), middleware }), close: () => codex.close(), quickReplies: replies.read }
     }
     if (provider === 'claude') {
         const capture = claudeContextCapture(agent.resolved.connection?.id)

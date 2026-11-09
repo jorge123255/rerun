@@ -3,6 +3,7 @@
 import { BrainEditor, type BrainEditorHandle } from '@/components/brain/editor/BrainEditor'
 import { PageColumn, PageProperty, PageTitle, PageTypeIcon, PageTypeSelect, UnconfirmedSections } from '@/components/brain/BrainPageParts'
 import { BrainTopBar } from '@/components/brain/BrainTopBar'
+import type { SharedFileRef } from '@/components/brain/useSharedFilesTree'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -24,7 +25,10 @@ type DesktopBrainPageProps = {
     pages: BrainPageSummary[]
     titles: Map<string, string>
     actions: DesktopBrainActions
+    files?: SharedFileRef[]
     onOpenPage: (slug: string) => void
+    onOpenFile?: (path: string) => void
+    onAcceptFileDrop?: (raw: string) => SharedFileRef | null
     onSaved: (detail: BrainPageDetail) => void
     onHistory: () => void
     onDeleted: (slug: string) => Promise<void> | void
@@ -66,7 +70,7 @@ function Backlinks({ links, onOpenPage }: { links: BrainPageData['backlinks']; o
  * whatever store root injected, and a refused or failed write is shown as such.
  *
  */
-export function DesktopBrainPage({ detail, pages, titles, actions, onOpenPage, onSaved, onHistory, onDeleted }: DesktopBrainPageProps) {
+export function DesktopBrainPage({ detail, pages, titles, actions, files = [], onOpenPage, onOpenFile, onAcceptFileDrop, onSaved, onHistory, onDeleted }: DesktopBrainPageProps) {
     const page = detail.page
     const initial = brainDraftFor(page)
     const autosave = useBrainPageDraft({ page, actions, onSaved })
@@ -226,9 +230,12 @@ export function DesktopBrainPage({ detail, pages, titles, actions, onOpenPage, o
                         content={content}
                         pages={pages}
                         titles={titles}
+                        files={files}
                         currentSlug={page.slug}
                         handleRef={editorHandle}
                         onOpenPage={onOpenPage}
+                        onOpenFile={onOpenFile}
+                        onAcceptFileDrop={onAcceptFileDrop}
                         onChange={markdown => {
                             setContent(markdown)
                             autosave.edit({ content: markdown })

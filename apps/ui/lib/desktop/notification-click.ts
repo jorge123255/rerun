@@ -27,7 +27,7 @@ export async function resolveDesktopNotificationClick(target: DesktopNotificatio
         const binding = desktopTerminalBindingSchema.parse(await response.json())
         return binding.agentId === target.agentId && binding.sessionId === target.sessionId ? binding : null
     }
-    if ((target.kind !== 'question' && target.kind !== 'approval' && target.kind !== 'takeover' && target.kind !== 'service' && target.kind !== 'secret' && target.kind !== 'mcp' && target.kind !== 'tool-install') || !target.requestId) return null
+    if ((target.kind !== 'question' && target.kind !== 'approval' && target.kind !== 'takeover' && target.kind !== 'service' && target.kind !== 'secret' && target.kind !== 'mcp' && target.kind !== 'tool-install' && target.kind !== 'info') || !target.requestId) return null
     const response = await fetch(DESKTOP_ATTENTION_URL, options)
     if (!response.ok) return null
     const body = desktopAttentionSchema.parse(await response.json())

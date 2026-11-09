@@ -564,7 +564,10 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             } : undefined)
         }
         assertDesktopRunAdmission(admission)
-        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker)
+        const imageRun = provider === 'codex' && desktopApp() && ctx.runId
+            ? { runId: ctx.runId, sessionId, abortSignal: controller.signal, runRoot: nativeWorker?.root }
+            : undefined
+        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker, imageRun)
         closeModel = resolvedModel.close
         contextUsage = resolvedModel.contextUsage
         // Cut out of the text whoever wrote it; only a coworker that offers replies gets the buttons.

@@ -2,6 +2,7 @@
 
 import { BrainEditor, type BrainEditorHandle } from '@/components/brain/editor/BrainEditor'
 import { PageColumn, PageProperty, PageTitle, PageTypeIcon, PageTypeSelect } from '@/components/brain/BrainPageParts'
+import type { SharedFileRef } from '@/components/brain/useSharedFilesTree'
 import { Button } from '@/components/ui/button'
 import { readBrainUiState, writeBrainUiState } from '@/lib/desktop/brain-ui-state'
 import { registerBrainFormFlush } from '@/lib/desktop/use-brain-page-draft'
@@ -20,7 +21,10 @@ type DesktopBrainNewPageProps = {
     pages: BrainPageSummary[]
     titles: Map<string, string>
     actions: BrainDraftActions
+    files?: SharedFileRef[]
     onOpenPage: (slug: string) => void
+    onOpenFile?: (path: string) => void
+    onAcceptFileDrop?: (raw: string) => SharedFileRef | null
     onCreated: (detail: BrainPageDetail) => void
 }
 
@@ -29,7 +33,7 @@ type DesktopBrainNewPageProps = {
  * the first blur with a title creates the page under the slug that title gives, and that slug stays
  * so the [[links]] other pages hold keep working.
  */
-export function DesktopBrainNewPage({ pages, titles, actions, onOpenPage, onCreated }: DesktopBrainNewPageProps) {
+export function DesktopBrainNewPage({ pages, titles, actions, files = [], onOpenPage, onOpenFile, onAcceptFileDrop, onCreated }: DesktopBrainNewPageProps) {
     const [pendingCreate, setPendingCreate] = useState(() => { try { return brainMutationIntent('create') } catch { return null } })
     const [formSaved] = useState(() => {
         try {
@@ -139,9 +143,12 @@ export function DesktopBrainNewPage({ pages, titles, actions, onOpenPage, onCrea
                         editable={!creating && !pendingCreate && !formSaved.error}
                         pages={pages}
                         titles={titles}
+                        files={files}
                         handleRef={editorHandle}
                         placeholder="Give the page a title, then type / for commands"
                         onOpenPage={onOpenPage}
+                        onOpenFile={onOpenFile}
+                        onAcceptFileDrop={onAcceptFileDrop}
                         onChange={markdown => { content.current = markdown; saveFormEdit({ content: markdown }) }}
                         onBlur={() => void create()}
                     />

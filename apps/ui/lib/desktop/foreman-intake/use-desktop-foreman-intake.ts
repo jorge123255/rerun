@@ -17,6 +17,7 @@ export type DesktopForemanIntakeController = {
     set(patch: Partial<IntakeDraft>): void; chooseIndustry(industry: TemplateCategory): void; chooseRole(position: string): void
     skipWebsite(): void; goTo(index: number): void; back(): void; next(): void; roles: string[]
     retryRestore(): void; retrySave(): void; reloadSaved(): void
+    sendOwn(text: string): Promise<boolean>
 }
 
 /** Original intake questions with a chat-scoped draft writer; restore never starts effects. */
@@ -116,6 +117,16 @@ export function useDesktopForemanIntake({ chat, ports, autoPersist = true, activ
         else if (next.hint) requestIntakeHint(record, next.hint)
     }, [record, autoPersist, active])
 
+    const sendOwn = useCallback(async (text: string) => {
+        const ownAsk = text.trim()
+        if (!active || !ownAsk || ownAsk.length > 4000 || isDesktopQuitting() || record.snapshot.machine.submitting) return false
+        const attempt = record.completionAttempt
+        if (attempt ? attempt.answers.ownAsk !== ownAsk : !mayEditIntake(record)) return false
+        await submitIntake(record, ownAsk)
+        const receipt = record.snapshot.completion
+        return receipt?.state === 'acknowledged' && receipt.answers.ownAsk === ownAsk
+    }, [record, active])
+
     const { machine } = snapshot
     const steps = desktopIntakeStepsOf(machine)
     const industry = machine.draft.industry ?? machine.decided
@@ -126,7 +137,7 @@ export function useDesktopForemanIntake({ chat, ports, autoPersist = true, activ
         draft: machine.draft, industry, deciding: visibleObservation?.deciding ?? false, siteRead: visibleObservation?.siteRead ?? null,
         submitting: machine.submitting, restored: snapshot.restored, revision: machine.revision, error: machine.error, completion: snapshot.completion,
         finished: snapshot.completion?.state === 'acknowledged', locked, quitting, canRetry: !!record.completionAttempt && snapshot.completion?.state !== 'acknowledged', saveFailed: snapshot.saveFailed, conflicted: snapshot.conflicted, hasSavedProgress: record.savedRevision > 0 || snapshot.completion !== null,
-        set, chooseIndustry, chooseRole, skipWebsite, goTo, back: () => goTo(record.snapshot.machine.index - 1), next, roles: rolesForIndustry(industry),
+        sendOwn, set, chooseIndustry, chooseRole, skipWebsite, goTo, back: () => goTo(record.snapshot.machine.index - 1), next, roles: rolesForIndustry(industry),
         retryRestore: () => { if (active) void restoreIntake(record) }, retrySave: () => { if (active) void saveIntake(record) }, reloadSaved: () => { if (active) void restoreIntake(record, true) },
     }
 }

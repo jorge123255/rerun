@@ -229,8 +229,8 @@ export async function createAgent(conn: EngineConnection, params: { config: Engi
     return request(conn, '/agents', { method: 'POST', body: JSON.stringify(params) }, d => engineAgentDetailSchema.parse(d))
 }
 
-export async function getAgent(conn: EngineConnection, id: string): Promise<EngineAgentDetail> {
-    return request(conn, `/agents/${encodeURIComponent(id)}`, { method: 'GET' }, d => engineAgentDetailSchema.parse(d))
+export async function getAgent(conn: EngineConnection, id: string, options: { signal?: AbortSignal } = {}): Promise<EngineAgentDetail> {
+    return request(conn, `/agents/${encodeURIComponent(id)}`, { method: 'GET', signal: options.signal }, d => engineAgentDetailSchema.parse(d))
 }
 
 // API variables / secrets are stored in the agent's .env on the engine. Only key

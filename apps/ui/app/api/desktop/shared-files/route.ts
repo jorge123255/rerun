@@ -1,5 +1,7 @@
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
-import { SHARED_IMPORT_BYTES, importDesktopSharedFile, listDesktopSharedFiles } from '@/lib/desktop/server/shared-workspace-files'
+import { SHARED_IMPORT_BYTES, importDesktopSharedFile, listDesktopSharedFiles, renameDesktopSharedFile } from '@/lib/desktop/server/shared-workspace-files'
+import { z } from 'zod'
+import { readDesktopJson } from '@/lib/desktop/server/request-json'
 import { desktopRoute } from '@/lib/desktop/server/http'
 
 export const dynamic = 'force-dynamic'
@@ -67,5 +69,17 @@ export function POST(request: Request) {
         if (file.size > SHARED_IMPORT_BYTES) throw new DesktopHttpError(413, 'Files can be up to 1 MB.')
         const result = await importDesktopSharedFile(runtime, typeof folder === 'string' ? folder : '', file.name, new Uint8Array(await file.arrayBuffer()), { signal })
         return Response.json(result, { status: 201, headers: { 'cache-control': 'no-store' } })
+    })
+}
+
+const renameInput = z.strictObject({ path: z.string().min(1).max(4096), name: z.string().trim().min(1).max(241) })
+
+export function PATCH(request: Request) {
+    return desktopRoute(request, async runtime => {
+        const input = renameInput.safeParse(await readDesktopJson(request, 16 * 1024))
+        if (!input.success) throw new DesktopHttpError(400, 'Choose a shared file and a new name.')
+        return Response.json(await renameDesktopSharedFile(runtime, input.data.path, input.data.name, request.signal), {
+            headers: { 'cache-control': 'no-store' },
+        })
     })
 }

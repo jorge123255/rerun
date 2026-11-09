@@ -75,6 +75,7 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (new RegExp(`^${proposals}/${id}/(?:accept|dismiss)$`).test(path)) return method === 'POST'
     const schedules = `/agents/${id}/schedules`
     if (new RegExp(`^${schedules}$`).test(path)) return method === 'GET' || method === 'POST'
+    if (method === 'POST' && new RegExp(`^${schedules}/describe$`).test(path)) return true
     if (new RegExp(`^${schedules}/${id}$`).test(path)) return method === 'GET' || method === 'PATCH' || method === 'DELETE'
     if (new RegExp(`^${schedules}/${id}/run$`).test(path)) return method === 'POST'
     const data = `/(?:agents/${id}/data|shared/data)/tables`

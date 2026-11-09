@@ -9,7 +9,7 @@ import 'server-only'
 import { desktopChatTitle } from '../chat-content'
 import { startQueuedChat } from './queued-chat'
 import { DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES, desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf, desktopRerunGrantsOf, type DesktopQuestionGuard, type DesktopApprovalGuard, type DesktopAttachmentItem, type DesktopResolvedAttachment } from '@rerun/contracts'
-import { EngineRequestError, chat, createAgent, getAgent, getSessionMessages, patchAgent } from '@/lib/engine/client'
+import { EngineRequestError, cancelRun, chat, createAgent, getAgent, getSessionMessages, patchAgent } from '@/lib/engine/client'
 import type { DesktopCoworkerPatch, DesktopCoworkerSettings } from '../coworker-settings'
 import { publicDesktopHistory, transformEngineMessages, type HistoryMessage } from '@/lib/chat/engine-history'
 import { sanitizeIdentifier } from '@/lib/utils'
@@ -23,9 +23,10 @@ import { assertDesktopCreationSettled, desktopCreationPendingMessage } from './c
 import { readCoworkerFile } from './coworker-files'
 import { readDesktopImageSnapshots } from './composer-image-files'
 import { openDesktopDatabase } from './database'
-import { discardTabStart, existingTabStart, recoverTabSession, reserveTabStart } from './tab-starts'
+import { GENERAL_ALREADY_OPEN, GENERAL_SESSION_TITLE, generalTabUid, openingMessage } from '../general-threads'
+import { discardTabStart, existingTabStart, readTabStart, recoverTabSession, reserveTabStart } from './tab-starts'
 import type { DesktopRuntime } from './runtime'
-import { createDesktopAgentWithinRosterWrite, createDesktopSession, findDesktopAgent, findDesktopSession, regenerationRequestId } from './store'
+import { GeneralAlreadyOpenError, createDesktopAgentWithinRosterWrite, createDesktopSession, findDesktopAgent, findDesktopGeneralSession, findDesktopSession, regenerationRequestId } from './store'
 import { withRosterWrite } from './roster-writes'
 import { planDesktopAgentPlacement } from './spaces'
 import { desktopCoworkerCallTargets } from './coworker-calls/targets'
@@ -126,7 +127,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     const agent = await findDesktopAgent(db, input.agentId)
     if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
     if (!agent.enabled) throw new DesktopHttpError(403, disabledCoworkerMessage)
-    const existing = input.sessionId ? await findDesktopSession(db, input.sessionId) : null
+    let existing = input.sessionId ? await findDesktopSession(db, input.sessionId) : null
     if (input.sessionId && (!existing || existing.agentId !== agent.id)) throw new DesktopHttpError(404, 'Conversation not found')
     await assertDesktopSetupChatAllowed(runtime, input.agentId, input.sessionId)
     const regenerate = 'regenerateMessageId' in input
@@ -136,7 +137,20 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     const mentionFields = desktopCoworkerMentionFieldsOf(mentions)
     const attachmentPaths = regenerate ? [] : desktopAttachmentSelectionsOf(input)
     const attachmentFields = desktopAttachmentFieldsOf(attachmentPaths)
-    const uid = !regenerate && !existing ? input.tabUid : undefined
+    const openingGeneral = !regenerate && !existing && 'text' in input && input.tabUid === generalTabUid(agent.id)
+    let uid = !regenerate && !existing ? input.tabUid : undefined
+    if (openingGeneral && uid) {
+        const seen = await readTabStart(db, agent, uid, input)
+        // A different first message lost the race. Resume only after the winning turn is durable;
+        // until then the draft stays put and nothing else is dispatched.
+        if (seen.row && !seen.matches) {
+            const bound = await recoverTabSession(db, engineOf(runtime), agent, seen.row)
+            if (!bound) throw new DesktopHttpError(409, GENERAL_ALREADY_OPEN)
+            existing = await findDesktopSession(db, bound)
+            if (!existing || existing.agentId !== agent.id || existing.kind !== 'general') throw new DesktopHttpError(409, GENERAL_ALREADY_OPEN)
+            uid = undefined
+        }
+    }
     const previousStart = !regenerate && uid ? await existingTabStart(db, agent, uid, input) : null
     if (previousStart) {
         const id = await recoverTabSession(db, engineOf(runtime), agent, previousStart)
@@ -144,6 +158,21 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
         if (id) return { sessionId: id, response: new Response('data: [DONE]\n\n', { headers: {
             'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1', 'x-session-id': id, 'x-run-id': String(previousStart.run_id),
         } }) }
+    }
+    if (openingGeneral && !previousStart && !existing && uid) {
+        const again = await readTabStart(db, agent, uid, input)
+        if (again.row?.input_hash && again.matches) {
+            const bound = await recoverTabSession(db, engineOf(runtime), agent, again.row)
+            if (bound) return { sessionId: bound, response: new Response('data: [DONE]\n\n', { headers: {
+                'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1', 'x-session-id': bound, 'x-run-id': String(again.row.run_id),
+            } }) }
+        } else if (!again.row) {
+            const winner = await findDesktopGeneralSession(db, agent.id)
+            if (winner) {
+                existing = winner
+                uid = undefined
+            }
+        }
     }
     const queued = !regenerate && input.requestId ? { runId: input.requestId, ...attachmentFields, ...(input.documents && { documents: input.documents }), ...(input.question && { question: input.question }), ...(input.approval && { approval: input.approval }), ...(input.takeover && { takeover: input.takeover }) } : undefined
     const requestId = regenerate ? await regenerationRequestId(db, input.sessionId, input.regenerateMessageId, input.requestId) : undefined
@@ -249,9 +278,27 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     if (start && (engineSessionId !== start.engine_session_id || engineResponse.headers.get('x-run-id') !== start.run_id)) throw new DesktopHttpError(502, 'The engine returned a different first turn.')
     if (queued && (engineSessionId !== existing?.engineSessionId || engineResponse.headers.get('x-run-id') !== queued.runId)) throw new DesktopHttpError(502, 'The engine returned a different queued message.')
     if (regenerate && engineSessionId === existing!.engineSessionId) throw new DesktopHttpError(502, 'The engine did not return an alternate conversation.')
-    const session = regenerate
-        ? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: 'Alternate · ' + existing!.title.replace(/^Alternate · /, ''), regenerationRequestId: requestId, model: savedChoice(existing) })
-        : existing ?? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: desktopChatTitle(input), model: firstChoice })
+    let session
+    try {
+        session = regenerate
+            ? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: 'Alternate · ' + existing!.title.replace(/^Alternate · /, ''), regenerationRequestId: requestId, model: savedChoice(existing) })
+            : existing ?? await createDesktopSession(db, {
+                agentId: agent.id, engineSessionId,
+                title: openingGeneral ? GENERAL_SESSION_TITLE : desktopChatTitle(input),
+                model: firstChoice,
+                kind: openingGeneral ? 'general' : 'thread',
+                firstMessage: openingGeneral ? null : openingMessage('text' in input ? input.text : ''),
+            })
+    } catch (error) {
+        if (error instanceof GeneralAlreadyOpenError) {
+            if (start) await discardTabStart(db, start)
+            const orphan = engineResponse.headers.get('x-run-id')
+            if (orphan) void cancelRun(engineOf(runtime), agent.engineAgentId, orphan).catch(() => {})
+            void engineResponse.body?.cancel().catch(() => {})
+            throw new DesktopHttpError(409, GENERAL_ALREADY_OPEN)
+        }
+        throw error
+    }
     if (!regenerate && input.documents) await consumeDesktopDocumentAdmission(runtime, input.documents, AbortSignal.timeout(10_000))
     const headers = new Headers({
         'content-type': engineResponse.headers.get('content-type') ?? 'text/event-stream',

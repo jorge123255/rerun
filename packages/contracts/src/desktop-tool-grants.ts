@@ -60,7 +60,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('computer', 'Computer control', 'See and drive this coworker’s isolated screen. Requires Docker Desktop and permission for the app in front.', 'computer', 'computer_open_app'),
     supported('terminalLaunch', 'Terminal', 'Open and drive Terminal inside this coworker’s isolated Linux screen. Requires Computer control. Commands can access the guest’s files and browser profile, not Mac files.'),
     supported('filesLaunch', 'Files', 'Open and drive the file manager inside this coworker’s isolated Linux screen. Requires Computer control. This does not open Finder or publish files to the Mac.'),
-    supported('notify', 'Send notifications', 'Request a coworker notification. The desktop callback currently reports delivery as unconfirmed.', 'notify_user'),
+    supported('notify', 'Send notifications', 'Ask for attention in this workspace inbox while the coworker keeps working. A native banner is reported separately from the inbox.', 'notify_user'),
     supported('teamRead', 'See other coworkers', 'Read their routines and runs', 'team_status', 'team_list_schedules', 'team_list_triggers', 'team_list_runs', 'team_get_run'),
     supported('services', 'Apps', 'Use tools from apps you connect in this coworker’s Apps panel. Installing an app does not enable this permission.'),
     pending('hub', 'Service catalog', 'Discover and configure Rerun services.', 'Requires an authenticated Rerun hub.'),

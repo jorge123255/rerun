@@ -64,3 +64,12 @@ test('bounds pending-request reads while processing the full saved list beyond o
     expect(filterDesktopChats(history.conversations, 'needs', '74').map(row => row.id)).toEqual(['74'])
     expect(filterDesktopChats(history.conversations, 'automations', '74').map(row => row.id)).toEqual(['74'])
 })
+
+test('the thread list leaves General out and can match an opening line', () => {
+    const row = (id: string, kind: 'general' | 'thread', firstMessage: string | null) => ({
+        id, agentId: 'alice', engineSessionId: `engine-${id}`, title: id, createdAt: time, updatedAt: time,
+        source: 'dashboard' as const, needsYou: false, pendingQuestion: null, kind, firstMessage,
+    })
+    expect(filterDesktopChats([row('General', 'general', null), row('Notes', 'thread', 'Check the funnel')], 'all', '').map(item => item.id)).toEqual(['Notes'])
+    expect(filterDesktopChats([row('Notes', 'thread', 'Check the funnel')], 'all', 'funnel').map(item => item.id)).toEqual(['Notes'])
+})

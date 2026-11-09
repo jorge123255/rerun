@@ -26,7 +26,7 @@ export async function stopAllDesktopNativeWorkers():Promise<void>{
     if(stopped.some(result=>result.status==='rejected'))throw new Error('Native worker cleanup was not confirmed')
 }
 
-export type DesktopNativeWorker = { cwd: string; url: string; close: () => Promise<void>; finish: () => Promise<void> }
+export type DesktopNativeWorker = { cwd: string; url: string; root?: string; close: () => Promise<void>; finish: () => Promise<void> }
 export type NativeWritebackHooks={authorizeCapture:(ctx:RunContext)=>Promise<void>;persist:(bundle:NativeWritebackBundle)=>Promise<void>}
 
 function inside(root: string, path: unknown): boolean {
@@ -255,6 +255,6 @@ export async function createDesktopNativeWorker(ctx: RunContext, writeback?:Nati
             checking = true
             void Promise.all([active(), withinBudget(cwd)]).then(([, okay]) => { if (!okay) abort() }).catch(abort).finally(() => { checking = false })
         }, 300).unref()
-        return { cwd, url: `ws://127.0.0.1:${address.port}${secret}`, close, finish:()=>{if(!closed)capture=true;return close()} }
+        return { cwd, root: dir, url: `ws://127.0.0.1:${address.port}${secret}`, close, finish:()=>{if(!closed)capture=true;return close()} }
     } catch (error) { await close(); throw error }
 }

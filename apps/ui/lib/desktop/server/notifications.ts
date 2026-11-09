@@ -7,6 +7,7 @@ import type { NotificationPayload } from '@/lib/engine/types'
 import { readDesktopCompletions } from './completed-actions'
 import { readDesktopAttention } from './attention'
 import { DesktopHttpError } from './auth'
+import { desktopInfoNotificationWanted, ensureDesktopUserNotifications, pendingDesktopUserNotificationEvents, takeDesktopUserNotificationDelivery } from './user-notifications'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { withRosterWrite } from './roster-writes'
@@ -73,6 +74,7 @@ export async function initializeDesktopNotifications(db: Client): Promise<void> 
             if (!columns.has('agent_local_id')) await db.execute('ALTER TABLE desktop_notification_terminals ADD COLUMN agent_local_id TEXT REFERENCES desktop_agents(id) ON DELETE CASCADE')
             if (!columns.has('session_local_id')) await db.execute('ALTER TABLE desktop_notification_terminals ADD COLUMN session_local_id TEXT REFERENCES desktop_sessions(id) ON DELETE CASCADE')
             await db.execute({ sql: 'INSERT INTO desktop_notifications_state (id,enabled_at) VALUES (1,?) ON CONFLICT(id) DO NOTHING', args: [new Date().toISOString()] })
+            await ensureDesktopUserNotifications(db)
         })()
         ensured.set(db, ready)
         // A failed initializer must not poison later calls: the next one retries.
@@ -111,7 +113,7 @@ async function mergeAndWritePrefs(db: Client, patch: NotificationPrefsPatch): Pr
 
 export type DesktopNotificationEvent = {
     key: string
-    kind: 'done' | 'error' | 'question' | 'approval' | 'takeover' | 'service' | 'secret' | 'mcp' | 'tool-install'
+    kind: 'done' | 'error' | 'info' | 'question' | 'approval' | 'takeover' | 'service' | 'secret' | 'mcp' | 'tool-install'
     source: 'chat' | 'schedule' | 'trigger'
     agentId: string
     agentName: string
@@ -128,7 +130,7 @@ export type DesktopNotificationEvent = {
     requestId?: string
 }
 
-type WantedEvent = { kind: 'done' | 'error' | 'question' | 'approval' | 'takeover' | 'service' | 'secret' | 'mcp' | 'tool-install'; agentId: string; source: 'chat' | 'schedule' | 'trigger'; slug: string | null }
+type WantedEvent = { kind: 'done' | 'error' | 'info' | 'question' | 'approval' | 'takeover' | 'service' | 'secret' | 'mcp' | 'tool-install'; agentId: string; source: 'chat' | 'schedule' | 'trigger'; slug: string | null }
 
 // The one question of the settings, mirrored from the original audience rules for the single
 // local member: scope first, then the coworker's own override, then whether the run reaches the
@@ -136,6 +138,7 @@ type WantedEvent = { kind: 'done' | 'error' | 'question' | 'approval' | 'takeove
 // a followed task included, but a run that broke is urgent and still reaches, exactly like the
 // original 'error' kind.
 function wantedByPrefs(prefs: NotificationPrefs, event: WantedEvent): boolean {
+    if (event.kind === 'info') return desktopInfoNotificationWanted(prefs, event.agentId)
     if (prefs.scope === 'nothing') return false
     const rule = coworkerRuleOf(prefs, event.agentId)
     if (rule.mode === 'muted') return false
@@ -269,6 +272,7 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime): Pr
             } })
         }
         for (const item of attention.items) {
+            if (item.kind === 'info') continue
             const key = `pending:${item.id}`
             const at = Date.parse(item.requestedAt ?? item.updatedAt)
             if (seen.has(key) || !Number.isFinite(at) || at < enabledAtMs) continue
@@ -305,6 +309,11 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime): Pr
             } })
         }
     }
+    for (const event of pendingDesktopUserNotificationEvents(runtime)) {
+        if (seen.has(event.key) || scored.some(entry => entry.event.key === event.key)) continue
+        if (!wantedByPrefs(prefs, { kind: 'info', agentId: event.agentId, source: 'chat', slug: null })) continue
+        scored.push({ at: Date.now(), event })
+    }
     scored.sort((a, b) => b.at - a.at)
     return { events: scored.map(entry => entry.event), channels: { toast: prefs.toast, sound: prefs.sound }, unavailableAgentIds, checkedAt: new Date().toISOString() }
 }
@@ -337,10 +346,15 @@ export async function admitDesktopNotificationEvents(runtime: DesktopRuntime, ke
         if (JSON.stringify(prefs) !== JSON.stringify(prefsBefore)) return { events: [], channels: { toast: prefs.toast, sound: prefs.sound } }
         const events: DesktopNotificationAdmission[] = []
         if (!prefs.toast && !prefs.sound) return { events, channels: snapshot.channels }
+        for (const event of snapshot.events) {
+            if (event.kind !== 'info' || !wanted.has(event.key)) continue
+            const reserved = await takeDesktopUserNotificationDelivery(runtime, event.key)
+            if (reserved) events.push(reserved)
+        }
         const tx = await db.transaction('write')
         try {
             for (const event of snapshot.events) {
-                if (!wanted.has(event.key) || (!prefs.toast && event.kind === 'done')) continue
+                if (event.kind === 'info' || !wanted.has(event.key) || (!prefs.toast && event.kind === 'done')) continue
                 const owner = await tx.execute({ sql: `SELECT s.id FROM desktop_sessions s JOIN desktop_agents a ON a.id=s.agent_id
                     LEFT JOIN desktop_deletions d ON d.agent_id=a.id WHERE s.id=? AND a.id=? AND a.workspace_id=1 AND d.agent_id IS NULL`, args: [event.sessionId, event.agentId] })
                 if (!owner.rows.length) continue
@@ -363,9 +377,9 @@ export async function finishDesktopNotificationAttempt(db: Client, input: Deskto
         try {
             const owned = await tx.execute({ sql: 'SELECT 1 FROM desktop_notification_attempts WHERE event_key=? AND attempt_id=?', args: [input.key, input.attemptId] })
             if (owned.rows.length && input.status !== 'unknown') {
-                if (input.status === 'shown') await tx.execute({
+                if (input.status === 'shown' || input.status === 'accepted') await tx.execute({
                     sql: 'INSERT INTO desktop_notifications_seen (event_key,notified_at,native_status) VALUES (?,?,?) ON CONFLICT(event_key) DO NOTHING',
-                    args: [input.key, new Date().toISOString(), input.nativeStatus ?? null],
+                    args: [input.key, new Date().toISOString(), input.nativeStatus === 'accepted' ? 'shown' : input.nativeStatus ?? null],
                 })
                 await tx.execute({ sql: 'DELETE FROM desktop_notification_attempts WHERE event_key=? AND attempt_id=?', args: [input.key, input.attemptId] })
             }

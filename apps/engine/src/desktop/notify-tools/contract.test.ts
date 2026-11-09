@@ -10,7 +10,7 @@ test('event identity is stable per exact agent/session/run/tool call', () => {
 })
 
 test('native outcomes map to shown, failed and unknown without upgrading uncertainty', () => {
-    expect(desktopNotifyUserReceiptFromNative(identity, { status: 'shown' })).toMatchObject({ status: 'shown', nativeStatus: 'shown' })
+    expect(desktopNotifyUserReceiptFromNative(identity, { status: 'shown' })).toMatchObject({ status: 'accepted', nativeStatus: 'accepted' })
     expect(desktopNotifyUserReceiptFromNative(identity, { status: 'failed' })).toMatchObject({ status: 'failed', nativeStatus: 'failed' })
     expect(desktopNotifyUserReceiptFromNative(identity, { status: 'unavailable' })).toMatchObject({ status: 'failed', nativeStatus: 'unavailable' })
     expect(desktopNotifyUserReceiptFromNative(identity, { status: 'unknown' })).toMatchObject({ status: 'unknown', nativeStatus: 'unknown' })

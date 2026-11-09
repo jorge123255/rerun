@@ -49,3 +49,10 @@ export async function importDesktopSharedFiles(folder: string, files: readonly F
     const response = await fetch(`${BASE}/batch`, { method: 'POST', body, signal: deadline(signal) })
     return (await parse<{ results: DesktopSharedImportResult[] }>(response)).results
 }
+
+export async function renameDesktopSharedFile(path: string, name: string, signal?: AbortSignal): Promise<{ path: string; name: string }> {
+    return parse(await fetch(BASE, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path, name }), signal: deadline(signal),
+    }))
+}

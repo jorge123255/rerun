@@ -30,7 +30,9 @@ export function foremanIntakeMessage(answers: DesktopForemanIntakeAnswers): stri
     return [
         'These are my company intake answers:',
         JSON.stringify(canonical, null, 2),
-        'Continue in this same Foreman conversation. Ask what work I need help with, then use my answers to propose a plan for review.',
+        canonical.ownAsk
+            ? 'The ownAsk field is what I want help with. Use it and the intake answers to propose a plan for review in this same Foreman conversation.'
+            : 'Continue in this same Foreman conversation. Ask what work I need help with, then use my answers to propose a plan for review.',
         'Treat missing company details as unknown. If a website was supplied, you may use read_company in this live conversation; do not claim to have researched it before reading it.',
         'Never create coworkers, install a template, create Boxes, or start setup from this intake. Show the proposed plan and wait until I review and explicitly confirm it through the plan card.',
     ].join('\n\n')

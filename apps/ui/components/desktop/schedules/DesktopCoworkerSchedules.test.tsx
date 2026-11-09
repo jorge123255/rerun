@@ -126,6 +126,7 @@ test('transport errors and malformed successful payloads remain failures without
 
 function exactModelResponses(tasks: Array<ReturnType<typeof task>> = [task('daily')]) {
     respond = async (url, init) => {
+        if (url.endsWith('/schedule-description')) return Response.json({ status: 'unavailable', message: 'Natural-language schedule parsing is unavailable in this build. Enter cron or an ISO time manually.' })
         if (url.endsWith('/model')) return Response.json(modelView)
         if (init?.method === 'PUT') {
             putBodies.push(JSON.parse(String(init.body)))
@@ -200,6 +201,7 @@ test('describe preview is truthfully unavailable and preserves timezone model an
     expect(document.body.textContent).toContain('Natural-language schedule parsing is unavailable in this build. Enter cron or an ISO time manually.')
     expect(document.body.textContent).not.toContain('Use schedule')
     expect(putBodies).toHaveLength(0)
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/schedule-description'), expect.anything())
     expect(container.querySelector<HTMLInputElement>('input[aria-label="Cron expression"]')?.value).toBe('0 8 * * *')
     expect(container.textContent).toContain('Europe/Paris')
     expect(container.querySelector('[data-testid="routine-model"]')?.getAttribute('data-connection')).toBe('conn-b')

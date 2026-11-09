@@ -28,7 +28,7 @@ import { Button } from '@/components/ui/button'
 import { CheckIcon, CopyIcon, RefreshCcwIcon, ThumbsDownIcon, ThumbsUpIcon } from '@/lib/icons'
 import { isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { desktopCompactionSteps } from '@/lib/desktop/compaction'
-import { desktopFileCardOf } from '@/lib/desktop/file-card'
+import { desktopFileCardOf, desktopImageGenerationOutput } from '@/lib/desktop/file-card'
 import { useCopy } from '@/lib/use-copy'
 import { splitIntoBubbles } from '@/lib/chat/message-bubbles'
 import { cn } from '@/lib/utils'
@@ -200,10 +200,15 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
                     onOpenSkill={proposal.appliedSlug && skillProposals?.onOpenSkill ? () => skillProposals.onOpenSkill?.(proposal.appliedSlug!) : undefined} />)
                 continue
             }
-            if (toolName === 'card_file' && part.state === 'output-available') {
+            if ((toolName === 'card_file' || toolName === 'image_generation') && part.state === 'output-available') {
                 const card = desktopFileCardOf(part.output)
                 if (card) {
                     blocks.push(<DesktopFileCard key={part.toolCallId} agentId={agentId} card={card} saveResultFile={saveDesktopResultFile} />)
+                    continue
+                }
+                if (toolName === 'image_generation') {
+                    const notice = desktopImageGenerationOutput(part.output)
+                    blocks.push(<DesktopToolStep key={part.toolCallId} part={{ ...part, state: 'output-error', errorText: notice, output: undefined }} restored={message.id.startsWith('engine-')} />)
                     continue
                 }
             }

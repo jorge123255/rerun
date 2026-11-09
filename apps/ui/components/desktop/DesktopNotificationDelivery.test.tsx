@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { DESKTOP_NOTIFICATION_EVENTS_URL, DESKTOP_NOTIFICATION_ADMIT_URL, DESKTOP_NOTIFICATION_DELIVERY_URL, DESKTOP_NOTIFICATION_TERMIALS_URL, type DesktopNotificationEvent } from '@/lib/desktop/notifications'
+import { DESKTOP_NOTIFICATION_EVENTS_URL, DESKTOP_NOTIFICATION_ADMIT_URL, DESKTOP_NOTIFICATION_DELIVERY_URL, DESKTOP_NOTIFICATION_TERMIALS_URL, type DesktopNotificationEvent, type DesktopNotificationReceipt } from '@/lib/desktop/notifications'
 import type { DesktopNotificationTarget } from '@/lib/desktop/notification-bridge'
 import { DESKTOP_ATTENTION_URL } from '@/lib/desktop/attention'
 import { DESKTOP_COMPLETIONS_URL } from '@/lib/desktop/completed-actions'
@@ -13,7 +13,7 @@ let root: Root | undefined
 const events: DesktopNotificationEvent[] = []
 const attempts = new Map<string, string>()
 const delivered = new Set<string>()
-const receipts: { key: string; attemptId: string; status: string }[] = []
+const receipts: DesktopNotificationReceipt[] = []
 const navigate = vi.fn(), notify = vi.fn(), audioPlay = vi.fn()
 const toastTargets = new Map<string, (target: DesktopNotificationTarget) => void>()
 vi.mock('@/lib/desktop/notification-toast', () => ({ showDesktopNotificationToast: (event: DesktopNotificationEvent, open: (target: DesktopNotificationTarget) => void) => { toastTargets.set(event.key, open) } }))
@@ -26,7 +26,7 @@ const event = (key = 'pending:request-a', sessionId = 'chat-a'): DesktopNotifica
 beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     channels = { toast: true, sound: false }; receiptFails = false; attentionRead = undefined; toastTargets.clear()
-    notify.mockReset().mockResolvedValue({ status: 'shown' }); audioPlay.mockReset().mockResolvedValue(undefined); navigate.mockReset()
+    notify.mockReset().mockResolvedValue({ status: 'accepted' }); audioPlay.mockReset().mockResolvedValue(undefined); navigate.mockReset()
     vi.stubGlobal('Audio', class { play = audioPlay; pause() {} })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     ;(window as unknown as { desktopApp: unknown }).desktopApp = { notifications: {
@@ -45,8 +45,8 @@ beforeEach(() => {
             if (receiptFails) return Response.json({ error: 'lost' }, { status: 503 })
             const receipt = JSON.parse(String(init?.body)); receipts.push(receipt)
             if (attempts.get(receipt.key) === receipt.attemptId && receipt.status !== 'unknown') {
-                attempts.delete(receipt.key)
-                if (receipt.status === 'shown') delivered.add(receipt.key)
+                if (receipt.status === 'shown' || receipt.status === 'accepted') delivered.add(receipt.key)
+                if (!String(receipt.key).startsWith('notify-user:')) attempts.delete(receipt.key)
             }
             return Response.json({ recorded: true })
         }
@@ -82,26 +82,40 @@ test('a missing bridge still delivers the in-app toast while disabled channels n
     events.push(event()); (window as unknown as { desktopApp?: unknown }).desktopApp = undefined
     await mount(); expect(notify).not.toHaveBeenCalled(); expect(delivered.has(events[0]!.key)).toBe(true)
     events.push(event('pending:request-b', 'chat-b')); channels = { toast: false, sound: false }; await tick()
-    expect(receipts).toHaveLength(1); expect(receipts[0]!.status).toBe('shown'); expect(delivered.size).toBe(1)
+    expect(receipts).toHaveLength(1); expect(receipts[0]).toMatchObject({ status: 'shown', inAppStatus: 'shown', nativeStatus: 'unavailable' }); expect(delivered.size).toBe(1)
 })
 test('a failed sound releases its exact admission and a later successful retry settles', async () => {
     channels = { toast: false, sound: true }; events.push(event())
     audioPlay.mockRejectedValueOnce(new Error('audio blocked'))
     await mount(); expect(notify).not.toHaveBeenCalled(); expect(attempts.size).toBe(0); expect(delivered.size).toBe(0)
     await tick(); expect(audioPlay).toHaveBeenCalledTimes(2); expect(delivered.has(events[0]!.key)).toBe(true)
-    expect(receipts.map(row => row.status)).toEqual(['unavailable', 'shown'])
+    expect(receipts.map(row => [row.status, row.inAppStatus, row.nativeStatus])).toEqual([
+        ['unavailable', 'unavailable', 'unavailable'], ['shown', 'unavailable', 'unavailable'],
+    ])
 })
 test('an ambiguous native outcome cannot unsend the in-app toast or replay it', async () => {
     events.push(event()); notify.mockRejectedValueOnce(new Error('IPC disconnected'))
     await mount(); await tick()
     expect(notify).toHaveBeenCalledTimes(1); expect(delivered.has(events[0]!.key)).toBe(true)
-    expect(receipts.map(row => row.status)).toEqual(['shown'])
+    expect(receipts).toEqual([expect.objectContaining({ status: 'shown', inAppStatus: 'shown', nativeStatus: 'unknown' })])
+})
+test('native failure stays separate from the visible in-app result and cannot replay it', async () => {
+    events.push(event()); notify.mockResolvedValueOnce({ status: 'failed' })
+    await mount(); await tick()
+    expect(notify).toHaveBeenCalledTimes(1); expect(delivered.has(events[0]!.key)).toBe(true)
+    expect(receipts).toEqual([expect.objectContaining({ status: 'shown', inAppStatus: 'shown', nativeStatus: 'failed' })])
+})
+test('a legacy native shown response reads as OS acceptance, never as banner visibility', async () => {
+    events.push(event()); notify.mockResolvedValueOnce({ status: 'shown' })
+    await mount()
+    expect(receipts).toEqual([expect.objectContaining({ status: 'accepted', inAppStatus: 'shown', nativeStatus: 'accepted' })])
 })
 test('the original sound is a real acknowledged channel and never rings for Done', async () => {
     channels = { toast: false, sound: true }; events.push(event())
     await mount(); expect(audioPlay).toHaveBeenCalledTimes(1); expect(notify).not.toHaveBeenCalled()
     events.push({ ...event('done:completion'), kind: 'done', groupId: 'group-a', requestId: undefined, silent: true })
     await tick(); expect(audioPlay).toHaveBeenCalledTimes(1); expect(delivered.size).toBe(1)
+    expect(receipts[0]).toMatchObject({ status: 'shown', inAppStatus: 'unavailable', nativeStatus: 'unavailable' })
 })
 test('an open chat suppresses visible alerts but a hidden Mac window still receives them', async () => {
     events.push(event()); await mount('chat-a'); expect(notify).not.toHaveBeenCalled()
@@ -158,5 +172,40 @@ test('toast and native clicks share supersession, unmount and exact target check
     await act(async () => { root?.unmount(); root = undefined })
     attention = [pendingItem(a)]
     await act(async () => { oldToast(a) })
+    expect(navigate).toHaveBeenCalledTimes(1)
+})
+
+test('an info toast does not count as native success and a failed native result is not replayed', async () => {
+    const info = { ...event('notify-user:agent-a:session-a:run-a:call-a', 'chat-a'), kind: 'info' as const, subtitle: 'Needs you', requestId: 'notify:agent-a:session-a:run-a:call-a', silent: true }
+    events.push(info)
+    notify.mockResolvedValue({ status: 'failed' })
+    await mount()
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(notify.mock.calls[0]?.[0]).toMatchObject({ kind: 'info', agentId: 'agent-a', sessionId: 'chat-a', requestId: info.requestId })
+    expect(receipts.at(-1)).toMatchObject({ key: info.key, status: 'shown', nativeStatus: 'failed' })
+    await tick()
+    expect(notify).toHaveBeenCalledTimes(1)
+})
+
+test('an info alert for the open conversation is not native success and is not sent later', async () => {
+    const info = { ...event('notify-user:agent-a:session-a:run-a:call-a', 'chat-a'), kind: 'info' as const, subtitle: 'Needs you', requestId: 'attempt-1', silent: true }
+    events.push(info)
+    await mount('chat-a')
+    expect(notify).not.toHaveBeenCalled()
+    expect(receipts.at(-1)).toMatchObject({ status: 'unavailable', nativeStatus: 'unavailable' })
+    await tick()
+    expect(notify).not.toHaveBeenCalled()
+})
+
+test('an info click opens only the originating conversation', async () => {
+    await mount()
+    const info = event('notify-user:agent-a:session-a:run-a:call-a', 'chat-a')
+    info.kind = 'info'
+    info.requestId = 'notify:agent-a:session-a:run-a:call-a'
+    attention = [pendingItem(info)]
+    await act(async () => listener?.({ key: info.key, kind: 'info', agentId: 'agent-a', sessionId: 'chat-a', requestId: info.requestId }))
+    expect(navigate).toHaveBeenCalledWith({ agentId: 'agent-a', sessionId: 'chat-a', title: '' })
+    attention = [{ ...pendingItem(info), sessionId: 'chat-b' }]
+    await act(async () => listener?.({ key: info.key, kind: 'info', agentId: 'agent-a', sessionId: 'chat-a', requestId: info.requestId }))
     expect(navigate).toHaveBeenCalledTimes(1)
 })

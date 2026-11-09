@@ -11,7 +11,7 @@ import { DesktopConversation, type TabActivity } from './DesktopConversation'
 
 const chat = vi.hoisted(() => ({
     messages: [] as UIMessage[], status: 'ready', error: undefined,
-    stop: vi.fn(), setMessages: vi.fn(), sendMessage: vi.fn(),
+    stop: vi.fn(), setMessages: vi.fn(), sendMessage: vi.fn(), resumeStream: vi.fn(),
 }))
 let acceptResponse: (url: string) => Promise<Response>
 vi.mock('@ai-sdk/react', () => ({ useChat: ({ transport }: { transport: { fetch: typeof acceptResponse } }) => {
@@ -26,13 +26,14 @@ let container: HTMLDivElement
 let root: Root
 let stopResponse: () => Response
 let running: boolean
+let activeRunId: string | null
 let statusUnavailable: boolean
 const requests: string[] = []
 
 beforeEach(() => {
-    chat.status = 'ready'; chat.stop.mockReset(); chat.sendMessage.mockReset()
+    chat.status = 'ready'; chat.stop.mockReset(); chat.sendMessage.mockReset(); chat.resumeStream.mockReset()
     requests.length = 0
-    running = false; statusUnavailable = false
+    running = false; statusUnavailable = false; activeRunId = null
     stopResponse = () => Response.json({ canceled: 1, alreadyFinished: false })
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
         const nativeReview = desktopNativeReviewRead(url, init); if (nativeReview) return nativeReview
@@ -42,7 +43,7 @@ beforeEach(() => {
         requests.push(`${init?.method ?? 'GET'} ${url}`)
         if (url.includes('/queue?')) return Response.json({ queued: null })
         if (url.startsWith('/reply/')) return new Response(null, { headers: { 'x-session-id': url.slice('/reply/'.length) } })
-        if (url.endsWith('/messages')) return saved.clone()
+        if (url.endsWith('/messages')) return Response.json({ ...await saved.clone().json(), activeRunId })
         if (url.endsWith('/stop') && init?.method === 'POST') { running = false; return stopResponse() }
         if (url.endsWith('/stop')) return statusUnavailable ? new Response(null, { status: 503 }) : Response.json({ running })
         if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
@@ -91,6 +92,21 @@ test('a reopened conversation with a run still in flight offers Stop and cancels
     expect(requests).toContain('POST /api/desktop/sessions/session-1/stop')
     expect(button('Stop')).toBeUndefined()
     expect(container.textContent).toContain('Saved question')
+})
+
+test('Stop stays enabled after reconnecting to a scheduled reply', async () => {
+    running = true
+    activeRunId = 'scheduled-run'
+    await render()
+    expect(chat.resumeStream).toHaveBeenCalledTimes(1)
+
+    chat.status = 'streaming'
+    await render()
+    expect(button('Stop')?.disabled).toBe(false)
+    await act(async () => { button('Stop')!.click() })
+
+    expect(chat.stop).toHaveBeenCalledTimes(1)
+    expect(requests.filter(request => request.startsWith('POST '))).toEqual(['POST /api/desktop/sessions/session-1/stop'])
 })
 
 test('disabling a coworker keeps the running reply and Stop while blocking new sends', async () => {

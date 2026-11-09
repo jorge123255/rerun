@@ -92,6 +92,22 @@ describe('SQLite intake completion reservation and restart safety', () => {
         expect(bound.deliver).not.toHaveBeenCalled()
     })
 
+    it('submits a typed request with incomplete intake, then recovers only that same request', async () => {
+        const store = createSqliteDesktopForemanIntakeStore(db)
+        const bound = authority()
+        const current = await store.read(chat)
+        const input = { chat, requestId: randomUUID(), expectedRevision: current.session.revision, answers: {
+            companyUrl: null, industry: null, decidedIndustry: null, industryLabel: null, position: null, firstName: null,
+            ownAsk: 'Build a QA coworker',
+        } }
+        await expect(store.complete(input, bound)).resolves.toMatchObject({ state: 'acknowledged', answers: input.answers })
+        const reopened = createSqliteDesktopForemanIntakeStore(await secondClient())
+        await expect(reopened.complete(input, bound)).resolves.toMatchObject({ state: 'acknowledged', answers: input.answers })
+        await expect(reopened.complete({ ...input, answers: { ...input.answers, ownAsk: 'Changed request' } }, bound))
+            .rejects.toBeInstanceOf(DesktopForemanIntakeRefusal)
+        expect(bound.deliver).toHaveBeenCalledTimes(1)
+    })
+
     it('commits pending identity before effects and leaves no SQLite write transaction open during authority work', async () => {
         const input = await savedInput(), entered = deferred(), release = deferred()
         const competitor = await secondClient()

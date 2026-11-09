@@ -9,6 +9,7 @@ import type { ForemanPlacement } from '@/lib/foreman-layout'
 import { useIsMobile as useMediaQuery } from '@rerun/ui/primitives/use-is-mobile'
 import type { DesktopForemanActionPorts, DesktopForemanChatRef, DesktopForemanPlacement } from '@/lib/desktop/foreman-client'
 import { DesktopForemanChatLayer, type DesktopForemanMessage } from './DesktopForemanChatLayer'
+import { useDesktopForemanFeedback } from '@/lib/desktop/use-foreman-feedback'
 import { DesktopForemanComposer } from './DesktopForemanComposer'
 import { DesktopForemanHeader } from './DesktopForemanHeader'
 import { DesktopForemanRoutines } from './DesktopForemanRoutines'
@@ -79,12 +80,24 @@ export function DesktopForemanColumn({
     className, onClose, openOnMount, refreshKey, composerTrailing, focusRequest, controlledOpen, hidden, centerOpen, dockFeed, voiceSlot, intake, onReviewTemplate, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
+    const savedAnswers = messages.some(message => message.role === 'assistant' && !!message.text.trim())
+    const answerFeedback = useDesktopForemanFeedback(chat, !hidden && foreman.restored && savedAnswers)
     const opened = useRef(false)
     const column = useRef<HTMLDivElement>(null)
     useEffect(() => {
         if (openOnMount && foreman.restored && !opened.current) { opened.current = true; foreman.setOpen(true) }
     }, [openOnMount, foreman.restored, foreman.setOpen])
     const { ui } = foreman
+    const composerScope = useRef({ chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft })
+    composerScope.current = { chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft }
+    const send = (text: string) => {
+        if (!intake) { void foreman.sendMessage(text); return }
+        const scope = composerScope.current
+        void intake.sendOwn(text).then(confirmed => {
+            const current = composerScope.current
+            if (confirmed && current.chatId === scope.chatId && current.workspaceId === scope.workspaceId && current.draft === scope.draft) foreman.setDraft('')
+        })
+    }
     const triggerRef = useRef<HTMLElement | null>(null)
     const mobile = useMediaQuery('(max-width: 767px)')
     const wide = useMediaQuery('(min-width: 1024px)')
@@ -167,6 +180,7 @@ export function DesktopForemanColumn({
                         onOpenCreated={step => foreman.navigate({ kind: 'open_coworker', agentId: step.agentId, sessionId: step.sessionId })}
                         onOpenCoworker={input => foreman.navigate({ kind: 'open_coworker', agentId: input.agentId, sessionId: input.sessionId })}
                         onOpenBox={spaceId => foreman.navigate({ kind: 'open_box', spaceId })}
+                        answerFeedback={{ ratingOf: answerFeedback.ratingOf, onRate: answerFeedback.rate, disabled: hidden }}
                         className="min-h-0 flex-1"
                     >
                         {starterPack && onReviewTemplate && <DesktopStarterPack
@@ -175,16 +189,16 @@ export function DesktopForemanColumn({
                             onReviewTemplate={onReviewTemplate}
                         />}
                     </DesktopForemanChatLayer>
+                    </>}
                     <DesktopForemanComposer
-                        trailing={ui.open ? voiceSlot ?? composerTrailing : composerTrailing}
+                        trailing={intake ? undefined : ui.open ? voiceSlot ?? composerTrailing : composerTrailing}
                         draft={ui.draft}
                         onDraftChange={foreman.setDraft}
                         busy={!!streaming}
-                        disabled={!!question || !foreman.restored || !!foreman.blocked || ui.decision.status === 'pending'}
-                        onSend={text => { void foreman.sendMessage(text) }}
+                        disabled={!!question || !foreman.restored || !!foreman.blocked || ui.decision.status === 'pending' || Boolean(intake && (!intake.restored || intake.submitting || intake.quitting || intake.conflicted || ui.draft.trim().length > 4000))}
+                        onSend={send}
                         onStop={() => void foreman.stop()}
                     />
-                    </>}
                 </div>
                 {onRoutines && (
                     <DesktopWorkspaceRoutines

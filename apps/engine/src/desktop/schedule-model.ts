@@ -7,7 +7,9 @@ import type { Schedule } from '../schedules/loader.js'
 const incomplete = () => new HttpError(409, 'This routine’s saved model selection is incomplete.')
 const unavailable = () => new HttpError(409, 'This routine’s saved model is unavailable. Choose another model or Coworker default.')
 
-export async function resolveDesktopScheduleModel(agent: LoadedAgent, schedule: Schedule): Promise<ModelOverride | undefined> {
+export type DesktopScheduleModelSelection = Pick<Schedule, 'connectionId' | 'provider' | 'model'>
+
+export async function resolveDesktopScheduleModel(agent: LoadedAgent, schedule: DesktopScheduleModelSelection): Promise<ModelOverride | undefined> {
     const fields = [schedule.connectionId, schedule.provider, schedule.model]
     if (fields.every(value => value === null)) return undefined
     if (!schedule.connectionId || !schedule.provider || !schedule.model) throw incomplete()

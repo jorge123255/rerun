@@ -76,10 +76,14 @@ test('a first-mounted blank tab is registered before its draft is read', async (
     } finally { await act(async () => { root.unmount() }); vi.unstubAllGlobals(); container.remove() }
 })
 
-test('regeneration stays on its own transport while another tab is active, and keeps the source draft in its original conversation', async () => {
+test.each(['thread', 'general'] as const)('regeneration of a %s stays on its own transport and keeps the original draft', async kind => {
     const agent = { id: 'a', name: 'Writer', description: '', createdAt: '', updatedAt: '' }
-    const sessions = ['Source', 'Other', 'Alternate'].map(title => ({ id: title.toLowerCase(), agentId: agent.id, title, createdAt: '', updatedAt: '' }))
-    const tabs = sessions.slice(0, 2).map(s => ({ uid: s.id + '-tab', id: s.id, title: s.title }))
+    const sessions = ['Source', 'Other', 'Alternate'].map((title, index) => ({
+        id: title.toLowerCase(), agentId: agent.id, title, createdAt: '', updatedAt: '', kind: index === 0 ? kind : 'thread' as const,
+    }))
+    const tabs = sessions.slice(0, 2).map((session, index) => ({
+        uid: index === 0 && kind === 'general' ? `general:${agent.id}` : session.id + '-tab', id: session.id, title: session.title,
+    }))
     drafts.seedTabs(agent.id, tabs)
     let resolve!: (r: Response) => void
     const requests: Record<string, string>[] = []
@@ -136,11 +140,13 @@ test('regeneration stays on its own transport while another tab is active, and k
         expect(visible().textContent).toContain('alternate answer')
         expect(visible().querySelector('textarea')?.value).toBe('')
         expect(visible().textContent).not.toContain('original.txt')
-        await click('Source')
+        await click(kind === 'general' ? 'General' : 'Source')
         expect(visible().textContent).toContain('source answer')
         expect(visible().textContent).toContain('original.txt')
         expect(visible().querySelector('textarea')?.value).toBe('A draft for the original')
-        expect(writes.at(-1)?.tabs.map(t => t.id)).toEqual(['source', 'alternate', 'other'])
+        expect(writes.at(-1)?.tabs.map(t => t.id)).toEqual(kind === 'general'
+            ? ['source', 'other', 'alternate'] : [null, 'source', 'alternate', 'other'])
+        if (kind === 'general') expect(writes.at(-1)?.tabs[0]).toEqual({ uid: `general:${agent.id}`, id: 'source' })
         expect(requests).toEqual([{ agentId: 'a', sessionId: 'source', regenerateMessageId: 'engine-source', requestId: expect.any(String) }])
     } finally { await act(async () => { root.unmount() }); vi.unstubAllGlobals(); container.remove() }
 })

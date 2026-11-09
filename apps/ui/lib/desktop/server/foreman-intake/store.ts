@@ -299,8 +299,11 @@ async function reserveIntakeCompletion(args: {
     }
 
     const steps = intakeSteps(session.knownFirstName, session.draft.websiteSkipped)
-    if (!steps.every(step => stepAnswered(step, session.draft))) throw new DesktopForemanIntakeRefusal(422, 'Answer each intake question before continuing.')
-    const answers = desktopForemanIntakeAnswersSchema.parse(toIntake(session.draft, session.knownFirstName, session.decidedIndustry))
+    if (!input.answers.ownAsk && !steps.every(step => stepAnswered(step, session.draft))) throw new DesktopForemanIntakeRefusal(422, 'Answer each intake question before continuing.')
+    const answers = desktopForemanIntakeAnswersSchema.parse({
+        ...toIntake(session.draft, session.knownFirstName, session.decidedIndustry),
+        ...(input.answers.ownAsk ? { ownAsk: input.answers.ownAsk } : {}),
+    })
     if (fingerprintIntakeAnswers(answers, input.chat, input.requestId) !== fingerprint) {
         throw new DesktopForemanIntakeConflictError(viewOf(session, latest), 'These answers do not match the saved intake draft. Save and review the current answers first.')
     }

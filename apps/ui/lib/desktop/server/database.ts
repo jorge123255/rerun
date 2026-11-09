@@ -15,6 +15,7 @@ import { initializeDesktopMcp } from './mcp/schema'
 import { ensureDesktopPrivateFileToolsSchema } from './private-file-tools/schema'
 import { initializeDesktopRound35 } from './round35-schema'
 import { initializeDesktopRound36 } from './round36-schema'
+import { initializeDesktopRound38 } from './round38-schema'
 import { initializeDesktopRound37 } from './round37-schema'
 import { initializeDesktopRound34 } from './round34-schema'
 import { initializeDesktopRound33 } from './round33-schema'
@@ -104,7 +105,9 @@ async function initialize(dataRoot: string): Promise<Client> {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             model_connection_id TEXT,
-            model TEXT
+            model TEXT,
+            kind TEXT NOT NULL DEFAULT 'thread' CHECK (kind IN ('general', 'thread')),
+            first_message TEXT
         );
         CREATE TABLE IF NOT EXISTS desktop_agent_tabs (
             agent_id TEXT PRIMARY KEY REFERENCES desktop_agents(id) ON DELETE CASCADE,
@@ -263,6 +266,7 @@ async function initialize(dataRoot: string): Promise<Client> {
     await initializeDesktopRound35(client)
     await initializeDesktopRound36(client)
     await initializeDesktopRound37(client)
+    await initializeDesktopRound38(client)
     if (nativeContext) {
         const assignedIcon = process.env.RERUN_DESKTOP_WORKSPACE_ICON
         if (seeded[1].rowsAffected && assignedIcon && desktopWorkspaceIconById(assignedIcon)) await writeDesktopWorkspaceIcon(client, { name: initialName, catalogId: assignedIcon })

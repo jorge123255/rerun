@@ -17,7 +17,7 @@ export const desktopNotificationPrefsPatchSchema = notificationPrefsPatchSchema
 
 export const desktopNotificationEventSchema = z.object({
     key: z.string().min(1),
-    kind: z.enum(['done', 'error', 'question', 'approval', 'takeover', 'service', 'secret', 'mcp', 'tool-install']),
+    kind: z.enum(['done', 'error', 'info', 'question', 'approval', 'takeover', 'service', 'secret', 'mcp', 'tool-install']),
     source: z.enum(['chat', 'schedule', 'trigger']),
     agentId: z.string().min(1),
     agentName: z.string(),
@@ -34,11 +34,12 @@ export const desktopNotificationEventSchema = z.object({
 })
 export type DesktopNotificationEvent = z.infer<typeof desktopNotificationEventSchema>
 
-export const desktopNotificationStatusSchema = z.enum(['shown', 'unavailable', 'failed', 'unknown'])
+export const desktopNotificationStatusSchema = z.enum(['shown', 'accepted', 'unavailable', 'failed', 'unknown'])
 export const desktopNotificationReceiptSchema = z.strictObject({
     key: z.string().min(8).max(600),
     attemptId: z.string().uuid(),
     status: desktopNotificationStatusSchema,
+    inAppStatus: z.enum(['shown', 'unavailable']).optional(),
     nativeStatus: desktopNotificationStatusSchema.nullable().optional(),
 })
 export type DesktopNotificationReceipt = z.infer<typeof desktopNotificationReceiptSchema>

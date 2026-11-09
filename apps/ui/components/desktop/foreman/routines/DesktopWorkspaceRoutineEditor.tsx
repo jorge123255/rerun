@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch'
 import { PanelEditorBody, PanelEditorFooter, PanelEditorHeader, PanelEditorShell } from '@/components/ui/panel-editor'
 import { TimezoneCombobox } from '@/components/agent/TimezoneCombobox'
 import type { DesktopScheduleEditInput, DesktopWorkspaceRoutine } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
+import { DesktopScheduleDescription } from '../../schedules/DesktopScheduleDescription'
 import { DesktopTaskNotifyField } from '../../DesktopTaskNotifyField'
 
 export function DesktopWorkspaceRoutineEditor({ routine, externalChange, onBack, onSave, onRun, onRefresh, onKeep }: {
@@ -23,7 +24,7 @@ export function DesktopWorkspaceRoutineEditor({ routine, externalChange, onBack,
     const [name, setName] = useState(routine.name)
     const [description, setDescription] = useState(routine.description)
     const [body, setBody] = useState(routine.body)
-    const [mode, setMode] = useState(routine.runAt ? 'runAt' : 'cron')
+    const [mode, setMode] = useState<'cron' | 'runAt'>(routine.runAt ? 'runAt' : 'cron')
     const [cron, setCron] = useState(routine.cron ?? '0 8 * * *')
     const [runAt, setRunAt] = useState(routine.runAt ?? '')
     const [timezone, setTimezone] = useState(routine.timezone)
@@ -55,11 +56,15 @@ export function DesktopWorkspaceRoutineEditor({ routine, externalChange, onBack,
             {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
             <Field label="Name"><Input aria-label="Name" value={name} onChange={event => setName(event.target.value)} maxLength={120} disabled={busy} /></Field>
             <Field label="Description"><Input aria-label="Description" value={description} onChange={event => setDescription(event.target.value)} disabled={busy} /></Field>
-            <Field label="When"><select aria-label="Schedule type" value={mode} disabled={busy} onChange={event => setMode(event.target.value)}><option value="cron">Recurring</option><option value="runAt">Once</option></select></Field>
+            <DesktopScheduleDescription mode={mode} cron={cron} runAt={runAt} timezone={timezone}
+                agentId={routine.agentId} connectionId={null} provider={null} model={null}
+                routine={{ slug: routine.slug, revision: routine.revision }} disabled={busy || externalChange}
+                onChange={next => { setMode(next.mode); setCron(next.cron ?? ''); setRunAt(next.runAt ?? ''); setTimezone(next.timezone) }} />
+            <Field label="Schedule type"><select aria-label="Schedule type" value={mode} disabled={busy} onChange={event => setMode(event.target.value as 'cron' | 'runAt')}><option value="cron">Recurring</option><option value="runAt">Once</option></select></Field>
             {mode === 'cron' ? <Field label="Cron expression"><Input aria-label="Cron expression" value={cron} onChange={event => setCron(event.target.value)} disabled={busy} /></Field>
                 : <Field label="Run at (ISO timestamp with timezone)"><Input aria-label="Run at (ISO timestamp with timezone)" value={runAt} onChange={event => setRunAt(event.target.value)} placeholder="2026-12-01T08:00:00-06:00" disabled={busy} /></Field>}
             <Field label="Timezone"><TimezoneCombobox value={timezone} onChange={setTimezone} /></Field>
-            <p className="text-xs text-muted-foreground">Raw cron and ISO time are the local fallback. Natural-language schedule parsing is unavailable. This task uses the coworker's configured local provider and model.</p>
+            <p className="text-xs text-muted-foreground">Raw cron and ISO time remain available. The preview uses this routine’s saved model selection.</p>
             <Field orientation="row" label="Enabled"><Switch checked={enabled} disabled={busy} onCheckedChange={setEnabled} /></Field>
             {routine.slug && <DesktopTaskNotifyField agentId={routine.agentId} source="schedule" slug={routine.slug} disabled={busy} />}
             <MarkdownTextarea label="Task prompt" dialogTitle="Edit the task prompt" value={body} onChange={setBody} disabled={busy} />

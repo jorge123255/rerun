@@ -32,7 +32,7 @@ function ChatHistoryRow({ conversation, active, busy, onOpen }: {
     const SourceIcon = conversation.source === 'trigger' ? WebhookIcon : CalendarClock
     const updatedAt = Number.isFinite(Date.parse(conversation.updatedAt)) ? conversation.updatedAt : null
     return (
-        <button type="button" disabled={busy} aria-current={active ? 'true' : undefined} onClick={onOpen}
+        <button type="button" disabled={busy} aria-current={active ? 'true' : undefined} data-thread-row={conversation.id} onClick={onOpen}
             className={cn('flex min-h-11 w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-muted/40 disabled:opacity-50', active && 'bg-muted/60')}>
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="flex min-w-0 items-center gap-1.5">
@@ -40,6 +40,7 @@ function ChatHistoryRow({ conversation, active, busy, onOpen }: {
                     <span title={conversation.title} className="min-w-0 flex-1 truncate text-sm font-medium">{conversation.title}</span>
                     {conversation.needsYou && <Badge size="xs" tone="orange" glow={false} className="shrink-0">Needs you</Badge>}
                 </span>
+                {conversation.firstMessage && <span className="truncate text-xs text-muted-foreground">{conversation.firstMessage}</span>}
                 {conversation.needsYou && conversation.pendingQuestion && (
                     <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
                         <MessageCircleQuestionIcon aria-hidden className="size-3 shrink-0" />
@@ -88,8 +89,8 @@ function ChatHistoryList({ history, filter, query, selectedId, busy, onSelect, o
         ? 'No matching conversations.'
         : filter === 'needs' ? 'Nothing waits on you.'
             : filter === 'automations' ? 'No automated run yet.'
-                : filter === 'chats' ? 'No chat yet.'
-                    : 'No conversation yet.'
+                : filter === 'chats' ? 'No thread yet.'
+                    : 'No thread yet.'
     return (
         <div className="max-h-[min(420px,50dvh)] min-h-0 overflow-y-auto">
             {history.enrichment === 'unavailable' && !classificationUnavailable && (
@@ -158,7 +159,7 @@ function ChatHistoryPanel({ agentId, selectedId, busy, onSelect, titleId, descri
             <div className="shrink-0 px-2 pt-1">
                 <h2 id={titleId} className="flex items-center gap-2 text-sm font-semibold">
                     <MessageCircle aria-hidden className="size-4 text-muted-foreground" />
-                    Chats
+                    Threads
                 </h2>
                 <p id={descriptionId} className="mt-1 text-xs text-muted-foreground">Dates show when chats were last updated.</p>
             </div>
@@ -216,7 +217,7 @@ export function DesktopChatHistory({ agentId, count, selectedId, busy, onSelect,
     return (
         <Popover open={visible} onOpenChange={changeOpen}>
             <PopoverTrigger asChild>
-                <Button type="button" size="icon" variant="outline" className="size-10 rounded-full border-border/50 bg-background/85 shadow-sm" title="Chats" disabled={busy}
+                <Button type="button" size="icon" variant="outline" className="size-10 rounded-full border-border/50 bg-background/85 shadow-sm" title="Threads" disabled={busy}
                     aria-label={count === undefined ? 'Conversation history' : `Conversation history (${count})`}>
                     <MessageCircle aria-hidden className="size-4 text-muted-foreground" /><span className="sr-only">Chats</span>
                 </Button>

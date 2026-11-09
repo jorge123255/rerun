@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } f
 import type { DesktopCoworkerShareAttempts } from '@/lib/desktop/coworker-share/attempts'
 import type { DesktopCoworkerShareClient } from '@/lib/desktop/coworker-share/client'
 import { DesktopCoworkerManifestReview } from './DesktopCoworkerManifestReview'
+import { DesktopCoworkerImportDatabaseReview } from './DesktopCoworkerImportDatabaseReview'
 import { DesktopCoworkerShareSafety } from './DesktopCoworkerShareSafety'
 import { useDesktopCoworkerImportFlow } from './useDesktopCoworkerImportFlow'
 
@@ -41,8 +42,9 @@ function Body({ client, attempts, targetWorkspaceId, snapshotId, onImported, onO
                 <DesktopCoworkerShareSafety exclusions={flow.manifest?.coworkers[0]?.exclusions ?? null} />
                 <p role="status" className="text-xs text-muted-foreground">Fresh coworker ID <code>{flow.importedAgentId}</code>. No source chat or unsent draft was changed.</p>
             </div> : flow.manifest ? <div className="flex flex-col gap-4">
-                <DesktopCoworkerManifestReview manifest={flow.manifest} approved={flow.approved} onApprovedChange={flow.setApproved} disabled={flow.busy} />
-                <PendingImports pending={flow.pendingImports} busy={flow.busy} onRecover={input => void flow.recoverImport(input)} />
+                {flow.databaseReview && <DesktopCoworkerImportDatabaseReview database={flow.databaseReview} />}
+                <DesktopCoworkerManifestReview manifest={flow.manifest} sectionReview={flow.sectionReview} approved={flow.approved} onApprovedChange={flow.setApproved} disabled={flow.busy || !flow.canImport} />
+                <PendingImports pending={flow.pendingImports} busy={flow.busy} disabled={!flow.canImport} onRecover={input => void flow.recoverImport(input)} />
             </div> : <p role="status" className="text-sm text-muted-foreground">{flow.loading ? 'Reading the portable file…' : 'The portable file is unavailable.'}</p>}
             {flow.error && <p role="alert" className="mt-4 text-xs text-destructive">{flow.error}</p>}
         </div>
@@ -52,16 +54,17 @@ function Body({ client, attempts, targetWorkspaceId, snapshotId, onImported, onO
                 {onOpenCoworker && <Button type="button" onClick={() => onOpenCoworker(flow.importedAgentId!)}>Open fresh copy</Button>}
             </> : <>
                 <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-                <Button type="button" disabled={flow.busy || flow.loading || !flow.manifest || !flow.approved} onClick={() => void flow.importFresh()}>{flow.busy ? 'Adding the fresh copy…' : 'Add a fresh copy'}</Button>
+                <Button type="button" disabled={flow.busy || flow.loading || !flow.manifest || !flow.canImport || !flow.approved} onClick={() => void flow.importFresh()}>{flow.busy ? 'Adding the fresh copy…' : 'Add a fresh copy'}</Button>
             </>}
         </DialogFooter>
     </>
 }
 
-function PendingImports({ pending, busy, onRecover }: { pending: DesktopCoworkerShareImportInput[]; busy: boolean; onRecover: (input: DesktopCoworkerShareImportInput) => void }) {
+function PendingImports({ pending, busy, disabled, onRecover }: { pending: DesktopCoworkerShareImportInput[]; busy: boolean; disabled: boolean; onRecover: (input: DesktopCoworkerShareImportInput) => void }) {
     if (busy || pending.length === 0) return null
     return <section className="rounded-md border border-amber-500/30 p-3">
         <p className="text-xs text-amber-600">An earlier import acknowledgement is uncertain. Recover the same fresh copy rather than creating another.</p>
-        <div className="mt-2 flex flex-wrap gap-2">{pending.map(input => <Button type="button" variant="outline" size="sm" key={input.requestId} disabled={busy} onClick={() => onRecover(input)}>Recover import {input.requestId.slice(0, 8)}</Button>)}</div>
+        {disabled && <p className="mt-1 text-xs text-muted-foreground">Verify this portable file before recovering the saved attempt.</p>}
+        <div className="mt-2 flex flex-wrap gap-2">{pending.map(input => <Button type="button" variant="outline" size="sm" key={input.requestId} disabled={busy || disabled} onClick={() => onRecover(input)}>Recover import {input.requestId.slice(0, 8)}</Button>)}</div>
     </section>
 }

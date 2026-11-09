@@ -11,7 +11,7 @@ import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
 
 import { BrainBubbleMenu } from './BrainBubbleMenu'
 import { brainExtensions, editorMarkdown } from './extensions'
-import { SHARED_FILE_DRAG_TYPE } from './file-link'
+import { insertSharedFileDrop } from './file-link'
 import { pickerItems, slashItems, type PickerMode } from './menu-items'
 import { SuggestionMenu, suggestionMenu, type MenuState } from './suggestion-menu'
 
@@ -30,6 +30,8 @@ type BrainEditorProps = {
     handleRef?: Ref<BrainEditorHandle>
     onOpenPage?: (slug: string) => void
     onOpenFile?: (path: string) => void
+    // Desktop checks a drop against the listed files. Hosted leaves this off.
+    onAcceptFileDrop?: (raw: string) => SharedFileRef | null
     // Only ever called for an edit the person made. Opening a page never calls it, even though
     // TipTap normalises the markdown it was given.
     onChange?: (markdown: string) => void
@@ -46,15 +48,15 @@ const MENU_WIDTH = 288
 
 // The page body as Notion edits it: no toolbar, `/` for blocks, `[[` to link a page or a file,
 // formatting on the selection. Reads and writes the same markdown agents read.
-export function BrainEditor({ content, editable = true, pages = [], titles, files = [], currentSlug = null, placeholder, className, handleRef, onOpenPage, onOpenFile, onChange, onBlur }: BrainEditorProps) {
+export function BrainEditor({ content, editable = true, pages = [], titles, files = [], currentSlug = null, placeholder, className, handleRef, onOpenPage, onOpenFile, onAcceptFileDrop, onChange, onBlur }: BrainEditorProps) {
     const containerRef = useRef<HTMLDivElement>(null)
     const [menu, setMenu] = useState<OpenMenu | null>(null)
     const [menuIndex, setMenuIndex] = useState(0)
 
     // The extensions are built once; everything they read that changes over time goes through here.
-    const live = useRef({ pages, titles, files, currentSlug, onOpenPage, onOpenFile, onChange, onBlur, menu, menuIndex, pickerMode: 'pages' as PickerMode })
+    const live = useRef({ pages, titles, files, currentSlug, onOpenPage, onOpenFile, onAcceptFileDrop, onChange, onBlur, menu, menuIndex, pickerMode: 'pages' as PickerMode })
     useEffect(() => {
-        Object.assign(live.current, { pages, titles, files, currentSlug, onOpenPage, onOpenFile, onChange, onBlur, menu, menuIndex })
+        Object.assign(live.current, { pages, titles, files, currentSlug, onOpenPage, onOpenFile, onAcceptFileDrop, onChange, onBlur, menu, menuIndex })
     })
 
     const handleMenuKey = useCallback((event: KeyboardEvent) => {
@@ -139,18 +141,7 @@ export function BrainEditor({ content, editable = true, pages = [], titles, file
             attributes: {
                 class: cn(richTextClassName, 'min-h-48 text-[15px] leading-7 text-foreground/85 outline-none [&_p.is-editor-empty:first-child::before]:pointer-events-none [&_p.is-editor-empty:first-child::before]:float-left [&_p.is-editor-empty:first-child::before]:h-0 [&_p.is-editor-empty:first-child::before]:text-muted-foreground/60 [&_p.is-editor-empty:first-child::before]:content-[attr(data-placeholder)] [&_h1]:mt-6 [&_h1]:mb-2 [&_h1]:text-2xl [&_h1]:font-semibold [&_h1]:text-foreground'),
             },
-            handleDrop: (view, event) => {
-                const raw = event.dataTransfer?.getData(SHARED_FILE_DRAG_TYPE)
-                if (!raw) return false
-                const file = JSON.parse(raw) as SharedFileRef
-                const position = view.posAtCoords({ left: event.clientX, top: event.clientY })
-                if (!position) return false
-                event.preventDefault()
-                const node = view.state.schema.nodes.fileLink.create({ path: file.path, name: file.name })
-                view.dispatch(view.state.tr.insert(position.pos, node))
-                view.focus()
-                return true
-            },
+            handleDrop: (view, event) => insertSharedFileDrop(view, event, live.current.onAcceptFileDrop),
         },
         onCreate: ({ editor: created }) => {
             baseline.current = editorMarkdown(created)

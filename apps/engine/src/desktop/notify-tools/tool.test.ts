@@ -17,8 +17,11 @@ test('uses the original info-only nonblocking input and exact owner identity', a
     const deliver = vi.fn(async () => receipt)
     const tools = desktopNotifyTools(context(), { deliver })
     const output = await (tools.notify_user as any).execute({ message: 'Review', metadata: { url: 'https://x' } }, { toolCallId: 'c', abortSignal: new AbortController().signal })
-    expect(JSON.parse(output)).toEqual(receipt)
-    expect(deliver).toHaveBeenCalledWith(expect.objectContaining({ notificationId: 'notify:a:s:r:c', eventKey: desktopNotifyUserEventKey({ agentId: 'a', sessionId: 's', runId: 'r', toolCallId: 'c' }), message: 'Review', metadata: { url: 'https://x' }, runId: 'r' }), expect.any(AbortSignal))
+    expect(JSON.parse(output)).toEqual({ notificationId: receipt.notificationId, eventKey: receipt.eventKey, inboxStatus: 'recorded', status: 'accepted', nativeStatus: 'accepted', createdAt: receipt.createdAt })
+    expect(output).not.toContain('https://x')
+    expect(output).not.toContain('Review')
+    expect(output).not.toContain(receipt.attemptId)
+    expect(deliver).toHaveBeenCalledWith(expect.objectContaining({ notificationId: 'notify:a:s:r:c', eventKey: desktopNotifyUserEventKey({ agentId: 'a', sessionId: 's', runId: 'r', toolCallId: 'c' }), toolCallId: 'c', message: 'Review', metadata: { url: 'https://x' }, runId: 'r' }), expect.any(AbortSignal))
 })
 
 test('a missing grant hides the tool and no delivery occurs', () => {
@@ -37,6 +40,18 @@ test('unknown and failed receipts are returned once with no automatic retry', as
     const first = JSON.parse(await (tools.notify_user as any).execute({ message: 'Review' }, { toolCallId: 'c' }))
     const second = JSON.parse(await (tools.notify_user as any).execute({ message: 'Review' }, { toolCallId: 'c' }))
     expect(first.status).toBe('unknown')
+    expect(first.nativeStatus).toBe('unknown')
     expect(second.status).toBe('failed')
+    expect(second.nativeStatus).toBe('unavailable')
+    expect(first.message).toBeUndefined()
     expect(deliver).toHaveBeenCalledTimes(2)
+})
+
+test('a run that is no longer active fails before any delivery', async () => {
+    const deliver = vi.fn()
+    const ctx = context()
+    ctx.runId = null
+    const tools = desktopNotifyTools(ctx, { deliver })
+    expect(JSON.parse(await (tools.notify_user as any).execute({ message: 'Review' }, { toolCallId: 'c' }))).toMatchObject({ status: 'failed', nativeStatus: 'unavailable' })
+    expect(deliver).not.toHaveBeenCalled()
 })

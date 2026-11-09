@@ -1,4 +1,5 @@
 import { mergeAttributes, Node } from '@tiptap/core'
+import type { EditorView } from '@tiptap/pm/view'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
 
 export type FileLinkAttrs = { path: string; name: string }
@@ -9,6 +10,80 @@ export const SHARED_FILE_SCHEME = 'shared:'
 
 // Dragged from the Files tree of the sidebar onto a page.
 export const SHARED_FILE_DRAG_TYPE = 'application/x-rerun-shared-file'
+
+export type SharedFileDrag = { path: string; name: string; workspace?: string }
+
+// The hosted sidebar omits `workspace`. Desktop sets it to the active workspace.
+export function sharedFileDragData(file: { path: string; name: string }, workspace?: string): string {
+    const payload: SharedFileDrag = workspace ? { path: file.path, name: file.name, workspace } : { path: file.path, name: file.name }
+    return JSON.stringify(payload)
+}
+
+// A directory, a non-object, or any field outside the drag contract is not a file link.
+export function readSharedFileDrag(raw: string): SharedFileDrag | null {
+    let parsed: unknown
+    try {
+        parsed = JSON.parse(raw) as unknown
+    } catch {
+        return null
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    const record = parsed as Record<string, unknown>
+    for (const key of Object.keys(record)) {
+        if (key !== 'path' && key !== 'name' && key !== 'workspace' && key !== 'type') return null
+    }
+    if (record.type !== undefined && record.type !== 'file') return null
+    if (typeof record.path !== 'string' || typeof record.name !== 'string') return null
+    if (record.workspace !== undefined && typeof record.workspace !== 'string') return null
+    return { path: record.path, name: record.name, ...(typeof record.workspace === 'string' ? { workspace: record.workspace } : {}) }
+}
+
+type SharedFileDropEvent = {
+    dataTransfer?: { getData(type: string): string } | null
+    clientX: number
+    clientY: number
+    preventDefault(): void
+}
+
+// The original sidebar drop: the pointer position, then one file-link node and no trailing space.
+// Desktop passes `accept` so only a listed file of the active workspace is inserted. Hosted omits
+// it and keeps that insert. A payload that is not JSON does not throw.
+export function insertSharedFileDrop(view: EditorView, event: SharedFileDropEvent, accept?: (raw: string) => { path: string; name: string } | null): boolean {
+    const raw = event.dataTransfer?.getData(SHARED_FILE_DRAG_TYPE)
+    if (!raw) return false
+    if (!view.editable) {
+        event.preventDefault()
+        return true
+    }
+    const position = view.posAtCoords({ left: event.clientX, top: event.clientY })
+    if (!position) return false
+    const file = accept ? accept(raw) : hostedSharedFileDrag(raw)
+    if (!file) {
+        event.preventDefault()
+        return true
+    }
+    const fileLink = view.state.schema.nodes.fileLink
+    if (!fileLink) {
+        event.preventDefault()
+        return true
+    }
+    event.preventDefault()
+    const node = fileLink.create({ path: file.path, name: file.name })
+    view.dispatch(view.state.tr.insert(position.pos, node))
+    view.focus()
+    return true
+}
+
+function hostedSharedFileDrag(raw: string): { path: string; name: string } | null {
+    try {
+        const parsed = JSON.parse(raw) as { path?: unknown; name?: unknown } | null
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+        if (typeof parsed.path !== 'string' || typeof parsed.name !== 'string') return null
+        return { path: parsed.path, name: parsed.name }
+    } catch {
+        return null
+    }
+}
 
 const fileName = (path: string) => path.split('/').filter(Boolean).pop() ?? path
 

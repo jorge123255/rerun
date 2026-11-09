@@ -4,7 +4,7 @@ import { BrainChromeContext, BrainTopBar, type BrainCrumb } from '@/components/b
 import { FileList } from '@/components/files/FileList'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { importDesktopSharedFiles, listDesktopSharedFolder, type DesktopSharedEntry, type DesktopSharedImportResult } from '@/lib/desktop/shared-workspace-files'
+import { importDesktopSharedFiles, listDesktopSharedFolder, renameDesktopSharedFile, type DesktopSharedEntry, type DesktopSharedImportResult } from '@/lib/desktop/shared-workspace-files'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { UploadEntry } from '@/lib/files/upload'
 import { FolderIcon } from '@/lib/icons'
@@ -15,7 +15,7 @@ import { toast } from 'sonner'
 import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 
 // The workspace shared folder. Same FileList, breadcrumb, and text preview as the hosted
-// shared Files view. Rename, delete, edit, media, and publication stay out of this slice.
+// shared Files view. Rename is limited to ordinary files in the current folder.
 // Optional FileList actions keep the original layout without advertising unavailable mutations.
 
 const ROOT = 'Files'
@@ -152,6 +152,25 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
         }
     }
 
+    const rename = async (name: string, next: string) => {
+        if (importing.current || !current.current.mounted || isDesktopQuitting()) return
+        const controller = new AbortController()
+        importing.current = controller
+        const release = holdDraftAdmission()
+        setUploading(true)
+        const active = () => current.current.mounted && current.current.path === path && !controller.signal.aborted && !isDesktopQuitting()
+        try {
+            await renameDesktopSharedFile(joinPath(path, name), next, controller.signal)
+            if (active()) setAttempt(value => value + 1)
+        } catch (error) {
+            if (active()) toast.error(messageOf(error, 'The rename was not confirmed. Refresh Shared files before retrying.'))
+        } finally {
+            if (importing.current === controller) importing.current = null
+            if (current.current.mounted) setUploading(false)
+            release()
+        }
+    }
+
     return (
         <div className="flex min-h-0 flex-1 flex-col">
             <BrainTopBar crumbs={folderCrumbs(path, next => onOpen(next, true))} status={truncated ? 'Showing the first 512 entries' : undefined} />
@@ -162,6 +181,8 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
                 entries={entries}
                 onOpen={entry => onOpen(joinPath(path, entry.name), entry.type === 'dir')}
                 emptyDescription="Nothing here yet. Import supported documents, images, audio, video, or PDFs to share them with coworkers that have Read shared files enabled."
+                canRename={entry => entry.type === 'file' && !uploading}
+                onRename={(name, next) => void rename(name, next)}
                 uploadDisabled={uploading || !entries}
                 onUpload={picked => void upload(picked)}
             />}
