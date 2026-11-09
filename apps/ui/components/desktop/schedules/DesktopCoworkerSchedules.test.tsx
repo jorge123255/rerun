@@ -4,19 +4,35 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 vi.mock('@/lib/desktop/use-schedule-tool-notices', () => ({ useDesktopScheduleToolNotices: () => null }))
 vi.mock('@/components/ui/panel-steps', () => ({ PanelSteps: ({ children }: { children: ReactNode }) => <>{children}</> }))
+vi.mock('@/components/agent/RunModelField', () => ({
+    RunModelField: ({ value, onChange }: { value: { connectionId: string | null; model: string | null }; onChange: (next: { connectionId: string | null; model: string | null }) => void }) => <div data-testid="routine-model" data-connection={value.connectionId ?? ''} data-model={value.model ?? ''}>
+        <button onClick={() => onChange({ connectionId: 'conn-b', model: 'gpt-exact' })}>Use exact model</button>
+        <button onClick={() => onChange({ connectionId: null, model: null })}>Use coworker default</button>
+    </div>,
+}))
 import { DesktopCoworkerSchedules } from './DesktopCoworkerSchedules'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const grantMessage = 'Enable Schedules in this coworker’s Capabilities to use routines'
-const task = (slug: string) => ({
+const task = (slug: string, extra: Record<string, unknown> = {}) => ({
     slug, name: `Saved ${slug}`, description: '', body: 'Return a short report.', enabled: true,
     cron: '0 8 * * *', runAt: null, timezone: 'America/Chicago', nextRunAt: null,
-    lastResult: null, lastResultUnknown: false,
+    connectionId: null, provider: null, model: null,
+    lastResult: null, lastResultUnknown: false, ...extra,
 })
-let root: ReturnType<typeof createRoot>, container: HTMLDivElement, respond: () => Promise<Response>
+const modelView = {
+    catalog: [{ connectionId: 'conn-b', name: 'OpenAI B', provider: 'openai', models: [{ id: 'gpt-exact', label: 'Exact model' }] }],
+    workspace: null,
+    coworker: { connectionId: null, provider: null, model: 'coworker-model', label: 'Coworker model', available: true },
+    conversation: null,
+    effective: { source: 'coworker', connectionId: null, provider: null, name: null, model: 'coworker-model', label: 'Coworker model', available: true },
+}
+let root: ReturnType<typeof createRoot>, container: HTMLDivElement, respond: (url: string, init?: RequestInit) => Promise<Response>
+let putBodies: Array<{ input?: Record<string, unknown> }>
 beforeEach(() => {
+    putBodies = []
     respond = async () => Response.json([task('daily'), task('weekly'), task('monthly')])
-    vi.stubGlobal('fetch', vi.fn(() => respond()))
+    vi.stubGlobal('fetch', vi.fn((url: unknown, init?: RequestInit) => respond(String(url), init)))
     container = document.createElement('div'); document.body.append(container); root = createRoot(container)
 })
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals() })
@@ -105,4 +121,60 @@ test('transport errors and malformed successful payloads remain failures without
     expect(container.textContent).not.toContain('0 scheduled tasks')
     expect(container.textContent).not.toContain('No scheduled tasks yet')
     expect(button('New').disabled).toBe(true)
+})
+
+
+function exactModelResponses(tasks: Array<ReturnType<typeof task>> = [task('daily')]) {
+    respond = async (url, init) => {
+        if (url.endsWith('/model')) return Response.json(modelView)
+        if (init?.method === 'PUT') {
+            putBodies.push(JSON.parse(String(init.body)))
+            return Response.json({ slug: 'saved' })
+        }
+        return Response.json(tasks)
+    }
+}
+
+async function setControlValue(selector: string, value: string) {
+    const control = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector)!
+    const prototype = control instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+    Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(control, value)
+    await act(async () => { control.dispatchEvent(new Event('input', { bubbles: true })) })
+}
+
+test('an exact catalog selection is saved with its connection provider and model', async () => {
+    exactModelResponses()
+    await render()
+    await act(async () => { button('New').click() })
+    await setControlValue('input[aria-label="Name"]', 'Exact routine')
+    await setControlValue('textarea', 'Use the exact model')
+    await act(async () => { button('Use exact model').click() })
+    await act(async () => { button('Create task').click() })
+
+    expect(putBodies).toHaveLength(1)
+    expect(putBodies[0].input).toMatchObject({ connectionId: 'conn-b', provider: 'openai', model: 'gpt-exact' })
+})
+
+test('an existing all-null row keeps coworker-default semantics when saved', async () => {
+    exactModelResponses()
+    await render()
+    await act(async () => { row('Saved daily').click() })
+    await act(async () => { button('Save changes').click() })
+
+    expect(putBodies).toHaveLength(1)
+    expect(putBodies[0].input).toMatchObject({ connectionId: null, provider: null, model: null })
+})
+
+test('an unavailable saved pin stays exact blocks Test Run and permits non-substituting edits', async () => {
+    exactModelResponses([task('stale', { connectionId: 'deleted', provider: 'openai', model: 'removed-model' })])
+    await render()
+    await act(async () => { row('Saved stale').click() })
+
+    expect(container.querySelector('[data-testid="routine-model"]')?.getAttribute('data-connection')).toBe('deleted')
+    expect(container.querySelector('[data-testid="routine-model"]')?.getAttribute('data-model')).toBe('removed-model')
+    expect(button('Test Run').disabled).toBe(true)
+    await act(async () => { button('Save changes').click() })
+
+    expect(putBodies).toHaveLength(1)
+    expect(putBodies[0].input).toMatchObject({ connectionId: 'deleted', provider: 'openai', model: 'removed-model' })
 })
