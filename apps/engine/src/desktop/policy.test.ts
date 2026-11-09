@@ -31,6 +31,17 @@ test('generic connection mutations cannot bypass named API receipts through raw,
     expect(desktopRouteAllowed('PUT', '/connections/default')).toBe(true)
 })
 
+test('desktop Foreman authority can read its details without opening mutation or hosted routes', () => {
+    expect(desktopRouteAllowed('GET', '/agents/foreman')).toBe(true)
+    for (const method of ['HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']) {
+        expect(desktopRouteAllowed(method, '/agents/foreman')).toBe(false)
+    }
+    for (const path of ['/agents/foreman/', '/agents/foreman/keys', '/agents/foreman/memories', '/agents/foreman/tools']) {
+        expect(desktopRouteAllowed('GET', path)).toBe(false)
+    }
+    expect(desktopRouteAllowed('POST', '/agents/foreman/chat')).toBe(false)
+})
+
 test('Claude requires its dedicated connection and both isolated bundled runtime paths', () => {
     vi.stubEnv('RERUN_DESKTOP_APP', '1')
     vi.stubEnv('RERUN_DESKTOP_CLAUDE_RUNNER', '')

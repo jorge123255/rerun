@@ -45,6 +45,8 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (path === '/desktop/foreman/chat' || path === '/desktop/agents/foreman-create') return method === 'POST'
     if (/^\/desktop\/agents\/foreman-create\/[A-Za-z0-9_-]+$/.test(path)) return method === 'GET'
     if (/^\/desktop\/templates\/foreman-import\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+$/.test(path)) return method === 'GET'
+    // Delegation and coworker calls read Foreman's current grants from its engine details.
+    if (path === '/agents/foreman') return method === 'GET'
     // Only the private Foreman chat adapter may admit runs. Its observer reads these exact routes.
     if (/^\/agents\/foreman\/(?:sessions\/[A-Za-z0-9_-]+(?:\/messages)?|runs\/[A-Za-z0-9_-]+(?:\/stream)?)$/.test(path)) return method === 'GET'
     if (/^\/agents\/foreman\/runs\/[A-Za-z0-9_-]+\/cancel$/.test(path)) return method === 'POST'
