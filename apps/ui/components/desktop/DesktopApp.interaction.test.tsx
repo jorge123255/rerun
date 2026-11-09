@@ -380,7 +380,7 @@ test('a board tile opens the saved conversation and New chat starts a separate s
         expect(container.querySelector('[aria-label="Open chat with Researcher"]')).toBe(tile)
         expect(container.querySelector('[aria-label="Coworker chat"]')?.textContent).toContain('Saved answer')
         await send('Continue')
-        await act(async () => { button('New chat').click() })
+        await act(async () => { button('New thread').click() })
         await send('Start fresh')
         expect(sent).toEqual([{ agentId: 'researcher', sessionId: 'previous', text: 'Continue' }, { agentId: 'researcher', tabUid: expect.any(String), text: 'Start fresh' }])
         await act(async () => { button('Close panel').click() })

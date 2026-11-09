@@ -1,6 +1,7 @@
 import { renderToString } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { UIMessage } from 'ai'
+import { generalTabUid } from '@/lib/desktop/general-threads'
 import { DesktopConversation } from './DesktopConversation'
 
 const agent = { id: 'local-agent-1', name: 'Researcher', description: 'Finds answers', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }
@@ -25,7 +26,26 @@ describe('DesktopConversation', () => {
         expect(html).toContain('First conversation')
         expect(html).toContain('Default · test-model')
         expect(html).toContain('desktop-message')
-        expect(html).toContain('Send a message…')
+        expect(html).toContain('Reply in First conversation...')
+    })
+
+    it('hangs a thread card in General with the opening message', () => {
+        const html = renderToString(<DesktopConversation
+            agent={agent}
+            sessionId={null}
+            tabUid={generalTabUid(agent.id)}
+            sessions={[
+                { id: 'general-row', agentId: agent.id, title: 'General', createdAt: '2026-11-08T09:00:00.000Z', updatedAt: '2026-11-08T09:00:00.000Z', kind: 'general', firstMessage: null },
+                { id: 'thread-row', agentId: agent.id, title: 'Signup drop', createdAt: '2026-11-08T10:00:00.000Z', updatedAt: '2026-11-08T10:00:00.000Z', kind: 'thread', firstMessage: 'Why did signups drop?' },
+            ]}
+            onSelectSession={vi.fn()}
+            onChatSession={vi.fn()}
+        />)
+        expect(html).toContain('data-testid="desktop-thread-branch"')
+        expect(html).toContain('data-thread-row="thread-row"')
+        expect(html).toContain('Why did signups drop?')
+        expect(html).toContain('Signup drop')
+        expect(html).toContain('Message Researcher...')
     })
 
     it('renders only marked Codex summaries as upstream running and settled reasoning steps', () => {

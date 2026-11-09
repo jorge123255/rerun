@@ -9,6 +9,7 @@ import type { EngineConnection } from '@/lib/engine/types'
 import type { DesktopModelPick } from '../chat-model'
 import { desktopChatTitle } from '../chat-content'
 import { DesktopHttpError } from './auth'
+import { GENERAL_SESSION_TITLE, generalTabUid, openingMessage } from '../general-threads'
 import { createDesktopSession, type DesktopAgent } from './store'
 
 type StartInput = DesktopAttachmentFields & DesktopCoworkerMentionFields & { text: string; modelChoice?: DesktopModelPick; documents?: DesktopDocumentSendSelection }
@@ -32,6 +33,13 @@ function validate(row: Row, hash: string) {
 
 const tabSource = `FROM desktop_agent_tabs a JOIN json_each(a.layout, '$.tabs') tab
                    WHERE a.agent_id = :agent AND json_extract(tab.value,'$.uid') = :uid`
+
+export async function readTabStart(db: Client, agent: DesktopAgent, uid: string, input: StartInput): Promise<{ row: Row | null; matches: boolean }> {
+    const previous = await db.execute({ sql: 'SELECT * FROM desktop_tab_starts WHERE agent_id = ? AND uid = ?', args: [agent.id, uid] })
+    const row = previous.rows[0]
+    if (!row) return { row: null, matches: true }
+    return { row, matches: row.input_hash === fingerprint(input) }
+}
 
 export async function existingTabStart(db: Client, agent: DesktopAgent, uid: string, input: StartInput) {
     const args = { agent: agent.id, uid }
@@ -66,7 +74,14 @@ export async function recoverTabSession(db: Client, conn: EngineConnection, agen
     if (bound.rows[0]) return String(bound.rows[0].id)
     const runs = await listRuns(conn, agent.engineAgentId, { sessionId: engineSessionId, limit: 1 })
     if (!runs.some(run => run.id === row.run_id && run.sessionId === engineSessionId)) return null
-    const saved = await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: String(row.title), model: JSON.parse(String(row.model_choice)) })
+    const general = String(row.uid) === generalTabUid(agent.id)
+    const saved = await createDesktopSession(db, {
+        agentId: agent.id, engineSessionId,
+        title: general ? GENERAL_SESSION_TITLE : String(row.title),
+        model: JSON.parse(String(row.model_choice)),
+        kind: general ? 'general' : 'thread',
+        firstMessage: general ? null : openingMessage(String(row.title)),
+    })
     return saved.id
 }
 

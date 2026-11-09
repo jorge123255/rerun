@@ -1,5 +1,6 @@
 import 'server-only'
 import { sessionSourceSchema, type SessionSource } from '@rerun/contracts'
+import type { DesktopSessionKind } from '../general-threads'
 import type { DesktopSession } from './store'
 
 export const PENDING_QUESTION_READ_CONCURRENCY = 4
@@ -28,6 +29,8 @@ export type DesktopChatHistoryConversation = {
     source: SessionSource | null
     needsYou: boolean
     pendingQuestion: string | null
+    kind: DesktopSessionKind
+    firstMessage: string | null
 }
 
 export type DesktopChatHistory = {
@@ -104,6 +107,8 @@ export async function readDesktopChatHistory(dependencies: DesktopChatHistoryDep
             source: engine?.source ?? null,
             needsYou: pendingQuestion !== null,
             pendingQuestion,
+            kind: session.kind ?? 'thread',
+            firstMessage: session.firstMessage ?? null,
         } satisfies DesktopChatHistoryConversation
     }).sort((a, b) => updatedTime(b.updatedAt) - updatedTime(a.updatedAt) || updatedTime(b.createdAt) - updatedTime(a.createdAt) || a.id.localeCompare(b.id))
 

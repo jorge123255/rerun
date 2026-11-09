@@ -68,7 +68,7 @@ test('switching, failed loads, retry, and New chat keep drafts and never show an
         await act(async () => { resolveSlow(messages('Stale slow answer.')) })
         expect(container.textContent).not.toContain('Stale slow answer.')
         expect(container.textContent).toContain('Second answer.')
-        await click('New chat')
+        await click('New thread')
         expect(container.textContent).not.toContain('Second answer.')
         expect(container.textContent).toContain('Start a conversation')
         expect(container.querySelector('textarea')).toBe(composer)

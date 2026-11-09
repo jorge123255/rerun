@@ -4,6 +4,7 @@ import type { Client, Row } from '@libsql/client'
 import { desktopAttachmentPathsSchema, desktopAttachmentItemsSchema, desktopAttachmentSelectionsOf, desktopAttachmentFieldsOf, type DesktopAttachmentSelection } from '@rerun/contracts'
 import type { DesktopTabLayout, DesktopTabWrite } from '../session-tabs'
 import { DesktopHttpError } from './auth'
+import { generalTabUid, isGeneralTabFor } from '../general-threads'
 import { desktopSessionsQuery, sessionOf } from './store'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { withRosterWrite } from './roster-writes'
@@ -63,6 +64,12 @@ export function writeDesktopTabs(db: Client, agentId: string, input: DesktopTabW
             const chats = await transaction.execute(desktopSessionsQuery(agentId))
             const owned = new Set(chats.rows.map(row => String(row.id)))
             if (input.tabs.some(t => t.id !== null && !owned.has(t.id))) throw new DesktopHttpError(404, 'Conversation not found for this coworker')
+            const generalUid = generalTabUid(agentId)
+            if (input.tabs.some(tab => tab.uid.startsWith('general:') && !isGeneralTabFor(agentId, tab))) throw new DesktopHttpError(404, 'Conversation not found for this coworker')
+            const generalRow = chats.rows.find(row => String(row.kind) === 'general' && String(row.agent_id) === agentId)
+            const generalTab = input.tabs.find(tab => tab.uid === generalUid)
+            if (generalTab?.id && (!generalRow || String(generalRow.id) !== generalTab.id)) throw new DesktopHttpError(409, 'General does not match this coworker.')
+            if (generalRow && input.tabs.some(tab => tab.id === String(generalRow.id) && tab.uid !== generalUid)) throw new DesktopHttpError(409, 'Open General from its own tab.')
             const row = current.rows[0]
             // Lost-response retries acknowledge the stored layout without repeating a fork
             // transfer or clearing the alternate's newer draft a second time.

@@ -15,6 +15,8 @@ export const desktopChatHistoryConversationSchema = z.object({
     source: sessionSourceSchema.nullable(),
     needsYou: z.boolean(),
     pendingQuestion: z.string().nullable(),
+    kind: z.enum(['general', 'thread']).optional(),
+    firstMessage: z.string().nullable().optional(),
 })
 export type DesktopChatHistoryConversation = z.infer<typeof desktopChatHistoryConversationSchema>
 
@@ -27,7 +29,7 @@ export type DesktopChatHistory = z.infer<typeof desktopChatHistorySchema>
 
 export const DESKTOP_CHAT_FILTERS = [
     { value: 'all', label: 'All' },
-    { value: 'chats', label: 'Chats' },
+    { value: 'chats', label: 'Threads' },
     { value: 'automations', label: 'Automations' },
     { value: 'needs', label: 'Needs you' },
 ] as const satisfies readonly { value: DesktopChatFilter; label: string }[]
@@ -53,12 +55,13 @@ export function filterDesktopChats(conversations: readonly DesktopChatHistoryCon
     const needle = query.trim().toLocaleLowerCase()
     const seen = new Set<string>()
     return sortDesktopChats(conversations.filter(conversation => {
-        if (seen.has(conversation.id)) return false
+        if (seen.has(conversation.id) || conversation.kind === 'general') return false
         seen.add(conversation.id)
         if (filter === 'automations' && !isAutomatedChat(conversation)) return false
         if (filter === 'chats' && !isOrdinaryChat(conversation)) return false
         if (filter === 'needs' && !conversation.needsYou) return false
-        return !needle || conversation.title.toLocaleLowerCase().includes(needle)
+        const haystack = `${conversation.title}\n${conversation.firstMessage ?? ''}`.toLocaleLowerCase()
+        return !needle || haystack.includes(needle)
     }))
 }
 

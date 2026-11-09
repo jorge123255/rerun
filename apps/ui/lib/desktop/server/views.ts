@@ -5,5 +5,5 @@ export function desktopAgentView(agent: DesktopAgent) {
 }
 
 export function desktopSessionView(session: DesktopSession) {
-    return { id: session.id, agentId: session.agentId, title: session.title, createdAt: session.createdAt, updatedAt: session.updatedAt }
+    return { id: session.id, agentId: session.agentId, title: session.title, createdAt: session.createdAt, updatedAt: session.updatedAt, kind: session.kind ?? 'thread', firstMessage: session.firstMessage ?? null }
 }

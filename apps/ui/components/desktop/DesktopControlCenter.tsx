@@ -5,7 +5,7 @@ import { DesktopControlCenterParityView } from './control-center-parity/DesktopC
 import { useDesktopControlParity, type DesktopParityCallbacks } from './control-center-parity/useDesktopControlParity'
 import type { ControlRow, ControlSection } from '@/components/control-center/types'
 import { useModKeyLabel } from '@/hooks/useModKeyLabel'
-import { BrainIcon, BellIcon, FolderIcon, BoxIcon, CirclePlusIcon, FocusCenterIcon, HelpCircleIcon, KeyboardIcon, LayoutGridIcon, ListChecksIcon, LockKeyholeIcon, MessageCircle, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from '@/lib/icons'
+import { BrainIcon, BellIcon, FolderIcon, BoxIcon, CirclePlusIcon, FocusCenterIcon, HelpCircleIcon, KeyboardIcon, LayoutGridIcon, ListChecksIcon, LockKeyholeIcon, MessageCircle, MessagesSquare, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from '@/lib/icons'
 import { parseQuery, searchItems } from '@/lib/control-center/search'
 import { buildDesktopControlCommands, buildDesktopControlCoworkerTabs, useDesktopConversationSearch, useDesktopControlCenterKeys, type DesktopControlCommand, type DesktopControlCommandId } from '@/lib/desktop/control-center'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
@@ -306,14 +306,19 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
         }] }]
         if (!chats.data) return [{ id: 'open-chats', heading: 'Open chats', rows: [], loading: chats.loading }]
         const openRows: ControlRow[] = chats.data.openChats.map(chat => ({
-            id: `open-chat-${chat.tabUid}`, label: chat.title, leading: { kind: 'icon', icon: MessageCircle },
+            id: `open-chat-${chat.tabUid}`,
+            label: chat.kind === 'general' ? 'General' : chat.title,
+            detail: chat.kind === 'general' ? 'Main conversation' : chat.kind === 'thread' ? (chat.firstMessage ? `Thread · ${chat.firstMessage}` : 'Thread') : undefined,
+            leading: { kind: 'icon', icon: chat.kind === 'general' ? MessagesSquare : MessageCircle },
             disabledReason: !onOpenChat && chat.sessionId === null ? 'Open this chat from the coworker panel.' : undefined,
             onSelect: () => { void selectCoworkerChat({ kind: 'open', chat }) },
         }))
         const recentRows: ControlRow[] = chats.data.recentStatus === 'unavailable' ? [{
             id: 'recent-chats-retry', label: 'Could not load recent conversations', detail: 'Try again', leading: { kind: 'icon', icon: RefreshCwIcon }, onSelect: retry,
         }] : chats.data.recentChats.map(chat => ({
-            id: `recent-chat-${chat.id}`, label: chat.title, leading: { kind: 'icon', icon: MessageCircle },
+            id: `recent-chat-${chat.id}`, label: chat.title,
+            detail: chat.kind === 'thread' ? (chat.firstMessage ? `Thread · ${chat.firstMessage}` : 'Thread') : undefined,
+            leading: { kind: 'icon', icon: MessageCircle },
             onSelect: () => { void selectCoworkerChat({ kind: 'recent', chat }) },
         }))
         return [{ id: 'open-chats', heading: 'Open chats', rows: openRows }, { id: 'recent-chats', heading: 'Recent conversations', rows: recentRows }]

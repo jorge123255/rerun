@@ -4,6 +4,7 @@ import type { Client, Row } from '@libsql/client'
 import { z } from 'zod'
 import { request } from '@/lib/engine/client'
 import { MAX_REMEMBERED_TABS } from '@/lib/chat/session-tabs'
+import { GENERAL_SESSION_TITLE, generalTabUid } from '../general-threads'
 import { DESKTOP_RECENT_CHAT_LIMIT, type DesktopControlCenterChats, type DesktopOpenChat } from '../control-center-chats'
 import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
@@ -48,8 +49,22 @@ function openChatsOf(agentId: string, row: Row | undefined, sessions: Row[]): De
     return layoutOf(row, sessions).tabs.flatMap(tab => {
         if (!eligible.has(tab.uid) || seenUids.has(tab.uid) || seenSessions.has(tab.id) || (tab.id !== null && !owned.has(tab.id))) return []
         seenUids.add(tab.uid); seenSessions.add(tab.id)
-        return [{ agentId, tabUid: tab.uid, sessionId: tab.id, title: tab.title }]
+        const session = tab.id === null ? undefined : sessions.find(row => String(row.id) === tab.id)
+        const firstMessage = session?.first_message == null || session.first_message === '' ? null : String(session.first_message)
+        const kind = session && String(session.kind) === 'general' ? 'general' as const : 'thread' as const
+        return [{ agentId, tabUid: tab.uid, sessionId: tab.id, title: tab.id === null ? tab.title : String(session?.title ?? tab.title), kind, firstMessage }]
     })
+}
+
+function withGeneralChat(agentId: string, openChats: DesktopOpenChat[], sessions: Row[]): DesktopOpenChat[] {
+    const uid = generalTabUid(agentId)
+    const general = sessions.map(sessionOf).find(session => session.agentId === agentId && session.kind === 'general')
+    const pinned: DesktopOpenChat = {
+        agentId, tabUid: uid, sessionId: general?.id ?? openChats.find(chat => chat.tabUid === uid)?.sessionId ?? null,
+        title: GENERAL_SESSION_TITLE, kind: 'general', firstMessage: null,
+    }
+    const threads = openChats.filter(chat => chat.tabUid !== uid && chat.kind !== 'general' && chat.sessionId !== general?.id)
+    return [pinned, ...threads.slice(0, MAX_REMEMBERED_TABS)]
 }
 
 function recentChatsOf(sessions: DesktopSession[], remote: Session[] | null, engineAgentId: string, openChats: DesktopOpenChat[], name: string) {
@@ -76,7 +91,7 @@ function recentChatsOf(sessions: DesktopSession[], remote: Session[] | null, eng
     }).sort((a, b) => remoteById.get(b.engineSessionId)! - remoteById.get(a.engineSessionId)!
         || b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id))
     return {
-        recentChats: recent.slice(0, DESKTOP_RECENT_CHAT_LIMIT).map(session => ({ id: session.id, agentId: session.agentId, agentName: name, title: session.title })),
+        recentChats: recent.slice(0, DESKTOP_RECENT_CHAT_LIMIT).map(session => ({ id: session.id, agentId: session.agentId, agentName: name, title: session.title, kind: session.kind ?? 'thread', firstMessage: session.firstMessage ?? null })),
         recentStatus: 'ok' as const,
         hasMore: recent.length > DESKTOP_RECENT_CHAT_LIMIT,
     }
@@ -100,8 +115,8 @@ export async function readDesktopControlCenterChats(runtime: DesktopRuntime, age
     const current = requireOwner(owners.rows)
     if (current.engineAgentId !== owner.engineAgentId) throw new DesktopHttpError(409, 'This coworker changed. Refresh the chats and try again.')
     const sessions = chats.rows.map(sessionOf).filter(session => session.agentId === agentId)
-    const openChats = openChatsOf(agentId, layouts.rows[0], chats.rows)
-    // Even a legacy layout beyond today's tab ceiling must not reclassify an open saved
-    // conversation as recent simply because its tab cannot fit in this bounded response.
-    return { agentId, openChats: openChats.slice(0, MAX_REMEMBERED_TABS), ...recentChatsOf(sessions, remote, current.engineAgentId, openChats, current.name) }
+    const openChats = withGeneralChat(agentId, layouts.rows[0] ? openChatsOf(agentId, layouts.rows[0], chats.rows) : [], chats.rows)
+    // General stays pinned. Threads beyond the tab ceiling stay out of Recent as well.
+    const openForRecent = layouts.rows[0] ? openChatsOf(agentId, layouts.rows[0], chats.rows) : []
+    return { agentId, openChats, ...recentChatsOf(sessions, remote, current.engineAgentId, [...openForRecent, ...openChats], current.name) }
 }

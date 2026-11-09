@@ -7,6 +7,7 @@ import { readDesktopRecentCoworkers } from './recent-coworkers'
 import { readDesktopWorkspaceIconSelection } from './workspace-icon'
 import { insertDesktopAgentWithPlacement, readDesktopBoardState } from './spaces'
 import { withRosterWrite } from './roster-writes'
+import { FIRST_MESSAGE_MAX_CHARS, GENERAL_SESSION_TITLE, kindOfStoredSession, openingMessage, type DesktopSessionKind } from '../general-threads'
 
 export type DesktopAgent = {
     id: string
@@ -30,6 +31,17 @@ export type DesktopSession = {
     updatedAt: string
     modelConnectionId: string | null
     model: string | null
+    kind?: DesktopSessionKind
+    firstMessage?: string | null
+}
+
+export class GeneralAlreadyOpenError extends Error {
+    readonly session: DesktopSession
+    constructor(session: DesktopSession) {
+        super('General already open')
+        this.name = 'GeneralAlreadyOpenError'
+        this.session = session
+    }
 }
 
 function agentOf(row: Row): DesktopAgent {
@@ -60,6 +72,8 @@ export function sessionOf(row: Row): DesktopSession {
         updatedAt: String(row.updated_at),
         modelConnectionId: choice?.modelConnectionId ?? null,
         model: choice?.model ?? null,
+        kind: kindOfStoredSession(row.kind),
+        firstMessage: openingMessage(row.first_message == null ? null : String(row.first_message)),
     }
 }
 
@@ -157,15 +171,29 @@ export async function regenerationRequestId(db: Client, source: string, message:
     return String(row.canonical_id)
 }
 
-export async function createDesktopSession(db: Client, input: { agentId: string; engineSessionId: string; title: string; regenerationRequestId?: string; model?: { connectionId: string; model: string } | null }): Promise<DesktopSession> {
+export async function findDesktopGeneralSession(db: Client, agentId: string): Promise<DesktopSession | null> {
+    const result = await db.execute({
+        sql: `SELECT s.* FROM desktop_sessions s
+              JOIN desktop_agents a ON a.id = s.agent_id AND a.workspace_id = 1
+              WHERE s.agent_id = ? AND s.kind = 'general'`,
+        args: [agentId],
+    })
+    return result.rows[0] ? sessionOf(result.rows[0]) : null
+}
+
+export async function createDesktopSession(db: Client, input: { agentId: string; engineSessionId: string; title: string; regenerationRequestId?: string; model?: { connectionId: string; model: string } | null; kind?: DesktopSessionKind; firstMessage?: string | null }): Promise<DesktopSession> {
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
+    const kind = input.kind ?? 'thread'
+    const title = (kind === 'general' ? GENERAL_SESSION_TITLE : input.title).slice(0, 80) || 'New conversation'
+    const firstMessage = kind === 'general' ? null : openingMessage(input.firstMessage)?.slice(0, FIRST_MESSAGE_MAX_CHARS) ?? null
     const statements: InStatement[] = [{
-        sql: `INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, created_at, updated_at, model_connection_id, model)
-              SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM desktop_agents WHERE id = ? AND workspace_id = 1)
+        sql: `INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, created_at, updated_at, model_connection_id, model, kind, first_message)
+              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM desktop_agents WHERE id = ? AND workspace_id = 1)
                 AND NOT EXISTS (SELECT 1 FROM desktop_deletions WHERE agent_id = ?)
+                AND (? = 'thread' OR NOT EXISTS (SELECT 1 FROM desktop_sessions WHERE agent_id = ? AND kind = 'general' AND engine_session_id <> ?))
               ON CONFLICT(engine_session_id) DO NOTHING`,
-        args: [id, input.agentId, input.engineSessionId, input.title.slice(0, 80) || 'New conversation', now, now, input.model?.connectionId ?? null, input.model?.model ?? null, input.agentId, input.agentId],
+        args: [id, input.agentId, input.engineSessionId, title, now, now, input.model?.connectionId ?? null, input.model?.model ?? null, kind, firstMessage, input.agentId, input.agentId, kind, input.agentId, input.engineSessionId],
     }]
     if (input.regenerationRequestId) statements.push({
         sql: `UPDATE desktop_regeneration_requests SET alternate_session_id =
@@ -175,10 +203,27 @@ export async function createDesktopSession(db: Client, input: { agentId: string;
     })
     // A retry can recover an engine fork that was already registered before the response was lost.
     statements.push({ sql: 'SELECT * FROM desktop_sessions WHERE engine_session_id = ? AND agent_id = ?', args: [input.engineSessionId, input.agentId] })
-    const results = await db.batch(statements, 'write')
+    let results
+    try {
+        results = await db.batch(statements, 'write')
+    } catch (error) {
+        if (kind === 'general') {
+            const winner = await findDesktopGeneralSession(db, input.agentId)
+            if (winner && winner.engineSessionId !== input.engineSessionId) throw new GeneralAlreadyOpenError(winner)
+        }
+        throw error
+    }
     const row = results.at(-1)!.rows[0]
-    if (!row) throw new Error('Engine conversation belongs to another coworker')
-    return sessionOf(row)
+    if (!row) {
+        if (kind === 'general') {
+            const winner = await findDesktopGeneralSession(db, input.agentId)
+            if (winner) throw new GeneralAlreadyOpenError(winner)
+        }
+        throw new Error('Engine conversation belongs to another coworker')
+    }
+    const session = sessionOf(row)
+    if (session.agentId !== input.agentId || (kind === 'general' && session.kind !== 'general')) throw new Error('Engine conversation belongs to another coworker')
+    return session
 }
 
 export async function setDesktopSessionModel(db: Client, id: string, pick: { connectionId: string; model: string } | null): Promise<void> {

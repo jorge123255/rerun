@@ -3,7 +3,8 @@
 import { useScrollFade } from '@rerun/ui/primitives'
 import { useEffect, useState } from 'react'
 import type { SessionTab } from '@/lib/chat/session-tabs'
-import { PlusIcon, XIcon } from '@/lib/icons'
+import { isGeneralTab } from '@/lib/desktop/general-threads'
+import { MessagesSquare, PlusIcon, XIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
 export type TabState = 'live' | 'needs' | 'quiet'
@@ -26,11 +27,31 @@ export function OpenChatsTabStrip({ tabs, activeIndex, onSelect, onClose, onCrea
         scroller?.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })
     }, [scroller, activeIndex])
 
+    const pinned = tabs.findIndex(tab => isGeneralTab(tab))
+    const threads = pinned < 0 ? tabs.map((tab, index) => ({ tab, index })) : tabs.flatMap((tab, index) => index === pinned ? [] : [{ tab, index }])
+    const general = pinned < 0 ? null : tabs[pinned]
     return (
         <div role="group" aria-label="Open conversations" className="flex w-full items-center gap-1 px-3">
+            {general && (
+                <>
+                    <button
+                        type="button"
+                        data-testid="desktop-general-tab"
+                        data-general-tab=""
+                        data-active={pinned === activeIndex}
+                        aria-pressed={pinned === activeIndex}
+                        onClick={() => onSelect(pinned)}
+                        className={cn('flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold transition-colors', pinned === activeIndex ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground')}
+                    >
+                        <MessagesSquare className="size-3.5" />
+                        General
+                    </button>
+                    <span aria-hidden className="mx-0.5 h-4 w-px shrink-0 bg-border" />
+                </>
+            )}
             <div ref={setScroller} className="min-w-0 overflow-x-auto [scrollbar-width:none]" style={{ maskImage: fadeMask, WebkitMaskImage: fadeMask }}>
                 <div className="flex w-max items-center gap-1">
-                    {tabs.map((tab, index) => {
+                    {threads.map(({ tab, index }) => {
                         const active = index === activeIndex
                         return (
                             <div

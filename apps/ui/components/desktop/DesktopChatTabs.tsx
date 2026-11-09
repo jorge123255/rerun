@@ -5,6 +5,7 @@ import { OpenChatsTabStrip } from '@/components/agent/sheet/OpenChatsTabStrip'
 import { CloseRunningTabDialog } from '@/components/dialogs/CloseRunningTabDialog'
 import { Button } from '@/components/ui/button'
 import { MAX_REMEMBERED_TABS, closeSessionTab, newSessionTab, openSessionTab, type SessionTabsState } from '@/lib/chat/session-tabs'
+import { adoptGeneralId, ensureDesktopGeneralTab, isGeneralTab } from '@/lib/desktop/general-threads'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import type { DesktopChatRequest } from '@/lib/desktop/chat-request'
 import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-request'
@@ -34,21 +35,26 @@ type Props = {
     overview?: DesktopConversationOverviewAuthority
 }
 
-function initialTabs(layout: DesktopTabLayout | null, sessions: DesktopSessionView[], requested: DesktopChatRequest | null): SessionTabsState {
-    if (requested && 'tabUid' in requested && layout) {
-        const index = layout.tabs.findIndex(tab => tab.uid === requested.tabUid && tab.id === requested.sessionId)
-        if (index >= 0) return index === layout.activeIndex ? layout : { ...layout, activeIndex: index }
+function initialTabs(agentId: string, layout: DesktopTabLayout | null, sessions: DesktopSessionView[], requested: DesktopChatRequest | null): SessionTabsState {
+    const generalId = sessions.find(session => session.agentId === agentId && session.kind === 'general')?.id ?? null
+    const stored = layout ?? (sessions[0] ? { tabs: [newSessionTab(sessions[0].id, sessions[0].title)], activeIndex: 0 } : { tabs: [], activeIndex: 0 })
+    const pinned = ensureDesktopGeneralTab(agentId, stored.tabs.length ? stored : { tabs: [], activeIndex: 0 }, generalId)
+    if (requested && 'tabUid' in requested) {
+        const index = pinned.tabs.findIndex(tab => tab.uid === requested.tabUid && tab.id === requested.sessionId)
+        if (index >= 0) return index === pinned.activeIndex ? pinned : { ...pinned, activeIndex: index }
     }
     const id = requested && 'id' in requested ? requested.id : undefined
-    const session = (id && sessions.find(s => s.id === id)) || sessions[0]
-    const initial = layout ?? { tabs: [newSessionTab(session?.id ?? null, session?.title)], activeIndex: 0 }
-    return id && session?.id === id ? openSessionTab(initial, id, session.title) : initial
+    const session = id ? sessions.find(item => item.id === id) : undefined
+    if (id && session?.kind === 'general') return { ...adoptGeneralId(pinned, id), activeIndex: 0 }
+    return id && session ? openSessionTab(pinned, id, session.title) : pinned
 }
 
 export function DesktopChatTabs({ agent, sessions, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, reload, onOpenCoworkerChat, onClosePanel, modelLabel, onOpenModelSettings, overview }: Props) {
-    const [layout, setLayout] = useState(() => initialTabs(initialLayout, sessions, requested))
-    const [rejectedRequest, setRejectedRequest] = useState<DesktopChatRequest | null>(() =>
-        requested && 'tabUid' in requested && !initialLayout?.tabs.some(tab => tab.uid === requested.tabUid && tab.id === requested.sessionId) ? requested : null)
+    const [layout, setLayout] = useState(() => initialTabs(agent.id, initialLayout, sessions, requested))
+    const [rejectedRequest, setRejectedRequest] = useState<DesktopChatRequest | null>(() => {
+        const pinned = initialTabs(agent.id, initialLayout, sessions, requested)
+        return requested && 'tabUid' in requested && !pinned.tabs.some(tab => tab.uid === requested.tabUid && tab.id === requested.sessionId) ? requested : null
+    })
     const [canMountChats, setCanMountChats] = useState(!rejectedRequest)
     const current = useRef(layout)
     const revision = useRef(initialLayout?.revision ?? 0)
@@ -108,14 +114,20 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
     const open = useCallback((id: string | null, title: string) => {
         if (isDesktopQuitting()) return
         const previous = current.current
-        if (pendingForks.current.size && previous.tabs.length + pendingForks.current.size >= MAX_REMEMBERED_TABS && !previous.tabs.some(t => t.id === id)) {
+        const general = id ? sessions.find(session => session.id === id && session.agentId === agent.id && session.kind === 'general') : undefined
+        if (id && (general || previous.tabs.some(tab => isGeneralTab(tab) && tab.id === id))) {
+            const adopted = adoptGeneralId(ensureDesktopGeneralTab(agent.id, previous, id), id)
+            void change({ tabs: adopted.tabs, activeIndex: 0 })
+            return
+        }
+        if (pendingForks.current.size && previous.tabs.filter(tab => !isGeneralTab(tab)).length + pendingForks.current.size >= MAX_REMEMBERED_TABS && !previous.tabs.some(t => t.id === id)) {
             setNotice('Close an idle tab to open another conversation.')
             return
         }
         const next = openSessionTab(previous, id, title, protectedUids())
         setNotice(next === previous && !previous.tabs.some(tab => tab.id === id) ? 'Close an idle tab to open another conversation.' : '')
         change(next)
-    }, [change, protectedUids])
+    }, [agent.id, change, protectedUids, sessions])
 
     useLayoutEffect(() => {
         if (lastRequest.current === requested) return
@@ -184,7 +196,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
     function requestClose(index: number) {
         if (isDesktopQuitting()) return
         const tab = current.current.tabs[index]
-        if (!tab) return
+        if (!tab || isGeneralTab(tab)) return
         if (activityRef.current[tab.uid]?.recordingPending) { setNotice('Send or discard this recording before closing its tab.'); return }
         if (activityRef.current[tab.uid]?.busy) {
             if (tab.id) setPendingClose(tab.uid)
@@ -243,7 +255,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
     }, [change, refreshSessions])
 
     function startFork(uid: string) {
-        if (current.current.tabs.length + pendingForks.current.size >= MAX_REMEMBERED_TABS) {
+        if (current.current.tabs.filter(tab => !isGeneralTab(tab)).length + pendingForks.current.size >= MAX_REMEMBERED_TABS) {
             setNotice('Close a tab to open an alternate conversation.')
             return false
         }
@@ -252,8 +264,16 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
         return true
     }
 
-    const displayTabs = layout.tabs.map(tab => ({ ...tab, title: sessions.find(s => s.id === tab.id)?.title ?? tab.title }))
-    const strip = <OpenChatsTabStrip tabs={displayTabs} activeIndex={layout.activeIndex} newLabel="New chat"
+    useEffect(() => {
+        const general = sessions.find(session => session.agentId === agent.id && session.kind === 'general')
+        if (!general) return
+        const adopted = adoptGeneralId(ensureDesktopGeneralTab(agent.id, current.current, general.id), general.id)
+        if (adopted.tabs === current.current.tabs && adopted.activeIndex === current.current.activeIndex) return
+        void change(adopted)
+    }, [agent.id, change, sessions])
+
+    const displayTabs = layout.tabs.map(tab => ({ ...tab, title: isGeneralTab(tab) ? 'General' : sessions.find(s => s.id === tab.id)?.title ?? tab.title }))
+    const strip = <OpenChatsTabStrip tabs={displayTabs} activeIndex={layout.activeIndex} newLabel="New thread"
         stateOf={tab => activity[tab.uid]?.busy ? 'live' : 'quiet'}
         onSelect={index => { if (!isDesktopQuitting() && index !== current.current.activeIndex) change({ ...current.current, activeIndex: index }) }}
         onClose={requestClose} onCreate={() => open(null, 'New conversation')} />

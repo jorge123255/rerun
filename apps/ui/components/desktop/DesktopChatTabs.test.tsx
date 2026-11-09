@@ -140,7 +140,7 @@ test('regeneration stays on its own transport while another tab is active, and k
         expect(visible().textContent).toContain('source answer')
         expect(visible().textContent).toContain('original.txt')
         expect(visible().querySelector('textarea')?.value).toBe('A draft for the original')
-        expect(writes.at(-1)?.tabs.map(t => t.id)).toEqual(['source', 'alternate', 'other'])
+        expect(writes.at(-1)?.tabs.map(t => t.id)).toEqual([null, 'source', 'alternate', 'other'])
         expect(requests).toEqual([{ agentId: 'a', sessionId: 'source', regenerateMessageId: 'engine-source', requestId: expect.any(String) }])
     } finally { await act(async () => { root.unmount() }); vi.unstubAllGlobals(); container.remove() }
 })

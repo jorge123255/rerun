@@ -86,9 +86,10 @@ test('lists genuine open tabs in strip order and recent chats by engine activity
     const before = (await db.execute('SELECT total_changes() AS changes')).rows[0].changes
     const result = await read()
     expect(result).toEqual({ agentId: alice.id, openChats: [
-        { agentId: alice.id, tabUid: 'saved-open', sessionId: openChat.id, title: 'Shared title' },
-        { agentId: alice.id, tabUid: 'blank-open', sessionId: null, title: 'New conversation' },
-    ], recentChats: [newer, older].map(session => ({ id: session.id, agentId: alice.id, agentName: 'Alice', title: 'Shared title' })), recentStatus: 'ok', hasMore: false })
+        { agentId: alice.id, tabUid: `general:${alice.id}`, sessionId: null, title: 'General', kind: 'general', firstMessage: null },
+        { agentId: alice.id, tabUid: 'saved-open', sessionId: openChat.id, title: 'Shared title', kind: 'thread', firstMessage: null },
+        { agentId: alice.id, tabUid: 'blank-open', sessionId: null, title: 'New conversation', kind: 'thread', firstMessage: null },
+    ], recentChats: [newer, older].map(session => ({ id: session.id, agentId: alice.id, agentName: 'Alice', title: 'Shared title', kind: 'thread', firstMessage: null })), recentStatus: 'ok', hasMore: false })
     expect(JSON.stringify(result)).not.toContain('PRIVATE UNSENT CONTENT')
     expect(JSON.stringify(result)).not.toContain('engine-')
     expect((await db.execute('SELECT total_changes() AS changes')).rows[0].changes).toBe(before)
@@ -100,7 +101,8 @@ test('does not manufacture a blank when no layout exists, and preserves disabled
     await db.execute({ sql: 'DELETE FROM desktop_agent_tabs WHERE agent_id = ?', args: [alice.id] })
     await db.execute({ sql: 'UPDATE desktop_agents SET enabled = 0 WHERE id = ?', args: [alice.id] })
     const before = await read()
-    expect(before.openChats).toEqual([])
+    expect(before.openChats).toEqual([{ agentId: alice.id, tabUid: `general:${alice.id}`, sessionId: null, title: 'General', kind: 'general', firstMessage: null }])
+    expect(before.openChats.some(chat => chat.title === 'New conversation')).toBe(false)
     expect(before.recentChats.map(chat => chat.id)).toEqual([openChat.id, newer.id, older.id])
     await closeDesktopDatabase(root)
     expect(await read()).toEqual(before)
@@ -114,13 +116,13 @@ test('excludes all open saved chats before taking eight recent rows and preserve
     await writeDesktopTabs(await openDesktopDatabase(root), alice.id, { baseRevision: 1, activeIndex: 0,
         tabs: chats.slice(0, 8).map((chat, index) => ({ uid: `open-${index}`, id: chat.id })) })
     const result = await read()
-    expect(result.openChats.map(chat => chat.sessionId)).toEqual(chats.slice(0, 8).map(chat => chat.id))
+    expect(result.openChats.map(chat => chat.sessionId)).toEqual([null, ...chats.slice(0, 8).map(chat => chat.id)])
     expect(result.recentChats.map(chat => chat.id)).toEqual(chats.slice(8, 16).map(chat => chat.id))
     expect(result.hasMore).toBe(true)
     await (await openDesktopDatabase(root)).execute({ sql: 'UPDATE desktop_agent_tabs SET layout = ? WHERE agent_id = ?',
         args: [JSON.stringify({ activeIndex: 0, tabs: chats.slice(0, 9).map((chat, index) => ({ uid: `legacy-${index}`, id: chat.id })) }), alice.id] })
     const legacy = await read()
-    expect(legacy.openChats).toHaveLength(8)
+    expect(legacy.openChats).toHaveLength(9)
     expect(legacy.recentChats.map(chat => chat.id)).toEqual(chats.slice(9).map(chat => chat.id))
     expect(legacy.hasMore).toBe(false)
 })
@@ -132,7 +134,7 @@ test('resolves a first send by its stable blank-tab UID without recovering or re
         VALUES (?,?,?,?,?,?,?,?)`, args: [alice.id, 'blank-open', 'fixture-hash', first.engineSessionId, 'fixture-run', first.title, 'null', 'old-launch'] })
     const before = (await db.execute('SELECT total_changes() AS changes')).rows[0].changes
     const result = await read()
-    expect(result.openChats[1]).toEqual({ agentId: alice.id, tabUid: 'blank-open', sessionId: first.id, title: first.title })
+    expect(result.openChats[2]).toEqual({ agentId: alice.id, tabUid: 'blank-open', sessionId: first.id, title: first.title, kind: 'thread', firstMessage: null })
     expect(result.recentChats.some(chat => chat.id === first.id)).toBe(false)
     expect((await db.execute('SELECT total_changes() AS changes')).rows[0].changes).toBe(before)
     expect(calls).toEqual(['GET /agents/engine-alice/sessions'])
@@ -142,9 +144,9 @@ test('filters invalid legacy saved targets instead of exposing the panel helper 
     const db = await openDesktopDatabase(root)
     const writeRaw = (tabs: { uid: string; id: string | null }[]) => db.execute({ sql: 'UPDATE desktop_agent_tabs SET layout = ? WHERE agent_id = ?', args: [JSON.stringify({ activeIndex: 0, tabs }), alice.id] })
     await writeRaw([{ uid: 'gone', id: 'missing-chat' }, { uid: 'foreign', id: other.id }])
-    expect((await read()).openChats).toEqual([])
+    expect((await read()).openChats).toEqual([{ agentId: alice.id, tabUid: `general:${alice.id}`, sessionId: null, title: 'General', kind: 'general', firstMessage: null }])
     await writeRaw([{ uid: 'saved', id: openChat.id }, { uid: 'duplicate', id: openChat.id }, { uid: 'blank', id: null }, { uid: 'blank-again', id: null }])
-    expect((await read()).openChats.map(chat => chat.tabUid)).toEqual(['saved', 'blank'])
+    expect((await read()).openChats.map(chat => chat.tabUid)).toEqual([`general:${alice.id}`, 'saved', 'blank'])
     await writeRaw([{ uid: 'ambiguous', id: openChat.id }, { uid: 'ambiguous', id: null }])
     expect((await get()).status).toBe(503)
     await db.execute({ sql: 'UPDATE desktop_agent_tabs SET layout = ? WHERE agent_id = ?', args: ['{"tabs":[],"activeIndex":0}', alice.id] })
@@ -210,7 +212,10 @@ test('uses the current tab snapshot after an engine read overlaps tab changes', 
             tabs: [{ uid: 'different-open', id: newer.id }] })
     }
     const result = await read()
-    expect(result.openChats).toEqual([{ agentId: alice.id, tabUid: 'different-open', sessionId: newer.id, title: newer.title }])
+    expect(result.openChats).toEqual([
+        { agentId: alice.id, tabUid: `general:${alice.id}`, sessionId: null, title: 'General', kind: 'general', firstMessage: null },
+        { agentId: alice.id, tabUid: 'different-open', sessionId: newer.id, title: newer.title, kind: 'thread', firstMessage: null },
+    ])
     expect(result.recentChats.map(chat => chat.id)).toEqual([openChat.id, older.id])
 })
 

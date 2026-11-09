@@ -10,12 +10,14 @@ export const desktopOpenChatSchema = z.object({
     tabUid: z.string().min(1).max(128),
     sessionId: id.nullable(),
     title: z.string(),
+    kind: z.enum(['general', 'thread']).optional(),
+    firstMessage: z.string().nullable().optional(),
 })
 export type DesktopOpenChat = z.infer<typeof desktopOpenChatSchema>
 
 export const desktopControlCenterChatsSchema = z.object({
     agentId: id,
-    openChats: z.array(desktopOpenChatSchema).max(MAX_REMEMBERED_TABS),
+    openChats: z.array(desktopOpenChatSchema).max(MAX_REMEMBERED_TABS + 1),
     recentChats: z.array(desktopConversationHitSchema).max(DESKTOP_RECENT_CHAT_LIMIT),
     recentStatus: z.enum(['ok', 'unavailable']),
     hasMore: z.boolean(),
