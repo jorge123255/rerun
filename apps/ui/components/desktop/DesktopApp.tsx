@@ -49,6 +49,10 @@ import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import type { GridPosition } from '@rerun/ui/iso-grid'
 import { Button } from '@/components/ui/button'
 import { DesktopChatTabs } from './DesktopChatTabs'
+import type { DesktopConversationOverviewAuthority } from './coworker-overview/conversation-mount'
+import type { DesktopOverviewIdentity } from '@/lib/desktop/coworker-overview/identity'
+import { DesktopGettingStartedPill } from './getting-started'
+import { requestDesktopGettingStartedReopen } from '@/lib/desktop/getting-started/reopen'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
 import { cancelDraftShutdown, freezeDesktopAdmissions, flushDesktopDrafts, forgetCoworkerDrafts, holdDraftAdmission, isDesktopQuitting, type DesktopDraftDrain } from '@/lib/desktop/draft-writes'
@@ -418,6 +422,35 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         })
     }
 
+    const overviewScope = useRef({ workspaceId: runtimeWorkspaceId, ownerId: String(initialData.profile.id), launchNonce: initialData.runtimeLaunchNonce })
+    overviewScope.current = { workspaceId: runtimeWorkspaceId, ownerId: String(initialData.profile.id), launchNonce: initialData.runtimeLaunchNonce }
+    const overview: DesktopConversationOverviewAuthority | undefined = selectedAgent && runtimeWorkspaceId !== null &&
+        initialData.runtimeLaunchNonce && initialData.board && boardState.board && !boardState.error && initialData.profile.id > 0
+        ? {
+            identity: { ownerId: String(initialData.profile.id), workspaceId: runtimeWorkspaceId, agentId: selectedAgent.id },
+            boxes: boardState.board.spaces,
+            canManage: !controlCenterDisabled,
+            onRenamed: (source, name) => {
+                if (currentOverview(source)) setAgents(agents => agents.map(agent => agent.id === source.agentId ? { ...agent, name } : agent))
+            },
+            onShare: () => {
+                if (!currentOverview({ ownerId: String(initialData.profile.id), workspaceId: runtimeWorkspaceId, agentId: selectedAgent.id })) return
+                const agent = currentAgents.current.find(candidate => candidate.id === selectedAgent.id)
+                if (agent) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) }
+            },
+            onDelete: async (source, name) => {
+                if (!currentOverview(source)) throw new Error('This coworker is no longer active.')
+                await deleteCoworker(source.agentId, name)
+            },
+        } : undefined
+    function currentOverview(source: DesktopOverviewIdentity) {
+        const scope = overviewScope.current
+        return !isDesktopQuitting() && !creationAdmission.current.blocked && !workspaceDialogLease.current.active &&
+            scope.launchNonce === initialData.runtimeLaunchNonce && scope.ownerId === source.ownerId && scope.workspaceId === source.workspaceId &&
+            selectedAgentRef.current === source.agentId && !deletedAgents.current.has(source.agentId) &&
+            currentAgents.current.some(agent => agent.id === source.agentId)
+    }
+
     function showBoard(create = false, spaceId?: string) {
         if (workspaceDialogActive || isDesktopQuitting()) return
         if (create && (creationAdmission.current.blocked || isDesktopQuitting())) return
@@ -682,6 +715,16 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetLeft={panelOpen ? 0 : foremanLeftTrack} panelInsetRight={panelOpen ? panelInsetRight : foremanRightTrack} onOpen={selectCoworker}
                     onRename={renameCoworker} onShare={agent => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting() && currentAgents.current.some(current => current.id === agent.id)) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) } }} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />}
+                {runtimeWorkspaceId !== null && initialData.runtimeLaunchNonce && <div className="absolute bottom-4 left-4 z-30"
+                    hidden={controlCenterDisabled || controlCenterOpen || panelOpen || foremanOpen}>
+                    <DesktopGettingStartedPill key={runtimeWorkspaceId} workspaceId={runtimeWorkspaceId}
+                        onAddCoworker={() => showBoard(true)} onModelSettings={openSettings}
+                        onOpenSchedules={() => {
+                            const coworker = currentAgents.current.find(agent => agent.enabled !== false)
+                            if (coworker) openCoworkerPanel(coworker.id, 'scheduled')
+                            else showBoard(true)
+                        }} />
+                </div>}
                 {!controlCenterDisabled && !controlCenterOpen && !panelOpen && !foremanEngaged && <DesktopForemanDock open={foremanOpen} onToggle={engageForeman} />}
                 {foremanEngaged && <div className="pointer-events-none absolute inset-2 z-40 grid min-h-0" style={{ gridTemplateColumns: `${foremanLeftTrack}px minmax(0,1fr) ${foremanRightTrack}px` }}>
 
@@ -700,7 +743,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                     closePanel()
                                 }
                             }}>
-                            <CoworkerChat onOpenCoworkerChat={openCoworkerChat} key={selectedAgent.id} agent={selectedAgent} requested={requestedSession} selected={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
+                            <CoworkerChat onOpenCoworkerChat={openCoworkerChat} key={selectedAgent.id} agent={selectedAgent} overview={overview} requested={requestedSession} selected={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
                                 requestedPanel={requestedPanel?.agentId === selectedAgent.id ? requestedPanel : null} onPanelRequestHandled={panelRequestHandled}
                                 onVisibleSession={reportVisibleSession}
                                 onClosePanel={closePanel} modelLabel={modelLabel} onOpenModelSettings={openSettings} />
@@ -788,13 +831,18 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 onOpenDesktop={agentId => { if (creationAdmission.current.blocked || isDesktopQuitting() || !currentAgents.current.some(agent => agent.id === agentId && agent.enabled !== false)) return; focusFromControlCenter(agentId); selectCoworker(agentId); setRequestedPanel({ agentId, panel: 'desktop', nonce: ++panelRequestNonce.current }) }}
                 onAskAssistant={askForeman}
                 onShortcuts={openShortcuts} onNotifications={openNotifications}
+                onGettingStarted={runtimeWorkspaceId !== null && initialData.runtimeLaunchNonce ? () => {
+                    showBoard()
+                    requestDesktopGettingStartedReopen()
+                } : undefined}
                 onModelSettings={openSettings} onBackToBoard={() => showBoard()} />
         </main>
     )
 }
 
-function CoworkerChat({ agent, requested, requestedPanel, onPanelRequestHandled, selected, modelLabel, onOpenModelSettings, onOpenCoworkerChat, onClosePanel, onVisibleSession }: {
+function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelRequestHandled, selected, modelLabel, onOpenModelSettings, onOpenCoworkerChat, onClosePanel, onVisibleSession }: {
     agent: DesktopAgentView
+    overview?: DesktopConversationOverviewAuthority
     requested: DesktopChatRequest | null
     requestedPanel: DesktopCoworkerPanelRequest | null
     onPanelRequestHandled: (request: DesktopCoworkerPanelRequest) => void
@@ -855,7 +903,7 @@ function CoworkerChat({ agent, requested, requestedPanel, onPanelRequestHandled,
         {missing && checkedRequest !== requested && !error && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">Opening conversation…</p>}
         {!error && !bootstrap && <p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p>}
         {!bootstrap || !sessions ? dismiss : <DesktopChatTabs onOpenCoworkerChat={onOpenCoworkerChat}
-            agent={agent} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} sessions={sessions} initialLayout={bootstrap.layout}
+            agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
             refreshSessions={readSessions} reload={reload} modelLabel={modelLabel} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}
     </>

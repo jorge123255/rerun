@@ -1,4 +1,4 @@
-import { isUsable, resolveRunModel } from '../agents/availability.js'
+import { isUsable, resolveRunModel, type RunModel } from '../agents/availability.js'
 import type { ModelOverride } from '../agents/providers.js'
 import type { LoadedAgent } from '../agents/types.js'
 import { HttpError } from '../lib/errors.js'
@@ -12,8 +12,11 @@ export async function resolveDesktopScheduleModel(agent: LoadedAgent, schedule: 
     if (fields.every(value => value === null)) return undefined
     if (!schedule.connectionId || !schedule.provider || !schedule.model) throw incomplete()
     const requested = { connectionId: schedule.connectionId, provider: schedule.provider, model: schedule.model }
-    const resolved = await resolveRunModel(agent, requested)
-    if (resolved.connection?.id !== schedule.connectionId || resolved.provider !== schedule.provider || resolved.model !== schedule.model
-        || !isUsable(resolved.connection, resolved.model)) throw unavailable()
+    assertExactDesktopScheduleModel(requested, await resolveRunModel(agent, requested))
     return requested
+}
+
+export function assertExactDesktopScheduleModel(requested: ModelOverride | undefined, resolved: RunModel) {
+    if (!requested || resolved.connection?.id !== requested.connectionId || resolved.provider !== requested.provider ||
+        resolved.model !== requested.model || !isUsable(resolved.connection, resolved.model)) throw unavailable()
 }

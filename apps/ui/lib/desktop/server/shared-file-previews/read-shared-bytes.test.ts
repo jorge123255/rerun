@@ -41,7 +41,8 @@ describe('confined shared media bytes', () => {
         await symlink(privateFile, join(shared, 'linked.png'))
         await link(privateFile, join(shared, 'alias.png'))
         await writeFile(join(shared, '.rerun-backup-old'), 'internal')
-        for (const path of ['.rerun-backup-old', 'nested/.rerun-skill-old/file.png', 'linked.png', 'alias.png', '../agents/alice/workspace/secret.txt']) {
+        await writeFile(join(shared, '.rerun'), 'internal')
+        for (const path of ['.rerun', '.rerun-backup-old', 'nested/.rerun-skill-old/file.png', 'linked.png', 'alias.png', '../agents/alice/workspace/secret.txt']) {
             await expect(readSharedBytes(runtime(), path, 'download')).rejects.toThrow()
         }
     })

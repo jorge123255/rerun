@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { DesktopGettingStartedPopover } from '@/components/desktop/getting-started/DesktopGettingStartedPopover'
 import { desktopGettingStartedResponseSchema, type DesktopGettingStartedResponse, type DesktopGettingStartedStepId } from '@/lib/desktop/getting-started/progress'
 import { onDesktopGettingStartedReopen } from '@/lib/desktop/getting-started/reopen'
 
 type DesktopGettingStartedPillProps = {
+    workspaceId: number
     onAddCoworker: () => void
     onModelSettings: () => void
     onOpenSchedules: () => void
@@ -19,9 +20,10 @@ async function readSnapshot(signal?: AbortSignal): Promise<DesktopGettingStarted
     return parsed.success ? parsed.data : null
 }
 
-async function postAction(action: 'dismiss' | 'reopen'): Promise<DesktopGettingStartedResponse | null> {
+async function postAction(action: 'dismiss' | 'reopen', signal: AbortSignal): Promise<DesktopGettingStartedResponse | null> {
     const response = await fetch('/api/desktop/getting-started', {
         method: 'POST',
+        signal,
         cache: 'no-store',
         credentials: 'same-origin',
         redirect: 'error',
@@ -34,24 +36,27 @@ async function postAction(action: 'dismiss' | 'reopen'): Promise<DesktopGettingS
 }
 
 /** Local checklist. Hidden after dismiss until Control Center asks it to reopen. A failed read shows nothing. */
-export function DesktopGettingStartedPill({ onAddCoworker, onModelSettings, onOpenSchedules }: DesktopGettingStartedPillProps) {
+export function DesktopGettingStartedPill({ workspaceId, onAddCoworker, onModelSettings, onOpenSchedules }: DesktopGettingStartedPillProps) {
     const [snapshot, setSnapshot] = useState<DesktopGettingStartedResponse | null>(null)
     const [open, setOpen] = useState(false)
+    const pending = useRef<AbortController | null>(null)
+    const refresh = useCallback(async (action?: 'dismiss' | 'reopen') => {
+        pending.current?.abort()
+        const controller = new AbortController()
+        pending.current = controller
+        const next = action ? await postAction(action, controller.signal) : await readSnapshot(controller.signal)
+        if (controller.signal.aborted || next?.workspaceId !== workspaceId) return
+        setSnapshot(next)
+        if (action === 'reopen' && !next.dismissed) setOpen(true)
+    }, [workspaceId])
 
     useEffect(() => {
-        const controller = new AbortController()
-        void readSnapshot(controller.signal).then(next => {
-            if (!controller.signal.aborted && next) setSnapshot(next)
-        })
-        return () => controller.abort()
-    }, [])
+        void refresh()
+        const stop = onDesktopGettingStartedReopen(() => { void refresh('reopen') })
+        return () => { stop(); pending.current?.abort() }
+    }, [refresh])
 
-    useEffect(() => onDesktopGettingStartedReopen(() => {
-        setOpen(true)
-        void postAction('reopen').then(next => { if (next) setSnapshot(next) })
-    }), [])
-
-    if (!snapshot || snapshot.dismissed) return null
+    if (snapshot?.workspaceId !== workspaceId || snapshot.dismissed) return null
 
     const onStep = (id: DesktopGettingStartedStepId) => {
         setOpen(false)
@@ -64,11 +69,11 @@ export function DesktopGettingStartedPill({ onAddCoworker, onModelSettings, onOp
         <DesktopGettingStartedPopover
             steps={snapshot.steps}
             open={open}
-            onOpenChange={setOpen}
+            onOpenChange={next => { setOpen(next); if (next) void refresh() }}
             onStep={onStep}
             onHide={() => {
                 setOpen(false)
-                void postAction('dismiss').then(next => { if (next?.dismissed) setSnapshot(next) })
+                void refresh('dismiss')
             }}
         />
     )

@@ -162,7 +162,7 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
             if(JSON.stringify(current)!==JSON.stringify(expectedSchedule) || JSON.stringify(currentAgent.config)!==JSON.stringify(agent.config))throw new Error('Task or coworker changed during preparation')
         }
         await beforeLaunch();check()
-        const { runId, settled } = await startHeadlessRun(agent, session.id, buildScheduledRunMessage(schedule), override, { source: 'schedule', slug: schedule.slug, name: schedule.name }, {beforeLaunch,assertActive:check})
+        const { runId, settled } = await startHeadlessRun(agent, session.id, buildScheduledRunMessage(schedule), override, { source: 'schedule', slug: schedule.slug, name: schedule.name, ...(pinned && { requireExactModel: true }) }, {beforeLaunch,assertActive:check})
 
         launched=true
         // Install settlement tracking BEFORE post-launch callbacks, so failures cannot strand admission.

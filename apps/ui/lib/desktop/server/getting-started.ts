@@ -8,6 +8,8 @@ import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { engineOf } from './settings'
+import { withRosterWrite } from './roster-writes'
+import { assertDesktopWorkspaceAdmission } from './workspace-admission'
 
 export const DESKTOP_GETTING_STARTED_SCHEMA = `
 CREATE TABLE IF NOT EXISTS desktop_getting_started (
@@ -90,9 +92,10 @@ export async function countDesktopGettingStartedProviders(runtime: DesktopRuntim
 }
 
 async function factsFor(runtime: DesktopRuntime, db: Client, signal?: AbortSignal): Promise<DesktopGettingStartedFacts> {
-    const workspaceId = workspaceIdOf(runtime.workspaceId)
-    const coworkers = await db.execute({ sql: COWORKERS_SQL, args: [workspaceId, FOREMAN_AGENT_ID] })
-    return readDesktopGettingStartedFacts(db, workspaceId, {
+    // Each active workspace has its own database. Its roster is stored under local row 1.
+    const localWorkspaceId = 1
+    const coworkers = await db.execute({ sql: COWORKERS_SQL, args: [localWorkspaceId, FOREMAN_AGENT_ID] })
+    return readDesktopGettingStartedFacts(db, localWorkspaceId, {
         schedules: await countDesktopGettingStartedSchedules(runtime, coworkers.rows.map(row => String(row.engine_agent_id)), signal),
         connectedProviders: await countDesktopGettingStartedProviders(runtime, signal),
     })
@@ -109,10 +112,13 @@ export async function setDesktopGettingStartedDismissed(runtime: DesktopRuntime,
     const db = await openDesktopDatabase(runtime.dataRoot)
     await ensureDesktopGettingStartedSchema(db)
     const workspaceId = workspaceIdOf(runtime.workspaceId)
-    await db.execute({
-        sql: `INSERT INTO desktop_getting_started (workspace_id, dismissed, updated_at) VALUES (?, ?, ?)
-              ON CONFLICT(workspace_id) DO UPDATE SET dismissed = excluded.dismissed, updated_at = excluded.updated_at`,
-        args: [workspaceId, dismissedFlag ? 1 : 0, new Date().toISOString()],
+    await withRosterWrite(async () => {
+        assertDesktopWorkspaceAdmission(runtime)
+        await db.execute({
+            sql: `INSERT INTO desktop_getting_started (workspace_id, dismissed, updated_at) VALUES (?, ?, ?)
+                  ON CONFLICT(workspace_id) DO UPDATE SET dismissed = excluded.dismissed, updated_at = excluded.updated_at`,
+            args: [workspaceId, dismissedFlag ? 1 : 0, new Date().toISOString()],
+        })
     })
     const saved = await dismissed(db, workspaceId)
     const facts = await factsFor(runtime, db)

@@ -43,6 +43,7 @@ import { requireDesktopToolGrant } from '../desktop/tool-grants.js'
 import { readAgentConfig } from '../agents/loader.js'
 import { beginDesktopCodexRun, endDesktopCodexRun } from '../desktop/native-grants.js'
 import { registerRunAbort, setRunCancel, unregisterRunAbort } from './run-control.js'
+import { assertExactDesktopScheduleModel } from '../desktop/schedule-model.js'
 import { assertDesktopProvider, desktopApp } from '../desktop/policy.js'
 import { beginDesktopAgentWork } from '../desktop/agent-lifecycle.js'
 import { runCurator } from './curator.js'
@@ -455,6 +456,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         assertDesktopRunAdmission(admission)
         const resolved = await resolveRunModel(baseAgent, override)
         if (desktopApp()) {
+            if (trigger.source === 'schedule' && trigger.requireExactModel) assertExactDesktopScheduleModel(override, resolved)
             const { admitDesktopApiConnectionRun } = await import('../desktop/api-connections/run-authority.js')
             releaseConnectionAdmission = await admitDesktopApiConnectionRun({ connectionId: resolved.connection?.id, expectedConnection: resolved.connection ?? undefined, runId: run.id, sessionId, agentId: baseAgent.id })
         }

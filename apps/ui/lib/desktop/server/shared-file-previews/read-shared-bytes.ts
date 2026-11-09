@@ -16,12 +16,12 @@ export type SharedPreviewBytes = { path: string; name: string; bytes: Uint8Array
 
 const MAX_BYTES = 16 * 1024 * 1024
 const MAX_DEPTH = 32
-const RESERVED = /^\.rerun(?:-skill)?-/i
+const reserved = (part: string) => part.normalize('NFKC').toLowerCase().startsWith('.rerun')
 
 function partsOf(path: string): string[] {
     if (path.length > 4096 || /[\0\\]/.test(path) || isAbsolute(path)) throw new SharedWorkspaceFileError(400, 'That path is outside the shared folder.')
     const parts = path.split('/').filter(part => part && part !== '.')
-    if (!parts.length || parts.length > MAX_DEPTH || parts.some(part => part === '..' || part.startsWith('.') && RESERVED.test(part))) {
+    if (!parts.length || parts.length > MAX_DEPTH || parts.some(part => part === '..' || reserved(part))) {
         throw new SharedWorkspaceFileError(400, 'That path is outside the shared folder.')
     }
     return parts
@@ -74,6 +74,10 @@ export async function readSharedBytes(runtime: DesktopRuntime, path: string, kin
         const opened = await file.stat({ bigint: true })
         if (opened.dev !== listed.dev || opened.ino !== listed.ino || opened.nlink !== BigInt(1) || opened.uid !== uid() || !opened.isFile()) {
             throw new SharedWorkspaceFileError(400, 'This shared file is linked elsewhere. It was left unopened.')
+        }
+        if (opened.size > BigInt(MAX_BYTES)) throw new SharedWorkspaceFileError(413, 'This shared file is too large to preview or save.')
+        if (opened.size !== listed.size || opened.ctimeNs !== listed.ctimeNs) {
+            throw new SharedWorkspaceFileError(409, 'This file changed while it was being read.')
         }
         const size = Number(opened.size)
         const bytes = Buffer.alloc(size)
