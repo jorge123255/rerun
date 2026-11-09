@@ -71,7 +71,7 @@ it('recovers only an exact saved snapshot after a lost UI ACK and then advances 
 })
 it('refuses foreign state and hides context parts from restored transcript', async () => {
     server.messages = [{ id: 'one', role: 'user', parts: [{ type: 'text', text: 'Visible message' }, { type: 'text', text: 'private context', providerOptions: { rerun: { context: true } } }] }]
-    expect(desktopForemanMessages(await readDesktopForemanState())).toEqual([{ id: 'one', role: 'user', text: 'Visible message', docs: [] }])
+    expect(desktopForemanMessages(await readDesktopForemanState())).toEqual([{ id: 'one', role: 'user', text: 'Visible message', docs: [], history: [{ key: '["one",0,null]', kind: 'text', text: 'Visible message' }] }])
     server.view.chat = { ...chat, chatId: 'fmc_otherchat' }
     await expect(readDesktopForemanState()).rejects.toThrow()
 })

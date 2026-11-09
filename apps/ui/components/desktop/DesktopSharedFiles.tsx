@@ -90,6 +90,7 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
             }
             const imported: DesktopSharedImportResult[] = []
             for (const [folder, files] of groups) {
+                if (!active()) return
                 let groupResults: DesktopSharedImportResult[]
                 try {
                     groupResults = await importDesktopSharedFiles(folder, files, controller.signal)

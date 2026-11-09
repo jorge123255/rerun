@@ -2,12 +2,12 @@
 
 import { DesktopHistoricalCardView } from '../../tool-presentations/DesktopHistoricalCardView'
 import { DesktopHistoricalStepGroup } from '../../tool-presentations/DesktopHistoricalStepGroup'
-import { foremanHistoryParts } from './parts'
+import type { ForemanHistoryPart } from './parts'
 
 /** Pure saved-parts presentation. No action callbacks, resource readers or live widgets. */
-export function DesktopForemanHistoryMessage({ messageId, parts }: { messageId: string; parts: readonly unknown[] }) {
+export function DesktopForemanHistoryMessage({ history }: { history: readonly ForemanHistoryPart[] }) {
     return <div className="flex min-w-0 max-w-full flex-col gap-2 break-words">
-        {foremanHistoryParts(messageId, parts).map(part => {
+        {history.map(part => {
             switch (part.kind) {
                 case 'text': return <div key={part.key} className="whitespace-pre-wrap break-words">{part.text}</div>
                 case 'reasoning': return <details key={part.key} className="text-xs text-muted-foreground"><summary>Thinking</summary><p className="whitespace-pre-wrap break-words">{part.text}</p></details>

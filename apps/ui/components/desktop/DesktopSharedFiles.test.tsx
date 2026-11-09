@@ -6,7 +6,7 @@ import { DesktopSharedFiles } from './DesktopSharedFiles'
 import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
 
 const api = vi.hoisted(() => ({ list: vi.fn(), read: vi.fn(), upload: vi.fn(), error: vi.fn() }))
-vi.mock('@/lib/desktop/shared-workspace-files', () => ({ listDesktopSharedFolder: api.list, readDesktopSharedPreview: api.read, importDesktopSharedFile: api.upload }))
+vi.mock('@/lib/desktop/shared-workspace-files', () => ({ listDesktopSharedFolder: api.list, readDesktopSharedPreview: api.read, importDesktopSharedFiles: api.upload }))
 vi.mock('sonner', () => ({ toast: { error: api.error } }))
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -34,9 +34,13 @@ async function open() {
     await click('Shared files')
 }
 async function pick(names: string[]) {
-    const input = document.querySelector<HTMLInputElement>('input[type="file"]:not([webkitdirectory])')!
+    const input = document.querySelector<HTMLInputElement>(names.some(name => name.includes('/')) ? 'input[webkitdirectory]' : 'input[type="file"]:not([webkitdirectory])')!
     expect(input).not.toBeNull()
-    Object.defineProperty(input, 'files', { configurable: true, value: names.map(name => new File(['body'], name)) })
+    Object.defineProperty(input, 'files', { configurable: true, value: names.map(path => {
+        const file = new File(['body'], path.split('/').at(-1)!)
+        if (path.includes('/')) Object.defineProperty(file, 'webkitRelativePath', { value: path })
+        return file
+    }) })
     await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })) })
     await flush()
 }
@@ -45,7 +49,7 @@ beforeEach(() => {
     cancelDraftShutdown()
     api.list.mockReset().mockImplementation(async (path: string) => ({ path, entries: path ? [entry('nested.txt')] : [entry('docs', 'dir'), entry('note.txt')], truncated: false }))
     api.read.mockReset().mockResolvedValue({ path: 'note.txt', content: 'shared body', truncated: false, offset: 0, nextOffset: null })
-    api.upload.mockReset().mockResolvedValue({ path: 'imported.txt', name: 'imported.txt' })
+    api.upload.mockReset().mockImplementation(async (folder: string, files: File[]) => files.map(file => ({ status: 'created', name: file.name, path: [folder, file.name].filter(Boolean).join('/') })))
     api.error.mockReset()
 })
 afterEach(async () => {
@@ -66,17 +70,17 @@ test('uses the shared folder layout and read preview without inactive mutation m
     await click('Files')
     await row('docs')
     await pick(['nested-new.md'])
-    expect(api.upload).toHaveBeenCalledWith('docs', expect.objectContaining({ name: 'nested-new.md' }), expect.any(AbortSignal))
+    expect(api.upload).toHaveBeenCalledWith('docs', [expect.objectContaining({ name: 'nested-new.md' })], expect.any(AbortSignal))
 })
 
 test.each(['close', 'navigate', 'quit'] as const)('%s stops a queued import after the in-flight file and releases Quit admission', async change => {
     let signal: AbortSignal | undefined
-    api.upload.mockImplementationOnce((_folder: string, _file: File, current: AbortSignal) => new Promise((_resolve, reject) => {
+    api.upload.mockImplementationOnce((_folder: string, _files: File[], current: AbortSignal) => new Promise((_resolve, reject) => {
         signal = current
         current.addEventListener('abort', () => reject(new DOMException('Stopped', 'AbortError')), { once: true })
     }))
     await open()
-    await pick(['one.txt', 'two.txt'])
+    await pick(['first/one.txt', 'second/two.txt'])
     expect(api.upload).toHaveBeenCalledTimes(1)
     expect(document.querySelector('button[title="Upload"]')?.hasAttribute('disabled')).toBe(true)
     if (change === 'close') await click('Close')
@@ -105,6 +109,6 @@ test('failed listing and preview stay visible and can retry without claiming an 
 test('empty shared files describes only supported import and reading', async () => {
     api.list.mockResolvedValue({ path: '', entries: [], truncated: false })
     await open()
-    expect(document.body.textContent).toContain('Import a text or Markdown file')
+    expect(document.body.textContent).toContain('Import supported documents, images, audio, video, or PDFs')
     expect(document.body.textContent).not.toContain('Anything a coworker downloads')
 })
