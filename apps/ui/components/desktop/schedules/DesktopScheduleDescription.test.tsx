@@ -44,7 +44,7 @@ async function click(label: string) {
     await act(async () => { button!.click() })
 }
 
-async function describe(text: string) {
+async function enterDescription(text: string) {
     const input = document.body.querySelector<HTMLInputElement>('input[aria-label="Describe the schedule"]')!
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, text)
     await act(async () => { input.dispatchEvent(new Event('input', { bubbles: true })) })
@@ -52,7 +52,7 @@ async function describe(text: string) {
 
 async function preview(text = 'weekdays at 8') {
     await click('Describe schedule')
-    await describe(text)
+    await enterDescription(text)
     await click('Preview schedule')
 }
 
