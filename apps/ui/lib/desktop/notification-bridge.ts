@@ -5,9 +5,11 @@
 // only hands over a payload and hears back about clicks. Nothing here requests a permission.
 
 export type DesktopNotificationCopy = { title: string; subtitle?: string; body?: string; silent?: boolean }
-export type DesktopNotificationAcceptanceResult = { status: 'accepted' | 'unavailable' | 'failed' | 'unknown' }
+export type DesktopNotificationDiagnostic = 'construction-failed' | 'native-failed' | 'observation-timeout' | 'closed-before-acceptance' | 'show-threw'
+const diagnostics = new Set<unknown>(['construction-failed', 'native-failed', 'observation-timeout', 'closed-before-acceptance', 'show-threw'])
+export type DesktopNotificationAcceptanceResult = { diagnostic?: DesktopNotificationDiagnostic; status: 'accepted' | 'unavailable' | 'failed' | 'unknown' }
 export type DesktopNotificationDeliveryResult = DesktopNotificationAcceptanceResult
-type DesktopNotificationBridgeResult = { status: DesktopNotificationAcceptanceResult['status'] | 'shown' }
+type DesktopNotificationBridgeResult = { diagnostic?: unknown; status: DesktopNotificationAcceptanceResult['status'] | 'shown' }
 
 // The identity a click must revalidate before navigating: the finished-run group for a completion,
 // the recorded terminal for a failed run, the exact pending request hash for a
@@ -43,7 +45,7 @@ export function desktopNotificationsBridge(): DesktopNotificationsHandle {
             try {
                 const result = await bridge.notify(payload)
                 if (result?.status === 'shown' || result?.status === 'accepted') return { status: 'accepted' }
-                if (result?.status === 'unavailable' || result?.status === 'failed' || result?.status === 'unknown') return { status: result.status }
+                if (result?.status === 'unavailable' || result?.status === 'failed' || result?.status === 'unknown') return { status: result.status, ...((result.status === 'failed' || result.status === 'unknown') && diagnostics.has(result.diagnostic) ? { diagnostic: result.diagnostic as DesktopNotificationDiagnostic } : {}) }
                 return { status: 'unknown' }
             } catch { return { status: 'unknown' } }
         },
