@@ -7,7 +7,7 @@ import type { NotificationPayload } from '@/lib/engine/types'
 import { readDesktopCompletions } from './completed-actions'
 import { readDesktopAttention } from './attention'
 import { DesktopHttpError } from './auth'
-import { ensureDesktopUserNotifications, pendingDesktopUserNotificationEvents, settleDesktopUserNotification, takeDesktopUserNotificationDelivery } from './user-notifications'
+import { desktopInfoNotificationWanted, ensureDesktopUserNotifications, pendingDesktopUserNotificationEvents, takeDesktopUserNotificationDelivery } from './user-notifications'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { withRosterWrite } from './roster-writes'
@@ -138,6 +138,7 @@ type WantedEvent = { kind: 'done' | 'error' | 'info' | 'question' | 'approval' |
 // a followed task included, but a run that broke is urgent and still reaches, exactly like the
 // original 'error' kind.
 function wantedByPrefs(prefs: NotificationPrefs, event: WantedEvent): boolean {
+    if (event.kind === 'info') return desktopInfoNotificationWanted(prefs, event.agentId)
     if (prefs.scope === 'nothing') return false
     const rule = coworkerRuleOf(prefs, event.agentId)
     if (rule.mode === 'muted') return false
@@ -372,15 +373,6 @@ export async function admitDesktopNotificationEvents(runtime: DesktopRuntime, ke
 export async function finishDesktopNotificationAttempt(db: Client, input: DesktopNotificationReceipt): Promise<void> {
     await initializeDesktopNotifications(db)
     await withRosterWrite(async () => {
-        if (input.key.startsWith('notify-user:')) {
-            await settleDesktopUserNotification(db, input)
-            const native = input.nativeStatus === 'shown' || input.nativeStatus === 'unavailable' || input.nativeStatus === 'failed' || input.nativeStatus === 'unknown' ? input.nativeStatus : 'unknown'
-            if (native === 'shown') await db.execute({
-                sql: 'INSERT INTO desktop_notifications_seen (event_key,notified_at,native_status) VALUES (?,?,?) ON CONFLICT(event_key) DO NOTHING',
-                args: [input.key, new Date().toISOString(), native],
-            })
-            return
-        }
         const tx = await db.transaction('write')
         try {
             const owned = await tx.execute({ sql: 'SELECT 1 FROM desktop_notification_attempts WHERE event_key=? AND attempt_id=?', args: [input.key, input.attemptId] })

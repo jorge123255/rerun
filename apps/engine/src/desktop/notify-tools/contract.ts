@@ -50,7 +50,7 @@ export type DesktopNotifyUserAdmission = {
 export function desktopNotifyUserModelReceipt(receipt: DesktopNotifyUserReceipt): {
     notificationId: string
     eventKey: string
-    attemptId: string
+    inboxStatus: 'recorded'
     status: DesktopNotifyUserReceipt['status']
     nativeStatus: DesktopNotifyUserReceipt['nativeStatus']
     reason?: string
@@ -59,7 +59,7 @@ export function desktopNotifyUserModelReceipt(receipt: DesktopNotifyUserReceipt)
     return {
         notificationId: receipt.notificationId,
         eventKey: receipt.eventKey,
-        attemptId: receipt.attemptId,
+        inboxStatus: 'recorded',
         status: receipt.status,
         nativeStatus: receipt.nativeStatus,
         ...(receipt.reason ? { reason: receipt.reason.slice(0, 400) } : {}),

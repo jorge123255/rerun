@@ -14,7 +14,7 @@ export function desktopNotifyTools(ctx: RunContext, ports: { deliver: (input: De
     return {
         notify_user: tool({
             description:
-                'Ask the user to look at a result, risk, or decision while you keep working. This does not pause you and does not wait for a reply. The receipt separates native delivery from the inbox: report shown only when nativeStatus is shown, and report failed or unknown as unconfirmed. Make at most one attempt for each notification. Use ask_user for an answer, request_approval for a go-ahead, suggest_service for a service, or request_secret for a credential.',
+                'Ask the user to look at a result, risk, or decision while you keep working. This does not pause you and does not wait for a reply. The inboxStatus field confirms whether the notice was recorded. Report a native alert only when nativeStatus is shown. Make at most one attempt for each notification. Use ask_user for an answer, request_approval for a go-ahead, suggest_service for a service, or request_secret for a credential.',
             inputSchema: z.object({
                 message: z.string().max(MAX_MESSAGE_LENGTH).describe('The human-readable message to show the user.'),
                 kind: z.enum(['info']).default('info').describe('Always info: this tool has exactly one purpose, asking the user to look at something.'),
@@ -26,7 +26,7 @@ export function desktopNotifyTools(ctx: RunContext, ports: { deliver: (input: De
                 const release = beginDesktopAgentWork(ctx.agent.id)
                 try {
                     await requireDesktopToolGrant({ ...ctx, abortSignal: signal }, 'notify')
-                    if (!ctx.runId) return JSON.stringify({ status: 'failed', nativeStatus: 'unavailable', reason: 'This notification is not part of an active run.' })
+                    if (!ctx.runId) return JSON.stringify({ inboxStatus: 'not-recorded', status: 'failed', nativeStatus: 'unavailable', reason: 'This notification is not part of an active run.' })
                     const result = await ports.deliver({
                         notificationId: `notify:${ctx.agent.id}:${ctx.sessionId}:${ctx.runId}:${options.toolCallId}`,
                         eventKey: desktopNotifyUserEventKey({ agentId: ctx.agent.id, sessionId: ctx.sessionId, runId: ctx.runId, toolCallId: options.toolCallId }),

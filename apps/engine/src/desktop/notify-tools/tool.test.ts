@@ -17,9 +17,10 @@ test('uses the original info-only nonblocking input and exact owner identity', a
     const deliver = vi.fn(async () => receipt)
     const tools = desktopNotifyTools(context(), { deliver })
     const output = await (tools.notify_user as any).execute({ message: 'Review', metadata: { url: 'https://x' } }, { toolCallId: 'c', abortSignal: new AbortController().signal })
-    expect(JSON.parse(output)).toEqual({ notificationId: receipt.notificationId, eventKey: receipt.eventKey, attemptId: receipt.attemptId, status: 'shown', nativeStatus: 'shown', createdAt: receipt.createdAt })
+    expect(JSON.parse(output)).toEqual({ notificationId: receipt.notificationId, eventKey: receipt.eventKey, inboxStatus: 'recorded', status: 'shown', nativeStatus: 'shown', createdAt: receipt.createdAt })
     expect(output).not.toContain('https://x')
     expect(output).not.toContain('Review')
+    expect(output).not.toContain(receipt.attemptId)
     expect(deliver).toHaveBeenCalledWith(expect.objectContaining({ notificationId: 'notify:a:s:r:c', eventKey: desktopNotifyUserEventKey({ agentId: 'a', sessionId: 's', runId: 'r', toolCallId: 'c' }), toolCallId: 'c', message: 'Review', metadata: { url: 'https://x' }, runId: 'r' }), expect.any(AbortSignal))
 })
 

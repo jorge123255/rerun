@@ -1,13 +1,20 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
+import { getAgent } from '@/lib/engine/client'
+import { setDesktopWorkspaceFrozen } from './workspace-admission'
 import { DesktopHttpError } from './auth'
 import { finishDesktopNotificationAttempt, initializeDesktopNotifications } from './notifications'
 import type { DesktopRuntime } from './runtime'
 import { acknowledgeDesktopUserNotification, acceptDesktopUserNotification, classifyDesktopNotifyGrant, desktopInfoNotificationWanted, pendingDesktopUserNotificationEvents, readDesktopNotifyGrant, readDesktopUserAttention, settleDesktopUserNotification, takeDesktopUserNotificationDelivery, type DesktopUserNotificationDeps, type DesktopUserNotificationInput } from './user-notifications'
 import { normalizeNotificationPrefs } from '@rerun/contracts'
+
+vi.mock('@/lib/engine/client', async importOriginal => ({
+    ...await importOriginal<typeof import('@/lib/engine/client')>(),
+    getAgent: vi.fn(),
+}))
 
 const clients: Client[] = []
 const roots: string[] = []
@@ -48,7 +55,7 @@ const input = (patch: Partial<DesktopUserNotificationInput> = {}): DesktopUserNo
 const granted: DesktopUserNotificationDeps = { grant: async () => 'granted', run: async () => true }
 async function count(db: Client) {
     const rows = await db.execute('SELECT COUNT(*) AS n FROM desktop_user_notifications')
-    const attempts = await db.execute('SELECT COUNT(*) AS n FROM desktop_notification_attempts')
+    const attempts = await db.execute('SELECT COUNT(DISTINCT attempt_id) AS n FROM desktop_user_notifications')
     return { rows: Number(rows.rows[0].n), attempts: Number(attempts.rows[0].n) }
 }
 async function whenQueued(current: DesktopRuntime) {
@@ -84,12 +91,13 @@ test('admission binds the workspace, coworker, conversation and tool call, and r
     await expect(acceptDesktopUserNotification(db, current, input({ sessionId: 'missing', eventKey: 'notify-user:engine-ada:missing:run-1:call-1', notificationId: 'notify:engine-ada:missing:run-1:call-1' }), signal, granted, 50)).rejects.toMatchObject({ status: 404 })
     await expect(acceptDesktopUserNotification(db, current, input({ eventKey: 'notify-user:engine-ada:session-ada:run-1:other' }), signal, granted, 50)).rejects.toBeInstanceOf(DesktopHttpError)
     expect(await count(db)).toEqual({ rows: 0, attempts: 0 })
-    const engine = join(root, 'engine', 'agents', 'engine-ada')
-    await mkdir(engine, { recursive: true })
-    await writeFile(join(engine, 'config.json'), JSON.stringify({ enabled: true, kind: 'user', ephemeral: false, tools: { desktopToolGrants: { notify: true } } }), { mode: 0o600 })
+    const config = { enabled: true, kind: 'user', ephemeral: false, tools: { desktopToolGrants: { notify: true } } }
+    vi.mocked(getAgent).mockResolvedValueOnce({ id: 'engine-ada', config } as never)
     expect(await readDesktopNotifyGrant(current, 'engine-ada', signal)).toBe('granted')
-    await writeFile(join(engine, 'config.json'), JSON.stringify({ enabled: true, ephemeral: true, tools: { desktopToolGrants: { notify: true } } }), { mode: 0o600 })
+    vi.mocked(getAgent).mockResolvedValueOnce({ id: 'engine-ada', config: { ...config, ephemeral: true } } as never)
     expect(await readDesktopNotifyGrant(current, 'engine-ada', signal)).toBe('child')
+    vi.mocked(getAgent).mockResolvedValueOnce({ id: 'another-agent', config } as never)
+    expect(await readDesktopNotifyGrant(current, 'engine-ada', signal)).toBe('revoked')
 })
 
 test('one admitted call is durable across a duplicate, a lost acknowledgement and a restart, and native failure is not success', async () => {
@@ -120,7 +128,13 @@ test('one admitted call is durable across a duplicate, a lost acknowledgement an
     expect(recovered).toMatchObject({ status: 'unknown', nativeStatus: 'unknown' })
     expect(pendingDesktopUserNotificationEvents(crashed)).toEqual([])
     const attemptId = String((await db.execute({ sql: 'SELECT attempt_id FROM desktop_user_notifications WHERE event_key = ?', args: [fresh.eventKey] })).rows[0].attempt_id)
-    await settleDesktopUserNotification(db, { key: fresh.eventKey, attemptId, status: 'shown', nativeStatus: 'failed' })
+    const native = { key: fresh.eventKey, attemptId, status: 'shown' as const, nativeStatus: 'failed' as const }
+    expect(await settleDesktopUserNotification(restartedRuntime, db, native)).toBe(false)
+    expect(await takeDesktopUserNotificationDelivery(restartedRuntime, fresh.eventKey)).toMatchObject({ attemptId })
+    expect(await settleDesktopUserNotification(crashed, db, native)).toBe(false)
+    expect(await settleDesktopUserNotification(restartedRuntime, db, { ...native, attemptId: crypto.randomUUID() })).toBe(false)
+    expect(await settleDesktopUserNotification(restartedRuntime, db, native)).toBe(true)
+    expect(await settleDesktopUserNotification(restartedRuntime, db, { ...native, nativeStatus: 'shown' })).toBe(false)
     expect(await waiting).toMatchObject({ status: 'failed', nativeStatus: 'failed' })
     const failed = await acceptDesktopUserNotification(db, crashed, fresh, new AbortController().signal, granted, 50)
     expect(failed).toMatchObject({ status: 'failed', nativeStatus: 'failed' })
@@ -137,8 +151,11 @@ test('acknowledgement clears only that row and ordinary failure notifications st
     const first = acceptDesktopUserNotification(db, current, input(), new AbortController().signal, granted, 1000)
     const second = acceptDesktopUserNotification(db, current, sibling, new AbortController().signal, granted, 1000)
     await whenQueued(current)
-    await settleDesktopUserNotification(db, { key: input().eventKey, attemptId: (await db.execute({ sql: 'SELECT attempt_id FROM desktop_user_notifications WHERE id = ?', args: [input().notificationId] })).rows[0].attempt_id as string, status: 'unknown', nativeStatus: 'unknown' })
-    await settleDesktopUserNotification(db, { key: sibling.eventKey, attemptId: (await db.execute({ sql: 'SELECT attempt_id FROM desktop_user_notifications WHERE id = ?', args: [sibling.notificationId] })).rows[0].attempt_id as string, status: 'unknown', nativeStatus: 'unknown' })
+    await whenQueued(current)
+    for (const key of [input().eventKey, sibling.eventKey]) {
+        const admission = await takeDesktopUserNotificationDelivery(current, key)
+        if (admission) await settleDesktopUserNotification(current, db, { key, attemptId: admission.attemptId, status: 'unknown', nativeStatus: 'unknown' })
+    }
     await Promise.all([first, second])
     const open = await readDesktopUserAttention(db, current)
     expect(open.map(item => item.sessionId).sort()).toEqual(['chat-ada', 'chat-other'])
@@ -153,7 +170,7 @@ test('acknowledgement clears only that row and ordinary failure notifications st
     await db.execute({ sql: 'INSERT INTO desktop_notification_attempts (event_key,attempt_id,created_at) VALUES (?,?,?)', args: ['terminal:ordinary-error', '22222222-2222-4222-8222-222222222222', '2026-11-09T00:00:00.000Z'] })
     await finishDesktopNotificationAttempt(db, { key: 'terminal:ordinary-error', attemptId: '22222222-2222-4222-8222-222222222222', status: 'failed', nativeStatus: 'failed' })
     expect((await db.execute({ sql: 'SELECT event_key FROM desktop_notification_attempts WHERE event_key = ?', args: ['terminal:ordinary-error'] })).rows).toEqual([])
-    expect((await db.execute({ sql: 'SELECT event_key FROM desktop_notification_attempts WHERE event_key = ?', args: [sibling.eventKey] })).rows).toHaveLength(1)
+    expect((await db.execute({ sql: 'SELECT event_key FROM desktop_notification_attempts WHERE event_key = ?', args: [sibling.eventKey] })).rows).toHaveLength(0)
 })
 
 test('a refused preference still records the inbox row and does not queue a native send', async () => {
@@ -170,4 +187,22 @@ test('a refused preference still records the inbox row and does not queue a nati
     const again = await acceptDesktopUserNotification(db, current, input(), new AbortController().signal, granted, 50)
     expect(again.attemptId).toBe(receipt.attemptId)
     expect(await count(db)).toEqual({ rows: 1, attempts: 1 })
+})
+
+
+test('a stopped or frozen admission leaves no inbox row, and normal multiline notices are supported', async () => {
+    const { db, root } = await database()
+    const current = runtime(root)
+    let checks = 0
+    await expect(acceptDesktopUserNotification(db, current, input(), new AbortController().signal, {
+        grant: async () => 'granted',
+        run: async () => ++checks === 1,
+    }, 50)).rejects.toMatchObject({ status: 409 })
+    setDesktopWorkspaceFrozen(current, true)
+    await expect(acceptDesktopUserNotification(db, current, input(), new AbortController().signal, granted, 50)).rejects.toMatchObject({ status: 409 })
+    expect(await count(db)).toEqual({ rows: 0, attempts: 0 })
+    setDesktopWorkspaceFrozen(current, false)
+    const receipt = await acceptDesktopUserNotification(db, current, input({ message: 'Review this.\nSecond line.' }), new AbortController().signal, granted, 10)
+    expect(receipt.message).toBe('Review this.\nSecond line.')
+    expect((await readDesktopUserAttention(db, current))[0]?.summary).toBe('Review this. Second line.')
 })

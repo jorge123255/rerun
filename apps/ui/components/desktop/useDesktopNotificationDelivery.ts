@@ -72,9 +72,11 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
                 for (const event of admitted.events) {
                     if (event.kind === 'info') {
                         const looking = document.visibilityState === 'visible' && event.sessionId === visible.current
+                        let status: DesktopNotificationDeliveryResult['status'] = 'unavailable'
                         let nativeStatus: DesktopNotificationDeliveryResult['status'] = 'unavailable'
                         if (!signal.aborted && !isDesktopQuitting() && !looking && admitted.channels.toast) {
                             showDesktopNotificationToast(event, openTarget)
+                            status = 'shown'
                             if (bridge.available) {
                                 const native = await boundedDelivery(bridge.notify({ key: event.key, kind: event.kind, agentId: event.agentId, sessionId: event.sessionId,
                                     groupId: event.groupId ?? null, terminalId: event.terminalId ?? null, requestId: event.requestId ?? null,
@@ -82,8 +84,7 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
                                 nativeStatus = native.status
                             }
                         }
-                        if (!looking && admitted.channels.sound) await playSound(signal)
-                        const status = nativeStatus === 'shown' ? 'shown' : nativeStatus === 'unknown' ? 'unknown' : 'failed'
+                        if (!signal.aborted && !isDesktopQuitting() && !looking && admitted.channels.sound) await playSound(signal)
                         await fetch(DESKTOP_NOTIFICATION_DELIVERY_URL, { method: 'POST', headers: { 'content-type': 'application/json' },
                             body: JSON.stringify({ key: event.key, attemptId: event.attemptId, status, nativeStatus }), cache: 'no-store', signal: AbortSignal.timeout(5000) }).catch(() => {})
                         continue

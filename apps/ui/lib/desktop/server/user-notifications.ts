@@ -1,15 +1,14 @@
 import 'server-only'
 import { coworkerRuleOf, normalizeNotificationPrefs, type NotificationPrefs } from '@rerun/contracts'
 import type { Client, Row } from '@libsql/client'
-import { lstat, readFile, realpath } from 'node:fs/promises'
-import { join } from 'node:path'
 import { desktopNotifyUserNativeBody, desktopNotifyUserReceiptFromNative, type DesktopNotifyUserNativeResult, type DesktopNotifyUserReceipt } from '../../../../engine/src/desktop/notify-tools/contract'
 import type { DesktopAttentionItem } from '../attention'
 import type { DesktopNotificationAdmission, DesktopNotificationEvent, DesktopNotificationReceipt } from '../notifications'
-import { getRun } from '@/lib/engine/client'
+import { getAgent, getRun } from '@/lib/engine/client'
 import { DesktopHttpError } from './auth'
 import { withRosterWrite } from './roster-writes'
-import { canonicalDesktopEngineRoot, type DesktopRuntime } from './runtime'
+import type { DesktopRuntime } from './runtime'
+import { assertDesktopWorkspaceAdmission } from './workspace-admission'
 import { engineOf } from './settings'
 
 export const DESKTOP_USER_NOTIFICATION_WAIT_MS = 12_000
@@ -78,13 +77,7 @@ function scopeMap(runtime: DesktopRuntime) {
     if (!map) scopes.set(key, map = new Map())
     return map
 }
-function findSlot(runtime: DesktopRuntime, key: string) { return scopeMap(runtime).get(key) }
-function findSlotAnywhere(key: string) {
-    for (const map of slotScopes().values()) {
-        const slot = map.get(key)
-        if (slot) return slot
-    }
-}
+function findSlot(runtime: DesktopRuntime, key: string) { return slotScopes().get(scopeKey(runtime))?.get(key) }
 
 const ensured = new WeakMap<Client, Promise<void>>()
 export async function ensureDesktopUserNotifications(db: Client): Promise<void> {
@@ -102,7 +95,7 @@ export function classifyDesktopNotifyGrant(value: unknown): DesktopNotifyGrant {
     const config = value as { enabled?: unknown; kind?: unknown; ephemeral?: unknown; tools?: { desktopToolGrants?: { notify?: unknown } } }
     if (config.kind === 'foreman') return 'foreman'
     if (config.ephemeral === true) return 'child'
-    if (config.enabled === false || config.tools?.desktopToolGrants?.notify !== true) return 'revoked'
+    if (config.enabled !== true || config.tools?.desktopToolGrants?.notify !== true) return 'revoked'
     return 'granted'
 }
 
@@ -119,12 +112,9 @@ export async function readDesktopNotifyGrant(runtime: DesktopRuntime, engineAgen
     signal.throwIfAborted()
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(engineAgentId)) return 'revoked'
     try {
-        const root = await canonicalDesktopEngineRoot(runtime)
-        const path = join(/* turbopackIgnore: true */ root, 'agents', engineAgentId, 'config.json')
-        const info = await lstat(/* turbopackIgnore: true */ path)
-        if (!info.isFile() || info.isSymbolicLink() || info.uid !== process.getuid?.() || info.size > 1_000_000 || await realpath(/* turbopackIgnore: true */ path) !== path) return 'revoked'
+        const agent = await getAgent(engineOf(runtime), engineAgentId, { signal })
         signal.throwIfAborted()
-        return classifyDesktopNotifyGrant(JSON.parse(await readFile(path, 'utf8')))
+        return agent.id === engineAgentId ? classifyDesktopNotifyGrant(agent.config) : 'revoked'
     } catch { return 'revoked' }
 }
 
@@ -136,11 +126,11 @@ export async function desktopNotifyRunIsCurrent(runtime: DesktopRuntime, input: 
 }
 
 function piece(value: string, max: number) {
-    return value.length > 0 && value.length <= max && !/[\u0000-\u001f]/.test(value)
+    return value.length > 0 && value.length <= max && /^[A-Za-z0-9_.-]+$/.test(value)
 }
 
 function assertIdentity(input: DesktopUserNotificationInput) {
-    if (!piece(input.agentId, 128) || !piece(input.sessionId, 128) || !piece(input.runId, 128) || !piece(input.toolCallId, 128) || !piece(input.message, 16_000)) {
+    if (!piece(input.agentId, 128) || !piece(input.sessionId, 128) || !piece(input.runId, 128) || !piece(input.toolCallId, 128) || !input.message.trim() || input.message.length > 16_000 || desktopNotifyUserNativeBody(input.message).trim() === '') {
         throw new DesktopHttpError(400, 'Notification identity is unavailable.')
     }
     const eventKey = `notify-user:${input.agentId}:${input.sessionId}:${input.runId}:${input.toolCallId}`
@@ -241,10 +231,6 @@ async function insertNotification(db: Client, runtime: DesktopRuntime, input: De
                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
             args: [input.notificationId, input.eventKey, attemptId, runtime.workspaceId, input.agentId, owner.localAgentId, input.sessionId, owner.localSessionId, input.runId, input.toolCallId, input.message, native, reason, createdAt],
         })
-        await tx.execute({
-            sql: 'INSERT INTO desktop_notification_attempts (event_key, attempt_id, created_at) VALUES (?,?,?)',
-            args: [input.eventKey, attemptId, createdAt],
-        })
         await tx.commit()
         return null
     } catch (error) {
@@ -284,6 +270,8 @@ export async function acceptDesktopUserNotification(db: Client, runtime: Desktop
     if (!await deps.run(input, signal)) throw new DesktopHttpError(409, 'This notification is no longer part of the active run.')
     signal.throwIfAborted()
     const prepared = await withRosterWrite(async () => {
+        assertDesktopWorkspaceAdmission(runtime)
+        signal.throwIfAborted()
         const existing = (await db.execute({ sql: 'SELECT * FROM desktop_user_notifications WHERE id = ? OR event_key = ?', args: [input.notificationId, input.eventKey] })).rows[0]
         if (existing) {
             sameAdmission(existing, runtime, input)
@@ -292,8 +280,12 @@ export async function acceptDesktopUserNotification(db: Client, runtime: Desktop
         }
         const prefs = await readPrefs(db)
         const attention = desktopInfoNotificationWanted(prefs, owner.localAgentId)
-        const native = attention && prefs.toast ? null : 'unavailable' as const
-        const reason = native ? (attention ? 'In-app notifications are turned off.' : 'Notifications for this coworker are turned off.') : null
+        const native = attention && (prefs.toast || prefs.sound) ? null : 'unavailable' as const
+        const reason = native ? (attention ? 'Notification delivery channels are turned off.' : 'Notifications for this coworker are turned off.') : null
+        if (await deps.grant(input.agentId, signal) !== 'granted') throw new DesktopHttpError(403, 'This coworker cannot send notifications.')
+        if (!await deps.run(input, signal)) throw new DesktopHttpError(409, 'This notification is no longer part of the active run.')
+        assertDesktopWorkspaceAdmission(runtime)
+        signal.throwIfAborted()
         const attemptId = crypto.randomUUID()
         const createdAt = new Date().toISOString()
         const raced = await insertNotification(db, runtime, input, owner, attemptId, createdAt, native, reason)
@@ -310,23 +302,21 @@ export async function acceptDesktopUserNotification(db: Client, runtime: Desktop
     const raced = await raceReceipt(slot, timeoutMs, signal)
     if (raced === 'timeout') return settleSlot(db, slot, 'unknown', 'Native notification acknowledgement is unknown.')
     if (raced === 'abort') return settleSlot(db, slot, 'unknown', 'The run stopped before native delivery was confirmed.')
-    if (raced.nativeStatus !== 'shown' && await deps.grant(input.agentId, signal).catch(() => 'revoked' as const) !== 'granted') {
-        return settleSlot(db, slot, 'unavailable', 'The notification permission was turned off.')
-    }
     return raced
 }
 
 function raceReceipt(slot: Slot, timeoutMs: number, signal: AbortSignal): Promise<DesktopNotifyUserReceipt | 'timeout' | 'abort'> {
     if (signal.aborted) return Promise.resolve('abort')
     return new Promise(resolve => {
-        const timer = setTimeout(() => resolve('timeout'), timeoutMs)
-        const onAbort = () => { clearTimeout(timer); resolve('abort') }
-        signal.addEventListener('abort', onAbort, { once: true })
-        slot.promise.then(receipt => {
+        const finish = (result: DesktopNotifyUserReceipt | 'timeout' | 'abort') => {
             clearTimeout(timer)
             signal.removeEventListener('abort', onAbort)
-            resolve(receipt)
-        })
+            resolve(result)
+        }
+        const onAbort = () => finish('abort')
+        const timer = setTimeout(() => finish('timeout'), timeoutMs)
+        signal.addEventListener('abort', onAbort, { once: true })
+        void slot.promise.then(finish)
     })
 }
 
@@ -342,6 +332,7 @@ export async function takeDesktopUserNotificationDelivery(runtime: DesktopRuntim
         const granted = await slot.grant()
         const current = granted && await slot.confirm()
         if (slot.settled) return null
+        assertDesktopWorkspaceAdmission(runtime)
         if (!granted || !current) {
             await settleSlot(slot.db, slot, granted ? 'unknown' : 'unavailable', granted ? 'The run stopped before native delivery was confirmed.' : 'The notification permission was turned off.')
             return null
@@ -351,17 +342,15 @@ export async function takeDesktopUserNotificationDelivery(runtime: DesktopRuntim
     } finally { slot.claiming = false }
 }
 
-export async function settleDesktopUserNotification(db: Client, input: DesktopNotificationReceipt): Promise<void> {
-    if (!input.key.startsWith('notify-user:')) return
-    const native = nativeOf(input)
-    const reason = native === 'shown' ? '' : native === 'unavailable' ? 'A native notification destination is unavailable.' : native === 'failed' ? 'Native notification delivery failed.' : 'Native notification acknowledgement is unknown.'
-    const slot = findSlotAnywhere(input.key)
-    if (slot) {
-        if (slot.attemptId !== input.attemptId) return
+export async function settleDesktopUserNotification(runtime: DesktopRuntime, db: Client, input: DesktopNotificationReceipt): Promise<boolean> {
+    return withRosterWrite(async () => {
+        const slot = findSlot(runtime, input.key)
+        if (!slot || slot.db !== db || !slot.handed || slot.settled || slot.attemptId !== input.attemptId) return false
+        const native = nativeOf(input)
+        const reason = native === 'shown' ? '' : native === 'unavailable' ? 'A native notification destination is unavailable.' : native === 'failed' ? 'Native notification delivery failed.' : 'Native notification acknowledgement is unknown.'
         await settleSlot(db, slot, native, reason)
-        return
-    }
-    await writeNative(db, input.key, input.attemptId, native, reason)
+        return true
+    })
 }
 
 export async function readDesktopUserAttention(db: Client, runtime: DesktopRuntime): Promise<DesktopAttentionItem[]> {
