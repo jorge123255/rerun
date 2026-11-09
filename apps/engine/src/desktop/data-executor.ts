@@ -74,7 +74,7 @@ async function verifyDataJournals(file: string): Promise<void> {
             if (error.code === 'ENOENT') return null
             throw error
         })
-        if (sidecar && (!sidecar.isFile() || sidecar.isSymbolicLink() || sidecar.nlink !== 1n)) throw new Error('Unsafe database journal.')
+        if (sidecar && (!sidecar.isFile() || sidecar.isSymbolicLink() || sidecar.nlink !== BigInt(1))) throw new Error('Unsafe database journal.')
     }
 }
 
@@ -89,7 +89,7 @@ export async function prepareDesktopDataFile(root: string, file: string): Promis
         if (error.code === 'ENOENT') return null
         throw error
     })
-    if (existing && (!existing.isFile() || existing.isSymbolicLink() || existing.nlink !== 1n)) throw new Error('Unsafe database file.')
+    if (existing && (!existing.isFile() || existing.isSymbolicLink() || existing.nlink !== BigInt(1))) throw new Error('Unsafe database file.')
     if (!existing) {
         const handle = await open(canonicalFile, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
             .catch((error: NodeJS.ErrnoException) => { if (error.code === 'EEXIST') return null; throw error })
@@ -102,7 +102,7 @@ export async function prepareDesktopDataFile(root: string, file: string): Promis
 export async function pinDesktopDataFile(root: string, file: string): Promise<DataFilePin> {
     const canonicalFile = await safeDataDirectory(root, file, false)
     const stat = await lstat(canonicalFile, { bigint: true })
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n) throw new Error('Unsafe database file.')
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== BigInt(1)) throw new Error('Unsafe database file.')
     const pin = { file: canonicalFile, parent: identity(await lstat(dirname(canonicalFile), { bigint: true })), identity: identity(stat) }
     await verifyDesktopDataFile(pin)
     return pin
@@ -112,7 +112,7 @@ export async function verifyDesktopDataFile(pin: DataFilePin): Promise<void> {
     const parent = await lstat(dirname(pin.file), { bigint: true })
     const file = await lstat(pin.file, { bigint: true })
     if (!parent.isDirectory() || parent.isSymbolicLink() || !same(identity(parent), pin.parent) ||
-        !file.isFile() || file.isSymbolicLink() || file.nlink !== 1n || !same(identity(file), pin.identity) ||
+        !file.isFile() || file.isSymbolicLink() || file.nlink !== BigInt(1) || !same(identity(file), pin.identity) ||
         await realpath(pin.file) !== pin.file) throw new Error('The database file changed. Try again.')
     await verifyDataJournals(pin.file)
 }
