@@ -4,13 +4,20 @@ import { Cron } from 'croner'
 import type { Client } from '@libsql/client'
 import { authenticateDesktopRequest, DesktopHttpError } from '../auth'
 import { engineOf } from '../settings'
+import { desktopProvider } from '../../settings'
 import { findDesktopAgent } from '../store'
 import { createSchedule,updateSchedule,deleteSchedule,listSchedules,listRuns,getAgent } from '@/lib/engine/client'
 import { nextRunAt } from '@/lib/schedules/cron'
 import { adoptDesktopScheduledSession } from './adoption'
 
-const input=z.object({name:z.string().trim().min(1).max(120),description:z.string().max(4000).default(''),body:z.string().trim().min(1).max(64000),cron:z.string().max(120).nullable(),runAt:z.string().datetime({offset:true}).nullable(),timezone:z.string().min(1).max(100),enabled:z.boolean()}).strict().superRefine((value,ctx)=>{
+const input=z.object({name:z.string().trim().min(1).max(120),description:z.string().max(4000).default(''),body:z.string().trim().min(1).max(64000),cron:z.string().max(120).nullable(),runAt:z.string().datetime({offset:true}).nullable(),timezone:z.string().min(1).max(100),enabled:z.boolean(),
+    connectionId:z.string().trim().min(1).max(256).nullable().default(null),provider:desktopProvider.nullable().default(null),model:z.string().trim().min(1).max(256).nullable().default(null),
+}).strict().superRefine((value,ctx)=>{
     try {new Intl.DateTimeFormat('en',{timeZone:value.timezone});if(Boolean(value.cron)===Boolean(value.runAt))throw new Error();if(value.cron)new Cron(value.cron,{timezone:value.timezone}).nextRun()}catch{ctx.addIssue({code:'custom',message:'Choose a valid cron or one-shot time and timezone'})}
+}).superRefine((value,ctx)=>{
+    const fields=[value.connectionId,value.provider,value.model]
+    if(fields.every(field=>field===null)||fields.every(field=>field!==null))return
+    ctx.addIssue({code:'custom',message:'Choose a connected provider and model, or follow the coworker default'})
 })
 export type DesktopScheduleInput=z.infer<typeof input>
 export type ScheduleAccess=(engineAgentId:string)=>Promise<void>
@@ -85,7 +92,7 @@ export function desktopSchedulesApi(db:Client,authorize:ScheduleAccess) {
                 if(!body || typeof body!=='object')throw new DesktopHttpError(400,'Invalid schedule request')
                 const slug=body.slug===undefined ? undefined : z.string().regex(/^[a-zA-Z0-9_-]{1,160}$/).parse(body.slug)
                 if(request.method==='PUT') {
-                    const value={...input.parse(body.input),connectionId:null,provider:null,model:null}
+                    const value=input.parse(body.input)
                     result=slug ? await updateSchedule(engine,owner.engineAgentId,slug,value as unknown as Parameters<typeof updateSchedule>[3]) : await createSchedule(engine,owner.engineAgentId,{...value,cron:value.cron ?? undefined,runAt:value.runAt ?? undefined})
                 } else if(request.method==='DELETE' && slug) {await deleteSchedule(engine,owner.engineAgentId,slug);result={deleted:slug}}
                 else if(request.method==='POST' && slug && body.action==='run') {
