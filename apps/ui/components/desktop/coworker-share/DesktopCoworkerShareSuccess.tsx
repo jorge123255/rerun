@@ -1,5 +1,6 @@
 'use client'
 
+import type { DesktopCoworkerShareRevokeInput } from '@rerun/contracts'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
@@ -11,14 +12,15 @@ export function DesktopCoworkerShareSuccess({ exported, downloadUrl, onPreviewIm
     downloadUrl: string
     onPreviewImport: () => void
     onWithdraw: () => void
-    onRecoverWithdrawal: () => void
-    pendingRevocations: unknown[]
+    onRecoverWithdrawal: (input: DesktopCoworkerShareRevokeInput) => void
+    pendingRevocations: DesktopCoworkerShareRevokeInput[]
     withdrawn: boolean
     busy: boolean
     onDone: () => void
 }) {
     const snapshotId = exported.result.manifest.packageKey
     const fileName = `coworker-${snapshotId.slice(0, 8)}.tar.gz`
+    const recoverable = pendingRevocations.filter(input => input.snapshotId === snapshotId)
     return <div className="flex flex-col gap-4">
         <Field label="Portable file" helperText={exported.result.reused
             ? 'A portable file with these same answers already existed for this coworker, so Rerun returned it rather than creating a second copy.'
@@ -39,7 +41,7 @@ export function DesktopCoworkerShareSuccess({ exported, downloadUrl, onPreviewIm
                 <Button type="button" variant="ghost" size="sm" className="gap-1.5 text-destructive hover:text-destructive" disabled={busy}><Trash2Icon className="size-3.5" />Withdraw local share</Button>
             </ConfirmDialog>
         </div>}
-        {pendingRevocations.length > 0 && !withdrawn && <Button type="button" variant="outline" size="sm" disabled={busy} onClick={onRecoverWithdrawal}>Recover withdrawal</Button>}
+        {recoverable.length > 0 && !withdrawn && <div className="flex flex-wrap gap-2">{recoverable.map(input => <Button type="button" variant="outline" size="sm" key={input.requestId} disabled={busy} onClick={() => onRecoverWithdrawal(input)}>Recover withdrawal {input.snapshotId.slice(0, 8)}</Button>)}</div>}
         <div className="flex justify-end"><Button type="button" onClick={onDone}>Done</Button></div>
     </div>
 }
