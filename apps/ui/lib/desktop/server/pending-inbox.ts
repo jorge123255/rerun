@@ -14,6 +14,7 @@ import { initializeDesktopPendingInbox } from './pending-inbox-db'
 import { readDesktopQuestion } from './questions'
 import type { DesktopRuntime } from './runtime'
 import { findDesktopSession } from './store'
+import { acknowledgeDesktopUserNotification } from './user-notifications'
 
 export const DESKTOP_PENDING_INBOX_CONCURRENCY = 4
 export const DESKTOP_PENDING_INBOX_DEADLINE_MS = 2_500
@@ -36,7 +37,7 @@ export async function readDesktopPendingInbox(runtime: DesktopRuntime): Promise<
 export const desktopPendingInboxReadSchema = z.object({
     items: z.array(z.object({
         id: z.string().min(1).max(8192),
-        kind: z.enum(['question', 'approval', 'takeover', 'service', 'secret', 'mcp', 'tool-install']),
+        kind: z.enum(['question', 'approval', 'takeover', 'service', 'secret', 'mcp', 'tool-install', 'info']),
         agentId: z.string().min(1).max(200),
         sessionId: z.string().min(1).max(200),
     }).strict()).max(500),
@@ -58,11 +59,19 @@ export async function markDesktopPendingInboxRead(runtime: DesktopRuntime, input
 
     const failed = new Set<string>()
     const confirmed: DesktopPendingReadTarget[] = []
+    let marked = 0
+    for (const item of targets) {
+        if (item.kind !== 'info') continue
+        if (await acknowledgeDesktopUserNotification(db, runtime, item)) marked++
+        else failed.add(item.id)
+    }
+    const remaining = targets.filter(item => item.kind !== 'info')
+    if (!remaining.length) return { marked, failedIds: [...failed] }
     const signal = AbortSignal.timeout(DESKTOP_PENDING_INBOX_DEADLINE_MS)
     // Group by session so no two workers revalidate the same chat concurrently. A submitted
     // batch can include stale identities alongside the current request; each keeps its own result.
     const bySession = new Map<string, DesktopPendingReadTarget[]>()
-    for (const item of targets) {
+    for (const item of remaining) {
         const list = bySession.get(item.sessionId) ?? []
         list.push(item)
         bySession.set(item.sessionId, list)
@@ -109,9 +118,9 @@ export async function markDesktopPendingInboxRead(runtime: DesktopRuntime, input
     // Sessions the deadline cut short remain explicitly unknown, never acknowledged.
     for (const sessionId of sessions.slice(next)) for (const item of bySession.get(sessionId)!) failed.add(item.id)
 
-    if (!confirmed.length) return { marked: 0, failedIds: [...failed] }
+    if (!confirmed.length) return { marked, failedIds: [...failed] }
+    const acknowledged = marked
     const transaction = await db.transaction('write')
-    let marked = 0
     try {
         const seenAt = new Date().toISOString()
         for (const item of confirmed) {
@@ -144,7 +153,7 @@ export async function markDesktopPendingInboxRead(runtime: DesktopRuntime, input
     } catch {
         // A partial write failure persists nothing: every target stays visible and retryable.
         await transaction.rollback().catch(() => {})
-        return { marked: 0, failedIds: targets.map(item => item.id) }
+        return { marked: acknowledged, failedIds: [...new Set([...failed, ...remaining.map(item => item.id)])] }
     } finally {
         transaction.close()
     }

@@ -5,7 +5,7 @@ import { DESKTOP_ATTENTION_DEADLINE_MS, readDesktopAttention } from './attention
 import { readDesktopBoardActivity } from './board-activity'
 
 const mock = vi.hoisted(() => ({ agents: vi.fn(), sessions: vi.fn(), session: vi.fn(), question: vi.fn(), approval: vi.fn(), service: vi.fn(), secret: vi.fn(), mcp: vi.fn(), installs: vi.fn(), runs: vi.fn(), owner: vi.fn() }))
-vi.mock('./database', () => ({ openDesktopDatabase: async () => ({}) }))
+vi.mock('./database', () => ({ openDesktopDatabase: async () => ({ execute: async () => ({ rows: [] }), executeMultiple: async () => undefined }) }))
 vi.mock('./store', () => ({ listDesktopAgents: mock.agents, listDesktopSessions: mock.sessions, findDesktopSession: mock.session }))
 vi.mock('./questions', () => ({ readDesktopQuestion: mock.question }))
 vi.mock('./takeover', () => ({ readDesktopTakeover: async () => ({ takeover: null }) }))

@@ -14,9 +14,9 @@ afterEach(() => {
     clearCachedEnvForTests()
 })
 const admission: DesktopNotifyUserAdmission = {
-    notificationId: 'notify:a:s:r:c', eventKey: 'notify-user:a:s:r:c', agentId: 'a', agentName: 'Ada', sessionId: 's', runId: 'r', message: 'm', metadata: null,
+    notificationId: 'notify:a:s:r:c', eventKey: 'notify-user:a:s:r:c', toolCallId: 'c', agentId: 'a', agentName: 'Ada', sessionId: 's', runId: 'r', message: 'm', metadata: null,
 }
-const { agentName: _agentName, ...receiptIdentity } = admission
+const { agentName: _agentName, toolCallId: _toolCallId, ...receiptIdentity } = admission
 const receipt = { ...receiptIdentity, attemptId: '11111111-1111-4111-8111-111111111111', status: 'unknown' as const, nativeStatus: 'unknown' as const, createdAt: '2026-11-06T00:00:00.000Z' }
 
 test('posts to the authenticated loopback and returns the validated receipt', async () => {

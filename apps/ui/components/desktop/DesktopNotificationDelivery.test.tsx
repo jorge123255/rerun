@@ -45,8 +45,8 @@ beforeEach(() => {
             if (receiptFails) return Response.json({ error: 'lost' }, { status: 503 })
             const receipt = JSON.parse(String(init?.body)); receipts.push(receipt)
             if (attempts.get(receipt.key) === receipt.attemptId && receipt.status !== 'unknown') {
-                attempts.delete(receipt.key)
                 if (receipt.status === 'shown') delivered.add(receipt.key)
+                if (!String(receipt.key).startsWith('notify-user:')) attempts.delete(receipt.key)
             }
             return Response.json({ recorded: true })
         }
@@ -158,5 +158,40 @@ test('toast and native clicks share supersession, unmount and exact target check
     await act(async () => { root?.unmount(); root = undefined })
     attention = [pendingItem(a)]
     await act(async () => { oldToast(a) })
+    expect(navigate).toHaveBeenCalledTimes(1)
+})
+
+test('an info toast does not count as native success and a failed native result is not replayed', async () => {
+    const info = { ...event('notify-user:agent-a:session-a:run-a:call-a', 'chat-a'), kind: 'info' as const, subtitle: 'Needs you', requestId: 'notify:agent-a:session-a:run-a:call-a', silent: true }
+    events.push(info)
+    notify.mockResolvedValue({ status: 'failed' })
+    await mount()
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(notify.mock.calls[0]?.[0]).toMatchObject({ kind: 'info', agentId: 'agent-a', sessionId: 'chat-a', requestId: info.requestId })
+    expect(receipts.at(-1)).toMatchObject({ key: info.key, status: 'failed', nativeStatus: 'failed' })
+    await tick()
+    expect(notify).toHaveBeenCalledTimes(1)
+})
+
+test('an info alert for the open conversation is not native success and is not sent later', async () => {
+    const info = { ...event('notify-user:agent-a:session-a:run-a:call-a', 'chat-a'), kind: 'info' as const, subtitle: 'Needs you', requestId: 'attempt-1', silent: true }
+    events.push(info)
+    await mount('chat-a')
+    expect(notify).not.toHaveBeenCalled()
+    expect(receipts.at(-1)).toMatchObject({ status: 'failed', nativeStatus: 'unavailable' })
+    await tick()
+    expect(notify).not.toHaveBeenCalled()
+})
+
+test('an info click opens only the originating conversation', async () => {
+    await mount()
+    const info = event('notify-user:agent-a:session-a:run-a:call-a', 'chat-a')
+    info.kind = 'info'
+    info.requestId = 'notify:agent-a:session-a:run-a:call-a'
+    attention = [pendingItem(info)]
+    await act(async () => listener?.({ key: info.key, kind: 'info', agentId: 'agent-a', sessionId: 'chat-a', requestId: info.requestId }))
+    expect(navigate).toHaveBeenCalledWith({ agentId: 'agent-a', sessionId: 'chat-a', title: '' })
+    attention = [{ ...pendingItem(info), sessionId: 'chat-b' }]
+    await act(async () => listener?.({ key: info.key, kind: 'info', agentId: 'agent-a', sessionId: 'chat-a', requestId: info.requestId }))
     expect(navigate).toHaveBeenCalledTimes(1)
 })
