@@ -1,4 +1,6 @@
 import { beforeEach, afterEach, expect, test, vi } from 'vitest'
+const question = vi.hoisted(() => ({ read: vi.fn() }))
+vi.mock('./question.js', () => ({ readForemanQuestion: question.read }))
 const state = vi.hoisted(() => ({ replay: false, session: null as null | { id: string; agentId: string; source: string; status: string; originAgentId: null; originSessionId: null }, run: null as null | { id: string; agentId: string; sessionId: string }, reserve: vi.fn(async () => ({ id: 'queued-user' })), model: vi.fn(async () => ({ connection: { id: 'conn' }, provider: 'codex', model: 'terra' })), claim: vi.fn(() => null), release: vi.fn() }))
 vi.mock('../../agents/lock.js', () => ({ withAgentLock: async (_id: string, work: () => Promise<unknown>) => work() }))
 vi.mock('../../agents/registry.js', () => ({ getAgent: async () => ({ id: 'foreman', config: { kind: 'foreman', enabled: true } }) }))
@@ -16,7 +18,7 @@ import type { createDesktopForemanBridge } from './bridge.js'
 const body = { binding: { workspaceId: '1', chatId: 'fmc_chat-0001', runId: '00000000-0000-4000-8000-000000000001', model: { connectionId: 'conn', model: 'terra' } }, sessionId: '00000000-0000-4000-8000-000000000002', text: 'Plan a team.', brief: { instructions: 'Propose, never approve.', tools: [] } }
 const request = (input: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
 const bridge = () => ({ admit: vi.fn(async () => {}), binding: vi.fn(), request: vi.fn(), close: vi.fn() }) as ReturnType<typeof createDesktopForemanBridge>
-beforeEach(() => { state.replay = false; state.session = null; state.run = null; vi.clearAllMocks() })
+beforeEach(() => { state.replay = false; state.session = null; state.run = null; vi.clearAllMocks(); question.read.mockResolvedValue(null) })
 afterEach(() => vi.restoreAllMocks())
 test('replay miss creates no session, model resolution, admission or provider work', async () => {
     const port = bridge(), app = createDesktopForemanRoutes(() => port)
@@ -40,4 +42,35 @@ test('hosted tool grants and a foreign existing session are refused without rese
     state.session = { id: body.sessionId, agentId: 'other', source: 'dashboard', status: 'open', originAgentId: null, originSessionId: null }
     expect((await app.request('/chat', request(body))).status).toBe(409)
     expect(port.admit).not.toHaveBeenCalled(); expect(state.reserve).not.toHaveBeenCalled()
+})
+
+
+test('admits only the exact pending Foreman question under the session claim', async () => {
+    const guard = { runId: '00000000-0000-4000-8000-000000000003', sourceMessageId: 'saved-message', toolCallId: 'ask-call', digest: 'a'.repeat(64) }
+    state.session = { id: body.sessionId, agentId: 'foreman', source: 'dashboard', status: 'open', originAgentId: null, originSessionId: null }
+    question.read.mockImplementation(async () => {
+        expect(state.claim).toHaveBeenCalledWith(body.sessionId, body.binding.runId)
+        return { guard, questions: [{ question: 'Which option?', options: ['A', 'B'] }] }
+    })
+    const port = bridge(), app = createDesktopForemanRoutes(() => port)
+    expect((await app.request('/chat', request(body))).status).toBe(409)
+    expect((await app.request('/chat', request({ ...body, question: { ...guard, toolCallId: 'stale-call' } }))).status).toBe(409)
+    expect((await app.request('/chat', request({ ...body, question: { ...guard, runId: body.binding.runId } }))).status).toBe(409)
+    expect(state.reserve).not.toHaveBeenCalled()
+    expect((await app.request('/chat', request({ ...body, question: guard }))).status).toBe(200)
+    expect(state.reserve).toHaveBeenCalledTimes(1)
+    expect(state.reserve.mock.calls[0]).toEqual(expect.arrayContaining([expect.objectContaining({
+        foreman: expect.objectContaining({ question: guard }),
+    })]))
+})
+
+test('a replayed answer reads its existing receipt without looking for a second pending question', async () => {
+    const guard = { runId: '00000000-0000-4000-8000-000000000003', sourceMessageId: 'saved-message', toolCallId: 'ask-call', digest: 'b'.repeat(64) }
+    state.replay = true
+    state.session = { id: body.sessionId, agentId: 'foreman', source: 'dashboard', status: 'open', originAgentId: null, originSessionId: null }
+    state.run = { id: body.binding.runId, agentId: 'foreman', sessionId: body.sessionId }
+    const response = await createDesktopForemanRoutes(bridge).request('/chat', request({ ...body, question: guard, replayOnly: true }))
+    expect(response.status).toBe(204)
+    expect(question.read).not.toHaveBeenCalled()
+    expect(state.reserve).not.toHaveBeenCalled()
 })

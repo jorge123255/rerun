@@ -30,11 +30,12 @@ vi.mock('../company-discovery', () => ({
 }))
 vi.mock('../../../../../engine/src/desktop/company-discovery/index.ts', () => ({ confinedCompanyDns: vi.fn(), confinedCompanyReader: vi.fn(), runCompanyCollectors: vi.fn() }))
 vi.mock('@/lib/engine/client', () => ({
+    request: vi.fn(async (_engine, _path, _init, parse) => parse({ question: null })),
     EngineRequestError: class extends Error { constructor(message: string, readonly status: number) { super(message) } },
     getRun: vi.fn(async (_engine: unknown, _agent: string, id: string) => ({ id, agentId: 'foreman', sessionId: 'original-session', status: 'finished' })),
     getSessionMessages: vi.fn(async () => []), cancelRun: vi.fn(),
 }))
-import { getRun, getSessionMessages } from '@/lib/engine/client'
+import { getRun, getSessionMessages, request } from '@/lib/engine/client'
 import { desktopForeman } from './binding'
 import { DESKTOP_FOREMAN_CHAT_SCHEMA } from './chat-store'
 import { DESKTOP_FOREMAN_SCHEMA_STATEMENTS } from './store'
@@ -86,6 +87,31 @@ describe('production Foreman intake phase and model brief', () => {
         }))
     })
     afterEach(async () => { state.db.close(); vi.unstubAllGlobals(); await rm(directory, { recursive: true, force: true }) })
+
+    it('reserves an answer for the exact completed question and reconciles a lost acknowledgement without another send', async () => {
+        const guard = { runId: randomUUID(), sourceMessageId: 'question-message', toolCallId: 'ask-choice', digest: 'a'.repeat(64) }
+        vi.mocked(request).mockImplementation(async (_engine, _path, _init, parse) =>
+            parse({ question: { guard, questions: [{ question: 'Choose a color', options: ['Red', 'Blue'] }] } }))
+        const app = await desktopForeman(runtime)
+        const question = (await app.state()).question!
+        const answer = { action: 'answer' as const, requestId: randomUUID(), questionId: question.id, answers: [['Blue']] }
+        await expect(app.send(chat, randomUUID(), 'Bypass question', model)).rejects.toMatchObject({ status: 409 })
+        await expect(app.answerQuestion(chat, { ...answer, questionId: 'b'.repeat(64) })).rejects.toMatchObject({ status: 409 })
+        expect(sent).toHaveLength(0)
+
+        const transport = vi.mocked(fetch).getMockImplementation()!
+        vi.mocked(fetch).mockRejectedValueOnce(new Error('Lost answer response'))
+        await expect(app.answerQuestion(chat, answer)).rejects.toThrow('Lost answer response')
+        expect((await app.state()).question?.attempt).toEqual({ action: 'answer', requestId: answer.requestId, answers: [['Blue']] })
+        await expect(app.answerQuestion(chat, { ...answer, requestId: randomUUID() })).rejects.toMatchObject({ status: 409 })
+        await expect(app.answerQuestion(chat, { ...answer, answers: [['Red']] })).rejects.toMatchObject({ status: 409 })
+        vi.mocked(fetch).mockImplementation(transport)
+        await expect(app.answerQuestion(chat, answer)).resolves.toEqual({ runId: answer.requestId })
+        expect(sent).toEqual([expect.objectContaining({ question: guard, replayOnly: true, text: expect.stringContaining('Blue') })])
+        expect(sent[0]).not.toHaveProperty('answerIntent')
+        vi.mocked(request).mockImplementation(async (_engine, _path, _init, parse) => parse({ question: null }))
+        expect((await app.state()).question).toBeNull()
+    })
 
     it('first exact pending intake sends the plan brief before model admission and returns plan after acknowledgement', async () => {
         const app = await desktopForeman(runtime)

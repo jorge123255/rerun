@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { FOREMAN_AGENT_ID, foremanBindingSchema, foremanBriefSchema } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, foremanBindingSchema, foremanBriefSchema, foremanQuestionGuardSchema } from '@rerun/contracts'
 import { withAgentLock } from '../../agents/lock.js'
 import { getAgent } from '../../agents/registry.js'
 import { resolveRunModel } from '../../agents/availability.js'
@@ -15,6 +15,7 @@ import { mergeRunStream } from '../../runtime/run-stream-merge.js'
 import { resumeStreamResponse, toResumableStreamResponse } from '../../runtime/stream.js'
 import { assertDesktopProvider, desktopApp } from '../policy.js'
 import { readDesktopForemanBinding } from './binding.js'
+import { readForemanQuestion } from './question.js'
 import type { createDesktopForemanBridge } from './bridge.js'
 import { createForemanFilePermissionRoutes } from '../foreman-agent-files/permissions.js'
 export const desktopForemanChatSchema = z.strictObject({
@@ -22,24 +23,46 @@ export const desktopForemanChatSchema = z.strictObject({
     text: z.string().min(1).max(20_000).refine(value => !!value.trim()),
     brief: foremanBriefSchema.extend({ instructions: z.string().min(1).max(12_000), tools: z.array(z.never()).max(0), hubToken: z.never().optional() }).strict(),
     replayOnly: z.boolean().optional(),
+    question: foremanQuestionGuardSchema.optional(),
 })
+function isOwnedForemanSession(session: NonNullable<Awaited<ReturnType<typeof getSession>>>) {
+    return session.agentId === FOREMAN_AGENT_ID && session.source === 'dashboard'
+        && session.status === 'open' && !session.originAgentId && !session.originSessionId
+}
+function sameQuestion(left: z.infer<typeof foremanQuestionGuardSchema>, right: z.infer<typeof foremanQuestionGuardSchema>) {
+    return left.runId === right.runId && left.sourceMessageId === right.sourceMessageId
+        && left.toolCallId === right.toolCallId && left.digest === right.digest
+}
 function identified(response: Response, sessionId: string, runId: string) { response.headers.set('x-session-id', sessionId); response.headers.set('x-run-id', runId); return response }
 export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof createDesktopForemanBridge> | undefined = readDesktopForemanBinding, permissionContext?: { workspaceId: string | number; launchNonce: string }) {
     const routes = new Hono()
     const permissionBinding = permissionContext ? readBinding() : undefined
     routes.route('/', createForemanFilePermissionRoutes(permissionContext, () => !!permissionBinding && readBinding() === permissionBinding && permissionBinding.workspaceId === String(permissionContext!.workspaceId)))
+    routes.get('/question', async c => {
+        if (!desktopApp() || !readBinding()) return c.json({ error: 'Desktop Foreman is unavailable.' }, 404)
+        const sessionId = z.uuid().safeParse(c.req.query('sessionId'))
+        if (!sessionId.success) return c.json({ error: 'Invalid Foreman conversation.' }, 400)
+        try {
+            const session = await getSession(FOREMAN_AGENT_ID, sessionId.data)
+            if (!session) return c.json({ question: null })
+            if (!isOwnedForemanSession(session)) throw new HttpError(409, 'Foreman conversation ownership changed.')
+            return c.json({ question: await readForemanQuestion(session.id) })
+        } catch (error) {
+            return c.json({ error: 'The Foreman question could not be read.' }, error instanceof HttpError && error.status === 409 ? 409 : 503)
+        }
+    })
     routes.post('/chat', async c => {
         try {
             if (!desktopApp()) throw new HttpError(404, 'Desktop Foreman is unavailable.')
             const raw = await c.req.text()
-            if (Buffer.byteLength(raw) > 32 * 1024) throw new HttpError(413, 'Foreman message exceeds limit.')
+            if (Buffer.byteLength(raw) > 48 * 1024) throw new HttpError(413, 'Foreman message exceeds limit.')
             const body = desktopForemanChatSchema.parse(JSON.parse(raw)), signal = c.req.raw.signal
-            const turn = { runId: body.binding.runId, sessionId: body.sessionId, message: body.text, foreman: { binding: body.binding, brief: body.brief } }
+            const turn = { runId: body.binding.runId, sessionId: body.sessionId, message: body.text, foreman: { binding: body.binding, brief: body.brief, ...(body.question && { question: body.question }) } }
             return await withAgentLock(FOREMAN_AGENT_ID, async () => {
                 signal.throwIfAborted()
                 const replay = await getDesktopQueuedTurn(FOREMAN_AGENT_ID, turn)
                 const session = await getSession(FOREMAN_AGENT_ID, body.sessionId), run = await getRun(FOREMAN_AGENT_ID, body.binding.runId)
-                if (session && (session.agentId !== FOREMAN_AGENT_ID || session.source !== 'dashboard' || session.status !== 'open' || session.originAgentId || session.originSessionId)) throw new HttpError(409, 'Foreman conversation ownership changed.')
+                if (session && !isOwnedForemanSession(session)) throw new HttpError(409, 'Foreman conversation ownership changed.')
                 if (replay) {
                     if (!session || !run || run.agentId !== FOREMAN_AGENT_ID || run.sessionId !== session.id) throw new HttpError(409, 'Foreman delivery receipt ownership changed.')
                     return identified(resumeStreamResponse(run.id), session.id, run.id)
@@ -49,7 +72,7 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
                 assertDesktopRunAdmission()
                 const bridge = readBinding()
                 if (!bridge) throw new HttpError(503, 'The Foreman is not connected to this app launch.')
-                const exact = { binding: body.binding, sessionId: body.sessionId, text: body.text, brief: body.brief }
+                const { replayOnly: _replay, ...exact } = body
                 await bridge.admit(exact, signal)
                 const agent = await getAgent(FOREMAN_AGENT_ID)
                 if (agent.id !== FOREMAN_AGENT_ID || agent.config.kind !== 'foreman' || !agent.config.enabled) throw new HttpError(409, 'The managed Foreman is unavailable.')
@@ -63,6 +86,12 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
                 const holder = claimSession(body.sessionId, body.binding.runId)
                 if (holder) throw new HttpError(409, 'The Foreman is already replying in this conversation.')
                 try {
+                    const question = session ? await readForemanQuestion(session.id) : null
+                    if (body.question ? !question || !sameQuestion(body.question, question.guard) : question) {
+                        throw new HttpError(409, body.question ? 'This Foreman question has changed.' : 'Answer or dismiss the Foreman question before sending another message.')
+                    }
+                    signal.throwIfAborted()
+                    assertDesktopRunAdmission()
                     const queuedUser = await reserveDesktopQueuedTurn(FOREMAN_AGENT_ID, turn, undefined, undefined, undefined, !session)
                     const view = { ...agent, brief: body.brief }
                     return identified(toResumableStreamResponse(turn.runId, async writer => {

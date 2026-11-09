@@ -29,6 +29,13 @@ export const foremanRevisionIdSchema = opaque('fmr')
 export const foremanDecisionIdSchema = opaque('fmd')
 export const foremanBuildIdSchema = opaque('fmb')
 export const foremanDigestSchema = z.string().regex(/^[a-f0-9]{64}$/)
+export const foremanQuestionGuardSchema = z.strictObject({
+    runId: z.uuid(),
+    sourceMessageId: z.string().min(1).max(256),
+    toolCallId: z.string().min(1).max(256),
+    digest: foremanDigestSchema,
+})
+export type DesktopForemanQuestionGuard = z.infer<typeof foremanQuestionGuardSchema>
 
 // The original phases, minus the hosted-only waitlist and trial steps (no billing on desktop).
 export const DESKTOP_FOREMAN_PHASES = ['discover', 'plan', 'build', 'companion'] as const

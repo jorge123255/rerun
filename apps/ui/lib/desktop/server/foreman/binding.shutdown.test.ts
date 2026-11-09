@@ -17,7 +17,8 @@ vi.mock('../company-discovery', () => ({
     CompanyDiscoveryError: class extends Error {},
 }))
 vi.mock('../../../../../engine/src/desktop/company-discovery/index.ts', () => ({ confinedCompanyDns: vi.fn(), confinedCompanyReader: vi.fn(), runCompanyCollectors: vi.fn() }))
-vi.mock('@/lib/engine/client', () => ({ EngineRequestError: class extends Error {}, cancelRun: vi.fn(), getRun: vi.fn(), getSessionMessages: vi.fn() }))
+vi.mock('@/lib/engine/client', () => ({
+    request: vi.fn(async (_engine, _path, _init, parse) => parse({ question: null })), EngineRequestError: class extends Error {}, cancelRun: vi.fn(), getRun: vi.fn(), getSessionMessages: vi.fn() }))
 vi.mock('@/lib/chat/engine-history', () => ({ publicDesktopHistory: vi.fn(), transformEngineMessages: vi.fn() }))
 import { desktopForeman, shutdownDesktopForeman } from './binding'
 

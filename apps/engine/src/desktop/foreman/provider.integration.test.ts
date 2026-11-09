@@ -48,7 +48,7 @@ test('authenticated Foreman plan tools reach the real Codex filter without grant
     const built = await buildTools(ctx)
     try {
         const live = resolveModel(agent, undefined, built.tools)
-        expect(names()).toEqual(['show_plan', 'open_panel', 'search_docs'])
+        expect(names()).toEqual(['show_plan', 'open_panel', 'search_docs', 'ask_user'])
         expect(captured.settings.at(-1)?.env).toMatchObject({ RERUN_NATIVE_SHELL: '0', RERUN_DESKTOP_CODEX_CODE_MODE: '0', RERUN_DESKTOP_CODEX_WEB: '0' })
         await live.close()
         const copied = resolveModel(agent, undefined, { show_plan: { ...built.tools.show_plan! }, open_panel: built.tools.show_plan! })

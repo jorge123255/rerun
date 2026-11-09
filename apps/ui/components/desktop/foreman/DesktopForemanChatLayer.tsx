@@ -34,6 +34,7 @@ export function DesktopForemanChatLayer({
     messages,
     streaming,
     restored,
+    question,
     emptyWelcome,
     planSnapshot,
     decisionStatus,
@@ -57,6 +58,7 @@ export function DesktopForemanChatLayer({
     messages: DesktopForemanMessage[]
     streaming?: boolean
     restored: boolean
+    question?: ReactNode
     emptyWelcome?: boolean
     planSnapshot: DesktopTrustedPlanSnapshot | null
     decisionStatus: DesktopPlanDecisionStatus
@@ -79,7 +81,7 @@ export function DesktopForemanChatLayer({
     className?: string
 }) {
     const plan = projectPlanCard(planSnapshot)
-    const empty = messages.length === 0 && !error && !plan.view && !build
+    const empty = messages.length === 0 && !error && !plan.view && !build && !question
 
     return (
         <div className={cn('pointer-events-auto relative flex min-h-0 w-full flex-1 flex-col', className)}>
@@ -110,6 +112,7 @@ export function DesktopForemanChatLayer({
                             </>}
                         </div>
                     ))}
+                    {question}
                     {plan.view && plan.revisionId && (
                         <DesktopPlanCard
                             plan={plan.view}
