@@ -343,7 +343,13 @@ export function toApiMessages(messages: HistoryMessage[]): ConversationMessage[]
         return {
             id: message.id,
             role: 'assistant',
-            parts: message.parts.map(part => ('output' in part && part.output !== undefined ? { ...part, output: trimOutput(part.toolName, part.output) } : part)),
+            parts: message.parts.map(part => {
+                if (!('toolName' in part)) return part
+                const publicPart = stripBridgePrefix(part.toolName) === 'image_generation' ? { ...part, input: {} } : part
+                return 'output' in publicPart && publicPart.output !== undefined
+                    ? { ...publicPart, output: trimOutput(publicPart.toolName, publicPart.output) }
+                    : publicPart
+            }),
             ...(message.metadata?.createdAt && { metadata: { createdAt: message.metadata.createdAt } }),
         }
     })

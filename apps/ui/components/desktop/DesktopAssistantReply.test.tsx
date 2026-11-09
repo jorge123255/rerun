@@ -337,7 +337,7 @@ test('expands actual native steps with the same plain-text input and output acro
 
 test('draws a Codex image result through the existing image card', async () => {
     const output = JSON.stringify({ kind: 'file', files: [{ path: 'generated-images/ig_1.png', name: 'ig_1.png', size: 70, scope: 'agent', identity: '12:34' }] })
-    const fetchMock = vi.fn(async () => new Response(null, { status: 404 }))
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(null, { status: 404 }))
     vi.stubGlobal('fetch', fetchMock)
     await render([{ type: 'dynamic-tool', toolName: 'image_generation', toolCallId: 'image-1', state: 'output-available',
         input: { result: 'iVBORw0KGgo' }, output }], false, 'agent-1')

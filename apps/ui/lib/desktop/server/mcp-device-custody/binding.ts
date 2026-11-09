@@ -11,7 +11,7 @@ export type CanonicalDeviceCustodyBinding = {
     db: Client
     key(): Buffer
     workspaceId: string
-    service: RemoteLoginService & { store: RemoteMcpStore }
+    service: Omit<RemoteLoginService, 'store'> & { store: RemoteMcpStore }
     watchOwner(owner: string): () => void
     /** Must read an explicit human-approved device method, not infer one from Connect/browser OAuth. */
     approvedMethod(target: DeviceAuthorityTarget, signal: AbortSignal): Promise<DeviceApprovalLease | null>

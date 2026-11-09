@@ -89,6 +89,7 @@ function ListSkeleton() {
 // line per entry, actions on hover, and the whole page as a drop zone.
 export function FileList({ title, entries, onOpen, onRename, canRename, onDelete, onDownload, onUpload, emptyDescription, uploadDisabled = false }: FileListProps) {
     const [renaming, setRenaming] = useState<string | null>(null)
+    const renameAfterClose = useRef<string | null>(null)
     const [deleting, setDeleting] = useState<FileEntry | null>(null)
     const [dragOver, setDragOver] = useState(false)
 
@@ -149,7 +150,7 @@ export function FileList({ title, entries, onOpen, onRename, canRename, onDelete
                                     role="button"
                                     tabIndex={0}
                                     onClick={() => renaming !== entry.name && onOpen(entry)}
-                                    onKeyDown={event => event.key === 'Enter' && renaming !== entry.name && onOpen(entry)}
+                                    onKeyDown={event => event.target === event.currentTarget && event.key === 'Enter' && renaming !== entry.name && onOpen(entry)}
                                     className="group/file grid h-9 cursor-pointer grid-cols-[minmax(0,1fr)_5rem_4rem_2rem] items-center gap-x-3 rounded-md px-2 text-sm outline-none transition-colors hover:bg-accent/60 focus-visible:bg-accent/60 max-sm:grid-cols-[minmax(0,1fr)_2rem]"
                                 >
                                     <span className="flex min-w-0 items-center gap-2.5">
@@ -182,13 +183,18 @@ export function FileList({ title, entries, onOpen, onRename, canRename, onDelete
                                             </Button>
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent align="end" onClick={event => event.stopPropagation()}
-                                            onCloseAutoFocus={event => { if (renaming === entry.name) event.preventDefault() }}>
+                                            onCloseAutoFocus={event => {
+                                                if (renameAfterClose.current !== entry.name) return
+                                                event.preventDefault()
+                                                renameAfterClose.current = null
+                                                setRenaming(entry.name)
+                                            }}>
                                             {entry.type !== 'dir' && onDownload && (
                                                 <DropdownMenuItem onSelect={() => onDownload(entry.name)}>
                                                     <DownloadIcon /> Download
                                                 </DropdownMenuItem>
                                             )}
-                                            {renameAllowed && <DropdownMenuItem onSelect={() => setRenaming(entry.name)}>
+                                            {renameAllowed && <DropdownMenuItem onSelect={() => { renameAfterClose.current = entry.name }}>
                                                 <PencilIcon /> Rename
                                             </DropdownMenuItem>}
                                             {onDelete && <><DropdownMenuSeparator />

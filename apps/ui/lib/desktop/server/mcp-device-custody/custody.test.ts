@@ -201,7 +201,9 @@ describe('approved MCP device custody (offline sources)', () => {
         const saved = (await f.store.read(initialApproval))!
         await f.store.create(sibling, { ...saved.value, approval: sibling }, () => {})
         await f.custody.stop(initialApproval)
-        expect((await f.store.read(initialApproval))?.value).toMatchObject({ phase: 'cancelled', deviceCode: undefined })
+        const stopped = (await f.store.read(initialApproval))?.value
+        expect(stopped?.phase).toBe('cancelled')
+        expect(stopped?.deviceCode).toBeUndefined()
         expect((await f.store.read(sibling))?.value.deviceCode).toBe('FIXTURE_DEVICE_SECRET')
     })
 

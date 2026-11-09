@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { DESKTOP_NOTIFICATION_EVENTS_URL, DESKTOP_NOTIFICATION_ADMIT_URL, DESKTOP_NOTIFICATION_DELIVERY_URL, DESKTOP_NOTIFICATION_TERMIALS_URL, type DesktopNotificationEvent } from '@/lib/desktop/notifications'
+import { DESKTOP_NOTIFICATION_EVENTS_URL, DESKTOP_NOTIFICATION_ADMIT_URL, DESKTOP_NOTIFICATION_DELIVERY_URL, DESKTOP_NOTIFICATION_TERMIALS_URL, type DesktopNotificationEvent, type DesktopNotificationReceipt } from '@/lib/desktop/notifications'
 import type { DesktopNotificationTarget } from '@/lib/desktop/notification-bridge'
 import { DESKTOP_ATTENTION_URL } from '@/lib/desktop/attention'
 import { DESKTOP_COMPLETIONS_URL } from '@/lib/desktop/completed-actions'
@@ -13,7 +13,7 @@ let root: Root | undefined
 const events: DesktopNotificationEvent[] = []
 const attempts = new Map<string, string>()
 const delivered = new Set<string>()
-const receipts: { key: string; attemptId: string; status: string }[] = []
+const receipts: DesktopNotificationReceipt[] = []
 const navigate = vi.fn(), notify = vi.fn(), audioPlay = vi.fn()
 const toastTargets = new Map<string, (target: DesktopNotificationTarget) => void>()
 vi.mock('@/lib/desktop/notification-toast', () => ({ showDesktopNotificationToast: (event: DesktopNotificationEvent, open: (target: DesktopNotificationTarget) => void) => { toastTargets.set(event.key, open) } }))
