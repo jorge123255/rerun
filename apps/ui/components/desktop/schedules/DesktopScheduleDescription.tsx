@@ -6,17 +6,23 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PencilIcon } from '@/lib/icons'
 import { scheduleSummary } from '@/lib/schedules/cron'
-import { unavailableDesktopScheduleParser, validateDesktopSchedulePreview, type DesktopScheduleParser, type DesktopSchedulePreview, type DesktopScheduleSelection } from '@/lib/desktop/schedule-description'
+import { createDesktopScheduleParser, validateDesktopSchedulePreview, type DesktopScheduleParser, type DesktopSchedulePreview, type DesktopScheduleSelection } from '@/lib/desktop/schedule-description'
+import type { DesktopProvider } from '@/lib/desktop/settings'
 
-export function DesktopScheduleDescription({mode,cron,runAt,timezone,disabled=false,onChange,parser=unavailableDesktopScheduleParser}: {
+export function DesktopScheduleDescription({mode,cron,runAt,timezone,agentId,connectionId,provider,model,disabled=false,onChange,parser}: {
     mode:'cron'|'runAt'
     cron:string
     runAt:string
     timezone:string
+    agentId:string
+    connectionId:string|null
+    provider:DesktopProvider|null
+    model:string|null
     disabled?:boolean
     onChange:(next:DesktopScheduleSelection)=>void
     parser?:DesktopScheduleParser
 }) {
+    const effectiveParser=parser??createDesktopScheduleParser({agentId,connectionId,provider,model})
     const [open,setOpen]=useState(false),[description,setDescription]=useState(''),[busy,setBusy]=useState(false)
     const [error,setError]=useState(''),[preview,setPreview]=useState<DesktopSchedulePreview|null>(null)
     const epoch=useRef(0),request=useRef<AbortController|undefined>(undefined)
@@ -30,7 +36,7 @@ export function DesktopScheduleDescription({mode,cron,runAt,timezone,disabled=fa
         request.current=controller
         setBusy(true);setError('');setPreview(null)
         try {
-            const result=await parser({description:description.trim(),nowIso:new Date().toISOString(),timezone,signal:controller.signal})
+            const result=await effectiveParser({description:description.trim(),nowIso:new Date().toISOString(),timezone,signal:controller.signal})
             if(own!==epoch.current||controller.signal.aborted)return
             if(result.status==='ok'){
                 const valid=validateDesktopSchedulePreview(result.value,timezone)

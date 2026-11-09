@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type { DesktopScheduleParser, DesktopScheduleSelection } from '@/lib/desktop/schedule-description'
-import { DESKTOP_SCHEDULE_UNAVAILABLE } from '@/lib/desktop/schedule-description'
+import { DESKTOP_SCHEDULE_UNAVAILABLE, unavailableDesktopScheduleParser } from '@/lib/desktop/schedule-description'
 import { DesktopScheduleDescription } from './DesktopScheduleDescription'
 
 let root: Root
@@ -33,6 +33,10 @@ async function render(options: { parser?: DesktopScheduleParser; timezone?: stri
         cron="0 8 * * *"
         runAt=""
         timezone={options.timezone ?? 'America/Chicago'}
+        agentId="alice"
+        connectionId="conn-b"
+        provider="openai"
+        model="gpt-exact"
         onChange={onChange}
         parser={options.parser}
     />))
@@ -100,7 +104,7 @@ describe('DesktopScheduleDescription', () => {
     })
 
     it('uses the truthful production unavailable state without a fake preview', async () => {
-        await render()
+        await render({ parser: unavailableDesktopScheduleParser })
         await preview('every weekday')
 
         expect(document.body.textContent).toContain(DESKTOP_SCHEDULE_UNAVAILABLE)
@@ -136,11 +140,27 @@ describe('DesktopScheduleDescription', () => {
         await preview()
         expect(document.body.textContent).toContain('Weekdays at 8')
         await act(async () => root.render(<DesktopScheduleDescription
-            mode="cron" cron="0 8 * * *" runAt="" timezone="Europe/Paris" onChange={onChange} parser={parser}
+            mode="cron" cron="0 8 * * *" runAt="" timezone="Europe/Paris" agentId="alice" connectionId="conn-b" provider="openai" model="gpt-exact" onChange={onChange} parser={parser}
         />))
         await click('Describe schedule')
 
         expect(document.body.textContent).not.toContain('Use schedule')
         expect(onChange).not.toHaveBeenCalled()
+    })
+})
+
+
+describe('production parser binding', () => {
+    it('uses the current routine selection through the local parser factory', async () => {
+        const fetchMock = vi.mocked(fetch)
+        fetchMock.mockResolvedValue(Response.json({ status: 'ok', value: { mode: 'cron', cron: '0 8 * * 1-5', label: 'Weekdays at 8' } }))
+        await render()
+        await preview()
+
+        expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+            description: 'weekdays at 8', timezone: 'America/Chicago', connectionId: 'conn-b', provider: 'openai', model: 'gpt-exact',
+        })
+        await click('Use schedule')
+        expect(onChange).toHaveBeenCalledWith({ mode: 'cron', cron: '0 8 * * 1-5', runAt: null, timezone: 'America/Chicago' })
     })
 })
