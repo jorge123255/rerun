@@ -58,7 +58,7 @@ async function preview(text = 'weekdays at 8') {
 
 describe('DesktopScheduleDescription', () => {
     it('previews with the exact editor timezone and mutates only on explicit confirmation', async () => {
-        await render()
+        await render({ parser })
         await preview()
 
         expect(parser.mock.calls[0][0]).toMatchObject({ description: 'weekdays at 8', timezone: 'America/Chicago' })
@@ -109,8 +109,9 @@ describe('DesktopScheduleDescription', () => {
     })
 
     it('discards an unconfirmed preview on Cancel', async () => {
-        await render()
+        await render({ parser })
         await preview()
+        expect(document.body.textContent).toContain('Weekdays at 8')
         await click('Cancel')
 
         expect(onChange).not.toHaveBeenCalled()
@@ -131,8 +132,9 @@ describe('DesktopScheduleDescription', () => {
     })
 
     it('invalidates an unconfirmed preview when the editor timezone changes', async () => {
-        await render()
+        await render({ parser })
         await preview()
+        expect(document.body.textContent).toContain('Weekdays at 8')
         await act(async () => root.render(<DesktopScheduleDescription
             mode="cron" cron="0 8 * * *" runAt="" timezone="Europe/Paris" onChange={onChange} parser={parser}
         />))
