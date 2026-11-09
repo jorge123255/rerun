@@ -83,7 +83,7 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
         try {
             const groups = new Map<string, File[]>()
             for (const entry of picked) {
-                const folder = joinPath(path, entry.subDir)
+                const folder = entry.subDir ? joinPath(path, entry.subDir) : path
                 const files = groups.get(folder) ?? []
                 files.push(entry.file)
                 groups.set(folder, files)
