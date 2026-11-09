@@ -746,6 +746,9 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         if (resumedRun.current === key) return
         resumedRun.current = key
         resumeTarget.current = { sessionId, runId: history.activeRunId }
+        // Resuming skips the send response that normally binds Stop to the live conversation.
+        setLiveSessionId(sessionId)
+        setLiveRunId(history.activeRunId)
         completedRef.current = false
         setReconnectNote(null)
         void resumeStream()
