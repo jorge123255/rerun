@@ -335,6 +335,28 @@ test('expands actual native steps with the same plain-text input and output acro
     }
 })
 
+test('draws a Codex image result through the existing image card', async () => {
+    const output = JSON.stringify({ kind: 'file', files: [{ path: 'generated-images/ig_1.png', name: 'ig_1.png', size: 70, scope: 'agent', identity: '12:34' }] })
+    const fetchMock = vi.fn(async () => new Response(null, { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await render([{ type: 'dynamic-tool', toolName: 'image_generation', toolCallId: 'image-1', state: 'output-available',
+        input: { result: 'iVBORw0KGgo' }, output }], false, 'agent-1')
+    await act(async () => { await Promise.all(fetchMock.mock.results.map(result => result.value)) })
+    expect(container.querySelector('[data-file-card]')).not.toBeNull()
+    expect(container.querySelector('button[aria-label="Open ig_1.png"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('iVBORw0KGgo')
+    const called = fetchMock.mock.calls.map(call => String(call[0]))
+    expect(called.some(url => url.includes('/files/image') && url.includes('generated-images') && url.includes('identity=12%3A34'))).toBe(true)
+    expect(called.some(url => url.includes('/files/video'))).toBe(false)
+
+    const blob = 'A'.repeat(400)
+    await render([{ type: 'dynamic-tool', toolName: 'image_generation', toolCallId: 'image-raw', state: 'output-available',
+        input: {}, output: blob }], false, 'agent-1')
+    expect(container.querySelector('[data-file-card]')).toBeNull()
+    expect(container.textContent).toContain('Image generation is not available.')
+    expect(container.textContent).not.toContain(blob)
+})
+
 test('draws a recorded card_file result as file tiles instead of a generic tool step', async () => {
     const output = JSON.stringify({ kind: 'file', files: [{ path: 'reports/summary.md', name: 'summary.md', size: 7, scope: 'agent' }] })
     await render([{ type: 'dynamic-tool', toolName: 'mcp__rerun__card_file', toolCallId: 'card-1', state: 'output-available',

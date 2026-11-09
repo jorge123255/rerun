@@ -431,6 +431,38 @@ it('keeps a validated recorded audio card and its endpoint identity across a reo
     })
 })
 
+it('keeps a Codex image result card and drops an image payload that is not a file card', () => {
+    const card = { kind: 'file', files: [{ path: 'generated-images/ig_1.png', name: 'ig_1.png', size: 70, scope: 'agent', identity: '12:34' }] }
+    const part = { type: 'tool-image_generation' as const, toolName: 'image_generation', toolCallId: 'image-1', state: 'output-available' as const,
+        input: { prompt: 'a red square', result: 'iVBORw0KGgo' }, output: JSON.stringify(card) }
+    const [result] = publicDesktopHistory([{ id: 'engine-image-gen', role: 'assistant', parts: [part] }])
+    expect(result.parts[0]).toEqual({
+        type: 'tool-image_generation', toolName: 'image_generation', toolCallId: 'image-1', desktopPreview: true,
+        state: 'output-available', input: {}, output: JSON.stringify(card),
+    })
+    expect(JSON.stringify(result)).not.toContain('iVBORw0KGgo')
+
+    const blob = 'A'.repeat(400)
+    const raw = { type: 'tool-image_generation' as const, toolName: 'image_generation', toolCallId: 'image-raw', state: 'output-available' as const,
+        input: { result: blob }, output: blob }
+    const [hidden] = publicDesktopHistory([{ id: 'engine-image-raw', role: 'assistant', parts: [raw] }])
+    expect(hidden.parts[0]).toMatchObject({ toolName: 'image_generation', input: {}, output: 'Image generation is not available.' })
+    expect(JSON.stringify(hidden)).not.toContain(blob)
+
+    const missingIdentity = { kind: 'file', files: [{ path: 'generated-images/ig_1.png', name: 'ig_1.png', size: 70, scope: 'agent' }] }
+    const [rejected] = publicDesktopHistory([{ id: 'engine-image-identity', role: 'assistant', parts: [{ ...part, output: JSON.stringify(missingIdentity) }] }])
+    expect(JSON.stringify(rejected)).not.toContain('generated-images/ig_1.png')
+    expect(JSON.stringify(rejected)).toContain('Image generation is not available.')
+
+    const plan = { error: 'Image generation is not available on this plan' }
+    const [failed] = publicDesktopHistory([{ id: 'engine-image-plan', role: 'assistant', parts: [{ ...part, toolCallId: 'image-plan', output: plan }] }])
+    expect(failed.parts[0]).toMatchObject({ output: plan.error })
+
+    const [api] = toApiMessages([{ id: 'engine-image-api', role: 'assistant', parts: [raw] }])
+    expect(JSON.stringify(api)).not.toContain(blob)
+    expect(api.parts[0]).toMatchObject({ output: 'Image generation is not available.' })
+})
+
 it('keeps a validated recorded MP4 card and its endpoint identity across a reopened chat', () => {
     const card = { kind: 'file', files: [{ path: 'shots/clip.mp4', name: 'clip.mp4', size: 1024, scope: 'agent', identity: '9:2' }] }
     const part = { type: 'tool-card_file' as const, toolName: 'card_file', toolCallId: 'card-video', state: 'output-available' as const,

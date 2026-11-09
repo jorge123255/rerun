@@ -133,6 +133,34 @@ export function desktopFileCardOf(value: unknown): FileCard | undefined {
     return { kind: 'file', files: normalized }
 }
 
+const IMAGE_GENERATION_UNAVAILABLE = 'Image generation is not available.'
+
+function imageGenerationMessage(value: unknown, depth = 0): string | undefined {
+    if (depth > 2) return undefined
+    if (typeof value === 'string') return value
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const record = value as { error?: unknown; message?: unknown; type?: unknown; value?: unknown }
+    if ((record.type === 'json' || record.type === 'text' || record.type === 'error-text' || record.type === 'error-json') && 'value' in record) {
+        return imageGenerationMessage(record.value, depth + 1)
+    }
+    if (typeof record.error === 'string') return record.error
+    if (typeof record.message === 'string') return record.message
+    return undefined
+}
+
+/**
+ * Public text for an image_generation result that is not a valid Mac file card.
+ * A validated card is returned as its small JSON. Payloads that are not a short
+ * refusal are replaced so inline image bytes never reach the conversation.
+ */
+export function desktopImageGenerationOutput(value: unknown): string {
+    const card = desktopFileCardOf(value)
+    if (card) return JSON.stringify(card)
+    const message = imageGenerationMessage(value)
+    if (message && message.length > 0 && message.length <= 300 && !/[A-Za-z0-9+/]{80}/.test(message)) return message
+    return IMAGE_GENERATION_UNAVAILABLE
+}
+
 /** A route or validation error safe to show in the card's preview. */
 export class DesktopCardError extends Error {}
 

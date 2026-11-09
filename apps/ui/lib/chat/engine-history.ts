@@ -13,7 +13,7 @@ import { desktopToolPresentation } from '@/lib/desktop/tool-presentation'
 import { projectDesktopHistoricalCard } from '@/components/desktop/tool-presentations/select'
 import { projectDesktopToolStatus } from '@/components/desktop/tool-presentations/status'
 import { desktopTableCardOf } from '@/lib/desktop/table-card'
-import { desktopFileCardOf } from '@/lib/desktop/file-card'
+import { desktopFileCardOf, desktopImageGenerationOutput } from '@/lib/desktop/file-card'
 import { desktopSkillProposalIdOf } from '@/lib/desktop/skill-proposal-source'
 import { hitlKindOf } from '@/lib/chat-hitl'
 import { desktopApprovalInput, desktopQuestionInput, QUICK_REPLIES_TOOL, desktopSourceParts, desktopAttachmentFieldsOf, type DesktopSourcePart, isContextPart, visibleText, desktopStoredAttachmentSelections, desktopImageSnapshotSchema, type DesktopAttachmentFields, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
@@ -227,6 +227,17 @@ export function publicDesktopHistory(messages: HistoryMessage[]): HistoryMessage
                     state: 'output-available' as const, input: {}, output: JSON.stringify(card),
                 }
             }
+            if (toolName === 'image_generation' && part.state === 'output-available') {
+                const card = desktopFileCardOf(part.output)
+                if (card) return {
+                    type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
+                    state: 'output-available' as const, input: {}, output: JSON.stringify(card),
+                }
+                return {
+                    type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
+                    state: 'output-available' as const, input: {}, output: desktopImageGenerationOutput(part.output),
+                }
+            }
             if (toolName === 'card_table' && part.state === 'output-available') {
                 const card = desktopTableCardOf(part.output)
                 if (card) return {
@@ -269,6 +280,7 @@ const UNTRIMMED_TOOLS = /(^|__)card_[a-z_]+$/
 
 function trimOutput(toolName: string, output: unknown): unknown {
     if (stripBridgePrefix(toolName) === 'tool_install') return desktopToolInstallReferenceOf(output) ?? output
+    if (stripBridgePrefix(toolName) === 'image_generation') return desktopImageGenerationOutput(output)
     if (UNTRIMMED_TOOLS.test(toolName)) return output
     const serialized = typeof output === 'string' ? output : JSON.stringify(output)
     if (serialized === undefined || serialized.length <= MAX_TOOL_OUTPUT_CHARS) return output
