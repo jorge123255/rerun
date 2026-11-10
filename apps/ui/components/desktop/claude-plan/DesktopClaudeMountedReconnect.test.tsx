@@ -2,13 +2,32 @@
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { ConnectionsList, DesktopClaudePlanCredential } from '@rerun/contracts'
+import type { ConnectionsList, DesktopClaudePlanAction, DesktopClaudePlanCredential, DesktopClaudePlanSnapshot } from '@rerun/contracts'
 import { createHmac } from 'node:crypto'
-import { createDesktopClaudePlanAuth, type ClaudeAuthPorts } from '../../../../engine/src/desktop/claude-plan/auth'
+import { resolve } from 'node:path'
 import { GET, POST } from '@/app/api/desktop/claude-login/route'
 import { DesktopSettings } from '../DesktopSettings'
 import { DesktopModelSelector } from '../DesktopModelSelector'
 import { buildDesktopModelView } from '@/lib/desktop/chat-model'
+
+type AuthFixturePorts = {
+    read(): Promise<Record<string, string>>
+    write(value: Record<string, string>): Promise<void>
+    lock<T>(work: () => Promise<T>): Promise<T>
+    exchange(): Promise<DesktopClaudePlanCredential>
+    fingerprint(value: string): string
+    available(): boolean
+    beforeCredentialChange(): Promise<void>
+    changed(): Promise<void>
+    now(): number
+    launchNonce: string
+}
+type AuthFixtureModule = { createDesktopClaudePlanAuth(ports: AuthFixturePorts): {
+    status(): Promise<DesktopClaudePlanSnapshot>
+    action(input: DesktopClaudePlanAction, signal: AbortSignal): Promise<DesktopClaudePlanSnapshot>
+    stop(): void
+} }
+const engineAuthPath = resolve(import.meta.dirname, '../../../../engine/src/desktop/claude-plan/auth.ts')
 
 const transport = vi.hoisted(() => ({ runtime: {} as any, engine: vi.fn(), providers: vi.fn() }))
 vi.mock('server-only', () => ({}))
@@ -36,7 +55,10 @@ it('drives Settings through real Claude route/auth, retains singleton/model, can
         if (hold) { entered(); return new Promise(resolve => { finish = resolve }) }
         return { accessToken: 'synthetic-fresh-access' }
     })
-    const ports: ClaudeAuthPorts = { read: async () => ({ ...saved }), write: async value => { saved = { ...value } }, lock: work => { const pending = tail.then(work); tail = pending.then(() => {}, () => {}); return pending }, exchange, fingerprint: value => createHmac('sha256', 'synthetic-fixture').update(value).digest('hex'), available: () => true, now: () => 1000, launchNonce: 'fixture-a', beforeCredentialChange: vi.fn(async () => {}), changed: async () => { rejected = false } }
+    const ports: AuthFixturePorts = { read: async () => ({ ...saved }), write: async value => { saved = { ...value } }, lock: work => { const pending = tail.then(work); tail = pending.then(() => {}, () => {}); return pending }, exchange, fingerprint: value => createHmac('sha256', 'synthetic-fixture').update(value).digest('hex'), available: () => true, now: () => 1000, launchNonce: 'fixture-a', beforeCredentialChange: vi.fn(async () => {}), changed: async () => { rejected = false } }
+    // Vitest loads the actual engine fixture without pulling its TS graph into the UI compiler.
+    const fixture: unknown = await import(/* @vite-ignore */ engineAuthPath)
+    const { createDesktopClaudePlanAuth } = fixture as AuthFixtureModule
     let auth = createDesktopClaudePlanAuth(ports)
     const providers = (): ConnectionsList => ({ connections: [{ id: 'mac-claude', provider: 'claude', name: 'Claude', connected: !!saved.CLAUDE_CODE_OAUTH_TOKEN, credentialRejected: rejected, models: [selected.model], extraModels: [], createdAt: '2026-11-09T00:00:00.000Z', planLimits: null }], default: { ...selected } })
     transport.providers.mockImplementation(async () => providers())
