@@ -23,8 +23,9 @@ it('unproven producer claims leave no pending request or receipt after a lost re
         },
         pending: async () => { proofReads++; return null },
     }
+    const scope = { workspaceId: claimed.workspaceId, chatId: claimed.chatId }
     const decision = {
-        workspaceId: claimed.workspaceId, chatId: claimed.chatId,
+        ...scope,
         requestId: 'renderer-invented-request', revision: '1' as const,
         choice: { kind: 'text' as const, text: 'A bookkeeper' },
     }
@@ -53,8 +54,8 @@ it('unproven producer claims leave no pending request or receipt after a lost re
         await expect(repository.decide(decision)).rejects.toThrow(/changed/)
         await expect(repository.decide({ ...decision, choice: { kind: 'cards', chosen: ['alpha'] } })).rejects.toThrow(/changed/)
         await expect(repository.decide({ ...decision, choice: { kind: 'dismiss' } })).rejects.toThrow(/changed/)
-        expect(await repository.pending(claimed)).toBeNull()
-        expect(await repository.receipt(claimed, decision.requestId)).toBeNull()
+        expect(await repository.pending(scope)).toBeNull()
+        expect(await repository.receipt(scope, decision.requestId)).toBeNull()
         for (const table of ['desktop_foreman_starter_requests', 'desktop_foreman_starter_receipts']) {
             expect((await db.execute(`SELECT count(*) AS n FROM ${table}`)).rows[0]!.n).toBe(0)
         }

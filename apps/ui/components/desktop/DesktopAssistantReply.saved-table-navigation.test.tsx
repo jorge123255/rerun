@@ -80,7 +80,12 @@ it('reopens one saved card through its authenticated owner/table/view panel, ref
         const button = [...host!.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'Open database')!
         expect(button).toBeDefined(); await act(async () => button.click())
     }
-    async function eventually(check: () => void) { await act(async () => { await vi.waitFor(check) }) }
+    async function eventually(check: () => void) {
+        await vi.waitFor(async () => {
+            await act(async () => {})
+            check()
+        })
+    }
     try {
         for (let reopen = 0; reopen < 2; reopen++) {
             const before = browserCalls.length

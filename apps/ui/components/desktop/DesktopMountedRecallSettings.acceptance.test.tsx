@@ -206,8 +206,9 @@ it('mounts Tool services and the board, recalls a paraphrase, keeps it across a 
     const brainPath = resolve(import.meta.dirname, '../../../engine/src/desktop/brain-semantic/runtime.ts')
     async function loadRuntimes(initializeBrain: boolean) {
         memoryRuntime = await import(/* @vite-ignore */ memoryPath)
-        brainRuntime = await import(/* @vite-ignore */ brainPath)
-        if (initializeBrain) await brainRuntime.initializeDesktopBrainSemanticStore()
+        const loadedBrain: BrainRuntime = await import(/* @vite-ignore */ brainPath)
+        brainRuntime = loadedBrain
+        if (initializeBrain) await loadedBrain.initializeDesktopBrainSemanticStore()
     }
     function MountedBoard() {
         const searchRef = useRef<HTMLInputElement>(null)

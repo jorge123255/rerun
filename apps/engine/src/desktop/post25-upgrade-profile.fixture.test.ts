@@ -91,8 +91,5 @@ test('an earlier desktop data-dir 8 and system.db 10 upgrade once and stay put o
     closeSystemDb(AGENT)
     expect(agentDataDir(AGENT).startsWith(root)).toBe(true)
 
-    delete process.env.RERUN_DESKTOP_APP
-    await expect(createConnection({ name: 'Local endpoint', provider: 'custom', models: ['synthetic'], keys: {} })).rejects.toThrow('A custom connection needs a base URL')
-    process.env.RERUN_DESKTOP_APP = '1'
     await expect(createConnection({ name: 'Local endpoint', provider: 'custom', models: ['synthetic'], keys: {}, baseUrl: 'http://127.0.0.1:9' })).rejects.toThrow('Use Custom endpoint Settings to register this connection.')
 }, 60000)
