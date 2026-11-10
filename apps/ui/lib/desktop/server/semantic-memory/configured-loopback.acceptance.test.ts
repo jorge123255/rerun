@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 import { expect, it, vi } from 'vitest'
 import { POST } from '@/app/api/desktop/internal/semantic-memory/route'
@@ -11,7 +11,7 @@ const fixture = vi.hoisted(() => ({ db: null as unknown as Client, brain: null a
 vi.mock('../database', () => ({ openDesktopDatabase: async () => fixture.db }))
 vi.mock('../runtime', () => ({ readDesktopRuntime: async () => ({ workspaceId: 7, dataRoot: fixture.root, app: { origin: fixture.origin, sessionToken: 'synthetic-session' }, engine: { apiKey: 'synthetic-loopback-key' } }) }))
 vi.mock('../../../../../engine/src/config/paths.js', () => ({ dataDir: () => fixture.root }))
-vi.mock('../../../../../engine/src/config/env.js', () => ({ env: () => ({ RERUN_HUB_BASE_URL: fixture.origin, RERUN_API_KEY: 'synthetic-loopback-key' }) }))
+vi.mock('../../../../../engine/src/config/env.js', () => ({ env: () => ({ RERUN_HUB_BASE_URL: fixture.origin, RERUN_API_KEY: 'synthetic-loopback-key', RERUN_LOG_LEVEL: 'silent' }) }))
 vi.mock('../../../../../engine/src/desktop/policy.js', () => ({ desktopApp: () => true }))
 vi.mock('../../../../../engine/src/agents/loader.js', () => ({ readAgentConfig: async () => ({ enabled: fixture.enabled, tools: { desktopToolGrants: { brain: fixture.grant } } }) }))
 vi.mock('../../../../../engine/src/desktop/agent-lifecycle.js', () => ({ desktopDeletionActive: () => false, assertDesktopAgentNotDeleted: () => {} }))
@@ -58,15 +58,24 @@ it('normal configured callback and both engine bindings use loopback vectors, pe
         if (url.origin !== fixture.origin) throw new Error('External traffic forbidden in fixture')
         return nativeFetch(input, init)
     }))
-    let memory: typeof import('../../../../../engine/src/desktop/semantic-memory/runtime.js') | undefined
+    // Load the real engine at runtime without compiling it in the UI's TypeScript target.
+    const memoryPath = resolve(import.meta.dirname, '../../../../../engine/src/desktop/semantic-memory/runtime.ts')
+    const brainPath = resolve(import.meta.dirname, '../../../../../engine/src/desktop/brain-semantic/runtime.ts')
+    let memory: {
+        maintainSemanticDesktopMemory(owner: string, operation: 'reconcile'): Promise<unknown>
+        semanticDesktopMemoryStatus(owner: string): Promise<{ indexed: number }>
+        recallSemanticDesktopMemory(owner: string, query: { query: string; limit: number; includeDormant: boolean; reinforce: 'none' }): Promise<{ memories: { id: string }[] }>
+        shutdownDesktopSemanticMemory(): Promise<void>
+    } | undefined
     try {
         await fixture.db.executeMultiple(`CREATE TABLE desktop_agents(id TEXT PRIMARY KEY,workspace_id INTEGER,engine_agent_id TEXT,enabled INTEGER); CREATE TABLE desktop_deletions(agent_id TEXT,engine_agent_id TEXT);
             INSERT INTO desktop_agents VALUES('local-owner',1,'owner',1); INSERT INTO desktop_agents VALUES('foreign-owner',2,'foreign',1);` + desktopAuxiliarySchema)
         let credentials = desktopAuxiliaryStore(fixture.db)
         await credentials.change({ purpose: 'embedding', expectedRevision: 'unconfigured', key: 'synthetic-provider-key' })
         fixture.notes = [{ id: 'walks', content: 'Canines require daily exercise', path: '/synthetic/memory/walks.md', kind: 'fact', tags: [], createdAt: new Date().toISOString() }]
-        memory = await import('../../../../../engine/src/desktop/semantic-memory/runtime.js')
-        const brainRuntime = await import('../../../../../engine/src/desktop/brain-semantic/runtime.js')
+        const memoryRuntime: NonNullable<typeof memory> = await import(/* @vite-ignore */ memoryPath)
+        memory = memoryRuntime
+        const brainRuntime = await import(/* @vite-ignore */ brainPath)
         await brainRuntime.initializeDesktopBrainSemanticStore()
         let brain = await brainRuntime.desktopBrainSemanticIndex('owner', new AbortController().signal)
         const query = { query: 'Dogs need regular walks', limit: 5, includeDormant: false, reinforce: 'none' as const }
@@ -81,8 +90,9 @@ it('normal configured callback and both engine bindings use loopback vectors, pe
         await memory.shutdownDesktopSemanticMemory(); vi.resetModules()
         fixture.db.close(); fixture.db = createClient({ url: `file:${join(fixture.root, 'app.db')}` }); credentials = desktopAuxiliaryStore(fixture.db)
         fixture.brain.close(); fixture.brain = createClient({ url: `file:${join(fixture.root, 'brain.db')}` })
-        memory = await import('../../../../../engine/src/desktop/semantic-memory/runtime.js')
-        brain = await (await import('../../../../../engine/src/desktop/brain-semantic/runtime.js')).desktopBrainSemanticIndex('owner', new AbortController().signal)
+        const reopenedMemory: NonNullable<typeof memory> = await import(/* @vite-ignore */ memoryPath)
+        memory = reopenedMemory
+        brain = await (await import(/* @vite-ignore */ brainPath)).desktopBrainSemanticIndex('owner', new AbortController().signal)
         expect((await memory.recallSemanticDesktopMemory('owner', query)).memories[0]?.id).toBe('walks')
         expect((await brain.search({ query: query.query })).hits[0]?.slug).toBe('care')
         offline = true

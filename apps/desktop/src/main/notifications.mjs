@@ -18,10 +18,11 @@ export function createDesktopNotifications({ Notification, onClick, timeoutMs = 
     const active = new Map()
     let closed = false
     let retryAfter = 0
-    function notify(value) {
+    function notify(value, scope) {
         const payload = notificationPayload(value)
         if (!payload || closed || !Notification.isSupported()) return Promise.resolve({ status: 'unavailable' })
-        if (active.has(payload.key)) return active.get(payload.key).result
+        const key = scope ? JSON.stringify([scope.workspaceId, scope.launchNonce, payload.key]) : payload.key
+        if (active.has(key)) return active.get(key).result
         // A refused OS delivery must not generate another native request every UI poll.
         // The durable event remains unconsumed and can be retried after this short cooldown.
         if (now() < retryAfter) return Promise.resolve({ status: 'unavailable' })
@@ -40,7 +41,7 @@ export function createDesktopNotifications({ Notification, onClick, timeoutMs = 
         let settle
         const result = new Promise(resolve => { settle = resolve })
         const entry = { notice, result, settled: false }
-        active.set(payload.key, entry)
+        active.set(key, entry)
         const finish = (status, diagnostic) => {
             if (entry.settled) return
             entry.settled = true
@@ -53,19 +54,19 @@ export function createDesktopNotifications({ Notification, onClick, timeoutMs = 
         // Electron's error string is deliberately ignored: it has no stable permission code
         // and may contain notification copy or other private native details.
         notice.once('failed', () => {
-            if (active.get(payload.key) !== entry) return
+            if (active.get(key) !== entry) return
             retryAfter = now() + 30_000
             finish('failed', 'native-failed')
-            active.delete(payload.key)
+            active.delete(key)
         })
         notice.once('close', () => {
             finish('unknown', 'closed-before-acceptance')
-            if (active.get(payload.key) === entry) active.delete(payload.key)
+            if (active.get(key) === entry) active.delete(key)
         })
         notice.once('click', () => {
-            if (closed || active.get(payload.key) !== entry) return
+            if (closed || active.get(key) !== entry) return
             const { title, subtitle, body, silent, ...target } = payload
-            onClick(target)
+            onClick(target, scope)
         })
         try { notice.show() } catch { finish('unknown', 'show-threw') }
         return result

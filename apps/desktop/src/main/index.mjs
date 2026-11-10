@@ -74,14 +74,16 @@ function flushNotificationClicks() {
         return true
     })
 }
-function createNotices() { return createDesktopNotifications({ Notification, onClick: target => {
-    if (!quitting && !transitioning && window && !window.isDestroyed()) {
+function createNotices() { return createDesktopNotifications({ Notification, onClick: (target, scope) => {
+    const current = clickScope()
+    if (!scope || !current || scope.workspaceId !== current.workspaceId || scope.launchNonce !== current.launchNonce) return
+    if (window && !window.isDestroyed()) {
         if (window.isMinimized()) window.restore()
         window.show(); window.focus()
     }
-    // A reload is still this workspace runtime. Hold the click until that page subscribes.
-    clickHandoff.accept(target, transitioning ? null : runtimeScope())
-    if (!quitting && !transitioning) flushNotificationClicks()
+    // Bind the click to the runtime that originally submitted the notice, even after reload.
+    clickHandoff.accept(target, scope)
+    flushNotificationClicks()
 } }) }
 
 if (!app.requestSingleInstanceLock()) app.quit()
@@ -198,8 +200,9 @@ async function launch() {
     ipcMain.handle('desktop:result-save', (event, value) => { trusted(event); return saveResultFile(value) })
     ipcMain.handle('desktop:notify', (event, value) => {
         trusted(event)
-        if (quitting || transitioning || !isDesktopPage(event.senderFrame.url)) return { status: 'unavailable' }
-        return desktopNotifications.notify(value)
+        const scope = clickScope()
+        if (!scope || !isDesktopPage(event.senderFrame.url)) return { status: 'unavailable' }
+        return desktopNotifications.notify(value, scope)
     })
     ipcMain.handle('desktop:save-draining-draft', (event, value) => {
         trusted(event)
@@ -225,7 +228,7 @@ async function launch() {
         try {
             trusted(event)
             const registrationId = clickRegistration(value)
-            if (!registrationId || quitting || transitioning || !isDesktopPage(event.senderFrame.url)) return
+            if (!registrationId || !isDesktopPage(event.senderFrame.url)) return
             clickReady = { contents: event.sender, registrationId }
             flushNotificationClicks()
         } catch {}
@@ -398,5 +401,5 @@ async function runWorkspaceTransition(operation) {
         await window.loadFile(startup)
         supervisor.publish('error', 'Workspace state needs recovery. Choose Retry to try again.')
         return { ok: false, code: 'path_corrupt', message: 'Workspace state needs recovery before continuing.' }
-    } finally { transitioning = false }
+    } finally { transitioning = false; flushNotificationClicks() }
 }

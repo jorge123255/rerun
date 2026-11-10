@@ -49,7 +49,7 @@ export function decodeReply(text: string, mime: string, id: number): Record<stri
     if (!reply || reply.error || !reply.result || typeof reply.result !== 'object') throw new Error('MCP protocol request failed')
     return reply.result
 }
-export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, network: typeof fetch = fetch, oauthCredential?: (agent:string,name:string,revision:string,signal:AbortSignal)=>Promise<string|null>, materials?: DesktopMcpMaterialSource) {
+export function remoteMcpRuntime(store: Pick<RemoteMcpStore, 'read' | 'readOAuth' | 'lifecycle'>, access: McpAccess, network: typeof fetch = fetch, oauthCredential?: (agent:string,name:string,revision:string,signal:AbortSignal)=>Promise<string|null>, materials?: DesktopMcpMaterialSource) {
     const lifecycle = store.lifecycle
     const disconnect = lifecycle.disconnect
     async function operate(agent: string, name: string, revision: string, call?: { name:string; arguments:Record<string,unknown> }, stop?: AbortSignal) {

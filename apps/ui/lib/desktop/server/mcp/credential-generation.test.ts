@@ -95,3 +95,22 @@ test('Stop and expiry invalidate an issued lease', async () => {
     expiring!.dispose()
     lease!.dispose()
 })
+
+test('a late approved exchange cannot replace a credential written by a different store', async () => {
+    const generation = await setup()
+    const lease = await generation.read(AGENT, SERVER)
+    const other = remoteMcpStore(db, () => KEY)
+    const racing = createMcpCredentialGeneration({
+        key: () => KEY,
+        store: {
+            ...store,
+            async replaceOAuth(agent, name, expected, next, stop) {
+                await other.writeOAuth(agent, name, expected.revision, bundle('browser-won'), stop)
+                return store.replaceOAuth(agent, name, expected, next, stop)
+            },
+        },
+    })
+    await expect(racing.advance(AGENT, SERVER, lease!.generation, bundle('late-device'), signal())).rejects.toThrow('MCP credential generation changed')
+    expect((await store.readOAuth(AGENT, SERVER))?.accessToken).toBe('browser-won')
+    lease!.dispose()
+})

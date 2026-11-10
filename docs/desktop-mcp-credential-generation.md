@@ -27,8 +27,8 @@ dispatch. No durable generation existed anywhere.
 | File | Change |
 |---|---|
 | `apps/ui/lib/desktop/server/mcp/credential-generation.ts` | the generation: `createMcpCredentialGeneration().read/advance`, opaque token, lease with deadline and check |
-| `apps/ui/lib/desktop/server/mcp/store.ts` | `credentialState()` (raw sealed row, server only) and an optional `guard` run inside the credential commit; any successful credential write invalidates watchers |
-| `apps/ui/lib/desktop/server/mcp/lifecycle.ts` | `invalidateCredentials()` — watchers/leases go stale, in-flight calls are not aborted |
+| `apps/ui/lib/desktop/server/mcp/store.ts` | `credentialState()` (raw sealed row, server only) and an exact conditional credential replacement; successful writes invalidate approval watchers |
+| `apps/ui/lib/desktop/server/mcp/lifecycle.ts` | `invalidateCredentials()` — approval leases go stale; ordinary OAuth admission stays valid |
 | `apps/ui/lib/desktop/server/mcp/credential-generation.test.ts` | authored regression (unrun) |
 | `docs/desktop-mcp-credential-generation.md` | this note |
 
@@ -48,8 +48,9 @@ No column, table or migration: the token is a keyed HMAC over the durable canoni
 ### Which exchange may advance it
 
 `advance(agent, server, expected, bundle, signal)` first requires the expected token, then writes
-through `writeOAuth` with a **guard executed inside the credential commit** that recomputes the
-token; a write that lost the race throws `MCP credential generation changed` before any row changes.
+through `replaceOAuth`. A single conditional write compares the immutable registration ID,
+revision and exact sealed credential. A write that lost the race throws
+`MCP credential generation changed` without replacing the winning row.
 So only the exact approved device exchange whose lease still holds the current generation can
 replace the credential.
 
@@ -60,7 +61,7 @@ replace the credential.
   lease's `check()` throws `MCP capability invalidated`;
 - revoke / registration delete → `read` returns null, `advance` refuses `unavailable`;
 - registration edit (`save`) → new revision → new token, old lease watch invalidated;
-- Stop / shutdown → `lifecycle` generation and `disconnect` abort the lease;
+- Stop / shutdown → the supplied Stop signal or the lifecycle check makes the lease unusable;
 - expiry → the lease's own deadline aborts its signal and `check()` throws `expired`.
 
 ## Root integration seam

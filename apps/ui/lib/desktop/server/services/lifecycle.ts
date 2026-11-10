@@ -3,7 +3,6 @@ import {randomUUID} from 'node:crypto'
 import type {DesktopServiceHealth} from '@rerun/contracts'
 import {remoteMcpLifecycle} from '../mcp/lifecycle'
 import {abortable,remoteMcpRuntime} from '../mcp/remote'
-import type {RemoteMcpStore} from '../mcp/store'
 import type {RemoteTool} from '../mcp/model'
 import type {DesktopRuntime} from '../runtime'
 import type {ServiceStore,ServiceInstall} from './store'
@@ -39,9 +38,9 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
  async function liveRecord(owner:string,key:string,revision:string,signal:AbortSignal){const record=await abortable(store.read(owner,key),signal);signal.throwIfAborted();if(!record || record.revision!==revision || record.state!=='ready')throw new Error('Service connection changed');await skillAuthority.assertReady(owner,record.id,signal);return record}
  function transport(record:ServiceInstall,run:ServiceRun|undefined,signal:AbortSignal):ServiceTransport{
   if(isAccountService(record)){if(!accountTransport)throw new Error('Service account transport unavailable');return accountTransport(record,run,signal)}
-  const reader:RemoteMcpStore={lifecycle,
-   list:async()=>[],read:async(owner,name)=>{if(owner!==record.owner||name!==idName(record))throw new Error('Service owner mismatch');const now=await liveRecord(owner,record.key,record.revision,signal);return {name,url:now.plan.url,revision:now.revision,bearer:await abortable(store.credential(owner,now.id),signal)}},
-   readOAuth:async()=>null,writeOAuth:async()=>{throw new Error('Service OAuth unavailable')},save:async()=>{throw new Error('Read-only service transport')},remove:async()=>{throw new Error('Read-only service transport')},
+  const reader:Parameters<typeof remoteMcpRuntime>[0]={lifecycle,
+   read:async(owner,name)=>{if(owner!==record.owner||name!==idName(record))throw new Error('Service owner mismatch');const now=await liveRecord(owner,record.key,record.revision,signal);return {name,url:now.plan.url,revision:now.revision,bearer:await abortable(store.credential(owner,now.id),signal)}},
+   readOAuth:async()=>null,
   }
   const runtime=remoteMcpRuntime(reader,async(owner)=>{const authority=await current(owner,'use',run,signal);if(authority.engineAgentId!==record.engineId)throw new Error('Service owner changed');return {enabled:authority.enabled,granted:authority.granted}},network)
   return {...runtime,probe:(...args:Parameters<typeof runtime.probe>)=>trackTransport(record.owner,runtime.probe(...args)),call:(...args:Parameters<typeof runtime.call>)=>trackTransport(record.owner,runtime.call(...args))}

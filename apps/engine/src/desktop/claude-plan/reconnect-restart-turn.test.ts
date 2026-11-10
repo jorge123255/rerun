@@ -25,6 +25,9 @@ vi.mock('../../runtime/loop.js', async original => ({
 it('reconnect persists one singleton, stale cancelled exchange cannot replace it, and canonical queued turn admits one synthetic reply after reopen', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'claude-restart-turn-'))
     vi.stubEnv('RERUN_DATA_DIR', directory); vi.stubEnv('RERUN_DESKTOP_APP', '1'); vi.stubEnv('RERUN_DESKTOP_SECRET_KEY', 'c'.repeat(64)); vi.stubEnv('RERUN_API_KEY', '')
+    // The actual desktop provider gate checks these paths. The fixture replaces only runAgent.
+    vi.stubEnv('RERUN_DESKTOP_CLAUDE_RUNNER', join(directory, 'fixture-claude-runner'))
+    vi.stubEnv('RERUN_DESKTOP_CLAUDE_SANDBOX', join(directory, 'fixture-claude-sandbox'))
     observed.calls = 0
     const { DEFAULT_CONNECTION_MODELS, boxDefaultModelSchema } = await import('@rerun/contracts')
     const { createConnection } = await import('../../connections/store.js')
