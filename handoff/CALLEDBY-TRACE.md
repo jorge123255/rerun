@@ -29,3 +29,7 @@ Both paths open a fresh session on the target coworker and launch it with `start
 - User and Foreman chats — `apps/engine/src/http/routes/chat.ts` and `apps/engine/src/desktop/foreman/routes.ts` call `runAgent` with `{ source: 'chat', ... }` and no caller coworker. Those runs are the person talking, not a coworker call.
 
 `RunTrigger` in `apps/engine/src/runtime/context.ts` has no `calledBy` yet. `startHeadlessRun` forwards the trigger object into `runAgent`, and `runAgent` passes it to `buildSystemPrompt`. The hosted brain section is `buildBrainSection()` with no argument (`apps/engine/src/agents/systemPrompt.ts`), which always appends `EMPTY_FOR_AGENTS` when the index is empty (`apps/engine/src/brain/prompt.ts`). That sentence tells the coworker to `call_agent` other coworkers. On the desktop app, `buildSystemPrompt` does not call `buildBrainSection`; it uses `DESKTOP_BRAIN_INSTRUCTION`, which does not contain that sentence and does not inject company pages. The Foreman section is `buildForemanBrainSection()` and stays on the plain empty line.
+
+## Mac review
+
+The desktop caller context now selects an operating note for the called coworker. It replaces the generic instruction to call another coworker for this turn. The note directs the recipient to answer from its own context and permitted sources, explain gaps, and return the result to the caller. It does not inject the caller id or read company data. The Mac brain tool instruction still requires the existing grant. The authorization, target allowlist, call depth and loop checks are unchanged.
