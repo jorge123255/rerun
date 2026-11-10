@@ -64,3 +64,23 @@ it('does not read the company brain for a desktop run, including one started by 
     expect(hosted.agent).not.toHaveBeenCalled()
     expect(hosted.foreman).not.toHaveBeenCalled()
 })
+
+it('directs a called desktop coworker to answer its caller within its own permissions', async () => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    const replyDirectly = 'Answer the calling coworker from the context you already have'
+    for (const grant of [undefined, true]) {
+        const agent = coworker(grant)
+        const called = systemPromptText(await buildSystemPrompt(agent, { source: 'chat', calledBy: 'synthetic-caller-id' }))
+        expect(called).toContain(replyDirectly)
+        expect(called).toContain('Return the result to the caller without passing the request to another coworker')
+        expect(called).not.toContain('To reach another persistent coworker on this engine, use call_agent')
+        expect(called).not.toContain('synthetic-caller-id')
+        expect(called.includes('<company_brain>')).toBe(grant === true)
+    }
+    for (const trigger of [{ source: 'chat' as const }, { source: 'schedule' as const, slug: 'daily', name: 'Daily' }, { source: 'trigger' as const, slug: 'hook', name: 'Hook' }]) {
+        const ordinary = systemPromptText(await buildSystemPrompt(coworker(), trigger))
+        expect(ordinary).not.toContain(replyDirectly)
+        expect(ordinary).toContain('To reach another persistent coworker on this engine, use call_agent')
+    }
+    expect(hosted.agent).not.toHaveBeenCalled()
+})
