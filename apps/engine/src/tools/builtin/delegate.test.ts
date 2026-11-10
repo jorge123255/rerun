@@ -10,15 +10,15 @@ type Child = { id: string; config: any; soul: string; env: Record<string, string
 type Script = { text?: string; error?: string; throws?: string; gate?: Promise<void> }
 
 const runs = vi.hoisted(() => ({
-    started: [] as Array<{ child: Child; sessionId: string; prompt: string }>,
+    started: [] as Array<{ child: Child; sessionId: string; prompt: string; args: unknown[] }>,
     script: (_prompt: string): Script => ({ text: 'done' }),
     active: 0,
     maxActive: 0,
 }))
 
 vi.mock('../../runtime/loop.js', () => ({
-    runAgent: async (child: Child, sessionId: string, prompt: string) => {
-        runs.started.push({ child, sessionId, prompt })
+    runAgent: async (child: Child, sessionId: string, prompt: string, ...args: unknown[]) => {
+        runs.started.push({ child, sessionId, prompt, args })
         const script = runs.script(prompt)
         if (script.throws) throw new Error(script.throws)
         runs.active += 1
@@ -96,6 +96,7 @@ describe('delegate_tasks', () => {
         expect(child.env).toEqual({ API_KEY: 'k' })
         expect(ctx.agent.config.tools.delegate).toBe(true)
         expect(ctx.agent.config.selfImprovement.enabled).toBe(true)
+        expect(runs.started[0].args).toEqual([])
     })
 
     it('keeps paid data for the child', async () => {

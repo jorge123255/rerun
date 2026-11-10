@@ -36,3 +36,51 @@ it('preserves hosted Brain prompt behavior outside desktop', async () => {
     expect(systemPromptText(await buildSystemPrompt(coworker()))).toContain('private-company-sentinel')
     expect(systemPromptText(await buildSystemPrompt(coworker(undefined, true, true, true)))).toContain('private-foreman-sentinel')
 })
+it('asks for the called-coworker empty text only on a hosted chat run that names its caller', async () => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '0')
+    hosted.agent.mockClear()
+    await buildSystemPrompt(coworker(), { source: 'chat' })
+    expect(hosted.agent).toHaveBeenCalledWith(false)
+    hosted.agent.mockClear()
+    await buildSystemPrompt(coworker(), { source: 'chat', calledBy: 'engine-caller' })
+    expect(hosted.agent).toHaveBeenCalledWith(true)
+    for (const trigger of [{ source: 'schedule' as const, slug: 'daily', name: 'Daily' }, { source: 'trigger' as const, slug: 'hook', name: 'Hook' }]) {
+        hosted.agent.mockClear()
+        await buildSystemPrompt(coworker(), trigger)
+        expect(hosted.agent).toHaveBeenCalledWith(false)
+    }
+    hosted.agent.mockClear()
+    hosted.foreman.mockClear()
+    await buildSystemPrompt(coworker(undefined, true, true, true), { source: 'chat', calledBy: 'engine-caller' })
+    expect(hosted.foreman).toHaveBeenCalledWith()
+    expect(hosted.agent).not.toHaveBeenCalled()
+})
+it('does not read the company brain for a desktop run, including one started by a coworker', async () => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    hosted.agent.mockClear()
+    const text = systemPromptText(await buildSystemPrompt(coworker(true), { source: 'chat', calledBy: 'engine-caller' }))
+    expect(text).toContain('use brain_search and then brain_read')
+    expect(text).not.toContain('ask the coworkers of the workspace')
+    expect(hosted.agent).not.toHaveBeenCalled()
+    expect(hosted.foreman).not.toHaveBeenCalled()
+})
+
+it('directs a called desktop coworker to answer its caller within its own permissions', async () => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    const replyDirectly = 'Answer the calling coworker from the context you already have'
+    for (const grant of [undefined, true]) {
+        const agent = coworker(grant)
+        const called = systemPromptText(await buildSystemPrompt(agent, { source: 'chat', calledBy: 'synthetic-caller-id' }))
+        expect(called).toContain(replyDirectly)
+        expect(called).toContain('Return the result to the caller without passing the request to another coworker')
+        expect(called).not.toContain('To reach another persistent coworker on this engine, use call_agent')
+        expect(called).not.toContain('synthetic-caller-id')
+        expect(called.includes('<company_brain>')).toBe(grant === true)
+    }
+    for (const trigger of [{ source: 'chat' as const }, { source: 'schedule' as const, slug: 'daily', name: 'Daily' }, { source: 'trigger' as const, slug: 'hook', name: 'Hook' }]) {
+        const ordinary = systemPromptText(await buildSystemPrompt(coworker(), trigger))
+        expect(ordinary).not.toContain(replyDirectly)
+        expect(ordinary).toContain('To reach another persistent coworker on this engine, use call_agent')
+    }
+    expect(hosted.agent).not.toHaveBeenCalled()
+})

@@ -183,6 +183,7 @@ describe('fireSchedule', () => {
             { event: 'agent.session.created', kind: 'info', agentId: 'on', sessionId: started.sessionId, runId: null, message: 'Scheduled run: Name daily', title: 'Name daily', source: 'schedule' },
         ])
         expect(state.runs[0]).toMatchObject({ agentId: 'on', sessionId: started.sessionId, message: '<scheduled_run schedule="daily" name="Name daily">\ndo daily\n</scheduled_run>', override: { provider: 'rerun', model: 'gpt-x' }, trigger: { source: 'schedule', slug: 'daily', name: 'Name daily' } })
+        expect(state.runs[0].trigger).not.toHaveProperty('calledBy')
         expect(started.runId).toBe(state.runs[0].runId)
     })
 

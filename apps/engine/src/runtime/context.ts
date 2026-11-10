@@ -8,7 +8,7 @@ import type { Logger } from '../lib/logger.js'
 import type { HostBreaker } from '../tools/host-breaker.js'
 import type { ScreenshotStore } from './screenshots.js'
 
-export type RunTrigger = { source: 'chat'; coworkerMentions?: DesktopCoworkerMention[]; author?: MessageAuthor; userLanguage?: string; workspaceAttachment?: DesktopWorkspaceAttachment; workspaceAttachments?: DesktopWorkspaceAttachment[]; desktopAttachments?: DesktopResolvedAttachment[]; desktopDocuments?: DesktopResolvedDocument[]; savedUser?: MessageRow; queuedUser?: MessageRow } | { source: 'schedule'; slug: string; name: string; requireExactModel?: boolean } | { source: 'trigger'; slug: string; name: string }
+export type RunTrigger = { source: 'chat'; coworkerMentions?: DesktopCoworkerMention[]; author?: MessageAuthor; userLanguage?: string; workspaceAttachment?: DesktopWorkspaceAttachment; workspaceAttachments?: DesktopWorkspaceAttachment[]; desktopAttachments?: DesktopResolvedAttachment[]; desktopDocuments?: DesktopResolvedDocument[]; savedUser?: MessageRow; queuedUser?: MessageRow; calledBy?: string } | { source: 'schedule'; slug: string; name: string; requireExactModel?: boolean } | { source: 'trigger'; slug: string; name: string }
 
 export type PartialResult = { label: string; text: string }
 

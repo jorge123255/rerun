@@ -105,6 +105,15 @@ describe('desktop trigger run authority', () => {
         expect((await mocks.getAgent.mock.results[0]!.value).config.tools.desktopToolGrants.trigger).toBe(false)
         expect(mocks.launched).toHaveBeenCalledOnce()
         expect(mocks.release).toHaveBeenCalledOnce()
+        expect(mocks.startHeadlessRun).toHaveBeenCalledWith(
+            expect.objectContaining({ id: 'engine-1' }),
+            'session-1',
+            'Handle this delivery.',
+            { connectionId: 'connection-1', model: 'model-1' },
+            { source: 'trigger', slug: 'hook', name: 'Hook' },
+            expect.any(Object),
+        )
+        expect(mocks.startHeadlessRun.mock.calls[0][4]).not.toHaveProperty('calledBy')
     })
 
     it('reports a disabled coworker separately from a missing model-tool grant before creating a session', async () => {

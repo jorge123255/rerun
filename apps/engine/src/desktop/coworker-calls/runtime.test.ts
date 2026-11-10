@@ -387,6 +387,7 @@ describe('desktop coworker call launch and recovery boundaries', () => {
             await input.onRunCreated('engine-child-run')
             const lineage = await store.inbound('engine-child-run')
             expect(lineage).toMatchObject({ parentAgentId: caller.publicAgentId, targetAgentId: bob.publicAgentId, depth: 0 })
+            expect(input.originAgentId).toBe(caller.engineAgentId)
             expect(input.model).toMatchObject({ connectionId: 'connection-bob', model: 'model-bob' })
             await input.assertActive()
             return { engineRunId: 'engine-child-run', follow: { runId: 'engine-child-run', settled: Promise.resolve(), result: { fullStream: streamOf([]) } } }

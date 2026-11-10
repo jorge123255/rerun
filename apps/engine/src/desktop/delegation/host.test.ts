@@ -5,7 +5,7 @@ import type { DelegationStore, Record as DelegationRecord, ReceiptStore } from '
 import { createDelegationRuntime } from './runtime.js'
 import type { DelegationClient } from './client.js'
 
-const hooks = vi.hoisted(() => ({ getRun: vi.fn(), closeDb: vi.fn(), inspect: vi.fn(), cleanup: vi.fn(), deletion: vi.fn() }))
+const hooks = vi.hoisted(() => ({ getRun: vi.fn(), closeDb: vi.fn(), inspect: vi.fn(), cleanup: vi.fn(), deletion: vi.fn(), allocate: vi.fn(), initialize: vi.fn() }))
 vi.mock('../../agents/availability.js', () => ({ isUsable: vi.fn() }))
 vi.mock('../../connections/registry.js', () => ({ findConnection: vi.fn() }))
 vi.mock('../../db/repos/runs.js', () => ({ getRun: hooks.getRun, cancelRun: vi.fn() }))
@@ -21,8 +21,17 @@ vi.mock('../agent-lifecycle.js', () => ({ desktopDeletionActive: vi.fn(), persis
 vi.mock('../coworker-calls/prepare.js', () => ({ redactCoworkerCallText: (text: string) => text }))
 vi.mock('../../tools/builtin/sub-run-watch.js', () => ({ isFailureResult: vi.fn() }))
 vi.mock('./child-scope.js', () => ({ registerDelegationChild: vi.fn() }))
-vi.mock('./resources.js', async importOriginal => ({ ...await importOriginal<typeof import('./resources.js')>(), inspectDelegationDirectory: hooks.inspect, cleanupDelegationDirectory: hooks.cleanup }))
+vi.mock('./resources.js', async importOriginal => ({ ...await importOriginal<typeof import('./resources.js')>(), inspectDelegationDirectory: hooks.inspect, cleanupDelegationDirectory: hooks.cleanup, allocateDelegationDirectory: hooks.allocate, initializeDelegationDirectory: hooks.initialize }))
 import { createDesktopDelegationHost } from './host.js'
+import { agentConfigSchema } from '@rerun/contracts'
+import { isUsable } from '../../agents/availability.js'
+import { findConnection } from '../../connections/registry.js'
+import { createSession } from '../../db/repos/sessions.js'
+import { readAgentConfig } from '../../agents/loader.js'
+import { startHeadlessRun } from '../../runtime/headless-run.js'
+import { sessionClaim, waitForRunCancellation } from '../../runtime/run-control.js'
+import type { RunContext } from '../../runtime/context.js'
+import { registerDelegationChild } from './child-scope.js'
 
 beforeEach(() => { vi.clearAllMocks(); hooks.cleanup.mockResolvedValue(undefined); hooks.deletion.mockResolvedValue(undefined) })
 function fixture(input: Partial<Allocation> = {}) {
@@ -115,4 +124,62 @@ test('queued recovery projects a full snapshot through the strict bridge and com
     expect(hooks.closeDb).not.toHaveBeenCalled()
     expect(hooks.inspect).not.toHaveBeenCalled()
     expect(hooks.cleanup).not.toHaveBeenCalled()
+})
+
+test('a delegated sub-run is a chat task and is not marked called by a coworker', async () => {
+    const source = { parentAgentId: 'coworker', parentSessionId: 'chat', parentRunId: 'parent-run', toolCallId: 'tool' }
+    let row: Allocation = {
+        token: randomUUID(), identity: randomUUID(), revision: randomUUID(), epoch: 'launch-epoch', source, taskId: randomUUID(),
+        childAgentId: `delegate-${randomUUID()}`, rootIdentity: null, sessionId: null, runId: null, phase: 'reserved', manifest: null,
+    }
+    const save = vi.fn(async (next: Allocation, revision: string) => {
+        if (row.revision !== revision) throw new Error('stale fixture write')
+        row = structuredClone(next)
+        return structuredClone(row)
+    })
+    const client = {
+        request: async (operation: string) => { if (operation !== 'allocate') throw new Error(operation); return structuredClone(row) },
+        resource: async (token: string) => { if (token !== row.token) throw new Error('token'); return structuredClone(row) },
+        saveResource: save,
+        authority: async () => ({ source, webFetch: false }),
+    } as unknown as DelegationClient
+    const parentConfig = agentConfigSchema.parse({ name: 'Ann', enabled: true, tools: { desktopToolGrants: { delegate: true } } })
+    vi.mocked(readAgentConfig).mockResolvedValue(parentConfig)
+    vi.mocked(sessionClaim).mockReturnValue({ runId: 'parent-run' } as never)
+    hooks.getRun.mockResolvedValue({ agentId: 'coworker', sessionId: 'chat', status: 'running' })
+    vi.mocked(findConnection).mockResolvedValue({ config: { provider: 'openai' } } as never)
+    vi.mocked(isUsable).mockReturnValue(true)
+    hooks.allocate.mockResolvedValue('9:9')
+    hooks.initialize.mockImplementation(async (_record: Allocation, _config: unknown, check: () => Promise<void>, persist: (manifest: Allocation['manifest']) => Promise<void>) => {
+        await check()
+        await persist([])
+    })
+    hooks.inspect.mockResolvedValue([])
+    vi.mocked(createSession).mockResolvedValue({ id: 'child-session' } as never)
+    vi.mocked(registerDelegationChild).mockReturnValue({ runCreated: () => undefined, close: () => undefined })
+    vi.mocked(waitForRunCancellation).mockResolvedValue(true)
+    vi.mocked(startHeadlessRun).mockImplementation(async (_agent, _session, _message, _override, _trigger, lifecycle) => {
+        await lifecycle?.beforeLaunch?.()
+        await lifecycle?.onRunCreated?.('child-run')
+        await lifecycle?.assertActive?.()
+        return { runId: 'child-run', result: { fullStream: (async function* () {})() }, settled: Promise.resolve({ kind: 'done' }) } as never
+    })
+    const { host, register } = createDesktopDelegationHost(client, 'launch-epoch')
+    const ctx = {
+        runId: 'parent-run', abortSignal: new AbortController().signal, sessionId: 'chat', model: 'm', provider: 'openai',
+        agent: { id: 'coworker', config: parentConfig, resolved: { connection: { id: 'conn' } } },
+    } as RunContext
+    register(source, ctx)
+    const resource = await host.allocate(source, row.taskId)
+    const child = await host.create(resource, { task: 'Answer from what you hold', connectionId: 'conn', model: 'm', tools: [], authorizeTool: async () => undefined, signal: new AbortController().signal })
+    await expect(child.run(async () => undefined)).resolves.toBe('')
+    expect(vi.mocked(startHeadlessRun)).toHaveBeenCalledWith(
+        expect.objectContaining({ id: row.childAgentId, config: expect.objectContaining({ ephemeral: true }) }),
+        'child-session',
+        'Answer from what you hold',
+        expect.objectContaining({ connectionId: 'conn', provider: 'openai', model: 'm' }),
+        { source: 'chat' },
+        expect.any(Object),
+    )
+    expect(vi.mocked(startHeadlessRun).mock.calls[0][4]).not.toHaveProperty('calledBy')
 })

@@ -11,7 +11,7 @@ const { migrate } = await import('../../db/migrate.js')
 const { insertAgentIndex, listAgentIndex } = await import('../../db/repos/agents.js')
 const { createSession, getSession } = await import('../../db/repos/sessions.js')
 
-type TracedEvent = { event: string; agentId?: string; sessionId?: string | null; title?: string | null; source?: string | null; originAgentId?: string | null }
+type TracedEvent = { event: string; agentId?: string; sessionId?: string | null; title?: string | null; source?: string | null; originAgentId?: string | null; trigger?: unknown }
 const traced: TracedEvent[] = []
 
 vi.doMock('../../runtime/notify.js', () => ({
@@ -22,8 +22,8 @@ vi.doMock('../../runtime/notify.js', () => ({
 }))
 
 vi.doMock('../../runtime/headless-run.js', () => ({
-    startHeadlessRun: async (_callee: unknown, sessionId: string) => {
-        traced.push({ event: 'run.started', sessionId })
+    startHeadlessRun: async (_callee: unknown, sessionId: string, _prompt: string, _override: unknown, trigger: unknown) => {
+        traced.push({ event: 'run.started', sessionId, trigger })
         return { runId: 'run-1', result: { finishReason: Promise.resolve('stop'), fullStream: (async function* () {})() } }
     },
 }))
@@ -113,6 +113,7 @@ describe('call_agent session mirroring', () => {
         expect(created.originAgentId).toBe('agent-a')
         expect(created.title).toBe('from Alice: tell a joke')
         expect(traced[1].sessionId).toBe(created.sessionId)
+        expect(traced[1].trigger).toEqual({ source: 'chat', calledBy: 'agent-a' })
     })
 })
 

@@ -257,6 +257,16 @@ describe('buildSystemPrompt for the foreman', () => {
         expect(await buildSystemPrompt(foreman({ tools: { brain: false } }))).not.toContain('<company_brain>')
     })
 
+    it('keeps the foreman brain section unchanged when a chat trigger names a caller', async () => {
+        const plain = await buildSystemPrompt(foreman(), { source: 'chat' })
+        const called = await buildSystemPrompt(foreman(), { source: 'chat', calledBy: 'agent-alice' })
+        const brain = (text: string) => text.slice(text.indexOf('<company_brain>'), text.indexOf('</company_brain>'))
+        expect(brain(called)).toBe(brain(plain))
+        expect(brain(called)).toContain('The company brain is still empty.')
+        expect(brain(called)).not.toContain('Another coworker is asking you')
+        expect(brain(called)).not.toContain('ask the coworkers of the workspace')
+    })
+
     it('uses the hub charter as its identity and roots it in its own workspace', async () => {
         const prompt = await buildSystemPrompt(foreman())
 

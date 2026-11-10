@@ -67,7 +67,7 @@ export async function bindDesktopCoworkerCalls(runtime: DesktopBind, fetchImpl?:
             if (!loaded.config.enabled) throw new Error(`Coworker "${loaded.config.name}" is switched off and cannot be called.`)
             // The target uses its own permissions. Foreman-origin calls cannot dispatch again.
             const callee = desktopCoworkerCallee(loaded, input.originAgentId)
-            const run = await startHeadlessRun(callee, input.engineSessionId, input.prompt, { connectionId: input.model.connectionId, model: input.model.model }, { source: 'chat' }, {
+            const run = await startHeadlessRun(callee, input.engineSessionId, input.prompt, { connectionId: input.model.connectionId, model: input.model.model }, { source: 'chat', ...(input.originAgentId ? { calledBy: input.originAgentId } : {}) }, {
                 beforeLaunch: input.assertActive,
                 onRunCreated: input.onRunCreated,
             })
