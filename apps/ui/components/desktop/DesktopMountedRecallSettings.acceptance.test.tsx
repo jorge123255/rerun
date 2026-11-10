@@ -145,7 +145,7 @@ it('mounts Tool services and the board, recalls a paraphrase, keeps it across a 
             const token = header.startsWith('Bearer ') ? header.slice(7) : header
             if (token !== fixture.engineKey) { outgoing.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'Unauthorized' })); return }
             if (url === '/api/desktop/internal/semantic-memory') {
-                const response = await embedCallback(new Request(fixture.origin + url, { method: 'POST', headers: { host: new URL(fixture.origin).host, authorization: header, 'content-type': 'application/json' }, body }))
+                const response = await embedCallback(localRequest(url, { method: 'POST', headers: { authorization: header, 'content-type': 'application/json' }, body }, false))
                 outgoing.writeHead(response.status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
                 outgoing.end(Buffer.from(await response.arrayBuffer()))
                 return
@@ -350,7 +350,7 @@ it('mounts Tool services and the board, recalls a paraphrase, keeps it across a 
         expect(JSON.stringify(await fixture.db.execute('SELECT * FROM desktop_auxiliary_credentials'))).not.toContain(PROVIDER_KEY)
         expect((await readAuxiliary(localRequest('/api/desktop/auxiliary', {}, false))).status).toBe(401)
         expect((await fetch(`/api/desktop/coworkers/foreign-owner/semantic-memory`)).status).toBe(404)
-        const foreign = await embedCallback(new Request(fixture.origin + '/api/desktop/internal/semantic-memory', { method: 'POST', headers: { host: new URL(fixture.origin).host, authorization: `Bearer ${fixture.engineKey}`, 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'configuration', engineAgentId: 'foreign' }) }))
+        const foreign = await embedCallback(localRequest('/api/desktop/internal/semantic-memory', { method: 'POST', headers: { authorization: `Bearer ${fixture.engineKey}`, 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'configuration', engineAgentId: 'foreign' }) }, false))
         expect(foreign.status).toBe(400)
         expect((await fetch(`${fixture.origin}/agents/${ENGINE}/memories/semantic/status`)).status).toBe(401)
         expect(serviceText('Web search')).toContain('Not configured')
