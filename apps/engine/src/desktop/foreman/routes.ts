@@ -1,11 +1,12 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { FOREMAN_AGENT_ID, foremanBindingSchema, foremanBriefSchema, foremanQuestionGuardSchema } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, foremanBindingSchema, foremanBriefSchema, foremanChatRefSchema, foremanQuestionGuardSchema } from '@rerun/contracts'
 import { withAgentLock } from '../../agents/lock.js'
 import { getAgent } from '../../agents/registry.js'
 import { resolveRunModel } from '../../agents/availability.js'
 import { getSession } from '../../db/repos/sessions.js'
 import { getRun, cancelRun } from '../../db/repos/runs.js'
+import { readForemanReplySource } from '../../db/repos/foreman-reply-sources.js'
 import { assertDesktopRunAdmission } from '../workspace-admission.js'
 import { getDesktopQueuedTurn, reserveDesktopQueuedTurn } from '../../db/repos/desktop-queued-turns.js'
 import { HttpError } from '../../lib/errors.js'
@@ -50,6 +51,15 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
         } catch (error) {
             return c.json({ error: 'The Foreman question could not be read.' }, error instanceof HttpError && error.status === 409 ? 409 : 503)
         }
+    })
+    routes.get('/reply-source', async c => {
+        const bridge = readBinding()
+        if (!desktopApp() || !bridge) return c.json({ error: 'Desktop Foreman is unavailable.' }, 404)
+        const target = foremanChatRefSchema.extend({ sessionId: z.uuid(), assistantMessageId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/) })
+            .safeParse(c.req.query())
+        if (!target.success) return c.json({ error: 'Invalid saved Foreman reply.' }, 400)
+        const source = target.data.workspaceId === bridge.workspaceId ? await readForemanReplySource(target.data) : null
+        return c.json({ source: readBinding() === bridge ? source : null }, 200, { 'cache-control': 'no-store' })
     })
     routes.post('/chat', async c => {
         try {

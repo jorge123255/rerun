@@ -1,9 +1,11 @@
 import { and, asc, desc, eq, getTableColumns, gt, gte, isNotNull, sql } from 'drizzle-orm'
 import type { ModelMessage } from 'ai'
-import { visibleText, type DesktopSourcePart, type MessageAuthor } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, visibleText, type DesktopSourcePart, type MessageAuthor } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
 import { messages, type MessageRow } from '../schema.js'
 import { newId, nowIso } from '../../lib/ids.js'
+import type { InValue } from '@libsql/client'
+import { foremanReplySourceUpdate, type ForemanReplyTurn } from './foreman-reply-sources.js'
 
 // What was said, which is not everything that carries a `text`: a reasoning part does too, and so
 // does the context the engine appends to a user turn. It feeds both the search index and the
@@ -24,7 +26,7 @@ export function storedContent(json: string): ModelMessage['content'] {
     return []
 }
 
-export async function appendMessage(agentId: string, sessionId: string, message: ModelMessage, author?: MessageAuthor, sources?: DesktopSourcePart[]): Promise<MessageRow> {
+export async function appendMessage(agentId: string, sessionId: string, message: ModelMessage, author?: MessageAuthor, sources?: DesktopSourcePart[], foremanReply?: ForemanReplyTurn): Promise<MessageRow> {
     const row: MessageRow = {
         id: newId(),
         sessionId,
@@ -37,9 +39,16 @@ export async function appendMessage(agentId: string, sessionId: string, message:
         authorName: author?.name ?? null,
     }
     const { db, client } = await getSystemDb(agentId)
-    await db.insert(messages).values(row)
+    const insert = db.insert(messages).values(row)
     const text = extractText(message.content)
-    if (text) await client.execute({ sql: 'INSERT INTO messages_fts(content, message_id) VALUES (?, ?)', args: [text, row.id] })
+    const index = { sql: 'INSERT INTO messages_fts(content, message_id) VALUES (?, ?)', args: [text, row.id] }
+    if (foremanReply && agentId === FOREMAN_AGENT_ID && row.role === 'assistant' && text.trim()) {
+        const { sql, params } = insert.toSQL()
+        await client.batch([{ sql, args: params as InValue[] }, index, foremanReplySourceUpdate(agentId, row, foremanReply)], 'write')
+    } else {
+        await insert
+        if (text) await client.execute(index)
+    }
     return row
 }
 
