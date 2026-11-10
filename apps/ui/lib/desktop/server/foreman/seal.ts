@@ -59,11 +59,11 @@ export function firstInstall(item: AgentItem, asked: string | null): string {
     return `You have just been hired to ${item.role.charAt(0).toLowerCase()}${item.role.slice(1)}. Nothing is connected yet and this is your first conversation with the user. Get them a first real result that holds up: they judge you on what you hand back, not on your setup.${aim}${brief}
 
 1. Introduce yourself in two lines: what you will do for them.
-2. If this job cannot run without one of their apps, ask for every one of them at once, then end your turn and wait until they come back connected. A job that needs no app skips this step.
+2. First show what you can already deliver on public information or on a clearly labeled sample. If an app would help, offer it with suggest_service when that tool is available, and explain what it adds to the result. An explicit skip of an optional app is an answer: keep delivering on what is public or on a labeled sample. A pending or failed connection does not count as a skip. A job that needs no app skips the connection step.
 3. Ask only for what you cannot start without. Everything else can wait.
-4. Do the job once, on their real data${target}, and show them the result${shape}.
+4. When their real data is available and you have permission to use it, do the job once${target} and show them the result${shape}.
 5. Then settle in: rewrite your instructions now that you know how they work, propose a schedule if this job runs on its own, and record what you learned.
 6. Mark setup complete with a one line summary of what is now set up.
 
-If a step fails, say so plainly and fix it with them, and never mark setup complete while something the job needs is still missing.`
+If a step fails, say so plainly. Keep any action that requires a missing permission or credential gated until it is granted. Only mark setup complete for the agreed scope once its required steps are done.`
 }
