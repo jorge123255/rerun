@@ -90,7 +90,7 @@ export function callAgentTools(ctx: RunContext): ToolSet {
                 try {
                     // `fullStream` tees, so following the run for the caller's progress block and
                     // publishing it to the run hub can happen side by side.
-                    run = await startHeadlessRun(callee, session.id, prompt, undefined, { source: 'chat' })
+                    run = await startHeadlessRun(callee, session.id, prompt, undefined, { source: 'chat', calledBy: ctx.agent.id })
                 } catch (err) {
                     // A run that never started emits no completion event of its own, so the session
                     // just mirrored on the hub would stay `working` forever.

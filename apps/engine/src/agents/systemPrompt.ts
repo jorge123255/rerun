@@ -295,7 +295,7 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
         buildMcpIndex(agent).catch(() => ''),
         desktop
             ? Promise.resolve(agent.config.enabled && hasDesktopToolGrant(agent.config, 'brain') ? DESKTOP_BRAIN_INSTRUCTION : '')
-            : cfg.brain ? buildBrainSection().catch(() => '') : Promise.resolve(''),
+            : cfg.brain ? buildBrainSection(trigger.source === 'chat' && trigger.calledBy !== undefined).catch(() => '') : Promise.resolve(''),
     ])
 
     const computer = offersComputer(agent.config)
