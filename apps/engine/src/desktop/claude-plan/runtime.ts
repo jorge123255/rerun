@@ -15,9 +15,13 @@ export async function stopDesktopClaudeWorkers() {
     if (results.some(result => result.status === 'rejected')) throw new Error('Claude process shutdown could not be confirmed.')
 }
 function trusted(path: string) {
-    const info = lstatSync(path)
-    if (!info.isFile() || info.isSymbolicLink() || realpathSync(path) !== path || ![0, process.getuid?.()].includes(info.uid)) throw new Error('The bundled Claude runtime is unavailable.')
-    return path
+    try {
+        const info = lstatSync(path)
+        if (info.isFile() && !info.isSymbolicLink() && realpathSync(path) === path && [0, process.getuid?.()].includes(info.uid)) return path
+    } catch {
+        // Missing or unreadable bundle files should not expose their local paths.
+    }
+    throw new Error('The bundled Claude runtime is unavailable.')
 }
 /** Bound protocol lines before the SDK parses JSON; never publish a credential echo. */
 export function desktopClaudeOutputFilter(token: string, totalLimit = 64 * 1024 * 1024, lineLimit = 8 * 1024 * 1024) {
