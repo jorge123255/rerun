@@ -33,7 +33,7 @@ export function DesktopClaudeLogin({ connected, rejected, onProviders }: { conne
             </ConfirmDialog>
         </> : <>
             {rejected && <p role="alert" className="text-sm text-destructive">Claude rejected this sign-in. Connect again to continue.</p>}
-            <DesktopClaudePlanSteps runtime={runtime} onOpenAuthorization={url => { window.open(url, '_blank', 'noopener,noreferrer') }} onDone={() => {}}
+            <DesktopClaudePlanSteps reconnect={!!rejected} runtime={runtime} onOpenAuthorization={url => { window.open(url, '_blank', 'noopener,noreferrer') }} onDone={() => {}}
                 lastStep={() => ({ title: 'Choose a Claude model above', remark: 'All set!' })} />
         </>}
     </div>

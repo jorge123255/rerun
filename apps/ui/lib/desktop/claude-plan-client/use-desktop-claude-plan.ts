@@ -21,17 +21,19 @@ function authorizationDestination(value: string): string {
 }
 const phaseOf = (phase?: DesktopClaudePlanSnapshot['phase']): DesktopClaudePlanPhase => phase === 'waiting' || phase === 'checking' || phase === 'connected' || phase === 'error' ? phase : 'idle'
 
-export function useDesktopClaudePlan({ runtime, onOpenAuthorization }: {
+export function useDesktopClaudePlan({ runtime, onOpenAuthorization, reconnect = false }: {
     runtime: DesktopClaudePlanRuntime
     onOpenAuthorization: (url: string) => void
+    reconnect?: boolean
 }) {
-    const owner = useMemo(() => ({ runtime, snapshot: null as DesktopClaudePlanAttempt | null, generation: 0, controller: null as AbortController | null, mounted: true, busy: false }), [runtime])
+    const owner = useMemo(() => ({ runtime, snapshot: null as DesktopClaudePlanAttempt | null, initialCredentialRevision: null as string | null, generation: 0, controller: null as AbortController | null, mounted: true, busy: false }), [runtime, reconnect])
     const latest = useRef(owner)
     latest.current = owner
     const [view, setView] = useState({ owner, phase: 'idle' as DesktopClaudePlanPhase, error: null as string | null, opening: false })
     const shown = view.owner === owner ? view : { owner, phase: 'idle' as const, error: null, opening: false }
     const apply = (attempt: DesktopClaudePlanAttempt, generation: number) => {
         if (!owner.mounted || latest.current !== owner || generation !== owner.generation) return false
+        owner.initialCredentialRevision ??= attempt.credentialRevision ?? '0'
         owner.snapshot = attempt
         const viewPhase = attempt.pendingAttempt ? phaseOf(attempt.pendingAttempt.phase) : phaseOf(attempt.phase)
         setView({ owner, phase: viewPhase === 'idle' && attempt.phase === 'connected' ? 'connected' : viewPhase, error: attempt.error ?? (attempt.phase === 'expired' ? 'This code expired. Open Claude again.' : null), opening: false })
@@ -57,6 +59,7 @@ export function useDesktopClaudePlan({ runtime, onOpenAuthorization }: {
         owner.controller = controller
         void runtime.reconcile(null, controller.signal).then(attempt => {
             if (!owner.mounted || latest.current !== owner || generation !== owner.generation) return
+            owner.initialCredentialRevision ??= attempt.credentialRevision ?? '0'
             owner.snapshot = attempt
             const projected = attempt.pendingAttempt ? phaseOf(attempt.pendingAttempt.phase) : phaseOf(attempt.phase)
             setView({ owner, phase: projected === 'idle' && attempt.phase === 'connected' ? 'connected' : projected, error: attempt.error ?? null, opening: false })
@@ -77,12 +80,13 @@ export function useDesktopClaudePlan({ runtime, onOpenAuthorization }: {
             catch { setView({ owner, phase: 'error', error: 'Invalid Claude sign-in destination.', opening: false }) }
         }
     }
+    const completed = (attempt: DesktopClaudePlanAttempt | null) => !!attempt && attempt.phase === 'connected' && !attempt.error && !attempt.pendingAttempt && (!reconnect || (!!attempt.credentialRevision && attempt.credentialRevision !== owner.initialCredentialRevision))
     const submit = async (raw: string) => {
         const id = owner.snapshot?.attemptId, code = raw.trim()
         if (code.startsWith('sk-ant') && runtime.token) return !!await token(code)
         const waiting = owner.snapshot?.pendingAttempt?.phase === 'waiting' || owner.snapshot?.phase === 'waiting'
         if (!id || !code || !waiting) return false
-        return (await run(signal => runtime.submit(id, code, signal), false, true))?.phase === 'connected'
+        return completed(await run(signal => runtime.submit(id, code, signal), false, true))
     }
     const cancel = async () => {
         const id = owner.snapshot?.attemptId
@@ -91,9 +95,9 @@ export function useDesktopClaudePlan({ runtime, onOpenAuthorization }: {
         await run(signal => runtime.cancel(id, signal))
     }
     const reconcile = () => run(signal => runtime.reconcile(owner.snapshot?.attemptId ?? null, signal))
-    const token = async (value: string) => runtime.token && (await run(signal => runtime.token!(owner.snapshot?.attemptId ?? null, value, signal), false, true))?.phase === 'connected'
+    const token = async (value: string) => runtime.token && completed(await run(signal => runtime.token!(owner.snapshot?.attemptId ?? null, value, signal), false, true))
     const disconnect = () => runtime.disconnect ? run(signal => runtime.disconnect!(owner.snapshot?.attemptId ?? null, signal)) : Promise.resolve(null)
-    const linked = shown.phase === 'connected' || Boolean(owner.snapshot?.credentialRevision)
+    const linked = reconnect ? completed(owner.snapshot) : shown.phase === 'connected' || Boolean(owner.snapshot?.credentialRevision)
     const attemptPhase = owner.snapshot?.pendingAttempt?.phase ?? shown.phase
     return { attemptId: owner.snapshot?.attemptId ?? null, phase: shown.phase, attemptPhase, linked, credentialRevision: owner.snapshot?.credentialRevision, error: shown.error, opening: shown.opening, start, submit, cancel, reconcile, token, disconnect }
 }

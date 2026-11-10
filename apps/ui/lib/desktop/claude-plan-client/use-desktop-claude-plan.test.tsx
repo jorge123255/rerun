@@ -22,10 +22,10 @@ function runtimeWith(overrides: Partial<DesktopClaudePlanRuntime> = {}): Desktop
     }
 }
 
-async function mount(runtime: DesktopClaudePlanRuntime, onOpenAuthorization = vi.fn()) {
+async function mount(runtime: DesktopClaudePlanRuntime, onOpenAuthorization = vi.fn(), reconnect = false) {
     let value!: ReturnType<typeof useDesktopClaudePlan>
     function Harness() {
-        value = useDesktopClaudePlan({ runtime, onOpenAuthorization })
+        value = useDesktopClaudePlan({ runtime, onOpenAuthorization, reconnect })
         return <span>{value.phase}</span>
     }
     const root = createRoot(document.body.appendChild(document.createElement('div'))); roots.push(root)
@@ -98,4 +98,19 @@ test('a runtime replacement hides old state and rejects its late response', asyn
     expect(value.phase).toBe('idle'); expect(value.attemptId).toBe(null)
     expect(old.cancel).toHaveBeenCalledWith('attempt-1', expect.any(AbortSignal))
     expect(next.cancel).not.toHaveBeenCalled()
+})
+
+test('reconnect requires a new credential generation; rejected replacement never reports completion', async () => {
+    const runtime = runtimeWith({
+        reconcile: vi.fn(async () => attempt('connected', { attemptId: null, credentialRevision: '1' })),
+        start: vi.fn(async () => attempt('connected', { credentialRevision: '1', pendingAttempt: { attemptId: 'attempt-1', phase: 'waiting' }, authorizeUrl: 'https://claude.ai/oauth/authorize?state=opaque' })),
+        submit: vi.fn(async () => attempt('connected', { attemptId: null, credentialRevision: '1', error: 'Claude sign-in could not be confirmed.' })),
+    })
+    const hook = await mount(runtime, vi.fn(), true)
+    expect(hook.value.linked).toBe(false)
+    await act(async () => { await hook.value.start() })
+    expect(hook.value.linked).toBe(false)
+    await act(async () => { expect(await hook.value.submit('synthetic-rejected-code')).toBe(false) })
+    expect(hook.value.linked).toBe(false)
+    expect(hook.value.error).toContain('could not be confirmed')
 })

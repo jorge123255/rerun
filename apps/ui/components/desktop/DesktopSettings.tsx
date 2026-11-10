@@ -49,7 +49,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
     const current = providers.connections.find(c => c.id === source)
     const provider = current ? desktopProvider.parse(current.provider) : desktopProvider.safeParse(source.replace(/^add:/, '')).data ?? 'openai'
     const missing = desktopProvider.options.filter(p => p !== 'custom' && !providers.connections.some(c => c.provider === p))
-    const picks = providers.connections.filter(c => c.connected).flatMap(c => enabledModels(c).map(m => ({ connectionId: c.id, model: m.id })))
+    const picks = providers.connections.filter(c => c.connected && !(c.provider === 'claude' && c.credentialRejected)).flatMap(c => enabledModels(c).map(m => ({ connectionId: c.id, model: m.id })))
     const selected = picks.findIndex(p => p.connectionId === providers.default?.connectionId && p.model === providers.default.model)
     const active = providers.default
     const codex = providers.connections.find(c => c.id === active?.connectionId && c.connected && c.provider === 'codex')
@@ -106,7 +106,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                 if (pick) void save({ action: 'default', ...pick }, 'Default model saved.')
                             }}>
                                 {selected < 0 && <option value={-1} disabled>{picks.length ? 'Choose a model' : 'Connect a provider to choose a model'}</option>}
-                                {providers.connections.filter(c => c.connected).map(c => <optgroup key={c.id} label={c.name}>{picks.map((p, index) => p.connectionId === c.id &&
+                                {providers.connections.filter(c => c.connected && !(c.provider === 'claude' && c.credentialRejected)).map(c => <optgroup key={c.id} label={c.name}>{picks.map((p, index) => p.connectionId === c.id &&
                                     <option key={p.model} value={index}>{modelName(c.id, p.model)}</option>)}</optgroup>)}
                             </select>
                             {codex && active && <div className="space-y-2 pt-3">
