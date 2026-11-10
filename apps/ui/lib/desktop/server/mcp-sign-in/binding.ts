@@ -55,13 +55,13 @@ export async function desktopMcpSignInPorts(runtime: DesktopRuntime, sessionId: 
         if (row.transport !== 'http' || row.bearer || row.name !== source.server.name || row.revision !== source.server.revision || row.url !== source.server.url) throw new DesktopHttpError(409, 'This MCP registration changed or does not support sign-in.')
         check(signal); return row
     }
-    async function authority(source: DesktopMcpSignInSource, signal: AbortSignal, mode: 'decision' | 'replay' | 'read' | 'dismiss' = 'decision') {
+    async function authority(source: DesktopMcpSignInSource, signal: AbortSignal, mode: 'decision' | 'replay' | 'read' | 'dismiss' | 'device' = 'decision') {
         if (source.agentId !== agent!.id || source.sessionId !== session!.id) throw new DesktopHttpError(409, 'MCP sign-in belongs to another conversation.')
         const saved = await readSource(signal, mode === 'decision' || mode === 'dismiss' ? undefined : source)
         if (!saved || !sameSource(saved.source, source) || saved.status !== 'done') throw new DesktopHttpError(409, 'This MCP sign-in was stopped or its source changed.')
         const detail = await engineRequest(engineOf(runtime), `/agents/${encodeURIComponent(agent!.engineAgentId)}`, { method: 'GET', signal }, value => engineAgentDetailSchema.parse(value))
         if (detail.id !== agent!.engineAgentId || detail.config.ephemeral) throw new DesktopHttpError(409, 'MCP sign-in ownership changed.')
-        if (mode === 'decision') {
+        if (mode === 'decision' || mode === 'device') {
             if (!detail.config.enabled || detail.config.tools.desktopToolGrants?.mcp !== true) throw new DesktopHttpError(409, 'MCP permission is unavailable.')
             await registration(source, signal)
         }
@@ -70,7 +70,7 @@ export async function desktopMcpSignInPorts(runtime: DesktopRuntime, sessionId: 
     }
     const slot = (target: DesktopMcpSignInOAuthTarget) => JSON.stringify([agent!.id, target.source.server.name])
     const exact = (target: DesktopMcpSignInOAuthTarget) => { const current = attempts.owners.get(slot(target)); return !!current && current.requestId === target.requestId && current.attemptId === target.attemptId }
-    return createDesktopMcpSignInRuntimePorts({ store, authority,
+    const browser = createDesktopMcpSignInRuntimePorts({ store, authority,
         source: async (id, signal) => {
             if (id !== session!.id) throw new DesktopHttpError(409, 'MCP sign-in conversation changed.')
             const pending = await readSource(signal)
@@ -128,6 +128,17 @@ export async function desktopMcpSignInPorts(runtime: DesktopRuntime, sessionId: 
             return { status: response.status, code: failure?.code, sessionId: actualSession === session!.engineSessionId ? session!.id : actualSession, runId: response.headers.get('x-run-id'), contentType: response.headers.get('content-type'), body: response.ok ? response.body : null }
         },
     })
+    return { ...browser,
+        async deviceMethodAuthority(source: DesktopMcpSignInSource, signal: AbortSignal, mode: 'review' | 'use' | 'retire') {
+            const lease = await authority(source, signal, mode === 'use' ? 'device' : mode === 'retire' ? 'dismiss' : 'decision')
+            const browserRequest = await store.readBySource(source)
+            if (mode !== 'retire' && (browserRequest?.activeAttemptId || browserRequest?.receipt)) throw new DesktopHttpError(409, 'This request already belongs to browser OAuth.')
+            lease.check()
+            return { workspaceId: String(runtime.workspaceId), owner: agent!.id, engineAgentId: agent!.engineAgentId, sessionId: session!.engineSessionId,
+                name: source.server.name, revision: source.server.revision, url: source.server.url,
+                signal: service.shutdownSignal, check: lease.check }
+        },
+    }
 }
 
 

@@ -55,7 +55,7 @@ export function DesktopClaudeConnectionDetails({ connection, account, defaultMod
                     <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-orange-500" />
                     <p className="text-xs">{rejected ? 'This sign-in was rejected. Coworkers using it are stopped until you sign in again.' : account?.unavailable ? 'This connection is unavailable. Check the desktop credential store and try again.' : 'This sign-in expired. Coworkers using it are stopped until you sign in again.'}</p>
                 </div>
-                <DesktopClaudePlanSteps runtime={runtime} onOpenAuthorization={onOpenAuthorization} onDone={() => {}} lastStep={() => ({ title: 'Your coworkers start again' })} />
+                <DesktopClaudePlanSteps reconnect runtime={runtime} onOpenAuthorization={onOpenAuthorization} onDone={() => {}} lastStep={() => ({ title: 'Your coworkers start again' })} />
             </div>}
             <ModelBuckets connection={connection} defaultModel={defaultModel} onModelsChange={onModelsChange} />
         </PanelScroller>

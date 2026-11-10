@@ -17,6 +17,7 @@ const sessions = ['Source', 'Other', 'Alternate'].map(title => ({ id: title.toLo
 const source = { uid: 'source-uid', id: 'source', title: 'Source' }
 const other = { uid: 'other-uid', id: 'other', title: 'Other' }
 const blank = { uid: 'persisted-blank-uid', id: null, title: 'New conversation' }
+const pinnedGeneral = { uid: `general:${agent.id}`, id: null }
 let root: Root | undefined
 const unexpected: string[] = []
 
@@ -116,8 +117,8 @@ test('a cold exact-blank selection restores its persisted draft before mounting 
     expect(app.active()?.querySelector('textarea')?.value).toBe('Saved before restart in this blank tab')
     expect(app.messageReads).toEqual([])
     expect(app.draftReads).toEqual([blank.uid])
-    expect(app.persisted().tabs.map(tab => ({ uid: tab.uid, id: tab.id }))).toEqual([{ uid: source.uid, id: source.id }, { uid: blank.uid, id: null }])
-    expect(app.persisted().activeIndex).toBe(1)
+    expect(app.persisted().tabs.map(tab => ({ uid: tab.uid, id: tab.id }))).toEqual([pinnedGeneral, { uid: source.uid, id: source.id }, { uid: blank.uid, id: null }])
+    expect(app.persisted().activeIndex).toBe(2)
     await click('Source')
     expect(app.active()?.textContent).toContain('source answer')
     expect(app.messageReads).toEqual(['source'])
@@ -135,7 +136,7 @@ test('selecting a saved open tab uses its existing UID and does not create a dup
     await app.render({ tabUid: other.uid, sessionId: other.id })
     expect(app.active()?.querySelector('textarea')).toBe(originalComposer)
     expect(app.writes).toHaveLength(writes)
-    expect(app.persisted().tabs.map(tab => tab.uid)).toEqual([source.uid, other.uid])
+    expect(app.persisted().tabs.map(tab => tab.uid)).toEqual([pinnedGeneral.uid, source.uid, other.uid])
     expect(app.persisted().tabs.filter(tab => tab.id === other.id)).toHaveLength(1)
 })
 
@@ -158,7 +159,9 @@ test.each([
     expect(app.container.querySelector('[role="alert"]')).toBeNull()
     expect(app.active()?.textContent).toContain('source answer')
     expect(app.active()?.querySelector('textarea')?.value).toBe('Original saved draft')
-    expect(app.persisted().tabs.map(tab => tab.uid)).toEqual([source.uid, blank.uid])
+    expect(app.container.querySelector('[data-testid="desktop-general-tab"]')).not.toBeNull()
+    // Re-selecting the already active saved UID needs no layout write.
+    expect(app.persisted().tabs.map(tab => tab.uid)).toEqual(recover ? [source.uid, blank.uid] : [pinnedGeneral.uid, source.uid, blank.uid])
 })
 
 test('a stale selection preserves a live reply and both mounted drafts until a valid selection returns', async () => {
@@ -226,6 +229,6 @@ test('closing an exact-selected tab consumes the request and leaves the remainin
     expect(app.container.querySelector('[role="alert"]')).toBeNull()
     expect(app.active()?.textContent).toContain('other answer')
     expect(app.active()?.querySelector('textarea')?.value).toBe('Do not discard the remaining draft')
-    expect(app.persisted().tabs.map(tab => tab.uid)).toEqual([other.uid])
+    expect(app.persisted().tabs.map(tab => tab.uid)).toEqual([pinnedGeneral.uid, other.uid])
     expect(app.container.querySelector('[aria-label="Close Source"]')).toBeNull()
 })

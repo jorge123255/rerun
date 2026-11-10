@@ -19,14 +19,15 @@ const REMARK = {
     error: 'Let’s try that again.',
 }
 
-export function DesktopClaudePlanSteps({ runtime, onOpenAuthorization, onDone, lastStep, initialName = 'Claude' }: {
+export function DesktopClaudePlanSteps({ runtime, onOpenAuthorization, onDone, lastStep, initialName = 'Claude', reconnect = false }: {
     runtime: DesktopClaudePlanRuntime
     onOpenAuthorization: (url: string) => void
     onDone: (name: string) => void | Promise<void>
     lastStep?: (linked: boolean) => TrackStep
+    reconnect?: boolean
     initialName?: string
 }) {
-    const oauth = useDesktopClaudePlan({ runtime, onOpenAuthorization })
+    const oauth = useDesktopClaudePlan({ runtime, onOpenAuthorization, reconnect })
     const [name, setName] = useState(initialName)
     const [saving, setSaving] = useState(false)
     const [nameError, setNameError] = useState<string | null>(null)

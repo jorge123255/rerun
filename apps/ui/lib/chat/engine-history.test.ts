@@ -421,6 +421,57 @@ it('keeps a validated recorded image card and its endpoint identity across a reo
     })
 })
 
+it('keeps a completed file card identity when the saved tool result is an MCP content block', () => {
+    const secret = 'sk-ABCDEFGHIJKLMNOPQRSTUVWX'
+    const card = { kind: 'file', files: [{ path: 'shots/photo.png', name: 'photo.png', size: 1024, scope: 'agent', identity: '12:34' }] }
+    const body = { ...card, token: secret, note: 'password=hunter2secret' }
+    const shapes = [
+        [{ type: 'text', text: JSON.stringify(body) }, { type: 'text', text: secret }],
+        JSON.stringify([{ type: 'text', text: JSON.stringify(body) }]),
+        { type: 'json', value: [{ type: 'text', text: JSON.stringify(body) }] },
+        { type: 'text', value: JSON.stringify([{ type: 'text', text: JSON.stringify(body) }]) },
+        { structuredContent: body },
+    ]
+    const row = (id: string, role: 'assistant' | 'tool', content: unknown): EngineMessage => ({
+        id, sessionId: 'chat-a', role, contentJson: JSON.stringify(content), toolCallsJson: null, createdAt: '2026-11-06T00:00:00.000Z',
+    })
+    for (const output of shapes) {
+        const saved = [
+            row('card-call', 'assistant', [{ type: 'tool-call', toolName: 'mcp__rerun__card_file', toolCallId: 'card-mcp', input: { files: [{ path: 'shots/photo.png' }], token: secret } }]),
+            row('card-result', 'tool', [{ type: 'tool-result', toolName: 'mcp__rerun__card_file', toolCallId: 'card-mcp', output }]),
+        ]
+        const [result] = publicDesktopHistory(transformEngineMessages(saved, { desktopSummaries: true, preserveSourceSteps: true }))
+        expect(result.parts[0]).toEqual({
+            type: 'tool-mcp__rerun__card_file', toolName: 'mcp__rerun__card_file', toolCallId: 'card-mcp', desktopPreview: true,
+            state: 'output-available', input: {}, output: JSON.stringify(card),
+        })
+        expect(JSON.stringify(result)).not.toContain(secret)
+        expect(JSON.stringify(result)).not.toContain('hunter2secret')
+        expect(publicDesktopHistory([result])).toEqual([result])
+    }
+})
+
+it('does not preview a saved file card whose target is missing or foreign', () => {
+    const secret = 'sk-ABCDEFGHIJKLMNOPQRSTUVWX'
+    const foreign = { kind: 'file', files: [{ path: '../foreign-agent/secret.png', name: 'secret.png', size: 1024, scope: 'agent', identity: '99:1' }], token: secret }
+    const missing = { kind: 'file', files: [{ path: 'shots/photo.png', name: 'photo.png', size: 1024, scope: 'agent' }], token: secret }
+    const row = (id: string, role: 'assistant' | 'tool', content: unknown): EngineMessage => ({
+        id, sessionId: 'chat-a', role, contentJson: JSON.stringify(content), toolCallsJson: null, createdAt: '2026-11-06T00:00:00.000Z',
+    })
+    for (const body of [foreign, missing]) {
+        const saved = [
+            row('card-call', 'assistant', [{ type: 'tool-call', toolName: 'card_file', toolCallId: 'card-foreign', input: { token: secret } }]),
+            row('card-result', 'tool', [{ type: 'tool-result', toolName: 'card_file', toolCallId: 'card-foreign', output: { type: 'json', value: [{ type: 'text', text: JSON.stringify(body) }, { type: 'text', text: secret }] } }]),
+        ]
+        const [result] = publicDesktopHistory(transformEngineMessages(saved, { desktopSummaries: true, preserveSourceSteps: true }))
+        expect(result.parts[0]).toMatchObject({ toolName: 'card_file', state: 'output-available', input: {} })
+        expect(result.parts[0]).not.toHaveProperty('output')
+        expect(JSON.stringify(result)).not.toContain(secret)
+        expect(JSON.stringify(result)).not.toContain('foreign-agent')
+        expect(JSON.stringify(result)).not.toContain('/files/image')
+    }
+})
+
 it('keeps a validated recorded audio card and its endpoint identity across a reopened chat', () => {
     const card = { kind: 'file', files: [{ path: 'voice/tone.wav', name: 'tone.wav', size: 1024, scope: 'agent', identity: '8:1' }] }
     const part = { type: 'tool-card_file' as const, toolName: 'card_file', toolCallId: 'card-audio', state: 'output-available' as const,
