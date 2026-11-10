@@ -7,7 +7,16 @@ import { expect, it, vi } from 'vitest'
 import { POST } from '@/app/api/desktop/internal/semantic-memory/route'
 import { desktopAuxiliarySchema, desktopAuxiliaryStore } from '../auxiliary/store'
 
-const fixture = vi.hoisted(() => ({ db: null as unknown as Client, brain: null as unknown as Client, root: '', origin: '', enabled: true, grant: true, notes: [] as any[], clear: null as null | { notesCleared(id: string): Promise<unknown> } }))
+type FixtureNote = {
+    id: string
+    content: string
+    path: string
+    kind: 'fact'
+    tags: string[]
+    createdAt: string
+}
+
+const fixture = vi.hoisted(() => ({ db: null as unknown as Client, brain: null as unknown as Client, root: '', origin: '', enabled: true, grant: true, notes: [] as FixtureNote[], clear: null as null | { notesCleared(id: string): Promise<unknown> } }))
 vi.mock('../database', () => ({ openDesktopDatabase: async () => fixture.db }))
 vi.mock('../runtime', () => ({ readDesktopRuntime: async () => ({ workspaceId: 7, dataRoot: fixture.root, app: { origin: fixture.origin, sessionToken: 'synthetic-session' }, engine: { apiKey: 'synthetic-loopback-key' } }) }))
 vi.mock('../../../../../engine/src/config/paths.js', () => ({ dataDir: () => fixture.root }))
@@ -18,7 +27,7 @@ vi.mock('../../../../../engine/src/desktop/agent-lifecycle.js', () => ({ desktop
 vi.mock('../../../../../engine/src/desktop/memory-paths.js', () => ({ desktopMemoryPaths: async () => ({}) }))
 vi.mock('../../../../../engine/src/desktop/memory-store.js', () => ({
     listDesktopMemory: async () => [fixture.notes, []], reinforceDesktopMemories: async () => {}, bindDesktopMemorySemanticClear: (value: typeof fixture.clear) => { fixture.clear = value },
-    recallDesktopMemory: async (_owner: string, query: string) => fixture.notes.filter(note => note.content.toLowerCase().includes(query.toLowerCase())).map(({ path: _path, ...note }) => ({ ...note, strength: 1 })),
+    recallDesktopMemory: async (_owner: string, query: string) => fixture.notes.filter(note => note.content.toLowerCase().includes(query.toLowerCase())).map(({ id, content, kind, tags, createdAt }) => ({ id, content, kind, tags, createdAt, strength: 1 })),
 }))
 vi.mock('../../../../../engine/src/db/brainDb.js', () => ({ getBrainDb: async () => fixture.brain }))
 vi.mock('../../../../../engine/src/desktop/brain-pages-router.js', () => ({ getDesktopBrainStore: async () => ({
