@@ -10,15 +10,16 @@ import { expect, it, vi } from 'vitest'
 import { GET as dataGET } from '@/app/api/desktop/agents/[agentId]/data/[[...path]]/route'
 import { GET as preferenceGET, PUT as preferencePUT } from '@/app/api/desktop/agents/[agentId]/data/preferred-view/route'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
+import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { createDesktopAgent } from '@/lib/desktop/server/store'
 import { publicDesktopHistory, type HistoryMessage } from '@/lib/chat/engine-history'
 import { DesktopAssistantReply } from './DesktopAssistantReply'
 import type { DesktopAgentView } from './DesktopApp'
 
-const fixture = vi.hoisted(() => ({ runtime: {} as any }))
+const fixture = vi.hoisted(() => ({ runtime: null as DesktopRuntime | null }))
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/desktop/server/runtime', async original => ({ ...await original<typeof import('@/lib/desktop/server/runtime')>(), readDesktopRuntime: async () => fixture.runtime }))
-;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 it('reopens one saved card through its authenticated owner/table/view panel, refuses removed/foreign targets and never reruns card_table', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'saved-table-navigation-'))

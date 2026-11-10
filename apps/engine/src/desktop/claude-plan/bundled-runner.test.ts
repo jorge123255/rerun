@@ -1,6 +1,6 @@
 import { execFile, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { once } from 'node:events'
-import { copyFile, mkdtemp, readdir, realpath, rm, symlink } from 'node:fs/promises'
+import { chmod, copyFile, mkdtemp, readdir, realpath, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -52,8 +52,15 @@ async function prepareHelperFixture() {
     const runner = join(root, 'fake-claude')
     const sandbox = join(root, 'claude-runner.sb')
     try {
-        const source = fileURLToPath(new URL('./fake-claude.c', import.meta.url))
-        await promisify(execFile)('/usr/bin/xcrun', ['clang', '-std=c11', '-Wall', '-Wextra', '-Werror', '-O2', source, '-o', runner], { timeout: 30_000, maxBuffer: 16_384 })
+        const prebuilt = process.env.RERUN_TEST_CLAUDE_HELPER
+        if (prebuilt) {
+            // An offline QA guest can use the exact fixture binary compiled on the host.
+            await copyFile(prebuilt, runner)
+            await chmod(runner, 0o700)
+        } else {
+            const source = fileURLToPath(new URL('./fake-claude.c', import.meta.url))
+            await promisify(execFile)('/usr/bin/xcrun', ['clang', '-std=c11', '-Wall', '-Wextra', '-Werror', '-O2', source, '-o', runner], { timeout: 30_000, maxBuffer: 16_384 })
+        }
         await copyFile(fileURLToPath(new URL('../../../../../scripts/desktop/claude-runner.sb', import.meta.url)), sandbox)
         return { root, runner, sandbox, close: () => rm(root, { recursive: true, force: true }) }
     } catch (error) { await rm(root, { recursive: true, force: true }); throw error }
@@ -116,7 +123,7 @@ function exited(child: ChildProcessWithoutNullStreams) {
 const tokenSum = (token: string) => Buffer.from(token).reduce((sum, byte) => (sum + byte) & 0xffffffff, 0)
 const generation = (token: string) => ({ revision: GEN, tokenBytes: Buffer.byteLength(token), tokenSum: tokenSum(token), hasToken: 1, ambient: 0 })
 
-describe('bundled Claude runner boundary', () => {
+describe.skipIf(process.platform !== 'darwin')('bundled Claude runner boundary', () => {
     beforeAll(async () => { fixture = await prepareHelperFixture() }, 30_000)
     afterEach(async () => {
         await stopDesktopClaudeWorkers().catch(() => {})
@@ -124,7 +131,7 @@ describe('bundled Claude runner boundary', () => {
         clearCachedEnvForTests()
         if (currentData) { await rm(currentData, { recursive: true, force: true }); currentData = undefined }
     })
-    afterAll(async () => { await fixture.close() })
+    afterAll(async () => { await fixture?.close() })
 
     it('refuses the gate and an untrusted bundled runner', async () => {
         await prepare()
@@ -142,11 +149,13 @@ describe('bundled Claude runner boundary', () => {
         await symlink(fixture.runner, link)
         vi.stubEnv('RERUN_DESKTOP_CLAUDE_RUNNER', link)
         expect(() => desktopClaudeRuntime('mac-claude', GEN_TOKEN, harness(GEN))).toThrow('The bundled Claude runtime is unavailable.')
-        vi.stubEnv('RERUN_DESKTOP_CLAUDE_RUNNER', fixture.runner.replace(/^\/private/, ''))
-        expect(() => desktopClaudeRuntime('mac-claude', GEN_TOKEN, harness(GEN))).toThrow('The bundled Claude runtime is unavailable.')
-        vi.stubEnv('RERUN_DESKTOP_CLAUDE_RUNNER', fixture.runner)
-        vi.stubEnv('RERUN_DESKTOP_CLAUDE_SANDBOX', fixture.sandbox.replace(/^\/private/, ''))
-        expect(() => desktopClaudeRuntime('mac-claude', GEN_TOKEN, harness(GEN))).toThrow('The bundled Claude runtime is unavailable.')
+        if (fixture.root.startsWith('/private/')) {
+            vi.stubEnv('RERUN_DESKTOP_CLAUDE_RUNNER', fixture.runner.replace(/^\/private/, ''))
+            expect(() => desktopClaudeRuntime('mac-claude', GEN_TOKEN, harness(GEN))).toThrow('The bundled Claude runtime is unavailable.')
+            vi.stubEnv('RERUN_DESKTOP_CLAUDE_RUNNER', fixture.runner)
+            vi.stubEnv('RERUN_DESKTOP_CLAUDE_SANDBOX', fixture.sandbox.replace(/^\/private/, ''))
+            expect(() => desktopClaudeRuntime('mac-claude', GEN_TOKEN, harness(GEN))).toThrow('The bundled Claude runtime is unavailable.')
+        }
     })
 
     it('sends the reopened exact credential generation to one confined child, drops ambient env, and Stop drains it', async () => {

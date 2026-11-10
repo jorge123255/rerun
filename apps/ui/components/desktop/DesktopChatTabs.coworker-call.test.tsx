@@ -37,7 +37,7 @@ async function mount(suffix: string) {
         progress: { steps: 1, toolCalls: 0, failures: 0, preview: 'Saved target answer', calls: [] },
     }
     let calls = [call]
-    const onOpenCoworkerChat = vi.fn(async (_target: { agentId: string; sessionId: string }) => {})
+    const onOpenCoworkerChat = vi.fn<(target: { agentId: string; sessionId: string }) => Promise<void>>().mockResolvedValue(undefined)
     const requests: string[] = []
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), 'http://127.0.0.1'), method = init?.method ?? 'GET'
