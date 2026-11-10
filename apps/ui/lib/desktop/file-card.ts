@@ -59,24 +59,41 @@ export function isDesktopResultFile(file: { path: string; scope?: string }): boo
     return file.scope === 'shared' || isDesktopCardBinary(file.path)
 }
 
+function refusedResult(value: unknown): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+    const item = value as { type?: unknown; isError?: unknown }
+    return item.isError === true || item.type === 'error-text' || item.type === 'error-json'
+}
+
+// The same recorded shapes the hosted card presenter unwraps: a text/json envelope, a JSON string,
+// an MCP content array whose first text block is the card, and structuredContent. A later block is
+// not a card. An error envelope is not a card. Depth stops a wrapper from unwrapping itself.
 function candidate(value: unknown, depth = 0): unknown {
-    if (depth > 2) return undefined
+    if (depth > 4 || refusedResult(value)) return undefined
     if (typeof value === 'string') {
         try { return candidate(JSON.parse(value), depth + 1) }
         catch { return undefined }
     }
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-        const wrapper = value as { type?: unknown; value?: unknown }
+    if (Array.isArray(value)) {
+        const block = value.find(item => item && typeof item === 'object' && (item as { type?: unknown }).type === 'text' && typeof (item as { text?: unknown }).text === 'string') as { text: string } | undefined
+        if (!block) return undefined
+        try { return candidate(JSON.parse(block.text), depth + 1) }
+        catch { return undefined }
+    }
+    if (value && typeof value === 'object') {
+        const wrapper = value as { type?: unknown; value?: unknown; kind?: unknown; structuredContent?: unknown }
         if (wrapper.type === 'json' && 'value' in wrapper) return candidate(wrapper.value, depth + 1)
         if (wrapper.type === 'text' && typeof wrapper.value === 'string') return candidate(wrapper.value, depth + 1)
+        // A file card that also carries structuredContent keeps its own files. The extra field is not another target.
+        if ('structuredContent' in wrapper && wrapper.kind !== 'file' && !('path' in wrapper)) return candidate(wrapper.structuredContent, depth + 1)
     }
     return value
 }
 
 /**
  * Validate one recorded card_file result for the Mac conversation. It accepts the live tool output
- * (a JSON string), a stored text/json wrapper, a parsed card, and the legacy single-file card. Every
- * file must still look like a visible reference: a .txt/.md document, a PDF, a bounded
+ * (a JSON string), a stored text/json wrapper, an MCP content block, structuredContent, a parsed card,
+ * and the legacy single-file card. Every file must still look like a visible reference: a .txt/.md document, a PDF, a bounded
  * PNG/JPEG/WebP/GIF/SVG/AVIF/ICO/BMP image, a WAV/MP3/M4A/Ogg/FLAC audio file, an MP4/WebM/MOV/M4V video,
  * or another visible file with an identity. Scope is only `agent` or `shared`. Private images and videos
  * share the 24 MiB album budget; shared files and download tiles do not. Images stay 8 MiB, video, audio,

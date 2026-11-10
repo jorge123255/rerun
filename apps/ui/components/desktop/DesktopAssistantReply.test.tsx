@@ -371,6 +371,40 @@ test('draws a recorded card_file result as file tiles instead of a generic tool 
     expect(container.textContent).not.toContain('Show a file')
 })
 
+test('restores an MCP file-card preview for this coworker and does not fetch a missing or foreign target', async () => {
+    const secret = 'sk-ABCDEFGHIJKLMNOPQRSTUVWX'
+    const card = { kind: 'file', files: [{ path: 'shots/photo.png', name: 'photo.png', size: 1024, scope: 'agent', identity: '12:34' }], token: secret }
+    const output = { type: 'json', value: [{ type: 'text', text: JSON.stringify(card) }, { type: 'text', text: secret }] }
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(null, { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await act(async () => root.render(<DesktopAssistantReply message={{ id: 'engine-card-mcp', role: 'assistant', parts: [{ type: 'dynamic-tool', toolName: 'mcp__rerun__card_file', toolCallId: 'card-mcp', state: 'output-available', input: { token: secret }, output }] }} streaming={false} agentId="agent-1" />))
+    await act(async () => { await Promise.all(fetchMock.mock.results.map(result => result.value)) })
+    expect(container.querySelector('[data-file-card]')).not.toBeNull()
+    expect(container.querySelector('button[aria-label="Open photo.png"]')).not.toBeNull()
+    expect(container.textContent).not.toContain(secret)
+    const called = fetchMock.mock.calls.map(call => [String(call[0]), (call[1] as RequestInit | undefined)?.method ?? 'GET'] as const)
+    expect(called.some(([url, method]) => method === 'GET' && url.includes('/api/desktop/agents/agent-1/files/image') && url.includes('identity=12%3A34') && url.includes('shots%2Fphoto.png'))).toBe(true)
+    expect(called.every(([url, method]) => method === 'GET' && url.includes('/api/desktop/agents/agent-1/'))).toBe(true)
+
+    fetchMock.mockClear()
+    await render([{ type: 'dynamic-tool', toolName: 'card_file', toolCallId: 'card-missing-owner', state: 'output-available', input: {}, output }])
+    await act(async () => { await Promise.all(fetchMock.mock.results.map(result => result.value)) })
+    expect(container.querySelector('[data-file-card]')).not.toBeNull()
+    expect(container.textContent).toContain('This conversation has no workspace.')
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    const foreign = { type: 'json', value: [{ type: 'text', text: JSON.stringify({ kind: 'file', files: [{ path: '../foreign-agent/secret.png', name: 'secret.png', size: 4, scope: 'agent', identity: '99:1' }], token: secret }) }] }
+    const missing = { type: 'json', value: [{ type: 'text', text: JSON.stringify({ kind: 'file', files: [{ path: 'shots/photo.png', name: 'photo.png', size: 1024, scope: 'agent' }] }) }] }
+    for (const blocked of [foreign, missing]) {
+        fetchMock.mockClear()
+        await render([{ type: 'dynamic-tool', toolName: 'card_file', toolCallId: 'card-blocked', state: 'output-available', input: {}, output: blocked }], false, 'agent-1')
+        expect(container.querySelector('[data-file-card]')).toBeNull()
+        expect(fetchMock).not.toHaveBeenCalled()
+        expect(container.innerHTML).not.toContain(secret)
+        expect(container.innerHTML).not.toContain('foreign-agent')
+    }
+})
+
 test('shows the recorded file tiles but keeps them inert without a trusted coworker id', async () => {
     const output = JSON.stringify({ kind: 'file', files: [{ path: 'reports/summary.md', name: 'summary.md', size: 7, scope: 'agent' }] })
     await render([{ type: 'dynamic-tool', toolName: 'card_file', toolCallId: 'card-2', state: 'output-available',

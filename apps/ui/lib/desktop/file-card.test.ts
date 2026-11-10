@@ -20,6 +20,41 @@ test('accepts the tool output, a stored wrapper and the legacy single-file card'
     expect(desktopFileCardOf({ kind: 'file', path: 'reports/summary.md', name: 'summary.md', size: 7 })).toEqual(expected)
 })
 
+test('restores a completed file card from the saved MCP result shapes and drops private fields', () => {
+    const expected = { kind: 'file', files: [{ path: 'shots/photo.png', name: 'photo.png', size: 1024, scope: 'agent', identity: '12:34' }] }
+    const secret = 'sk-ABCDEFGHIJKLMNOPQRSTUVWX'
+    const body = { ...expected, token: secret, url: 'https://user:secret@outside.invalid/x' }
+    const shapes = [
+        [{ type: 'text', text: JSON.stringify(body) }, { type: 'text', text: secret }],
+        JSON.stringify([{ type: 'text', text: JSON.stringify(body) }]),
+        { type: 'json', value: [{ type: 'text', text: JSON.stringify(body) }] },
+        { type: 'text', value: JSON.stringify([{ type: 'text', text: JSON.stringify(body) }]) },
+        { structuredContent: body },
+        { type: 'json', value: { structuredContent: body, token: secret } },
+    ]
+    for (const shape of shapes) {
+        const restored = desktopFileCardOf(shape)
+        expect(restored).toEqual(expected)
+        expect(JSON.stringify(restored)).not.toContain(secret)
+        expect(JSON.stringify(restored)).not.toContain('outside.invalid')
+    }
+})
+
+test('does not restore a file card from an error, a missing identity, or a foreign path', () => {
+    const imageCard = card([image()])
+    const foreign = card([{ path: '../foreign-agent/secret.png', name: 'secret.png', size: 1024, scope: 'agent', identity: '9:9' }])
+    const missing = card([image({ identity: undefined })])
+    for (const value of [
+        { type: 'error-json', value: imageCard },
+        { type: 'error-text', value: JSON.stringify(imageCard) },
+        { isError: true, structuredContent: imageCard },
+        { type: 'json', value: { isError: true, structuredContent: imageCard } },
+        { structuredContent: foreign },
+        { type: 'json', value: [{ type: 'text', text: JSON.stringify(missing) }] },
+        [{ type: 'text', text: 'sk-ABCDEFGHIJKLMNOPQRSTUVWX' }, { type: 'text', text: JSON.stringify(imageCard) }],
+    ]) expect(desktopFileCardOf(value)).toBeUndefined()
+})
+
 test('keeps only the path metadata the tiles need', () => {
     expect(desktopFileCardOf({ ...card([file({ token: 'private' })]), extra: 'private', url: 'https://outside.invalid/x' })).toEqual({
         kind: 'file', files: [{ path: 'reports/summary.md', name: 'summary.md', size: 7, scope: 'agent' }],
