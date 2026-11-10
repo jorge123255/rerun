@@ -96,9 +96,9 @@ async function assertAttempt(db: Query, input: DesktopMcpSignInDecision, bodyFin
 }
 
 export function createDesktopMcpSignInStore(db: Client) {
-    async function read(requestId: string): Promise<DesktopMcpSignInView | null> {
-        const request = await requestById(db, requestId)
-        return request ? viewOf(request, await receiptById(db, requestId)) : null
+    async function read(requestId: string, query: Query = db): Promise<DesktopMcpSignInView | null> {
+        const request = await requestById(query, requestId)
+        return request ? viewOf(request, await receiptById(query, requestId)) : null
     }
     async function transaction<T>(requestId: string, work: (tx: Awaited<ReturnType<Client['transaction']>>) => Promise<T>): Promise<T> {
         return withLock(requestId, async () => {
@@ -147,7 +147,7 @@ export function createDesktopMcpSignInStore(db: Client) {
             return row ? viewOf(requestOf(row), await receiptById(db, String(row.request_id))) : null
         },
         async begin(input: DesktopMcpSignInDecision, authority: DesktopMcpSignInAuthority) { return (await beginAttempt(input, authority)).request },
-        async readBySource(source: DesktopMcpSignInSource) { return read(identity(source)) },
+        async readBySource(source: DesktopMcpSignInSource, query: Query = db) { return read(identity(source), query) },
         async validate(input: DesktopMcpSignInDecision, active = false) {
             const request = active ? (await pending(db, input)).request : await exact(db, input)
             if (!active && request.revision !== input.expectedRevision) refusal(409, 'This MCP sign-in request changed.')

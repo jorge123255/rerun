@@ -68,8 +68,8 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
             const row=(await db.execute({sql:'SELECT o.bundle FROM desktop_remote_mcp_oauth o JOIN desktop_remote_mcp s ON s.agent_id=o.agent_id AND s.name=o.name AND s.revision=o.revision WHERE o.agent_id=? AND o.name=?',args:[agent,name]})).rows[0]
             return row?JSON.parse(open(agent,`oauth:${name}`,String(row.bundle))):null
         },
-        async credentialState(agent:string,name:string) {
-            const row=(await db.execute({sql:`SELECT s.id,s.revision,s.transport,s.bearer IS NOT NULL AS has_bearer,o.bundle
+        async credentialState(agent:string,name:string, query: Pick<Client, 'execute'> = db) {
+            const row=(await query.execute({sql:`SELECT s.id,s.revision,s.transport,s.bearer IS NOT NULL AS has_bearer,o.bundle
                 FROM desktop_remote_mcp s LEFT JOIN desktop_remote_mcp_oauth o ON s.agent_id=o.agent_id AND s.name=o.name
                 WHERE s.agent_id=? AND s.name=?`,args:[agent,name]})).rows[0]
             return row && row.transport === 'http' && !row.has_bearer && row.id
