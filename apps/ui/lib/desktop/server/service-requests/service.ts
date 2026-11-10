@@ -22,6 +22,7 @@ import {
 } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { disabledCoworkerMessage } from '../coworker-enabled'
+import { recordObservedServiceSetup } from '../foreman/setup-result-store'
 
 export type ServiceRequestScope = { agentId: string; sessionId: string; enabled: boolean }
 export type ServiceRequestDatabase = Pick<Client, 'execute'>
@@ -314,6 +315,7 @@ export async function progressDesktopServiceRequest(db: Client, scope: ServiceRe
             sql: 'INSERT INTO desktop_service_suggestion_mutations (request_id, service_request_id, kind, expected_revision, body, result_revision, created_at) VALUES (?,?,?,?,?,?,?)',
             args: [input.requestId, current.serviceRequestId, 'progress', input.expectedRevision, progressBody(input), nextRevision, new Date().toISOString()],
         })
+        await recordObservedServiceSetup(tx, scope.agentId, { choices: input.choices })
         return nextRevision
     }))
     return desktopServiceProgressResultSchema.parse({ serviceRequestId: input.serviceRequestId, revision, currentIndex: input.currentIndex, choices: input.choices })
@@ -408,6 +410,7 @@ export async function finishDesktopServiceRequest(db: Client, scope: ServiceRequ
             sql: 'INSERT INTO desktop_service_suggestion_mutations (request_id, service_request_id, kind, expected_revision, body, result_revision, created_at) VALUES (?,?,?,?,?,?,?)',
             args: [input.requestId, current.serviceRequestId, 'finish', current.revision, JSON.stringify({ source: sealed.guard, choices: current.choices }), current.revision, createdAt],
         })
+        await recordObservedServiceSetup(tx, scope.agentId, { choices: current.choices, entries: confirmed })
         return sealed
     }, authority.check))
     return reconcile(db, scope, ports, receipt)

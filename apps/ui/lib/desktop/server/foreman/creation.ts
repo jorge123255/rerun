@@ -21,6 +21,8 @@ import { commitDesktopTemplateInstall } from '../templates/commit'
 import { prepareTemplateIntent } from '../templates/intents'
 import { createDesktopTemplateServer, type DesktopTemplateEngineClient } from '../templates/server'
 import { ForemanRefusal, type ForemanCreationAuthority, type ForemanSetupAuthority, type ForemanReceipt } from './authority'
+import { openSetupResult } from './setup-result'
+import { saveSetupResult } from './setup-result-store'
 
 // Root installs this in its numbered app.db migration. No secondary database or lazy schema.
 export const DESKTOP_FOREMAN_CREATION_SCHEMA_SQL = `
@@ -296,6 +298,7 @@ export async function createDesktopForemanCreationAuthority(runtime: DesktopRunt
                     if (prior) throw changed()
                     const now = new Date().toISOString()
                     await tx.execute({sql:'INSERT INTO desktop_agents(id,workspace_id,engine_agent_id,name,description,enabled,created_at,updated_at) VALUES(?,1,?,?,?,0,?,?)',args:[agentId,engineAgentId,body.name,body.description,now,now]})
+                    await saveSetupResult(tx, agentId, openSetupResult({ permissions: { services: false, suggestService: false, requestSecret: false } }))
                     await tx.execute(desktopPlacementInsert({agentId,spaceId:body.spaceId,...position}))
                     await tx.execute(desktopBoardRevisionWrite)
                     await complete(tx,row,{agentId,engineAgentId,spaceId:body.spaceId})
