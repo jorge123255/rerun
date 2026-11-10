@@ -418,3 +418,34 @@ test('an animated preview still refuses symlinks, hard links, the wrong file, an
     expect((await GET(request(alice, '?path=docs/shot.png&animation=1&animation=1'), { params: Promise.resolve({ agentId: alice }) })).status).toBe(400)
     expect((await GET(request(alice, '?path=docs/shot.png&animation=0'), { params: Promise.resolve({ agentId: alice }) })).status).toBe(400)
 })
+
+test('saved generated-image card reopens through authorized original bytes after DB reopen and refuses replaced, missing or foreign identity', async () => {
+    const { desktopFileCardOf } = await import('@/lib/desktop/file-card')
+    const { inspectCardImageResponse } = await import('@/lib/desktop/image-card-response')
+    const { createDesktopSession, findDesktopSession } = await import('@/lib/desktop/server/store')
+    const path = join(workspace('engine-alice'), 'docs', 'shot.png'), stat = await lstat(path)
+    const session = await createDesktopSession(await openDesktopDatabase(root), { agentId: alice, engineSessionId: 'synthetic-saved-engine-session', title: 'Saved image fixture' })
+    const saved = { sessionId: session.id, agentId: alice, message: { id: 'engine-saved_image_reply', role: 'assistant', parts: [{ type: 'tool-image_generation', toolCallId: 'saved-image-call', state: 'output-available', input: {}, output: { kind: 'file', files: [{ path: 'docs/shot.png', name: 'shot.png', size: png.length, scope: 'agent', identity: `${stat.dev}:${stat.ino}` }] } }] } }
+    const record = join(root, 'saved-image-fixture.json')
+    await writeFile(record, JSON.stringify(saved))
+    for (let reopen = 0; reopen < 2; reopen++) {
+        await closeDesktopDatabase(root)
+        const restored = JSON.parse(await readFile(record, 'utf8'))
+        expect(await findDesktopSession(await openDesktopDatabase(root), restored.sessionId)).toMatchObject({ id: session.id, agentId: alice, engineSessionId: 'synthetic-saved-engine-session' })
+        const card = desktopFileCardOf(restored.message.parts[0].output)!
+        expect(card.files).toEqual(saved.message.parts[0]!.output.files)
+        const response = await image(card.files[0]!.path, card.files[0]!.identity, restored.agentId, true)
+        expect(response.status).toBe(200)
+        const display = await inspectCardImageResponse(response, card.files[0]!.path)
+        expect(Buffer.from(await display.blob.arrayBuffer())).toEqual(png)
+        expect(await readFile(path)).toEqual(png)
+    }
+    await writeFile(join(workspace('engine-bob'), 'docs', 'shot.png'), png)
+    const identity = saved.message.parts[0]!.output.files[0]!.identity
+    expect((await image('docs/shot.png', identity, bob, true)).status).toBeGreaterThanOrEqual(400)
+    await rename(path, `${path}.original`); await writeFile(path, png)
+    expect((await image('docs/shot.png', identity, alice, true)).status).toBeGreaterThanOrEqual(400)
+    await unlink(path)
+    expect((await image('docs/shot.png', identity, alice, true)).status).toBeGreaterThanOrEqual(400)
+    expect(await readFile(`${path}.original`)).toEqual(png)
+})

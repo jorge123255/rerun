@@ -509,3 +509,26 @@ test('a restored generic receipt keeps its status and does not render a secret o
     expect(container.textContent).not.toContain('Unknown')
     expect(container.querySelector('[data-historical="group"]')).toBeNull()
 })
+
+test('saved image_generation part rehydrates the same authorized preview without a generation or tool POST', async () => {
+    const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='), char => char.charCodeAt(0))
+    const urls = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:saved-image-fixture')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://127.0.0.1')
+        expect(url.pathname).toBe('/api/desktop/agents/saved-owner/files/image')
+        expect(Object.fromEntries(url.searchParams)).toEqual({ path: 'images/saved.png', identity: '1:123', animation: '1' })
+        expect(init?.method ?? 'GET').toBe('GET')
+        return new Response(png, { headers: { 'content-type': 'image/png' } })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const saved: UIMessage = { id: 'engine-saved_image_reply', role: 'assistant', parts: [{ type: 'tool-image_generation', toolCallId: 'saved-image-call', state: 'output-available', input: {}, output: { kind: 'file', files: [{ path: 'images/saved.png', name: 'saved.png', size: png.length, scope: 'agent', identity: '1:123' }] } }] }
+    for (let reopen = 0; reopen < 2; reopen++) {
+        await act(async () => root.render(<DesktopAssistantReply message={JSON.parse(JSON.stringify(saved))} streaming={false} agentId="saved-owner" />))
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+        expect(container.querySelector('[data-file-card]')).not.toBeNull()
+        expect(fetcher).toHaveBeenCalledTimes(reopen + 1)
+        if (reopen === 0) { await act(async () => root.unmount()); root = createRoot(container) }
+    }
+    expect(urls).toHaveBeenCalledTimes(2)
+})
