@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron')
 let beforeQuit
+let notificationClicks = null
 let registrationSequence = 0
 
 ipcRenderer.on('desktop:before-quit', (_event, value) => {
@@ -44,9 +45,17 @@ contextBridge.exposeInMainWorld('desktopApp', {
         notify: value => ipcRenderer.invoke('desktop:notify', value),
         onNotificationClick: listener => {
             if (typeof listener !== 'function') throw new TypeError('Expected a notification-click listener')
-            const handler = (_event, value) => listener(value)
+            const current = { registrationId: String(++registrationSequence) }
+            notificationClicks = current
+            const handler = (_event, value) => { if (notificationClicks === current) listener(value) }
             ipcRenderer.on('desktop:notification-click', handler)
-            return () => ipcRenderer.removeListener('desktop:notification-click', handler)
+            ipcRenderer.send('desktop:notification-clicks-ready', { registrationId: current.registrationId })
+            return () => {
+                ipcRenderer.removeListener('desktop:notification-click', handler)
+                if (notificationClicks !== current) return
+                notificationClicks = null
+                ipcRenderer.send('desktop:notification-clicks-unready', { registrationId: current.registrationId })
+            }
         },
     },
     findInPage: input => ipcRenderer.invoke('desktop:find-in-page', { action: input?.action, query: typeof input?.query === 'string' ? input.query : '' }),

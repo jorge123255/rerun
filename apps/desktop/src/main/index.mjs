@@ -7,6 +7,7 @@ import { createWorkspaceCoordinator, seedLegacyCatalog, getWorkspace } from './w
 import { loadBundle, loadIdentity, workspaceIdentity } from './runtime.mjs'
 import { RuntimeSupervisor } from './supervisor.mjs'
 import { createDesktopNotifications } from './notifications.mjs'
+import { createNotificationClickHandoff } from './notification-click-handoff.mjs'
 import { BeforeQuitDrafts, completeDesktopQuit } from './before-quit.mjs'
 import { createDesktopTemplateFiles } from './templates.mjs'
 import { createDesktopCoworkerShareFiles } from './coworker-share-files.mjs'
@@ -53,12 +54,34 @@ const remoteMachineIpc = createRemoteMachineIpc({ trusted, context: () => {
     return { binding: remoteMachines, actor: { installId: remoteInstallId, workspaceId: current.workspaceId,
         launchNonce: current.launchNonce, rendererEpoch } }
 } })
+const clickHandoff = createNotificationClickHandoff()
+let clickReady = null
 let desktopNotifications = createNotices()
+function runtimeScope() {
+    const current = supervisor?.runtime
+    if (!current || !runtime || runtime !== current || supervisor.status.state !== 'ready') return null
+    return { workspaceId: current.workspaceId, launchNonce: current.launchNonce }
+}
+function clickScope() {
+    if (quitting || transitioning) return null
+    return runtimeScope()
+}
+function flushNotificationClicks() {
+    clickHandoff.flush(clickScope(), target => {
+        if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return false
+        if (!clickReady || clickReady.contents !== window.webContents) return false
+        window.webContents.send('desktop:notification-click', target)
+        return true
+    })
+}
 function createNotices() { return createDesktopNotifications({ Notification, onClick: target => {
-    if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return
-    if (window.isMinimized()) window.restore()
-    window.show(); window.focus()
-    window.webContents.send('desktop:notification-click', target)
+    if (!quitting && !transitioning && window && !window.isDestroyed()) {
+        if (window.isMinimized()) window.restore()
+        window.show(); window.focus()
+    }
+    // A reload is still this workspace runtime. Hold the click until that page subscribes.
+    clickHandoff.accept(target, transitioning ? null : runtimeScope())
+    if (!quitting && !transitioning) flushNotificationClicks()
 } }) }
 
 if (!app.requestSingleInstanceLock()) app.quit()
@@ -89,7 +112,7 @@ else {
                 return result.response === 1
             },
             stop: async () => { await remoteMachines?.close(); await supervisor?.stop() },
-            quit: () => { quittingNow = true; app.quit() },
+            quit: () => { clickHandoff.stop(); quittingNow = true; app.quit() },
             cancelled: resumeAfterCancelledQuit,
         }).catch(() => { if (!quittingNow) resumeAfterCancelledQuit() })
     })
@@ -122,6 +145,7 @@ function resumeAfterCancelledQuit() {
             window.webContents.send('desktop:quit-cancelled')
         }
     } catch {}
+    flushNotificationClicks()
 }
 
 async function launch() {
@@ -192,6 +216,26 @@ async function launch() {
     ]) ipcMain.on(channel, (event, value) => {
         // Event handlers must ignore untrusted frames rather than throw in the main process.
         try { trusted(event); if (isDesktopPage(event.senderFrame.url)) handle(value) } catch {}
+    })
+    const clickRegistration = value => {
+        const registrationId = value?.registrationId
+        return typeof registrationId === 'string' && registrationId && registrationId.length <= 128 ? registrationId : null
+    }
+    ipcMain.on('desktop:notification-clicks-ready', (event, value) => {
+        try {
+            trusted(event)
+            const registrationId = clickRegistration(value)
+            if (!registrationId || quitting || transitioning || !isDesktopPage(event.senderFrame.url)) return
+            clickReady = { contents: event.sender, registrationId }
+            flushNotificationClicks()
+        } catch {}
+    })
+    ipcMain.on('desktop:notification-clicks-unready', (event, value) => {
+        try {
+            trusted(event)
+            const registrationId = clickRegistration(value)
+            if (registrationId && clickReady?.registrationId === registrationId && clickReady.contents === event.sender) clickReady = null
+        } catch {}
     })
     await window.loadFile(startup)
     if (!safeStorage.isEncryptionAvailable()) throw new Error('Mac secure storage is unavailable')
@@ -285,6 +329,7 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
     const invalidateRenderer = () => {
         if (window?.webContents !== contents) return
         rendererEpoch = randomUUID()
+        clickReady = null
         draftQuit.reset()
         // Revoke the lease immediately, then drain only this workspace's remote work.
         // A failed drain cannot turn an old receipt into a successful connection.
@@ -320,6 +365,7 @@ async function displayWorkspace() {
     if (activeWorkspaceId !== current.workspaceId) await prepareWorkspaceWindow(current.workspaceId)
     await activeSession.cookies.set({ url: current.app.origin, name: 'rerun-desktop-session', value: current.app.sessionToken, httpOnly: true, sameSite: 'strict', path: '/' })
     await window.loadURL(`${current.app.origin}/desktop`)
+    clickHandoff.retain(runtimeScope())
 }
 async function startWorkspace() {
     try {

@@ -1,14 +1,18 @@
 // A deliberately narrow main-process notification boundary; renderer permissions stay denied.
 const kinds = new Set(['done', 'error', 'info', 'question', 'approval', 'takeover', 'service', 'secret', 'mcp', 'tool-install'])
 const text = (value, max, required = false) => typeof value === 'string' && value.length <= max && (!required || value.length > 0) && !/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(value)
-export function notificationPayload(value) {
+export function notificationClickTarget(value) {
     if (!value || typeof value !== 'object' || !kinds.has(value.kind) || !text(value.key, 600, true)
-        || !text(value.agentId, 128, true) || !text(value.sessionId, 128, true) || !text(value.title, 256, true)) return null
+        || !text(value.agentId, 128, true) || !text(value.sessionId, 128, true)) return null
     for (const key of ['groupId', 'terminalId', 'requestId']) if (value[key] != null && !text(value[key], 600, true)) return null
-    if (value.subtitle != null && !text(value.subtitle, 256) || value.body != null && !text(value.body, 2048)) return null
     return { key: value.key, kind: value.kind, agentId: value.agentId, sessionId: value.sessionId,
-        ...Object.fromEntries(['groupId', 'terminalId', 'requestId'].filter(key => value[key] != null).map(key => [key, value[key]])),
-        title: value.title, subtitle: value.subtitle ?? '', body: value.body ?? '', silent: true }
+        ...Object.fromEntries(['groupId', 'terminalId', 'requestId'].filter(key => value[key] != null).map(key => [key, value[key]])) }
+}
+export function notificationPayload(value) {
+    const target = notificationClickTarget(value)
+    if (!target || !text(value.title, 256, true)) return null
+    if (value.subtitle != null && !text(value.subtitle, 256) || value.body != null && !text(value.body, 2048)) return null
+    return { ...target, title: value.title, subtitle: value.subtitle ?? '', body: value.body ?? '', silent: true }
 }
 export function createDesktopNotifications({ Notification, onClick, timeoutMs = 5000, now = Date.now }) {
     const active = new Map()
