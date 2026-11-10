@@ -45,12 +45,25 @@ it('drives Settings through real Claude route/auth, retains singleton/model, can
         return parse(init.method === 'POST' ? await auth.action(JSON.parse(init.body), init.signal) : await auth.status())
     })
     const calls: { path: string; method: string }[] = [], replies: string[] = []
+    const statuses: number[] = []
+    function localRequest(path: string, init: RequestInit = {}, authenticated = true) {
+        const request = new Request(origin + path, init)
+        // Happy DOM applies browser restrictions to Host and Cookie. This is the server's inbound request.
+        const headers = new Headers(init.headers)
+        headers.set('host', new URL(origin).host)
+        headers.set('origin', origin)
+        if (authenticated) headers.set('cookie', `rerun-desktop-session=${sessionToken}`)
+        Object.defineProperty(request, 'headers', { value: headers })
+        return request
+    }
     vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
         const path = new URL(url, origin).pathname
         calls.push({ path, method: init.method ?? 'GET' })
         if (path === '/api/desktop/claude-login') {
-            const request = new Request(origin + path, { ...init, headers: { ...Object.fromEntries(new Headers(init.headers)), host: new URL(origin).host, origin, cookie: `rerun-desktop-session=${sessionToken}` } })
-            return init.method === 'POST' ? POST(request) : GET(request)
+            const request = localRequest(path, init)
+            const response = await (init.method === 'POST' ? POST(request) : GET(request))
+            statuses.push(response.status)
+            return response
         }
         if (path === '/api/desktop/agents/fixture/model') return Response.json(buildDesktopModelView({ connections: providers().connections, workspace: providers().default, coworker: null, conversation: selected }))
         if (path === '/fixture/synthetic-reply') {
@@ -81,7 +94,7 @@ it('drives Settings through real Claude route/auth, retains singleton/model, can
         expect(button('Open Claude again').disabled).toBe(false) // Parent negative control: saved rejected credential disabled this.
         expect(button('Send synthetic reply').disabled).toBe(true)
         await click('Open Claude again')
-        expect(opened).toHaveBeenCalledTimes(1)
+        await vi.waitFor(() => expect(opened, `Mounted route statuses: ${statuses.join(', ')}`).toHaveBeenCalledTimes(1))
         const old = await auth.status()
         await paste('synthetic-delayed-code'); await exchangeEntered
         await click('Cancel sign-in')
@@ -111,6 +124,6 @@ it('drives Settings through real Claude route/auth, retains singleton/model, can
         expect(exchange).toHaveBeenCalledTimes(2)
         expect(replies).toHaveLength(1)
         // Real route authentication is kept in this fixture; wrong session cannot query auth.
-        expect((await GET(new Request(origin + '/api/desktop/claude-login', { headers: { host: new URL(origin).host } }))).status).toBe(401)
+        expect((await GET(localRequest('/api/desktop/claude-login', {}, false))).status).toBe(401)
     } finally { finish?.({ accessToken: 'synthetic-late-cleanup' }); auth.stop() }
 })

@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { DesktopRuntime } from '../runtime'
@@ -11,11 +14,16 @@ const mocks = vi.hoisted(() => ({ context: vi.fn(), ports: vi.fn() }))
 vi.mock('../mcp-sign-in/binding', () => ({ desktopMcpSignInPorts: mocks.ports }))
 import { bindTrustedMcpDeviceMethodReview } from './binding'
 
-const clients: Client[] = [], cleanup: (() => void)[] = []
-afterEach(() => { cleanup.splice(0).forEach(close => close()); clients.splice(0).forEach(db => db.close()) })
+const clients: Client[] = [], roots: string[] = [], cleanup: (() => void)[] = []
+afterEach(async () => {
+    cleanup.splice(0).forEach(close => close())
+    clients.splice(0).forEach(db => db.close())
+    await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+})
 beforeEach(() => { mocks.context.mockReset(); mocks.ports.mockReset(); mocks.ports.mockResolvedValue({ deviceMethodAuthority: mocks.context }) })
 async function fixture() {
-    const db = createClient({ url: 'file::memory:' }); clients.push(db)
+    const root = await mkdtemp(join(tmpdir(), 'rerun-device-method-binding-')); roots.push(root)
+    const db = createClient({ url: `file:${join(root, 'fixture.db')}` }); clients.push(db)
     await db.executeMultiple(`CREATE TABLE desktop_agents(id TEXT PRIMARY KEY); INSERT INTO desktop_agents VALUES('coworker');
         CREATE TABLE desktop_remote_mcp(id TEXT, transport TEXT, agent_id TEXT, name TEXT, url TEXT, revision TEXT, bearer TEXT, PRIMARY KEY(agent_id,name));
         INSERT INTO desktop_remote_mcp VALUES('registration','http','coworker','docs','https://docs.example/mcp','r1',NULL); ${desktopMcpDeviceReviewSchema} ${desktopMcpDeviceCustodySchema}`)
