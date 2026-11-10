@@ -265,3 +265,31 @@ test('combined portable Share preserves opted-in memory, private row, saved view
         expect((await target.execute("SELECT name FROM sqlite_master WHERE name='_rerun_internal'")).rows).toEqual([])
     } finally { target.close() }
 }, 20_000)
+
+test('lost import response recovers only the original workspace/digest/request receipt, including after completion and reopen', async () => {
+    const runtime = fixture.runtime, binding = await openDesktopCoworkerShareBinding(runtime, sourceId)
+    const source = await binding.source(1, sourceId), include = { memories: false, database: false, files: false }
+    const common = { workspaceId: 1, agentId: sourceId, sourceRevision: source.revision, include }
+    const review = await binding.service.review({ ...common, requestId: 'integrity-review' }, source)
+    const exported = await binding.service.export({ ...common, requestId: 'integrity-export', reviewId: review.reviewId, expectedDigest: review.manifest.contentDigest }, source)
+    const inspected = await binding.service.inspect(exported.manifest.packageKey)
+    expect(inspected.importReview.manifestDigest).toBe(review.manifest.contentDigest)
+    const input = { requestId: 'integrity-original', snapshotId: exported.manifest.packageKey, expectedDigest: inspected.importReview.manifestDigest, targetWorkspaceId: 1 }
+    vi.spyOn(binding.store, 'settleImport').mockRejectedValueOnce(new Error('Synthetic lost response after canonical install'))
+    expect(await binding.service.import(input)).toMatchObject({ status: 'uncertain', recoverable: true })
+    expect(await binding.service.import({ ...input, requestId: 'integrity-alias-before' })).toMatchObject({ status: 'uncertain' })
+    await expect(binding.service.import({ ...input, expectedDigest: '0'.repeat(64) })).rejects.toMatchObject({ status: 409 })
+    await expect(binding.service.import({ ...input, targetWorkspaceId: 2 })).rejects.toThrow()
+    fixture.db.close(); fixture.db = createClient({ url: `file:${dbPath}` })
+    const reopened = await openDesktopCoworkerShareBinding(runtime, 'portable-import')
+    const recovered = await reopened.service.import(input)
+    expect(recovered).toMatchObject({ status: 'imported', importedAgentId: expect.any(String) })
+    // Parent negative control: the old branch returned this completed receipt to a different UUID.
+    expect(await reopened.service.import({ ...input, requestId: 'integrity-alias-after' })).toMatchObject({ status: 'uncertain' })
+    expect(await reopened.service.import(input)).toEqual(recovered)
+    const copies = (await fixture.db.execute({ sql: 'SELECT id,engine_agent_id,enabled FROM desktop_agents WHERE id!=?', args: [sourceId] })).rows
+    expect(copies).toHaveLength(1); expect(copies[0]!.id).toBe(recovered.importedAgentId); expect(copies[0]!.enabled).toBe(0)
+    expect((await fixture.db.execute("SELECT count(*) AS n FROM desktop_template_requests WHERE operation='install'")).rows[0]!.n).toBe(1)
+    const receipts = (await fixture.db.execute("SELECT request_id,status FROM desktop_coworker_share_imports")).rows
+    expect(receipts).toEqual([{ request_id: input.requestId, status: 'imported' }])
+})
