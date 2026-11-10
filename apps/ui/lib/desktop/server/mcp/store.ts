@@ -42,9 +42,16 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
             const row=(await db.execute({sql:'SELECT o.bundle FROM desktop_remote_mcp_oauth o JOIN desktop_remote_mcp s ON s.agent_id=o.agent_id AND s.name=o.name AND s.revision=o.revision WHERE o.agent_id=? AND o.name=?',args:[agent,name]})).rows[0]
             return row?JSON.parse(open(agent,`oauth:${name}`,String(row.bundle))):null
         },
-        async writeOAuth(agent:string,name:string,revision:string,bundle:OAuthTokenBundle,signal:AbortSignal) {
+        async credentialState(agent:string,name:string):Promise<{revision:string;bundle:string}|null> {
+            const row=(await db.execute({sql:'SELECT revision,bundle FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=?',args:[agent,name]})).rows[0]
+            return row?{revision:String(row.revision),bundle:String(row.bundle)}:null
+        },
+        /** `guard` runs inside the credential commit, before the write, for a caller that must prove
+         * the exact current credential state it is replacing (an approved device exchange). */
+        async writeOAuth(agent:string,name:string,revision:string,bundle:OAuthTokenBundle,signal:AbortSignal,guard?:()=>Promise<void>) {
             return lifecycle.commitCredentials(agent,name,signal,async check=>{
                 check()
+                if(guard){await guard();check()}
                 const remote=(await db.execute({sql:'SELECT transport FROM desktop_remote_mcp WHERE agent_id=? AND name=?',args:[agent,name]})).rows[0]
                 if(remote?.transport==='sse'){const drain=transportDrains.get(lifecycle);if(!drain)throw new Error('SSE cleanup unavailable');await drain(agent,name);check()}
                 const previous=(await db.execute({sql:'SELECT revision,bundle FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=?',args:[agent,name]})).rows[0]
@@ -62,6 +69,7 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
                     else await db.execute({sql:'DELETE FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=? AND bundle=?',args:[agent,name,encrypted]})
                     throw error
                 }
+                lifecycle.invalidateCredentials(agent,name)
             })
         },
         async read(agent: string, name: string): Promise<Omit<RemoteServer, 'hasBearer'> & { bearer: string }> {

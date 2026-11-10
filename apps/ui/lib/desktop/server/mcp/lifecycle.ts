@@ -55,7 +55,9 @@ export function remoteMcpLifecycle() {
         server.tail=result
         return result.finally(()=>{server.pending--})
     }
-    return {admit,disconnect,mutate,watch,commitCredentials,
+    /** A credential was written: watchers (and issued leases) are stale, in-flight calls are not aborted. */
+    function invalidateCredentials(agent:string,name:string){state(agent,name).generation++}
+    return {admit,disconnect,mutate,watch,commitCredentials,invalidateCredentials,
         transitionOwner:<T>(agent:string,write:()=>Promise<T>)=>mutate(agent,'',write),
         shutdown:()=>{closed=true;for(const value of states.values())invalidate(value)},
     }
