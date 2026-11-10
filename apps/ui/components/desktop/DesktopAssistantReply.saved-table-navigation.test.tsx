@@ -26,6 +26,11 @@ it('reopens one saved card through its authenticated owner/table/view panel, ref
     let mode: 'present' | 'view-removed' | 'table-removed' = 'present'
     const engineCalls: { path: string; method: string }[] = []
     const server = createServer((request, response) => {
+        if (request.headers.origin) response.setHeader('access-control-allow-origin', request.headers.origin)
+        if (request.method === 'OPTIONS') {
+            response.writeHead(204, { 'access-control-allow-methods': 'GET', 'access-control-allow-headers': 'authorization, content-type' }).end()
+            return
+        }
         const path = new URL(request.url!, 'http://127.0.0.1').pathname
         engineCalls.push({ path, method: request.method ?? 'GET' })
         response.setHeader('content-type', 'application/json')
@@ -78,7 +83,7 @@ it('reopens one saved card through its authenticated owner/table/view panel, ref
             expect(host!.textContent).toContain('Frozen original row'); expect(browserCalls).toHaveLength(before)
             const draft = host!.querySelector('textarea')!
             await open()
-            await eventually(() => expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Live owned row'))
+            await eventually(() => expect(document.querySelector('[role="dialog"]')?.textContent ?? '').toContain('Live owned row'))
             expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Original coworker')
             expect([...document.querySelectorAll('button[aria-pressed="true"]')].some(button => button.textContent?.includes('Saved notes'))).toBe(true)
             expect(host!.querySelector('textarea')).toBe(draft); expect(draft.value).toBe('Keep my draft')

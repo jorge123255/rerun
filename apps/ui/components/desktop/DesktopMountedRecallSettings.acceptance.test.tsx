@@ -118,6 +118,11 @@ it('mounts Tool services and the board, recalls a paraphrase, keeps it across a 
     let memoryRuntime: MemoryRuntime | undefined
     let brainRuntime: BrainRuntime | undefined
     const server = createServer(async (incoming, outgoing) => {
+        if (incoming.headers.origin) outgoing.setHeader('access-control-allow-origin', incoming.headers.origin)
+        if (incoming.method === 'OPTIONS') {
+            outgoing.writeHead(204, { 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'authorization, content-type' }).end()
+            return
+        }
         try {
             const chunks: Buffer[] = []; for await (const chunk of incoming) chunks.push(Buffer.from(chunk))
             const body = Buffer.concat(chunks).toString()
