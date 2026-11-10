@@ -54,7 +54,7 @@ export function desktopClaudeSpawnSpec(binary: string, sandbox: string, profile:
         command: '/usr/bin/sandbox-exec',
         args: ['-D', `PROFILE=${profile}`, '-D', `BINARY=${binary}`, '-f', sandbox, binary, ...options.args],
         cwd: profile,
-        env: { ...harness, NODE_ENV: 'production' as const, PATH: '/usr/bin:/bin', HOME: profile, CLAUDE_CONFIG_DIR: profile, TMPDIR: join(profile, 'tmp'), LANG: 'en_US.UTF-8', CLAUDE_CODE_ENTRYPOINT: 'sdk-ts', CLAUDE_AGENT_SDK_VERSION: '0.3.281', CLAUDE_CODE_OAUTH_TOKEN: token },
+        env: { ...harness, NODE_ENV: 'production' as const, PATH: '/usr/bin:/bin', HOME: profile, CLAUDE_CONFIG_DIR: profile, TMPDIR: join(profile, 'tmp'), LANG: 'en_US.UTF-8', CLAUDE_CODE_ENTRYPOINT: 'sdk-ts', CLAUDE_AGENT_SDK_VERSION: '0.3.322', CLAUDE_CODE_OAUTH_TOKEN: token },
     }
 }
 export function desktopClaudeRuntime(connectionId: string | undefined, token: string, harness: Record<string, string>) {
