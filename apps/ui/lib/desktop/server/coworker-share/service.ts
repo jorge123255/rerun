@@ -175,8 +175,8 @@ export function createDesktopCoworkerShareService(store: DesktopCoworkerShareSto
             const snapshot = await saved(input.snapshotId)
             if (!snapshot || snapshot.manifest.contentDigest !== input.expectedDigest) throw new DesktopHttpError(409,'The reviewed share changed or is no longer available.')
             const reservation = await store.reserveImport(input)
-            if (reservation.status === 'imported') return { status: 'imported', importedAgentId: reservation.importedAgentId }
             if (reservation.requestId !== input.requestId) return unknown()
+            if (reservation.status === 'imported') return { status: 'imported', importedAgentId: reservation.importedAgentId }
             const slot = JSON.stringify([input.snapshotId,input.targetWorkspaceId])
             const inflight = state.imports.get(slot)
             if (inflight) return inflight

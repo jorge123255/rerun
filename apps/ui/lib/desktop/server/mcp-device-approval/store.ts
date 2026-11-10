@@ -22,8 +22,8 @@ export function createDeviceReviewStore(db: Client, key: () => Buffer) {
         try { return await crypto.seal(context(value.approval.workspaceId, value.approval.owner, value.reviewId, version), bytes) }
         finally { bytes.fill(0) }
     }
-    async function read(workspace: string, owner: string, id: string): Promise<SavedDeviceReview | null> {
-        const row = (await db.execute({ sql: 'SELECT version,sealed,source_scope FROM desktop_mcp_device_reviews WHERE workspace_id=? AND agent_id=? AND review_id=?', args: [workspace, owner, id] })).rows[0]
+    async function read(workspace: string, owner: string, id: string, query: Pick<Client, 'execute'> = db): Promise<SavedDeviceReview | null> {
+        const row = (await query.execute({ sql: 'SELECT version,sealed,source_scope FROM desktop_mcp_device_reviews WHERE workspace_id=? AND agent_id=? AND review_id=?', args: [workspace, owner, id] })).rows[0]
         if (!row) return null
         let bytes: Uint8Array | undefined
         try {
@@ -38,9 +38,9 @@ export function createDeviceReviewStore(db: Client, key: () => Buffer) {
     }
     return {
         read,
-        async bySource(workspace: string, owner: string, scope: string) {
-            const row = (await db.execute({ sql: 'SELECT review_id FROM desktop_mcp_device_reviews WHERE workspace_id=? AND agent_id=? AND source_scope=?', args: [workspace, owner, scope] })).rows[0]
-            return row ? read(workspace, owner, String(row.review_id)) : null
+        async bySource(workspace: string, owner: string, scope: string, query: Pick<Client, 'execute'> = db) {
+            const row = (await query.execute({ sql: 'SELECT review_id FROM desktop_mcp_device_reviews WHERE workspace_id=? AND agent_id=? AND source_scope=?', args: [workspace, owner, scope] })).rows[0]
+            return row ? read(workspace, owner, String(row.review_id), query) : null
         },
         async list(workspace: string, owner: string) {
             const rows = (await db.execute({ sql: 'SELECT review_id FROM desktop_mcp_device_reviews WHERE workspace_id=? AND agent_id=? LIMIT ?', args: [workspace, owner, DEVICE_REVIEW_LIMITS.records + 1] })).rows

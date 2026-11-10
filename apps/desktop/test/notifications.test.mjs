@@ -4,14 +4,14 @@ import { EventEmitter } from 'node:events'
 import { createDesktopNotifications, notificationPayload } from '../src/main/notifications.mjs'
 const payload = {key:'event:1',kind:'done',agentId:'owner',sessionId:'chat',title:'Coworker',body:'Finished',groupId:'group'}
 function fixture(now = Date.now) {
-    const notices = [], clicks = []
+    const notices = [], clicks = [], clickScopes = []
     class Notification extends EventEmitter {
         static isSupported() { return true }
         constructor(options) { super(); this.options = options; notices.push(this) }
         show() { this.shown = true }
         close() { this.emit('close') }
     }
-    return { notices, clicks, Notification, bridge:createDesktopNotifications({Notification,onClick:target=>clicks.push(target),timeoutMs:20,now}) }
+    return { notices, clicks, clickScopes, Notification, bridge:createDesktopNotifications({Notification,onClick:(target,scope)=>{clicks.push(target);clickScopes.push(scope)},timeoutMs:20,now}) }
 }
 test('only bounded exact notification copy and target fields cross into native notifications',()=>{
     assert.equal(notificationPayload({...payload,kind:'cancelled'}),null)
@@ -103,4 +103,17 @@ test('constructor and show exceptions expose stage only and preserve failed vers
     const second=createDesktopNotifications({Notification:BrokenShow,onClick:()=>{}})
     assert.deepEqual(await second.notify(payload),{status:'unknown',diagnostic:'show-threw'})
     second.close()
+})
+
+test('a notice keeps its submission scope and duplicate keys do not reuse a previous runtime receipt',async()=>{
+    const {notices,clickScopes,bridge}=fixture()
+    const firstScope={workspaceId:1,launchNonce:'old-runtime'}, current={workspaceId:1,launchNonce:'new-runtime'}
+    const first=bridge.notify(payload,firstScope), second=bridge.notify(payload,current)
+    assert.equal(bridge.notify(payload,current),second)
+    assert.notEqual(first,second)
+    assert.equal(notices.length,2)
+    for(const notice of notices){notice.emit('show');notice.emit('click')}
+    assert.deepEqual(await Promise.all([first,second]),[{status:'accepted'},{status:'accepted'}])
+    assert.deepEqual(clickScopes,[firstScope,current])
+    bridge.close()
 })

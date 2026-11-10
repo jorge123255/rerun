@@ -2,13 +2,13 @@ import 'server-only'
 
 /** One instance per store/runtime binding. Reservations and invalidation happen before any await. */
 export function remoteMcpLifecycle() {
-    type State = { generation:number; pending:number; tail:Promise<unknown>; active:Set<AbortController> }
+    type State = { generation:number; credentialGeneration:number; pending:number; tail:Promise<unknown>; active:Set<AbortController> }
     let closed=false
     const states = new Map<string,State>()
     const state = (agent:string,name:string) => {
         const key = JSON.stringify([agent,name])
         let value=states.get(key)
-        if (!value) {value={generation:0,pending:0,tail:Promise.resolve(),active:new Set()};states.set(key,value)}
+        if (!value) {value={generation:0,credentialGeneration:0,pending:0,tail:Promise.resolve(),active:new Set()};states.set(key,value)}
         return value
     }
     function invalidate(value:State) {
@@ -55,7 +55,17 @@ export function remoteMcpLifecycle() {
         server.tail=result
         return result.finally(()=>{server.pending--})
     }
-    return {admit,disconnect,mutate,watch,commitCredentials,
+    function watchCredentials(agent:string,name:string) {
+        const check = watch(agent,name), server = state(agent,name), generation = server.credentialGeneration
+        return () => {
+            check()
+            if (server.credentialGeneration !== generation) throw new Error('MCP credential generation invalidated')
+        }
+    }
+    // An OAuth refresh writes twice while holding ordinary admission. Only the device approval
+    // lease becomes stale when the credential changes; the active writer still owns its run.
+    function invalidateCredentials(agent:string,name:string){state(agent,name).credentialGeneration++}
+    return {admit,disconnect,mutate,watch,watchCredentials,commitCredentials,invalidateCredentials,
         transitionOwner:<T>(agent:string,write:()=>Promise<T>)=>mutate(agent,'',write),
         shutdown:()=>{closed=true;for(const value of states.values())invalidate(value)},
     }

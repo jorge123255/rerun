@@ -106,9 +106,14 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
         return saved
     }, [agent.id, save])
 
-    // A directly requested conversation starts active without loading an unrelated newer chat.
+    // General's display metadata can be rebuilt on mount. Only save a change to
+    // the ordered tab identities or selection that the layout API persists.
     useLayoutEffect(() => {
-        if (!rejectedRequest && initialLayout !== current.current) save(current.current)
+        const next = current.current
+        const saved = initialLayout
+        const sameLayout = saved && saved.activeIndex === next.activeIndex && saved.tabs.length === next.tabs.length
+            && saved.tabs.every((tab, index) => tab.uid === next.tabs[index]?.uid && tab.id === next.tabs[index]?.id)
+        if (!rejectedRequest && !sameLayout) void save(next)
     }, [initialLayout, save])
 
     const protectedUids = useCallback(() => new Set(current.current.tabs.filter(t => !t.id || !activityRef.current[t.uid] || activityRef.current[t.uid]?.busy || activityRef.current[t.uid]?.dirty).map(t => t.uid)), [])

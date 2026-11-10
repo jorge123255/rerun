@@ -89,6 +89,12 @@ owner and chat. Failure clicks verify the pinned binding still equals the clicke
 Completion clicks require the original chat still belongs to the same folded group and open that
 chat, even if a newer run has changed the group's newest chat. Deleted/rebound/stale targets land
 nowhere. A superseded click, unmount, timeout or Quit cannot navigate after a late response.
+A click that arrives before the board subscribes, or while `/desktop` is reloading, stays in a
+main-process queue of at most eight targets bound to the current workspace id and launch nonce.
+The existing `onNotificationClick` subscription reports readiness, and that same target is then
+sent once on `desktop:notification-click`. A different workspace or launch nonce is dropped.
+Permission, display-sharing suppression, and a click from a previous app process stay outside
+this queue (`docs/desktop-next-f-notification-ready-handoff.md`).
 
 ## Root integration contract
 
@@ -115,9 +121,10 @@ The main process must verify the trusted owned window/frame/origin, validate bou
 construct Electron `new Notification({title, subtitle, body, silent:true})`. `accepted` requires the
 native show event and reports OS acceptance only; an older bridge's `shown` response normalizes to
 `accepted`. Unsupported means `unavailable`; definite nondelivery means `failed`; timeouts and IPC
-ambiguity mean `unknown`. Root's native bridge deduplicates by key as an additional guard, routes
-clicks only to the trusted current app window, shows/focuses it, and refuses Quit-time
-delivery/clicks. Blanket renderer permission denial remains unchanged.
+ambiguity mean `unknown`. Root's native bridge deduplicates by key as an additional guard, holds a
+click until the current desktop page has subscribed, then routes that target once to the trusted
+window, shows/focuses it, and refuses delivery after quit is committed. Blanket renderer permission
+denial remains unchanged.
 
 ## Authored coverage and limits
 
@@ -129,6 +136,10 @@ accepted, failed, unavailable and ambiguous bridge results, legacy native `shown
 delivery, visible/hidden behavior and stale/cross-owner click guards.
 `DesktopNotificationSettings.test.tsx` covers original composition, authoritative saves, failed
 saves and Quit admission. Attention's route regression covers request age independent of session age.
+`apps/desktop/test/notification-click-handoff.test.mjs` covers a click held before subscription and
+across reload, one exact delivery, a stale workspace or launch nonce, the queue bound, duplicates,
+malformed targets, quit, and diagnostics without notification copy. That fixture was authored and
+not run by the readiness lane.
 Root must run these and the shell tests, then verify real notification permission, actual native
 display/sound/click behavior, settings persistence and no replay after a full restart.
 

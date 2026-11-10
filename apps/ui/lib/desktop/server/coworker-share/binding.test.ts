@@ -200,3 +200,96 @@ test('exports only opted-in logical tables and restores the same disabled databa
         expect((await target.execute("SELECT name FROM sqlite_master WHERE name='_rerun_internal'")).rows).toHaveLength(0)
     } finally { target.close() }
 }, 20_000)
+
+test('combined portable Share preserves opted-in memory, private row, saved view and file across receipt restart; opt-outs and credential sentinel stay out', async () => {
+    const folder = join(engineRoot, 'agents', 'source')
+    const sentinel = 'SYNTHETIC_CREDENTIAL_SENTINEL_NEVER_EXPORT_20261110'
+    await mkdir(join(folder, 'memory')); await mkdir(join(folder, 'data'))
+    await writeFile(join(folder, '.env'), `ANTHROPIC_API_KEY=${sentinel}\n`)
+    await writeFile(join(folder, 'memory', 'note.md'), noteBytes())
+    const sourceDb = createClient({ url: `file:${join(folder, 'data', 'agent.db')}` })
+    try {
+        await sourceDb.executeMultiple(`CREATE TABLE notes(id INTEGER PRIMARY KEY,title TEXT);
+            INSERT INTO notes VALUES(1,'Exact portable café row');
+            CREATE TABLE _rerun_internal(marker TEXT);
+            INSERT INTO _rerun_internal VALUES('SYNTHETIC_CREDENTIAL_SENTINEL_NEVER_EXPORT_20261110');
+            CREATE TABLE _rerun_views(id TEXT PRIMARY KEY,table_name TEXT NOT NULL,name TEXT NOT NULL,position INTEGER NOT NULL,config TEXT NOT NULL,updated_at TEXT NOT NULL);
+            INSERT INTO _rerun_views VALUES('portable-view','notes','Portable review',2,'{"layout":"table"}','2026-11-10');`)
+    } finally { sourceDb.close() }
+    const send = fixture.send
+    fixture.send = (path, init) => path === '/desktop/coworker-share-database/capture'
+        ? captureScopedPrivateDatabase({ ...JSON.parse(String(init.body)), engineRoot, assertCurrent: async () => {} }) : send(path, init)
+    const runtime = fixture.runtime, binding = await openDesktopCoworkerShareBinding(runtime, sourceId), source = await binding.source(1, sourceId)
+    const plan = binding.service.plan(source)
+    expect(plan.memoryPreview).toMatchObject({ available: true, contents: { count: 1, bytes: noteBytes().length } })
+    expect(plan.databasePreview).toMatchObject({ available: true, contents: { count: 1 }, viewCount: 1 })
+    expect(plan.contents.files).toEqual({ count: 1, bytes: Buffer.byteLength('A portable note.') })
+    const common = { workspaceId: 1, agentId: sourceId, sourceRevision: source.revision }
+    const off = await binding.service.review({ ...common, requestId: 'combined-off', include: { memories: false, database: false, files: false } }, source)
+    expect(off.manifest.coworkers[0]!.members.some(member => /^(memory|workspace)\//.test(member.path) || member.path === PORTABLE_DATABASE_MEMBER)).toBe(false)
+    expect(off.manifest.excludedCategories).toEqual(expect.arrayContaining(['memory', 'private-memory', 'database', 'credentials']))
+    const include = { memories: true, database: true, files: true }
+    const review = await binding.service.review({ ...common, requestId: 'combined-review', include }, source)
+    const exported = await binding.service.export({ ...common, requestId: 'combined-export', include, reviewId: review.reviewId, expectedDigest: review.manifest.contentDigest }, source)
+    expect(exported.manifest).toEqual(review.manifest)
+    const downloaded = await binding.service.download(exported.manifest.packageKey), archive = await readPortableArchive(downloaded.bytes)
+    expect(archive.members.find(member => member.path === 'memory/note.md')?.bytes).toEqual(noteBytes())
+    expect(archive.members.find(member => member.path === 'workspace/notes.txt')?.bytes).toEqual(Buffer.from('A portable note.'))
+    expect(archive.members.map(member => member.path)).toContain(PORTABLE_DATABASE_MEMBER)
+    for (const member of archive.members) {
+        expect(member.bytes.toString()).not.toContain(sentinel)
+        expect(member.path).not.toMatch(/(?:^|\/)\.env$|data\/agent\.db$/)
+        const reviewed = review.manifest.coworkers[0]!.members.find(row => row.path === member.path)
+        expect(reviewed?.bytes).toBe(member.bytes.length)
+    }
+    expect(review.manifest.excludedCategories).toContain('credentials')
+    const input = { requestId: 'combined-import', snapshotId: exported.manifest.packageKey, expectedDigest: exported.manifest.contentDigest, targetWorkspaceId: 1 }
+    const first = await binding.service.import(input)
+    expect(first).toMatchObject({ status: 'imported', importedAgentId: expect.any(String) })
+    fixture.db.close(); fixture.db = createClient({ url: `file:${dbPath}` })
+    const reopened = await openDesktopCoworkerShareBinding(runtime, 'portable-import')
+    expect(await reopened.service.import(input)).toEqual(first)
+    const rows = (await fixture.db.execute({ sql: 'SELECT id,engine_agent_id,enabled FROM desktop_agents WHERE id!=?', args: [sourceId] })).rows
+    expect(rows).toHaveLength(1); expect(rows[0]!.enabled).toBe(0); expect(rows[0]!.id).not.toBe(sourceId); expect(rows[0]!.engine_agent_id).not.toBe('source')
+    const installed = join(engineRoot, 'agents', String(rows[0]!.engine_agent_id))
+    expect(await readFile(join(installed, 'memory', 'note.md'))).toEqual(noteBytes())
+    expect(await readFile(join(installed, 'workspace', 'notes.txt'))).toEqual(Buffer.from('A portable note.'))
+    const config = JSON.parse(await readFile(join(installed, 'config.json'), 'utf8'))
+    expect(config.enabled).toBe(false); expect(config.connectionId ?? null).toBeNull()
+    expect(Object.values(config.tools?.desktopToolGrants ?? {}).every(value => value !== true)).toBe(true)
+    expect(await readdir(installed)).not.toContain('.env')
+    const target = createClient({ url: `file:${join(installed, 'data', 'agent.db')}` })
+    try {
+        expect((await target.execute('SELECT id,title FROM notes')).rows).toEqual([{ id: 1, title: 'Exact portable café row' }])
+        expect(await listViews(target, 'notes')).toMatchObject([{ id: 'portable-view', name: 'Portable review', position: 2, layout: 'table' }])
+        expect((await target.execute("SELECT name FROM sqlite_master WHERE name='_rerun_internal'")).rows).toEqual([])
+    } finally { target.close() }
+}, 20_000)
+
+test('lost import response recovers only the original workspace/digest/request receipt, including after completion and reopen', async () => {
+    const runtime = fixture.runtime, binding = await openDesktopCoworkerShareBinding(runtime, sourceId)
+    const source = await binding.source(1, sourceId), include = { memories: false, database: false, files: false }
+    const common = { workspaceId: 1, agentId: sourceId, sourceRevision: source.revision, include }
+    const review = await binding.service.review({ ...common, requestId: 'integrity-review' }, source)
+    const exported = await binding.service.export({ ...common, requestId: 'integrity-export', reviewId: review.reviewId, expectedDigest: review.manifest.contentDigest }, source)
+    const inspected = await binding.service.inspect(exported.manifest.packageKey)
+    expect(inspected.importReview.manifestDigest).toBe(review.manifest.contentDigest)
+    const input = { requestId: 'integrity-original', snapshotId: exported.manifest.packageKey, expectedDigest: inspected.importReview.manifestDigest, targetWorkspaceId: 1 }
+    vi.spyOn(binding.store, 'settleImport').mockRejectedValueOnce(new Error('Synthetic lost response after canonical install'))
+    expect(await binding.service.import(input)).toMatchObject({ status: 'uncertain', recoverable: true })
+    expect(await binding.service.import({ ...input, requestId: 'integrity-alias-before' })).toMatchObject({ status: 'uncertain' })
+    await expect(binding.service.import({ ...input, expectedDigest: '0'.repeat(64) })).rejects.toMatchObject({ status: 409 })
+    await expect(binding.service.import({ ...input, targetWorkspaceId: 2 })).rejects.toThrow()
+    fixture.db.close(); fixture.db = createClient({ url: `file:${dbPath}` })
+    const reopened = await openDesktopCoworkerShareBinding(runtime, 'portable-import')
+    const recovered = await reopened.service.import(input)
+    expect(recovered).toMatchObject({ status: 'imported', importedAgentId: expect.any(String) })
+    // Parent negative control: the old branch returned this completed receipt to a different UUID.
+    expect(await reopened.service.import({ ...input, requestId: 'integrity-alias-after' })).toMatchObject({ status: 'uncertain' })
+    expect(await reopened.service.import(input)).toEqual(recovered)
+    const copies = (await fixture.db.execute({ sql: 'SELECT id,engine_agent_id,enabled FROM desktop_agents WHERE id!=?', args: [sourceId] })).rows
+    expect(copies).toHaveLength(1); expect(copies[0]!.id).toBe(recovered.importedAgentId); expect(copies[0]!.enabled).toBe(0)
+    expect((await fixture.db.execute("SELECT count(*) AS n FROM desktop_template_requests WHERE operation='install'")).rows[0]!.n).toBe(1)
+    const receipts = (await fixture.db.execute("SELECT request_id,status FROM desktop_coworker_share_imports")).rows
+    expect(receipts).toEqual([{ request_id: input.requestId, status: 'imported' }])
+})

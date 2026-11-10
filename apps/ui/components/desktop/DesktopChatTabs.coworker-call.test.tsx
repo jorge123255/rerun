@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
+import { generalTabUid } from '@/lib/desktop/general-threads'
 import { flushTabWrites } from '@/lib/desktop/tab-writes'
 import type { DesktopCoworkerCallSnapshot } from '@/lib/desktop/coworker-calls-client'
 import { DesktopChatTabs } from './DesktopChatTabs'
@@ -23,7 +24,10 @@ afterEach(async () => {
 async function mount(suffix: string) {
     const agent = { id: `caller-${suffix}`, name: 'Caller', description: '', createdAt: '', updatedAt: '' }
     const session = { id: `caller-chat-${suffix}`, agentId: agent.id, title: 'Original chat', createdAt: '', updatedAt: '' }
-    const initialLayout = { revision: 0, activeIndex: 0, tabs: [{ uid: `call-tab-${suffix}`, id: session.id, title: session.title }] }
+    const initialLayout = { revision: 0, activeIndex: 1, tabs: [
+        { uid: generalTabUid(agent.id), id: null, title: 'General' },
+        { uid: `call-tab-${suffix}`, id: session.id, title: session.title },
+    ] }
     const drafts = createDesktopDraftFixture()
     drafts.seedTabs(agent.id, initialLayout.tabs)
     const call: DesktopCoworkerCallSnapshot = {
@@ -33,7 +37,7 @@ async function mount(suffix: string) {
         progress: { steps: 1, toolCalls: 0, failures: 0, preview: 'Saved target answer', calls: [] },
     }
     let calls = [call]
-    const onOpenCoworkerChat = vi.fn(async (_target: { agentId: string; sessionId: string }) => {})
+    const onOpenCoworkerChat = vi.fn<(target: { agentId: string; sessionId: string }) => Promise<void>>().mockResolvedValue(undefined)
     const requests: string[] = []
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), 'http://127.0.0.1'), method = init?.method ?? 'GET'

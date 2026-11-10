@@ -346,6 +346,17 @@ it('keeps reads on the original assistant row when a provider reuses call IDs', 
         { state: 'output-available', output: { value: 'early contents' } }, { state: 'output-available', output: { type: 'error-text', value: 'Denied.' } },
         { state: 'input-available' }, { state: 'output-available', output: { value: 'later contents' } },
     ])
+    // The desktop projection must show the denial on its own row even when the
+    // underlying protocol still stores an error-text result envelope.
+    const shown = publicDesktopHistory(history).filter(m => m.role === 'assistant')
+    expect(shown.map(m => m.parts[0])).toMatchObject([
+        { state: 'output-available', output: 'early contents' },
+        { state: 'output-error', errorText: 'Denied.' },
+        { state: 'input-available' },
+        { state: 'output-available', output: 'later contents' },
+    ])
+    expect(shown[1]?.parts[0]).not.toHaveProperty('output')
+
 })
 
 it('returns the public desktop tool outcome without exposing the stored protocol event', () => {

@@ -34,8 +34,11 @@ test('replay reuses the snapshot and changed source requires fresh review', asyn
     expect(replay.manifest.packageKey).toBe(first.manifest.packageKey)
     const changed = await service.export(await exportInput('request-c', { ...source, revision: 'b'.repeat(64) }), { ...source, revision: 'b'.repeat(64) })
     expect(changed.manifest.packageKey).not.toBe(first.manifest.packageKey)
-    await service.import({ requestId: 'import-a', snapshotId: first.manifest.packageKey, expectedDigest: first.manifest.contentDigest, targetWorkspaceId: 2 })
-    await service.import({ requestId: 'import-b', snapshotId: first.manifest.packageKey, expectedDigest: first.manifest.contentDigest, targetWorkspaceId: 2 })
+    const originalImport = { requestId: 'import-a', snapshotId: first.manifest.packageKey, expectedDigest: first.manifest.contentDigest, targetWorkspaceId: 2 }
+    const receipt = await service.import(originalImport)
+    expect(receipt).toEqual({ status: 'imported', importedAgentId: 'imported-a' })
+    expect(await service.import({ ...originalImport, requestId: 'import-b' })).toMatchObject({ status: 'uncertain', recoverable: true })
+    expect(await service.import(originalImport)).toEqual(receipt)
     expect(install).toHaveBeenCalledTimes(1)
 })
 
@@ -46,4 +49,18 @@ test('uncertain install returns recoverable state without claiming completion', 
     await store.create(snapshot)
     const result = await service.import({ requestId: 'import-a', snapshotId: snapshot.manifest.packageKey, expectedDigest: snapshot.manifest.contentDigest, targetWorkspaceId: 2 })
     expect(result).toMatchObject({ status: 'uncertain', recoverable: true })
+})
+
+test('archive altered after inspection refuses before import reservation or install', async () => {
+    const store = createDesktopCoworkerShareStore(db), install = vi.fn(async () => 'must-not-install')
+    const service = createDesktopCoworkerShareService(store, { install })
+    const snapshot = await createDesktopCoworkerSnapshot(source, { memories: false, database: false, files: false })
+    await store.create(snapshot)
+    const inspected = await service.inspect(snapshot.manifest.packageKey)
+    const changed = Buffer.from(snapshot.archiveBytes), offset = Math.floor(snapshot.archiveBytes.length / 2)
+    changed[offset] = (changed[offset] ?? 0) ^ 1
+    await db.execute({ sql: 'UPDATE desktop_coworker_shares SET archive_blob=? WHERE snapshot_id=?', args: [changed, snapshot.manifest.packageKey] })
+    await expect(service.import({ requestId: 'altered-import', snapshotId: snapshot.manifest.packageKey, expectedDigest: inspected.importReview.manifestDigest, targetWorkspaceId: 2 })).rejects.toThrow()
+    expect(install).not.toHaveBeenCalled()
+    expect((await db.execute('SELECT count(*) AS n FROM desktop_coworker_share_imports')).rows[0]!.n).toBe(0)
 })
