@@ -9,6 +9,7 @@ import { GET, POST } from '@/app/api/desktop/claude-login/route'
 import { DesktopSettings } from '../DesktopSettings'
 import { DesktopModelSelector } from '../DesktopModelSelector'
 import { buildDesktopModelView } from '@/lib/desktop/chat-model'
+import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 
 type AuthFixturePorts = {
     read(): Promise<Record<string, string>>
@@ -29,16 +30,16 @@ type AuthFixtureModule = { createDesktopClaudePlanAuth(ports: AuthFixturePorts):
 } }
 const engineAuthPath = resolve(import.meta.dirname, '../../../../engine/src/desktop/claude-plan/auth.ts')
 
-const transport = vi.hoisted(() => ({ runtime: {} as any, engine: vi.fn(), providers: vi.fn() }))
+const transport = vi.hoisted(() => ({ runtime: null as DesktopRuntime | null, engine: vi.fn(), providers: vi.fn() }))
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/desktop/server/runtime', () => ({ readDesktopRuntime: async () => transport.runtime }))
 vi.mock('@/lib/engine/client', () => ({ request: (...args: unknown[]) => transport.engine(...args) }))
-vi.mock('@/lib/desktop/server/settings', () => ({ engineOf: () => transport.runtime.engine, readDesktopProviders: () => transport.providers() }))
+vi.mock('@/lib/desktop/server/settings', () => ({ engineOf: () => transport.runtime?.engine, readDesktopProviders: () => transport.providers() }))
 vi.mock('@/components/connections/plan-connect/ForemanTrack', () => ({ ForemanTrack: ({ steps }: { steps: { title: string; body?: React.ReactNode }[] }) => <ol>{steps.map((step, index) => <li key={index}>{step.title}{step.body}</li>)}</ol> }))
 vi.mock('@rerun/ui/foreman', () => ({ Orb: () => null }))
 const originalStorage = Object.getOwnPropertyDescriptor(window, 'localStorage')
 let root: Root | null = null
-;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = null; vi.unstubAllGlobals(); vi.restoreAllMocks(); document.body.innerHTML = ''; if (originalStorage) Object.defineProperty(window, 'localStorage', originalStorage); else Reflect.deleteProperty(window, 'localStorage') })
 
 it('drives Settings through real Claude route/auth, retains singleton/model, cancels reconnect and ignores stale completion before one synthetic reply', async () => {
