@@ -32,28 +32,30 @@ export function createDesktopNotifications({ Notification, onClick, timeoutMs = 
         }
         let notice
         try { notice = new Notification({ title: payload.title, subtitle: payload.subtitle, body: payload.body, silent: true }) }
-        catch { retryAfter = now() + 30_000; return Promise.resolve({ status: 'failed' }) }
+        catch { retryAfter = now() + 30_000; return Promise.resolve({ status: 'failed', diagnostic: 'construction-failed' }) }
         let settle
         const result = new Promise(resolve => { settle = resolve })
         const entry = { notice, result, settled: false }
         active.set(payload.key, entry)
-        const finish = status => {
+        const finish = (status, diagnostic) => {
             if (entry.settled) return
             entry.settled = true
             clearTimeout(timer)
-            settle({ status })
+            settle({ status, ...(diagnostic ? { diagnostic } : {}) })
         }
-        const timer = setTimeout(() => finish('unknown'), timeoutMs)
+        const timer = setTimeout(() => finish('unknown', 'observation-timeout'), timeoutMs)
         timer.unref?.()
         notice.once('show', () => finish('accepted'))
+        // Electron's error string is deliberately ignored: it has no stable permission code
+        // and may contain notification copy or other private native details.
         notice.once('failed', () => {
             if (active.get(payload.key) !== entry) return
             retryAfter = now() + 30_000
-            finish('failed')
+            finish('failed', 'native-failed')
             active.delete(payload.key)
         })
         notice.once('close', () => {
-            finish('unknown')
+            finish('unknown', 'closed-before-acceptance')
             if (active.get(payload.key) === entry) active.delete(payload.key)
         })
         notice.once('click', () => {
@@ -61,7 +63,7 @@ export function createDesktopNotifications({ Notification, onClick, timeoutMs = 
             const { title, subtitle, body, silent, ...target } = payload
             onClick(target)
         })
-        try { notice.show() } catch { finish('unknown') }
+        try { notice.show() } catch { finish('unknown', 'show-threw') }
         return result
     }
     return { notify, close() { closed = true; for (const { notice } of active.values()) notice.close(); active.clear() } }

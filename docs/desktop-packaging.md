@@ -1,9 +1,8 @@
 # Desktop packaging (internal preview)
 
-Packages the desktop app shell into an unsigned macOS `.app` for arm64. This is an
-internal/development artifact only: it is not signed, not notarized, and not for
-general distribution. Signing (Developer ID on the OpenFlix team), notarization,
-update hosting, and x64 builds are separate release work.
+Packages the desktop shell as an arm64 macOS `.app` using the stable local
+preview signing identity. The preview is for internal development. Public
+distribution still requires a release signing and notarization workflow.
 
 ## Commands
 
@@ -11,8 +10,8 @@ update hosting, and x64 builds are separate release work.
 pnpm install                                   # workspace deps incl. electron + electron-builder
 pnpm desktop:install                           # update ~/Applications/Rerun Desktop Preview.app
 pnpm desktop:install --commit FULL_SHA          # install only this checked-out commit
-pnpm desktop:package                           # build a separate release artifact for distribution
-pnpm desktop:package -- --dmg                  # additionally produce an unsigned DMG
+pnpm desktop:package                           # build a separate signed preview
+pnpm desktop:package -- --dmg                  # request the preview DMG
 pnpm desktop:stage                             # rebuild runtime resources for QA without making an .app
 pnpm desktop:verify                            # re-run runtime checks only
 ```
@@ -31,7 +30,28 @@ installed app intact. The installer clears its staging output on completion and 
 from an interrupted install on the next run. A kernel lock allows only one installer at a time.
 
 For agents reviewing code in separate worktrees, run `pnpm desktop:stage` for runtime QA.
-Use `pnpm desktop:package` or the DMG command when you explicitly need a separate release artifact.
+Use `pnpm desktop:package` when you need a separate signed preview.
+
+## Native macOS notification QA
+
+Use the signed Rerun app bundle built from the commit under test. Before launch,
+run this read-only check from that clean checkout. It verifies the signing
+requirement and matches the manifest, Electron shell, UI and engine build receipts.
+
+```bash
+node scripts/desktop/verify-notification-preview.mjs "/absolute/path/to/Rerun Desktop Preview.app"
+```
+
+If this check fails, record native delivery and click-through as blocked. A
+staged runtime launched through generic Electron can exercise the in-app toast,
+Actions inbox and chat recovery. macOS can reject its notification authorization
+under the generic bundle identity. Keep Electron’s renderer sandbox enabled.
+
+For a signed preview that passes the check, record OS submission, observed
+banner, and the conversation opened by clicking it as separate results.
+macOS can suppress banner presentation during screen sharing even after it
+accepts the request. Use the current notification settings and keep in-app
+delivery results separate.
 
 ## Staged layout
 
@@ -80,8 +100,8 @@ Resources, refuses symlinks escaping Resources, and runs no executable from PATH
   and reports v22.23.4; `@libsql/client` and `sharp` load and execute under the
   bundled Node from the staged engine node_modules (N-API/ABI check); npm staged;
   no `.env`/`.git`/key-material files or Resources-escaping symlinks.
-- `package.mjs` — all stages + verify, then `electron-builder --mac --arm64 dir`
-  (or `dmg`). `identity: null` in `electron-builder.yml` forces unsigned output.
+- `package.mjs` — all stages and verification, then `electron-builder` with a
+  stable local signing identity and strict signature verification.
 
 ## Boundaries
 
@@ -99,8 +119,6 @@ Resources, refuses symlinks escaping Resources, and runs no executable from PATH
 
 - arm64 only; x64 staging would need a second Node tarball + arch-matched native
   modules (`@libsql/darwin-x64`, sharp prebuilds) — follow-up.
-- The unsigned `.app` may need `xattr -d com.apple.quarantine` if moved via download;
-  intended for local/internal use.
 - UI standalone tracing assumes the workspace `outputFileTracingRoot` at repo root;
   if `standalone/` emits an unexpected layout, `stage-ui.mjs` fails loudly.
 

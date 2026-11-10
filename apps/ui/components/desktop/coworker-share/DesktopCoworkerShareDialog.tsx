@@ -57,8 +57,8 @@ function DesktopCoworkerShareBody({ client, attempts, workspaceId, agentId, agen
                 downloadUrl={client.downloadUrl(flow.exported.result.manifest.packageKey)}
                 onPreviewImport={() => onPreviewImport?.(flow.exported!.result.manifest.packageKey)}
                 onWithdraw={() => { void flow.withdraw() }}
-                onRecoverWithdrawal={() => { const pending = flow.pendingRevocations[0]; if (pending) void flow.recoverWithdrawal(pending) }}
-                pendingRevocations={flow.pendingRevocations}
+                onRecoverWithdrawal={input => { void flow.recoverWithdrawal(input) }}
+                pendingRevocations={flow.pendingRevocations.filter(input => input.snapshotId === flow.exported!.result.manifest.packageKey)}
                 withdrawn={flow.withdrawn}
                 busy={flow.busy}
                 onDone={onClose}

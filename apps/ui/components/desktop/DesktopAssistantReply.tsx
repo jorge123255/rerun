@@ -161,8 +161,9 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
         } else if (isToolUIPart(part)) {
             const toolName = stripBridgePrefix(getToolName(part))
             if (part.toolCallId === pendingRequestToolCallId || toolName === QUICK_REPLIES_TOOL) continue
+            const receiptContext = { ownerId: agentId ?? null }
             if (childRuns && agentId && (toolName === 'call_agent' || toolName === 'delegate_tasks')) {
-                const fallback = <DesktopToolStep part={part} restored={message.id.startsWith('engine-')} />
+                const fallback = <DesktopToolStep part={part} restored={message.id.startsWith('engine-')} context={receiptContext} />
                 blocks.push(toolName === 'call_agent'
                     ? <DesktopCoworkerCalls key={part.toolCallId} agentId={agentId} sessionId={childRuns.sessionId} toolCallId={part.toolCallId} active={childRuns.active} currentRunActive={streaming} fallback={fallback} onOpenTarget={childRuns.onOpenTarget} />
                     : <DesktopDelegationMount key={part.toolCallId} agentId={agentId} sessionId={childRuns.sessionId} toolCallId={part.toolCallId} view={childRuns.active ? 'live' : 'history'} followLive={streaming} fallback={fallback} />)
@@ -208,7 +209,7 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
                 }
                 if (toolName === 'image_generation') {
                     const notice = desktopImageGenerationOutput(part.output)
-                    blocks.push(<DesktopToolStep key={part.toolCallId} part={{ ...part, state: 'output-error', errorText: notice, output: undefined }} restored={message.id.startsWith('engine-')} />)
+                    blocks.push(<DesktopToolStep key={part.toolCallId} part={{ ...part, state: 'output-error', errorText: notice, output: undefined }} restored={message.id.startsWith('engine-')} context={receiptContext} />)
                     continue
                 }
             }
@@ -225,7 +226,7 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
                 continue
             }
             if (toolName === 'notify_user' && (projectDesktopToolStatus(part, { ownerId: agentId }) === 'failed' || projectDesktopToolStatus(part, { ownerId: agentId }) === 'unknown')) continue
-            blocks.push(<DesktopToolStep key={part.toolCallId} part={part} restored={message.id.startsWith('engine-')} />)
+            blocks.push(<DesktopToolStep key={part.toolCallId} part={part} restored={message.id.startsWith('engine-')} context={receiptContext} />)
         } else if (part.type === 'data-compaction') {
             const step = compactions.get(index)
             if (step) blocks.push(<CompactionStep key={step.key} data={step.data} />)

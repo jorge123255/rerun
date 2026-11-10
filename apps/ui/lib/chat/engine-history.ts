@@ -9,9 +9,11 @@ import { parseInstallMessage } from '@/lib/chat/install-marker'
 import { parseScheduledRun } from '@/lib/schedules/scheduled-run'
 import { encodePeaks } from '@/lib/voice/peaks'
 import { parseVoiceMessage } from '@/lib/voice/marker'
-import { desktopToolPresentation } from '@/lib/desktop/tool-presentation'
+import { desktopToolPresentation, type DesktopToolPresentation } from '@/lib/desktop/tool-presentation'
+import { DESKTOP_HISTORICAL_PASSTHROUGH_TOOLS } from '@/components/desktop/tool-presentations/plan'
+import { redactHistoricalText } from '@/components/desktop/tool-presentations/redact'
 import { projectDesktopHistoricalCard } from '@/components/desktop/tool-presentations/select'
-import { projectDesktopToolStatus } from '@/components/desktop/tool-presentations/status'
+import { projectDesktopToolStatus, type DesktopHistoricalToolSource, type DesktopToolPresentationStatus } from '@/components/desktop/tool-presentations/status'
 import { desktopTableCardOf } from '@/lib/desktop/table-card'
 import { desktopFileCardOf, desktopImageGenerationOutput } from '@/lib/desktop/file-card'
 import { desktopSkillProposalIdOf } from '@/lib/desktop/skill-proposal-source'
@@ -19,13 +21,22 @@ import { hitlKindOf } from '@/lib/chat-hitl'
 import { desktopApprovalInput, desktopQuestionInput, QUICK_REPLIES_TOOL, desktopSourceParts, desktopAttachmentFieldsOf, type DesktopSourcePart, isContextPart, visibleText, desktopStoredAttachmentSelections, desktopImageSnapshotSchema, type DesktopAttachmentFields, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
 
 type TextPart = { type: 'text'; text: string }
+type ToolReceiptState = 'input-streaming' | 'input-available' | 'approval-requested' | 'approval-responded' | 'output-available' | 'output-error' | 'output-denied' | 'cancelled' | 'canceled' | 'unknown'
 type ToolInvocationPart = {
     type: `tool-${string}`
     toolCallId: string
     toolName: string
-    state: 'input-available' | 'output-available' | 'output-error'
+    state: ToolReceiptState
     errorText?: string
     desktopPreview?: true
+    preliminary?: boolean
+    acknowledgement?: unknown
+    ownerId?: unknown
+    agentId?: unknown
+    workspaceId?: unknown
+    runId?: unknown
+    restarted?: unknown
+    providerMetadata?: unknown
     input: unknown
     output?: unknown
 }
@@ -152,7 +163,24 @@ export function transformEngineMessages(messages: EngineMessage[], options?: { d
     return result
 }
 
-type StoredToolCall = { toolCallId?: string; id?: string; toolName?: string; name?: string; function?: { name?: string }; input?: unknown; args?: unknown; arguments?: unknown }
+type StoredToolCall = {
+    toolCallId?: string
+    id?: string
+    toolName?: string
+    name?: string
+    function?: { name?: string }
+    input?: unknown
+    args?: unknown
+    arguments?: unknown
+    state?: unknown
+    errorText?: unknown
+    acknowledgement?: unknown
+    preliminary?: unknown
+    restarted?: unknown
+}
+
+const NONTERMINAL_TOOL_STATES = new Set(['input-streaming', 'input-available', 'output-available'])
+const RECORDED_TOOL_STATES = new Set(['approval-requested', 'approval-responded', 'output-error', 'output-denied', 'cancelled', 'canceled'])
 
 function toolPartOf(call: unknown, toolResults?: Map<string, unknown>): ToolInvocationPart {
     const c = call as StoredToolCall
@@ -161,10 +189,48 @@ function toolPartOf(call: unknown, toolResults?: Map<string, unknown>): ToolInvo
     const rawInput = c.input ?? c.args ?? c.arguments ?? {}
     const input = typeof rawInput === 'string' ? safeParse(rawInput) : rawInput
     const output = toolResults?.get(toolCallId)
-    // An unresolved tool call (no matching tool-result) is still awaiting input, e.g. a paused
-    // ask_user / request_approval. Keep it 'input-available' so the pinned block re-renders on reload.
-    if (output !== undefined) return { type: `tool-${toolName}`, toolCallId, toolName, state: 'output-available', input, output }
-    return { type: `tool-${toolName}`, toolCallId, toolName, state: 'input-available', input }
+    const recorded = typeof c.state === 'string' && c.state.trim() ? c.state : undefined
+    const errorText = typeof c.errorText === 'string' ? c.errorText : undefined
+    const receipt = {
+        ...(c.acknowledgement !== undefined && { acknowledgement: c.acknowledgement }),
+        ...(typeof c.preliminary === 'boolean' && { preliminary: c.preliminary }),
+        ...(typeof c.restarted === 'boolean' && { restarted: c.restarted }),
+    }
+    // A paused ask_user / request_approval has no result yet. Keep that open state so the pinned
+    // block re-renders on reload. Cancelled, pending, and malformed states must not become that.
+    if (recorded && !NONTERMINAL_TOOL_STATES.has(recorded)) {
+        const state = RECORDED_TOOL_STATES.has(recorded) ? recorded as ToolReceiptState : 'unknown'
+        return { type: `tool-${toolName}`, toolCallId, toolName, state, input, ...receipt, ...(output !== undefined && { output }), ...(errorText && { errorText }) }
+    }
+    if (output !== undefined) return { type: `tool-${toolName}`, toolCallId, toolName, state: 'output-available', input, output, ...receipt }
+    if (recorded === 'input-streaming' || recorded === 'input-available') {
+        return { type: `tool-${toolName}`, toolCallId, toolName, state: recorded, input, ...receipt }
+    }
+    return { type: `tool-${toolName}`, toolCallId, toolName, state: recorded === 'output-available' ? 'unknown' : 'input-available', input, ...receipt }
+}
+
+const PASSTHROUGH_TOOLS = new Set<string>(DESKTOP_HISTORICAL_PASSTHROUGH_TOOLS)
+
+function savedPreview(input: unknown): { preview: string } | undefined {
+    if (!input || typeof input !== 'object' || Array.isArray(input) || !('preview' in input)) return
+    return typeof input.preview === 'string' ? { preview: redactHistoricalText(input.preview) } : undefined
+}
+
+function genericReceipt(part: DesktopHistoricalToolSource, view: DesktopToolPresentation, alreadyPublic: boolean): { state: ToolReceiptState; preliminary?: true; input: unknown; output?: string; errorText?: string } {
+    let status: DesktopToolPresentationStatus = projectDesktopToolStatus(part)
+    if (view.errorText && status !== 'cancelled' && status !== 'unknown' && status !== 'pending') status = 'failed'
+    const input = view.input ?? (alreadyPublic ? savedPreview(part.input) : undefined) ?? {}
+    if (status === 'pending') return { state: part.state === 'approval-responded' ? 'approval-responded' : 'approval-requested', input }
+    if (status === 'running') {
+        if (part.state === 'input-streaming') return { state: 'input-streaming', input }
+        if (part.preliminary === true) return { state: 'output-available', preliminary: true, input }
+        return { state: 'input-available', input }
+    }
+    if (status === 'failed') return { state: 'output-error', input, ...(view.errorText && { errorText: view.errorText }) }
+    if (status === 'cancelled') return { state: part.state === 'canceled' ? 'canceled' : 'cancelled', input }
+    if (status === 'unknown') return { state: 'unknown', input }
+    const output = view.output ?? (alreadyPublic && typeof part.output === 'string' ? redactHistoricalText(part.output) : undefined)
+    return { state: 'output-available', input, ...(output !== undefined && { output }) }
 }
 
 function publicForemanDocsResult(output: unknown) {
@@ -254,13 +320,19 @@ export function publicDesktopHistory(messages: HistoryMessage[]): HistoryMessage
                 type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
                 state: projectDesktopToolStatus(part) === 'failed' ? 'output-error' as const : part.state, input: {},
             }
-            const view = desktopToolPresentation(part.toolName, part.input, part.output)
+            const view = desktopToolPresentation(part.toolName, part.input, part.output, typeof part.errorText === 'string' ? part.errorText : undefined)
             const formInput = toolName === 'ask_user' ? desktopQuestionInput(part.input)
                 : toolName === 'request_approval' ? desktopApprovalInput(part.input) : null
-            return {
+            if (formInput || PASSTHROUGH_TOOLS.has(toolName)) return {
                 type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
                 state: view.errorText ? 'output-error' as const : part.state, input: formInput ?? view.input ?? {},
                 ...(view.output !== undefined && { output: view.output }), ...(view.errorText && { errorText: view.errorText }),
+            }
+            const receipt = genericReceipt(part, view, part.desktopPreview === true)
+            return {
+                type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
+                state: receipt.state, ...(receipt.preliminary && { preliminary: true }), input: receipt.input,
+                ...(receipt.output !== undefined && { output: receipt.output }), ...(receipt.errorText && { errorText: receipt.errorText }),
             }
         }),
     }))

@@ -76,3 +76,27 @@ test('deleting the owner and Stop both prevent a delayed query from returning pr
         expect((await pending).memories).toEqual([])
     } finally { await runtime.shutdownDesktopSemanticMemory() }
 })
+
+test('configured runtime preserves a keyword-free paraphrase through the internal embedding seam and distinguishes fallback', async () => {
+    state.notes = [
+        { id: 'walks', content: 'Canines require daily exercise', path: '/memory/walks.md', kind: 'fact', tags: [], createdAt: new Date().toISOString() },
+        { id: 'billing', content: 'Invoices expire quarterly', path: '/memory/billing.md', kind: 'fact', tags: [], createdAt: new Date().toISOString() },
+    ]
+    let offline = false
+    state.callback.mockImplementation(async (_path, body) => {
+        if (body.operation === 'configuration') return { identity, revision: '11111111-1111-4111-8111-111111111111' }
+        if (offline) throw new Error('synthetic offline')
+        return { vectors: body.texts.map((text: string) => text === 'Dogs need regular walks' || text === state.notes[0]?.content ? [1, 0] : [0, 1]) }
+    })
+    const runtime = await import('./runtime.js')
+    const query = { query: 'Dogs need regular walks', limit: 5, includeDormant: false, reinforce: 'none' as const }
+    try {
+        await runtime.maintainSemanticDesktopMemory('owner', 'reconcile')
+        await vi.waitFor(async () => expect((await runtime.semanticDesktopMemoryStatus('owner')).indexed).toBe(2))
+        expect(await runtime.recallSemanticDesktopMemory('owner', query)).toMatchObject({ mode: 'semantic', memories: [{ id: 'walks' }] })
+        expect(state.callback.mock.calls.filter(([, body]) => body.operation === 'embed').every(([path, body]) => path === '/api/desktop/internal/semantic-memory' && body.engineAgentId === 'owner' && body.revision === '11111111-1111-4111-8111-111111111111')).toBe(true)
+        offline = true
+        expect(await runtime.recallSemanticDesktopMemory('owner', query)).toMatchObject({ mode: 'keyword-only', memories: [] })
+        expect((await runtime.recallSemanticDesktopMemory('owner', { ...query, query: 'Canines' })).memories.map(note => note.id)).toEqual(['walks'])
+    } finally { await runtime.shutdownDesktopSemanticMemory() }
+})
