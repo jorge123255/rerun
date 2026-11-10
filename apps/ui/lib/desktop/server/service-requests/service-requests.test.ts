@@ -138,6 +138,16 @@ it('saves ordered choices, rejects a stale installation, and finishes one secret
     const again = await finishDesktopServiceRequest(db, scope, ports, finish)
     expect(again.headers.get('x-run-id')).toBe(finish.requestId)
     expect(sent.filter(mode => mode === 'send')).toHaveLength(1)
+
+    const reopened = createClient({ url: urls.get(db)! })
+    clients.push(reopened)
+    expect(await open(reopened, ports)).toMatchObject({
+        choices: saved.choices,
+        retry: { phase: 'accepted', requestId: finish.requestId },
+        receipt: { text, entries: [{ slug: 'notion', outcome: 'connected' }, { slug: 'slack', outcome: 'skipped' }] },
+    })
+    expect(await readPendingDesktopServiceToolCall(reopened, scope, ports)).toBeNull()
+    expect(sent.filter(mode => mode === 'send')).toHaveLength(1)
 })
 
 it('blocks pending choices, derives reset and not-found, and refuses a failed catalog read', async () => {

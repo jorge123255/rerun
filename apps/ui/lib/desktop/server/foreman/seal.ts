@@ -51,27 +51,19 @@ export function firstSoul(item: AgentItem, plan: DesktopForemanSealedPlan, compa
     ].filter(Boolean).join('\n\n')
 }
 
-export type SetupInstallJob = {
-    offers?: readonly { name: string; slug?: string; adds?: string }[]
-    required?: { name: string; kind: 'credential' | 'permission' } | null
-}
-
-export function firstInstall(item: Pick<AgentItem, 'role' | 'need' | 'gets'>, asked: string | null, job: SetupInstallJob = {}): string {
+export function firstInstall(item: AgentItem, asked: string | null): string {
     const aim = item.need ? ` They told you what goes wrong there: ${item.need}. Your first result goes straight at that.` : ''
     const target = item.need ? ', aimed at what they told you goes wrong' : ''
     const shape = item.gets?.length ? `, in the shape the plan promised them (${item.gets.join('; ')})` : ''
     const brief = asked ? `\n\nWhat they asked for when they changed the plan, in their own words:\n<brief>\n${asked}\n</brief>\nThat is the brief: your first result follows it, and you never ask again for something it already says.` : ''
-    const offers = (job.offers ?? []).map(offer => `Offer ${offer.name}${offer.slug ? ` (${offer.slug})` : ''} with suggest_service because it would improve the result${offer.adds ? `: ${offer.adds}` : ''}. Still hand back the first result on what is public, or on a sample you label as a sample, before that connection is answered.`)
-    const required = job.required ? `${job.required.name} (${job.required.kind}) stays gated until it is granted. Skipping it does not grant it and does not count as connected.` : ''
-    const extra = [offers.join('\n'), required].filter(Boolean).join('\n\n')
     return `You have just been hired to ${item.role.charAt(0).toLowerCase()}${item.role.slice(1)}. Nothing is connected yet and this is your first conversation with the user. Get them a first real result that holds up: they judge you on what you hand back, not on your setup.${aim}${brief}
 
 1. Introduce yourself in two lines: what you will do for them.
-2. If this job cannot run without one of their apps (their mailbox, their CRM, the place their posts go out from), first show what you can already do without it: the job done on what is public (their site or store, its catalogue and pages) or on a sample you label as a sample. Then offer every one of those apps at once with suggest_service, each tied to what it adds to that result, and end your turn. An app that would only improve the result is offered the same way and does not block that result. A skipped app is an answer: keep delivering on what is public and say what the app would add, never that the job is on hold. A job that needs no app skips this step. A permission or credential the job cannot run at all without stays gated until it is granted.
+2. First show what you can already deliver on public information or on a clearly labeled sample. If an app would help, offer it with suggest_service when that tool is available, and explain what it adds to the result. An explicit skip of an optional app is an answer: keep delivering on what is public or on a labeled sample. A pending or failed connection does not count as a skip. A job that needs no app skips the connection step.
 3. Ask only for what you cannot start without. Everything else can wait.
-4. Do the job once, on their real data${target}, and show them the result${shape}.
+4. When their real data is available and you have permission to use it, do the job once${target} and show them the result${shape}.
 5. Then settle in: rewrite your instructions now that you know how they work, propose a schedule if this job runs on its own, and record what you learned.
 6. Mark setup complete with a one line summary of what is now set up.
-${extra ? `\n${extra}\n` : ''}
-If a step fails, say so plainly and fix it with them, and never mark setup complete while something the job needs is still missing, unless they chose to go on without it. Going on without it does not grant a required permission or credential.`
+
+If a step fails, say so plainly. Keep any action that requires a missing permission or credential gated until it is granted. Only mark setup complete for the agreed scope once its required steps are done.`
 }
