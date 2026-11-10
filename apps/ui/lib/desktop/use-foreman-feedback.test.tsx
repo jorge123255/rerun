@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { MessageFeedbackRating } from '@rerun/contracts'
@@ -11,8 +11,10 @@ const chat = { workspaceId: '1', chatId: 'fmc_feedback01' }
 let current: ReturnType<typeof useDesktopForemanFeedback>
 let root: Root
 const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
-function Probe({ active = true }: { active?: boolean }) {
-    current = useDesktopForemanFeedback(chat, active)
+const captureFeedback = (feedback: ReturnType<typeof useDesktopForemanFeedback>) => { current = feedback }
+function Probe({ active = true, onFeedback }: { active?: boolean; onFeedback: typeof captureFeedback }) {
+    const feedback = useDesktopForemanFeedback(chat, active)
+    useEffect(() => onFeedback(feedback), [feedback, onFeedback])
     return null
 }
 beforeEach(() => { root = createRoot(document.body.appendChild(document.createElement('div'))) })
@@ -35,7 +37,7 @@ it('recovers the saved vote, writes a change, and removes the exact row on a sec
         }
         return Response.json({ votes: saved ? [saved] : [] })
     }))
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Probe onFeedback={captureFeedback} />))
     await flush()
     expect(current.ratingOf('engine-answer')).toBe('up')
     expect(calls[0]).toContain('GET /api/desktop/foreman/feedback')
@@ -57,11 +59,11 @@ it('does not read or write when inactive, and reverts a rejected stale message',
         reads.push(String(url))
         return Response.json({ votes: [] })
     }))
-    await act(async () => root.render(<Probe active={false} />))
+    await act(async () => root.render(<Probe active={false} onFeedback={captureFeedback} />))
     await flush()
     expect(reads).toHaveLength(0)
     await act(async () => current.rate('engine-answer', 'up'))
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Probe onFeedback={captureFeedback} />))
     await flush()
     await act(async () => current.rate('engine-answer', 'up'))
     await flush()
