@@ -103,6 +103,28 @@ describe('company brain section', () => {
         expect(prompt).toContain('The company brain is still empty.')
     })
 
+    it('keeps the ask-other-coworkers line on a normal empty-brain chat', async () => {
+        const prompt = await buildSystemPrompt(agentWith({ brain: true }), { source: 'chat' })
+        expect(prompt).toContain('ask the coworkers of the workspace who may already know (call_agent)')
+        expect(prompt).not.toContain('Another coworker is asking you')
+    })
+
+    it('tells a coworker called by another one to answer from what it holds', async () => {
+        const prompt = await buildSystemPrompt(agentWith({ brain: true }), { source: 'chat', calledBy: 'agent-alice' })
+        const brain = prompt.slice(prompt.indexOf('<company_brain>'), prompt.indexOf('</company_brain>'))
+        expect(brain).toContain('Another coworker is asking you: answer it from what you already hold, even if that is nothing, and never pass its question on to another coworker.')
+        expect(prompt).not.toContain('ask the coworkers of the workspace who may already know (call_agent)')
+        expect(brain).not.toContain('call_agent')
+    })
+
+    it('keeps the ask-other-coworkers line for schedule and trigger runs', async () => {
+        for (const trigger of [{ source: 'schedule' as const, slug: 'daily', name: 'Daily' }, { source: 'trigger' as const, slug: 'hook', name: 'Hook' }]) {
+            const prompt = await buildSystemPrompt(agentWith({ brain: true }), trigger)
+            expect(prompt).toContain('ask the coworkers of the workspace who may already know (call_agent)')
+            expect(prompt).not.toContain('Another coworker is asking you')
+        }
+    })
+
     it('leaves the section out when the brain tools are off', async () => {
         const prompt = await buildSystemPrompt(agentWith({ brain: false }), { source: 'chat' })
         expect(prompt).not.toContain('<company_brain>')

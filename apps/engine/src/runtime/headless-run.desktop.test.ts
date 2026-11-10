@@ -62,6 +62,23 @@ test('awaits an asynchronous final assertion instead of orphaning its rejection'
     expect(mocks.run).not.toHaveBeenCalled()
 })
 
+test('forwards calledBy on a coworker chat run and leaves schedule, trigger, and plain chat unmarked', async () => {
+    await startHeadlessRun(agent, 'session', 'What do we sell?', undefined, { source: 'chat', calledBy: 'engine-caller' })
+    expect(mocks.run).toHaveBeenCalledWith(agent, 'session', 'What do we sell?', undefined, expect.anything(), 'run', { source: 'chat', calledBy: 'engine-caller' })
+    mocks.run.mockClear()
+    await startHeadlessRun(agent, 'session', 'Read notes', undefined, { source: 'schedule', slug: 'daily', name: 'Daily' })
+    expect(mocks.run.mock.calls[0][6]).toEqual({ source: 'schedule', slug: 'daily', name: 'Daily' })
+    expect(mocks.run.mock.calls[0][6]).not.toHaveProperty('calledBy')
+    mocks.run.mockClear()
+    await startHeadlessRun(agent, 'session', 'Handle this', undefined, { source: 'trigger', slug: 'hook', name: 'Hook' })
+    expect(mocks.run.mock.calls[0][6]).toEqual({ source: 'trigger', slug: 'hook', name: 'Hook' })
+    expect(mocks.run.mock.calls[0][6]).not.toHaveProperty('calledBy')
+    mocks.run.mockClear()
+    await startHeadlessRun(agent, 'session', 'Hello', undefined, { source: 'chat' })
+    expect(mocks.run.mock.calls[0][6]).toEqual({ source: 'chat' })
+    expect(mocks.run.mock.calls[0][6]).not.toHaveProperty('calledBy')
+})
+
 test('rejects the pending start when the last admission and cancellation write both fail', async () => {
     let checks = 0
     mocks.cancel.mockRejectedValueOnce(new Error('Cancellation write failed'))

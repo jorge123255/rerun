@@ -105,6 +105,7 @@ describe('fireTrigger', () => {
         ])
         expect(state.markFired).toHaveBeenCalledWith('on', 'inbound', expect.any(String))
         expect(state.runs[0]).toMatchObject({ sessionId: started.sessionId, message: 'payload: {"id":1}', override: { provider: 'rerun', model: 'm' }, trigger: { source: 'trigger', slug: 'inbound', name: 'Inbound mail' } })
+        expect(state.runs[0].trigger).not.toHaveProperty('calledBy')
         expect(started.runId).toBe(state.runs[0].runId)
     })
 
