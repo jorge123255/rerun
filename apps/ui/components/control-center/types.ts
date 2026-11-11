@@ -8,6 +8,7 @@ export type ControlRow = {
     id: string
     label: string
     detail?: string
+    keywords?: string[]
     leading: ControlRowLeading
     badge?: { label: string; tone: BadgeTone }
     // Why the row cannot be run. Written under the label, since a tooltip never opens on touch.
