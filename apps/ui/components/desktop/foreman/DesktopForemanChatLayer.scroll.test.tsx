@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { act, type ComponentProps, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { createPortal } from 'react-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { DesktopForemanChatLayer } from './DesktopForemanChatLayer'
 
@@ -100,6 +101,24 @@ afterEach(async () => {
     if (root) await act(async () => root!.unmount())
     root = undefined; document.body.innerHTML = ''
     vi.useRealTimers(); vi.unstubAllGlobals()
+})
+
+it('places saved work after its own prompt even when two prompts have the same text', async () => {
+    await render({
+        messages: [
+            { id: 'user-first', role: 'user', text: 'Same prompt', sourceRunId: 'run-first' },
+            { id: 'answer-first', role: 'assistant', text: 'First answer' },
+            { id: 'user-second', role: 'user', text: 'Same prompt', sourceRunId: 'run-second' },
+            { id: 'answer-second', role: 'assistant', text: 'Second answer' },
+        ],
+        renderChildWork: slots => {
+            const slot = slots.get('run-second')
+            const card = <div>Second call completed</div>
+            return slot ? createPortal(card, slot) : card
+        },
+    })
+    expect(host.textContent).toMatch(/Same prompt.*First answer.*Same prompt.*Second call completed.*Second answer/)
+    expect(host.textContent?.match(/Second call completed/g)).toHaveLength(1)
 })
 
 it('opens the latest restored message after an async history load and after reopening the dock', async () => {

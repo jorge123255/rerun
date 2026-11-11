@@ -1,6 +1,7 @@
 'use client'
 
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { ForemanAnchor, OrbActivity } from '@rerun/ui/foreman'
 import { DesktopForemanDockLayout, DesktopParkedForeman, useDesktopForemanDockBinding } from './dock'
 import { DEFAULT_DOCK_EXTRAS } from '@/lib/desktop/foreman-dock'
@@ -57,6 +58,7 @@ export type DesktopForemanColumnProps = {
     messages: DesktopForemanMessage[]
     mentionTargets?: DesktopCoworkerCallTarget[]
     onOpenCalledChat?: (target: DesktopCoworkerCallOpenTarget) => Promise<void>
+    callSources?: readonly { callId: string; runId: string }[]
     sessionId?: string
     pendingSend?: boolean
     retryAttachedMessage?: boolean
@@ -103,6 +105,7 @@ export function DesktopForemanColumn({
     messages,
     mentionTargets,
     onOpenCalledChat,
+    callSources,
     sessionId,
     pendingSend,
     retryAttachedMessage,
@@ -145,6 +148,7 @@ export function DesktopForemanColumn({
         eligible: !!retrySnapshot && !streaming && !question && !pendingStarter && !foreman.blocked && ui.decision.status !== 'pending',
     })
     const { close: closeAlternates, open: alternatesOpen } = alternates
+    const runByCall = useMemo(() => new Map(callSources?.map(source => [source.callId, source.runId])), [callSources])
     const starterInFlight = useRef(false)
     const [starterBusy, setStarterBusy] = useState(false)
     const [starterError, setStarterError] = useState<{ offerId: string; message: string } | null>(null)
@@ -274,15 +278,27 @@ export function DesktopForemanColumn({
                         answerFeedback={{ ratingOf: answerFeedback.ratingOf, onRate: answerFeedback.rate, disabled: hidden }}
                         replyRetry={retrySnapshot ? { review: id => void alternates.reviewReply(id),
                             disabled: !!streaming || !!question || pendingStarter || !!foreman.blocked || alternates.busy || ui.decision.status === 'pending' } : undefined}
+                        renderChildWork={sessionId && ui.open && !hidden && !onRoutines && !alternates.open && foreman.restored
+                            ? slots => <Fragment key={`${chat.workspaceId}:${chat.chatId}`}>
+                                <DesktopDelegationMount scope="foreman" sessionId={chat.chatId}
+                                    agentId={FOREMAN_AGENT_ID} followLive={!!live} stopRunId={live?.runId ?? null}
+                                    placeCard={(snapshot, card) => {
+                                        const slot = slots.get(snapshot.parentRunId)
+                                        const settled = snapshot.tasks.every(task => task.cleanup === 'complete' && task.status !== 'running' && task.status !== 'queued')
+                                        return slot && settled ? createPortal(card, slot, snapshot.delegationId) : card
+                                    }} />
+                                <DesktopCoworkerCalls agentId={FOREMAN_AGENT_ID} sessionId={chat.chatId} fallback={null}
+                                    currentRunActive={!!live} onOpenTarget={onOpenCalledChat}
+                                    placeCard={(call, card) => {
+                                        const runId = runByCall.get(call.callId)
+                                        const slot = runId && slots.get(runId)
+                                        return slot && ['completed', 'error', 'cancelled', 'interrupted'].includes(call.status)
+                                            ? createPortal(card, slot, call.callId) : card
+                                    }} />
+                            </Fragment>
+                            : undefined}
                         className="min-h-0 flex-1"
                     >
-                        {sessionId && ui.open && !hidden && !onRoutines && !alternates.open && foreman.restored &&
-                            <Fragment key={`${chat.workspaceId}:${chat.chatId}`}>
-                                <DesktopDelegationMount scope="foreman" sessionId={chat.chatId}
-                                    agentId={FOREMAN_AGENT_ID} followLive={!!live} stopRunId={live?.runId ?? null} />
-                                <DesktopCoworkerCalls agentId={FOREMAN_AGENT_ID} sessionId={chat.chatId} fallback={null}
-                                    currentRunActive={!!live} onOpenTarget={onOpenCalledChat} />
-                            </Fragment>}
                         {starterPack && onReviewTemplate && <DesktopStarterPack
                             workspaceId={chat.workspaceId}
                             active={ui.open && !hidden}

@@ -1,8 +1,8 @@
 import { Hono } from 'hono'
 import { agentExists } from '../../agents/loader.js'
 import { getSession, listDesktopThreadMetadata, listSessions, sessionBelongsToAgent } from '../../db/repos/sessions.js'
-import { listMessages, readSavedWorkspaceAttachment } from '../../db/repos/messages.js'
-import { desktopAttachmentPathSchema, desktopMcpSignInGuardSchema, desktopMcpSignInSourceResponseSchema, desktopThreadMetadataListSchema } from '@rerun/contracts'
+import { listDesktopForemanMessages, listMessages, readSavedWorkspaceAttachment } from '../../db/repos/messages.js'
+import { desktopAttachmentPathSchema, desktopMcpSignInGuardSchema, desktopMcpSignInSourceResponseSchema, desktopThreadMetadataListSchema, FOREMAN_AGENT_ID } from '@rerun/contracts'
 import { readDesktopMcpSignInSource } from '../../desktop/mcp-sign-in/source.js'
 import { desktopSecretRequestGuardSchema, desktopSecretSourceResponseSchema } from '@rerun/contracts'
 import { z } from 'zod'
@@ -49,7 +49,9 @@ sessionRoutes.get('/:sid/messages', async c => {
     const agentId = c.req.param('id')!
     const sid = c.req.param('sid')
     if (!(await sessionBelongsToAgent(sid, agentId))) return c.json({ error: 'session not found' }, 404)
-    return c.json({ messages: await listMessages(agentId, sid) })
+    return c.json({ messages: desktopApp() && agentId === FOREMAN_AGENT_ID
+        ? await listDesktopForemanMessages(sid)
+        : await listMessages(agentId, sid) })
 })
 
 sessionRoutes.get('/:sid/messages/:mid/attachment', async c => {

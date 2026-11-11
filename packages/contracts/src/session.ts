@@ -29,6 +29,7 @@ export const messageRoleSchema = z.enum(['user', 'assistant', 'tool'])
 export type MessageRole = z.infer<typeof messageRoleSchema>
 
 export const messageSchema = z.object({
+    foremanRunId: z.string().min(1).max(128).nullish(),
     id: z.string(),
     sessionId: z.string(),
     role: messageRoleSchema,

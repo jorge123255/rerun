@@ -44,6 +44,7 @@ export type DesktopDelegationMountProps = {
     dense?: boolean
     /** Shown while loading, when the filtered list is empty, or when the read cannot be shown. */
     fallback?: ReactNode
+    placeCard?: (snapshot: DesktopDelegationSnapshot, card: ReactNode) => ReactNode
     client?: DesktopDelegationClient
     /** GET-shaped transcript `{delegations}`. A shape failure is malformed, not an empty success. */
     projection?: unknown
@@ -104,6 +105,7 @@ export function DesktopDelegationMount({
     errorText,
     dense = false,
     fallback = null,
+    placeCard,
     client,
     projection,
     parentSnapshots,
@@ -283,8 +285,8 @@ export function DesktopDelegationMount({
                     <Button type="button" size="sm" variant="outline" onClick={retry}>Retry</Button>
                 </div>
             )}
-            {rows.length > 0 ? rows.map(snapshot => (
-                <DesktopDelegationBlock
+            {rows.length > 0 ? rows.map(snapshot => {
+                const card = <DesktopDelegationBlock
                     key={snapshot.delegationId}
                     snapshot={snapshot}
                     agentId={agentId}
@@ -294,7 +296,8 @@ export function DesktopDelegationMount({
                     showLiveClock={view === 'live' && isLive(snapshot)}
                     onStopTask={stopRunId === undefined || stopRunId === snapshot.parentRunId ? taskId => stopTask(snapshot, taskId) : undefined}
                 />
-            )) : fallback}
+                return placeCard ? placeCard(snapshot, card) : card
+            }) : fallback}
         </div>
     )
 }

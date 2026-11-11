@@ -36,6 +36,7 @@ import { foremanTranscriptRevision } from '../../../../../engine/src/desktop/for
 import { desktopForemanContext } from '../../foreman/context'
 import { consumeDesktopDocumentAdmission, resolveDesktopDocumentAdmission } from '../document-attachments/binding'
 import { listDesktopCoworkerCallTargets } from '../coworker-calls/authority'
+import { initializeDesktopCoworkerCalls, listDesktopForemanCallSources } from '../coworker-calls/db'
 import { revalidateDesktopCoworkerMentions } from '@/components/desktop/mentions/coworker-mention-model'
 
 const KEY = Symbol.for('rerun.desktop.foreman.binding.v1')
@@ -57,6 +58,7 @@ export function desktopForeman(runtime: DesktopRuntime): Promise<Binding> {
 async function createBinding(runtime: DesktopRuntime) {
     const db = await openDesktopDatabase(runtime.dataRoot)
     await db.execute(FOREMAN_ALTERNATE_SQL)
+    await initializeDesktopCoworkerCalls(db)
     const workspaceId = String(runtime.workspaceId)
     const starterDecisions = createDesktopLocalStarterDecisions(runtime, db)
     const starterOffers = createDesktopLocalStarterOffers(runtime, db)
@@ -376,7 +378,18 @@ async function createBinding(runtime: DesktopRuntime) {
             ])
             const retrySnapshot = foremanAlternateSnapshot(runtime, owner.chat, owner.sessionId,
                 foremanTranscriptRevision(owner.chat, owner.sessionId, messages))
-            return { ...owner, view, messages: history, retrySnapshot, answeredQuestions, context, starter: await starterDecisions.view(owner.chat),
+            const visibleUserIds = new Set(history.filter(message => message.role === 'user').map(message => message.id))
+            const runSources = messages.flatMap(message => {
+                const messageId = `engine-${message.id}`
+                return message.role === 'user' && message.foremanRunId && visibleUserIds.has(messageId)
+                    ? [{ messageId, runId: message.foremanRunId }]
+                    : []
+            })
+            const knownRuns = new Set(runSources.map(source => source.runId))
+            const callSources = knownRuns.size
+                ? (await listDesktopForemanCallSources(db, owner.chat.chatId, owner.sessionId)).filter(row => knownRuns.has(row.runId))
+                : []
+            return { ...owner, view, messages: history, retrySnapshot, answeredQuestions, context, runSources, callSources, starter: await starterDecisions.view(owner.chat),
                 question: pending ? { ...pending.view, ...(attempt && { attempt: attempt.action === 'cancel'
                     ? { action: 'cancel' as const, requestId: attempt.requestId }
                     : { action: 'answer' as const, requestId: attempt.requestId, answers: attempt.answers } }) } : null }

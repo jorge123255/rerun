@@ -84,6 +84,21 @@ export async function listMessages(agentId: string, sessionId: string, throughMe
     return db.select().from(messages).where(and(eq(messages.sessionId, sessionId), through)).orderBy(asc(messages.createdAt), asc(sql`rowid`))
 }
 
+export async function listDesktopForemanMessages(sessionId: string) {
+    const { db } = await getSystemDb(FOREMAN_AGENT_ID)
+    // The queued receipt owns exactly one user row. A provider's tool-call ID can repeat.
+    const foremanRunId = sql<string | null>`(
+        SELECT run.id
+        FROM desktop_queued_turns AS receipt
+        JOIN runs AS run ON run.id = receipt.run_id
+        JOIN desktop_foreman_reply_sources AS source ON source.run_id = run.id AND source.user_message_id = receipt.message_id
+        WHERE receipt.message_id = ${messages.id} AND run.session_id = ${messages.sessionId}
+          AND run.agent_id = ${FOREMAN_AGENT_ID} AND ${messages.role} = 'user'
+    )`
+    return db.select({ ...getTableColumns(messages), foremanRunId }).from(messages)
+        .where(eq(messages.sessionId, sessionId)).orderBy(asc(messages.createdAt), asc(sql`rowid`))
+}
+
 /** Read only the text attachment explicitly stored with this user message. */
 export async function readSavedWorkspaceAttachment(agentId: string, sessionId: string, messageId: string, path: string) {
     const { db } = await getSystemDb(agentId)

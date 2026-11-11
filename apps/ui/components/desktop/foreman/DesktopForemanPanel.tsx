@@ -167,6 +167,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     <DesktopForemanColumn
         mentionTargets={props.mentionTargets}
         onOpenCalledChat={props.onOpenCalledChat}
+        callSources={state.callSources}
         sessionId={state.sessionId} pendingSend={!!pendingSend} retryAttachedMessage={!!pendingSend?.documents && !pendingSend.text}
         imageModel={providers?.connections.some(connection => connection.id === voiceModel?.connectionId && connection.provider === 'codex')}
         controlledOpen={props.controlledOpen} hidden={props.hidden} centerOpen={props.centerOpen} onOpenChange={props.onOpenChange} onLayout={props.onLayout}

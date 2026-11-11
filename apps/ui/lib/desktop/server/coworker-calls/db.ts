@@ -2,6 +2,7 @@ import 'server-only'
 import {
     DESKTOP_COWORKER_CALL_INTERRUPTED_REASON,
     DESKTOP_COWORKER_CALL_MAX_FANOUT,
+    FOREMAN_AGENT_ID,
     desktopCoworkerCallProgressSchema,
     desktopCoworkerCallStatuses,
     type DesktopCoworkerCallProgress,
@@ -233,6 +234,16 @@ export async function getDesktopCoworkerCall(db: Reader, callId: string): Promis
 export async function listDesktopCoworkerCallRows(db: Reader, parentSessionId: string): Promise<CoworkerCallRecord[]> {
     const result = await db.execute({ sql: `${SELECT} WHERE parent_session_id = ? ORDER BY created_at DESC, call_id`, args: [parentSessionId] })
     return result.rows.map(row => recordOf(row as Record<string, unknown>))
+}
+
+export async function listDesktopForemanCallSources(db: Reader, chatId: string, sessionId: string) {
+    const { rows } = await db.execute({
+        sql: `SELECT call_id, engine_parent_run_id FROM desktop_coworker_calls
+            WHERE parent_agent_id = ? AND parent_session_id = ? AND engine_parent_agent_id = ? AND engine_parent_session_id = ?
+            ORDER BY created_at DESC, call_id LIMIT 5000`,
+        args: [FOREMAN_AGENT_ID, chatId, FOREMAN_AGENT_ID, sessionId],
+    })
+    return rows.map(row => ({ callId: String(row.call_id), runId: String(row.engine_parent_run_id) }))
 }
 
 export async function inboundDesktopCoworkerCall(db: Reader, engineRunId: string): Promise<CoworkerCallRecord | null> {

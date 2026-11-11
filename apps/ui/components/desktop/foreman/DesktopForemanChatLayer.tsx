@@ -9,7 +9,7 @@ import { DesktopForemanHistoryMessage } from './transcript/DesktopForemanHistory
 import { DesktopForemanAnswerActions } from './DesktopForemanAnswerActions'
 
 import { AnimatePresence, motion } from 'motion/react'
-import { useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { DesktopDocumentLightbox } from '../document-attachments/DesktopDocumentLightbox'
 import { Conversation, ConversationContent, ConversationScrollButton } from '@/components/ai-elements/conversation'
@@ -35,11 +35,17 @@ export type DesktopForemanMessage = {
     id: string
     role: 'user' | 'assistant' | 'system'
     text: string
+    sourceRunId?: string
     docs?: UIMessage['parts']
     history?: readonly ForemanHistoryPart[]
     answeredQuestions?: readonly DesktopAnsweredQuestionRecap[]
     documents?: readonly DesktopDocumentReference[]
     coworkerMentions?: readonly DesktopCoworkerMention[]
+}
+
+function RunCardsSlot({ runId, register }: { runId: string; register: (runId: string, node: HTMLDivElement | null) => void }) {
+    const ref = useCallback((node: HTMLDivElement | null) => register(runId, node), [register, runId])
+    return <div className="flex min-w-0 flex-col gap-3 empty:hidden" ref={ref} />
 }
 
 export function DesktopForemanChatLayer({
@@ -67,6 +73,7 @@ export function DesktopForemanChatLayer({
     onOpenBox,
     answerFeedback,
     replyRetry,
+    renderChildWork,
     children,
     className,
 }: {
@@ -96,11 +103,22 @@ export function DesktopForemanChatLayer({
     /** Local thumbs for a restored saved answer; absent on read-only or still-live transcripts. */
     answerFeedback?: { ratingOf: (messageId: string) => MessageFeedbackRating | null; onRate: (messageId: string, rating: MessageFeedbackRating) => void; disabled?: boolean } | null
     replyRetry?: { review: (messageId: string) => void; disabled: boolean }
+    renderChildWork?: (slots: ReadonlyMap<string, HTMLDivElement>) => ReactNode
     children?: ReactNode
     className?: string
 }) {
     const { t } = useDesktopLocale()
     const [preview, setPreview] = useState<{ messageId: string; index: number; trigger: HTMLButtonElement } | null>(null)
+    const [runSlots, setRunSlots] = useState<ReadonlyMap<string, HTMLDivElement>>(() => new Map())
+    const register = useCallback((runId: string, node: HTMLDivElement | null) => {
+        setRunSlots(previous => {
+            if ((previous.get(runId) ?? null) === node) return previous
+            const next = new Map(previous)
+            if (node) next.set(runId, node)
+            else next.delete(runId)
+            return next
+        })
+    }, [])
     const previewDocuments = preview && messages.find(message => message.id === preview.messageId)?.documents
     const plan = projectPlanCard(planSnapshot)
     const empty = messages.length === 0 && !error && !plan.view && !build && !question
@@ -121,8 +139,8 @@ export function DesktopForemanChatLayer({
                         </div>
                     )}
                     {messages.map(message => (
+                        <Fragment key={message.id}>
                         <div
-                            key={message.id}
                             className={cn(
                                 'max-w-[95%] rounded-lg px-4 py-3 text-sm',
                                 message.role === 'user' ? 'ml-auto bg-secondary' : 'bg-transparent text-foreground',
@@ -151,6 +169,9 @@ export function DesktopForemanChatLayer({
                                 {message.docs?.map((part, index) => <DesktopForemanDocsTool key={index} part={part as import('ai').ToolUIPart} restored={restored} />)}
                             </>}
                         </div>
+                        {renderChildWork && restored && message.role === 'user' && message.sourceRunId &&
+                            <RunCardsSlot runId={message.sourceRunId} register={register} />}
+                        </Fragment>
                     ))}
                     {question}
                     {plan.view && plan.revisionId && (
@@ -184,6 +205,7 @@ export function DesktopForemanChatLayer({
                             {error}
                         </div>
                     )}
+                    {renderChildWork?.(runSlots)}
                     {children}
                 </ConversationContent>
                 <ConversationScrollButton />

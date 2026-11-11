@@ -31,6 +31,8 @@ const stateSchema = z.strictObject({
     answeredQuestions: z.array(desktopAnsweredQuestionRecapSchema).max(2048).optional(),
     retrySnapshot: foremanDigestSchema.optional(),
     context: desktopForemanContextSchema.nullable().optional(),
+    runSources: z.array(z.strictObject({ messageId: z.string().min(1).max(256), runId: z.string().min(1).max(128) })).max(5000).optional(),
+    callSources: z.array(z.strictObject({ callId: z.uuid(), runId: z.string().min(1).max(128) })).max(5000).optional(),
     messages: z.array(z.object({ id: z.string().max(256), role: z.enum(['user', 'assistant']), parts: z.array(z.unknown()).max(4096),
         metadata: z.object({
             documents: z.array(desktopDocumentReferenceSchema).max(DESKTOP_DOCUMENT_MAX_FILES).optional(),
@@ -67,6 +69,7 @@ export async function readDesktopForemanState(signal?: AbortSignal): Promise<Des
 const post = async (input: unknown, signal?: AbortSignal) => json(await fetch('/api/desktop/foreman', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input), signal }))
 export function desktopForemanMessages(state: DesktopForemanClientState) {
     const scope = foremanDocumentScope(state.chat, state.sessionId)
+    const sourceByMessage = new Map(state.runSources?.map(source => [source.messageId, source.runId]))
     return state.messages.map(({ id, role, parts, metadata }) => {
         const answeredQuestions = answeredQuestionRecapsForMessage(state.answeredQuestions ?? [], id)
         const documents = role === 'user' ? metadata?.documents?.filter(item => item.scope.agentId === scope.agentId
@@ -74,6 +77,7 @@ export function desktopForemanMessages(state: DesktopForemanClientState) {
         return {
             id,
             role,
+            ...(role === 'user' && sourceByMessage.has(id) && { sourceRunId: sourceByMessage.get(id) }),
             history: foremanHistoryParts(id, parts),
             ...(documents?.length && { documents }),
             ...(role === 'user' && desktopCoworkerMentionFieldsOf(metadata?.coworkerMentions)),

@@ -18,7 +18,8 @@ vi.mock('./dock', () => ({
 vi.mock('@rerun/ui/primitives/use-is-mobile', () => ({ useIsMobile: () => false }))
 vi.mock('./DesktopForemanHeader', () => ({ DesktopForemanHeader: (props: HeaderProps) => <button onClick={() => props.onTabChange('routines')}>Routines tab</button> }))
 vi.mock('./DesktopForemanComposer', () => ({ DesktopForemanComposer: (props: ComposerProps) => <div><textarea data-desktop-foreman-composer aria-label="Message the Foreman" />{props.trailing}{props.controls}</div> }))
-vi.mock('./DesktopForemanChatLayer', () => ({ DesktopForemanChatLayer: ({ children }: ComponentProps<typeof import('./DesktopForemanChatLayer').DesktopForemanChatLayer>) => <div>Chat{children}</div> }))
+vi.mock('./DesktopForemanChatLayer', () => ({ DesktopForemanChatLayer: ({ children, renderChildWork }: ComponentProps<typeof import('./DesktopForemanChatLayer').DesktopForemanChatLayer>) =>
+    <div>Chat{renderChildWork?.(new Map())}{children}</div> }))
 vi.mock('./routines/DesktopWorkspaceRoutines', () => ({ DesktopWorkspaceRoutines: () => <div>Routines content</div> }))
 vi.mock('./plan/DesktopPlanBoardPreview', () => ({ DesktopPlanBoardPreview: () => null }))
 import { DesktopForemanColumn } from './DesktopForemanColumn'
