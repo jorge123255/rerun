@@ -51,6 +51,7 @@ export const ENGINE_MODEL_CATALOG: CatalogProvider[] = [
         section: 'api',
         apiKeyUrl: 'https://console.anthropic.com/settings/keys',
         models: [
+            model('claude-fable-5-2', 6),
             model('claude-fable-5-1', 6),
             model('claude-fable-5', 6),
             model('claude-opus-5-5', 5),
@@ -71,9 +72,10 @@ export const ENGINE_MODEL_CATALOG: CatalogProvider[] = [
         apiKeyUrl: 'https://docs.claude.com/en/docs/claude-code/setup',
         // Claude Code's own picker, id for id. `[1m]` is how the CLI names the 1M-context variant of
         // a model whose default window is smaller; Fable, Opus 5/5.5, Sonnet 5.5 and Haiku 5.5 are 1M
-        // natively and take none. Haiku 5.5 needs Claude Code 2.1.293, which `rerun update` installs.
+        // natively and take none. Fable 5.2 uses the newer CLI bundled with the desktop app.
         models: [
             model('claude-opus-5-5', 5),
+            model('claude-fable-5-2', 6),
             model('claude-fable-5-1', 6),
             model('claude-fable-5', 6),
             model('claude-opus-5', 5),
@@ -147,6 +149,7 @@ export const ENGINE_MODEL_CATALOG: CatalogProvider[] = [
         section: 'api',
         apiKeyUrl: 'https://openrouter.ai/keys',
         models: [
+            model('anthropic/claude-fable-5.2', 6),
             model('anthropic/claude-fable-5.1', 6),
             model('anthropic/claude-opus-5.5', 5),
             model('anthropic/claude-sonnet-5.5', 4),

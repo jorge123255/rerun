@@ -7,6 +7,7 @@ import { getSystemDb } from '../systemDb.js'
 import type { MessageRow } from '../schema.js'
 import { HttpError } from '../../lib/errors.js'
 import { newId, nowIso } from '../../lib/ids.js'
+import { desktopApp } from '../../desktop/policy.js'
 
 export type QueuedTurn = { runId: string; sessionId: string; message: string; documents?: DesktopDocumentSendSelection; mcpSignIn?: DesktopMcpSignInGuard; coworkerMentions?: DesktopCoworkerMention[]; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard; service?: DesktopServiceRequestGuard; secret?: DesktopSecretRequestGuard; foreman?: { binding: DesktopForemanBinding; brief: ForemanBrief; question?: DesktopForemanQuestionGuard } }
 
@@ -60,6 +61,8 @@ export async function reserveDesktopQueuedTurn(agentId: string, turn: QueuedTurn
         toolCallsJson: null, sourcesJson: null, createdAt: now, authorId: author?.id ?? null, authorName: author?.name ?? null,
     }
     if (initializeSession && (agentId !== 'foreman' || !turn.foreman || turn.foreman.binding.runId !== turn.runId)) throw new HttpError(409, 'Only the admitted Foreman can initialize this conversation.')
+    const binding = turn.foreman?.binding
+    if (binding && (agentId !== FOREMAN_AGENT_ID || binding.runId !== turn.runId)) throw new HttpError(409, 'Foreman turn identity changed.')
     await client.batch([
         ...atomicStatements,
         ...(initializeSession ? [{ sql: "INSERT INTO sessions(id,agent_id,title,source,status,created_at,updated_at) VALUES(?,?,'Foreman','dashboard','open',?,?)", args: [turn.sessionId, agentId, now, now] }] : []),
@@ -67,6 +70,10 @@ export async function reserveDesktopQueuedTurn(agentId: string, turn: QueuedTurn
         { sql: 'INSERT INTO messages (id, session_id, role, content_json, created_at, author_id, author_name) VALUES (?,?,?,?,?,?,?)', args: [user.id, turn.sessionId, 'user', user.contentJson, now, user.authorId, user.authorName] },
         { sql: 'INSERT INTO messages_fts(content, message_id) VALUES (?,?)', args: [turn.message, user.id] },
         { sql: 'INSERT INTO desktop_queued_turns (run_id, fingerprint, message_id) VALUES (?,?,?)', args: [turn.runId, fingerprint(turn), user.id] },
+        ...(binding && desktopApp() ? [{
+            sql: 'INSERT INTO desktop_foreman_reply_sources (run_id, workspace_id, chat_id, user_message_id) VALUES (?,?,?,?)',
+            args: [turn.runId, binding.workspaceId, binding.chatId, user.id],
+        }] : []),
     ], 'write')
     return user
 }

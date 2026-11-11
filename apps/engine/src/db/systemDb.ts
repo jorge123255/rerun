@@ -9,6 +9,8 @@ import { agentDataDir, systemDbPath } from '../config/paths.js'
 import { sessions, messages, runs, runSteps, toolCalls, compactionCheckpoints, skillProposals } from './schema.js'
 import { latestVersion, migrateSqlite, type SqliteMigration } from './ladder.js'
 import { beginDesktopAgentWork } from '../desktop/agent-lifecycle.js'
+import { desktopApp } from '../desktop/policy.js'
+import { FOREMAN_AGENT_ID } from '@rerun/contracts'
 
 const schema = { sessions, messages, runs, runSteps, toolCalls, compactionCheckpoints, skillProposals }
 
@@ -272,6 +274,18 @@ async function open(id: string): Promise<SystemDb> {
     mkdirSync(agentDataDir(id), { recursive: true })
     const client = createClient({ url: `file:${systemDbPath(id)}` })
     await migrateSystemDb(client, systemDbPath(id))
+    // Only the managed Mac Foreman records reply provenance. Reconcile this independent
+    // table on open so either desktop or hosted migration ladders can open the profile.
+    if (desktopApp() && id === FOREMAN_AGENT_ID) await client.execute(`
+        CREATE TABLE IF NOT EXISTS desktop_foreman_reply_sources (
+            run_id TEXT PRIMARY KEY NOT NULL,
+            workspace_id TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            user_message_id TEXT NOT NULL,
+            assistant_message_id TEXT UNIQUE,
+            reply_digest TEXT
+        )
+    `)
     const entry: SystemDb = { client, db: drizzle(client, { schema }) }
     pool.set(id, entry)
     return entry
