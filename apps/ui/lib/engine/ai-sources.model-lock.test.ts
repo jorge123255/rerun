@@ -7,6 +7,8 @@ describe('isModelLocked', () => {
         expect(isModelLocked(RERUN_CONNECTION_ID, RERUN_MODELS.smart, false)).toBe(true)
         expect(isModelLocked('cnx-claude', 'claude-opus-5-5', false)).toBe(true)
         expect(isModelLocked('cnx-anthropic', 'claude-fable-5-1', false)).toBe(true)
+        expect(isModelLocked('cnx-anthropic', 'claude-fable-5-2', false)).toBe(true)
+        expect(isModelLocked('cnx-openrouter', 'anthropic/claude-fable-5.2', false)).toBe(true)
         expect(isModelLocked('cnx-codex', 'gpt-6-astra', false)).toBe(true)
     })
 

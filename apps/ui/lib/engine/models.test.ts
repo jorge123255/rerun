@@ -33,7 +33,11 @@ describe('premium models on a trial', () => {
     const premium = providerSchema.options.flatMap(provider => DEFAULT_CONNECTION_MODELS[provider].filter(isPremiumModel).map(model => ({ provider, model })))
 
     it('covers Opus, Fable and Astra, and leaves Sonnet and Sol open', () => {
-        expect(premium.map(p => p.model)).toEqual(expect.arrayContaining(['claude-opus-5-5', 'claude-fable-5-1', 'claude-opus-4-8[1m]', 'gpt-6-astra', 'openai/gpt-6-astra', 'anthropic/claude-opus-5.5']))
+        expect(premium.map(p => p.model)).toEqual(expect.arrayContaining(['claude-opus-5-5', 'claude-fable-5-1', 'claude-fable-5-2', 'claude-opus-4-8[1m]', 'gpt-6-astra', 'openai/gpt-6-astra', 'anthropic/claude-opus-5.5', 'anthropic/claude-fable-5.2']))
+        expect(MODEL_LABEL['claude-fable-5-2']).toBe('Fable 5.2')
+        expect(MODEL_LABEL['anthropic/claude-fable-5.2']).toBe('Fable 5.2')
+        expect(MODEL_CONTEXT_WINDOW['claude-fable-5-2']).toBe(1_000_000)
+        expect(MODEL_CONTEXT_WINDOW['anthropic/claude-fable-5.2']).toBe(1_000_000)
         for (const model of ['claude-sonnet-5[1m]', 'claude-haiku-4-5', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-6-luna', 'rerun-smart']) expect(isPremiumModel(model), model).toBe(false)
     })
 
