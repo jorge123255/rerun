@@ -143,6 +143,42 @@ it('a stale start cannot close or replace a newer authorized attempt',async()=>{
  await vi.waitFor(async()=>expect((await oauth.status('a','x',nextRevision,new AbortController().signal)).state).toBe('connected'))
 })
 
+it('keeps the original callback when two chats and Settings request the same registration', async () => {
+ const {oauth,revision,json,exchanges}=await setup()
+ const signal=new AbortController().signal
+ const started=await oauth.start('a','x',revision,signal,undefined,'chat-a')
+ const requestCount=vi.mocked(json).mock.calls.length
+ const closeCount=http.closed.mock.calls.length
+
+ await expect(oauth.start('a','x',revision,signal,undefined,'chat-b')).rejects.toThrow('already in progress')
+ await expect(oauth.start('a','x',revision,signal)).rejects.toThrow('already in progress')
+ expect(json).toHaveBeenCalledTimes(requestCount)
+ expect(http.closed).toHaveBeenCalledTimes(closeCount)
+ expect(await oauth.status('a','x',revision,signal,'chat-a')).toEqual({state:'waiting'})
+ expect(await oauth.status('a','x',revision,signal,'chat-b')).toEqual({state:'idle'})
+
+ callback(new URL(started.authorizationUrl!).searchParams.get('state')!)
+ await vi.waitFor(async()=>expect(await oauth.status('a','x',revision,signal,'chat-a')).toEqual({state:'connected'}))
+ expect(exchanges()).toBe(1)
+})
+
+it('does not let a stale chat cancel a later Settings callback at the same revision', async () => {
+ const {oauth,revision,exchanges}=await setup()
+ const signal=new AbortController().signal
+ await oauth.start('a','x',revision,signal,undefined,'chat-a')
+ await oauth.cancel('a','x',revision,signal,'chat-a')
+
+ const started=await oauth.start('a','x',revision,signal)
+ const closeCount=http.closed.mock.calls.length
+ await oauth.cancel('a','x',revision,signal,'chat-a')
+ expect(http.closed).toHaveBeenCalledTimes(closeCount)
+ expect(await oauth.status('a','x',revision,signal)).toEqual({state:'waiting'})
+
+ callback(new URL(started.authorizationUrl!).searchParams.get('state')!)
+ await vi.waitFor(async()=>expect(await oauth.status('a','x',revision,signal)).toEqual({state:'connected'}))
+ expect(exchanges()).toBe(1)
+})
+
 it('finished attempts do not exhaust the active listener budget',async()=>{
  const {store}=await setup()
  const unavailable=loopbackMcpOAuth(store,async()=>({enabled:true,granted:true}),async()=>{throw new Error('Unavailable')});services.push(unavailable)

@@ -5,12 +5,13 @@ import type {RemoteMcpStore,OAuthTokenBundle,BrowserOAuthWriteAdmission} from '.
 import {abortable,type McpAccess} from './remote'
 import {discoverLoopbackOAuth,oauthJson,publicOAuthAddress,type OAuthJson,type OAuthMetadata} from './oauth-network'
 export type OAuthStatus={state:'idle'|'waiting'|'connected'|'error'|'unsupported';message?:string}
-type Attempt={slot:string;ended:boolean;controller:AbortController;server?:Server;timer:ReturnType<typeof setTimeout>;status:OAuthStatus;revision:string;url:string;used:boolean;release:()=>void}
+type AttemptStatus={revision:string;url:string;status:OAuthStatus;attemptId?:string}
+type Attempt=AttemptStatus & {slot:string;ended:boolean;controller:AbortController;server?:Server;timer:ReturnType<typeof setTimeout>;used:boolean;release:()=>void}
 type BrowserCredentialStore=Pick<RemoteMcpStore,'browserCredentialState'|'replaceOAuth'>
 type BrowserApprovalCheck=(credential:NonNullable<Awaited<ReturnType<BrowserCredentialStore['browserCredentialState']>>>,signal:AbortSignal)=>Promise<BrowserOAuthWriteAdmission>
 export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'writeOAuth'|'lifecycle'>,access:McpAccess,json:OAuthJson=oauthJson,credentials?:BrowserCredentialStore) {
  const attempts=new Map<string,Attempt>(),refreshes=new Map<string,Promise<string>>()
- const terminal=new Map<string,{revision:string;url:string;status:OAuthStatus}>()
+ const terminal=new Map<string,AttemptStatus>()
  const key=(agent:string,name:string)=>JSON.stringify([agent,name])
  let closed=false
  async function authority(agent:string,name:string,revision:string,signal:AbortSignal,check:()=>void) {
@@ -30,7 +31,7 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   if(attempts.get(attempt.slot)===attempt){
    attempts.delete(attempt.slot);terminal.delete(attempt.slot)
    // Connected state comes from the encrypted store, never a process-local success flag.
-   if(status.state==='error' || status.state==='unsupported')terminal.set(attempt.slot,{revision:attempt.revision,url:attempt.url,status})
+   if(status.state==='error' || status.state==='unsupported')terminal.set(attempt.slot,{revision:attempt.revision,url:attempt.url,attemptId:attempt.attemptId,status})
    while(terminal.size>128)terminal.delete(terminal.keys().next().value!)
   }
  }
@@ -40,7 +41,7 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   if(typeof data.access_token!=='string' || !/^[\x21-\x7e]{1,8192}$/.test(data.access_token) || typeof data.expires_in!=='number' || !Number.isFinite(data.expires_in) || data.expires_in<=0 || data.expires_in>365*86400 || data.refresh_token!==undefined && (typeof data.refresh_token!=='string' || data.refresh_token.length>8192) || data.scope!==undefined && (typeof data.scope!=='string' || data.scope.length>8192))throw new Error('Unsupported token bundle')
   return {accessToken:data.access_token,refreshToken:typeof data.refresh_token==='string'?data.refresh_token:previous?.refreshToken,expiresAt:Date.now()+data.expires_in*1000,resource:meta.resource,issuer:meta.issuer,tokenEndpoint:meta.token,clientId,scope:typeof data.scope==='string'?data.scope:previous?.scope}
  }
- async function start(agent:string,name:string,revision:string,stop:AbortSignal,approval?:BrowserApprovalCheck) {
+ async function start(agent:string,name:string,revision:string,stop:AbortSignal,approval?:BrowserApprovalCheck,attemptId?:string) {
   if(closed)throw new Error('OAuth unavailable')
   // A stale dialog must not invalidate a newer attempt or an active bearer/OAuth call.
   const admission=store.lifecycle.watch(agent,name)
@@ -60,14 +61,14 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   }
   if(approval)await assertCredentialCurrent(admissionSignal)
   admission();stop.throwIfAborted()
-  const slot=key(agent,name),old=attempts.get(slot)
-  if(attempts.size>=128 && !old)throw new Error('OAuth unavailable')
-  if(old)end(old,{state:'idle'})
+  const slot=key(agent,name)
+  if(attempts.has(slot))throw new Error('Browser sign-in is already in progress for this server.')
+  if(attempts.size>=128)throw new Error('OAuth unavailable')
   terminal.delete(slot)
   store.lifecycle.disconnect(agent,name)
   const controller=new AbortController(),ticket=store.lifecycle.admit(agent,name,controller)
   const signal=AbortSignal.any([controller.signal,stop,AbortSignal.timeout(30_000)])
-  const attempt:Attempt={slot,ended:false,controller,revision,url:admitted.url,used:false,release:ticket.release,status:{state:'waiting'},timer:setTimeout(()=>end(attempt,{state:'error',message:'Authorization expired. Retry.'}),300_000)}
+  const attempt:Attempt={slot,ended:false,controller,revision,attemptId,url:admitted.url,used:false,release:ticket.release,status:{state:'waiting'},timer:setTimeout(()=>end(attempt,{state:'error',message:'Authorization expired. Retry.'}),300_000)}
   attempt.timer.unref?.()
   attempts.set(slot,attempt)
   controller.signal.addEventListener('abort',()=>{if(attempt.status.state==='waiting')end(attempt,{state:'error',message:'Authorization cancelled. Retry.'})},{once:true})
@@ -129,11 +130,13 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
    return {authorizationUrl:url.href,status:attempt.status}
   }catch{end(attempt,signal.aborted?{state:'error',message:'Authorization cancelled or timed out. Retry.'}:{state:'unsupported',message:'Unsupported or unavailable provider. Public PKCE and dynamic loopback registration are required.'});return {status:attempt.status}}
  }
- async function status(agent:string,name:string,revision:string,signal:AbortSignal):Promise<OAuthStatus> {
+ async function status(agent:string,name:string,revision:string,signal:AbortSignal,attemptId?:string):Promise<OAuthStatus> {
   const check=store.lifecycle.watch(agent,name)
   const server=await authority(agent,name,revision,signal,check)
-  const attempt=attempts.get(key(agent,name))??terminal.get(key(agent,name))
-  if(attempt && attempt.revision===revision && attempt.url===server.url)return attempt.status
+  const slot=key(agent,name),live=attempts.get(slot)
+  if(live && live.revision===revision && live.url===server.url)return live.attemptId===attemptId?live.status:{state:'idle'}
+  const previous=terminal.get(slot)
+  if(previous?.revision===revision && previous.url===server.url && previous.attemptId===attemptId)return previous.status
   const token=await abortable(store.readOAuth(agent,name),signal);check();signal.throwIfAborted()
   if(token && token.expiresAt<=Date.now()+60_000 && !token.refreshToken)return {state:'error',message:'Authorization expired. Reconnect required.'}
   if(token?.refreshPending)return {state:'error',message:'Refresh acknowledgement unavailable. Reconnect required.'}
@@ -177,6 +180,17 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
    return result
   }finally{controller.abort();ticket.release()}
  }
- async function cancel(agent:string,name:string,revision:string,signal:AbortSignal){const check=store.lifecycle.watch(agent,name);await authority(agent,name,revision,signal,check);check();signal.throwIfAborted();const slot=key(agent,name),attempt=attempts.get(slot);if(attempt?.revision===revision)end(attempt,{state:'idle'});terminal.delete(slot);store.lifecycle.disconnect(agent,name)}
+ async function cancel(agent:string,name:string,revision:string,signal:AbortSignal,attemptId?:string) {
+  const check=store.lifecycle.watch(agent,name)
+  const server=await authority(agent,name,revision,signal,check)
+  check();signal.throwIfAborted()
+  const slot=key(agent,name),attempt=attempts.get(slot)
+  if(attempt?.revision===revision && attempt.url===server.url && attempt.attemptId===attemptId) {
+   end(attempt,{state:'idle'})
+   store.lifecycle.disconnect(agent,name)
+  }
+  const previous=terminal.get(slot)
+  if(previous?.revision===revision && previous.url===server.url && previous.attemptId===attemptId)terminal.delete(slot)
+ }
  return {start,status,credential,cancel,shutdown(){closed=true;for(const attempt of attempts.values())end(attempt,{state:'idle'});attempts.clear();terminal.clear();store.lifecycle.shutdown()}}
 }

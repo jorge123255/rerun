@@ -15,12 +15,16 @@ import { boundedText } from '../mcp/remote'
 import { createDesktopMcpSignInStore } from './store'
 import { createDesktopMcpSignInRuntimePorts, type DesktopMcpSignInOAuthTarget } from './runtime'
 
-const stateKey = Symbol.for('rerun.desktop.mcp-sign-in-oauth-attempts.v1')
-type OAuthOwner = { requestId: string; attemptId: string }
-type State = { owners: Map<string, OAuthOwner>; tails: Map<string, Promise<unknown>> }
-const states = () => ((globalThis as unknown as Record<symbol, Map<string, State>>)[stateKey] ??= new Map())
-function state(runtime: DesktopRuntime) { const key = JSON.stringify([runtime.dataRoot, runtime.launchNonce]); let value = states().get(key); if (!value) { value = { owners: new Map(), tails: new Map() }; states().set(key, value) }; return value }
-function exclusive<T>(state: State, key: string, work: () => Promise<T>): Promise<T> { const next = (state.tails.get(key) ?? Promise.resolve()).then(work, work); state.tails.set(key, next.then(() => undefined, () => undefined)); return next }
+const lockKey = Symbol.for('rerun.desktop.mcp-sign-in-oauth-locks.v1')
+const host = globalThis as typeof globalThis & { [lockKey]?: Map<string, Promise<void>> }
+const locks = host[lockKey] ??= new Map<string, Promise<void>>()
+function exclusive<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const result = (locks.get(key) ?? Promise.resolve()).then(work, work)
+    const settled = result.then(() => undefined, () => undefined)
+    locks.set(key, settled)
+    void settled.then(() => { if (locks.get(key) === settled) locks.delete(key) })
+    return result
+}
 const guardOf = ({ runId, sourceMessageId, toolCallId, fingerprint, server }: DesktopMcpSignInSource) => ({ runId, sourceMessageId, toolCallId, fingerprint, server })
 const sameSource = (a: DesktopMcpSignInSource, b: DesktopMcpSignInSource) => JSON.stringify(guardOf(a)) === JSON.stringify(guardOf(b)) && a.agentId === b.agentId && a.sessionId === b.sessionId
 
@@ -29,7 +33,7 @@ export async function desktopMcpSignInPorts(runtime: DesktopRuntime, sessionId: 
     if (!session) throw new DesktopHttpError(404, 'Conversation not found.')
     const agent = await findDesktopAgent(db, session.agentId)
     if (!agent || agent.workspaceId !== 1) throw new DesktopHttpError(404, 'Coworker not found.')
-    const store = createDesktopMcpSignInStore(db), service = await getDesktopRemoteMcpService(runtime), attempts = state(runtime)
+    const store = createDesktopMcpSignInStore(db), service = await getDesktopRemoteMcpService(runtime)
     const approvals = service.browserApprovals({ owner: agent.id, sessionId: session.id, engineAgentId: agent.engineAgentId, engineSessionId: session.engineSessionId })
     const initialOwner = watchDesktopMcpOwner(runtime, agent.id), initialSession = watchDesktopSecretAuthority(runtime, agent.id, session.id)
     const check = (signal: AbortSignal) => { signal.throwIfAborted(); service.shutdownSignal.throwIfAborted(); initialOwner(); initialSession() }
@@ -69,8 +73,7 @@ export async function desktopMcpSignInPorts(runtime: DesktopRuntime, sessionId: 
         await owner(signal)
         return { check: () => check(signal) }
     }
-    const slot = (target: DesktopMcpSignInOAuthTarget) => JSON.stringify([agent!.id, target.source.server.name])
-    const exact = (target: DesktopMcpSignInOAuthTarget) => { const current = attempts.owners.get(slot(target)); return !!current && current.requestId === target.requestId && current.attemptId === target.attemptId }
+    const slot = (target: DesktopMcpSignInOAuthTarget) => JSON.stringify([runtime.dataRoot, runtime.launchNonce, agent!.id, target.source.server.name])
     const browser = createDesktopMcpSignInRuntimePorts({ store, authority, captureBrowserApproval: approvals.capture,
         source: async (id, signal) => {
             if (id !== session!.id) throw new DesktopHttpError(409, 'MCP sign-in conversation changed.')
@@ -81,7 +84,7 @@ export async function desktopMcpSignInPorts(runtime: DesktopRuntime, sessionId: 
         },
         oauth: {
             async start(target, signal) {
-                return exclusive(attempts, slot(target), async () => {
+                return exclusive(slot(target), async () => {
                     const current = await authority(target.source, signal)
                     const request = await store.read(target.requestId)
                     if (!target.attemptId || request?.activeAttemptId !== target.attemptId || !sameSource(request.source, target.source)) throw new DesktopHttpError(409, 'MCP sign-in attempt changed.')
@@ -90,18 +93,16 @@ export async function desktopMcpSignInPorts(runtime: DesktopRuntime, sessionId: 
                         const approved = await approvals.assertCurrent(target, credential)
                         current.check()
                         return approved
-                    })
+                    }, target.attemptId)
                     current.check()
-                    attempts.owners.set(slot(target), { requestId: target.requestId, attemptId: target.attemptId })
                     return { ...result.status, ...(result.authorizationUrl ? { authorizationUrl: result.authorizationUrl } : {}) }
                 })
             },
             async status(target, signal) {
                 try {
                     await registration(target.source, signal)
-                    const status = await service.oauth.status(agent!.id, target.source.server.name, target.source.server.revision, signal)
-                    if (status.state === 'connected') return status
-                    if (target.attemptId && (!exact(target) || status.state === 'idle')) {
+                    const status = await service.oauth.status(agent!.id, target.source.server.name, target.source.server.revision, signal, target.attemptId)
+                    if (target.attemptId && status.state === 'idle') {
                         return { state: 'error', message: 'Browser sign-in was interrupted. Cancel this attempt to reconnect.' }
                     }
                     if (!target.attemptId && status.state === 'waiting') return { state: 'idle' }
@@ -110,20 +111,19 @@ export async function desktopMcpSignInPorts(runtime: DesktopRuntime, sessionId: 
                 catch { await owner(signal); return { state: 'unsupported', message: 'This server or its permission changed. Choose Not now, or restore its configuration before signing in.' } }
             },
             async cancel(target, signal) {
-                return exclusive(attempts, slot(target), async () => {
+                return exclusive(slot(target), async () => {
                     await owner(signal)
-                    if (!exact(target)) return
+                    if (!target.attemptId) return
                     // A removed/reconfigured registration already invalidated its old callback.
                     const row = (await service.store.list(agent!.id)).find(item => item.name === target.source.server.name)
                     await owner(signal)
-                    if (!row || row.revision !== target.source.server.revision || row.url !== target.source.server.url) { attempts.owners.delete(slot(target)); return }
+                    if (!row || row.revision !== target.source.server.revision || row.url !== target.source.server.url) return
                     const detail = await engineRequest(engineOf(runtime), `/agents/${encodeURIComponent(agent!.engineAgentId)}`, { method: 'GET', signal }, value => engineAgentDetailSchema.parse(value))
                     await owner(signal)
                     if (detail.id !== agent!.engineAgentId) throw new DesktopHttpError(409, 'MCP sign-in ownership changed.')
                     // Coworker disable/revoke already closes the owner's callback through the canonical lifecycle.
-                    if (!detail.config.enabled || detail.config.tools.desktopToolGrants?.mcp !== true) { attempts.owners.delete(slot(target)); return }
-                    await service.oauth.cancel(agent!.id, target.source.server.name, target.source.server.revision, signal)
-                    if (exact(target)) attempts.owners.delete(slot(target))
+                    if (!detail.config.enabled || detail.config.tools.desktopToolGrants?.mcp !== true) return
+                    await service.oauth.cancel(agent!.id, target.source.server.name, target.source.server.revision, signal, target.attemptId)
                 })
             },
             async ready(target, signal) {
