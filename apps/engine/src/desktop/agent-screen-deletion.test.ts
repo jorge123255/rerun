@@ -1,4 +1,4 @@
-import { copyFile, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { copyFile, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from 'vitest'
@@ -23,6 +23,7 @@ const { createServer } = await import('../http/server.js')
 const { migrate } = await import('../db/migrate.js')
 const { bindIsolatedScreen } = await import('./isolated-screen/binding.js')
 const { service } = await import('./isolated-screen/index.js')
+const { duplicateAgent } = await import('../agents/duplicate.js')
 const { agentDir } = await import('../config/paths.js')
 const { UNUSED_SCREEN_MARKER, knownUnusedScreen } = await import('./isolated-screen/ownership.js')
 const app = createServer()
@@ -53,11 +54,16 @@ test('deletes a newly created coworker that never allocated a screen with Docker
 
 test('keeps deletion pending if an allocation could have created Docker resources', async () => {
     const id = await coworker('Possible screen')
+    const marker = join(agentDir(id), UNUSED_SCREEN_MARKER)
+    const originalMarker = await readFile(marker)
     docker.inspectContainer.mockResolvedValueOnce({ status: 'missing' })
     docker.inspectVolume.mockResolvedValueOnce({ status: 'missing' }).mockResolvedValueOnce({ status: 'missing' })
     await expect(service().ensure({ engineAgentId: id, launchNonce: 'test-launch' }, AbortSignal.timeout(5000)))
         .rejects.toThrow('synthetic ambiguous volume creation')
     expect(docker.createVolume).toHaveBeenCalledTimes(1)
+    expect(await knownUnusedScreen(id)).toBe(false)
+    // Simulate a backup restoring the original marker while Docker is inaccessible.
+    await writeFile(marker, originalMarker)
     expect(await knownUnusedScreen(id)).toBe(false)
     expect((await app.request(`/agents/${id}`, { method: 'DELETE' })).status).toBe(500)
     expect((await app.request(`/agents/${id}`)).status).toBe(200)
@@ -75,4 +81,24 @@ test('does not use another coworker’s copied unused marker as absence proof', 
     expect(await knownUnusedScreen(recipient)).toBe(false)
     expect((await app.request(`/agents/${recipient}`, { method: 'DELETE' })).status).toBe(500)
     expect(docker.inspectContainer).toHaveBeenCalledTimes(1)
+})
+
+
+test('deletes a fresh duplicate without inspecting the source’s isolated computer', async () => {
+    const original = await coworker('Source with screen history')
+    docker.inspectContainer.mockResolvedValueOnce({ status: 'missing' })
+    docker.inspectVolume.mockResolvedValueOnce({ status: 'missing' }).mockResolvedValueOnce({ status: 'missing' })
+    await expect(service().ensure({ engineAgentId: original, launchNonce: 'test-launch' }, AbortSignal.timeout(5000)))
+        .rejects.toThrow('synthetic ambiguous volume creation')
+    vi.clearAllMocks()
+
+    const requestId = crypto.randomUUID()
+    const copy = await duplicateAgent(original, { name: 'Copy without screen history' }, requestId)
+    expect(await knownUnusedScreen(copy.id)).toBe(true)
+    expect(await knownUnusedScreen(original)).toBe(false)
+    expect(await duplicateAgent(original, { name: 'Copy without screen history' }, requestId)).toEqual(copy)
+    const deleted = await app.request(`/agents/${copy.id}`, { method: 'DELETE' })
+    expect(deleted.status).toBe(200)
+    expect(docker.inspectContainer).not.toHaveBeenCalled()
+    expect((await app.request(`/agents/${original}`)).status).toBe(200)
 })
