@@ -1,6 +1,6 @@
 import { type CustomProviderConfig, type CustomProviderDraftProbe, type CustomProviderModel, type CustomProviderProbe } from '@rerun/contracts'
 import { createPinnedProviderFetch, endpointBase } from './network.js'
-import { parseCustomModels } from './runtime.js'
+import { customModelCatalog } from './catalog.js'
 
 /** An explicit Settings action, before connection creation. Credentials remain ephemeral. */
 export async function probeCustomDraft(input: CustomProviderDraftProbe, checkWorkspace: (signal: AbortSignal) => Promise<void>, stop: AbortSignal) {
@@ -11,9 +11,10 @@ export async function probeCustomDraft(input: CustomProviderDraftProbe, checkWor
     let models: CustomProviderModel[] = [], status: CustomProviderProbe['status'] = 'unavailable', problem: CustomProviderProbe['problem'] = 'not_listed', manualUsable = false
     await checkWorkspace(signal)
     try {
-        const response = await network(`${endpointBase(config)}/models`, { headers, signal })
+        const catalog = customModelCatalog(endpointBase(config))
+        const response = await network(catalog.url, { headers, signal })
         if (response.status === 401 || response.status === 403) problem = 'unauthorized'
-        else if (response.ok) { models = parseCustomModels(await response.json()); status = models.length ? 'fresh' : 'empty'; problem = null }
+        else if (response.ok) { models = catalog.parse(await response.json()); status = models.length ? 'fresh' : 'empty'; problem = null }
         else await response.body?.cancel()
     } catch { signal.throwIfAborted(); problem = 'unreachable' }
     if (input.manualModel && problem !== 'unauthorized') {

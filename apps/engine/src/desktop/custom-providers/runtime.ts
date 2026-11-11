@@ -3,23 +3,11 @@ import { generateText, streamText, wrapLanguageModel, type Prompt } from 'ai'
 import { CUSTOM_DEFAULT_CONTEXT_WINDOW, type CustomProviderAuthority, type CustomProviderIdentity, type CustomProviderModel, type CustomProviderProbe } from '@rerun/contracts'
 import { openrouterReasoningMiddleware } from '../../agents/openrouter-reasoning.js'
 import { createPinnedProviderFetch, endpointBase } from './network.js'
+import { customModelCatalog } from './catalog.js'
 
 type CustomGenerateInput = Omit<Parameters<typeof generateText>[0], 'model' | 'prompt' | 'messages'> & Prompt
 type CustomStreamInput = Omit<Parameters<typeof streamText>[0], 'model' | 'prompt' | 'messages'> & Prompt
 
-export function parseCustomModels(body: unknown): CustomProviderModel[] {
-    const rows = Array.isArray(body) ? body : body && typeof body === 'object' && 'data' in body && Array.isArray(body.data) ? body.data : null
-    if (!rows || rows.length > 256) throw new Error('Custom catalog unavailable.')
-    const models = new Map<string, CustomProviderModel>()
-    for (const value of rows) {
-        if (!value || typeof value !== 'object') continue
-        const row = value as Record<string,unknown>, id = typeof row.id === 'string' ? row.id.trim() : ''
-        if (!id || id.length > 256 || models.has(id)) continue
-        const context = [row.context_length,row.max_model_len,row.context_window,row.max_context_length].find(n => typeof n === 'number' && Number.isInteger(n) && n >= 256 && n <= 10_000_000)
-        models.set(id, { id, contextWindow: typeof context === 'number' ? context : null, vision: false, source: 'discovered' })
-    }
-    return [...models.values()]
-}
 export function createCustomProviderRuntime(authority: CustomProviderAuthority) {
     const work = new Set<{ identity: CustomProviderIdentity; abort: AbortController }>()
     let closed = false
@@ -71,9 +59,10 @@ export function createCustomProviderRuntime(authority: CustomProviderAuthority) 
             try {
                 const headers: Record<string, string> = bound.key ? { Authorization: `Bearer ${bound.key}` } : {}
                 try {
-                    const response = await bound.network(`${endpointBase(bound.snapshot.config)}/models`, { headers, signal: bound.signal })
+                    const catalog = customModelCatalog(endpointBase(bound.snapshot.config))
+                    const response = await bound.network(catalog.url, { headers, signal: bound.signal })
                     if (response.status === 401 || response.status === 403) problem = 'unauthorized'
-                    else if (response.ok) { models = parseCustomModels(await response.json()); status = models.length ? 'fresh' : 'empty'; problem = null }
+                    else if (response.ok) { models = catalog.parse(await response.json()); status = models.length ? 'fresh' : 'empty'; problem = null }
                     else await response.body?.cancel()
                 } catch { bound.signal.throwIfAborted(); problem = 'unreachable' }
                 if (manualModel && problem !== 'unauthorized') {

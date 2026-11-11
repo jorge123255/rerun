@@ -2,6 +2,7 @@ import { z } from 'zod'
 export const DESKTOP_CUSTOM_PROVIDER_VERSION = 1 as const
 export const registeredCustomConnectionIdSchema = z.uuidv4()
 export const CUSTOM_DEFAULT_CONTEXT_WINDOW = 128_000
+export const DESKTOP_XAI_BASE_URL = 'https://api.x.ai/v1'
 export const DESKTOP_CUSTOM_PRESETS = [
     { id: 'ollama', label: 'Ollama', baseUrl: 'http://localhost:11434/v1', keyRequired: false, local: true },
     { id: 'lmstudio', label: 'LM Studio', baseUrl: 'http://localhost:1234/v1', keyRequired: false, local: true },
@@ -11,7 +12,10 @@ export const DESKTOP_CUSTOM_PRESETS = [
     { id: 'together', label: 'Together', baseUrl: 'https://api.together.xyz/v1', keyRequired: true, local: false },
     { id: 'mistral', label: 'Mistral', baseUrl: 'https://api.mistral.ai/v1', keyRequired: true, local: false },
     { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', keyRequired: true, local: false },
+    { id: 'xai', label: 'Grok (xAI API)', baseUrl: DESKTOP_XAI_BASE_URL, keyRequired: true, local: false },
+    { id: 'kimi-platform', label: 'Kimi Platform API', baseUrl: 'https://api.moonshot.ai/v1', keyRequired: true, local: false },
 ] as const
+const customProviderPresetSchema = z.enum(DESKTOP_CUSTOM_PRESETS.map(preset => preset.id))
 const endpoint = z.url().max(2048).refine(value => { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash }, 'Use a plain HTTP(S) endpoint without credentials, query or fragment.')
 const opaque = z.string().min(1).max(256)
 export const customProviderIdentitySchema = z.strictObject({ workspaceId: z.number().int().positive(), connectionId: opaque, revision: z.number().int().positive() })
@@ -19,7 +23,7 @@ export type CustomProviderIdentity = z.infer<typeof customProviderIdentitySchema
 export const customProviderModelSchema = z.strictObject({ id: opaque, contextWindow: z.number().int().min(256).max(10_000_000).nullable(), vision: z.boolean().default(false), source: z.enum(['discovered', 'manual']) })
 export type CustomProviderModel = z.infer<typeof customProviderModelSchema>
 export const customEndpointPolicySchema = z.strictObject({ reviewedOrigin: endpoint.refine(value => { const url = new URL(value); return url.pathname === '/' }, 'Review an exact origin.'), allowHttp: z.boolean().default(false), allowPrivate: z.boolean().default(false) })
-export const customProviderConfigSchema = z.strictObject({ name: z.string().trim().min(1).max(60), baseUrl: endpoint, preset: z.enum(['ollama','lmstudio','vllm','litellm','groq','together','mistral','deepseek']).nullable(), models: z.array(customProviderModelSchema).min(1).max(256), contextWindow: z.number().int().min(256).max(10_000_000).nullable(), vision: z.boolean(), policy: customEndpointPolicySchema })
+export const customProviderConfigSchema = z.strictObject({ name: z.string().trim().min(1).max(60), baseUrl: endpoint, preset: customProviderPresetSchema.nullable(), models: z.array(customProviderModelSchema).min(1).max(256), contextWindow: z.number().int().min(256).max(10_000_000).nullable(), vision: z.boolean(), policy: customEndpointPolicySchema })
 export type CustomProviderConfig = z.infer<typeof customProviderConfigSchema>
 export const customProviderSnapshotSchema = customProviderIdentitySchema.extend({ config: customProviderConfigSchema, configuredSecret: z.boolean(), state: z.enum(['configured','disconnected']), catalog: z.strictObject({ status: z.enum(['never','fresh','stale','unavailable','empty']), models: z.array(customProviderModelSchema).max(256), observedAt: z.number().nullable(), attemptedAt: z.number().nullable() }) }).strict()
 export type CustomProviderSnapshot = z.infer<typeof customProviderSnapshotSchema>
