@@ -3,6 +3,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer } from '@/lib/desktop/questions'
+import { questionDocumentTabUid } from '@/lib/desktop/question-documents'
+import type { DesktopDocumentAttachment } from '@rerun/contracts'
 import { loadMessages } from '@rerun/i18n/messages'
 import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
 import { DesktopLocale } from './DesktopLocale'
@@ -44,6 +46,7 @@ afterEach(async () => {
     for (const root of roots.splice(0)) await act(async () => { root.unmount() })
     document.body.innerHTML = ''
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
 })
 
 test('uses the original option form and submits an authoritative answer only once', async () => {
@@ -59,6 +62,40 @@ test('uses the original option form and submits an authoritative answer only onc
     await click('[data-hitl="option-0"]')
     expect(onAnswer).toHaveBeenCalledTimes(1)
     expect(document.querySelector('input[type="file"]')).toBeNull()
+})
+
+test('restores an attachment and submits a file-only answer in the exact conversation', async () => {
+    const documentOwner = { agentId: 'coworker', sessionId: 'saved-chat' }
+    const scope = { ...documentOwner, tabUid: questionDocumentTabUid(question.id) }
+    const saved: DesktopDocumentAttachment = {
+        attachmentId: crypto.randomUUID(), scope, name: 'notes.txt', mimeType: 'text/plain', kind: 'text', byteLength: 5,
+        sha256: 'f'.repeat(64), conversion: { mode: 'plain-text', state: 'ready' }, uploaded: true, selected: true,
+        admitted: false, position: 0, revision: crypto.randomUUID(), createdAt: '', updatedAt: '',
+    }
+    const admit = vi.fn()
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+        const endpoint = '/api/desktop/coworkers/coworker/document-attachments'
+        if (init.method === 'POST') {
+            expect(url).toBe(endpoint)
+            const payload = JSON.parse(String(init.body))
+            admit(payload)
+            return Response.json({ allowed: true, admissionId: payload.admissionId, references: [], inputs: [] })
+        }
+        expect(url).toBe(`${endpoint}?${new URLSearchParams({ tabUid: scope.tabUid, sessionId: scope.sessionId })}`)
+        return Response.json({ attachments: [saved] })
+    })
+    const onAnswer = vi.fn(async (_payload: DesktopQuestionAnswer) => {})
+    const root = mount()
+    await act(async () => {
+        root.render(<DesktopQuestionCard question={{ ...question, questions: [{ question: 'Which notes?', options: [] }] }}
+            documentOwner={documentOwner} onAnswer={onAnswer} />)
+    })
+    expect(document.querySelector('[data-hitl="attach"]')).not.toBeNull()
+    expect(document.body.textContent).toContain(saved.name)
+    await click('[data-hitl="next"]')
+    const documents = { scope, attachmentIds: [saved.attachmentId], admissionId: expect.any(String) }
+    expect(admit).toHaveBeenCalledExactlyOnceWith({ ...scope, operation: 'admission', attachmentIds: documents.attachmentIds, admissionId: documents.admissionId })
+    expect(onAnswer).toHaveBeenCalledExactlyOnceWith({ action: 'answer', questionId: question.id, requestId: expect.any(String), answers: [[]], documents })
 })
 
 test('a failed answer keeps the form editable and reuses only the same canonical intent ID', async () => {

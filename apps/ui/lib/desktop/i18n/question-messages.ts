@@ -2,6 +2,7 @@ import type { Locale } from '@rerun/i18n'
 
 const local = {
     en: {
+        retryAttachments: 'Reload question attachments',
         unavailable: 'This question cannot be answered right now.',
         retrySaved: 'An answer is already saved for this question. Retry that answer.',
         failed: 'Could not send this answer. Try again.',
@@ -13,6 +14,7 @@ const local = {
         retryCancellationHint: 'Retry to confirm the cancellation.',
     },
     fr: {
+        retryAttachments: 'Recharger les pièces jointes de la question',
         unavailable: 'Vous ne pouvez pas répondre à cette question pour le moment.',
         retrySaved: 'Une réponse est déjà enregistrée pour cette question. Réessayez de l’envoyer.',
         failed: 'Impossible d’envoyer cette réponse. Réessayez.',
@@ -24,6 +26,7 @@ const local = {
         retryCancellationHint: 'Réessayez pour confirmer l’annulation.',
     },
     es: {
+        retryAttachments: 'Volver a cargar los archivos adjuntos de la pregunta',
         unavailable: 'No se puede responder a esta pregunta ahora.',
         retrySaved: 'Ya hay una respuesta guardada para esta pregunta. Intenta enviarla de nuevo.',
         failed: 'No se pudo enviar esta respuesta. Vuelve a intentarlo.',
@@ -35,6 +38,7 @@ const local = {
         retryCancellationHint: 'Vuelve a intentarlo para confirmar la cancelación.',
     },
     pt: {
+        retryAttachments: 'Recarregar os anexos da pergunta',
         unavailable: 'Não é possível responder a esta pergunta agora.',
         retrySaved: 'Já existe uma resposta salva para esta pergunta. Tente enviá-la novamente.',
         failed: 'Não foi possível enviar esta resposta. Tente novamente.',
@@ -46,6 +50,7 @@ const local = {
         retryCancellationHint: 'Tente novamente para confirmar o cancelamento.',
     },
     de: {
+        retryAttachments: 'Frageanhänge erneut laden',
         unavailable: 'Diese Frage kann gerade nicht beantwortet werden.',
         retrySaved: 'Zu dieser Frage ist bereits eine Antwort gespeichert. Versuche erneut, sie zu senden.',
         failed: 'Die Antwort konnte nicht gesendet werden. Versuche es erneut.',

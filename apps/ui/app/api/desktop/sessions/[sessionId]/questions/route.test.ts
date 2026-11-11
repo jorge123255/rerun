@@ -11,6 +11,9 @@ import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { GET, POST } from './route'
 import { POST as TRANSCRIBE } from './transcribe/route'
 import { desktopAuxiliaryStore } from '@/lib/desktop/server/auxiliary/store'
+import { GET as GET_FILES, POST as POST_FILES } from '@/app/api/desktop/coworkers/[agentId]/document-attachments/route'
+import { POST as POST_CHAT } from '@/app/api/desktop/chat/route'
+import { questionDocumentTabUid, QUESTION_DOCUMENT_POSITIONS } from '@/lib/desktop/question-documents'
 
 const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime, alice: DesktopAgent, bob: DesktopAgent, a: DesktopSession, b: DesktopSession
@@ -84,7 +87,7 @@ beforeEach(async () => {
         const chat = req.url?.match(/^\/agents\/(engine-alice|engine-bob)\/chat$/)
         if (req.method === 'POST' && chat) {
             const turn = body.desktopQueuedTurn
-            const identity = JSON.stringify([chat[1], body.sessionId, body.message, turn?.question])
+            const identity = JSON.stringify([chat[1], body.sessionId, body.message, turn?.question, turn?.documents])
             if (receipts.has(turn?.runId)) {
                 if (receipts.get(turn.runId) !== identity) return reply(409, { error: 'Different queued message' })
                 return res.writeHead(204, { 'x-session-id': body.sessionId, 'x-run-id': turn.runId }).end()
@@ -151,6 +154,69 @@ test('transcribes only a current owned question and does not save or dispatch th
     expect((await transcribe(input)).status).toBe(409)
     expect(provider).toHaveBeenCalledTimes(2)
     expect(dispatches).toEqual([])
+})
+
+async function restartQuestionFixture() {
+    await closeDesktopDatabase(root)
+    runtime = { ...runtime, launchNonce: crypto.randomUUID() }
+    await writeFile(join(root, 'runtime.json'), JSON.stringify(runtime))
+}
+
+test('retains a file-only answer for its exact question and reconciles with the same bytes after restart', async () => {
+    const question = await pending()
+    const scope = { agentId: alice.id, sessionId: a.id, tabUid: questionDocumentTabUid(question.id) }
+    const attachmentId = crypto.randomUUID()
+    const documents = { scope, admissionId: crypto.randomUUID(), attachmentIds: [attachmentId] }
+    const url = (agentId: string) => `${runtime.app.origin}/api/desktop/coworkers/${agentId}/document-attachments`
+    const headers = { origin: runtime.app.origin, host: new URL(runtime.app.origin).host, 'content-type': 'application/json',
+        cookie: 'rerun-desktop-session=' + runtime.app.sessionToken }
+    const upload = { ...scope, operation: 'upload', attachmentId, name: 'quarterly [draft].txt', mimeType: 'text/plain',
+        position: QUESTION_DOCUMENT_POSITIONS, audioBase64: Buffer.from('Original quarterly figures').toString('base64') }
+    const files = (input: object, agentId = alice.id) => POST_FILES(new Request(url(agentId), {
+        method: 'POST', headers, body: JSON.stringify(input),
+    }), { params: Promise.resolve({ agentId }) })
+    expect((await files({ ...upload, agentId: bob.id }, bob.id)).status).toBe(409)
+    const saved = await files(upload)
+    expect(saved.status).toBe(200)
+    const { attachment } = await saved.json()
+    expect(attachment).toMatchObject({ kind: 'text', conversion: { mode: 'plain-text', state: 'ready' } })
+    await restartQuestionFixture()
+    const listing = await GET_FILES(new Request(url(alice.id) + '?' + new URLSearchParams({
+        sessionId: a.id, tabUid: scope.tabUid,
+    }), { headers }), { params: Promise.resolve({ agentId: alice.id }) })
+    const listed = await listing.json()
+    expect(listing.status, JSON.stringify(listed)).toBe(200)
+    expect(listed.attachments).toEqual([attachment])
+
+    const ordinary = await POST_CHAT(new Request(runtime.app.origin + '/api/desktop/chat', {
+        method: 'POST', headers, body: JSON.stringify({ agentId: alice.id, sessionId: a.id, text: 'ordinary chat', documents }),
+    }))
+    expect(ordinary.status).toBe(409)
+    expect(dispatches).toHaveLength(0)
+    const body = { ...answer(question, [[], [], [], []]), documents }
+    rejectBeforeAccept = true
+    expect((await post(body)).status).toBe(502)
+    await restartQuestionFixture()
+    expect((await pending()).attempt).toMatchObject({ requestId: body.requestId, documents })
+    expect((await post({ ...body, documents: { ...documents, attachmentIds: [crypto.randomUUID()] } })).status).toBe(409)
+    rejectBeforeAccept = false
+    const response = await post(body)
+    expect(response.headers.get('x-run-id')).toBe(body.requestId)
+    expect(dispatches).toHaveLength(2)
+    expect(dispatches[1]).toMatchObject({
+        message: expect.stringContaining('**Choose a color**\nAttached: quarterly [draft].txt'),
+        desktopQueuedTurn: { runId: body.requestId, documents },
+        desktopDocuments: [{ text: 'Original quarterly figures', reference: { attachmentId, scope, sha256: attachment.sha256 } }],
+    })
+    expect(dispatches[1].message).not.toContain('Attachments added to your workspace')
+    await restartQuestionFixture()
+    expect((await post(body)).headers.get('x-run-id')).toBe(body.requestId)
+    expect(dispatches).toHaveLength(2)
+    const download = await GET_FILES(new Request(url(alice.id) + '?' + new URLSearchParams({
+        sessionId: a.id, tabUid: scope.tabUid, attachmentId, sha256: attachment.sha256, view: 'download',
+    }), { headers }), { params: Promise.resolve({ agentId: alice.id }) })
+    expect(download.status).toBe(200)
+    expect(await download.text()).toBe('Original quarterly figures')
 })
 
 test('an unavailable source lookup cannot bypass webhook authority and dispatch an ordinary reply', async () => {

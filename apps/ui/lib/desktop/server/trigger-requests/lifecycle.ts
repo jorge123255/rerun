@@ -67,6 +67,9 @@ export function createTriggerRequestLifecycle(journal: TriggerRequestJournal, po
             return ports.withDecisionClaim(row.link, async () => reconcileRow(await required(key)))
         },
         async decide(key: string, raw: TriggerRequestDecision): Promise<Response> {
+            if (raw.kind === 'question' && raw.input.action === 'answer' && raw.input.documents) {
+                throw new DesktopHttpError(400, 'Files cannot be attached to this webhook question.')
+            }
             const initial = await required(key)
             const decision = triggerRequestDecisionSchema.parse(raw)
             if (decision.kind !== initial.link.kind || canonicalRequestId(decision) !== initial.link.requestId) throw new DesktopHttpError(409, 'Decision belongs to a different webhook request')

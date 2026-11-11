@@ -195,16 +195,17 @@ export type QuestionAnswer = { question: string; answers: string[]; attachments?
 
 // Each block names its own files so the agent knows which answer they belong to, while the paths
 // travel once in the trailing marker, which is what renders them as tiles in the bubble.
-export function serializeAnswers(answers: QuestionAnswer[]): string {
+export function serializeAnswers(answers: QuestionAnswer[], options: { attachmentsAreNames?: boolean } = {}): string {
     const blocks = answers.map(a => {
         const values = a.answers.map(value => value.trim()).filter(Boolean)
         const files = a.attachments ?? []
         if (values.length === 0 && files.length === 0) return `**${a.question}**\n[skipped]`
         const lines = values.length > 1 ? values.map(value => `- ${value}`) : values
-        if (files.length > 0) lines.push(`Attached: ${files.map(attachmentDisplayName).join(', ')}`)
+        if (files.length > 0) lines.push(`Attached: ${(options.attachmentsAreNames ? files : files.map(attachmentDisplayName)).join(', ')}`)
         return `**${a.question}**\n${lines.join('\n')}`
     })
     const text = `Here are my answers:\n\n${blocks.join('\n\n')}`
+    if (options.attachmentsAreNames) return text
     const paths = answers.flatMap(a => a.attachments ?? [])
     return paths.length > 0 ? appendAttachmentsRef(text, buildAttachmentsRef(paths)) : text
 }

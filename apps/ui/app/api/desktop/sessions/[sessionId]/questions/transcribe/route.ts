@@ -4,7 +4,7 @@ import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { desktopAuxiliaryBackends } from '@/lib/desktop/server/auxiliary/backends'
 import { desktopAuxiliaryStore } from '@/lib/desktop/server/auxiliary/store'
 import { desktopRoute } from '@/lib/desktop/server/http'
-import { requireDesktopQuestionForTranscription } from '@/lib/desktop/server/questions'
+import { requireDesktopPendingQuestion } from '@/lib/desktop/server/questions'
 import { readDesktopJson } from '@/lib/desktop/server/request-json'
 import { decodeDesktopVoiceAudio, inspectDesktopVoiceBytes } from '@/lib/desktop/server/voice/bytes'
 
@@ -21,7 +21,7 @@ export function POST(request: Request, context: { params: Promise<{ sessionId: s
         inspectDesktopVoiceBytes(format, bytes, { durationMs, levels })
         const { sessionId } = await context.params
         const signal = AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])
-        const target = await requireDesktopQuestionForTranscription(runtime, sessionId, questionId, signal)
+        const target = await requireDesktopPendingQuestion(runtime, sessionId, questionId, signal)
         const store = desktopAuxiliaryStore(target.db)
         if (!(await store.list()).some(item => item.purpose === 'transcription' && item.configured)) {
             throw new DesktopHttpError(503, 'Configure voice transcription in Settings to use a voice answer.')
@@ -33,7 +33,7 @@ export function POST(request: Request, context: { params: Promise<{ sessionId: s
         } catch {
             throw new DesktopHttpError(502, 'Could not transcribe this recording. Record again or type your answer.')
         }
-        const current = await requireDesktopQuestionForTranscription(runtime, sessionId, questionId, signal)
+        const current = await requireDesktopPendingQuestion(runtime, sessionId, questionId, signal)
         if (current.agent.engineAgentId !== target.agent.engineAgentId || current.session.engineSessionId !== target.session.engineSessionId) {
             throw new DesktopHttpError(409, 'This question is no longer available for a voice answer.')
         }

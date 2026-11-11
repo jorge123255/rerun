@@ -14,9 +14,9 @@ export const desktopDocumentScopeSchema = z.object({
 }).strict()
 export type DesktopDocumentScope = z.infer<typeof desktopDocumentScopeSchema>
 
-export const desktopDocumentKindSchema = z.enum(['pdf', 'audio', 'video', 'binary'])
+export const desktopDocumentKindSchema = z.enum(['pdf', 'audio', 'video', 'binary', 'text'])
 export type DesktopDocumentKind = z.infer<typeof desktopDocumentKindSchema>
-export const desktopDocumentInputModeSchema = z.enum(['pdf-text', 'voice-transcript', 'staged-file', 'unsupported'])
+export const desktopDocumentInputModeSchema = z.enum(['pdf-text', 'voice-transcript', 'staged-file', 'unsupported', 'plain-text'])
 export type DesktopDocumentInputMode = z.infer<typeof desktopDocumentInputModeSchema>
 export const desktopDocumentConversionStateSchema = z.enum(['pending', 'converting', 'ready', 'failed', 'unsupported'])
 export type DesktopDocumentConversionState = z.infer<typeof desktopDocumentConversionStateSchema>
@@ -111,6 +111,7 @@ export const desktopDocumentRequestSchema = z.discriminatedUnion('operation', [
 
 /** Pure name classification. Actual media inspection remains on the server. */
 export function desktopDocumentKindForName(name: string): DesktopDocumentKind {
+    if (/\.(?:txt|md|csv|json|log)$/i.test(name)) return 'text'
     if (/\.pdf$/i.test(name)) return 'pdf'
     if (/\.(?:wav|mp3|m4a|ogg|flac)$/i.test(name)) return 'audio'
     if (/\.(?:mp4|webm|mov|m4v)$/i.test(name)) return 'video'

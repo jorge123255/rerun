@@ -14,6 +14,7 @@ import { extractDesktopPdfText } from '../pdf-text'
 import { createDesktopDocumentAttachmentService } from './service'
 import { desktopDocumentStore, ensureDesktopDocumentAttachmentsSchema } from './store'
 import { desktopDocumentBlobs } from './storage'
+import { questionDocumentId } from '../../question-documents'
 
 export async function createDesktopDocumentRuntime(runtime: DesktopRuntime, db: Client, ports: {
     isCurrent: () => boolean
@@ -44,6 +45,15 @@ export async function createDesktopDocumentRuntime(runtime: DesktopRuntime, db: 
     }
     async function owner(scope: DesktopDocumentScope, signal: AbortSignal) {
         const agent = await baseOwner(scope, signal)
+        const questionId = questionDocumentId(scope.tabUid)
+        if (questionId) {
+            if (!scope.sessionId) throw unavailable()
+            const { requireDesktopPendingQuestion } = await import('../questions')
+            const target = await requireDesktopPendingQuestion(runtime, scope.sessionId, questionId, signal, true)
+            if (target.agent.id !== agent.id || target.agent.engineAgentId !== agent.engineAgentId) throw unavailable()
+            current(signal)
+            return
+        }
         const tab = (await readDesktopChats(db, agent.id)).tabs?.tabs.find(item => item.uid === scope.tabUid)
         if (!tab) throw unavailable()
         if (scope.sessionId) {

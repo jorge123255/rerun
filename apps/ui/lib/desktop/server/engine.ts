@@ -7,6 +7,7 @@ import { assertDesktopSetupChatAllowed } from './setup/service'
 import type { DesktopTakeoverGuard } from '@rerun/contracts'
 import 'server-only'
 import { desktopChatTitle } from '../chat-content'
+import { questionDocumentId } from '../question-documents'
 import { startQueuedChat } from './queued-chat'
 import { DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES, desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf, desktopRerunGrantsOf, type DesktopQuestionGuard, type DesktopApprovalGuard, type DesktopAttachmentItem, type DesktopResolvedAttachment } from '@rerun/contracts'
 import { EngineRequestError, cancelRun, chat, createAgent, getAgent, getSessionMessages, patchAgent } from '@/lib/engine/client'
@@ -104,7 +105,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
 }
 
 type DesktopChatInput = { agentId: string } & (
-    | { sessionId?: string; text: string; documents?: DesktopDocumentSendSelection; coworkerMentions?: DesktopCoworkerMention[]; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard }
+    | { sessionId?: string; text: string; documents?: DesktopDocumentSendSelection; questionDocumentId?: string; coworkerMentions?: DesktopCoworkerMention[]; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard }
     | { sessionId: string; regenerateMessageId: string; requestId: string }
 )
 
@@ -117,6 +118,12 @@ async function readDesktopAttachments(runtime: DesktopRuntime, agentId: string, 
 }
 
 export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopChatInput, internalCreationRequestId?: string): Promise<{ response: Response; sessionId: string }> {
+    if ('text' in input && input.documents) {
+        const questionId = questionDocumentId(input.documents.scope.tabUid)
+        if (questionId && (!input.question || input.questionDocumentId !== questionId)) {
+            throw new DesktopHttpError(409, 'These files can only be sent with their original question.')
+        }
+    }
     const db = await openDesktopDatabase(runtime.dataRoot)
     await assertCoworkerNotDeleting(db, input.agentId)
     const kickoff = await assertDesktopCreationSettled(db, input.agentId, internalCreationRequestId)
@@ -299,7 +306,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
         }
         throw error
     }
-    if (!regenerate && input.documents) await consumeDesktopDocumentAdmission(runtime, input.documents, AbortSignal.timeout(10_000))
+    if (!regenerate && input.documents && !input.questionDocumentId) await consumeDesktopDocumentAdmission(runtime, input.documents, AbortSignal.timeout(10_000))
     const headers = new Headers({
         'content-type': engineResponse.headers.get('content-type') ?? 'text/event-stream',
         'x-vercel-ai-ui-message-stream': engineResponse.headers.get('x-vercel-ai-ui-message-stream') ?? 'v1',

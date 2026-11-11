@@ -2,7 +2,7 @@ import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
 import { desktopDocumentScopeSchema, desktopDocumentSelectionSchema, desktopDocumentRevisionActionSchema, desktopDocumentUploadSchema, DESKTOP_DOCUMENT_TEXT_MAX_CHARS, DESKTOP_DOCUMENT_INPUT_MAX_BYTES, type DesktopDocumentAdmission, type DesktopDocumentAttachment, type DesktopDocumentConversion, type DesktopDocumentReference, type DesktopDocumentScope, type DesktopDocumentSelection } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
-import { inspectDesktopDocumentUpload } from './bytes'
+import { inspectDesktopDocumentUpload, readDesktopPlainText } from './bytes'
 import { documentConflict } from './store'
 import type { DesktopDocumentAttachmentRecord, DesktopDocumentAuthorities } from './types'
 
@@ -68,7 +68,10 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
                 const inspected = inspectDesktopDocumentUpload(input, bytes)
                 const fingerprint = digest(JSON.stringify([scopeKey(scope), input.attachmentId, input.name, inspected.mimeType, inspected.sha256, inspected.byteLength, input.position]))
                 const now = new Date().toISOString()
-                const initial: DesktopDocumentAttachmentRecord = { fingerprint, attachment: { ...inspected, scope, attachmentId: input.attachmentId, name: input.name, position: input.position, uploaded: false, selected: true, admitted: false, conversion: initialConversion(inspected.kind), revision: randomUUID(), createdAt: now, updatedAt: now } }
+                const conversion: DesktopDocumentConversion = inspected.kind === 'text'
+                    ? { mode: 'plain-text', state: 'ready', text: readDesktopPlainText(bytes) }
+                    : initialConversion(inspected.kind)
+                const initial: DesktopDocumentAttachmentRecord = { fingerprint, attachment: { ...inspected, scope, attachmentId: input.attachmentId, name: input.name, position: input.position, uploaded: false, selected: true, admitted: false, conversion, revision: randomUUID(), createdAt: now, updatedAt: now } }
                 await owner(scope, signal)
                 let record = (await store.reserve(initial)).record
                 if (record.fingerprint !== fingerprint || record.deletion) throw documentConflict()
@@ -135,7 +138,7 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
                 const a = record.attachment
                 await owner(a.scope, signal)
                 await verified(a.scope, a, signal)
-                if (a.conversion.state !== 'ready' || !a.conversion.text || !['pdf-text', 'voice-transcript'].includes(a.conversion.mode)) return { allowed: false, reason: a.conversion.error ?? 'Prepare every selected attachment, or remove unsupported files before sending.', references: [], inputs: [] }
+                if (a.conversion.state !== 'ready' || !a.conversion.text || !['pdf-text', 'voice-transcript', 'plain-text'].includes(a.conversion.mode)) return { allowed: false, reason: a.conversion.error ?? 'Prepare every selected attachment, or remove unsupported files before sending.', references: [], inputs: [] }
                 textBytes += new TextEncoder().encode(a.conversion.text).byteLength
                 if (textBytes > DESKTOP_DOCUMENT_INPUT_MAX_BYTES) return { allowed: false, reason: 'The selected documents contain more than 128 KiB of text. Choose fewer or shorter documents.', references: [], inputs: [] }
                 references.push({ attachmentId: a.attachmentId, scope: a.scope, name: a.name, mimeType: a.mimeType, kind: a.kind, sha256: a.sha256, byteLength: a.byteLength })

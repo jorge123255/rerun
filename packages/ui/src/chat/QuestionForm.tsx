@@ -17,7 +17,7 @@ export type { QuestionItem }
 // the host, which is why the landing previews can render the form without any upload behind it.
 export type QuestionAttachments = {
     onPick: (questionIndex: number, files: File[]) => void
-    onClear: (questionIndex: number) => void
+    onClear: (questionIndex: number) => void | Promise<boolean>
     count: (questionIndex: number) => number
     // Rendered beside the answer input.
     render: (questionIndex: number) => ReactNode
@@ -61,7 +61,7 @@ export type QuestionFormProps = {
     questions: QuestionItem[]
     // A rejected promise reopens the form, so a failed attachment can be fixed before answering again.
     onSubmit: (answers: { question: string; answers: string[] }[]) => void | Promise<void>
-    onCancel?: () => void
+    onCancel?: () => void | Promise<void>
     disabled?: boolean
     renderText?: (text: string) => ReactNode
     attachments?: QuestionAttachments
@@ -85,12 +85,17 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
     const [submitted, setSubmitted] = useState(false)
     const [current, setCurrent] = useState(0)
     const [dragging, setDragging] = useState(false)
+    const [clearingFiles, setClearingFiles] = useState(false)
     const fileInputRef = useRef<HTMLInputElement>(null)
     const voiceDelivery = useRef<object | null>(null)
+    const fileClear = useRef<object | null>(null)
+    const inactive = useRef(disabled)
     useLayoutEffect(() => {
+        inactive.current = disabled
         if (disabled) voiceDelivery.current = null
         return () => { voiceDelivery.current = null }
     }, [disabled])
+    useLayoutEffect(() => () => { fileClear.current = null }, [])
     // The state above only drives the disabled styling. Answering the agent twice starts two runs
     // on the same conversation, so the latch that guards it has to be a ref: two callbacks fired
     // from the same render both read the same stale `submitted`.
@@ -107,7 +112,7 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
     }
 
     const recording = !!voice && voice.status !== 'idle'
-    const locked = disabled || submitted || recording
+    const locked = disabled || submitted || recording || clearingFiles
     const last = questions.length - 1
 
     const answerAt = (i: number, source: Record<string, QuestionAnswer> = answers): QuestionAnswer => source[String(i)] ?? EMPTY_ANSWER
@@ -123,6 +128,22 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
 
     const isMultiple = (i: number) => questions[i].multiple === true && questions[i].options.length > 0
 
+    const clearBefore = (index: number, next: () => void) => {
+        if (fileClear.current) return
+        const clear = attachments?.onClear(index)
+        if (!clear) { next(); return }
+        const operation = {}
+        fileClear.current = operation
+        setClearingFiles(true)
+        void clear.then(removed => {
+            if (removed && fileClear.current === operation && !inactive.current) next()
+        }).catch(() => {}).finally(() => {
+            if (fileClear.current !== operation) return
+            fileClear.current = null
+            setClearingFiles(false)
+        })
+    }
+
     const chooseOption = (i: number, opt: string) => {
         if (locked) return
         const value = answerAt(i)
@@ -130,18 +151,19 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
             setAnswer(i, { ...value, selected: value.selected.includes(opt) ? value.selected.filter(o => o !== opt) : [...value.selected, opt] })
             return
         }
-        setCustomOpen(prev => ({ ...prev, [i]: false }))
-        setAnswer(i, { selected: [opt], custom: '' })
-        attachments?.onClear(i)
-        advance()
+        clearBefore(i, () => {
+            setCustomOpen(prev => ({ ...prev, [i]: false }))
+            setAnswer(i, { selected: [opt], custom: '' })
+            advance()
+        })
     }
 
     const openCustom = (i: number) => {
-        if (locked || customOpen[i]) return
+        if (locked || customOpen[i] || attachments?.count(i)) return
         setCustomOpen(prev => ({ ...prev, [i]: true }))
         if (isMultiple(i)) return
         setAnswer(i, EMPTY_ANSWER)
-        attachments?.onClear(i)
+        // No selected files can exist here, including when a saved draft has restored.
     }
 
     const pickFiles = (i: number, files: File[]) => {
@@ -152,6 +174,7 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
 
     const setCustom = (i: number, custom: string) => {
         if (locked) return
+        if (questions[i].options.length > 0 && !customOpen[i]) setCustomOpen(prev => ({ ...prev, [i]: true }))
         setAnswer(i, { ...answerAt(i), custom })
     }
 
@@ -182,9 +205,10 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
         }
     }
 
-    const cancel = () => {
+    const cancel = async () => {
         if (locked || !claimSubmit()) return
-        onCancel?.()
+        try { await onCancel?.() }
+        catch { releaseSubmit() }
     }
 
     const advance = () => {
@@ -195,16 +219,17 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
 
     const skip = () => {
         if (locked) return
-        setAnswer(current, EMPTY_ANSWER)
-        setCustomOpen(prev => ({ ...prev, [current]: false }))
-        attachments?.onClear(current)
-        advance()
+        clearBefore(current, () => {
+            setAnswer(current, EMPTY_ANSWER)
+            setCustomOpen(prev => ({ ...prev, [current]: false }))
+            advance()
+        })
     }
 
     const paginated = questions.length > 1
     const q = questions[current]
     const value = answerAt(current)
-    const isCustom = !!customOpen[current]
+    const isCustom = !!customOpen[current] || !!value.custom || (attachments?.count(current) ?? 0) > 0
     const freeText = q.options.length === 0
     const multi = isMultiple(current)
 

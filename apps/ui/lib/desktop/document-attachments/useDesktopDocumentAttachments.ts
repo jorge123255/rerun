@@ -44,7 +44,7 @@ export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, enab
         for (const item of retainedDocuments(scope)) if (item.work) setPending(old => new Set(old).add(item.id))
         return () => { mounted.current = false; generation.current++; unsubscribe(); for (const controller of operations.current.values()) controller.abort(); operations.current.clear() }
     }, [scope, scopeKey, current, refresh, update])
-    const add = useCallback((files: readonly File[]): DesktopDocumentAddResult => {
+    const add = useCallback((files: readonly File[], positionRange?: { start: number; end: number }): DesktopDocumentAddResult => {
         const empty: DesktopDocumentAddResult = { outcomes: [], attachedIds: [], error: null }
         if (!files.length) return empty
         if (!enabled || !loaded || isDesktopQuitting()) {
@@ -68,7 +68,9 @@ export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, enab
         selection.current = null
         const outcomes: DesktopDocumentAddResult['outcomes'] = []
         const attachedIds: string[] = []
-        let position = Math.max(-1, ...rows.current.map(a => a.position)) + 1
+        const existingPositions = rows.current.map(a => a.position)
+            .filter(position => !positionRange || position >= positionRange.start && position < positionRange.end)
+        let position = Math.max((positionRange?.start ?? 0) - 1, ...existingPositions) + 1
         const rejectByFile = new Map(rejects.map(row => [row.file, row]))
         const records = [] as ReturnType<typeof retainDocument>[]
         for (const file of files) {
@@ -77,6 +79,11 @@ export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, enab
                 outcomes.push({ status: 'rejected', name: file.name, byteLength: file.size, reason: rejected.reason, message: rejected.message })
                 continue
             }
+            if (positionRange && position >= positionRange.end) {
+                position = positionRange.start
+                while (existingPositions.includes(position)) position++
+            }
+            existingPositions.push(position)
             const record = retainDocument(scope, file, position++)
             records.push(record)
             attachedIds.push(record.id)
@@ -92,19 +99,21 @@ export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, enab
         return { outcomes, attachedIds, error }
     }, [enabled, loaded, scope])
     const work = useCallback(async (id: string, action: (attachment: DesktopDocumentAttachment, signal: AbortSignal) => Promise<void>) => {
-        if (!enabled || isDesktopQuitting() || operations.current.has(id)) return
+        if (!enabled || isDesktopQuitting() || operations.current.has(id)) return false
         const key = scopeKey, token = generation.current, controller = new AbortController(), release = holdDraftAdmission()
         operations.current.set(id, controller); setPending(old => new Set(old).add(id)); setError(null)
         try {
             const raw = retainedDocument(id)
             if (raw) { const saved = await saveRetainedDocument(raw); if (!saved) throw new Error(raw.error ?? 'Save this file before removing its exact attempt.'); if (current(key, token)) update(saved) }
-            if (!current(key, token)) return
+            if (!current(key, token)) return false
             const saved = (await listDesktopDocuments(scope, controller.signal)).find(a => a.attachmentId === id)
             if (!saved) throw new Error('This attachment is no longer selected.')
             await action(saved, controller.signal)
             if (current(key, token)) { selection.current = null; await refresh(key, token) }
+            return current(key, token)
         } catch (error) {
             if (current(key, token)) { await refresh(key, token).catch(() => {}); setError(error instanceof Error ? error.message : 'Attachment request did not finish.') }
+            return false
         } finally { if (operations.current.get(id) === controller) operations.current.delete(id); if (current(key, token)) setPending(old => { const next = new Set(old); next.delete(id); return next }); release() }
     }, [current, enabled, refresh, scope, scopeKey, update])
     // Explicit user action; attaching or restoring never calls a paid converter.
@@ -120,14 +129,15 @@ export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, enab
             if (a.admitted) await detachDesktopDocument(a.scope, id, a.revision, signal)
             else await discardDesktopDocument(a.scope, id, a.revision, signal)
         })
-        if (!enabled || raw.work || operations.current.has(id)) return
+        if (!enabled || raw.work || operations.current.has(id)) return false
         const key = scopeKey, token = generation.current, controller = new AbortController(), release = holdDraftAdmission()
         operations.current.set(id, controller); setPending(old => new Set(old).add(id))
         try {
             await cancelDesktopDocumentUpload(raw.scope, id, controller.signal)
             forgetRetainedDocument(id)
             if (current(key, token)) { selection.current = null; await refresh(key, token) }
-        } catch (error) { if (current(key, token)) setError(error instanceof Error ? error.message : 'Could not remove this upload. Retry the same attempt.') }
+            return current(key, token)
+        } catch (error) { if (current(key, token)) setError(error instanceof Error ? error.message : 'Could not remove this upload. Retry the same attempt.'); return false }
         finally { if (operations.current.get(id) === controller) operations.current.delete(id); if (current(key, token)) setPending(old => { const next = new Set(old); next.delete(id); return next }); release() }
     }, [current, enabled, refresh, scopeKey, work])
     const settle = useCallback(async (modelChoice?: DesktopDocumentSelection['modelChoice']): Promise<{ selection: DesktopDocumentSendSelection; admission: Awaited<ReturnType<typeof admitDesktopDocuments>> } | null> => {

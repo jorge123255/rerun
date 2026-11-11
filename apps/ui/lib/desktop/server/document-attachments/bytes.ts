@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { DESKTOP_DOCUMENT_MAX_BYTES, desktopDocumentKindForName } from '@rerun/contracts'
+import { DESKTOP_DOCUMENT_INPUT_MAX_BYTES, DESKTOP_DOCUMENT_MAX_BYTES, desktopDocumentKindForName } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { desktopAudioKind, inspectDesktopAudioBytes } from '../audio-bytes'
 import { inspectDesktopPdfBytes } from '../pdf-bytes'
@@ -15,7 +15,11 @@ export function inspectDesktopDocumentUpload(input: { name: string; mimeType: st
     if (bytes.byteLength < 1 || bytes.byteLength > DESKTOP_DOCUMENT_MAX_BYTES) throw new DesktopHttpError(413, 'Documents can be up to 16 MB.')
     const kind = desktopDocumentKindForName(input.name)
     let mimeType = input.mimeType
-    if (kind === 'pdf') {
+    if (kind === 'text') {
+        // Never serve a browser-supplied active media type for these UTF-8 documents.
+        readDesktopPlainText(bytes)
+        mimeType = 'text/plain'
+    } else if (kind === 'pdf') {
         if (!['application/pdf', 'application/octet-stream', ''].includes(input.mimeType)) throw new DesktopHttpError(400, 'PDF type does not match its contents.')
         mimeType = inspectDesktopPdfBytes('pdf', bytes).contentType
     } else if (kind === 'audio') {
@@ -31,4 +35,13 @@ export function inspectDesktopDocumentUpload(input: { name: string; mimeType: st
         throw new DesktopHttpError(400, 'This media type is not supported by the desktop readers.')
     }
     return { kind, mimeType, sha256: createHash('sha256').update(bytes).digest('hex'), byteLength: bytes.byteLength }
+}
+
+export function readDesktopPlainText(bytes: Uint8Array): string {
+    if (bytes.byteLength > DESKTOP_DOCUMENT_INPUT_MAX_BYTES) throw new DesktopHttpError(413, 'Text attachments can be up to 128 KiB.')
+    let text: string
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
+    catch { throw new DesktopHttpError(400, 'Choose a UTF-8 text file.') }
+    if (!text.trim() || text.includes('\0')) throw new DesktopHttpError(400, 'Choose a non-empty UTF-8 text file.')
+    return text
 }
