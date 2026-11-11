@@ -518,3 +518,14 @@ html [data-sonner-toaster] [data-sonner-toast][data-styled='true']:has([data-clo
     opacity: 1;
   }
 }
+
+/* Keep the active Find match distinct from other matches in either chat theme. */
+::highlight(rerun-chat-find) {
+  background-color: #ffe6a0;
+  color: #201a00;
+}
+
+::highlight(rerun-chat-find-current) {
+  background-color: #fbbf24;
+  color: #201a00;
+}

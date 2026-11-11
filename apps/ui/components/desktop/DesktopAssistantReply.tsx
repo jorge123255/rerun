@@ -248,7 +248,7 @@ export function DesktopAssistantReply({ message, streaming, createdAt, onRegener
         {blocks}
         <DesktopReplySources parts={message.parts} />
         {quickReplies && <DesktopQuickReplies message={message} {...quickReplies} />}
-        {text && !streaming && <div className="mt-2 flex flex-wrap items-center gap-1">
+        {text && !streaming && <div data-chat-find-ignore className="mt-2 flex flex-wrap items-center gap-1">
             <Button type="button" variant="ghost" size="sm" aria-label="Copy reply" onClick={() => copy(text)}>
                 {copied ? <CheckIcon aria-hidden className="size-3.5" /> : <CopyIcon aria-hidden className="size-3.5" />}
                 {copied ? 'Copied' : 'Copy'}

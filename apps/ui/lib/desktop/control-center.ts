@@ -151,7 +151,7 @@ function editingFieldFocused(): boolean {
 }
 
 // ⌘F on a Mac, Ctrl+F elsewhere opens the center. Pressed while the center is open it closes
-// the center and asks the shell to find in the open conversation. Electron has no browser find
+// the center and opens Find in the active conversation. Electron has no browser find
 // bar, so the event is not left to the default. ⌘K
 // toggles the center where nothing else holds it — never from an open coworker chat or from an
 // editing field. The capture listener precedes every local handler, like the original's.

@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import type { UIMessage } from 'ai'
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, test, vi } from 'vitest'
 import { desktopAttachmentFieldsOf } from '@rerun/contracts'
+import { useDesktopControlCenterKeys } from '@/lib/desktop/control-center'
 import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { DesktopConversation } from './DesktopConversation'
 
@@ -21,6 +22,7 @@ const saved: UIMessage[] = [
 ]
 
 test('folds a saved long message, keeps its attachment outside the fold and reveals the full text for Find', async () => {
+    const platform = vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Macintosh')
     const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
         return this.firstElementChild?.textContent === long ? 500 : 60
     })
@@ -34,24 +36,35 @@ test('folds a saved long message, keeps its attachment outside the fold and reve
         if (background) return background
         return Response.json({}, { status: 404 })
     }))
-    const findInPage = vi.fn(async ({ action }: { action: string }) => {
-        if (action === 'start') {
-            const body = Array.from(container.querySelectorAll('span')).find(node => node.textContent === long)?.parentElement
-            expect(body?.parentElement?.style.maxHeight).toBe('')
-        }
-        return { ok: true, matches: 1, activeMatchOrdinal: 1 }
+    const highlights = new Map<string, Set<Range>>()
+    vi.stubGlobal('Highlight', class extends Set<Range> {
+        priority = 0
+        constructor(...ranges: Range[]) { super(ranges) }
     })
-    vi.stubGlobal('desktopApp', { findInPage })
+    vi.stubGlobal('CSS', Object.assign(Object.create(globalThis.CSS ?? null), { highlights }))
     const container = document.body.appendChild(document.createElement('div'))
     let root = createRoot(container)
-    const render = () => act(async () => root.render(
-        <DesktopConversation agent={agent} sessionId="saved-thread" sessions={[]} onSelectSession={() => {}} onChatSession={() => {}} />,
-    ))
+    function Harness() {
+        const [center, setCenter] = useState(false)
+        useDesktopControlCenterKeys({ open: center, setOpen: setCenter, conversationOpen: true })
+        return <>
+            {center && <aside>Control Center</aside>}
+            <DesktopConversation agent={agent} sessionId="saved-thread" sessions={[]} onSelectSession={() => {}} onChatSession={() => {}} />
+        </>
+    }
+    const render = () => act(async () => root.render(<Harness />))
     const toggles = () => [...container.querySelectorAll<HTMLButtonElement>('button[aria-controls][aria-expanded]')]
         .filter(button => button.textContent === 'Show more' || button.textContent === 'Show less')
     const toggle = () => toggles()[0] ?? null
     const click = (button: HTMLElement) => act(async () => button.click())
-    const openFind = () => act(async () => { window.dispatchEvent(new Event('rerun-desktop-conversation-find')) })
+    const commandF = () => act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', metaKey: true, cancelable: true })) })
+    const openFind = async () => {
+        await commandF()
+        expect(container.querySelector('aside')?.textContent).toBe('Control Center')
+        await commandF()
+        expect(container.querySelector('aside')).toBeNull()
+        expect(container.querySelector('[aria-label="Find in conversation"]')).not.toBeNull()
+    }
     const closeFind = () => click(container.querySelector<HTMLButtonElement>('[aria-label="Close find"]')!)
     try {
         await render()
@@ -83,9 +96,11 @@ test('folds a saved long message, keeps its attachment outside the fold and reve
             Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, marker)
             input.dispatchEvent(new Event('input', { bubbles: true }))
         })
-        expect(findInPage).toHaveBeenCalledWith({ action: 'start', query: marker })
+        expect([...highlights.get('rerun-chat-find-current')!][0]?.toString()).toBe(marker)
+        expect(viewport.style.maxHeight).toBe('')
         expect(container.textContent).toContain('1 of 1')
         await closeFind()
+        expect(highlights.size).toBe(0)
         expect(viewport.style.maxHeight).toBe('384px')
         expect(toggle()!.textContent).toBe('Show more')
 
@@ -98,6 +113,7 @@ test('folds a saved long message, keeps its attachment outside the fold and reve
         await act(async () => root.unmount())
         container.remove()
         height.mockRestore()
+        platform.mockRestore()
         vi.unstubAllGlobals()
     }
 })

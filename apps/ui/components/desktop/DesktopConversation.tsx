@@ -1147,6 +1147,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
     uploadGate.current = uploadDisabled
     const composerForm = useRef<HTMLFormElement>(null)
     const uploadFileInput = useRef<HTMLInputElement>(null)
+    const findTranscript = useRef<HTMLDivElement>(null)
     const [findOpen, setFindOpen] = useState(false)
     const finding = findOpen && active
     const [editorOpen, setEditorOpen] = useState(false)
@@ -1326,7 +1327,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
 
             <Conversation key={sessionId ?? 'new'} className="min-h-0" aria-label={t('chatMessages')}>
                 <ConversationContent className="gap-4 px-3.5 py-4">
-                    <DesktopConversationFind open={finding} onOpenChange={setFindOpen} />
+                    <DesktopConversationFind open={finding} onOpenChange={setFindOpen} transcript={findTranscript} />
                     {!ready && !historyError && !busy && <p role="status" className="text-sm text-muted-foreground">{t('openingSavedChat')}</p>}
                     {threadRows.leading.map(thread => <DesktopThreadBranch key={thread.id} thread={thread} needsYou={pendingChatSummaries?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />)}
                     {ready && transcript.length === 0 && threadRows.leading.length === 0 && !busy && (
@@ -1336,14 +1337,17 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                         </div>
                     )}
                     {sessionId && active && <DesktopNativeWritebackReview agentId={agent.id} sessionId={sessionId} refreshKey={`${status}/${transcript.length}`}/>}
-                    {transcript.map((message, messageIndex) => {
+                    <div ref={findTranscript} className="contents">{transcript.map((message, messageIndex) => {
                         const branches = threadRows.after.get(messageIndex) ?? []
                         const createdAt = messageTimes[messageIndex]
                         const withTimeline = (content: ReactNode) => <Fragment key={message.id}>
                             {timeBreaks.has(messageIndex) && <ChatTimeSeparator createdAt={createdAt} locale={locale} />}
-                            {branches.length === 0 ? content : <div>{content}{branches.map(thread =>
-                                <DesktopThreadBranch key={thread.id} thread={thread} needsYou={pendingChatSummaries?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />
-                            )}</div>}
+                            <div className={branches.length === 0 ? 'contents' : undefined}>
+                                <div className="contents" data-chat-find-message>{content}</div>
+                                {branches.map(thread =>
+                                    <DesktopThreadBranch key={thread.id} thread={thread} needsYou={pendingChatSummaries?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />
+                                )}
+                            </div>
                         </Fragment>
                         const scheduledRun = scheduledRunOf(message)
                         const triggerPayload = message.role === 'user' ? parseTriggerPayload(message.parts.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n')) : null
@@ -1405,7 +1409,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                                 {message.role === 'user' && <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"><UserRoundIcon className="size-4" /></span>}
                             </div>
                         )
-                    })}
+                    })}</div>
                     {sessionId && <DesktopToolInstallPending agentId={agent.id} sessionId={sessionId} messages={transcript} active={active && ready} disabled={draft.quitting || inactive || generating || stopping} />}
                     {active && takeover && !webhookOwns('takeover', takeover.id) && <DesktopBrowserCard key={takeover.id} agentId={agent.id} takeover={takeover} disabled={draft.quitting || inactive || generating || stopping || !ready} onAction={async payload => {
                         if (payload.action === 'open') { setScreenOpen('request'); return }
