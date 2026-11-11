@@ -16,7 +16,7 @@ const nextConfig: NextConfig = {
   // scripts to unless it is listed here. A Conductor cloud workspace serves it behind
   // *.conductor.show: without that origin the page arrives but never hydrates, so every click dies.
   allowedDevOrigins: [...(process.env.ALLOWED_DEV_ORIGINS?.split(",") ?? []), "*.conductor.show"],
-  transpilePackages: ["@rerun/ui", "@rerun/db", "@rerun/analytics"],
+  transpilePackages: ["@rerun/ui", "@rerun/db", "@rerun/analytics", "@rerun/i18n"],
   // ssh2 (the Incus hosts transport) loads an optional native crypto binding; bundled, Turbopack
   // cannot place the .node asset in an ESM chunk. Left external, Node requires it at runtime and
   // falls back to pure JS when the binding is missing.

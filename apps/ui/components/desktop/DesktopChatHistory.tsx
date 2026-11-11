@@ -1,5 +1,6 @@
 'use client'
 
+import { useDesktopLocale } from './DesktopLocale'
 import { useEffect, useId, useState } from 'react'
 import { Badge } from '@rerun/ui/primitives'
 import { Button } from '@/components/ui/button'
@@ -81,15 +82,16 @@ function ChatHistoryList({ history, filter, query, selectedId, busy, onSelect, o
     onSelect: (id: string) => void
     onRetry: () => void
 }) {
+    const { t } = useDesktopLocale()
     const shown = filterDesktopChats(history.conversations, filter, query)
     const groups = groupDesktopChats(shown)
     const questionsUnavailable = history.questions === 'unavailable'
     const classificationUnavailable = (filter === 'chats' || filter === 'automations') && history.enrichment === 'unavailable'
     const empty = query.trim()
         ? 'No matching conversations.'
-        : filter === 'needs' ? 'Nothing waits on you.'
-            : filter === 'automations' ? 'No automated run yet.'
-                : filter === 'chats' ? 'No thread yet.'
+        : filter === 'needs' ? t('emptyNeeds')
+            : filter === 'automations' ? t('emptyAutomations')
+                : filter === 'chats' ? t('emptyThreads')
                     : 'No thread yet.'
     return (
         <div className="max-h-[min(420px,50dvh)] min-h-0 overflow-y-auto">
@@ -122,6 +124,7 @@ function ChatHistoryPanel({ agentId, selectedId, busy, onSelect, titleId, descri
     titleId: string
     descriptionId: string
 }) {
+    const { t } = useDesktopLocale()
     const [history, setHistory] = useState<DesktopChatHistory | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [attempt, setAttempt] = useState(0)
@@ -159,16 +162,16 @@ function ChatHistoryPanel({ agentId, selectedId, busy, onSelect, titleId, descri
             <div className="shrink-0 px-2 pt-1">
                 <h2 id={titleId} className="flex items-center gap-2 text-sm font-semibold">
                     <MessageCircle aria-hidden className="size-4 text-muted-foreground" />
-                    Threads
+                    {t('threads')}
                 </h2>
                 <p id={descriptionId} className="mt-1 text-xs text-muted-foreground">Dates show when chats were last updated.</p>
             </div>
-            <Input className="shrink-0" type="search" aria-label="Search conversations" placeholder="Search conversations…" value={query}
+            <Input className="shrink-0" type="search" aria-label={t('searchChats')} placeholder={t('searchChats') + '…'} value={query}
                 onChange={event => setQuery(event.target.value)} />
             <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto px-0.5 py-1">
-                {DESKTOP_CHAT_FILTERS.map(({ value, label }) => (
+                {DESKTOP_CHAT_FILTERS.map(({ value }) => (
                     <Chip key={value} selected={filter === value} onClick={() => setFilter(value)}>
-                        {label}
+                        {t(value)}
                         {value === 'needs' && inbox.status === 'ready' && !inbox.unavailableAgentIds.includes(agentId) && (
                             <span className="ml-1 tabular-nums text-muted-foreground/70">
                                 {inbox.items.length}
@@ -202,6 +205,7 @@ export function DesktopChatHistory({ agentId, count, selectedId, busy, onSelect,
     busy: boolean
     onSelect: (id: string) => void
 }) {
+    const { t } = useDesktopLocale()
     const [open, setOpen] = useState(false)
     const [seenRequest, setSeenRequest] = useState<number | null>(null)
     const [initialFilter, setInitialFilter] = useState<DesktopChatFilter>('all')
@@ -217,7 +221,7 @@ export function DesktopChatHistory({ agentId, count, selectedId, busy, onSelect,
     return (
         <Popover open={visible} onOpenChange={changeOpen}>
             <PopoverTrigger asChild>
-                <Button type="button" size="icon" variant="outline" className="size-10 rounded-full border-border/50 bg-background/85 shadow-sm" title="Threads" disabled={busy}
+                <Button type="button" size="icon" variant="outline" className="size-10 rounded-full border-border/50 bg-background/85 shadow-sm" title={t('threads')} disabled={busy}
                     aria-label={count === undefined ? 'Conversation history' : `Conversation history (${count})`}>
                     <MessageCircle aria-hidden className="size-4 text-muted-foreground" /><span className="sr-only">Chats</span>
                 </Button>

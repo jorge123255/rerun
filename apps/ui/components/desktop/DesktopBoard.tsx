@@ -1,3 +1,4 @@
+import { useDesktopLocale } from './DesktopLocale'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { ChromeBar, ChromeButton, ChromeDivider } from '@rerun/ui/chrome'
 import type { ContainerCellRect, GridPosition, IsoCamera, ResizePatch, TileStyle } from '@rerun/ui/iso-grid'
@@ -140,6 +141,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
         if (!board || !onBoardCommand || boardDisabled || boardSaving || commandBusy || quitting || placement || spaceDialog) return
         setSpaceDialog({ kind: 'create' })
     }, [newBoxSignal, covered, board, onBoardCommand, boardDisabled, boardSaving, commandBusy, quitting, placement, spaceDialog])
+    const { t } = useDesktopLocale()
     const baseBlocked = boardDisabled || boardSaving || commandBusy || quitting
     const gridBlocked = baseBlocked || !!spaceDialog || covered
     const boardRevision = board?.revision
@@ -162,7 +164,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                 if (!placed || !renderedBoard.spaces.some(space => space.id === placed.spaceId)) return []
                 return [{ id: agent.id, position: { col: placed.col, row: placed.row }, span: 2, containerId: placed.spaceId,
                     style: agent.enabled === false ? disabledAgentTileStyle(agent.name) : tileStyle(activity[agent.id] ?? 'unknown', agent.name, attentionCounts.get(agent.id) ?? 0),
-                    ariaLabel: `Open chat with ${agent.name}${attentionCounts.has(agent.id) ? ', Needs you' : ''}` }]
+                    ariaLabel: t('openCoworker', { name: agent.name }) + (attentionCounts.has(agent.id) ? ', ' + t('needs') : '') }]
             })
             const containers: Container[] = renderedBoard.spaces.length ? renderedBoard.spaces.map((space, index) => ({
                 ...space, label: space.name, color: preview?.spaceId === space.id && board && !desktopSpaceRectAllowed(board, space.id, preview.rect, preview.moving) ? '#ef4444' : SPACE_COLOR,
@@ -177,7 +179,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
             span: 2,
             containerId: 'team',
             style: agent.enabled === false ? disabledAgentTileStyle(agent.name) : tileStyle(activity[agent.id] ?? 'unknown', agent.name, attentionCounts.get(agent.id) ?? 0),
-            ariaLabel: `Open chat with ${agent.name}${attentionCounts.has(agent.id) ? ', Needs you' : ''}`,
+            ariaLabel: t('openCoworker', { name: agent.name }) + (attentionCounts.has(agent.id) ? ', ' + t('needs') : ''),
         }))
         const box: Container = {
             id: 'team', label: agents.length ? workspaceName : null, color: SPACE_COLOR,
@@ -186,7 +188,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
             placeholderLabel: 'Create your first coworker',
         }
         return { tiles, containers: [box] }
-    }, [agents, workspaceName, activity, attentionCounts, layout, renderedBoard, preview, board])
+    }, [agents, workspaceName, activity, attentionCounts, layout, renderedBoard, preview, board, t])
 
     useEffect(() => { if (placement?.requestId) placeButton.current?.focus({ preventScroll: true }) }, [placement?.requestId])
 
@@ -350,10 +352,10 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     }
 
     return (
-        <section ref={section} aria-label="Team board" className="relative isolate min-h-0 min-w-0 flex-1"
+        <section ref={section} data-testid="desktop-team-board" aria-label={t('board')} className="relative isolate min-h-0 min-w-0 flex-1"
             onPointerDownCapture={() => { resizeCanceled.current = false }} onPointerCancelCapture={() => { resizeCanceled.current = true }}
             onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented && placement) { event.preventDefault(); cancelCopy() } }}>
-            <h1 className="sr-only">Team board</h1>
+            <h1 className="sr-only">{t('board')}</h1>
             <DesktopBoardMenu agents={agents} onOpen={openCoworker} onRename={onRename} onShare={onShare} onDuplicate={onDuplicate ? beginCopy : undefined}
                 onSetEnabled={onSetEnabled} onDelete={onDelete} disabled={!!placement || gridBlocked}
                 spaces={board} onRenameSpace={onBoardCommand ? spaceId => openBoxDialog({ kind: 'rename', spaceId }) : undefined}
@@ -408,7 +410,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
             <div className="absolute top-4 left-4 z-40 flex items-start gap-2">{workspaceMenu}</div>
             <div className="absolute bottom-4 left-4 z-40 flex max-w-[calc(100%-2rem)] flex-wrap items-end gap-2">
             {!placement && onOpenConversation && <DesktopActionsInbox agents={agents} onOpenConversation={onOpenConversation} visibleSessionId={visibleSessionId} />}
-            <ChromeBar aria-label="Board actions" role="group">
+            <ChromeBar aria-label={t('boardActions')} role="group">
                 {placement ? <div className="flex min-w-0 items-center gap-2 pl-3">
                     <div className="min-w-0" role="status">
                         <Shimmer as="span" duration={1.6} className="block truncate text-sm font-medium">
@@ -421,11 +423,11 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                     <ChromeButton ref={placeButton} label={placement.position && !placement.saving ? 'Retry' : newCoworker || templatePlacement ? 'Place coworker' : 'Place copy'} disabled={placement.saving || (!suggestion && !placement.position) || gridBlocked}
                         onClick={() => { const position = placement.position ?? suggestion; if (position) void placeCopy(position) }} />
                     {templatePlacement?.submitted ? <ChromeButton label="Review installation" disabled={placement.saving || gridBlocked} onClick={onReviewTemplate} />
-                        : <ChromeButton label="Cancel" disabled={placement.saving || newCoworker?.submitted} onClick={cancelCopy} />}
+                        : <ChromeButton label={t('cancel')} disabled={placement.saving || newCoworker?.submitted} onClick={cancelCopy} />}
                 </div> : <>
                     {onOpenConversation && <><DesktopFindChat onSelect={onOpenConversation} /><ChromeDivider /></>}
-                    <ChromeButton icon={Plus} label="Add coworker" disabled={baseBlocked || !!spaceDialog || covered || creationChecking || !!creationError} onClick={() => onCreate()} />
-                    {board && onBoardCommand && <><ChromeDivider /><ChromeButton icon={Plus} label="Add Box" disabled={gridBlocked} onClick={() => openBoxDialog({ kind: 'create' })} /></>}
+                    <ChromeButton icon={Plus} label={t('addCoworker')} disabled={baseBlocked || !!spaceDialog || covered || creationChecking || !!creationError} onClick={() => onCreate()} />
+                    {board && onBoardCommand && <><ChromeDivider /><ChromeButton icon={Plus} label={t('addBox')} disabled={gridBlocked} onClick={() => openBoxDialog({ kind: 'create' })} /></>}
                 </>}
             </ChromeBar>
             {!placement && creationChecking && <p className="rounded-xl border bg-background px-3 py-2 text-xs text-muted-foreground" role="status">Checking previous creation…</p>}

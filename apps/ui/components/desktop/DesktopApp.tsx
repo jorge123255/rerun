@@ -1,5 +1,6 @@
 'use client'
 
+import { useDesktopLocale } from './DesktopLocale'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
@@ -93,6 +94,7 @@ async function json<T>(response: Response): Promise<T> {
 const brainActions = createDesktopBrainPagesActions(countDesktopBrainProposals)
 
 export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
+    const { t } = useDesktopLocale()
     const boardState = useDesktopBoardState(initialData.board)
     const [boardInteraction, setBoardInteraction] = useState(false)
     const [controlCenterOpen, setControlCenterOpen] = useState(false)
@@ -746,7 +748,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 </div>}
                 {selectedAgent && <div inert={!panelOpen || boardInteraction || workspaceDialogActive} aria-hidden={!panelOpen || boardInteraction || workspaceDialogActive || undefined}>
                     <SidePanel isOpen={panelOpen} onDismiss={closePanel}>
-                        <section ref={panelContent} tabIndex={-1} aria-label="Coworker chat" className="flex h-full min-h-0 flex-col outline-none"
+                        <section ref={panelContent} tabIndex={-1} data-testid="desktop-coworker-chat" aria-label={t('coworkerChat')} className="flex h-full min-h-0 flex-col outline-none"
                             onKeyDown={event => {
                                 if (event.key === 'Escape' && !event.defaultPrevented && event.currentTarget.contains(event.target as Node)) {
                                     event.preventDefault()
@@ -763,7 +765,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             </div>
             {settings && <div className="absolute inset-0 z-50 flex flex-col bg-background md:m-2 md:overflow-hidden md:rounded-3xl md:border">
                 <div className="border-b px-4 py-2">
-                    <Button type="button" variant="ghost" size="sm" onClick={() => setSettings(false)}><ArrowLeft />{panelOpen ? 'Back to chat' : 'Team board'}</Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setSettings(false)}><ArrowLeft />{panelOpen ? t('backToChat') : t('board')}</Button>
                 </div>
                 <DesktopSettings key={settingsTab} initialTab={settingsTab} providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={applyProviders} workspaceId={runtimeWorkspaceId} onConnectionsChanged={() => { void refreshProviders() }} />
             </div>}

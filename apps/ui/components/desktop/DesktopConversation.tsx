@@ -1,5 +1,6 @@
 'use client'
 
+import { useDesktopLocale } from './DesktopLocale'
 import { DesktopConversationOverview, type DesktopConversationOverviewAuthority } from './coworker-overview/conversation-mount'
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -215,6 +216,7 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
     onOpenModelSettings?: () => void
     overview?: DesktopConversationOverviewAuthority
 }) {
+    const { t } = useDesktopLocale()
     const setup = useDesktopSetup(agent.id)
     const setupBlocked = !setup.view || !!setup.error || setup.view.pending && (!setup.view.sessionId || setup.view.sessionId !== sessionId)
     const [cardOpen, setCardOpen] = useState(false)
@@ -1232,7 +1234,7 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
         return metadata && typeof metadata === 'object' && 'createdAt' in metadata && typeof metadata.createdAt === 'string' ? metadata.createdAt : ''
     })
     const threadRows = generalView ? threadsByMessage(messageTimes, threadCards) : { leading: [], after: new Map<number, typeof threadCards>() }
-    const placeholder = generalView ? `Message ${agent.name}...` : sessionId && currentTitle !== 'New conversation' ? `Reply in ${currentTitle}...` : 'Send a message…'
+    const placeholder = generalView ? t('message', { name: agent.name }) : sessionId && currentTitle !== 'New conversation' ? t('reply', { title: currentTitle }) : t('sendMessage')
     return (
         <div ref={conversationRoot} className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-background" onKeyDown={event => {
             if (cardOpen && event.key === 'Escape' && !event.defaultPrevented && !(event.target as HTMLElement).closest('[role="dialog"]')) {
@@ -1266,7 +1268,7 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
                         <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
                     </FloatingPill>
                 </h1>
-                {onClosePanel && <Button type="button" aria-label="Close panel" variant="ghost" size="icon-sm" className="justify-self-end" onClick={onClosePanel}><XIcon className="size-4" /></Button>}
+                {onClosePanel && <Button type="button" aria-label={t('closePanel')} variant="ghost" size="icon-sm" className="justify-self-end" onClick={onClosePanel}><XIcon className="size-4" /></Button>}
             </header>
             {cardOpen && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={dismissCard} />}
             <section aria-label="Coworker details" hidden={!cardOpen} className={!cardOpen ? "hidden" : overview ? "absolute inset-x-3 top-14 bottom-3 z-40 flex min-h-0 flex-col overflow-auto rounded-2xl border border-border bg-background shadow-xl" : "absolute inset-x-3 top-14 z-40 rounded-2xl border border-border bg-background p-4 shadow-xl"}>
@@ -1304,12 +1306,12 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
                     <span title={currentTitle} className="max-w-40 truncate">{currentTitle}</span>
                     {sessionId && <Button type="button" variant="ghost" size="icon-xs" aria-label="Close current conversation" disabled={busy} onClick={() => onSelectSession(null)}><XIcon className="size-3" /></Button>}
                 </div>
-                <Button type="button" variant="ghost" size="icon-sm" title="New thread" aria-label="New thread" disabled={busy} onClick={() => onSelectSession(null, 'New conversation')}>
+                <Button type="button" variant="ghost" size="icon-sm" title={t('newThread')} aria-label={t('newThread')} disabled={busy} onClick={() => onSelectSession(null, 'New conversation')}>
                     <PlusIcon aria-hidden className="size-3.5" /><span className="sr-only">New thread</span>
                 </Button>
             </div>}
 
-            <Conversation key={sessionId ?? 'new'} className="min-h-0" aria-label="Chat messages">
+            <Conversation key={sessionId ?? 'new'} className="min-h-0" aria-label={t('chatMessages')}>
                 <ConversationContent className="gap-4 px-3.5 py-4">
                     <DesktopConversationFind open={findOpen && active} onOpenChange={setFindOpen} />
                     {!ready && !historyError && !busy && <p role="status" className="text-sm text-muted-foreground">Loading conversation…</p>}
@@ -1543,9 +1545,9 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
                                 active={active && !draft.quitting && !cardOpen && !detailPanel && !chatsOpen} besideSend
                                 disabled={generating || stopping || inactive || !ready || !modelReady || requestBlocked || !!pendingRequest || !!queue.queued || queue.pending || uploadsActive || preparingSend || !draft.loaded}
                                 onActivity={setVoiceActivity} onSent={voiceSent} />}
-                            {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">Stop</span></Button>}
+                            {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">{t('stop')}</span></Button>}
                             <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={voiceActivity.busy || !draft.loaded || !uploadsLoaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || inactive || (!input.trim() && !attachmentPaths.length && !documents.attachments.length) || stopping || !ready || !queue.loaded || queue.pending || !!queue.error || uploadsActive || blockedUploads.length > 0 || preparingSend}>
-                                <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">Send</span>
+                                <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">{t('send')}</span>
                             </Button>
                         </div>
                     </div>
