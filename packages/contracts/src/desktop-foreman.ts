@@ -2,12 +2,14 @@ import { z } from 'zod'
 import { desktopTemplateRevisionSchema } from './desktop-templates.js'
 import { desktopDocumentSendSelectionSchema, type DesktopDocumentScope } from './desktop-document-attachments.js'
 import { FOREMAN_AGENT_ID, foremanBriefSchema } from './foreman.js'
+import { desktopCoworkerMentionsSchema, validDesktopCoworkerMentionFields } from './desktop-coworker-calls.js'
 
 // Local Foreman (E11). Renderer DTOs carry opaque local identities only: no engine ids, provider
 // credentials, connection secrets or host paths. Compatibility: version 1. Additive fields only;
 // a breaking change bumps DESKTOP_FOREMAN_CONTRACT_VERSION and is recorded in the round33 I handoff.
 
 export const DESKTOP_FOREMAN_CONTRACT_VERSION = 1 as const
+export const DESKTOP_FOREMAN_TURN_MAX_BYTES = 384 * 1024
 
 export const DESKTOP_FOREMAN_LIMITS = {
     maxBoxes: 5,
@@ -69,7 +71,9 @@ export const desktopForemanTurnSchema = z.strictObject({
     brief: foremanBriefSchema.extend({ instructions: z.string().min(1).max(12_000), tools: z.array(z.never()).max(0), hubToken: z.never().optional() }).strict(),
     question: foremanQuestionGuardSchema.optional(),
     documents: desktopDocumentSendSelectionSchema.optional(),
-}).refine(turn => Boolean(turn.text.trim() || turn.documents) && !(turn.documents && turn.question))
+    coworkerMentions: desktopCoworkerMentionsSchema.optional(),
+}).refine(turn => Boolean(turn.text.trim() || turn.documents) && !(turn.question && (turn.documents || turn.coworkerMentions?.length)))
+    .refine(validDesktopCoworkerMentionFields, 'Selected coworker mentions do not match the message.')
 
 // Engine and app server only. Renderer requests continue to use their saved message ID.
 export const foremanReplyTargetSchema = foremanChatRefSchema.extend({

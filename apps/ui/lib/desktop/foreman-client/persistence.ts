@@ -5,7 +5,8 @@ import type { DesktopPlanDecisionStatus } from './decision'
 import type { DesktopForemanBuildProgressView } from './build-progress'
 import type { DesktopDiscoveriesState } from './discovery-view'
 import type { ForemanTab } from '@rerun/ui/foreman'
-import type { DesktopDocumentSendSelection, DesktopForemanModelRef } from '@rerun/contracts'
+import type { DesktopCoworkerMention, DesktopCoworkerMentionFields, DesktopDocumentSendSelection, DesktopForemanModelRef } from '@rerun/contracts'
+import { reconcileDesktopCoworkerMentions } from '@/components/desktop/mentions/coworker-mention-model'
 
 export type DesktopForemanUiTab = ForemanTab
 
@@ -15,11 +16,12 @@ export type DesktopForemanPersistedUi = {
     open: boolean
     tab: DesktopForemanUiTab
     draft: string
+    draftCoworkerMentions?: DesktopCoworkerMention[]
     pendingPlanRevisionId: string | null
     decision: DesktopPlanDecisionStatus
     build: DesktopForemanBuildProgressView | null
     discoveries: DesktopDiscoveriesState | null
-    pendingSend?: { requestId: string; text: string; modelChoice: DesktopForemanModelRef | null; documents?: DesktopDocumentSendSelection }
+    pendingSend?: DesktopCoworkerMentionFields & { requestId: string; text: string; modelChoice: DesktopForemanModelRef | null; documents?: DesktopDocumentSendSelection }
     dock?: import('@/lib/desktop/foreman-dock/layout').DockExtras
     placement: DesktopForemanPlacement
 }
@@ -55,9 +57,10 @@ export function projectTabChange(current: DesktopForemanPersistedUi, tab: Deskto
     return { ...current, tab }
 }
 
-export function projectDraftChange(current: DesktopForemanPersistedUi, draft: string): DesktopForemanPersistedUi {
-    if (current.draft === draft) return current
-    return { ...current, draft }
+export function projectDraftChange(current: DesktopForemanPersistedUi, draft: string, selected?: DesktopCoworkerMention[]): DesktopForemanPersistedUi {
+    if (current.draft === draft && selected === undefined) return current
+    const mentions = selected ?? reconcileDesktopCoworkerMentions(current.draft, draft, current.draftCoworkerMentions ?? [])
+    return { ...current, draft, draftCoworkerMentions: mentions.length ? mentions : undefined }
 }
 
 export function projectOpenChange(current: DesktopForemanPersistedUi, open: boolean): DesktopForemanPersistedUi {

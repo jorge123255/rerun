@@ -41,8 +41,7 @@ export function DesktopCoworkerMentions({ agentId, preferredBoxName, text, menti
         preferredBoxName,
         text,
         mentions,
-        onTextChange,
-        onMentionsChange,
+        onDraftChange: (value, selected) => { onMentionsChange(selected); onTextChange(value) },
     })
 
     const handleKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {

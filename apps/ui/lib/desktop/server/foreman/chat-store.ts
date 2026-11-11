@@ -2,6 +2,7 @@ import 'server-only'
 import { randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
 import type { DesktopDocumentSendSelection, DesktopForemanChatRef, DesktopForemanModelRef, DesktopForemanQuestionGuard, ForemanBrief } from '@rerun/contracts'
+import { desktopCoworkerMentionFieldsOf, type DesktopCoworkerMentionFields } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import type { DesktopQuestionAnswer } from '../../questions'
 import type { DesktopRuntime } from '../runtime'
@@ -20,18 +21,18 @@ CREATE TABLE IF NOT EXISTS desktop_foreman_turns(
 CREATE INDEX IF NOT EXISTS desktop_foreman_turns_chat ON desktop_foreman_turns(chat_id,created_at);
 `
 export type ForemanChat = { chat: DesktopForemanChatRef; sessionId: string; model: DesktopForemanModelRef | null }
-export type ForemanTurn = {
+export type ForemanSendFields = DesktopCoworkerMentionFields & { documents?: DesktopDocumentSendSelection }
+export type ForemanTurn = ForemanSendFields & {
     binding: DesktopForemanChatRef & { runId: string; model: DesktopForemanModelRef }
     sessionId: string
     text: string
     brief: ForemanBrief
     question?: DesktopForemanQuestionGuard
-    documents?: DesktopDocumentSendSelection
     answerIntent?: DesktopQuestionAnswer
     starterOfferId?: string
 }
-export function foremanTurnWire({ binding, sessionId, text, brief, question, documents }: ForemanTurn) {
-    return { binding, sessionId, text, brief, ...(question && { question }), ...(documents && { documents }) }
+export function foremanTurnWire({ binding, sessionId, text, brief, question, documents, coworkerMentions }: ForemanTurn) {
+    return { binding, sessionId, text, brief, ...(question && { question }), ...(documents && { documents }), ...desktopCoworkerMentionFieldsOf(coworkerMentions) }
 }
 const LOCKS = Symbol.for('rerun.desktop.foreman.chat-locks.v1')
 const locks = () => ((globalThis as unknown as Record<symbol, WeakMap<Client, Promise<unknown>>>)[LOCKS] ??= new WeakMap())

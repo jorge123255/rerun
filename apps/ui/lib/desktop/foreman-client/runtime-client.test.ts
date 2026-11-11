@@ -71,15 +71,42 @@ it('recovers a file-only send from the composer without preparing or uploading t
         return transport(url, init)
     })
     const client = connect(server, model)
-    await expect(client.ports.conversation.sendMessage('', undefined, prepare)).rejects.toThrow('lost file acknowledgement')
+    await expect(client.ports.conversation.sendMessage('', undefined, { prepareDocuments: prepare })).rejects.toThrow('lost file acknowledgement')
     const requestId = server.ui.snapshot?.pendingSend?.requestId
     client.close()
     const restored = connect(await readDesktopForemanState())
     await expect(restored.ports.conversation.sendMessage('')).rejects.toThrow('Retry the attached message')
-    expect(await restored.ports.conversation.sendMessage('', undefined, prepare)).toBe(true)
+    expect(await restored.ports.conversation.sendMessage('', undefined, { prepareDocuments: prepare })).toBe(true)
     expect(prepare).toHaveBeenCalledExactlyOnceWith(model)
     expect(bodies.find(body => body.action === 'send')).toMatchObject({ requestId, text: '', modelChoice: model, documents })
     expect(server.ui.snapshot?.pendingSend).toBeUndefined()
+})
+it('restores the selected coworker ID after a lost acknowledgment and refuses a same-name replacement', async () => {
+    const transport = vi.mocked(fetch).getMockImplementation()!
+    const text = 'Review with @Sam'
+    const mention = { token: '@Sam', start: 12, end: 16, targetId: 'selected-sam' }
+    const options = { coworkerMentions: [mention] }
+    server.ui.snapshot = { ...server.ui.snapshot!, draft: text, draftCoworkerMentions: options.coworkerMentions }
+    let lost = false
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : null
+        if (body?.action === 'send' && !lost) {
+            lost = true
+            expect(server.ui.snapshot?.pendingSend).toMatchObject({ requestId: body.requestId, ...options })
+            throw new Error('lost mention acknowledgment')
+        }
+        return transport(url, init)
+    })
+    const first = connect(server, model)
+    await expect(first.ports.conversation.sendMessage(text, undefined, options)).rejects.toThrow('lost mention acknowledgment')
+    const requestId = server.ui.snapshot?.pendingSend?.requestId
+    first.close()
+    const saved = await readDesktopForemanState()
+    expect(saved.ui.snapshot?.draftCoworkerMentions).toEqual([mention])
+    const restored = connect(saved)
+    await expect(restored.ports.conversation.sendMessage(text, undefined, { coworkerMentions: [{ ...mention, targetId: 'different-sam' }] })).rejects.toThrow('original model and mentions')
+    expect(await restored.ports.conversation.sendMessage(text, undefined, options)).toBe(true)
+    expect(bodies.filter(body => body.action === 'send')).toEqual([expect.objectContaining({ requestId, ...options })])
 })
 it('uses an acknowledged model immediately and ignores a state read that predates the change', async () => {
     const transport = vi.mocked(fetch).getMockImplementation()!

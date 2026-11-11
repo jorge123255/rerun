@@ -255,6 +255,15 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         return () => { unsubscribe?.(); window.removeEventListener('keydown', keydown) }
     }, [workspaceDialogActive, templatesActive, workspaceSettings, shortcutsOpen, helpOpen, notificationsTarget, sharedDataOpen, sharedFilesOpen, brainOpen, boardInteraction, boardState.saving])
     const [agents, setAgents] = useState(initialData.agents)
+    const foremanMentionTargets = useMemo(() => {
+        const boxNames = new Map(boardState.board?.spaces.map(box => [box.id, box.name]))
+        const boxesByAgent = new Map(boardState.board?.placements.map(placement => [placement.agentId, placement.spaceId]))
+        return agents.map(agent => ({
+            agentId: agent.id, name: agent.name, handle: null,
+            boxName: boxNames.get(boxesByAgent.get(agent.id) ?? agent.spaceId ?? '') ?? null,
+            enabled: agent.enabled !== false, callable: false,
+        }))
+    }, [agents, boardState.board])
     const boardActivity = useBoardActivity(agents.map(agent => agent.id))
     // Responses already in flight cannot reintroduce a coworker after its confirmed deletion.
     const deletedAgents = useRef(new Set<string>())
@@ -755,7 +764,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 {!controlCenterDisabled && !controlCenterOpen && !panelOpen && !foremanEngaged && <DesktopForemanDock open={foremanOpen} onToggle={engageForeman} />}
                 {foremanEngaged && <div className="pointer-events-none absolute inset-2 z-40 grid min-h-0" style={{ gridTemplateColumns: `${foremanLeftTrack}px minmax(0,1fr) ${foremanRightTrack}px` }}>
 
-                    <DesktopForemanPanel controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout}
+                    <DesktopForemanPanel controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout} mentionTargets={foremanMentionTargets}
                         hidden={controlCenterDisabled || controlCenterOpen || panelOpen || settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
                         centerOpen={controlCenterOpen} onOpenTranscriptionSettings={() => { setSettingsTab('Tool services'); setSettings(true) }} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('The Chief of Staff chat was closed.')); setForemanOpen(false) }}
                         onOpenCoworker={openForemanCoworker} onOpenBox={openForemanBox} onReviewTemplate={reviewTemplate} providers={providers} onOpenModelSettings={openSettings}

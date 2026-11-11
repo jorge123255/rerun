@@ -1,7 +1,7 @@
 import { readAnsweredQuestionRecaps } from './answered-question-recap'
 import 'server-only'
 import { createHash } from 'node:crypto'
-import { COMPANY_BRIEF_MODEL_PROVIDERS, FOREMAN_AGENT_ID, foremanDocumentScope, type CompanyBriefModelRef, type DesktopDocumentSendSelection, type DesktopForemanBinding, type DesktopForemanChatRef, type DesktopForemanLiveEvent, type DesktopForemanModelRef } from '@rerun/contracts'
+import { COMPANY_BRIEF_MODEL_PROVIDERS, FOREMAN_AGENT_ID, desktopCoworkerMentionFieldsOf, foremanDocumentScope, type CompanyBriefModelRef, type DesktopForemanBinding, type DesktopForemanChatRef, type DesktopForemanLiveEvent, type DesktopForemanModelRef } from '@rerun/contracts'
 import { EngineRequestError, cancelRun, getRun, getSessionMessages } from '@/lib/engine/client'
 import { publicDesktopHistory, transformEngineMessages } from '@/lib/chat/engine-history'
 import { usableConnection } from '../../chat-model'
@@ -12,7 +12,7 @@ import { readDesktopBoardState } from '../spaces'
 import { listDesktopAgents } from '../store'
 import type { DesktopRuntime } from '../runtime'
 import { openForemanRuntime } from './server'
-import { ensureForemanChat, foremanTurn, foremanTurnWire, ownedForemanChat, withForemanChatWrite, type ForemanTurn } from './chat-store'
+import { ensureForemanChat, foremanTurn, foremanTurnWire, ownedForemanChat, withForemanChatWrite, type ForemanSendFields, type ForemanTurn } from './chat-store'
 import { createDesktopForemanCreationAuthority } from './creation'
 import { foremanPhaseInstructions } from '../../../../../engine/src/desktop/foreman/prompts.ts'
 import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
@@ -35,6 +35,8 @@ import { foremanAlternateSnapshot } from '../foreman-alternates/snapshot'
 import { foremanTranscriptRevision } from '../../../../../engine/src/desktop/foreman/transcript-revision.ts'
 import { desktopForemanContext } from '../../foreman/context'
 import { consumeDesktopDocumentAdmission, resolveDesktopDocumentAdmission } from '../document-attachments/binding'
+import { listDesktopCoworkerCallTargets } from '../coworker-calls/authority'
+import { revalidateDesktopCoworkerMentions } from '@/components/desktop/mentions/coworker-mention-model'
 
 const KEY = Symbol.for('rerun.desktop.foreman.binding.v1')
 const SHUTDOWN_KEY = Symbol.for('rerun.desktop.foreman.shutdown.v1')
@@ -209,7 +211,8 @@ async function createBinding(runtime: DesktopRuntime) {
     }
 
     async function send(chat: DesktopForemanChatRef, requestId: string, text: string, requested?: DesktopForemanModelRef, guard?: VoiceGuard,
-        answer?: DesktopQuestionAnswer, starter?: { input: DesktopLocalStarterDecision; signal: AbortSignal }, documents?: DesktopDocumentSendSelection) {
+        answer?: DesktopQuestionAnswer, starter?: { input: DesktopLocalStarterDecision; signal: AbortSignal }, fields?: ForemanSendFields) {
+        const { documents, coworkerMentions } = fields ?? {}
         if (chat.workspaceId !== workspaceId) throw new DesktopHttpError(404, 'Conversation not found.')
         await assertDesktopWorkspaceAdmission(runtime)
         return withForemanChatWrite(db, async () => {
@@ -226,7 +229,8 @@ async function createBinding(runtime: DesktopRuntime) {
             }
             const fingerprint = createHash('sha256').update(JSON.stringify(starter
                 ? [chat, text, requested ?? null, 'starter', starter.input.offerId]
-                : [chat, answer ?? text, requested ?? null, ...(documents ? [documents] : [])])).digest('hex')
+                : [chat, answer ?? text, requested ?? null, ...(documents ? [documents] : []),
+                    ...(coworkerMentions?.length ? [['coworkerMentions', coworkerMentions]] : [])])).digest('hex')
             const previous = await foremanTurn(db, requestId)
             if (previous) {
                 if (previous.fingerprint !== fingerprint || previous.body.binding.chatId !== chat.chatId) throw new DesktopHttpError(409, 'This message ID was used for another message.')
@@ -261,6 +265,12 @@ async function createBinding(runtime: DesktopRuntime) {
             let model = original ?? requested ?? owner.model
             if (!model) { const fallback = await desktopModel(runtime); model = { connectionId: fallback.connection.id, model: fallback.model } }
             if (!await modelAvailable(model)) throw new ForemanRefusal('model_unavailable', 'Choose a connected model in Settings.')
+            if (coworkerMentions?.length) {
+                const roster = await listDesktopCoworkerCallTargets(db, FOREMAN_AGENT_ID, false)
+                // Referring to someone on the board does not require or confer a call grant.
+                const checked = revalidateDesktopCoworkerMentions(text, coworkerMentions, roster, false)
+                if (!checked.ok) throw new DesktopHttpError(400, checked.error)
+            }
             if (documents) {
                 const scope = foremanDocumentScope(chat, owner.sessionId)
                 if (answer || starter || guard || documents.scope.agentId !== scope.agentId || documents.scope.tabUid !== scope.tabUid
@@ -283,7 +293,7 @@ async function createBinding(runtime: DesktopRuntime) {
                 'When the user asks to design or add coworkers, propose their jobs with show_plan. Nothing is created until they confirm the card. Never treat chat text as approval.'].filter(Boolean).join('\n\n')
             const turn: ForemanTurn = { binding: { ...chat, runId: requestId, model }, sessionId: owner.sessionId, text, brief: { instructions, tools: [] },
                 ...(answer && question && { question: question.guard, answerIntent: answer }), ...(starter && { starterOfferId: starter.input.offerId }),
-                ...(documents && { documents }) }
+                ...(documents && { documents }), ...desktopCoworkerMentionFieldsOf(coworkerMentions) }
             await checkVoice(guard)
             starter?.signal.throwIfAborted()
             await assertDesktopWorkspaceAdmission(runtime)
@@ -294,8 +304,8 @@ async function createBinding(runtime: DesktopRuntime) {
     }
     return {
         core, db, isLive, companyDiscovery, starterOffers,
-        send: (chat: DesktopForemanChatRef, requestId: string, text: string, model?: DesktopForemanModelRef, documents?: DesktopDocumentSendSelection) =>
-            send(chat, requestId, text, model, undefined, undefined, undefined, documents),
+        send: (chat: DesktopForemanChatRef, requestId: string, text: string, model?: DesktopForemanModelRef, fields?: ForemanSendFields) =>
+            send(chat, requestId, text, model, undefined, undefined, undefined, fields),
         assertAlternateIdle: (chat: DesktopForemanChatRef) => assertChatIdle(chat, 'Resolve the current Chief of Staff work before preparing a retry.'),
         async setModel(chat: DesktopForemanChatRef, expected: DesktopForemanModelRef | null, model: DesktopForemanModelRef | null) {
             return withForemanChatWrite(db, async () => {

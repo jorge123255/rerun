@@ -1,6 +1,6 @@
 /** Injected action ports for I's canonical runtime and root mounting. */
 
-import type { DesktopDocumentSendSelection, DesktopForemanConversationView, DesktopForemanModelRef } from '@rerun/contracts'
+import type { DesktopCoworkerMentionFields, DesktopDocumentSendSelection, DesktopForemanConversationView, DesktopForemanModelRef } from '@rerun/contracts'
 import { foremanChatKey } from './identity'
 import type { DesktopPlanDecisionRequest, DesktopPlanDecisionResult } from './decision'
 import type { DesktopForemanBuildProgressView } from './build-progress'
@@ -11,8 +11,9 @@ import type { DesktopForemanChatRef, DesktopForemanBinding } from './identity'
 import type { DesktopForemanPersistedUi, DesktopForemanPersistence } from './persistence'
 
 export type PrepareForemanDocuments = (model: DesktopForemanModelRef | null) => Promise<DesktopDocumentSendSelection | undefined>
+export type DesktopForemanMessageOptions = DesktopCoworkerMentionFields & { prepareDocuments?: PrepareForemanDocuments }
 export type DesktopForemanConversationCallbacks = {
-    sendMessage: (text: string, signal?: AbortSignal, prepareDocuments?: PrepareForemanDocuments) => boolean | Promise<boolean>
+    sendMessage: (text: string, signal?: AbortSignal, options?: DesktopForemanMessageOptions) => boolean | Promise<boolean>
     stop: () => void | Promise<void>
     focusComposer?: () => void
 }

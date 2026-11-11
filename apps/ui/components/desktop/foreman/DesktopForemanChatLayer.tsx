@@ -28,7 +28,8 @@ import { DesktopForemanWelcome } from './DesktopForemanWelcome'
 import { DesktopPlanCard } from './plan/DesktopPlanCard'
 import { DesktopForemanBuildProgress } from './DesktopForemanBuildProgress'
 import { DesktopForemanNextSteps } from './DesktopForemanNextSteps'
-import type { DesktopDocumentReference, MessageFeedbackRating } from '@rerun/contracts'
+import type { DesktopCoworkerMention, DesktopDocumentReference, MessageFeedbackRating } from '@rerun/contracts'
+import { DesktopSelectedMentionText } from '../mentions/DesktopSelectedMentionText'
 
 export type DesktopForemanMessage = {
     id: string
@@ -38,6 +39,7 @@ export type DesktopForemanMessage = {
     history?: readonly ForemanHistoryPart[]
     answeredQuestions?: readonly DesktopAnsweredQuestionRecap[]
     documents?: readonly DesktopDocumentReference[]
+    coworkerMentions?: readonly DesktopCoworkerMention[]
 }
 
 export function DesktopForemanChatLayer({
@@ -131,7 +133,9 @@ export function DesktopForemanChatLayer({
                                     onClick={event => setPreview({ messageId: message.id, index, trigger: event.currentTarget })}>{document.name}</Button>)}
                             </div>}
                             {restored && message.history ? <>
-                                <DesktopForemanHistoryMessage history={message.history} />
+                                {message.role === 'user' && message.coworkerMentions?.length
+                                    ? <div className="whitespace-pre-wrap wrap-anywhere"><DesktopSelectedMentionText text={message.text} metadata={message} /></div>
+                                    : <DesktopForemanHistoryMessage history={message.history} />}
                                 <DesktopForemanAnsweredQuestion recaps={message.answeredQuestions ?? []} />
                                 {message.role === 'assistant' && message.text.trim() && answerFeedback && (
                                     <DesktopForemanAnswerActions

@@ -3,7 +3,7 @@
 import { useDesktopLocale } from '../DesktopLocale'
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import type { ConnectionsList, DesktopForemanChatRef, DesktopForemanModelRef } from '@rerun/contracts'
+import type { ConnectionsList, DesktopCoworkerCallTarget, DesktopForemanChatRef, DesktopForemanModelRef } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 import { isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 import { flushDesktopForemanUiSaves } from '@/lib/desktop/foreman-client'
@@ -25,6 +25,7 @@ import { DesktopForemanContext } from './DesktopForemanContext'
 
 export type DesktopForemanCommand = { id: string; chat: DesktopForemanChatRef; text: string; signal: AbortSignal; settle: (error?: Error) => void }
 export type DesktopForemanPanelProps = {
+    mentionTargets?: DesktopCoworkerCallTarget[]
     command?: DesktopForemanCommand | null
     onOpenCoworker: (target: { agentId: string; sessionId?: string }) => void | Promise<void>
     onOpenBox: (spaceId: string) => void | Promise<void>
@@ -163,6 +164,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         accepted={() => { void client.refresh() }} onSlot={setVoice} onSettings={props.onOpenTranscriptionSettings} />}
     {!intakeOpen && <DesktopCompanyResearch chat={state.chat} active={!!props.controlledOpen && !props.hidden} refreshKey={JSON.stringify(state.view)} />}
     <DesktopForemanColumn
+        mentionTargets={props.mentionTargets}
         sessionId={state.sessionId} pendingSend={!!pendingSend} retryAttachedMessage={!!pendingSend?.documents && !pendingSend.text}
         imageModel={providers?.connections.some(connection => connection.id === voiceModel?.connectionId && connection.provider === 'codex')}
         controlledOpen={props.controlledOpen} hidden={props.hidden} centerOpen={props.centerOpen} onOpenChange={props.onOpenChange} onLayout={props.onLayout}

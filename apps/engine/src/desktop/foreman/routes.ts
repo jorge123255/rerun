@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
-import { FOREMAN_AGENT_ID, desktopForemanTurnSchema, foremanAlternateRequestSchema, foremanAlternateRunActionSchema, foremanDigestSchema, foremanDocumentScope, foremanQuestionGuardSchema, foremanReplyTargetSchema } from '@rerun/contracts'
+import { DESKTOP_FOREMAN_TURN_MAX_BYTES, FOREMAN_AGENT_ID, desktopCoworkerMentionFieldsOf, desktopForemanTurnSchema, foremanAlternateRequestSchema, foremanAlternateRunActionSchema, foremanDigestSchema, foremanDocumentScope, foremanQuestionGuardSchema, foremanReplyTargetSchema } from '@rerun/contracts'
 import { withAgentLock } from '../../agents/lock.js'
 import { getAgent } from '../../agents/registry.js'
 import { resolveRunModel } from '../../agents/availability.js'
@@ -106,13 +106,14 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
                 { 'cache-control': 'no-store' })
         }
     })
-    routes.post('/chat', async c => {
+    routes.post('/chat', bodyLimit({ maxSize: DESKTOP_FOREMAN_TURN_MAX_BYTES }), async c => {
         try {
             if (!desktopApp()) throw new HttpError(404, 'Desktop Foreman is unavailable.')
             const raw = await c.req.text()
-            if (Buffer.byteLength(raw) > 48 * 1024) throw new HttpError(413, 'Foreman message exceeds limit.')
+            if (Buffer.byteLength(raw) > DESKTOP_FOREMAN_TURN_MAX_BYTES) throw new HttpError(413, 'Foreman message exceeds limit.')
             const body = desktopForemanChatSchema.parse(JSON.parse(raw)), signal = c.req.raw.signal
-            const turn = { runId: body.binding.runId, sessionId: body.sessionId, message: body.text, documents: body.documents, foreman: { binding: body.binding, brief: body.brief, ...(body.question && { question: body.question }) } }
+            const mentionFields = desktopCoworkerMentionFieldsOf(body.coworkerMentions)
+            const turn = { runId: body.binding.runId, sessionId: body.sessionId, message: body.text, documents: body.documents, ...mentionFields, foreman: { binding: body.binding, brief: body.brief, ...(body.question && { question: body.question }) } }
             return await withAgentLock(FOREMAN_AGENT_ID, async () => {
                 signal.throwIfAborted()
                 const replay = await getDesktopQueuedTurn(FOREMAN_AGENT_ID, turn)
@@ -171,7 +172,8 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
                             signal.throwIfAborted()
                             assertDesktopRunAdmission()
                             if (readBinding() !== bridge) throw new HttpError(409, 'Foreman app launch changed.')
-                            const result = await runAgent(view, turn.sessionId, turn.message, override, writer, turn.runId, { source: 'chat', queuedUser, desktopDocuments: documents }); mergeRunStream(writer, result, { provider: model.provider, model: model.model }) }
+                            const result = await runAgent(view, turn.sessionId, turn.message, override, writer, turn.runId,
+                                { source: 'chat', queuedUser, desktopDocuments: documents, ...mentionFields }); mergeRunStream(writer, result, { provider: model.provider, model: model.model }) }
                         catch (error) { await cancelRun(FOREMAN_AGENT_ID, turn.runId); releaseSession(turn.runId); throw error }
                     }), turn.sessionId, turn.runId)
                 } catch (error) { releaseSession(turn.runId); throw error }

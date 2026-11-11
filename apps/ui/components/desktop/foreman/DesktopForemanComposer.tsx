@@ -5,6 +5,7 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } fro
 import { CornerDownLeftIcon, SquareIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { useDesktopLocale } from '../DesktopLocale'
+import type { useDesktopMentionAutocomplete } from '../mentions/useDesktopMentionAutocomplete'
 
 export function DesktopForemanComposer({
     draft,
@@ -21,6 +22,7 @@ export function DesktopForemanComposer({
     attachments,
     hasAttachments,
     onFiles,
+    mentions,
     className,
 }: {
     draft: string
@@ -37,6 +39,7 @@ export function DesktopForemanComposer({
     attachments?: ReactNode
     hasAttachments?: boolean
     onFiles?: (files: File[]) => void
+    mentions?: Pick<ReturnType<typeof useDesktopMentionAutocomplete>, 'inputRef' | 'textareaProps' | 'menu'>
     className?: string
 }) {
     const { language: { locale }, t } = useDesktopLocale()
@@ -51,7 +54,7 @@ export function DesktopForemanComposer({
     }
 
     return (
-        <form onSubmit={submit} className={cn('shrink-0 px-3 py-3', className)}
+        <form onSubmit={submit} className={cn('relative shrink-0 px-3 py-3', className)}
             onDragOver={event => { if (onFiles && event.dataTransfer.types.includes('Files')) event.preventDefault() }}
             onDrop={event => {
                 if (!onFiles || event.defaultPrevented || !event.dataTransfer.files.length) return
@@ -66,12 +69,16 @@ export function DesktopForemanComposer({
             <InputGroup className="rounded-xl bg-card">
                 {attachments && <InputGroupAddon align="block-start" className="min-w-0">{attachments}</InputGroupAddon>}
                 <InputGroupTextarea
+                    {...mentions?.textareaProps}
+                    ref={mentions?.inputRef}
                     value={draft}
-                    onChange={event => onDraftChange(event.target.value)}
+                    onChange={mentions?.textareaProps.onChange ?? (event => onDraftChange(event.target.value))}
                     onCompositionStart={() => { composing.current = true }}
                     onCompositionEnd={() => { composing.current = false }}
                     onKeyDown={event => {
-                        if (event.key !== 'Enter' || event.shiftKey || event.defaultPrevented || composing.current || event.nativeEvent.isComposing) return
+                        if (composing.current || event.nativeEvent.isComposing) return
+                        mentions?.textareaProps.onKeyDown(event)
+                        if (event.key !== 'Enter' || event.shiftKey || event.defaultPrevented) return
                         event.preventDefault()
                         if (canSend) event.currentTarget.form?.requestSubmit()
                     }}
@@ -104,6 +111,7 @@ export function DesktopForemanComposer({
                     )}
                 </InputGroupAddon>
             </InputGroup>
+            {mentions?.menu}
         </form>
     )
 }

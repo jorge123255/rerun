@@ -53,6 +53,18 @@ test('admits a file-only turn using the exact conversation-bound manifest and se
     expect(port.documents).toHaveBeenLastCalledWith(turn, expect.any(AbortSignal))
     expect(state.reserve).toHaveBeenCalledWith('foreman', expect.objectContaining({ documents }), undefined, undefined, undefined, true, resolved)
 })
+test('checks mention ranges before reserving and binds the selected ID to the engine turn', async () => {
+    const port = bridge(), app = createDesktopForemanRoutes(() => port)
+    const mention = { targetId: randomUUID(), token: '@Sam', start: 0, end: 4 }
+    const turn = { ...body, text: '@Sam can help.', coworkerMentions: [mention] }
+    expect((await app.request('/chat', request({ ...turn, coworkerMentions: [{ ...mention, end: 5 }] }))).status).toBe(400)
+    expect(port.admit).not.toHaveBeenCalled()
+    expect(state.reserve).not.toHaveBeenCalled()
+    expect((await app.request('/chat', request(turn))).status).toBe(200)
+    expect(port.admit).toHaveBeenLastCalledWith(turn, expect.any(AbortSignal))
+    expect(state.reserve).toHaveBeenCalledWith('foreman', expect.objectContaining({ coworkerMentions: [mention] }),
+        undefined, undefined, undefined, true, undefined)
+})
 test('hosted tool grants and a foreign existing session are refused without reserving a run', async () => {
     const port = bridge(), app = createDesktopForemanRoutes(() => port)
     expect((await app.request('/chat', request({ ...body, brief: { ...body.brief, hubToken: 'forged' } }))).status).toBe(400)

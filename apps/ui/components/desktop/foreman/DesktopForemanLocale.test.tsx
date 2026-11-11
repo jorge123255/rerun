@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { act, useState, type ReactNode } from 'react'
-import type { ConnectionSummary, DesktopForemanModelRef } from '@rerun/contracts'
+import type { ConnectionSummary, DesktopCoworkerCallTarget, DesktopCoworkerMention, DesktopForemanModelRef } from '@rerun/contracts'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { loadMessages } from '@rerun/i18n/messages'
@@ -13,6 +13,7 @@ import { DesktopPlanCard } from './plan/DesktopPlanCard'
 import { DesktopForemanModelPill } from './DesktopForemanModelPill'
 import { DesktopForemanContext } from './DesktopForemanContext'
 import { buildDesktopModelView } from '@/lib/desktop/chat-model'
+import { useDesktopMentionAutocomplete } from '../mentions/useDesktopMentionAutocomplete'
 
 vi.mock(import('@rerun/ui/iso-grid'), async original => {
     const { memo } = await import('react')
@@ -112,6 +113,36 @@ it('keeps an over-limit saved entry editable and refuses to submit it', async ()
     await show(<DesktopForemanComposer {...composer} draft="Résumé" />)
     await act(async () => button('Envoyer').click())
     expect(send).toHaveBeenCalledExactlyOnceWith('Résumé')
+})
+
+it('selects the exact enabled coworker by Box on Return, then sends only on a separate Return', async () => {
+    const send = vi.fn()
+    const targets: DesktopCoworkerCallTarget[] = [
+        { agentId: 'first', name: 'Sam', boxName: 'Research', handle: null, enabled: true, callable: false },
+        { agentId: 'second', name: 'Sam', boxName: 'Delivery', handle: null, enabled: true, callable: false },
+        { agentId: 'disabled', name: 'Sam', boxName: 'Inactive', handle: null, enabled: false, callable: false },
+    ]
+    function Composer() {
+        const [draft, setDraft] = useState<{ text: string; mentions: DesktopCoworkerMention[] }>({ text: '', mentions: [] })
+        const mentions = useDesktopMentionAutocomplete({
+            ...draft, targets, skills: [], requireCallable: false, onDraftChange: (text, selected) => setDraft({ text, mentions: selected }),
+        })
+        return <DesktopForemanComposer draft={draft.text} onDraftChange={text => setDraft({ text, mentions: [] })}
+            mentions={mentions} onSend={text => send(text, draft.mentions)} />
+    }
+    await show(<Composer />)
+    const field = document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')!
+    const key = (value: string) => act(async () => field.dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true })))
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, '@sa')
+    field.setSelectionRange(3, 3)
+    await act(async () => field.dispatchEvent(new Event('input', { bubbles: true })))
+    expect([...document.querySelectorAll('[role="option"]')].map(option => option.textContent)).toEqual(['SamResearch', 'SamDelivery'])
+    await key('ArrowDown')
+    await key('Enter')
+    expect(field.value).toBe('@Sam ')
+    expect(send).not.toHaveBeenCalled()
+    await key('Enter')
+    expect(send).toHaveBeenCalledExactlyOnceWith('@Sam', [{ targetId: 'second', token: '@Sam', start: 0, end: 4 }])
 })
 
 it('selects a connected model and returns to the translated workspace default without submitting the draft', async () => {

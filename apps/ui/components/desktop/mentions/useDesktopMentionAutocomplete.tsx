@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEv
 import { mentionTokensOf, type MentionSkill } from '@/components/chat/MentionAutocomplete'
 import type { ComposerMention } from '@/lib/chat/composer-links'
 import {
+    canMentionDesktopCoworker,
     insertDesktopCoworkerMention,
     reconcileDesktopCoworkerMentions,
     type DesktopCoworkerMention,
@@ -14,14 +15,14 @@ import { DesktopMentionMenu, type DesktopMentionItem } from './DesktopMentionMen
 type Trigger = '@' | '/'
 type MentionState = { trigger: Trigger; query: string; start: number }
 
-export function useDesktopMentionAutocomplete({ targets, skills, preferredBoxName, text, mentions, onTextChange, onMentionsChange }: {
+export function useDesktopMentionAutocomplete({ targets, skills, preferredBoxName, text, mentions, onDraftChange, requireCallable = true }: {
     targets: DesktopCoworkerCallTarget[]
     skills: MentionSkill[]
     preferredBoxName?: string | null
     text: string
     mentions: DesktopCoworkerMention[]
-    onTextChange: (text: string) => void
-    onMentionsChange: (mentions: DesktopCoworkerMention[]) => void
+    onDraftChange: (text: string, mentions: DesktopCoworkerMention[]) => void
+    requireCallable?: boolean
 }) {
     const inputRef = useRef<HTMLTextAreaElement>(null)
     const menuId = useId()
@@ -29,7 +30,7 @@ export function useDesktopMentionAutocomplete({ targets, skills, preferredBoxNam
     const [highlight, setHighlight] = useState(0)
 
     const agents = useMemo(() => targets
-        .filter(target => target.enabled && target.callable)
+        .filter(target => canMentionDesktopCoworker(target, requireCallable))
         .map(target => ({
             kind: 'agent' as const,
             target,
@@ -38,7 +39,7 @@ export function useDesktopMentionAutocomplete({ targets, skills, preferredBoxNam
             handle: target.handle,
             hint: target.boxName ?? '',
             preferred: preferredBoxName !== null && preferredBoxName !== undefined && target.boxName === preferredBoxName,
-        })), [targets, preferredBoxName])
+        })), [targets, preferredBoxName, requireCallable])
 
     const items = useMemo<DesktopMentionItem[]>(() => {
         if (!mention) return []
@@ -79,30 +80,28 @@ export function useDesktopMentionAutocomplete({ targets, skills, preferredBoxNam
         const caret = element.selectionStart ?? 0
         const currentText = element.value
         if (item.kind === 'agent') {
-            const next = insertDesktopCoworkerMention(currentText, mentions, { start: mention.start, end: caret, target: item.target })
+            const next = insertDesktopCoworkerMention(currentText, mentions, { start: mention.start, end: caret, target: item.target }, requireCallable)
+            if (element.maxLength >= 0 && next.text.length > element.maxLength) return
             element.value = next.text
             const position = next.mentions.find(selected => selected.targetId === item.id && selected.start === mention.start)?.end ?? mention.start
             element.setSelectionRange(position + 1, position + 1)
-            onMentionsChange(next.mentions)
-            onTextChange(next.text)
+            onDraftChange(next.text, next.mentions)
         } else {
             const inserted = `/${item.slug} `
             const nextText = `${currentText.slice(0, mention.start)}${inserted}${currentText.slice(caret)}`
             element.value = nextText
             element.setSelectionRange(mention.start + inserted.length, mention.start + inserted.length)
-            onMentionsChange(reconcileDesktopCoworkerMentions(currentText, nextText, mentions))
-            onTextChange(nextText)
+            onDraftChange(nextText, reconcileDesktopCoworkerMentions(currentText, nextText, mentions))
         }
         element.focus()
         setMention(null)
-    }, [mention, mentions, onMentionsChange, onTextChange])
+    }, [mention, mentions, onDraftChange, requireCallable])
 
     const onChange = useCallback((event: ChangeEvent<HTMLTextAreaElement>) => {
         const element = event.currentTarget
         detect(element)
-        onMentionsChange(reconcileDesktopCoworkerMentions(text, element.value, mentions))
-        onTextChange(element.value)
-    }, [detect, mentions, onMentionsChange, onTextChange, text])
+        onDraftChange(element.value, reconcileDesktopCoworkerMentions(text, element.value, mentions))
+    }, [detect, mentions, onDraftChange, text])
 
     const onSelect = useCallback((event: SyntheticEvent<HTMLTextAreaElement>) => detect(event.currentTarget), [detect])
     const onKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -129,8 +128,8 @@ export function useDesktopMentionAutocomplete({ targets, skills, preferredBoxNam
         tokens,
         textareaProps: {
             onChange, onSelect, onKeyDown,
-            'aria-autocomplete': 'list',
-            'aria-haspopup': 'listbox',
+            'aria-autocomplete': 'list' as const,
+            'aria-haspopup': 'listbox' as const,
             'aria-expanded': open,
             'aria-controls': open ? menuId : undefined,
             'aria-activedescendant': open ? `${menuId}-${highlight}` : undefined,

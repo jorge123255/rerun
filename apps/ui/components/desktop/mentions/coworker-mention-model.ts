@@ -80,12 +80,16 @@ export function reconcileDesktopCoworkerMentions(previousText: string, nextText:
     return next.flatMap(mention => readMentions(nextText, [mention]))
 }
 
+export function canMentionDesktopCoworker(target: DesktopCoworkerCallTarget, requireCallable = true): boolean {
+    return target.enabled && (!requireCallable || target.callable)
+}
+
 export function insertDesktopCoworkerMention(text: string, mentions: DesktopCoworkerMention[], selection: {
     start: number
     end: number
     target: DesktopCoworkerCallTarget
-}): { text: string; mentions: DesktopCoworkerMention[] } {
-    if (!selection.target.enabled || !selection.target.callable) throw new Error('This coworker is not available for a new mention.')
+}, requireCallable = true): { text: string; mentions: DesktopCoworkerMention[] } {
+    if (!canMentionDesktopCoworker(selection.target, requireCallable)) throw new Error('This coworker is not available for a new mention.')
     if (!Number.isInteger(selection.start) || !Number.isInteger(selection.end) || selection.start < 0 || selection.end < selection.start || selection.end > text.length) throw new RangeError('Invalid coworker mention range')
     if (selection.start > 0 && !/\s/.test(text[selection.start - 1])) throw new Error('A coworker mention must start after whitespace.')
     const token = `@${selection.target.handle || selection.target.name}`
@@ -190,7 +194,7 @@ export function desktopCoworkerMentionsForRegeneration(sourceText: string, nextT
     return reconcileDesktopCoworkerMentions(sourceText, nextText, records.present ? records.mentions : [])
 }
 
-export function revalidateDesktopCoworkerMentions(text: string, mentions: DesktopCoworkerMention[], targets: DesktopCoworkerCallTarget[]): DesktopCoworkerMentionRevalidation {
+export function revalidateDesktopCoworkerMentions(text: string, mentions: DesktopCoworkerMention[], targets: DesktopCoworkerCallTarget[], requireCallable = true): DesktopCoworkerMentionRevalidation {
     const current = readMentions(text, mentions)
     if (current.length !== mentions.length) return { ok: false, code: 'range', error: 'A selected coworker mention was edited. Reinsert it before sending.' }
     const resolved: DesktopResolvedCoworkerMention[] = []
@@ -201,7 +205,7 @@ export function revalidateDesktopCoworkerMentions(text: string, mentions: Deskto
     }
     for (const mention of current) {
         const target = targets.find(candidate => candidate.agentId === mention.targetId)
-        if (!target || !target.enabled || !target.callable) {
+        if (!target || !canMentionDesktopCoworker(target, requireCallable)) {
             return { ok: false, code: 'target', error: 'A selected coworker is no longer available. Reinsert the mention before sending.' }
         }
         resolved.push({ ...mention, target })

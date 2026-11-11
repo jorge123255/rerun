@@ -21,7 +21,7 @@ import { DEFAULT_DESKTOP_FOREMAN_PLACEMENT, type DesktopForemanPersistedUi } fro
 import { desktopForemanSavedUiSchema } from './ui-schema'
 import { desktopStarterViewSchema, localStarterDecisionSchema, type DesktopLocalStarterDecision } from './starter'
 import { desktopForemanContextSchema } from '../foreman/context'
-import { desktopDocumentReferenceSchema, foremanDocumentScope, DESKTOP_DOCUMENT_MAX_FILES } from '@rerun/contracts'
+import { checkedDesktopCoworkerMentions, desktopCoworkerMentionFieldsOf, desktopCoworkerMentionsSchema, desktopDocumentReferenceSchema, foremanDocumentScope, DESKTOP_DOCUMENT_MAX_FILES } from '@rerun/contracts'
 export { desktopForemanSavedUiSchema } from './ui-schema'
 const stateSchema = z.strictObject({
     chat: foremanChatRefSchema, sessionId: z.string().min(1).max(128), model: foremanModelRefSchema.nullable(),
@@ -32,7 +32,10 @@ const stateSchema = z.strictObject({
     retrySnapshot: foremanDigestSchema.optional(),
     context: desktopForemanContextSchema.nullable().optional(),
     messages: z.array(z.object({ id: z.string().max(256), role: z.enum(['user', 'assistant']), parts: z.array(z.unknown()).max(4096),
-        metadata: z.object({ documents: z.array(desktopDocumentReferenceSchema).max(DESKTOP_DOCUMENT_MAX_FILES).optional() }).optional(),
+        metadata: z.object({
+            documents: z.array(desktopDocumentReferenceSchema).max(DESKTOP_DOCUMENT_MAX_FILES).optional(),
+            coworkerMentions: desktopCoworkerMentionsSchema.optional(),
+        }).optional(),
     })).max(5000),
     ui: z.strictObject({ snapshot: desktopForemanSavedUiSchema.nullable(), revision: z.number().int().nonnegative() }),
 }).refine(value => sameForemanChat(value.chat, value.view.chat) && (!value.ui.snapshot || sameForemanChat(value.chat, value.ui.snapshot)), 'Foreman state belongs to another chat.')
@@ -73,6 +76,7 @@ export function desktopForemanMessages(state: DesktopForemanClientState) {
             role,
             history: foremanHistoryParts(id, parts),
             ...(documents?.length && { documents }),
+            ...(role === 'user' && desktopCoworkerMentionFieldsOf(metadata?.coworkerMentions)),
             ...(answeredQuestions.length > 0 && { answeredQuestions }),
             text: visibleText(parts, '\n'),
             docs: parts.filter(part => part && typeof part === 'object' && (
@@ -162,7 +166,9 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
             },
         },
         conversation: {
-            sendMessage: async (text, signal, prepareDocuments) => {
+            sendMessage: async (text, signal, messageOptions) => {
+                const { prepareDocuments, coworkerMentions } = messageOptions ?? {}
+                const mentions = desktopCoworkerMentionFieldsOf(checkedDesktopCoworkerMentions(text, coworkerMentions))
                 owned(chat); signal?.throwIfAborted()
                 if (isDesktopQuitting() || sending || state.question || state.starter && !state.starter.decision?.settled) return false
                 sending = true
@@ -170,14 +176,17 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
                 try {
                     const picked = options.modelChoice?.()
                     const choice = pendingSend && picked === undefined ? pendingSend.modelChoice : picked ?? state.model ?? options.workspaceModel?.() ?? null
-                    if (pendingSend && (pendingSend.text !== text || JSON.stringify(pendingSend.modelChoice) !== JSON.stringify(choice))) throw new Error('Retry the previous message with its original model before sending a different message.')
+                    if (pendingSend && (pendingSend.text !== text || JSON.stringify(pendingSend.modelChoice) !== JSON.stringify(choice)
+                        || JSON.stringify(pendingSend.coworkerMentions ?? []) !== JSON.stringify(mentions.coworkerMentions ?? []))) {
+                        throw new Error('Retry the previous message with its original model and mentions before sending a different message.')
+                    }
                     if (pendingSend?.documents && !prepareDocuments) throw new Error('Retry the attached message from your Chief of Staff chat.')
                     const documents = pendingSend ? pendingSend.documents : await prepareDocuments?.(choice)
                     if (!text && !documents) return false
                     if (!await flushDesktopForemanUiSaves()) throw new Error('Save this Foreman draft before sending.')
                     signal?.throwIfAborted(); owned(chat)
                     if (isDesktopQuitting()) return false
-                    if (!pendingSend) { pendingSend = { requestId: createPlanDecisionRequestId(), text, modelChoice: choice, ...(documents && { documents }) }; reserved = true }
+                    if (!pendingSend) { pendingSend = { requestId: createPlanDecisionRequestId(), text, modelChoice: choice, ...(documents && { documents }), ...mentions }; reserved = true }
                     await saveForemanUiIfMatching(ports.persistence, lastUi)
                     signal?.throwIfAborted(); owned(chat)
                     if (isDesktopQuitting()) throw new Error('Rerun is closing.')
@@ -185,6 +194,7 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
                     const receipt = z.strictObject({ runId: z.string().min(1).max(128) }).parse(await act({
                         action: 'send', chat, requestId: pendingSend.requestId, text: pendingSend.text,
                         ...(pendingSend.modelChoice && { modelChoice: pendingSend.modelChoice }), ...(pendingSend.documents && { documents: pendingSend.documents }),
+                        ...desktopCoworkerMentionFieldsOf(pendingSend.coworkerMentions),
                     }, signal))
                     if (receipt.runId !== pendingSend.requestId) throw new Error('Foreman acknowledged a different message.')
                     pendingSend = undefined
@@ -192,7 +202,8 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
                     changed()
                     return true
                 } catch (error) {
-                    if (reserved && (!dispatched || pendingSend?.documents && error instanceof ForemanRequestError && error.status === 400)) {
+                    if (reserved && (!dispatched || (pendingSend?.documents || pendingSend?.coworkerMentions?.length)
+                        && error instanceof ForemanRequestError && error.status === 400)) {
                         pendingSend = undefined
                         await saveForemanUiIfMatching(ports.persistence, lastUi)
                     }

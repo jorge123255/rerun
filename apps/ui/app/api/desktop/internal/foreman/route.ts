@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
-import { companyBriefModelSchema, desktopForemanTurnSchema, foremanAlternateRequestSchema, foremanChatRefSchema, foremanBindingSchema, foremanNavigationIntentSchema } from '@rerun/contracts'
+import { DESKTOP_FOREMAN_TURN_MAX_BYTES, companyBriefModelSchema, desktopForemanTurnSchema, foremanAlternateRequestSchema, foremanChatRefSchema, foremanBindingSchema, foremanNavigationIntentSchema } from '@rerun/contracts'
 import { authenticateDesktopEngineRequest, DesktopHttpError } from '@/lib/desktop/server/auth'
 import { readDesktopJson } from '@/lib/desktop/server/request-json'
 import { foremanTurn, foremanTurnWire, ownedForemanDispatch } from '@/lib/desktop/server/foreman/chat-store'
@@ -23,7 +23,7 @@ const schema = z.discriminatedUnion('action', [
 ])
 export async function POST(request: Request) {
     try {
-        const runtime = await authenticateDesktopEngineRequest(request), input = schema.parse(await readDesktopJson(request, 48 * 1024))
+        const runtime = await authenticateDesktopEngineRequest(request), input = schema.parse(await readDesktopJson(request, DESKTOP_FOREMAN_TURN_MAX_BYTES))
         if (input.launchNonce !== runtime.launchNonce) throw new DesktopHttpError(409, 'Foreman launch changed.')
         if (input.action === 'alternate') {
             return Response.json(await authorizeForemanAlternate(runtime, input.operation, input.target))

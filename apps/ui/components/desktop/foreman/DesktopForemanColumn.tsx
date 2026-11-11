@@ -32,7 +32,9 @@ import { RotateCwIcon } from '@/lib/icons'
 import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopForemanAlternateReview, DesktopForemanAlternates } from './DesktopForemanAlternates'
 import { useDesktopForemanAlternates } from './useDesktopForemanAlternates'
-import { foremanDocumentScope } from '@rerun/contracts'
+import { foremanDocumentScope, type DesktopCoworkerCallTarget, type DesktopCoworkerMention } from '@rerun/contracts'
+import type { MentionSkill } from '@/components/chat/MentionAutocomplete'
+import { useDesktopMentionAutocomplete } from '../mentions/useDesktopMentionAutocomplete'
 import { useDesktopDocumentAttachments } from '@/lib/desktop/document-attachments/useDesktopDocumentAttachments'
 import { DesktopDocumentAttachmentControls } from '../document-attachments/DesktopDocumentAttachmentControls'
 import { DesktopDocumentPicker } from '../document-attachments/DesktopDocumentPicker'
@@ -41,12 +43,16 @@ function anchorOf(placement: DesktopForemanPlacement): ForemanAnchor {
     if (placement.mode === 'float') return 'float'
     return placement.side === 'left' ? 'dock-left' : 'dock-right'
 }
+const NO_MENTION_TARGETS: DesktopCoworkerCallTarget[] = []
+const NO_SKILLS: MentionSkill[] = []
+const NO_MENTIONS: DesktopCoworkerMention[] = []
 
 export type DesktopForemanColumnProps = {
     chat: DesktopForemanChatRef
     ports: DesktopForemanActionPorts
     live: { runId: string } | null
     messages: DesktopForemanMessage[]
+    mentionTargets?: DesktopCoworkerCallTarget[]
     sessionId?: string
     pendingSend?: boolean
     retryAttachedMessage?: boolean
@@ -91,6 +97,7 @@ export function DesktopForemanColumn({
     ports,
     live,
     messages,
+    mentionTargets,
     sessionId,
     pendingSend,
     retryAttachedMessage,
@@ -123,6 +130,11 @@ export function DesktopForemanColumn({
     const editAttachments = attachmentComposer && !hidden && !question && !streaming && !sendingDocuments
         && !pendingSend && !foreman.blocked && !sendDisabled && ui.decision.status !== 'pending' && foreman.restored
     const documents = useDesktopDocumentAttachments({ ...foremanDocumentScope(chat, sessionId ?? ''), load: attachmentComposer, enabled: editAttachments })
+    const mentions = useDesktopMentionAutocomplete({
+        targets: editAttachments && mentionTargets ? mentionTargets : NO_MENTION_TARGETS,
+        skills: NO_SKILLS, requireCallable: false, text: ui.draft, mentions: ui.draftCoworkerMentions ?? NO_MENTIONS,
+        onDraftChange: foreman.setDraft,
+    })
     const alternates = useDesktopForemanAlternates({
         chat, snapshot: retrySnapshot, active: !!retrySnapshot && ui.open && !hidden && !onRoutines && !intake && foreman.restored,
         eligible: !!retrySnapshot && !streaming && !question && !pendingStarter && !foreman.blocked && ui.decision.status !== 'pending',
@@ -270,6 +282,7 @@ export function DesktopForemanColumn({
                     </DesktopForemanChatLayer>
                     </>}
                     <DesktopForemanComposer
+                        mentions={editAttachments && !alternates.open ? mentions : undefined}
                         trailing={intake || pendingStarter ? undefined : composerTrailing}
                         controls={intake || pendingStarter || !ui.open ? undefined : <>
                             {attachmentComposer && <DesktopDocumentPicker disabled={!editAttachments || !documents.loaded} onFiles={documents.add} />}

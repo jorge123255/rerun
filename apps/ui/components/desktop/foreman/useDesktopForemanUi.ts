@@ -2,11 +2,13 @@
 
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { trimDesktopCoworkerMentions, type DesktopCoworkerMention } from '@rerun/contracts'
+import type { PrepareForemanDocuments } from '@/lib/desktop/foreman-client/actions'
 import {
     applyDesktopDiscoveryEvent, applyPlanDecisionResult, beginPlanDecision, canSubmitPlanDecision,
     createPlanDecisionRequestId, DEFAULT_DESKTOP_FOREMAN_PLACEMENT, discoveriesFromRun,
     EMPTY_DESKTOP_DISCOVERIES, fromContractBuild, isLiveForemanView, loadForemanUiAfterWrites,
-    projectForemanNextSteps, projectRestoredForemanUi, retryPlanDecisionRequest,
+    projectDraftChange, projectForemanNextSteps, projectRestoredForemanUi, retryPlanDecisionRequest,
     sameForemanChat, saveForemanUiIfMatching,
     type DesktopDiscoveriesState, type DesktopForemanActionPorts, type DesktopForemanBuildProgressView,
     type DesktopForemanChatRef, type DesktopForemanNextStep, type DesktopForemanPersistedUi,
@@ -169,8 +171,8 @@ export function useDesktopForemanUi({ chat, ports, live, initialOpen = false, re
         if (owner.state.ui.tab === tab) return
         commit(state => ({ ...state, ui: { ...state.ui, tab } }))
     }, [owner, commit])
-    const setDraft = useCallback((draft: string) => {
-        if (!isDesktopQuitting() && owner.state.restored) commit(state => ({ ...state, ui: { ...state.ui, draft } }))
+    const setDraft = useCallback((draft: string, selected?: DesktopCoworkerMention[]) => {
+        if (!isDesktopQuitting() && owner.state.restored) commit(state => ({ ...state, ui: projectDraftChange(state.ui, draft, selected) }))
     }, [owner, commit])
     const setDock = useCallback((dock: import('@/lib/desktop/foreman-dock/layout').DockExtras) => {
         if (!valid()) return
@@ -186,7 +188,7 @@ export function useDesktopForemanUi({ chat, ports, live, initialOpen = false, re
     useEffect(() => {
         if (!ui.open) return
         const onKeyDown = (event: KeyboardEvent) => {
-            if (event.key !== 'Escape') return
+            if (event.key !== 'Escape' || event.defaultPrevented) return
             if (event.target instanceof Element && event.target.closest('[role="dialog"], [role="alertdialog"], [role="menu"]')) return
             setOpen(false)
         }
@@ -260,16 +262,18 @@ export function useDesktopForemanUi({ chat, ports, live, initialOpen = false, re
             if (valid(generation) && !controller.signal.aborted) commit(current => ({ ...current, leadState: { status: 'failed', agentId: step.agentId, error: messageOf(error) } }), false)
         } finally { owner.controllers.delete(controller) }
     }, [owner, valid, commit, ports.build, navigate])
-    const sendMessage = useCallback(async (text: string, prepareDocuments?: import('@/lib/desktop/foreman-client/actions').PrepareForemanDocuments) => {
+    const sendMessage = useCallback(async (text: string, prepareDocuments?: PrepareForemanDocuments) => {
         if (isDesktopQuitting() || !valid() || !owner.state.restored || owner.state.blocked || owner.sending) return false
         const generation = owner.generation
         owner.sending = true
-        const submittedDraft = owner.state.ui.draft
+        const { draft: submittedDraft, draftCoworkerMentions: submittedMentions } = owner.state.ui
         try {
-            const accepted = prepareDocuments
-                ? await ports.conversation.sendMessage(text, undefined, prepareDocuments)
+            const { coworkerMentions } = submittedDraft.trim() === text ? trimDesktopCoworkerMentions(submittedDraft, submittedMentions) : {}
+            const accepted = prepareDocuments || coworkerMentions
+                ? await ports.conversation.sendMessage(text, undefined, { prepareDocuments, coworkerMentions })
                 : await ports.conversation.sendMessage(text)
-            if (valid(generation) && accepted && owner.state.ui.draft === submittedDraft && submittedDraft.trim() === text) setDraft('')
+            if (valid(generation) && accepted && owner.state.ui.draft === submittedDraft
+                && owner.state.ui.draftCoworkerMentions === submittedMentions && submittedDraft.trim() === text) setDraft('')
             return accepted
         } catch (error) {
             if (valid(generation)) commit(state => ({ ...state, error: messageOf(error) }), false)
