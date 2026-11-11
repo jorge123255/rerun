@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { recordUnusedScreen } from './isolated-screen/ownership.js'
 import { constants } from 'node:fs'
 import { mkdir, open, readdir, realpath, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -236,6 +237,7 @@ async function createAgentWithReceipt(input: DesktopAgentCreationInput, foreman?
                     // A partially written/unowned directory is never erased or guessed at on retry.
                     await mkdir(join(agents.pinned, stageName), { mode: 0o700 })
                     folder = await pinDirectory(join(agents.path, stageName))
+                    await recordUnusedScreen(id, folder.path)
                     const config = creationConfig(exactInput, foreman)
                     receipt = { version: 1, requestId, fingerprint, input: exactInput, ...(foreman && { foreman }), folder: { dev: String(folder.dev), ino: String(folder.ino) },
                         configHash: hash(JSON.stringify(config, null, 4)), soulHash: hash(foreman?.soulMd ?? defaultSoul({ ...config, description: '' })) }

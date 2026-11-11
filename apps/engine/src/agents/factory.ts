@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises'
-import { agentDir, configPath, installPath, skillsDir, soulPath, workspaceDir } from '../config/paths.js'
+import { agentDir, agentsDir, configPath, installPath, skillsDir, soulPath, workspaceDir } from '../config/paths.js'
 import { resolve } from 'node:path'
 import { newId } from '../lib/ids.js'
 import { insertAgentIndex } from '../db/repos/agents.js'
@@ -7,6 +7,8 @@ import { agentConfigSchema, type AgentConfig, type LoadedAgent } from './types.j
 import { serializeEnv, writeAgentEnv } from './env.js'
 import { defaultSoul } from './soul.js'
 import { resolveConfiguredModel } from './availability.js'
+import { desktopApp } from '../desktop/policy.js'
+import { recordUnusedScreen } from '../desktop/isolated-screen/ownership.js'
 
 export type CreateAgentInput = {
     config: Partial<AgentConfig> & { name: string }
@@ -21,6 +23,11 @@ export async function createAgent(input: CreateAgentInput): Promise<LoadedAgent>
     const env = input.keys ?? {}
     // Refused keys must fail before the folder exists, or the agent is left on disk with no index row.
     serializeEnv(env)
+    if (desktopApp()) {
+        await mkdir(agentsDir(), { recursive: true })
+        await mkdir(agentDir(id), { mode: 0o700 })
+        await recordUnusedScreen(id)
+    }
     await mkdir(workspaceDir(id), { recursive: true })
     await mkdir(skillsDir(id), { recursive: true })
     await mkdir(resolve(agentDir(id), 'memory'), { recursive: true })
