@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { DesktopDocumentReference } from '@rerun/contracts'
+import { DESKTOP_DOCUMENT_IMAGE_MAX_BYTES, type DesktopDocumentReference } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 import { DownloadIcon, FileIcon } from '@/lib/icons'
 import { fetchDesktopDocument, readDocumentResponse } from '@/lib/desktop/document-attachments/client'
@@ -49,8 +49,9 @@ function OwnedDocumentView({ attachment, onBack }: { attachment: DesktopDocument
                     : attachment.kind === 'audio' ? ['audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/flac']
                         : ['video/mp4', 'video/webm', 'video/quicktime']
                 if (!accepted.includes(type)) { await response.body?.cancel(); throw new Error('This attachment has no supported preview.') }
-                const bytes = await readDocumentResponse(response, attachment.byteLength, controller.signal)
-                if (bytes.byteLength !== attachment.byteLength) throw new Error('This attachment changed.')
+                const rendered = attachment.kind === 'image' && type === 'image/png' && type !== attachment.mimeType
+                const bytes = await readDocumentResponse(response, rendered ? DESKTOP_DOCUMENT_IMAGE_MAX_BYTES : attachment.byteLength, controller.signal)
+                if (!rendered && bytes.byteLength !== attachment.byteLength) throw new Error('This attachment changed.')
                 controller.signal.throwIfAborted()
                 src = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type })); setView({ src })
             } catch (error) { if (!controller.signal.aborted) setView({ error: error instanceof Error ? error.message : 'Preview is unavailable.' }) }

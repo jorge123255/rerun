@@ -51,16 +51,17 @@ export function desktopDocumentAttachmentsApi(service: DesktopDocumentAttachment
                     return Response.json({ attachments: await service.list(scope, signal) }, { headers })
                 }
                 if (!query.sha256 || !query.view) throw new DesktopHttpError(400, 'Choose an exact attachment identity.')
-                const result = await service.read(scope, query.attachmentId, query.sha256, signal)
+                const result = await service.read(scope, query.attachmentId, query.sha256, signal, query.view === 'preview' ? 'preview' : 'source')
                 if (query.view === 'preview') {
-                    const response = await previewResultBytes(result.attachment.name, result.bytes, { signal, page: query.page, scale: query.scale })
+                    const response = await previewResultBytes(result.renderedImage ? 'preview.png' : result.attachment.name,
+                        result.bytes, { signal, page: query.page, scale: query.scale })
                     await service.assertReadable(scope, query.attachmentId, query.sha256, signal)
                     response.headers.set('x-rerun-document-sha256', query.sha256)
                     return response
                 }
                 await service.assertReadable(scope, query.attachmentId, query.sha256, signal)
                 const name = encodeURIComponent(result.attachment.name).replace(/['()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
-                return new Response(new Uint8Array(result.bytes), { headers: { ...headers, 'Content-Type': query.view === 'download' ? 'application/octet-stream' : result.attachment.mimeType, 'Content-Length': String(result.bytes.byteLength), 'Content-Disposition': `attachment; filename*=UTF-8''${name}`, 'x-rerun-document-sha256': query.sha256 } })
+                return new Response(new Uint8Array(result.bytes), { headers: { ...headers, 'Content-Type': query.view === 'download' || result.attachment.conversion.renderedImage ? 'application/octet-stream' : result.attachment.mimeType, 'Content-Length': String(result.bytes.byteLength), 'Content-Disposition': `attachment; filename*=UTF-8''${name}`, 'x-rerun-document-sha256': query.sha256 } })
             }
             if (request.method !== 'POST') return Response.json({ error: 'Method unavailable.' }, { status: 405, headers })
             const body = desktopDocumentRequestSchema.parse(await readJson(request, signal))

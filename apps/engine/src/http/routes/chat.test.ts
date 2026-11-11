@@ -673,7 +673,7 @@ describe('POST /agents/:id/chat', () => {
         } finally { resolveModel.mockRestore(); vi.unstubAllEnvs() }
     })
 
-    it('binds question images to a verified answer and enforces the selected model on new and saved images', async () => {
+    it.each(['direct', 'rendered'])('binds %s question images to a verified answer and the selected model', async variant => {
         vi.stubEnv('RERUN_DESKTOP_APP', '1')
         const availability = await import('../../agents/availability.js')
         const resolveModel = vi.spyOn(availability, 'resolveRunModel').mockResolvedValue({ provider: 'openrouter', model: 'text-fixture', connection: null })
@@ -684,14 +684,17 @@ describe('POST /agents/:id/chat', () => {
             const session = await createSession(id)
             const question = await pendingQuestion(session.id)
             const data = Buffer.from('question image')
+            const original = variant === 'rendered' ? Buffer.from('original SVG') : data
             const reference = {
                 attachmentId: crypto.randomUUID(), scope: { agentId: 'desktop-agent', sessionId: 'local-chat', tabUid: 'question:' + 'a'.repeat(64) },
-                name: 'sample.png', mimeType: 'image/png', kind: 'image', byteLength: data.length,
-                sha256: createHash('sha256').update(data).digest('hex'),
+                name: variant === 'rendered' ? 'sample.svg' : 'sample.png',
+                mimeType: variant === 'rendered' ? 'image/svg+xml' : 'image/png', kind: 'image', byteLength: original.length,
+                sha256: createHash('sha256').update(original).digest('hex'),
             }
             const documents = { scope: reference.scope, attachmentIds: [reference.attachmentId], admissionId: crypto.randomUUID() }
             const turn = { runId: crypto.randomUUID(), question, documents }
-            const image = { reference, dataBase64: data.toString('base64') }
+            const image = { reference, dataBase64: data.toString('base64'),
+                ...(variant === 'rendered' && { renderedImage: { mimeType: 'image/png', sha256: createHash('sha256').update(data).digest('hex'), byteLength: data.length } }) }
             const body = { sessionId: session.id, message: 'Here is the image.', desktopQueuedTurn: turn, desktopDocuments: [image] }
             expect((await chat(id, { ...body, desktopQueuedTurn: { runId: turn.runId, documents } })).status).toBe(400)
             expect((await chat(id, { ...body, desktopDocuments: [{ ...image, dataBase64: 'c3dhcHBlZA==' }] })).status).toBe(400)
@@ -706,7 +709,7 @@ describe('POST /agents/:id/chat', () => {
             const user = (await listMessages(id, session.id)).find(row => row.role === 'user')
             const content = JSON.parse(user!.contentJson)
             expect(content).toContainEqual({ type: 'file', data: image.dataBase64, filename: reference.name,
-                mediaType: reference.mimeType, providerOptions: { rerun: { desktopDocument: reference } } })
+                mediaType: 'image/png', providerOptions: { rerun: { desktopDocument: reference } } })
             expect(desktopStoredDocumentReferences(content)).toEqual([reference])
 
             resolveModel.mockResolvedValue({ provider: 'openrouter', model: 'text-fixture', connection: null })

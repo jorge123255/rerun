@@ -22,8 +22,9 @@ export async function admitDesktopChatDocuments(runtime: DesktopRuntime, db: Cli
             resolved.push({ reference, text: content.text })
         } else if (content?.mode === 'file' && reference.kind === 'image') {
             const service = await desktopDocumentAttachmentService(runtime)
-            const { bytes } = await service.read(reference.scope, reference.attachmentId, reference.sha256, signal)
-            const image = desktopResolvedDocumentSchema.safeParse({ reference, dataBase64: Buffer.from(bytes).toString('base64') })
+            const { bytes, renderedImage } = await service.read(reference.scope, reference.attachmentId, reference.sha256, signal, 'preview')
+            const image = desktopResolvedDocumentSchema.safeParse({ reference, dataBase64: Buffer.from(bytes).toString('base64'),
+                ...(renderedImage && { renderedImage }) })
             if (!image.success) throw new DesktopHttpError(409, 'The selected image is no longer available.')
             resolved.push(image.data)
         } else throw new DesktopHttpError(409, 'Prepare this document before sending.')

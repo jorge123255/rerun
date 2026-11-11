@@ -166,7 +166,7 @@ chatRoutes.post('/chat', async c => {
     if (documentImages.length && !body.desktopQueuedTurn?.question) throw new HttpError(400, 'Question images must be sent with their original question.')
     const images = [
         ...resolvedAttachments.filter(item => item.type === 'image').map(item => ({ ...item.image, dataBase64: item.dataBase64 })),
-        ...documentImages.map(item => ({ ...item.reference, dataBase64: item.dataBase64 })),
+        ...documentImages.map(item => ({ ...('renderedImage' in item ? item.renderedImage : item.reference), dataBase64: item.dataBase64 })),
     ]
     verifyImageBytes(images)
     const attachmentSelections = body.desktopAttachments ? desktopResolvedAttachmentSelections(body.desktopAttachments) : attachments.map(attachment => attachment.path)

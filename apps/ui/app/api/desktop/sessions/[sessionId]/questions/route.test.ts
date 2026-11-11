@@ -1,4 +1,5 @@
 import { createServer, type Server } from 'node:http'
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,6 +11,7 @@ import type { DesktopPendingQuestion, DesktopQuestionAnswer } from '@/lib/deskto
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { GET, POST } from './route'
 import { POST as TRANSCRIBE } from './transcribe/route'
+import { SAFE_RED_CIRCLE } from '@/lib/desktop/server/preview-svg/fixtures'
 import { composerTestPng } from '@/lib/desktop/server/composer-image.test-fixtures'
 import { desktopAuxiliaryStore } from '@/lib/desktop/server/auxiliary/store'
 import { GET as GET_FILES, POST as POST_FILES } from '@/app/api/desktop/coworkers/[agentId]/document-attachments/route'
@@ -266,6 +268,64 @@ test('saves an image with its question, refuses a text-only model, and sends the
     await restartQuestionFixture()
     expect((await post(body)).headers.get('x-run-id')).toBe(body.requestId)
     expect(dispatches).toHaveLength(1)
+})
+
+test('preserves an original SVG and sends only its stored PNG representation after restart', async () => {
+    const question = await pending()
+    const scope = { agentId: alice.id, sessionId: a.id, tabUid: questionDocumentTabUid(question.id) }
+    const attachmentId = crypto.randomUUID()
+    const original = Buffer.from(SAFE_RED_CIRCLE)
+    const url = `${runtime.app.origin}/api/desktop/coworkers/${alice.id}/document-attachments`
+    const headers = { origin: runtime.app.origin, host: new URL(runtime.app.origin).host, 'content-type': 'application/json',
+        cookie: 'rerun-desktop-session=' + runtime.app.sessionToken }
+    const params = { params: Promise.resolve({ agentId: alice.id }) }
+    const upload = { ...scope, operation: 'upload', attachmentId, name: 'reference.svg', mimeType: 'image/svg+xml',
+        position: 0, audioBase64: original.toString('base64') }
+    const write = (input: object) => POST_FILES(new Request(url, { method: 'POST', headers, body: JSON.stringify(input) }), params)
+    const refused = await write({ ...upload, audioBase64: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><foreignObject/></svg>').toString('base64') })
+    expect(refused.status).toBe(415)
+    const uploaded = await write(upload)
+    const body = await uploaded.json()
+    expect(uploaded.status, JSON.stringify(body)).toBe(200)
+    const { attachment } = body
+    expect(attachment).toMatchObject({ sha256: createHash('sha256').update(original).digest('hex'), mimeType: 'image/svg+xml',
+        conversion: { mode: 'image', state: 'ready', renderedImage: { mimeType: 'image/png' } } })
+    const renderedImage = attachment.conversion.renderedImage
+    const read = (view: string, hash = attachment.sha256) => GET_FILES(new Request(url + '?' + new URLSearchParams({
+        tabUid: scope.tabUid, sessionId: scope.sessionId, attachmentId, sha256: hash, view,
+    }), { headers }), params)
+    await restartQuestionFixture()
+    const preview = await read('preview')
+    expect(preview.status).toBe(200)
+    expect(preview.headers.get('content-type')).toBe('image/png')
+    const png = Buffer.from(await preview.arrayBuffer())
+    expect(png.length).toBe(renderedImage.byteLength)
+    expect(createHash('sha256').update(png).digest('hex')).toBe(renderedImage.sha256)
+    expect((await read('preview', renderedImage.sha256)).status).toBe(409)
+
+    const download = await read('read')
+    expect(download.headers.get('content-type')).toBe('application/octet-stream')
+    expect(Buffer.from(await download.arrayBuffer())).toEqual(original)
+    const documents = { scope, admissionId: crypto.randomUUID(), attachmentIds: [attachmentId] }
+    const payload = { ...answer(question, [[], [], [], []]), documents }
+    const db = await openDesktopDatabase(root)
+    const changeBytes = (bytes: Uint8Array) => db.execute({ sql: 'UPDATE desktop_document_rendered_images SET bytes=? WHERE attachment_id=?', args: [bytes, attachmentId] })
+    await changeBytes(new Uint8Array(png.length))
+    expect((await read('preview')).status).toBe(409)
+    expect((await post(payload)).status).toBe(409)
+    expect((await pending()).attempt).toBeUndefined()
+    expect(dispatches).toHaveLength(0)
+    await changeBytes(png)
+    expect((await post(payload)).status).toBe(200)
+    expect(dispatches[0].desktopDocuments).toMatchObject([{ reference: { name: 'reference.svg', sha256: attachment.sha256 },
+        renderedImage, dataBase64: png.toString('base64') }])
+    expect(JSON.stringify(dispatches[0])).not.toContain(original.toString('base64'))
+    await restartQuestionFixture()
+    expect((await post(payload)).headers.get('x-run-id')).toBe(payload.requestId)
+    expect(dispatches).toHaveLength(1)
+    const saved = await read('download')
+    expect(saved.status).toBe(200)
+    expect(Buffer.from(await saved.arrayBuffer())).toEqual(original)
 })
 
 test('an unavailable source lookup cannot bypass webhook authority and dispatch an ordinary reply', async () => {

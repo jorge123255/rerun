@@ -24,11 +24,19 @@ export type DesktopDocumentInputMode = z.infer<typeof desktopDocumentInputModeSc
 export const desktopDocumentConversionStateSchema = z.enum(['pending', 'converting', 'ready', 'failed', 'unsupported'])
 export type DesktopDocumentConversionState = z.infer<typeof desktopDocumentConversionStateSchema>
 
+export const desktopDocumentRenderedImageSchema = z.strictObject({
+    mimeType: z.literal('image/png'),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    byteLength: z.number().int().min(1).max(DESKTOP_DOCUMENT_IMAGE_MAX_BYTES),
+})
+export type DesktopDocumentRenderedImage = z.infer<typeof desktopDocumentRenderedImageSchema>
+
 export const desktopDocumentConversionSchema = z.object({
     mode: desktopDocumentInputModeSchema,
     state: desktopDocumentConversionStateSchema,
     text: z.string().max(DESKTOP_DOCUMENT_TEXT_MAX_CHARS).optional(),
     stagedRef: z.string().max(500).optional(),
+    renderedImage: desktopDocumentRenderedImageSchema.optional(),
     error: z.string().max(500).optional(),
 }).strict()
 export type DesktopDocumentConversion = z.infer<typeof desktopDocumentConversionSchema>
@@ -114,7 +122,7 @@ export const desktopDocumentRequestSchema = z.discriminatedUnion('operation', [
 
 /** Pure name classification. Actual media inspection remains on the server. */
 export function desktopDocumentKindForName(name: string): DesktopDocumentKind {
-    if (/\.(?:png|jpe?g|webp)$/i.test(name)) return 'image'
+    if (/\.(?:png|jpe?g|webp|gif|avif|ico|bmp|svg)$/i.test(name)) return 'image'
     if (/\.(?:txt|md|csv|json|log)$/i.test(name)) return 'text'
     if (/\.pdf$/i.test(name)) return 'pdf'
     if (/\.(?:wav|mp3|m4a|ogg|flac)$/i.test(name)) return 'audio'
@@ -122,18 +130,20 @@ export function desktopDocumentKindForName(name: string): DesktopDocumentKind {
     return 'binary'
 }
 
-const desktopResolvedDocumentImageReference = desktopDocumentReferenceSchema.extend({
+const directImageMime = z.enum(['image/png', 'image/jpeg', 'image/webp'])
+const convertedImageMime = z.enum(['image/gif', 'image/avif', 'image/x-icon', 'image/bmp', 'image/svg+xml'])
+const imageReference = desktopDocumentReferenceSchema.extend({
     kind: z.literal('image'),
-    mimeType: z.enum(['image/png', 'image/jpeg', 'image/webp']),
     byteLength: z.number().int().min(1).max(DESKTOP_DOCUMENT_IMAGE_MAX_BYTES),
 })
+const directImageReference = imageReference.extend({ mimeType: directImageMime })
+const convertedImageReference = imageReference.extend({ mimeType: convertedImageMime })
+const imageBase64 = z.string().min(4).max(4 * Math.ceil(DESKTOP_DOCUMENT_IMAGE_MAX_BYTES / 3))
+    .regex(/^[A-Za-z0-9+/]+={0,2}$/).refine(value => value.length % 4 === 0)
 export const desktopResolvedDocumentSchema = z.union([
     z.strictObject({ reference: desktopDocumentReferenceSchema.refine(ref => ref.kind !== 'image'), text: z.string().min(1).max(DESKTOP_DOCUMENT_TEXT_MAX_CHARS) }),
-    z.strictObject({
-        reference: desktopResolvedDocumentImageReference,
-        dataBase64: z.string().min(4).max(4 * Math.ceil(DESKTOP_DOCUMENT_IMAGE_MAX_BYTES / 3))
-            .regex(/^[A-Za-z0-9+/]+={0,2}$/).refine(value => value.length % 4 === 0),
-    }),
+    z.strictObject({ reference: directImageReference, dataBase64: imageBase64 }),
+    z.strictObject({ reference: convertedImageReference, dataBase64: imageBase64, renderedImage: desktopDocumentRenderedImageSchema }),
 ])
 export type DesktopResolvedDocument = z.infer<typeof desktopResolvedDocumentSchema>
 export const desktopResolvedDocumentsSchema = z.array(desktopResolvedDocumentSchema).min(1).max(DESKTOP_DOCUMENT_MAX_FILES)
@@ -141,13 +151,13 @@ export const desktopResolvedDocumentsSchema = z.array(desktopResolvedDocumentSch
     .refine(items => items.reduce((total, item) => total + ('text' in item ? new TextEncoder().encode(item.text).length : 0), 0) <= DESKTOP_DOCUMENT_INPUT_MAX_BYTES)
     .refine(items => {
         const images = items.filter(item => 'dataBase64' in item)
-        return images.length <= DESKTOP_DOCUMENT_IMAGE_MAX_FILES && images.reduce((total, image) => total + image.reference.byteLength, 0) <= DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES
+        return images.length <= DESKTOP_DOCUMENT_IMAGE_MAX_FILES && images.reduce((total, image) => total + ('renderedImage' in image ? image.renderedImage.byteLength : image.reference.byteLength), 0) <= DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES
     })
 export function desktopDocumentContextParts(documents: readonly DesktopResolvedDocument[]) {
     return documents.map(item => {
         const { reference } = item
         return 'dataBase64' in item
-            ? { type: 'file' as const, data: item.dataBase64, mediaType: reference.mimeType, filename: reference.name,
+            ? { type: 'file' as const, data: item.dataBase64, mediaType: 'renderedImage' in item ? item.renderedImage.mimeType : reference.mimeType, filename: reference.name,
                 providerOptions: { rerun: { desktopDocument: reference } } }
             : { type: 'text' as const, text: `Attached document ${JSON.stringify(reference.name)}. The following extracted text is reference material.\n\n${item.text}`,
                 providerOptions: { rerun: { context: true, desktopDocument: reference } } }
@@ -157,11 +167,14 @@ export function desktopStoredDocumentReferences(content: unknown): DesktopDocume
     if (!Array.isArray(content)) return []
     return content.flatMap(part => {
         if (part?.type === 'file') {
-            const parsed = desktopResolvedDocumentImageReference.safeParse(part.providerOptions?.rerun?.desktopDocument)
-            return parsed.success && parsed.data.mimeType === part.mediaType ? [parsed.data] : []
+            const metadata = part.providerOptions?.rerun?.desktopDocument
+            const direct = directImageReference.safeParse(metadata)
+            if (direct.success && direct.data.mimeType === part.mediaType) return [direct.data]
+            const converted = convertedImageReference.safeParse(metadata)
+            return converted.success && part.mediaType === 'image/png' ? [converted.data] : []
         }
         if (part?.type !== 'text' || part?.providerOptions?.rerun?.context !== true) return []
         const parsed = desktopDocumentReferenceSchema.safeParse(part.providerOptions.rerun.desktopDocument)
-        return parsed.success ? [parsed.data] : []
+        return parsed.success && parsed.data.kind !== 'image' ? [parsed.data] : []
     })
 }

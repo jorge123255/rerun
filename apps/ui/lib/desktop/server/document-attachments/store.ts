@@ -18,6 +18,11 @@ CREATE TABLE IF NOT EXISTS desktop_document_blobs (
  sha256 TEXT NOT NULL, byte_length INTEGER NOT NULL CHECK(byte_length > 0 AND byte_length <= 16777216),
  bytes BLOB NOT NULL CHECK(length(bytes)=byte_length)
 );
+CREATE TABLE IF NOT EXISTS desktop_document_rendered_images (
+ attachment_id TEXT PRIMARY KEY REFERENCES desktop_document_blobs(attachment_id) ON DELETE CASCADE,
+ sha256 TEXT NOT NULL, byte_length INTEGER NOT NULL CHECK(byte_length > 0 AND byte_length <= 8388608),
+ bytes BLOB NOT NULL CHECK(length(bytes)=byte_length)
+);
 CREATE TABLE IF NOT EXISTS desktop_document_admissions (
  admission_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
  tab_uid TEXT NOT NULL, session_id TEXT, fingerprint TEXT NOT NULL, selection TEXT NOT NULL,

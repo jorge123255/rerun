@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { useDesktopLocale } from './DesktopLocale'
 import { useDesktopQuestionVoice } from './voice/useDesktopQuestionVoice'
 import { DesktopDocumentChips } from './document-attachments/DesktopDocumentChips'
+import { DESKTOP_IMAGE_UPLOAD_ACCEPT } from '@/lib/desktop/composer-image'
 import { useDesktopDocumentAttachments } from '@/lib/desktop/document-attachments/useDesktopDocumentAttachments'
 import { QUESTION_DOCUMENT_POSITIONS, questionDocumentIndex, questionDocumentTabUid } from '@/lib/desktop/question-documents'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer, DesktopQuestionPayload } from '@/lib/desktop/questions'
@@ -91,7 +92,7 @@ function QuestionCard({ question, disabled, voiceSessionId, onAnswer, files }: D
         return true
     }
     const attachments: QuestionAttachments | undefined = files?.loaded ? {
-        accept: '.png,.jpg,.jpeg,.webp,.txt,.md,.csv,.json,.log,.pdf,.wav,.mp3,.m4a,.ogg',
+        accept: DESKTOP_IMAGE_UPLOAD_ACCEPT + '.txt,.md,.csv,.json,.log,.pdf,.wav,.mp3,.m4a,.ogg',
         onPick: (index, selected) => {
             const start = index * QUESTION_DOCUMENT_POSITIONS
             files.add(selected, { start, end: start + QUESTION_DOCUMENT_POSITIONS })

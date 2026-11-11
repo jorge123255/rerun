@@ -2,7 +2,7 @@ import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
 import { desktopDocumentScopeSchema, desktopDocumentSelectionSchema, desktopDocumentRevisionActionSchema, desktopDocumentUploadSchema, DESKTOP_DOCUMENT_IMAGE_MAX_FILES, DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES, DESKTOP_DOCUMENT_TEXT_MAX_CHARS, DESKTOP_DOCUMENT_INPUT_MAX_BYTES, type DesktopDocumentAdmission, type DesktopDocumentAttachment, type DesktopDocumentConversion, type DesktopDocumentReference, type DesktopDocumentScope, type DesktopDocumentSelection } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
-import { inspectStoredComposerImage } from '../composer-image-formats'
+import { inspectComposerImageSource } from '../composer-image-formats'
 import { questionDocumentId } from '../../question-documents'
 import { inspectDesktopDocumentUpload, readDesktopPlainText } from './bytes'
 import { documentConflict } from './store'
@@ -51,6 +51,11 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
         inspectDesktopDocumentUpload(attachment, bytes)
         return bytes
     }
+    async function verifyPrepared(scope: DesktopDocumentScope, attachment: DesktopDocumentAttachment, signal: AbortSignal) {
+        await verified(scope, attachment, signal)
+        const image = attachment.conversion.renderedImage
+        if (image) await blobs.readRenderedImage(scope, attachment, image, signal)
+    }
     const initialConversion = (kind: DesktopDocumentAttachment['kind']): DesktopDocumentConversion => kind === 'pdf'
         ? { mode: 'pdf-text', state: 'pending' }
         : kind === 'audio' ? { mode: 'voice-transcript', state: 'pending' }
@@ -68,28 +73,31 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
                 await owner(scope, signal)
                 if (scopeKey(input) !== scopeKey(scope)) throw documentConflict()
                 const inspected = inspectDesktopDocumentUpload(input, bytes)
+                let rendered: Uint8Array | undefined
                 if (inspected.kind === 'image') {
                     if (!questionDocumentId(scope.tabUid)) throw new DesktopHttpError(415, 'Use the chat composer to attach images to an ordinary message.')
-                    const mimeType = inspected.mimeType
-                    if (mimeType !== 'image/png' && mimeType !== 'image/jpeg' && mimeType !== 'image/webp') throw new DesktopHttpError(415, 'Choose a supported image.')
-                    await inspectStoredComposerImage(mimeType, bytes)
+                    const image = await inspectComposerImageSource(input.name, bytes, signal)
+                    if (image.mediaType !== inspected.mimeType) rendered = image.bytes
                     signal.throwIfAborted()
                 }
                 const fingerprint = digest(JSON.stringify([scopeKey(scope), input.attachmentId, input.name, inspected.mimeType, inspected.sha256, inspected.byteLength, input.position]))
                 const now = new Date().toISOString()
                 const conversion: DesktopDocumentConversion = inspected.kind === 'text'
                     ? { mode: 'plain-text', state: 'ready', text: readDesktopPlainText(bytes) }
-                    : inspected.kind === 'image' ? { mode: 'image', state: 'ready' } : initialConversion(inspected.kind)
+                    : inspected.kind === 'image' ? {
+                        mode: 'image', state: 'ready',
+                        ...(rendered && { renderedImage: { mimeType: 'image/png', sha256: digest(rendered), byteLength: rendered.byteLength } }),
+                    } : initialConversion(inspected.kind)
                 const initial: DesktopDocumentAttachmentRecord = { fingerprint, attachment: { ...inspected, scope, attachmentId: input.attachmentId, name: input.name, position: input.position, uploaded: false, selected: true, admitted: false, conversion, revision: randomUUID(), createdAt: now, updatedAt: now } }
                 await owner(scope, signal)
                 let record = (await store.reserve(initial)).record
                 if (record.fingerprint !== fingerprint || record.deletion) throw documentConflict()
                 await owner(scope, signal)
                 if (!record.attachment.uploaded) {
-                    await blobs.put(scope, record.attachment, bytes, signal)
+                    await blobs.put(scope, record.attachment, bytes, signal, rendered)
                     await owner(scope, signal)
                     record = await save(record, { uploaded: true })
-                } else await verified(scope, record.attachment, signal)
+                } else await verifyPrepared(scope, record.attachment, signal)
                 await owner(scope, signal)
                 return record.attachment
             })
@@ -132,7 +140,12 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
             const previous = await store.readAdmission(scope, selection.admissionId)
             if (previous) {
                 if (previous.fingerprint !== fingerprint) throw documentConflict()
-                for (const ref of previous.admission.references) { await owner(ref.scope, signal); const item = await required(ref.scope, ref.attachmentId); await verified(ref.scope, item.attachment, signal); if (item.attachment.sha256 !== ref.sha256) throw documentConflict() }
+                for (const ref of previous.admission.references) {
+                    await owner(ref.scope, signal)
+                    const item = await required(ref.scope, ref.attachmentId)
+                    if (item.attachment.sha256 !== ref.sha256) throw documentConflict()
+                    await verifyPrepared(ref.scope, item.attachment, signal)
+                }
                 await owner(scope, signal)
                 return previous.admission
             }
@@ -146,11 +159,11 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
                 if (!record || record.deletion || !record.attachment.selected || !record.attachment.uploaded) throw documentConflict()
                 const a = record.attachment
                 await owner(a.scope, signal)
-                await verified(a.scope, a, signal)
+                await verifyPrepared(a.scope, a, signal)
                 const reference: DesktopDocumentReference = { attachmentId: a.attachmentId, scope: a.scope, name: a.name, mimeType: a.mimeType, kind: a.kind, sha256: a.sha256, byteLength: a.byteLength }
                 if (a.kind === 'image' && a.conversion.mode === 'image' && a.conversion.state === 'ready') {
                     imageCount++
-                    imageBytes += a.byteLength
+                    imageBytes += a.conversion.renderedImage?.byteLength ?? a.byteLength
                     if (imageCount > DESKTOP_DOCUMENT_IMAGE_MAX_FILES || imageBytes > DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES) {
                         return { allowed: false, reason: 'Choose at most four images, up to 16 MiB in total.', references: [], inputs: [] }
                     }
@@ -198,7 +211,7 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
                 await owner(record.attachment.scope, signal)
                 const a = record.attachment
                 if (!a.uploaded) { output.push({ ...a, conversion: { ...a.conversion, state: 'failed', error: 'Upload is incomplete. Retry with the original file, or remove it and attach again.' } }); continue }
-                try { await verified(a.scope, a, signal) }
+                try { await verifyPrepared(a.scope, a, signal) }
                 catch (error) { signal.throwIfAborted(); await owner(a.scope, signal); output.push({ ...a, conversion: { ...a.conversion, state: 'failed', error: 'Attachment bytes are unavailable. Remove it and attach the file again.' } }); continue }
                 output.push(a.conversion.state === 'converting' && !pending.has(a.attachmentId) ? { ...a, conversion: { ...a.conversion, state: 'failed', error: 'Preparation was interrupted. Retry explicitly to prepare again.' } } : a)
             }
@@ -224,13 +237,16 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
                 await store.discard(scope, input.attachmentId)
             })
         },
-        async read(scope: DesktopDocumentScope, attachmentId: string, sha256: string, signal: AbortSignal) {
+        async read(scope: DesktopDocumentScope, attachmentId: string, sha256: string, signal: AbortSignal, view: 'source' | 'preview' = 'source') {
             await readOwner(scope, attachmentId, signal)
             const record = await required(scope, attachmentId)
-            if (!record.attachment.uploaded || record.attachment.sha256 !== sha256) throw documentConflict()
-            const bytes = await verified(scope, record.attachment, signal)
+            const attachment = record.attachment
+            if (!attachment.uploaded || attachment.sha256 !== sha256) throw documentConflict()
+            const renderedImage = view === 'preview' ? attachment.conversion.renderedImage : undefined
+            const bytes = renderedImage
+                ? await blobs.readRenderedImage(scope, attachment, renderedImage, signal) : await verified(scope, attachment, signal)
             await readOwner(scope, attachmentId, signal)
-            return { bytes, attachment: record.attachment }
+            return { bytes, attachment, renderedImage }
         },
         async assertReadable(scope: DesktopDocumentScope, attachmentId: string, sha256: string, signal: AbortSignal) {
             await readOwner(scope, attachmentId, signal)
