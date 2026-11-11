@@ -1,12 +1,14 @@
 import { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
-import { FOREMAN_AGENT_ID, foremanBindingSchema, foremanBriefSchema, foremanChatRefSchema, foremanQuestionGuardSchema } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, foremanAlternateRequestSchema, foremanBindingSchema, foremanBriefSchema, foremanDigestSchema, foremanQuestionGuardSchema, foremanReplyTargetSchema } from '@rerun/contracts'
 import { withAgentLock } from '../../agents/lock.js'
 import { getAgent } from '../../agents/registry.js'
 import { resolveRunModel } from '../../agents/availability.js'
 import { getSession } from '../../db/repos/sessions.js'
 import { getRun, cancelRun } from '../../db/repos/runs.js'
 import { readForemanReplySource } from '../../db/repos/foreman-reply-sources.js'
+import { lookupForemanAlternate, prepareForemanAlternate } from '../../db/repos/foreman-alternate-sessions.js'
 import { assertDesktopRunAdmission } from '../workspace-admission.js'
 import { getDesktopQueuedTurn, reserveDesktopQueuedTurn } from '../../db/repos/desktop-queued-turns.js'
 import { HttpError } from '../../lib/errors.js'
@@ -55,16 +57,43 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
     routes.get('/reply-source', async c => {
         const bridge = readBinding()
         if (!desktopApp() || !bridge) return c.json({ error: 'Desktop Foreman is unavailable.' }, 404)
-        const target = foremanChatRefSchema.extend({
-            sessionId: z.uuid(),
-            assistantMessageId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
-            expectedTranscriptRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+        const target = foremanReplyTargetSchema.extend({
+            expectedTranscriptRevision: foremanDigestSchema.optional(),
         }).safeParse(c.req.query())
         if (!target.success) return c.json({ error: 'Invalid saved Foreman reply.' }, 400)
         const { expectedTranscriptRevision, ...scope } = target.data
         const source = scope.workspaceId === bridge.workspaceId ? await readForemanReplySource(scope) : null
         const sameTranscript = expectedTranscriptRevision === undefined || source?.transcriptRevision === expectedTranscriptRevision
         return c.json({ source: readBinding() === bridge && sameTranscript ? source : null }, 200, { 'cache-control': 'no-store' })
+    })
+    routes.post('/alternate', bodyLimit({ maxSize: 4096 }), async c => {
+        const bridge = readBinding()
+        if (!desktopApp() || !bridge) return c.json({ error: 'Desktop Foreman is unavailable.' }, 404)
+        const parsed = z.strictObject({ operation: z.enum(['prepare', 'lookup']), target: foremanAlternateRequestSchema })
+            .safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) return c.json({ error: 'Invalid alternate request.' }, 400)
+        const { operation, target } = parsed.data
+        const signal = c.req.raw.signal
+        const assertCurrent = () => {
+            signal.throwIfAborted()
+            if (readBinding() !== bridge || target.workspaceId !== bridge.workspaceId) throw new HttpError(409, 'Foreman app launch changed.')
+            if (operation === 'prepare') assertDesktopRunAdmission()
+        }
+        const authorize = async () => {
+            assertCurrent()
+            await bridge.authorizeAlternate(operation, target, signal)
+            assertCurrent()
+        }
+        try {
+            if (operation === 'lookup') await authorize()
+            const alternate = operation === 'prepare'
+                ? await prepareForemanAlternate(target, { authorize, assertCurrent })
+                : await lookupForemanAlternate(target)
+            assertCurrent()
+            return c.json({ alternate }, 200, { 'cache-control': 'no-store' })
+        } catch {
+            return c.json({ error: 'The Chief of Staff alternate was not confirmed.' }, 409, { 'cache-control': 'no-store' })
+        }
     })
     routes.post('/chat', async c => {
         try {

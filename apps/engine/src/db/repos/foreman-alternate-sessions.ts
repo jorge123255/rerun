@@ -1,16 +1,16 @@
 import { randomUUID } from 'node:crypto'
 import type { Client, InStatement } from '@libsql/client'
-import { FOREMAN_AGENT_ID } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, type ForemanAlternateRequest } from '@rerun/contracts'
 import { withAgentLock } from '../../agents/lock.js'
 import { desktopApp } from '../../desktop/policy.js'
 import { HttpError } from '../../lib/errors.js'
 import { newId, nowIso } from '../../lib/ids.js'
 import { sessionClaim } from '../../runtime/run-control.js'
 import { getSystemDb } from '../systemDb.js'
-import { readForemanReplySnapshot, type ForemanReplyTarget } from './foreman-reply-sources.js'
+import { readForemanReplySnapshot } from './foreman-reply-sources.js'
 import { copiedMessageStatements } from './messages.js'
 
-export type ForemanAlternateRequest = ForemanReplyTarget & { requestId: string; transcriptRevision: string }
+type PreparationGuard = { authorize(): Promise<void>; assertCurrent(): void }
 
 const conflict = () => new HttpError(409, 'This saved Chief of Staff reply cannot be used to prepare an alternate.')
 
@@ -56,9 +56,11 @@ export async function lookupForemanAlternate(input: ForemanAlternateRequest) {
 // Persist the independent session, copied prefix and stable future run identity together.
 // Dispatch and human-decision/build admission belong to the authenticated app/engine bridge.
 // The reserved run ID has no live run row and no tool authority.
-export async function prepareForemanAlternate(input: ForemanAlternateRequest) {
+export async function prepareForemanAlternate(input: ForemanAlternateRequest, guard?: PreparationGuard) {
     if (!desktopApp()) throw conflict()
     return withAgentLock(FOREMAN_AGENT_ID, async () => {
+        await guard?.authorize()
+        guard?.assertCurrent()
         const { client } = await getSystemDb(FOREMAN_AGENT_ID)
         const tx = await client.transaction('write')
         try {
@@ -118,7 +120,9 @@ export async function prepareForemanAlternate(input: ForemanAlternateRequest) {
                         sessionId, runId, userMessageId],
                 },
             ]
+            guard?.assertCurrent()
             await tx.batch([...statements, ...prefix.flatMap(copiedMessageStatements)])
+            guard?.assertCurrent()
             await tx.commit()
             return { requestId: input.requestId, sessionId, runId, userMessageId, source: proof }
         } finally { tx.close() }

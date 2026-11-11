@@ -29,6 +29,7 @@ import { foremanQuestionText, readPendingForemanQuestion } from './question'
 import type { DesktopQuestionAnswer } from '../../questions'
 import { createDesktopLocalStarterDecisions, type DesktopLocalStarterDecision } from '../foreman-starter/local-decision'
 import { createDesktopLocalStarterOffers } from '../foreman-starter/local-offer'
+import { FOREMAN_ALTERNATE_SQL } from '../foreman-alternates/repository'
 
 const KEY = Symbol.for('rerun.desktop.foreman.binding.v1')
 const SHUTDOWN_KEY = Symbol.for('rerun.desktop.foreman.shutdown.v1')
@@ -48,6 +49,7 @@ export function desktopForeman(runtime: DesktopRuntime): Promise<Binding> {
 }
 async function createBinding(runtime: DesktopRuntime) {
     const db = await openDesktopDatabase(runtime.dataRoot)
+    await db.execute(FOREMAN_ALTERNATE_SQL)
     const workspaceId = String(runtime.workspaceId)
     const starterDecisions = createDesktopLocalStarterDecisions(runtime, db)
     const starterOffers = createDesktopLocalStarterOffers(runtime, db)
@@ -140,6 +142,27 @@ async function createBinding(runtime: DesktopRuntime) {
         readView: async (chat: DesktopForemanChatRef) => (await intakeContext(chat)).view,
     }
     await core.reconcile()
+
+    async function assertAlternateIdle(chat: DesktopForemanChatRef) {
+        assertDesktopWorkspaceAdmission(runtime)
+        if (chat.workspaceId !== workspaceId) throw new DesktopHttpError(404, 'Conversation not found.')
+        const owner = await ownedForemanChat(db, chat)
+        const row = (await db.execute({ sql: "SELECT request_id FROM desktop_foreman_turns WHERE chat_id=? AND status IN ('pending','admitted') ORDER BY rowid DESC LIMIT 1", args: [chat.chatId] })).rows[0]
+        if (row) {
+            const saved = await lookupRun(String(row.request_id))
+            if (saved.state !== 'present' || saved.run.status === 'running') {
+                throw new DesktopHttpError(409, 'Wait for the Chief of Staff’s current message to settle.')
+            }
+        }
+        const [view, question, starter] = await Promise.all([
+            core.readView(chat), readPendingForemanQuestion(runtime, owner), starterDecisions.view(chat, true),
+        ])
+        if (view.live || view.blocked || view.build?.state === 'reserved' || view.build?.state === 'running'
+            || view.build?.setup.state === 'pending' || view.discovery?.status === 'running' || question || (starter && !starter.decision?.settled)) {
+            throw new DesktopHttpError(409, 'Resolve the current Chief of Staff work before preparing a retry.')
+        }
+        assertDesktopWorkspaceAdmission(runtime)
+    }
 
     async function dispatch(turn: ForemanTurn, replayOnly: boolean, guard?: VoiceGuard): Promise<{ runId: string }> {
         await checkVoice(guard)
@@ -240,7 +263,7 @@ async function createBinding(runtime: DesktopRuntime) {
         })
     }
     return {
-        core, db, send, isLive, companyDiscovery, starterOffers,
+        core, db, send, isLive, companyDiscovery, starterOffers, assertAlternateIdle,
         answerQuestion: (chat: DesktopForemanChatRef, answer: DesktopQuestionAnswer) => send(chat, answer.requestId, '', undefined, undefined, answer),
         async answerStarter(chat: DesktopForemanChatRef, input: DesktopLocalStarterDecision, signal: AbortSignal) {
             if (input.choice.kind === 'text') {

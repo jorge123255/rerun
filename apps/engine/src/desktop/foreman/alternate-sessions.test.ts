@@ -17,6 +17,8 @@ const { appendMessage, listMessages } = await import('../../db/repos/messages.js
 const { cancelRun, finishRun, getRun } = await import('../../db/repos/runs.js')
 const { getSession } = await import('../../db/repos/sessions.js')
 const { claimSession, releaseSession } = await import('../../runtime/run-control.js')
+const { createDesktopForemanBridge } = await import('./bridge.js')
+const { createDesktopForemanRoutes } = await import('./routes.js')
 const id = 'foreman'
 const chat = { workspaceId: '1', chatId: 'fmc_alternate-test' }
 
@@ -134,4 +136,50 @@ test('a failed prefix write leaves no session or receipt, and a damaged receipt 
     await expect(lookupForemanAlternate(request)).rejects.toMatchObject({ status: 409 })
     await expect(prepareForemanAlternate(request)).rejects.toMatchObject({ status: 409 })
     expect((await linked()).rows).toHaveLength(1)
+})
+
+test('alternate route requires exact app authorization and checks the launch again before writing', async () => {
+    const { request } = await source()
+    const launchNonce = randomUUID()
+    let allowed = false
+    let revokeOnAuthorize = false
+    const observed: { operation: string; target: typeof request }[] = []
+    const bridge = createDesktopForemanBridge({ workspaceId: 1, launchNonce,
+        app: { origin: 'http://127.0.0.1:3101' }, engine: { apiKey: 'a'.repeat(64) } },
+    async (_url, init) => {
+        const body = JSON.parse(String(init?.body))
+        expect(body.action).toBe('alternate')
+        expect(body.launchNonce).toBe(launchNonce)
+        observed.push({ operation: body.operation, target: body.target })
+        if (revokeOnAuthorize) current = undefined
+        return allowed ? Response.json({ ok: true }) : Response.json({}, { status: 409 })
+    })
+    let current: typeof bridge | undefined = bridge
+    const app = createDesktopForemanRoutes(() => current)
+    const call = (operation: 'prepare' | 'lookup', target = request) => app.request('/alternate', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation, target }),
+    })
+    try {
+        expect((await call('prepare', { ...request, workspaceId: '2' })).status).toBe(409)
+        expect(observed).toHaveLength(0)
+        expect((await call('prepare')).status).toBe(409)
+        expect(await lookupForemanAlternate(request)).toBeNull()
+        allowed = true
+        revokeOnAuthorize = true
+        expect((await call('prepare')).status).toBe(409)
+        expect(await lookupForemanAlternate(request)).toBeNull()
+        current = bridge
+        revokeOnAuthorize = false
+        const accepted = await call('prepare')
+        expect(accepted.status).toBe(200)
+        const { alternate } = await accepted.json()
+        expect(alternate).toEqual(await lookupForemanAlternate(request))
+        expect(await getRun(id, alternate.runId)).toBeUndefined()
+        const read = await call('lookup')
+        expect(read.status).toBe(200)
+        expect(await read.json()).toEqual({ alternate })
+        expect(observed).toEqual(['prepare', 'prepare', 'prepare', 'lookup'].map(operation => ({ operation, target: request })))
+        allowed = false
+        expect((await call('lookup')).status).toBe(409)
+    } finally { bridge.close() }
 })

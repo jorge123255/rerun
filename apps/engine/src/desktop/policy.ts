@@ -51,7 +51,7 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (/^\/desktop\/brain\/proposals\/[A-Za-z0-9_-]+\/(?:accept|dismiss)$/.test(path)) return method === 'POST'
     if (path === '/desktop/foreman/question' || path === '/desktop/foreman/reply-source') return method === 'GET'
     if (path === '/desktop/coworker-share-database/capture') return method === 'POST'
-    if (path === '/desktop/foreman/chat' || path === '/desktop/agents/foreman-create') return method === 'POST'
+    if (path === '/desktop/foreman/chat' || path === '/desktop/foreman/alternate' || path === '/desktop/agents/foreman-create') return method === 'POST'
     if (/^\/desktop\/agents\/foreman-create\/[A-Za-z0-9_-]+$/.test(path)) return method === 'GET'
     if (/^\/desktop\/templates\/foreman-import\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+$/.test(path)) return method === 'GET'
     // Delegation and coworker calls read Foreman's current grants from its engine details.

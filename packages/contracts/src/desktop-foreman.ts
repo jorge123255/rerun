@@ -57,6 +57,30 @@ export type DesktopForemanBinding = z.infer<typeof foremanBindingSchema>
 export const foremanChatRefSchema = z.strictObject({ workspaceId: foremanWorkspaceIdSchema, chatId: foremanChatIdSchema })
 export type DesktopForemanChatRef = z.infer<typeof foremanChatRefSchema>
 
+// Engine and app server only. Renderer requests continue to use their saved message ID.
+export const foremanReplyTargetSchema = foremanChatRefSchema.extend({
+    sessionId: z.uuid(),
+    assistantMessageId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+})
+export const foremanReplySourceSchema = foremanReplyTargetSchema.extend({
+    sourceRunId: z.uuid(),
+    precedingUserMessageId: foremanReplyTargetSchema.shape.assistantMessageId,
+    replyDigest: foremanDigestSchema,
+    transcriptRevision: foremanDigestSchema,
+})
+export const foremanAlternateRequestSchema = foremanReplyTargetSchema.extend({
+    requestId: z.uuid(),
+    transcriptRevision: foremanDigestSchema,
+})
+export type ForemanAlternateRequest = z.infer<typeof foremanAlternateRequestSchema>
+export const foremanAlternateReservationSchema = z.strictObject({
+    requestId: z.uuid(),
+    sessionId: z.uuid(),
+    runId: z.uuid(),
+    userMessageId: foremanReplyTargetSchema.shape.assistantMessageId,
+    source: foremanReplySourceSchema,
+})
+
 const line = (max: number) => z.string().trim().min(1).max(max)
 
 // Original show_plan shape (apps/ui/lib/foreman/tool-defs.ts planItemsSchema), with a local
