@@ -1,9 +1,13 @@
 'use client'
 
 import { useDesktopLocale } from './DesktopLocale'
+import { desktopLocaleTag } from '@/lib/desktop/locale'
+import { ChatTimeSeparator } from '@/components/chat/ChatTimeSeparator'
+import { MessageTimeTooltip } from '@/components/chat/MessageTimeTooltip'
+import { timeBreaksOf } from '@/lib/chat/message-times'
 import { DesktopConversationOverview, type DesktopConversationOverviewAuthority } from './coworker-overview/conversation-mount'
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { useChat } from '@ai-sdk/react'
 import { useRunReconnect } from '@/hooks/useRunReconnect'
@@ -217,7 +221,8 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
     onOpenModelSettings?: () => void
     overview?: DesktopConversationOverviewAuthority
 }) {
-    const { t } = useDesktopLocale()
+    const { language, t } = useDesktopLocale()
+    const locale = desktopLocaleTag(language.locale)
     const setup = useDesktopSetup(agent.id)
     const setupBlocked = !setup.view || !!setup.error || setup.view.pending && (!setup.view.sessionId || setup.view.sessionId !== sessionId)
     const [cardOpen, setCardOpen] = useState(false)
@@ -1234,10 +1239,11 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
     const currentTitle = sessions.find(session => session.id === sessionId)?.title ?? 'New conversation'
     const generalView = tabUid === generalTabUid(agent.id)
     const threadCards = generalView ? sessions.filter(session => session.agentId === agent.id && session.kind !== 'general' && session.id !== sessionId) : []
-    const messageTimes = transcript.map(message => {
-        const metadata = message.metadata
-        return metadata && typeof metadata === 'object' && 'createdAt' in metadata && typeof metadata.createdAt === 'string' ? metadata.createdAt : ''
-    })
+    const { messageTimes, timeBreaks } = useMemo(() => {
+        const messageTimes = transcript.map(({ metadata }) =>
+            metadata && typeof metadata === 'object' && 'createdAt' in metadata && typeof metadata.createdAt === 'string' ? metadata.createdAt : '')
+        return { messageTimes, timeBreaks: timeBreaksOf(messageTimes) }
+    }, [transcript])
     const threadRows = generalView ? threadsByMessage(messageTimes, threadCards) : { leading: [], after: new Map<number, typeof threadCards>() }
     const placeholder = generalView ? t('message', { name: agent.name }) : sessionId && currentTitle !== 'New conversation' ? t('reply', { title: currentTitle }) : t('sendMessage')
     return (
@@ -1330,26 +1336,27 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                     {sessionId && active && <DesktopNativeWritebackReview agentId={agent.id} sessionId={sessionId} refreshKey={`${status}/${transcript.length}`}/>}
                     {transcript.map((message, messageIndex) => {
                         const branches = threadRows.after.get(messageIndex) ?? []
-                        const withBranches = (content: ReactNode) => branches.length === 0 ? content
-                            : <div key={message.id}>{content}{branches.map(thread =>
+                        const createdAt = messageTimes[messageIndex]
+                        const withTimeline = (content: ReactNode) => <Fragment key={message.id}>
+                            {timeBreaks.has(messageIndex) && <ChatTimeSeparator createdAt={createdAt} locale={locale} />}
+                            {branches.length === 0 ? content : <div>{content}{branches.map(thread =>
                                 <DesktopThreadBranch key={thread.id} thread={thread} needsYou={pendingChatSummaries?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />
-                            )}</div>
+                            )}</div>}
+                        </Fragment>
                         const scheduledRun = scheduledRunOf(message)
                         const triggerPayload = message.role === 'user' ? parseTriggerPayload(message.parts.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n')) : null
                         // Reuse Rerun's routine divider and prompt dialog. No hosted file-link
                         // navigation: the desktop Files panel owns this coworker's documents.
                         const install = message.role==='user' ? parseInstallMessage(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
-                        if(install)return withBranches(<AgentInstallBlock key={message.id} agentId={agent.id} agentName={agent.name} guide={install.guide} installing={setup.view?.completedAt == null} />)
+                        if(install)return withTimeline(<AgentInstallBlock agentId={agent.id} agentName={agent.name} guide={install.guide} installing={setup.view?.completedAt == null} />)
                         const hitl = message.role === 'user' ? parseHitlReply(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
                         const secretReceipt = message.role === 'user' ? parseDesktopSecretReceiptSummary(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
-                        if (secretReceipt) return withBranches(<DesktopSecretSummaryReceipt key={message.id} entries={secretReceipt} />)
-                        if (hitl?.kind === 'mcp' || hitl?.kind === 'cancelled' && hitl.of === 'mcp') return withBranches(<DesktopMcpSignInSummary key={message.id} name={hitl.kind === 'mcp' ? hitl.name : undefined} />)
-                        if(hitl?.kind==='service')return withBranches(<DesktopServiceRequestReceipt key={message.id} entries={hitl.entries} />)
-                        if (triggerPayload) return withBranches(<DesktopWebhookRunBlock key={message.id} agentId={agent.id} payload={triggerPayload} />)
-                        if (scheduledRun) return withBranches(<DesktopScheduledRunBlock key={message.id} run={scheduledRun} />)
-                        const view = (
-                        <div key={message.id} className={cn('flex min-w-0 items-end', message.role === 'user' && 'justify-end gap-2')}>
-                            <Message from={message.role} className="min-w-0">
+                        if (secretReceipt) return withTimeline(<DesktopSecretSummaryReceipt entries={secretReceipt} />)
+                        if (hitl?.kind === 'mcp' || hitl?.kind === 'cancelled' && hitl.of === 'mcp') return withTimeline(<DesktopMcpSignInSummary name={hitl.kind === 'mcp' ? hitl.name : undefined} />)
+                        if(hitl?.kind==='service')return withTimeline(<DesktopServiceRequestReceipt entries={hitl.entries} />)
+                        if (triggerPayload) return withTimeline(<DesktopWebhookRunBlock agentId={agent.id} payload={triggerPayload} />)
+                        if (scheduledRun) return withTimeline(<DesktopScheduledRunBlock run={scheduledRun} />)
+                        const bubble = (
                                 <MessageContent className={cn(message.role === 'user' ? [USER_BUBBLE_SHAPE, USER_BUBBLE_INK, 'whitespace-pre-wrap wrap-anywhere'] : 'overflow-visible')}>
                                     {message.role === 'user' && (() => {
                                         const selections = messageAttachmentPaths(message.metadata)
@@ -1365,7 +1372,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                                             {images.length > 0 && <MessageAttachments paths={images.map(item => item.path)} rawUrlFor={path => images.find(item => item.path === path)?.url ?? ''} />}</>
                                     })()}
                                     {message.role === 'assistant'
-                                        ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} streaming={(status === 'streaming' || serviceStreaming) && messageIndex === transcript.length - 1}
+                                        ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} createdAt={createdAt} streaming={(status === 'streaming' || serviceStreaming) && messageIndex === transcript.length - 1}
                                             toolInstall={sessionId ? { sessionId, active: active && ready, disabled: draft.quitting || inactive || generating || stopping } : undefined}
                                             childRuns={sessionId ? { sessionId, active, onOpenTarget: onOpenCoworkerChat } : undefined}
                                             skillProposals={{ rows: skillProposals.proposals, pinnedIds: skillProposals.pinnedIds, pendingId: skillProposals.pendingId,
@@ -1378,11 +1385,17 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                                             onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />
                                         : message.parts.map((part, index) => part.type === 'text' ? <DesktopVoiceHistoryMessage key={index} agentId={agent.id} text={part.text}><DesktopSelectedMentionText text={part.text} metadata={message.metadata} /></DesktopVoiceHistoryMessage> : null)}
                                 </MessageContent>
-                            </Message>
-                            {message.role === 'user' && <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"><UserRoundIcon className="size-4" /></span>}
-                        </div>
                         )
-                        return withBranches(view)
+                        return withTimeline(
+                            <div className={cn('flex min-w-0 items-end', message.role === 'user' && 'justify-end gap-2')}>
+                                <Message from={message.role} className="min-w-0">
+                                    {message.role === 'user'
+                                        ? <MessageTimeTooltip createdAt={createdAt} locale={locale} side="left">{bubble}</MessageTimeTooltip>
+                                        : bubble}
+                                </Message>
+                                {message.role === 'user' && <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"><UserRoundIcon className="size-4" /></span>}
+                            </div>
+                        )
                     })}
                     {sessionId && <DesktopToolInstallPending agentId={agent.id} sessionId={sessionId} messages={transcript} active={active && ready} disabled={draft.quitting || inactive || generating || stopping} />}
                     {active && takeover && !webhookOwns('takeover', takeover.id) && <DesktopBrowserCard key={takeover.id} agentId={agent.id} takeover={takeover} disabled={draft.quitting || inactive || generating || stopping || !ready} onAction={async payload => {
