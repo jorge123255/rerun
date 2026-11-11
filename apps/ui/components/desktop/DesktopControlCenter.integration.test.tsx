@@ -47,10 +47,11 @@ const providers = { connections: [{ id: 'fixture-openai', name: 'Fixture OpenAI'
     default: { connectionId: 'fixture-openai', model: 'gpt-4o-mini' } }
 const roots: ReturnType<typeof createRoot>[] = []
 const unexpected: string[] = []
+const realSetTimeout = setTimeout
 
 beforeEach(() => {
     resetDesktopRecentCoworkers()
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)')
@@ -69,12 +70,16 @@ const center = () => [...document.querySelectorAll<HTMLElement>('[role="dialog"]
     .find(dialog => dialog.querySelector('input[cmdk-input]'))
 const activeChat = () => document.querySelector<HTMLElement>('[data-desktop-tab-active="true"]')!
 const composer = () => activeChat().querySelector<HTMLTextAreaElement>('#desktop-message')!
-const settle = (ms = 0) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)) })
+const settle = (ms = 0) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
 async function until<T>(read: () => T | null | undefined): Promise<T> {
     for (let attempt = 0; attempt < 75; attempt++) {
         const result = read()
         if (result) return result
-        await settle(20)
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(20)
+            // Lazy editor modules also need time on the real event loop.
+            await new Promise(resolve => realSetTimeout(resolve, 20))
+        })
     }
     throw new Error('Expected UI did not appear')
 }
@@ -97,10 +102,9 @@ async function shortcut(key: string, target: EventTarget = window) {
     await act(async () => { target.dispatchEvent(new KeyboardEvent('keydown', { key, metaKey: true, bubbles: true, cancelable: true })) })
 }
 async function query(text: string) {
-    const input = center()?.querySelector<HTMLInputElement>('input')
-    expect(input).toBeDefined()
-    await enterText(input!, text)
-    await settle(300)
+    const input = await until(() => center()?.querySelector<HTMLInputElement>('input'))
+    await enterText(input, text)
+    await settle(250)
 }
 async function pick(value: string) {
     const row = [...(center()?.querySelectorAll<HTMLElement>('[cmdk-item]') ?? [])].find(item => item.getAttribute('data-value') === value)
