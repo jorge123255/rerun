@@ -10,7 +10,10 @@ import { DesktopForemanComposer } from './DesktopForemanComposer'
 import { DesktopForemanTabs } from './DesktopForemanTabs'
 import { DesktopPlanCard } from './plan/DesktopPlanCard'
 
-vi.mock(import('@rerun/ui/iso-grid'), async original => ({ ...await original(), IsoGrid: () => null }))
+vi.mock(import('@rerun/ui/iso-grid'), async original => {
+    const { memo } = await import('react')
+    return { ...await original(), IsoGrid: memo(() => null) }
+})
 vi.mock('./plan/DesktopPlanLifeScene', () => ({ DesktopPlanLifeScene: () => null }))
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
