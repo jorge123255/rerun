@@ -492,6 +492,23 @@ export async function importSharedText(root: string, folder: string, name: strin
     return importSharedFile(root, folder, name, bytes, { ...access, textOnly: true, maxBytes: SHARED_IMPORT_BYTES })
 }
 
+/** Use the same native root lock as imports and renames for a prepared write. */
+export function withSharedPublicationLease<T>(root: string, signal: AbortSignal | undefined, publish: (guard: () => Promise<void>) => Promise<T>): Promise<T> {
+    return withRoot(root, { signal }, openSharedRoot, async rootPin => {
+        const lease = await acquireSkillLease(rootPin.path, rootPin, signal)
+        const guard = async () => {
+            await assertPin(rootPin, true)
+            lease.assertCurrent()
+        }
+        try {
+            await guard()
+            const result = await publish(guard)
+            await guard()
+            return result
+        } finally { await lease.release() }
+    }, false, true)
+}
+
 /** Rename a listed ordinary file in the same shared directory without replacing an arrival. */
 export async function renameSharedFile(root: string, path: string, nextName: string, access?: SharedFileAccess): Promise<SharedImportResult> {
     const parts = partsOf(path, 'reject')
