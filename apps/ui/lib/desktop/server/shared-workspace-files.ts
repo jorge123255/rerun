@@ -3,12 +3,12 @@ import 'server-only'
 import { DesktopHttpError } from './auth'
 import type { DesktopRuntime } from './runtime'
 import { assertDesktopWorkspaceAdmission } from './workspace-admission'
-export { SHARED_IMPORT_BYTES } from '../../../../engine/src/desktop/shared-workspace-files'
+export { SHARED_IMPORT_BYTES, sharedFileImportLimit } from '../../../../engine/src/desktop/shared-workspace-files'
 import {
     importSharedFile,
     importSharedText,
     listSharedDirectory,
-    readSharedText,
+    readSharedEditorText,
     renameSharedFile,
     replaceSharedText,
     resolveEngineSharedDirectory,
@@ -47,7 +47,7 @@ export async function listDesktopSharedFiles(runtime: DesktopRuntime, path: stri
 }
 
 export async function readDesktopSharedFile(runtime: DesktopRuntime, path: string, offset = 0, access?: SharedFileAccess): Promise<SharedTextPage> {
-    try { return await readSharedText(await desktopSharedDirectory(runtime, access?.signal), path, offset, access) }
+    try { return await readSharedEditorText(await desktopSharedDirectory(runtime, access?.signal), path, offset, access) }
     catch (error) { rethrowDesktopSharedFileError(error) }
 }
 

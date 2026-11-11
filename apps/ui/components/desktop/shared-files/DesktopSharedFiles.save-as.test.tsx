@@ -60,3 +60,27 @@ test('previews supported shared media and saves exact reviewed bytes with siblin
     await click('Save As')
     expect(api.save).toHaveBeenCalledTimes(1)
 })
+
+test('opens a shared CSV and saves the exact version from its text preview', async () => {
+    const path = 'report.csv', content = 'city,count\r\nQuébec,1\r\n', hash = 'b'.repeat(64)
+    const bytes = new TextEncoder().encode(content)
+    api.list.mockResolvedValue({ path: '', entries: [{ name: path, type: 'file', size: bytes.length, modified: '' }], truncated: false })
+    api.read.mockResolvedValue({ path, content, truncated: false, editIdentity: { expectedBytes: bytes.length, expectedSha256: hash } })
+    const download = vi.fn(async () => new Response(bytes, { headers: { 'x-rerun-shared-sha256': hash } }))
+    vi.stubGlobal('fetch', download)
+    await act(async () => {
+        root = createRoot(document.body.appendChild(document.createElement('div')))
+        root!.render(<DesktopSharedFiles workspaceId={2} />)
+    })
+    await click('Shared files')
+    await act(async () => {
+        [...document.querySelectorAll<HTMLElement>('[role="button"]')].find(node => node.querySelector('.truncate')?.textContent === path)!.click()
+    })
+    await flush()
+    expect(document.querySelector('pre')?.textContent).toBe(content)
+    expect(button('Edit')).toBeDefined()
+    expect(button('Save As')?.disabled).toBe(false)
+    await click('Save As')
+    expect(download).toHaveBeenCalledWith(expect.stringContaining(`identity=${hash}`), expect.any(Object))
+    expect(api.save).toHaveBeenCalledWith(path, bytes)
+})

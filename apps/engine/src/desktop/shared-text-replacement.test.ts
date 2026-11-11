@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { prepareSkillHelperFixture } from './skill-publication.test-support.js'
-import { readSharedText, replaceSharedText } from './shared-workspace-files.js'
+import { readSharedEditorText, readSharedText, replaceSharedText } from './shared-workspace-files.js'
 
 const exec = promisify(execFile)
 const xattr = '/usr/bin/xattr'
@@ -54,6 +54,22 @@ describe.skipIf(process.platform !== 'darwin')('Mac shared text replacement', ()
         expect((await lstat(recovery, { bigint: true })).ino).toBe(prior.ino)
         expect(await acl(target)).toBe(originalAcl)
         expect((await exec(xattr, ['-p', metadataKey, target])).stdout).toBe('fixture metadata\n')
+    })
+
+    test.each(['report.csv', 'settings.json', 'Makefile'])('edits %s through the human path and leaves model reads scoped', async path => {
+        const target = join(shared, path)
+        const original = 'Original – Québec\r\n', content = 'Edited – Québec\r\n'
+        await writeFile(target, original, { mode: 0o640 })
+        await expect(readSharedText(shared, path)).rejects.toMatchObject({ status: 415 })
+        const preview = await readSharedEditorText(shared, path)
+        expect(preview).toMatchObject({ content: original, truncated: false })
+        const saved = await replaceSharedText(shared, { path, content, ...preview.editIdentity! })
+        expect(saved.recoveryPath).toMatch(new RegExp(path.includes('.') ? path.slice(path.lastIndexOf('.') + 1) + '$' : '^shared-edit-recovery-[a-f0-9]+$'))
+        expect((await readSharedEditorText(shared, path)).content).toBe(content)
+        expect((await readSharedEditorText(shared, saved.recoveryPath!)).content).toBe(original)
+        expect((await lstat(target)).mode & 0o777).toBe(0o640)
+        await expect(replaceSharedText(shared, { path, content: 'stale', ...preview.editIdentity! })).rejects.toMatchObject({ status: 409 })
+        await expect(readSharedText(shared, path)).rejects.toMatchObject({ status: 415 })
     })
 
     test('serializes same-base saves and refuses stale, linked and non-UTF-8 files', async () => {

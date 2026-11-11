@@ -180,7 +180,7 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
                 title={path.split('/').filter(Boolean).pop() ?? ROOT}
                 entries={entries}
                 onOpen={entry => onOpen(joinPath(path, entry.name), entry.type === 'dir')}
-                emptyDescription="Nothing here yet. Import supported documents, images, audio, video, or PDFs to share them with coworkers that have Read shared files enabled."
+                emptyDescription="Nothing here yet. Import text, images, audio, video, or PDFs for this workspace."
                 canRename={entry => entry.type === 'file' && !uploading}
                 onRename={(name, next) => void rename(name, next)}
                 uploadDisabled={uploading || !entries}
@@ -190,9 +190,7 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
     )
 }
 
-const SharedFile = DesktopSharedFilePreview
-
-function SharedFilesPanel({ onClose }: { onClose: () => void }) {
+function SharedFilesPanel({ onClose, workspaceId }: { onClose: () => void; workspaceId?: number | null }) {
     const [selection, setSelection] = useState<{ kind: 'folder' | 'file'; path: string }>({ kind: 'folder', path: '' })
     const [folderEntries, setFolderEntries] = useState<DesktopSharedEntry[] | undefined>()
     const folder = selection.kind === 'file' ? parentPath(selection.path) : selection.path
@@ -214,13 +212,15 @@ function SharedFilesPanel({ onClose }: { onClose: () => void }) {
             <div className="flex min-h-0 flex-1 flex-col">
                 {selection.kind === 'folder'
                     ? <SharedFolder path={selection.path} onOpen={open} />
-                    : <SharedFile key={selection.path} path={selection.path} entries={folderEntries} onOpen={open} />}
+                    : <DesktopSharedFilePreview key={selection.path} path={selection.path} entries={folderEntries} onOpen={open} editWorkspaceId={workspaceId} />}
             </div>
         </BrainChromeContext.Provider>
     )
 }
 
-export function DesktopSharedFiles({ dialogControl, hideTrigger = false, onCloseAutoFocus }: { dialogControl?: DesktopDialogControl; hideTrigger?: boolean; onCloseAutoFocus?: (event: Event) => void }) {
+export function DesktopSharedFiles({ dialogControl, hideTrigger = false, onCloseAutoFocus, workspaceId }: {
+    dialogControl?: DesktopDialogControl; hideTrigger?: boolean; onCloseAutoFocus?: (event: Event) => void; workspaceId?: number | null
+}) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     return (
         <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
@@ -228,9 +228,9 @@ export function DesktopSharedFiles({ dialogControl, hideTrigger = false, onClose
             {open && <DialogContent onCloseAutoFocus={onCloseAutoFocus} className="flex h-[80dvh] flex-col sm:max-w-5xl">
                 <DialogHeader>
                     <DialogTitle>Shared files</DialogTitle>
-                    <DialogDescription>The workspace shared folder. Import supported documents, images, audio, video, or PDFs. Coworkers with shared files permission read the same files. Their private Files stay separate.</DialogDescription>
+                    <DialogDescription>Import files for this workspace. Coworkers with Read shared files can read shared .txt and .md files.</DialogDescription>
                 </DialogHeader>
-                <SharedFilesPanel onClose={() => setOpen(false)} />
+                <SharedFilesPanel key={workspaceId ?? 'loading'} workspaceId={workspaceId} onClose={() => setOpen(false)} />
             </DialogContent>}
         </Dialog>
     )

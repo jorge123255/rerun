@@ -85,7 +85,7 @@ export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResu
                 canRename={entry => entry.type !== 'dir' && !importing && !renaming}
                 onUpload={entries => onUpload(entries, path)}
                 uploadDisabled={importing || renaming}
-                emptyDescription="Nothing here yet. Import supported documents, images, audio, video, or PDFs to share them with coworkers that have Read shared files enabled."
+                emptyDescription="Nothing here yet. Import text, images, audio, video, or PDFs for this workspace."
             />
         </div>
     )

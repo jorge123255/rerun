@@ -213,7 +213,7 @@ static int replace_shared(const char *path, uintmax_t parent_dev, uintmax_t pare
     if (original < 0 || replacement < 0 || fstat(original, &old_info) || fstat(replacement, &stage_info)
         || !shared_regular(&old_info) || !shared_regular(&stage_info)
         || !is_identity(&old_info, target_dev, target_ino) || !is_identity(&stage_info, stage_dev, stage_ino)
-        || (uintmax_t)old_info.st_size != size || (uintmax_t)old_info.st_ctimespec.tv_sec != seconds
+        || stage_info.st_size > 256 * 1024 || (uintmax_t)old_info.st_size != size || (uintmax_t)old_info.st_ctimespec.tv_sec != seconds
         || (uintmax_t)old_info.st_ctimespec.tv_nsec != nanos || old_info.st_flags != 0
         || (old_info.st_mode & (S_ISUID | S_ISGID))) goto done;
     if (!fstatat(parent, recovery, &named, AT_SYMLINK_NOFOLLOW)) { error = EEXIST; goto done; }
@@ -259,7 +259,8 @@ done:
 
 int main(int argc, char **argv) {
     uintmax_t parent_dev, parent_ino, source_dev, source_ino;
-    if (argc > 1 && !strcmp(argv[1], "--replace-shared-text")) {
+    const int editor_text = argc > 1 && !strcmp(argv[1], "--replace-shared-editor-text");
+    if (editor_text || (argc > 1 && !strcmp(argv[1], "--replace-shared-text"))) {
 #ifdef __APPLE__
         uintmax_t target_dev, target_ino, size, seconds, nanos;
         if (argc != 15 || argv[2][0] != '/' || !number(argv[3], &parent_dev) || !number(argv[4], &parent_ino)
@@ -269,7 +270,9 @@ int main(int argc, char **argv) {
             || !number(argv[12], &seconds) || !number(argv[13], &nanos) || nanos >= 1000000000
             || !name_ok(argv[14]) || strncmp(argv[14], "shared-edit-recovery-", 21) || !strcmp(argv[8], argv[14])) return replacement_failure(EINVAL, 1);
         const char *suffix = strrchr(argv[8], '.');
-        if (!suffix || (strcasecmp(suffix, ".txt") && strcasecmp(suffix, ".md"))) return replacement_failure(EINVAL, 1);
+        // The shared editor has already checked the file kind and complete UTF-8 bytes.
+        // Both modes still pin the exact names and inodes before swapping them.
+        if (!editor_text && (!suffix || (strcasecmp(suffix, ".txt") && strcasecmp(suffix, ".md")))) return replacement_failure(EINVAL, 1);
         return replace_shared(argv[2], parent_dev, parent_ino, argv[5], source_dev, source_ino, argv[8], target_dev, target_ino, size, seconds, nanos, argv[14]);
 #else
         return replacement_failure(ENOTSUP, 1);

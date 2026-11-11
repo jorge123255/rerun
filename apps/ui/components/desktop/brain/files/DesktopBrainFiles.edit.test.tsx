@@ -54,7 +54,7 @@ async function edit(value: string) {
     })
 }
 
-test('Brain Files saves the captured revision, preserves CRLF, and uses the returned revision for the next edit', async () => {
+test.each(['docs/note.md', 'docs/report.csv'])('Brain Files saves %s with the captured revision and original line endings', async path => {
     fetchFile.mockImplementation(async (_url, init?: RequestInit) => init?.method === 'PUT'
         ? Response.json({ ok: true, workspaceId: 2, path, editIdentity: saved, recoveryPath: 'docs/shared-edit-recovery-example.md' })
         : Response.json({ path, content: 'original\r\n', truncated: false, editIdentity: original }))

@@ -60,6 +60,23 @@ test('enforces text and image caps while admitting an ordinary PDF', async () =>
     expect(await readFile(join(root, 'workspaces', '1', 'engine', 'shared', 'nested', 'document.pdf'))).toEqual(Buffer.from([37, 80, 68, 70]))
 })
 
+test('imports complete CSV, JSON and extensionless text and refuses malformed text', async () => {
+    const csv = Buffer.from('city,count\r\nQuébec,1\r\n')
+    const response = await POST(form([
+        { name: 'report.csv', body: csv },
+        { name: 'settings.json', body: Buffer.from('{"enabled":true}') },
+        { name: 'Makefile', body: Buffer.from('all:\n\t@echo ready\n') },
+        { name: 'invalid.json', body: Buffer.from([0xff]) },
+        { name: 'large.csv', body: Buffer.alloc(1024 * 1024 + 1, 0x41) },
+    ]))
+    expect(response.status).toBe(201)
+    expect((await response.json()).results.map((result: { status: string }) => result.status))
+        .toEqual(['created', 'created', 'created', 'refused', 'refused'])
+    const folder = join(root, 'workspaces', '1', 'engine', 'shared', 'nested')
+    expect(await readFile(join(folder, 'report.csv'))).toEqual(csv)
+    await expect(readFile(join(folder, 'invalid.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
 test('rejects more than 16 files before any file write', async () => {
     const response = await POST(form(Array.from({ length: 17 }, (_, index) => ({ name: `file-${index}.txt` }))))
     expect(response.status).toBe(413)

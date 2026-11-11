@@ -28,12 +28,12 @@ export async function renameSkillEntry(directory: string, parent: Identity, sour
 }
 
 export async function replaceSharedEntry(directory: string, parent: Identity, stage: string, staged: Identity,
-    target: string, original: Identity & { size: bigint; ctimeNs: bigint }, recovery: string): Promise<'published' | 'conflict' | 'refused' | 'unknown'> {
+    target: string, original: Identity & { size: bigint; ctimeNs: bigint }, recovery: string, editorText = false): Promise<'published' | 'conflict' | 'refused' | 'unknown'> {
     const executable = helper()
     const nanosecondsPerSecond = BigInt(1_000_000_000)
     let output: string
     try {
-        output = (await exec(executable, ['--replace-shared-text', directory, String(parent.dev), String(parent.ino),
+        output = (await exec(executable, [editorText ? '--replace-shared-editor-text' : '--replace-shared-text', directory, String(parent.dev), String(parent.ino),
             stage, String(staged.dev), String(staged.ino), target, String(original.dev), String(original.ino),
             String(original.size), String(original.ctimeNs / nanosecondsPerSecond), String(original.ctimeNs % nanosecondsPerSecond), recovery],
         { encoding: 'utf8', timeout: 10_000, maxBuffer: 4096, env })).stdout

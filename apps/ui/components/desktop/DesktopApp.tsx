@@ -816,7 +816,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 const target = boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                 if (target && !isDesktopQuitting()) { event.preventDefault(); target.focus({ preventScroll: true }) }
             }} />
-            <DesktopSharedFiles hideTrigger dialogControl={{ open: sharedFilesOpen, onOpenChange: setSharedFilesOpen }} onCloseAutoFocus={event => {
+            <DesktopSharedFiles hideTrigger workspaceId={runtimeWorkspaceId} dialogControl={{ open: sharedFilesOpen, onOpenChange: setSharedFilesOpen }} onCloseAutoFocus={event => {
                 const target = boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                 if (target && !isDesktopQuitting()) { event.preventDefault(); target.focus({ preventScroll: true }) }
             }} />

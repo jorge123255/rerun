@@ -19,7 +19,6 @@ import { DesktopFileAudioPreview } from '../DesktopFileAudioPreview'
 import { DesktopFileVideoPreview } from '../DesktopFileVideoPreview'
 import { DesktopFilePdfPreview } from '../DesktopFilePdfPreview'
 
-const TEXT = /\.(txt|md)$/i
 const joinPath = (dir: string, name: string) => (dir ? `${dir}/${name}` : name)
 const parentPath = (path: string) => path.split('/').filter(Boolean).slice(0, -1).join('/')
 
@@ -44,8 +43,8 @@ export function DesktopSharedFilePreview({ path, entries, onOpen, editWorkspaceI
 }) {
     const dir = parentPath(path)
     const name = path.split('/').pop() ?? path
-    const text = TEXT.test(name)
     const kind = filePreviewKind(name)
+    const text = kind === 'text'
     const [preview, setPreview] = useState<{ path: string; content: string | null; truncated: boolean; error: string | null; editIdentity?: DesktopSharedTextIdentity | null } | null>(null)
     const [attempt, setAttempt] = useState(0)
     const [previewHash, setPreviewHash] = useState<string | null>(null)
@@ -81,7 +80,7 @@ export function DesktopSharedFilePreview({ path, entries, onOpen, editWorkspaceI
         onOpen: next => onOpen(joinPath(dir, next), false),
     })
     const ready = preview?.path === path ? preview : null
-    const canSave = kind ? !!previewHash : !text || ready?.content != null
+    const canSave = text ? ready !== null : kind === 'binary' || !!previewHash
     // The shared editor preserves LF or CRLF. Keep mixed and bare-CR files read-only.
     const lineBreaks = ready?.content?.replace(/\r\n/g, '')
     const canEdit = !!editWorkspaceId && !!ready?.editIdentity && !ready.truncated && ready.content != null

@@ -1,8 +1,8 @@
 import { constants } from 'node:fs'
 import { createHash, randomBytes } from 'node:crypto'
 import { lstat, mkdir, open, readdir, realpath, unlink, type FileHandle } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
-import { TEXT_FILE_PAGE_CHARS } from '@rerun/contracts'
+import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'node:path'
+import { filePreviewKind, TEXT_FILE_PAGE_CHARS } from '@rerun/contracts'
 import { acquireSkillLease, renameSkillEntry, replaceSharedEntry } from './skill-publication-native.ts'
 import { SkillBoundaryError } from './skill-publication-error.ts'
 
@@ -13,6 +13,7 @@ import { SkillBoundaryError } from './skill-publication-error.ts'
 
 const O_NOFOLLOW_ANY = 0x20000000
 const TEXT_NAME = /\.(txt|md)$/i
+const BINARY_CONTROLS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/
 const PART = /^[^/\\.\0][^/\\\0]{0,240}$/
 export const SHARED_IMPORT_BYTES = 1024 * 1024
 export const SHARED_LIST_LIMIT = 512
@@ -82,14 +83,26 @@ function stamp(mtimeNs: bigint): string {
     return new Date(Number(mtimeNs / BigInt(1_000_000))).toISOString()
 }
 
-const ORDINARY_IMPORT_NAME = /\.(txt|md|png|jpe?g|gif|webp|wav|mp3|m4a|ogg|flac|mp4|webm|mov|m4v|pdf)$/i
+const MEDIA_IMPORT_NAME = /\.(png|jpe?g|gif|webp|wav|mp3|m4a|ogg|flac|mp4|webm|mov|m4v|pdf)$/i
 
-function validImportName(name: string, textOnly: boolean) {
+export function sharedFileImportLimit(name: string): number | null {
+    const kind = filePreviewKind(name)
+    if (kind === 'text') return SHARED_IMPORT_BYTES
+    if (!MEDIA_IMPORT_NAME.test(name)) return null
+    return (kind === 'image' ? 8 : 16) * 1024 * 1024
+}
+
+function validateImportName(name: string, textOnly: boolean): number {
     if (!name || name.length > 255 || /[/\\\0]/.test(name) || name.startsWith('.') || !PART.test(name)) {
         throw new SharedWorkspaceFileError(400, 'That file name can’t be imported.')
     }
-    if (textOnly && !TEXT_NAME.test(name)) throw new SharedWorkspaceFileError(415, 'Only .txt and .md files can be imported.')
-    if (!textOnly && !ORDINARY_IMPORT_NAME.test(name)) throw new SharedWorkspaceFileError(415, 'Choose a supported shared file type.')
+    if (textOnly) {
+        if (!TEXT_NAME.test(name)) throw new SharedWorkspaceFileError(415, 'Only .txt and .md files can be imported.')
+        return SHARED_IMPORT_BYTES
+    }
+    const limit = sharedFileImportLimit(name)
+    if (limit === null) throw new SharedWorkspaceFileError(415, 'Choose a supported shared file type.')
+    return limit
 }
 
 function rethrow(error: unknown, folder = false): never {
@@ -313,13 +326,26 @@ function decodePrefix(bytes: Uint8Array, partial: boolean): string {
     catch { throw new SharedWorkspaceFileError(415, 'This file must contain UTF-8 text.') }
 }
 
-export async function readSharedText(root: string, path: string, offset = 0, access?: SharedFileAccess): Promise<SharedTextPage> {
+export function readSharedText(root: string, path: string, offset = 0, access?: SharedFileAccess): Promise<SharedTextPage> {
+    return readSharedTextPage(root, path, offset, 'tool', access)
+}
+
+export function readSharedEditorText(root: string, path: string, offset = 0, access?: SharedFileAccess): Promise<SharedTextPage> {
+    return readSharedTextPage(root, path, offset, 'editor', access)
+}
+
+async function readSharedTextPage(root: string, path: string, offset: number, audience: 'tool' | 'editor', access?: SharedFileAccess): Promise<SharedTextPage> {
     if (!Number.isInteger(offset) || offset < 0) throw new SharedWorkspaceFileError(400, 'offset must be a non-negative integer.')
     const byteBudget = (offset + TEXT_FILE_PAGE_CHARS) * 4
     if (byteBudget > MAX_WINDOW_BYTES) throw new SharedWorkspaceFileError(413, 'This shared file is too large to read from that offset.')
     const parts = partsOf(path, 'reject')
     const name = parts[parts.length - 1]!
-    if (!TEXT_NAME.test(name)) throw new SharedWorkspaceFileError(415, 'Only .txt and .md files can be read from the shared folder.')
+    if (audience === 'tool' && !TEXT_NAME.test(name)) {
+        throw new SharedWorkspaceFileError(415, 'Only .txt and .md files can be read from the shared folder.')
+    }
+    if (audience === 'editor' && filePreviewKind(name) !== 'text') {
+        throw new SharedWorkspaceFileError(415, 'Only text files can be opened in the editor.')
+    }
     const rel = parts.join('/')
     return withRoot(root, access, openSharedRoot, async rootPin => {
         const child = await descend(root, rootPin, parts.slice(0, -1), access?.signal)
@@ -355,6 +381,9 @@ export async function readSharedText(root: string, path: string, offset = 0, acc
             const bytes = buffer.subarray(0, read)
             if (bytes.includes(0)) throw new SharedWorkspaceFileError(415, 'This file must contain UTF-8 text.')
             const text = decodePrefix(bytes, size > read)
+            if (audience === 'editor' && BINARY_CONTROLS.test(text)) {
+                throw new SharedWorkspaceFileError(415, 'This file must contain UTF-8 text.')
+            }
             if (offset > text.length && size > read) throw new SharedWorkspaceFileError(413, 'This shared file is too large to read from that offset.')
             const content = text.slice(offset, offset + TEXT_FILE_PAGE_CHARS)
             const end = offset + content.length
@@ -400,13 +429,14 @@ async function mkdirChild(parent: Pin, root: string, rel: string, name: string, 
 
 export async function importSharedFile(root: string, folder: string, name: string, bytes: Uint8Array, access?: SharedFileAccess & { textOnly?: boolean; maxBytes?: number }): Promise<SharedImportResult> {
     const textOnly = access?.textOnly === true
-    const maxBytes = access?.maxBytes ?? 16 * 1024 * 1024
-    validImportName(name, textOnly)
+    const typeLimit = validateImportName(name, textOnly)
+    const maxBytes = Math.min(typeLimit, access?.maxBytes ?? typeLimit)
     if (bytes.byteLength > maxBytes) throw new SharedWorkspaceFileError(413, `Files can be up to ${maxBytes} bytes.`)
-    if (textOnly) {
-        if (bytes.includes(0)) throw new SharedWorkspaceFileError(415, 'Only text files can be imported.')
-        try { new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }
-        catch { throw new SharedWorkspaceFileError(415, 'Only text files can be imported.') }
+    if (filePreviewKind(name) === 'text') {
+        const text = decodePrefix(bytes, false)
+        if (textOnly ? text.includes('\0') : BINARY_CONTROLS.test(text)) {
+            throw new SharedWorkspaceFileError(415, 'Only text files can be imported.')
+        }
     }
     const folders = partsOf(folder, 'root')
     const rel = folders.length ? `${folders.join('/')}/${name}` : name
@@ -517,7 +547,7 @@ export type SharedTextReplacementResult = {
 /** Stage complete UTF-8, then publish while retaining the displaced inode. */
 export async function replaceSharedText(root: string, input: SharedTextReplacement, access?: SharedFileAccess): Promise<SharedTextReplacementResult> {
     const parts = partsOf(input.path, 'reject'), name = parts.at(-1)!, path = parts.join('/')
-    if (!TEXT_NAME.test(name) || typeof input.content !== 'string' || !Number.isSafeInteger(input.expectedBytes) || input.expectedBytes < 0
+    if (filePreviewKind(name) !== 'text' || typeof input.content !== 'string' || !Number.isSafeInteger(input.expectedBytes) || input.expectedBytes < 0
         || input.expectedBytes > 256 * 1024 || !/^[a-f0-9]{64}$/.test(input.expectedSha256)) {
         throw new SharedWorkspaceFileError(400, 'Choose one fully read UTF-8 shared text file.')
     }
@@ -525,8 +555,7 @@ export async function replaceSharedText(root: string, input: SharedTextReplaceme
     if (bytes.length > 256 * 1024 || input.content.length > TEXT_FILE_PAGE_CHARS) {
         throw new SharedWorkspaceFileError(413, 'This text is too large to edit here.')
     }
-    const binary = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/
-    if (binary.test(input.content) || new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) !== input.content) {
+    if (BINARY_CONTROLS.test(input.content) || new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) !== input.content) {
         throw new SharedWorkspaceFileError(415, 'Only complete UTF-8 text can be saved.')
     }
     const editIdentity = { expectedBytes: bytes.length, expectedSha256: createHash('sha256').update(bytes).digest('hex') }
@@ -538,15 +567,17 @@ export async function replaceSharedText(root: string, input: SharedTextReplaceme
             const child = await descend(root, rootPin, parts.slice(0, -1), access?.signal)
             const parent = child.pin, target = join(/* turbopackIgnore: true */ parent.pinned, name)
             const suffix = randomBytes(12).toString('hex')
-            const stage = `.rerun-shared-replace-${suffix}`, recovery = `shared-edit-recovery-${suffix}${name.slice(name.lastIndexOf('.'))}`
+            const stage = `.rerun-shared-replace-${suffix}`
+            const recoveryName = `shared-edit-recovery-${suffix}${extname(name)}`
+            const recovery = Buffer.byteLength(recoveryName) <= 255 ? recoveryName : `shared-edit-recovery-${suffix}.txt`
             const stagedPath = join(/* turbopackIgnore: true */ parent.pinned, stage)
             let handle: FileHandle | undefined, staged: { dev: bigint; ino: bigint } | undefined
             try {
                 await commit(access)
                 const original = await lstat(target, { bigint: true })
                 if (!original.isFile() || original.uid !== currentUid() || original.nlink !== singleLink) throw outside()
-                const preview = await readSharedText(root, path, 0, { signal: access?.signal })
-                if (preview.truncated || !preview.editIdentity || binary.test(preview.content)) {
+                const preview = await readSharedEditorText(root, path, 0, { signal: access?.signal })
+                if (preview.truncated || !preview.editIdentity) {
                     throw new SharedWorkspaceFileError(415, 'Reopen one complete UTF-8 text file before editing.')
                 }
                 if (preview.editIdentity.expectedBytes !== input.expectedBytes || preview.editIdentity.expectedSha256 !== input.expectedSha256) throw conflict()
@@ -570,14 +601,14 @@ export async function replaceSharedText(root: string, input: SharedTextReplaceme
                 await assertPin(parent, true)
                 await guard()
                 publicationUncertain = true
-                const published = await replaceSharedEntry(parent.path, parent, stage, staged, name, original, recovery)
+                const published = await replaceSharedEntry(parent.path, parent, stage, staged, name, original, recovery, !TEXT_NAME.test(name))
                 if (published === 'conflict' || published === 'refused') {
                     publicationUncertain = false
                     if (published === 'conflict') throw conflict()
                     throw new SharedWorkspaceFileError(415, 'This file could not be replaced with its original permissions and metadata.')
                 }
                 if (published !== 'published') throw new Error('Native replacement acknowledgement unavailable')
-                const confirmed = await readSharedText(root, path, 0, { signal: access?.signal })
+                const confirmed = await readSharedEditorText(root, path, 0, { signal: access?.signal })
                 const entry = await lstat(target, { bigint: true })
                 if (confirmed.truncated || confirmed.editIdentity?.expectedSha256 !== editIdentity.expectedSha256
                     || confirmed.editIdentity.expectedBytes !== editIdentity.expectedBytes
