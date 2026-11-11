@@ -3,10 +3,14 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { desktopLocaleTag, desktopTranslator, englishDesktopLanguage, type DesktopLanguage } from '@/lib/desktop/locale'
 
-const LocaleContext = createContext({
+const LocaleContext = createContext<{
+    language: DesktopLanguage
+    t: ReturnType<typeof desktopTranslator>
+    setLanguage: (language: DesktopLanguage) => void
+}>({
     language: englishDesktopLanguage,
     t: desktopTranslator(englishDesktopLanguage),
-    setLanguage: (_language: DesktopLanguage) => {},
+    setLanguage: () => {},
 })
 
 export function DesktopLocale({ initial, children }: { initial: DesktopLanguage; children: ReactNode }) {

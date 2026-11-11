@@ -9,18 +9,22 @@ import { readDesktopWorkspace } from '@/lib/desktop/server/settings'
 
 export const dynamic = 'force-dynamic'
 
-export default async function DesktopPage() {
+async function readPageData() {
     try {
         const runtime = await readDesktopRuntime()
         const requestHeaders = await headers()
         await authenticateDesktopRequest(new Request(`${runtime.app.origin}/desktop`, { headers: requestHeaders }))
-        const [bootstrap, language] = await Promise.all([
+        return await Promise.all([
             readDesktopWorkspace(runtime),
             readDesktopLanguage(runtime, requestHeaders.get('accept-language')),
         ])
-        return <DesktopLocale initial={language}><DesktopApp initialData={bootstrap} /></DesktopLocale>
     } catch (error) {
         if (error instanceof DesktopHttpError) notFound()
         throw error
     }
+}
+
+export default async function DesktopPage() {
+    const [bootstrap, language] = await readPageData()
+    return <DesktopLocale initial={language}><DesktopApp initialData={bootstrap} /></DesktopLocale>
 }
