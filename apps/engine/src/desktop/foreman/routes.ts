@@ -55,11 +55,16 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
     routes.get('/reply-source', async c => {
         const bridge = readBinding()
         if (!desktopApp() || !bridge) return c.json({ error: 'Desktop Foreman is unavailable.' }, 404)
-        const target = foremanChatRefSchema.extend({ sessionId: z.uuid(), assistantMessageId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/) })
-            .safeParse(c.req.query())
+        const target = foremanChatRefSchema.extend({
+            sessionId: z.uuid(),
+            assistantMessageId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+            expectedTranscriptRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+        }).safeParse(c.req.query())
         if (!target.success) return c.json({ error: 'Invalid saved Foreman reply.' }, 400)
-        const source = target.data.workspaceId === bridge.workspaceId ? await readForemanReplySource(target.data) : null
-        return c.json({ source: readBinding() === bridge ? source : null }, 200, { 'cache-control': 'no-store' })
+        const { expectedTranscriptRevision, ...scope } = target.data
+        const source = scope.workspaceId === bridge.workspaceId ? await readForemanReplySource(scope) : null
+        const sameTranscript = expectedTranscriptRevision === undefined || source?.transcriptRevision === expectedTranscriptRevision
+        return c.json({ source: readBinding() === bridge && sameTranscript ? source : null }, 200, { 'cache-control': 'no-store' })
     })
     routes.post('/chat', async c => {
         try {
