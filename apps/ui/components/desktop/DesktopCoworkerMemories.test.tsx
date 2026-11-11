@@ -548,3 +548,85 @@ test('a clear finishing after a coworker switch cannot empty the newly selected 
         expect(calls).toEqual(['GET /api/desktop/agents/first/memories', 'DELETE /api/desktop/agents/first/memories', 'GET /api/desktop/agents/second/memories'])
     } finally { await act(async () => { root.unmount() }) }
 })
+
+test('keeps the saved-list read alive while the first recall returns no matches', async () => {
+    const root = mount()
+    const saved = note('saved', 'Working hours for the office')
+    let listSignal!: AbortSignal
+    let complete!: (response: Response) => void
+    let lists = 0
+    stubMemoryFetch((url, init) => {
+        if (url.endsWith('/recall')) return Response.json({ memories: [] })
+        lists++
+        listSignal = init.signal!
+        return new Promise<Response>(resolve => { complete = resolve })
+    })
+    try {
+        await act(async () => root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />))
+        await click('Memories')
+        await enter('desktop-memory-search', 'meeting')
+        await click('Search')
+        expect(dialog()?.textContent).toContain('No matches')
+        expect(listSignal.aborted).toBe(false)
+        await act(async () => complete(Response.json({ memories: [saved] })))
+        expect(dialog()?.querySelector('[aria-label="Clear all memories"]')).not.toBeNull()
+        expect(dialog()?.textContent).not.toContain(saved.content)
+        await click('Clear search')
+        expect(dialog()?.textContent).toContain(saved.content)
+        expect(lists).toBe(1)
+    } finally { await act(async () => root.unmount()) }
+})
+
+test('deleting the last note from recall removes Clear all when the saved list is empty', async () => {
+    const root = mount()
+    let notes = [note('last', 'Printer locations')]
+    const url = '/api/desktop/agents/reviewer/memories'
+    stubMemoryFetch((target, init) => {
+        if (target === url + '/last' && init.method === 'DELETE') {
+            notes = []
+            return new Response(null, { status: 204 })
+        }
+        expect([url, url + '/recall']).toContain(target)
+        return Response.json({ memories: notes })
+    })
+    try {
+        await act(async () => root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />))
+        await click('Memories')
+        await enter('desktop-memory-search', 'Printer')
+        await click('Search')
+        expect(dialog()?.querySelector('[aria-label="Clear all memories"]')).not.toBeNull()
+        await act(async () => { dialog()!.querySelector<HTMLButtonElement>('[aria-label="Delete memory"]')!.click() })
+        await click('Delete')
+        expect(dialog()?.textContent).toContain('No matches')
+        expect(dialog()?.querySelector('[aria-label="Clear all memories"]')).toBeNull()
+        await click('Clear search')
+        expect(dialog()?.textContent).toContain('No memories yet')
+    } finally { await act(async () => root.unmount()) }
+})
+
+test('a new recall does not report the previous query’s backend outcome while it is pending', async () => {
+    const root = mount()
+    const semantic = '/api/desktop/coworkers/reviewer/semantic-memory'
+    let finish!: (response: Response) => void
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit = {}) => {
+        if (url !== semantic) return Response.json({ memories: [] })
+        if (init.method !== 'POST') return Response.json(keywordIndex)
+        const { query } = JSON.parse(String(init.body))
+        if (query === 'earlier') return Response.json({ memories: [], mode: 'keyword-only', detail: 'Earlier lookup fell back to keywords.', index: keywordIndex })
+        return new Promise<Response>(resolve => { finish = resolve })
+    })
+    try {
+        await act(async () => root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />))
+        await click('Memories')
+        await enter('desktop-memory-search', 'earlier')
+        await click('Search')
+        expect(dialog()?.textContent).toContain('Earlier lookup fell back to keywords.')
+        await enter('desktop-memory-search', 'current')
+        await click('Search')
+        expect(dialog()?.textContent).toContain('Searching memories…')
+        expect(dialog()?.textContent).not.toContain('Earlier lookup fell back to keywords.')
+        await act(async () => finish(Response.json({}, { status: 502 })))
+        expect(dialog()?.textContent).toContain('Could not search memories.')
+        expect(dialog()?.textContent).not.toContain('Earlier lookup fell back to keywords.')
+    } finally { await act(async () => root.unmount()) }
+})
