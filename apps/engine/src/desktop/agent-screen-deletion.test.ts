@@ -24,7 +24,7 @@ const { migrate } = await import('../db/migrate.js')
 const { bindIsolatedScreen } = await import('./isolated-screen/binding.js')
 const { service } = await import('./isolated-screen/index.js')
 const { agentDir } = await import('../config/paths.js')
-const { knownUnusedScreen } = await import('./isolated-screen/ownership.js')
+const { UNUSED_SCREEN_MARKER, knownUnusedScreen } = await import('./isolated-screen/ownership.js')
 const app = createServer()
 
 beforeAll(async () => {
@@ -70,8 +70,7 @@ test('keeps deletion pending if an allocation could have created Docker resource
 test('does not use another coworker’s copied unused marker as absence proof', async () => {
     const donor = await coworker('Marker donor')
     const recipient = await coworker('Marker recipient')
-    const marker = '.desktop-screen-unused.json'
-    await copyFile(join(agentDir(donor), marker), join(agentDir(recipient), marker))
+    await copyFile(join(agentDir(donor), UNUSED_SCREEN_MARKER), join(agentDir(recipient), UNUSED_SCREEN_MARKER))
     expect(await knownUnusedScreen(donor)).toBe(true)
     expect(await knownUnusedScreen(recipient)).toBe(false)
     expect((await app.request(`/agents/${recipient}`, { method: 'DELETE' })).status).toBe(500)

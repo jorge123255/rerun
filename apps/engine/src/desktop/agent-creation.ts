@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { recordUnusedScreen } from './isolated-screen/ownership.js'
+import { UNUSED_SCREEN_MARKER, recordUnusedScreen } from './isolated-screen/ownership.js'
 import { constants } from 'node:fs'
 import { mkdir, open, readdir, realpath, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -161,7 +161,7 @@ function creationConfig(input: z.infer<typeof desktopAgentCreationConfigSchema>,
     return agentConfigSchema.parse({ ...input, kind: 'user', ...(foreman && { enabled: false, setup: { required: true, completedAt: null, sessionId: null } }) })
 }
 async function prepare(folder: Pin, receipt: Receipt): Promise<void> {
-    const allowed = new Set([RECEIPT, COMPLETE, STAGED_CONFIG, 'config.json', 'SOUL.md', ...(receipt.foreman ? ['INSTALL.md'] : []), '.env', 'workspace', 'skills', 'memory'])
+    const allowed = new Set([RECEIPT, COMPLETE, STAGED_CONFIG, UNUSED_SCREEN_MARKER, 'config.json', 'SOUL.md', ...(receipt.foreman ? ['INSTALL.md'] : []), '.env', 'workspace', 'skills', 'memory'])
     if ((await readdir(folder.path)).some(name => !allowed.has(name))) throw conflict()
     const config = creationConfig(receipt.input, receipt.foreman)
     const encoded = JSON.stringify(config, null, 4)

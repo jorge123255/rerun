@@ -6,7 +6,7 @@ import { desktopDeletionActive } from '../agent-lifecycle.js'
 import { openWithoutLinks, readBoundedFileWithoutLinks } from '../open-without-links.js'
 import { IsolatedScreenRefusal } from './refusal.js'
 
-const unusedMarker = '.desktop-screen-unused.json'
+export const UNUSED_SCREEN_MARKER = '.desktop-screen-unused.json'
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT'
 
 async function agentPath(id: string, parent = 'agents') {
@@ -33,7 +33,7 @@ async function openOwnerFolder(path: string) {
 export async function recordUnusedScreen(id: string, directory?: string): Promise<void> {
     const folder = await openOwnerFolder(directory ?? await agentPath(id))
     try {
-        const file = await open(join(folder.pinned, unusedMarker), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+        const file = await open(join(folder.pinned, UNUSED_SCREEN_MARKER), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
         try {
             await file.writeFile(JSON.stringify([id, folder.dev, folder.ino]), 'utf8')
             await file.sync()
@@ -51,7 +51,7 @@ export async function knownUnusedScreen(id: string): Promise<boolean> {
             return openOwnerFolder(path)
         })
         try {
-            const bytes = await readBoundedFileWithoutLinks(join(path, unusedMarker), 512)
+            const bytes = await readBoundedFileWithoutLinks(join(path, UNUSED_SCREEN_MARKER), 512)
             const current = await openOwnerFolder(path)
             try {
                 return current.dev === folder.dev && current.ino === folder.ino
@@ -67,7 +67,7 @@ export async function recordPossibleScreenResources(id: string): Promise<void> {
     if (desktopDeletionActive(id)) throw new IsolatedScreenRefusal('This coworker is being deleted.', 'refused')
     const folder = await openOwnerFolder(await agentPath(id))
     try {
-        await unlink(join(folder.pinned, unusedMarker)).catch(error => { if (!missing(error)) throw error })
+        await unlink(join(folder.pinned, UNUSED_SCREEN_MARKER)).catch(error => { if (!missing(error)) throw error })
         await folder.handle.sync()
         if (desktopDeletionActive(id)) throw new IsolatedScreenRefusal('This coworker is being deleted.', 'refused')
     } finally { await folder.handle.close() }
