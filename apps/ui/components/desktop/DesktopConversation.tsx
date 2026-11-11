@@ -4,6 +4,7 @@ import { useDesktopLocale } from './DesktopLocale'
 import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { ChatTimeSeparator } from '@/components/chat/ChatTimeSeparator'
 import { MessageTimeTooltip } from '@/components/chat/MessageTimeTooltip'
+import { ExpandableMessageBody } from '@/components/chat/ExpandableMessageBody'
 import { timeBreaksOf } from '@/lib/chat/message-times'
 import { DesktopConversationOverview, type DesktopConversationOverviewAuthority } from './coworker-overview/conversation-mount'
 
@@ -1147,6 +1148,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
     const composerForm = useRef<HTMLFormElement>(null)
     const uploadFileInput = useRef<HTMLInputElement>(null)
     const [findOpen, setFindOpen] = useState(false)
+    const finding = findOpen && active
     const [editorOpen, setEditorOpen] = useState(false)
     const [editorSession, setEditorSession] = useState(0)
     const expandable = isLongMessage(input)
@@ -1324,7 +1326,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
 
             <Conversation key={sessionId ?? 'new'} className="min-h-0" aria-label={t('chatMessages')}>
                 <ConversationContent className="gap-4 px-3.5 py-4">
-                    <DesktopConversationFind open={findOpen && active} onOpenChange={setFindOpen} />
+                    <DesktopConversationFind open={finding} onOpenChange={setFindOpen} />
                     {!ready && !historyError && !busy && <p role="status" className="text-sm text-muted-foreground">{t('openingSavedChat')}</p>}
                     {threadRows.leading.map(thread => <DesktopThreadBranch key={thread.id} thread={thread} needsYou={pendingChatSummaries?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />)}
                     {ready && transcript.length === 0 && threadRows.leading.length === 0 && !busy && (
@@ -1383,7 +1385,14 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                                             feedbackRating={feedback.votes.get(message.id)?.rating ?? null}
                                             onRate={message.id.startsWith('engine-') ? rating => feedback.rate(message.id, rating) : undefined}
                                             onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />
-                                        : message.parts.map((part, index) => part.type === 'text' ? <DesktopVoiceHistoryMessage key={index} agentId={agent.id} text={part.text}><DesktopSelectedMentionText text={part.text} metadata={message.metadata} /></DesktopVoiceHistoryMessage> : null)}
+                                        : message.parts.map((part, index) => {
+                                            if (part.type !== 'text') return null
+                                            const text = <DesktopSelectedMentionText text={part.text} metadata={message.metadata} />
+                                            return <DesktopVoiceHistoryMessage key={index} agentId={agent.id} text={part.text}>
+                                                {message.role === 'user' && part.text ? <ExpandableMessageBody forceExpanded={finding}
+                                                    showMore={t('showMore')} showLess={t('showLess')}>{text}</ExpandableMessageBody> : text}
+                                            </DesktopVoiceHistoryMessage>
+                                        })}
                                 </MessageContent>
                         )
                         return withTimeline(

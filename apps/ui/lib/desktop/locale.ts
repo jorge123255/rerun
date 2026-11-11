@@ -279,6 +279,8 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         askedByUnknown: source.agent.threadBranch.opener.askedByUnknown,
         started: source.agent.threadBranch.opener.started,
         message: source.agent.agentSheetChat.messagePlaceholder,
+        showMore: source.chat.message.showMore,
+        showLess: source.chat.message.showLess,
         reply: source.agent.agentSheetChat.replyPlaceholder,
         sendMessage: locale === 'en' ? 'Send a message…' : source.chat.composer.placeholder,
         send: source.chat.composer.editor.send,

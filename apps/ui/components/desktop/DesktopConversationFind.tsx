@@ -1,52 +1,62 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { desktopFindInPage } from '@/lib/desktop/find-in-page'
+import { desktopFindInPage, type DesktopFindResult } from '@/lib/desktop/find-in-page'
 import { XIcon } from '@/lib/icons'
 
 export function DesktopConversationFind({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
     const [query, setQuery] = useState('')
-    const [result, setResult] = useState<{ matches: number; activeMatchOrdinal: number } | null>(null)
-    const [unavailable, setUnavailable] = useState(false)
+    const [result, setResult] = useState<DesktopFindResult | null>(null)
+    const currentQuery = useRef('')
+    const generation = useRef(0)
+
+    const run = useCallback(async (action: 'start' | 'next' | 'previous', text: string) => {
+        const request = ++generation.current
+        if (action === 'start') setResult(null)
+        const found = await desktopFindInPage(action, text)
+        if (request === generation.current) setResult(found)
+    }, [])
+
     useEffect(() => {
         if (!open) return
         const selected = window.getSelection()?.toString().replace(/\s+/g, ' ').trim() ?? ''
-        if (selected && selected.length <= 200 && !selected.includes('\n')) setQuery(selected)
-    }, [open])
-
-    useEffect(() => () => { void desktopFindInPage('stop') }, [])
-
-    async function run(action: 'start' | 'next' | 'previous', text = query) {
-        const found = await desktopFindInPage(action, text)
-        if (!found.ok) {
-            setUnavailable(true)
-            setResult(null)
-            return
+        if (selected && selected.length <= 200) {
+            currentQuery.current = selected
+            setQuery(selected)
         }
-        setUnavailable(false)
-        setResult({ matches: found.matches ?? 0, activeMatchOrdinal: found.activeMatchOrdinal ?? 0 })
-    }
+        if (currentQuery.current) void run('start', currentQuery.current)
+        return () => {
+            generation.current++
+            void desktopFindInPage('stop')
+        }
+    }, [open, run])
 
-    async function close() {
-        await desktopFindInPage('stop')
+    function close() {
+        generation.current++
         setResult(null)
-        setUnavailable(false)
         onOpenChange(false)
     }
 
     if (!open) return null
-    return <form className="mb-2 flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-border bg-background p-2" onSubmit={event => { event.preventDefault(); void run('next') }}>
+    const status = result === null ? null : !result.ok ? 'Find is unavailable in this window.'
+        : result.matches ? `${result.activeMatchOrdinal ?? 0} of ${result.matches}` : 'No matches'
+    return <form className="mb-2 flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-border bg-background p-2" onSubmit={event => { event.preventDefault(); void run('next', query) }}>
         <Input autoFocus value={query} aria-label="Find in conversation" placeholder="Find in conversation" className="h-8 min-w-0 flex-1" maxLength={200}
-            onChange={event => { const text = event.target.value; setQuery(text); void run('start', text) }}
+            onChange={event => {
+                const text = event.target.value
+                currentQuery.current = text
+                setQuery(text)
+                void run('start', text)
+            }}
             onKeyDown={event => {
-                if (event.key === 'Escape') { event.preventDefault(); void close() }
-                if (event.key === 'Enter' && event.shiftKey) { event.preventDefault(); void run('previous') }
+                if (event.key === 'Escape') { event.preventDefault(); close() }
+                if (event.key === 'Enter' && event.shiftKey) { event.preventDefault(); void run('previous', query) }
             }} />
-        <span className="text-xs text-muted-foreground" role="status">{unavailable ? 'Find is unavailable in this window.' : result ? (result.matches ? `${result.activeMatchOrdinal} of ${result.matches}` : 'No matches') : null}</span>
-        <Button type="button" size="sm" variant="outline" onClick={() => void run('previous')}>Previous</Button>
+        <span className="text-xs text-muted-foreground" role="status">{status}</span>
+        <Button type="button" size="sm" variant="outline" onClick={() => void run('previous', query)}>Previous</Button>
         <Button type="submit" size="sm" variant="outline">Next</Button>
-        <Button type="button" size="icon-sm" variant="ghost" aria-label="Close find" onClick={() => void close()}><XIcon className="size-4" /></Button>
+        <Button type="button" size="icon-sm" variant="ghost" aria-label="Close find" onClick={close}><XIcon className="size-4" /></Button>
     </form>
 }
