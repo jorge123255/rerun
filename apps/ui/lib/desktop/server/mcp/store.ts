@@ -62,18 +62,24 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
             return encrypted
         })
     }
+    async function readCredentialState(agent:string,name:string,query:Pick<Client, 'execute'>,browser:boolean) {
+        const row=(await query.execute({sql:`SELECT s.id,s.revision,s.transport,s.bearer IS NOT NULL AS has_bearer,o.bundle
+            FROM desktop_remote_mcp s LEFT JOIN desktop_remote_mcp_oauth o ON s.agent_id=o.agent_id AND s.name=o.name
+            WHERE s.agent_id=? AND s.name=?`,args:[agent,name]})).rows[0]
+        return row && (row.transport === 'http' || browser && row.transport === 'sse') && !row.has_bearer && row.id
+            ? { registrationId:String(row.id), revision:String(row.revision), sealed:row.bundle == null ? null : String(row.bundle) } : null
+    }
     return {
         list, lifecycle,
         async readOAuth(agent:string,name:string):Promise<OAuthTokenBundle|null> {
             const row=(await db.execute({sql:'SELECT o.bundle FROM desktop_remote_mcp_oauth o JOIN desktop_remote_mcp s ON s.agent_id=o.agent_id AND s.name=o.name AND s.revision=o.revision WHERE o.agent_id=? AND o.name=?',args:[agent,name]})).rows[0]
             return row?JSON.parse(open(agent,`oauth:${name}`,String(row.bundle))):null
         },
-        async credentialState(agent:string,name:string, query: Pick<Client, 'execute'> = db) {
-            const row=(await query.execute({sql:`SELECT s.id,s.revision,s.transport,s.bearer IS NOT NULL AS has_bearer,o.bundle
-                FROM desktop_remote_mcp s LEFT JOIN desktop_remote_mcp_oauth o ON s.agent_id=o.agent_id AND s.name=o.name
-                WHERE s.agent_id=? AND s.name=?`,args:[agent,name]})).rows[0]
-            return row && row.transport === 'http' && !row.has_bearer && row.id
-                ? { registrationId:String(row.id), revision:String(row.revision), sealed:row.bundle == null ? null : String(row.bundle) } : null
+        credentialState(agent:string,name:string, query: Pick<Client, 'execute'> = db) {
+            return readCredentialState(agent,name,query,false)
+        },
+        browserCredentialState(agent:string,name:string) {
+            return readCredentialState(agent,name,db,true)
         },
         async writeOAuth(agent:string,name:string,revision:string,bundle:OAuthTokenBundle,signal:AbortSignal) {
             await commitOAuth(agent,name,revision,bundle,signal)

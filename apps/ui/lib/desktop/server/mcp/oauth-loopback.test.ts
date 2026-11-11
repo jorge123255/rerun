@@ -6,7 +6,7 @@ const http=vi.hoisted(()=>({callback:null as null|HttpHandler,closed:vi.fn()}))
 vi.mock('node:http',()=>({createServer:(callback:HttpHandler)=>{http.callback=callback;return {once:()=>{},listen:(_port:number,_host:string,ready:()=>void)=>ready(),address:()=>({port:49152}),close:http.closed,closeIdleConnections:()=>{}}}}))
 vi.mock('./oauth-network',async original=>({...await original<typeof import('./oauth-network')>(),publicOAuthAddress:vi.fn(async()=>({address:'93.184.216.34',family:4}))}))
 import {migrateDesktopSse} from '../mcp-sse/schema'
-import {remoteMcpStore,remoteMcpSchema,remoteMcpOAuthSchema} from './store'
+import {bindRemoteTransportDrain,remoteMcpStore,remoteMcpSchema,remoteMcpOAuthSchema} from './store'
 import {loopbackMcpOAuth} from './oauth-loopback'
 import {discoverLoopbackOAuth,type OAuthJson} from './oauth-network'
 const clients:ReturnType<typeof createClient>[]=[]
@@ -99,6 +99,19 @@ for (const duringExchange of [false, true]) it(`preserves a newer credential whe
  services.push(reopened)
  expect(await reopened.status('a','x',revision,signal)).toEqual({state:'connected'})
  expect(await reopened.credential('a','x',revision,signal)).toBe('newer-approval')
+})
+it('keeps browser authorization available for SSE without admitting device sign-in',async()=>{
+ const {db,oauth,revision,store}=await setup()
+ await db.execute("UPDATE desktop_remote_mcp SET transport='sse' WHERE agent_id='a' AND name='x'")
+ const drain=vi.fn(async()=>{})
+ bindRemoteTransportDrain(store,drain)
+ const signal=new AbortController().signal
+ expect(await store.credentialState('a','x')).toBeNull()
+ const started=await oauth.start('a','x',revision,signal)
+ const response=callback(new URL(started.authorizationUrl!).searchParams.get('state')!)
+ await vi.waitFor(()=>expect(response.writeHead).toHaveBeenCalledWith(200,expect.anything()))
+ expect(drain).toHaveBeenCalledWith('a','x')
+ expect(await oauth.status('a','x',revision,signal)).toEqual({state:'connected'})
 })
 for(const change of ['disconnect','edit','revoke','quit'] as const)it(`invalidates callback on ${change}`,async()=>{
  const {oauth,revision,store,exchanges,revoke}=await setup()

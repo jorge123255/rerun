@@ -6,7 +6,7 @@ import {abortable,type McpAccess} from './remote'
 import {discoverLoopbackOAuth,oauthJson,publicOAuthAddress,type OAuthJson,type OAuthMetadata} from './oauth-network'
 export type OAuthStatus={state:'idle'|'waiting'|'connected'|'error'|'unsupported';message?:string}
 type Attempt={slot:string;ended:boolean;controller:AbortController;server?:Server;timer:ReturnType<typeof setTimeout>;status:OAuthStatus;revision:string;url:string;used:boolean;release:()=>void}
-type BrowserCredentialStore=Pick<RemoteMcpStore,'credentialState'|'replaceOAuth'>
+type BrowserCredentialStore=Pick<RemoteMcpStore,'browserCredentialState'|'replaceOAuth'>
 export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'writeOAuth'|'lifecycle'>,access:McpAccess,json:OAuthJson=oauthJson,credentials?:BrowserCredentialStore) {
  const attempts=new Map<string,Attempt>(),refreshes=new Map<string,Promise<string>>()
  const terminal=new Map<string,{revision:string;url:string;status:OAuthStatus}>()
@@ -45,11 +45,11 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   const admission=store.lifecycle.watch(agent,name)
   const admitted=await authority(agent,name,revision,AbortSignal.any([stop,AbortSignal.timeout(30_000)]),admission)
   if(admitted.bearer)throw new Error('Clear the configured bearer before OAuth')
-  const expected=await credentials?.credentialState(agent,name)
+  const expected=await credentials?.browserCredentialState(agent,name)
   if(credentials && (!expected || expected.registrationId!==admitted.id || expected.revision!==revision))throw new Error('MCP OAuth credential unavailable')
   async function assertCredentialCurrent(signal:AbortSignal) {
    if(!credentials || !expected)return
-   const current=await abortable(credentials.credentialState(agent,name),signal)
+   const current=await abortable(credentials.browserCredentialState(agent,name),signal)
    if(!current || current.registrationId!==expected.registrationId || current.revision!==expected.revision || current.sealed!==expected.sealed)throw new Error('MCP credential generation changed.')
   }
   admission();stop.throwIfAborted()
