@@ -7,7 +7,7 @@ import { dataDir } from '../../config/paths.js'
 import { desktopSubscriptionModels, type DesktopSubscriptionProvider } from '@rerun/contracts'
 import { z } from 'zod'
 import { assertDesktopRunAdmission } from '../workspace-admission.js'
-import { openDesktopSubscriptionTurnRelay } from './device-relay.js'
+import { openDesktopSubscriptionCatalogRelay, openDesktopSubscriptionTurnRelay } from './device-relay.js'
 import { SubscriptionAcpError } from './peer.js'
 import { openDesktopSubscriptionAcpSession } from './session.js'
 
@@ -248,7 +248,7 @@ const catalogSchema = z.object({
 })
 
 export function readDesktopSubscriptionCatalog(provider: DesktopSubscriptionProvider) {
-    if (!desktopSubscriptionChatAvailable(provider)) return null
+    if (!desktopSubscriptionDeviceLoginAvailable(provider)) return null
     const saved = readApproval(provider)
     if (!saved) return null
     try {
@@ -266,7 +266,7 @@ export async function refreshDesktopSubscriptionCatalog(provider: DesktopSubscri
     const admission = assertDesktopRunAdmission()
     const saved = readApproval(provider)
     if (!saved) throw new SubscriptionAcpError('auth-required')
-    const session = await openDesktopSubscriptionTurn(provider, saved.id, signal)
+    const session = await openApprovedSession(provider, saved.id, 'catalog', signal)
     const initial = session.getSelectors().find(option => option.category === 'model')
     const models = []
     try {
@@ -295,9 +295,18 @@ export async function refreshDesktopSubscriptionCatalog(provider: DesktopSubscri
 }
 
 /** Opens one confined turn for the exact approved account. No credential is exported. */
-export async function openDesktopSubscriptionTurn(
+export function openDesktopSubscriptionTurn(
     provider: DesktopSubscriptionProvider,
     generation: string,
+    signal?: AbortSignal,
+) {
+    return openApprovedSession(provider, generation, 'turn', signal)
+}
+
+async function openApprovedSession(
+    provider: DesktopSubscriptionProvider,
+    generation: string,
+    purpose: 'catalog' | 'turn',
     signal?: AbortSignal,
 ) {
     const admission = assertDesktopRunAdmission()
@@ -309,19 +318,25 @@ export async function openDesktopSubscriptionTurn(
         return saved
     }
     assertCurrent()
-    // Enable a runner only after its provider request has been observed with its tools disabled.
-    if (!desktopSubscriptionChatAvailable(provider) || workers.has(provider)) throw unavailable()
+    if (!desktopSubscriptionDeviceLoginAvailable(provider) || workers.has(provider)) throw unavailable()
+    // Catalog discovery never enables Grok's tool-bearing prompt path.
+    if (purpose === 'turn' && !desktopSubscriptionChatAvailable(provider)) throw unavailable()
     const { binary } = bundlePaths(provider)
     const sandbox = ownedFile(process.env.RERUN_DESKTOP_SUBSCRIPTION_LOGIN_SANDBOX)
-    const relay = await openDesktopSubscriptionTurnRelay(provider)
+    const relay = await (purpose === 'catalog'
+        ? openDesktopSubscriptionCatalogRelay(provider)
+        : openDesktopSubscriptionTurnRelay(provider))
     try {
         const account = accountDirectories(assertCurrent().profile)
         if (workers.has(provider)) throw unavailable()
-        restrictKimiTools(account.vendorHome)
+        if (provider === 'kimi-code') restrictKimiTools(account.vendorHome)
         const { child, dispose } = spawnRunner(provider, { binary, sandbox }, account, runners[provider].args, relay, true)
         child.stderr.resume()
         return await openDesktopSubscriptionAcpSession({
-            provider, cwd: account.cwd, signal, beforePrompt: assertCurrent,
+            provider, cwd: account.cwd, signal, beforePrompt() {
+                if (purpose !== 'turn') throw unavailable()
+                assertCurrent()
+            },
             channel: { input: child.stdout, output: child.stdin, dispose },
         })
     } catch (error) {

@@ -7,10 +7,18 @@ const deviceDestinations = {
     'grok-build': new Set(['auth.x.ai:443']),
     'kimi-code': new Set(['auth.kimi.ai:443', 'api.kimi.ai:443']),
 }
+const catalogDestinations = {
+    ...deviceDestinations,
+    'grok-build': new Set([...deviceDestinations['grok-build'], 'cli-chat-proxy.grok.com:443']),
+}
 const dialVendor = (host: string) => connect({ host, port: 443 })
 
 export function openDesktopSubscriptionDeviceRelay(provider: DesktopSubscriptionProvider, dial = dialVendor) {
     return openRelay(deviceDestinations[provider], dial)
+}
+
+export function openDesktopSubscriptionCatalogRelay(provider: DesktopSubscriptionProvider, dial = dialVendor) {
+    return openRelay(catalogDestinations[provider], dial)
 }
 
 export function openDesktopSubscriptionTurnRelay(provider: DesktopSubscriptionProvider, dial = dialVendor) {

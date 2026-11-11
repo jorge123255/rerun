@@ -53,7 +53,12 @@ const status = z.discriminatedUnion('phase', [
         verificationUrl: z.string().max(600),
         userCode: desktopSubscriptionDeviceCode,
     }),
-    z.object({ phase: z.literal('approved'), canRefreshModels: z.boolean().optional(), models: desktopSubscriptionModels.optional() }),
+    z.object({
+        phase: z.literal('approved'),
+        canRefreshModels: z.boolean().optional(),
+        chatReady: z.boolean().optional(),
+        models: desktopSubscriptionModels.optional(),
+    }),
     z.object({ phase: z.literal('error'), reason: z.enum(['failed', 'expired', 'unconfirmed']) }),
 ])
 

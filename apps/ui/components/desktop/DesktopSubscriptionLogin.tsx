@@ -62,8 +62,11 @@ export function DesktopSubscriptionLogin({ onConnectionsChanged }: { onConnectio
         setPending(true)
         setError(null)
         try {
-            setSnapshot(await read(action))
-            if (action.action === 'refresh-models' || action.action === 'disconnect') onConnectionsChanged?.()
+            const next = await read(action)
+            setSnapshot(next)
+            const state = next[action.provider]
+            if (action.action === 'disconnect' ||
+                (action.action === 'refresh-models' && state.phase === 'approved' && state.chatReady)) onConnectionsChanged?.()
         } catch {
             setError(action.action === 'refresh-models' ? 'Could not refresh subscription models. Try again.' : 'Could not confirm the sign-in change.')
         }
@@ -90,10 +93,21 @@ export function DesktopSubscriptionLogin({ onConnectionsChanged }: { onConnectio
                     <p role="status" className="text-sm">Requesting code…</p>
                     <Button type="button" variant="outline" disabled={pending} onClick={() => send('cancel')}>Cancel sign-in</Button>
                 </> : state.phase === 'cancelling' ? <p role="status" className="text-sm">Cancelling sign-in…</p> : state.phase === 'approved' ? <>
-                    <p role="status" className="text-sm">{state.models?.length
+                    <p role="status" className="text-sm">{state.chatReady
                         ? 'Ready for text chat. Choose a model in the coworker’s chat or as the workspace default.'
-                        : state.canRefreshModels ? 'Sign-in approval saved. Load models to use this subscription in chat.'
-                            : 'Sign-in approval saved. Coworker chat is pending in this build.'}</p>
+                        : state.models?.length ? 'Models loaded. Coworker chat is unavailable in this build.'
+                            : 'Sign-in approval saved.'}</p>
+                    {state.models?.length && <details className="text-sm">
+                        <summary className="cursor-pointer font-medium">{state.models.length} available {state.models.length === 1 ? 'model' : 'models'}</summary>
+                        <ul className="mt-2 space-y-2 pl-4">
+                            {state.models.map(model => <li key={model.id}>
+                                <span>{model.label}</span>
+                                {model.reasoning && <span className="block text-xs text-muted-foreground">
+                                    Reasoning {model.reasoning.supported.join(', ')} · Default {model.reasoning.default}
+                                </span>}
+                            </li>)}
+                        </ul>
+                    </details>}
                     {state.canRefreshModels && <Button type="button" variant="outline" disabled={pending} onClick={() => send('refresh-models')}>
                         {state.models?.length ? 'Refresh models' : 'Load models'}
                     </Button>}

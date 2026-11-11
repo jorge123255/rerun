@@ -3,9 +3,10 @@ import {
     type DesktopSubscriptionProvider,
 } from '@rerun/contracts'
 import type { LoadedConnection } from '../../connections/types.js'
-import { readDesktopSubscriptionCatalog } from './runtime.js'
+import { desktopSubscriptionChatAvailable, readDesktopSubscriptionCatalog } from './runtime.js'
 
 function subscriptionConnection(provider: DesktopSubscriptionProvider): LoadedConnection | null {
+    if (!desktopSubscriptionChatAvailable(provider)) return null
     const catalog = readDesktopSubscriptionCatalog(provider)
     if (!catalog) return null
     return {

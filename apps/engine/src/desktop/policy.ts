@@ -4,7 +4,7 @@ import { DESKTOP_CLAUDE_CONNECTION_ID, isDesktopSubscriptionProvider, parseDeskt
 import { desktopClaudeAvailable } from './claude-plan/runtime.js'
 import { desktopBrainPagesRouteAllowed } from './brain-pages-policy.js'
 import { badRequest } from '../lib/errors.js'
-import { readDesktopSubscriptionCatalog } from './subscription-acp/runtime.js'
+import { desktopSubscriptionChatAvailable, readDesktopSubscriptionCatalog } from './subscription-acp/runtime.js'
 
 export const desktopApp = (): boolean => process.env.RERUN_DESKTOP_APP === '1'
 
@@ -13,7 +13,8 @@ const API_PROVIDERS = new Set(['openai', 'anthropic', 'google', 'openrouter'])
 export function desktopProviderAllowed(provider: string, id?: string) {
     if (isDesktopSubscriptionProvider(provider)) {
         const pin = parseDesktopSubscriptionConnectionId(id)
-        return pin?.provider === provider && readDesktopSubscriptionCatalog(provider)?.generation === pin.generation
+        return pin?.provider === provider && desktopSubscriptionChatAvailable(provider) &&
+            readDesktopSubscriptionCatalog(provider)?.generation === pin.generation
     }
     return API_PROVIDERS.has(provider) || (provider === 'custom' && registeredCustomConnectionIdSchema.safeParse(id).success) || (provider === 'codex' && id === DESKTOP_CODEX_ID && desktopCodexAvailable())
         || (provider === 'claude' && id === DESKTOP_CLAUDE_CONNECTION_ID && desktopClaudeAvailable())

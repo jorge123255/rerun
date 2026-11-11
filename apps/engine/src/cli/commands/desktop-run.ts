@@ -155,9 +155,13 @@ export async function desktopRunCommand(): Promise<void> {
     const subscriptionStatus = () => {
         const state = subscriptionLogin.snapshot()
         for (const provider of ['grok-build', 'kimi-code'] as const) {
-            if (state[provider].phase !== 'approved' || !desktopSubscriptionChatAvailable(provider)) continue
+            if (state[provider].phase !== 'approved') continue
             const catalog = readDesktopSubscriptionCatalog(provider)
-            state[provider] = { phase: 'approved', canRefreshModels: true, ...(catalog && { models: catalog.models }) }
+            state[provider] = {
+                phase: 'approved', canRefreshModels: true,
+                chatReady: !!catalog && desktopSubscriptionChatAvailable(provider),
+                ...(catalog && { models: catalog.models }),
+            }
         }
         return state
     }

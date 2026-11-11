@@ -77,7 +77,7 @@ test('refreshes the approved model catalog and removes it on disconnect', async 
             const { provider, action } = JSON.parse(String(init.body))
             expect(provider).toBe('kimi-code')
             state = { ...state, 'kimi-code': action === 'refresh-models'
-                ? { phase: 'approved', canRefreshModels: true, models: [{ id: 'kimi-fixture', label: 'Kimi Fixture' }] }
+                ? { phase: 'approved', canRefreshModels: true, chatReady: true, models: [{ id: 'kimi-fixture', label: 'Kimi Fixture' }] }
                 : { phase: 'idle' } }
         }
         return Response.json(state)
@@ -93,5 +93,34 @@ test('refreshes the approved model catalog and removes it on disconnect', async 
     await act(async () => { button('Disconnect Kimi Code from Rerun').click() })
     expect(container.textContent).toContain('Sign in with Kimi Code')
     expect(changed).toHaveBeenCalledTimes(2)
+    await act(async () => { root.unmount() })
+})
+
+test('lists saved Grok models and reasoning without marking the connection chat ready', async () => {
+    const changed = vi.fn()
+    let state: DesktopSubscriptionLoginSnapshot = {
+        'grok-build': { phase: 'approved', canRefreshModels: true, chatReady: false },
+        'kimi-code': { phase: 'unavailable' },
+    }
+    vi.stubGlobal('fetch', vi.fn(async (_path: string, init?: RequestInit) => {
+        if (init?.method === 'POST') {
+            expect(JSON.parse(String(init.body))).toEqual({ provider: 'grok-build', action: 'refresh-models' })
+            state = { ...state, 'grok-build': {
+                phase: 'approved', canRefreshModels: true, chatReady: false,
+                models: [{ id: 'grok-fixture', label: 'Grok Fixture', reasoning: { supported: ['low', 'high'], default: 'low' } }],
+            } }
+        }
+        return Response.json(state)
+    }))
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    await act(async () => { root.render(<DesktopSubscriptionLogin onConnectionsChanged={changed} />) })
+    await act(async () => { [...container.querySelectorAll('button')].find(button => button.textContent === 'Load models')!.click() })
+    expect(container.textContent).toContain('Models loaded. Coworker chat is unavailable')
+    expect(container.querySelector('summary')?.textContent).toBe('1 available model')
+    expect(container.querySelector('li')?.textContent).toContain('Grok Fixture')
+    expect(container.querySelector('li')?.textContent).toContain('low, high')
+    expect(changed).not.toHaveBeenCalled()
     await act(async () => { root.unmount() })
 })
