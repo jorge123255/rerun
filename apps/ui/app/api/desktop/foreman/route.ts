@@ -12,10 +12,12 @@ import { ForemanError } from '@/lib/desktop/server/foreman/runtime'
 import { cancelCompanyBriefChat } from '@/lib/desktop/server/company-brief/client'
 import { desktopForemanVoice } from '@/lib/desktop/server/foreman-voice/binding'
 import { assertDesktopWorkspaceAdmission } from '@/lib/desktop/server/workspace-admission'
+import { localStarterDecisionSchema } from '@/lib/desktop/server/foreman-starter/local-decision'
 export const runtime = 'nodejs'
 const inputSchema = z.discriminatedUnion('action', [
     z.strictObject({ action: z.literal('send'), chat: foremanChatRefSchema, requestId: z.uuid(), text: z.string().trim().min(1).max(20_000), modelChoice: foremanModelRefSchema.optional() }),
     z.strictObject({ action: z.literal('answer'), chat: foremanChatRefSchema, input: desktopQuestionAnswerSchema }),
+    z.strictObject({ action: z.literal('starter'), chat: foremanChatRefSchema, input: localStarterDecisionSchema }),
     z.strictObject({ action: z.literal('stop'), chat: foremanChatRefSchema }),
     z.strictObject({ action: z.literal('decision'), input: foremanDecisionInputSchema }),
     z.strictObject({ action: z.literal('recover'), chat: foremanChatRefSchema, requestId: z.uuid() }),
@@ -41,6 +43,11 @@ export async function POST(request: Request) {
         try {
             if (input.action === 'send') return Response.json(await app.send(input.chat, input.requestId, input.text, input.modelChoice))
             if (input.action === 'answer') return Response.json(await app.answerQuestion(input.chat, input.input))
+            if (input.action === 'starter') {
+                if (input.input.choice.kind === 'cards') throw new DesktopHttpError(409, 'Starter template review is unavailable.')
+                return Response.json(await app.answerStarter(input.chat, input.input, AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])),
+                    { headers: { 'cache-control': 'no-store' } })
+            }
             if (input.action === 'stop') { await cancelCompanyBriefChat(runtime, input.chat); await (await desktopForemanVoice(runtime, app.voiceShutdownSignal)).cancelChat(input.chat); await app.stop(input.chat); return Response.json({ ok: true }) }
             if (input.action === 'decision') return Response.json(await app.core.decide(input.input))
             if (input.action === 'recover') return Response.json(await app.core.recoverDecision(input.chat, input.requestId))

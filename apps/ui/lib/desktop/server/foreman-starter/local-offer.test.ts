@@ -10,6 +10,7 @@ import { createSqliteDesktopForemanIntakeStore } from '../foreman-intake/store'
 import type { DesktopRuntime } from '../runtime'
 import { setDesktopWorkspaceFrozen } from '../workspace-admission'
 import { createDesktopLocalStarterOffers } from './local-offer'
+import { createDesktopLocalStarterDecisions } from './local-decision'
 
 vi.mock('server-only', () => ({}))
 
@@ -184,4 +185,81 @@ test('a user-authored ask keeps the ordinary kickoff and does not fetch the cata
     })
     expect(completed.followUp?.runId).toBe('custom-kickoff')
     expect(catalog).not.toHaveBeenCalled()
+})
+
+test('card decisions require the exact captured revision and one immutable choice across reopen', async () => {
+    const { store, input } = await intake()
+    const offers = createDesktopLocalStarterOffers(runtime, db)
+    const completed = await store.complete(input, {
+        lookup: async () => null,
+        deliver: async effect => {
+            expect(await offers.prepare(effect.chat, effect.requestId, effect.fingerprint, signal())).toBeTruthy()
+            return ack()
+        },
+    })
+    const offer = (await offers.read(input.chat, completed.requestId))!
+    const decisions = createDesktopLocalStarterDecisions(runtime, db)
+    const selection = { offerId: offer.id, digest: offer.digest, intakeRequestId: completed.requestId,
+        choice: { kind: 'cards' as const, chosen: [template.templateId] } }
+    await expect(decisions.reserve(input.chat, { ...selection, digest: 'f'.repeat(64) }, signal())).rejects.toMatchObject({ status: 409 })
+    await expect(decisions.reserve(input.chat, { ...selection, choice: { kind: 'cards', chosen: ['f'.repeat(32)] } }, signal())).rejects.toMatchObject({ status: 409 })
+    catalog.mockResolvedValueOnce(Response.json({ templates: [{ ...template, revision: 'f'.repeat(64) }] }))
+    await expect(decisions.reserve(input.chat, selection, signal())).rejects.toMatchObject({ status: 409 })
+    expect((await db.execute('SELECT offer_id FROM desktop_foreman_local_starter_decisions')).rows).toEqual([])
+    const decision = await decisions.reserve(input.chat, selection, signal())
+    expect(decision).toEqual({ offer, choice: selection.choice })
+    expect(await offers.read(input.chat, completed.requestId)).toBeNull()
+    await closeDesktopDatabase(dir)
+    db = await openDesktopDatabase(dir)
+    const reopened = createDesktopLocalStarterDecisions(runtime, db)
+    catalog.mockClear()
+    expect(await reopened.reserve(input.chat, selection, signal())).toEqual(decision)
+    expect(catalog).not.toHaveBeenCalled()
+    await expect(reopened.reserve(input.chat, { ...selection, choice: { kind: 'dismiss' } }, signal())).rejects.toMatchObject({ status: 409 })
+    expect((await db.execute('SELECT offer_id FROM desktop_foreman_local_starter_decisions')).rows).toEqual([{ offer_id: offer.id }])
+    expect((await db.execute('SELECT request_id FROM desktop_foreman_turns')).rows).toEqual([])
+})
+
+test('Stop fences the reserved intake before a catalog response can publish the offer', async () => {
+    const { store, input } = await intake()
+    const offers = createDesktopLocalStarterOffers(runtime, db)
+    const decisions = createDesktopLocalStarterDecisions(runtime, db)
+    catalog.mockImplementationOnce(async () => {
+        await decisions.stop(input.chat)
+        return Response.json({ templates: [template] })
+    })
+    const completed = await store.complete(input, {
+        lookup: async () => null,
+        deliver: async effect => {
+            expect(await offers.prepare(effect.chat, effect.requestId, effect.fingerprint, signal())).toBeNull()
+            return ack()
+        },
+    })
+    expect(completed.state).toBe('acknowledged')
+    expect(await offers.prepare(input.chat, completed.requestId, completed.fingerprint, signal())).toBeNull()
+    expect(catalog).toHaveBeenCalledTimes(1)
+    expect((await db.execute('SELECT intake_request_id FROM desktop_foreman_local_starter_stops')).rows).toEqual([{ intake_request_id: completed.requestId }])
+    expect((await db.execute('SELECT id FROM desktop_foreman_local_starter_offers')).rows).toEqual([])
+})
+
+test('dismissal closes the exact acknowledged offer without reserving a turn', async () => {
+    const { store, input } = await intake()
+    const offers = createDesktopLocalStarterOffers(runtime, db)
+    const decisions = createDesktopLocalStarterDecisions(runtime, db)
+    const completed = await store.complete(input, {
+        lookup: async () => null,
+        deliver: async effect => {
+            const offer = (await offers.prepare(effect.chat, effect.requestId, effect.fingerprint, signal()))!
+            await expect(decisions.reserve(input.chat, { offerId: offer.id, digest: offer.digest, intakeRequestId: effect.requestId,
+                choice: { kind: 'dismiss' } }, signal())).rejects.toMatchObject({ status: 409 })
+            return ack()
+        },
+    })
+    expect(completed.state).toBe('acknowledged')
+    const offer = (await offers.read(input.chat, completed.requestId))!
+    const choice = { offerId: offer.id, digest: offer.digest, intakeRequestId: completed.requestId, choice: { kind: 'dismiss' as const } }
+    await expect(decisions.reserve(input.chat, choice, signal())).resolves.toEqual({ offer, choice: choice.choice })
+    await expect(decisions.reserve(input.chat, choice, signal())).resolves.toEqual({ offer, choice: choice.choice })
+    expect(await offers.read(input.chat, completed.requestId)).toBeNull()
+    expect((await db.execute('SELECT request_id FROM desktop_foreman_turns')).rows).toEqual([])
 })

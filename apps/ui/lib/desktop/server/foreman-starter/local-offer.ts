@@ -25,7 +25,7 @@ const cardSchema = z.strictObject({
 })
 const cardsSchema = z.array(cardSchema).min(1).max(maxCards)
 type Card = z.infer<typeof cardSchema>
-type Offer = {
+export type DesktopLocalStarterOffer = {
     id: string
     chat: DesktopForemanChatRef
     sessionId: string
@@ -34,7 +34,7 @@ type Offer = {
     digest: string
     cards: Card[]
 }
-const fingerprint = (offer: Omit<Offer, 'id' | 'digest'>) => createHash('sha256').update(JSON.stringify([
+const fingerprint = (offer: Omit<DesktopLocalStarterOffer, 'id' | 'digest'>) => createHash('sha256').update(JSON.stringify([
     'desktop-local-starter-v1', offer.chat.workspaceId, offer.chat.chatId, offer.sessionId,
     offer.intakeRequestId, offer.intakeFingerprint, offer.cards,
 ])).digest('hex')
@@ -56,7 +56,7 @@ export function createDesktopLocalStarterOffers(runtime: DesktopRuntime, db: Cli
         return { owner, receipt }
     }
 
-    async function read(chat: DesktopForemanChatRef, requestId: string): Promise<Offer | null> {
+    async function readOffer(chat: DesktopForemanChatRef, requestId: string, receiptOnly: boolean): Promise<DesktopLocalStarterOffer | null> {
         assertDesktopWorkspaceAdmission(runtime)
         const source = await intake(chat, requestId)
         if (!source) return null
@@ -66,7 +66,11 @@ export function createDesktopLocalStarterOffers(runtime: DesktopRuntime, db: Cli
                   JOIN desktop_foreman_chats c ON c.chat_id=o.chat_id AND c.workspace_id=o.workspace_id AND c.engine_session_id=o.session_id
                   WHERE o.workspace_id=? AND o.chat_id=? AND o.session_id=? AND o.intake_request_id=?
                     AND o.intake_fingerprint=? AND i.state=? AND i.updated_at=? AND o.withdrawn=0
-                    AND NOT EXISTS (SELECT 1 FROM desktop_foreman_turns t WHERE t.chat_id=o.chat_id)`,
+                    AND NOT EXISTS (SELECT 1 FROM desktop_foreman_local_starter_stops s WHERE s.intake_request_id=i.request_id)
+                    AND (${receiptOnly
+                        ? 'EXISTS (SELECT 1 FROM desktop_foreman_local_starter_decisions d WHERE d.offer_id=o.id)'
+                        : `NOT EXISTS (SELECT 1 FROM desktop_foreman_local_starter_decisions d WHERE d.offer_id=o.id)
+                           AND NOT EXISTS (SELECT 1 FROM desktop_foreman_turns t WHERE t.chat_id=o.chat_id)`})`,
             args: [chat.workspaceId, chat.chatId, source.owner.sessionId, requestId, source.receipt.fingerprint, source.receipt.state, source.receipt.updatedAt],
         })).rows[0]
         assertDesktopWorkspaceAdmission(runtime)
@@ -78,11 +82,13 @@ export function createDesktopLocalStarterOffers(runtime: DesktopRuntime, db: Cli
             return { ...base, id: z.uuid().parse(row.id), digest: String(row.digest) }
         } catch { throw unavailable() }
     }
+    const read = (chat: DesktopForemanChatRef, requestId: string) => readOffer(chat, requestId, false)
 
     return {
         read,
+        readDecided: (chat: DesktopForemanChatRef, requestId: string) => readOffer(chat, requestId, true),
         /** Called only by the server that owns completion of this exact intake. */
-        async prepare(chat: DesktopForemanChatRef, requestId: string, intakeFingerprint: string, signal: AbortSignal): Promise<Offer | null> {
+        async prepare(chat: DesktopForemanChatRef, requestId: string, intakeFingerprint: string, signal: AbortSignal): Promise<DesktopLocalStarterOffer | null> {
             signal.throwIfAborted()
             assertDesktopWorkspaceAdmission(runtime)
             const source = await intake(chat, requestId)
@@ -91,8 +97,9 @@ export function createDesktopLocalStarterOffers(runtime: DesktopRuntime, db: Cli
             if (existing) return existing
             const ineligible = (await db.execute({
                 sql: `SELECT 1 FROM desktop_foreman_turns WHERE chat_id=?
-                      UNION ALL SELECT 1 FROM desktop_foreman_local_starter_offers WHERE chat_id=? LIMIT 1`,
-                args: [chat.chatId, chat.chatId],
+                      UNION ALL SELECT 1 FROM desktop_foreman_local_starter_offers WHERE chat_id=?
+                      UNION ALL SELECT 1 FROM desktop_foreman_local_starter_stops WHERE intake_request_id=? LIMIT 1`,
+                args: [chat.chatId, chat.chatId, requestId],
             })).rows[0]
             if (ineligible) return null
             const { templates } = await request(engineOf(runtime), '/desktop/templates', {
@@ -119,6 +126,7 @@ export function createDesktopLocalStarterOffers(runtime: DesktopRuntime, db: Cli
                       FROM desktop_foreman_chats c JOIN desktop_foreman_intake_completions i ON i.chat_id=c.chat_id AND i.workspace_id=c.workspace_id
                       WHERE c.workspace_id=? AND c.chat_id=? AND c.engine_session_id=? AND i.request_id=? AND i.fingerprint=? AND i.state=? AND i.updated_at=?
                         AND NOT EXISTS (SELECT 1 FROM desktop_foreman_turns t WHERE t.chat_id=c.chat_id)
+                        AND NOT EXISTS (SELECT 1 FROM desktop_foreman_local_starter_stops s WHERE s.intake_request_id=i.request_id)
                       ON CONFLICT(chat_id) DO NOTHING`,
                 args: [randomUUID(), fingerprint(base), JSON.stringify(cards), chat.workspaceId, chat.chatId,
                     base.sessionId, requestId, intakeFingerprint, source.receipt.state, source.receipt.updatedAt],

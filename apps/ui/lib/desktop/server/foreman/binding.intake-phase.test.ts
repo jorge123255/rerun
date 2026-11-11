@@ -1,6 +1,6 @@
 import { createClient, type Client } from '@libsql/client'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -33,14 +33,18 @@ vi.mock('@/lib/engine/client', () => ({
     request: vi.fn(async (_engine, _path, _init, parse) => parse({ question: null })),
     EngineRequestError: class extends Error { constructor(message: string, readonly status: number) { super(message) } },
     getRun: vi.fn(async (_engine: unknown, _agent: string, id: string) => ({ id, agentId: 'foreman', sessionId: 'original-session', status: 'finished' })),
-    getSessionMessages: vi.fn(async () => []), cancelRun: vi.fn(),
+    getSessionMessages: vi.fn(async () => []), cancelRun: vi.fn(async () => {}),
 }))
-import { getRun, getSessionMessages, request } from '@/lib/engine/client'
+import { cancelRun, getRun, getSessionMessages, request } from '@/lib/engine/client'
 import { desktopForeman } from './binding'
 import { DESKTOP_FOREMAN_CHAT_SCHEMA } from './chat-store'
 import { DESKTOP_FOREMAN_SCHEMA_STATEMENTS } from './store'
 import { DESKTOP_FOREMAN_INTAKE_SCHEMA_SQL, fingerprintIntakeAnswers } from '../foreman-intake'
 import { createDesktopForemanIntakeBinding } from './intake'
+import { createDesktopLocalStarterOffers, type DesktopLocalStarterOffer } from '../foreman-starter/local-offer'
+import { createSqliteDesktopForemanIntakeStore } from '../foreman-intake/store'
+import { initializeDesktopRound41 } from '../round41-schema'
+import { POST as foremanAction } from '@/app/api/desktop/foreman/route'
 
 const chat = { workspaceId: '1', chatId: 'fmc_phaseprimary01' }
 const answers = { companyUrl: 'acme.com', industry: 'saas' as const, decidedIndustry: null, industryLabel: null, position: 'Founder', firstName: 'Ada' }
@@ -73,7 +77,9 @@ describe('production Foreman intake phase and model brief', () => {
         directory = await mkdtemp(join(tmpdir(), 'rerun-intake-phase-'))
         state.db = open()
         await state.db.executeMultiple([DESKTOP_FOREMAN_CHAT_SCHEMA, ...DESKTOP_FOREMAN_SCHEMA_STATEMENTS, DESKTOP_FOREMAN_INTAKE_SCHEMA_SQL,
+            'CREATE TABLE desktop_schema_migrations(version INTEGER PRIMARY KEY,id TEXT NOT NULL UNIQUE)',
             'CREATE TABLE desktop_workspace(id INTEGER PRIMARY KEY,name TEXT); INSERT INTO desktop_workspace VALUES(1,\'Source test workspace\');'].join(';'))
+        await initializeDesktopRound41(state.db)
         await state.db.execute({ sql: 'INSERT INTO desktop_foreman_chats(chat_id,workspace_id,engine_session_id,model) VALUES(?,?,?,?)', args: [chat.chatId, chat.workspaceId, 'original-session', JSON.stringify(model)] })
         runtime = { protocolVersion: 1, workspaceId: 1, launchNonce: randomUUID(), buildId: 'phase-source-test', dataRoot: directory,
             app: { origin: 'http://127.0.0.1:3210', sessionToken: 'a'.repeat(64) }, engine: { origin: 'http://127.0.0.1:3222', apiKey: 'b'.repeat(64) } }
@@ -86,7 +92,76 @@ describe('production Foreman intake phase and model brief', () => {
             return new Response(null, { headers: { 'x-run-id': turn.binding.runId, 'x-session-id': turn.sessionId } })
         }))
     })
-    afterEach(async () => { state.db.close(); vi.unstubAllGlobals(); await rm(directory, { recursive: true, force: true }) })
+    afterEach(async () => { state.db.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); await rm(directory, { recursive: true, force: true }) })
+
+    it('resumes the exact saved starter answer once after a lost response and refuses it after Stop', async () => {
+        const app = await desktopForeman(runtime)
+        const store = createSqliteDesktopForemanIntakeStore(state.db, { schemaReady: true })
+        const saved = await store.save({ chat, requestId: randomUUID(), baseRevision: 0, stepIndex: 2,
+            draft: { ...EMPTY_DRAFT, companyUrl: answers.companyUrl, industry: answers.industry, position: answers.position, firstName: answers.firstName },
+            decidedIndustry: null, knownFirstName: null })
+        vi.mocked(request).mockImplementation(async (_engine, path, _init, parse) => parse(path === '/desktop/templates' ? {
+            templates: [{ templateId: 'a'.repeat(32), revision: 'b'.repeat(64), title: 'Fixture support', status: 'captured', coworkerCount: 1, capturedAt: timestamp }],
+        } : { question: null }))
+        const offers = createDesktopLocalStarterOffers(runtime, state.db)
+        let offer: DesktopLocalStarterOffer | null = null
+        const receipt = await store.complete({ chat, requestId: randomUUID(), expectedRevision: saved.session.revision, answers }, {
+            lookup: async () => null,
+            deliver: async input => {
+                offer = await offers.prepare(input.chat, input.requestId, input.fingerprint, AbortSignal.timeout(5000))
+                return { conversationId: 'original-session', runId: null, industry: 'saas' }
+            },
+        })
+        expect(receipt.state).toBe('acknowledged')
+        expect(offer).toBeTruthy()
+        const prepared = (await offers.read(chat, receipt.requestId))!
+        const choice = { offerId: prepared.id, digest: prepared.digest, intakeRequestId: receipt.requestId,
+            choice: { kind: 'text' as const, text: 'Design a support coworker' } }
+        const runtimeFile = join(directory, 'runtime.json')
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        vi.stubEnv('RERUN_DESKTOP_DATA_DIR', directory)
+        vi.stubEnv('RERUN_DESKTOP_RUNTIME_FILE', runtimeFile)
+        await writeFile(runtimeFile, JSON.stringify(runtime), { mode: 0o600 })
+        const answerFromApp = (scope = chat, input: { offerId: string; digest: string; intakeRequestId: string; choice: unknown } = choice, authenticated = true) => foremanAction(new Request(runtime.app.origin + '/api/desktop/foreman', {
+            method: 'POST',
+            headers: { host: new URL(runtime.app.origin).host, origin: runtime.app.origin,
+                ...(authenticated && { cookie: 'rerun-desktop-session=' + runtime.app.sessionToken }) },
+            body: JSON.stringify({ action: 'starter', chat: scope, input }),
+        }))
+        expect((await answerFromApp(chat, choice, false)).status).toBe(401)
+        expect((await answerFromApp({ ...chat, workspaceId: '2' })).status).toBe(404)
+        expect((await answerFromApp(chat, { ...choice, choice: { kind: 'cards', chosen: ['a'.repeat(32)] } })).status).toBe(409)
+        expect((await state.db.execute('SELECT offer_id FROM desktop_foreman_local_starter_decisions')).rows).toEqual([])
+        const transport = vi.mocked(fetch).getMockImplementation()!
+        vi.mocked(fetch).mockImplementationOnce(async (url, init) => {
+            await transport(url, init)
+            throw new Error('Lost starter response')
+        })
+        await expect(app.answerStarter(chat, choice, AbortSignal.timeout(5000))).rejects.toThrow('Lost starter response')
+        expect(sent).toEqual([expect.objectContaining({ text: choice.choice.text, replayOnly: false,
+            binding: expect.objectContaining({ ...chat, runId: prepared.id }), sessionId: 'original-session' })])
+        expect(sent[0]).not.toHaveProperty('starterOfferId')
+
+        state.db.close()
+        state.db = open()
+        runtime = { ...runtime, launchNonce: randomUUID() }
+        await writeFile(runtimeFile, JSON.stringify(runtime))
+        const reopened = await desktopForeman(runtime)
+        await expect(reopened.send(chat, prepared.id, choice.choice.text, model)).rejects.toMatchObject({ status: 409 })
+        await expect(reopened.answerStarter(chat, { ...choice, choice: { kind: 'text', text: 'Another job' } }, AbortSignal.timeout(5000))).rejects.toMatchObject({ status: 409 })
+        const accepted = await answerFromApp()
+        expect(accepted.status).toBe(200)
+        expect(await accepted.json()).toEqual({ runId: prepared.id })
+        await expect(reopened.answerStarter(chat, choice, AbortSignal.timeout(5000))).resolves.toEqual({ runId: prepared.id })
+        expect(sent).toHaveLength(2)
+        expect(sent[1]).toMatchObject({ replayOnly: true, binding: { runId: prepared.id } })
+        expect((await state.db.execute('SELECT request_id FROM desktop_foreman_turns')).rows).toEqual([{ request_id: prepared.id }])
+        vi.mocked(getRun).mockResolvedValueOnce({ id: prepared.id, agentId: 'foreman', sessionId: 'original-session', status: 'running' } as Awaited<ReturnType<typeof getRun>>)
+        await reopened.stop(chat)
+        expect(cancelRun).toHaveBeenCalledWith(expect.anything(), 'foreman', prepared.id)
+        await expect(reopened.answerStarter(chat, choice, AbortSignal.timeout(5000))).rejects.toMatchObject({ status: 409 })
+        expect(sent).toHaveLength(2)
+    })
 
     it('reserves an answer for the exact completed question and reconciles a lost acknowledgement without another send', async () => {
         const guard = { runId: randomUUID(), sourceMessageId: 'question-message', toolCallId: 'ask-choice', digest: 'a'.repeat(64) }

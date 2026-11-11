@@ -27,9 +27,10 @@ export type ForemanTurn = {
     brief: ForemanBrief
     question?: DesktopForemanQuestionGuard
     answerIntent?: DesktopQuestionAnswer
+    starterOfferId?: string
 }
-export function foremanTurnWire({ answerIntent: _answerIntent, ...body }: ForemanTurn) {
-    return body
+export function foremanTurnWire({ binding, sessionId, text, brief, question }: ForemanTurn) {
+    return { binding, sessionId, text, brief, ...(question && { question }) }
 }
 const LOCKS = Symbol.for('rerun.desktop.foreman.chat-locks.v1')
 const locks = () => ((globalThis as unknown as Record<symbol, WeakMap<Client, Promise<unknown>>>)[LOCKS] ??= new WeakMap())
