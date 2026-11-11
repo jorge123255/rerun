@@ -40,3 +40,23 @@ export const desktopSetupMutationResultSchema = z.object({
 export type DesktopSetupMutationResult = z.infer<typeof desktopSetupMutationResultSchema>
 
 export const DESKTOP_SETUP_DEFAULT_PROMPT = `Introduce yourself in two lines, then show one concrete result of your job built only from tools this Mac coworker actually has: files in your workspace, web search, the browser, your database, scheduled tasks and connected apps. Verify what you show works before presenting it. Ask for anything missing with the question tool instead of guessing. Never promise environment variables, shell secrets, logins or apps that are not connected. When everything asked for is genuinely in place and verified, call install_complete so the user gets a normal message box back.`
+
+export const desktopForemanImportedSetupSchema = z.strictObject({ focus: z.string().min(1).max(2000).optional() })
+export type DesktopForemanImportedSetup = z.infer<typeof desktopForemanImportedSetupSchema>
+
+const FOCUS_HEADING = '## Start with:'
+
+/**
+ * The template's own install, opened on the skill the card sold. They hired it for that one use case,
+ * so that is what it gets working first; the rest of its install follows as its author wrote it.
+ * Written once: an install that already opens on a focus is left as it is.
+ */
+export function installWithFocus(install: string, focus: string): string {
+    if (install.trimStart().startsWith(FOCUS_HEADING)) return install
+    return `${FOCUS_HEADING} ${focus}\n\nThey hired you from a card that promised this, so get it working first, on their real company, before anything else this guide sets up.\n\n${install.trimStart()}`
+}
+
+export function foremanImportedSetupPrompt(prompt: string, focus?: string): string {
+    const base = prompt.trim() || DESKTOP_SETUP_DEFAULT_PROMPT
+    return focus ? installWithFocus(base, focus) : base
+}

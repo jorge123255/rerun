@@ -2,9 +2,8 @@ import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Client, Transaction } from '@libsql/client'
 import { z } from 'zod'
-import { DESKTOP_SETUP_DEFAULT_PROMPT, desktopTemplateDetailSchema, desktopTemplateInstallResultSchema, desktopTemplateOperationSchema, desktopTemplateRevisionSchema, desktopSetupMutationResultSchema, foremanModelRefSchema, providerSchema, type DesktopTemplateOperation } from '@rerun/contracts'
+import { foremanImportedSetupPrompt, desktopTemplateDetailSchema, desktopTemplateInstallResultSchema, desktopTemplateOperationSchema, desktopTemplateRevisionSchema, desktopSetupMutationResultSchema, foremanModelRefSchema, providerSchema, type DesktopTemplateOperation } from '@rerun/contracts'
 import { EngineRequestError, getAgent, request } from '@/lib/engine/client'
-import { installWithFocus } from '@/lib/foreman/starter-pack'
 import { usableConnection } from '../../chat-model'
 import type { DesktopSpaceWrite } from '../../spaces'
 import { DesktopHttpError } from '../auth'
@@ -347,19 +346,11 @@ export async function createDesktopForemanCreationAuthority(runtime: DesktopRunt
             const templateServer = createDesktopTemplateServer({db,engine:engineClient,foremanDisabled:true,
                 initializeImportedSetup: async input => {
                     await current()
-                    await canonicalAuthority.initializeImportedSetup(input)
-                    const path = `/agents/${encodeURIComponent(input.engineAgentId)}/setup`
                     const key = `setup:${input.engineAgentId}`
-                    let setupInput = row.payload[key]
-                    if (!setupInput) {
-                        const view = setupWire.parse(await engineClient.get(path))
-                        const prompt = input.prompt.trim() || DESKTOP_SETUP_DEFAULT_PROMPT
-                        setupInput = {requestId:stableId(body.requestId,key),expectedRevision:view.revision,prompt:body.focus ? installWithFocus(prompt,body.focus) : prompt,required:true}
-                        await payload(db,row,{...row.payload,[key]:setupInput})
-                    }
-                    const result = setupWire.parse(await engineClient.post(`${path}/save`,setupInput))
-                    if (result.required !== true || result.completedAt !== null || result.sessionId !== null) throw changed()
-                    return {revision:result.revision}
+                    const prompt = foremanImportedSetupPrompt(input.prompt, body.focus)
+                    if (!row.payload[key]) await payload(db,row,{...row.payload,[key]:{prompt}})
+                    else if (z.object({prompt:z.string()}).parse(row.payload[key]).prompt !== prompt) throw changed()
+                    return canonicalAuthority.initializeImportedSetup({ ...input, foreman: body.focus ? { focus: body.focus } : {} })
                 },
                 commitInstalled: async input => {
                     await current()

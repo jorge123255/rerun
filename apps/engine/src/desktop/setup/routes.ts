@@ -1,13 +1,13 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { DESKTOP_TEMPLATE_LIMITS } from '@rerun/contracts'
+import { DESKTOP_TEMPLATE_LIMITS, desktopForemanImportedSetupSchema } from '@rerun/contracts'
 import { agentExists } from '../../agents/loader.js'
 import { notFound } from '../../lib/errors.js'
 import { claimDesktopSetupSession, continueDesktopSetupSession, DesktopSetupMutationRejected, initializeImportedSetup, readDesktopSetup, saveDesktopSetup } from './service.js'
 
 const mutationInput = z.strictObject({ requestId: z.uuid(), expectedRevision: z.string().min(1) })
 const saveInput = mutationInput.extend({ prompt: z.string().max(100_000), required: z.boolean().nullable() })
-const importInput = z.strictObject({ agentId: z.uuid(), importReceiptId: z.uuid(), prompt: z.string().max(DESKTOP_TEMPLATE_LIMITS.maxFileBytes), required: z.boolean() })
+const importInput = z.strictObject({ agentId: z.uuid(), importReceiptId: z.uuid(), prompt: z.string().max(DESKTOP_TEMPLATE_LIMITS.maxFileBytes), required: z.boolean(), foreman: desktopForemanImportedSetupSchema.optional() })
 
 export const desktopSetupRoutes = new Hono()
 
