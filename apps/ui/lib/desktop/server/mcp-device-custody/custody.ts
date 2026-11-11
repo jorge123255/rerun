@@ -2,7 +2,7 @@ import 'server-only'
 import type { ApprovedDeviceFallback } from '../../../../../engine/src/desktop/mcp-login-tools/backend'
 import type { DeviceView } from '../../../../../engine/src/desktop/mcp-login-tools/contract'
 import { abortable } from '../mcp/remote'
-import type { OAuthTokenBundle } from '../mcp/store'
+import type { OAuthTokenBundle, SettleOAuthWrite } from '../mcp/store'
 import {
     DEVICE_CUSTODY_LIMITS, deviceApprovalSchema, deviceStartSchema, devicePollSchema, digest,
     parsePrivate, requestFingerprint, requestKey, slotOf,
@@ -20,13 +20,19 @@ export type DeviceCustodyPorts = {
         start(method: ApprovedDeviceMethod, signal: AbortSignal): Promise<unknown>
         poll(method: ApprovedDeviceMethod, deviceCode: string, signal: AbortSignal): Promise<unknown>
     }
-    writeCredential(approval: DeviceApproval, token: OAuthTokenBundle, signal: AbortSignal): Promise<void>
+    assertCredentialCurrent(approval: DeviceApproval, signal: AbortSignal): Promise<void>
+    writeCredential(approval: DeviceApproval, token: OAuthTokenBundle, signal: AbortSignal, settle: SettleOAuthWrite): Promise<void>
     now?: () => number
 }
 
 type Admitted = { approval: DeviceApproval; signal: AbortSignal; check(): void; recheck(): Promise<void> }
 type ReceiptResult = NonNullable<DeviceRecord['requests'][string]['result']>
 const inFlight = (phase: DeviceRecord['phase']) => phase === 'starting' || phase === 'polling' || phase === 'committing'
+function settledRecord(saved: SavedDeviceRecord, key: string, phase: DeviceRecord['phase'], result: ReceiptResult, fields: Partial<DeviceRecord> = {}): DeviceRecord {
+    return { ...saved.value, ...fields, phase,
+        requests: { ...saved.value.requests, [key]: { ...saved.value.requests[key]!, state: 'settled', result } },
+    }
+}
 
 /** A factory owned by the existing MCP runtime. Construction/reads never start a broker effect. */
 export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
@@ -40,7 +46,8 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
         const lease = await abortable(ports.approval(target, signal), signal)
         if (!lease) return null
         const approval = parsePrivate(deviceApprovalSchema, lease.approval)
-        const bound = AbortSignal.any([signal, lease.signal])
+        const expiresIn = Math.max(1, Math.min(DEVICE_CUSTODY_LIMITS.operationMs, Math.ceil(approval.approvedUntil - now())))
+        const bound = AbortSignal.any([signal, lease.signal, AbortSignal.timeout(expiresIn)])
         const check = () => {
             bound.throwIfAborted(); lease.check()
             if (disposed || approval.approvedUntil <= now()
@@ -80,10 +87,7 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
     }
     async function settle(admitted: Admitted, saved: SavedDeviceRecord, key: string, phase: DeviceRecord['phase'], result: ReceiptResult, fields: Partial<DeviceRecord> = {}) {
         await admitted.recheck()
-        const next: DeviceRecord = { ...saved.value, ...fields, phase,
-            requests: { ...saved.value.requests, [key]: { ...saved.value.requests[key]!, state: 'settled', result } },
-        }
-        return ports.store.replace(admitted.approval, saved, next, admitted.check)
+        return ports.store.replace(admitted.approval, saved, settledRecord(saved, key, phase, result, fields), admitted.check)
     }
     async function operate(action: 'start' | 'complete', target: DeviceTarget, stop: AbortSignal): Promise<DeviceView> {
         const admitted = await admit(target, stop)
@@ -104,6 +108,8 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
         if (saved && action === 'start') return waiting(saved.value)
         if (!saved && action === 'complete') return { state: 'no_pending' }
         if (saved && now() < saved.value.nextPollAt) return { state: 'pending' }
+        try { await ports.assertCredentialCurrent(approval, admitted.signal) }
+        catch { admitted.check(); return { state: 'approval_required' } }
         if (active.size >= DEVICE_CUSTODY_LIMITS.registrations || active.has(slot)) return { state: 'unknown' }
         const controller = new AbortController(), ticket = ports.lifecycle(target, controller)
         const signal = AbortSignal.any([admitted.signal, controller.signal])
@@ -125,6 +131,7 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
             }
             effectReserved = true
             await admitted.recheck(); check()
+            await ports.assertCredentialCurrent(approval, signal); check()
             if (action === 'start') {
                 const start = parsePrivate(deviceStartSchema, await abortable(ports.broker.start(approval.method, signal), signal))
                 await admitted.recheck(); check()
@@ -153,14 +160,23 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
             saved = await ports.store.replace(approval, saved, { ...saved.value, phase: 'committing', deviceCode: undefined }, check)
             await admitted.recheck(); check()
             const method = approval.method
+            const committing = saved
             await abortable(ports.writeCredential(approval, {
                 accessToken: result.token.accessToken, refreshToken: result.token.refreshToken,
                 expiresAt: now() + result.token.expiresIn * 1000, scope: approval.method.scope,
                 resource: method.resource, issuer: method.issuer, tokenEndpoint: method.tokenEndpoint, clientId: method.clientId,
-            }, signal), signal)
-            await admitted.recheck(); check()
-            await settle(admitted, saved, key, 'connected', 'connected')
-            check(); return { state: 'connected', tools: [] }
+            }, signal, async query => {
+                const checkDeadline = () => {
+                    signal.throwIfAborted()
+                    if (committing.value.expiresAt <= now() || approval.approvedUntil <= now()) throw new Error('MCP device attempt expired')
+                }
+                await ports.store.replace(approval, committing, settledRecord(committing, key, 'connected', 'connected'), checkDeadline, query)
+                checkDeadline()
+            }), signal)
+            // This write advanced the approved generation. The backend separately rechecks
+            // current owner and registration before probing the committed credential.
+            signal.throwIfAborted()
+            return { state: 'connected', tools: [] }
         } catch {
             // A reserved effect may have reached the provider or credential store. Never poll/start it again.
             if (saved && effectReserved) {

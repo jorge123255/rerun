@@ -6,6 +6,7 @@ import { createClient, type Client } from '@libsql/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { DesktopMcpSignInSource } from '../../../../../../packages/contracts/src/desktop-mcp-sign-in'
 import { remoteMcpStore, remoteMcpOAuthSchema } from '../mcp/store'
+import { credentialGenerationToken } from '../mcp/credential-generation'
 import { bindApprovedMcpDeviceCustody } from '../mcp-device-custody/binding'
 import { desktopMcpDeviceCustodySchema } from '../mcp-device-custody/store'
 import { digest, type ApprovedDeviceMethod, type DeviceApproval } from '../mcp-device-custody/model'
@@ -30,7 +31,7 @@ async function fixture() {
         server: { name: 'docs', revision: 'r1', url: 'https://docs.example/mcp', displayName: 'Docs' } }
     const identity = { engineAgentId: 'engine-coworker', sessionId: 'engine-chat', runId: 'new-approved-run' }
     const target = { owner: source.agentId, identity, name: source.server.name, revision: source.server.revision, url: source.server.url }
-    let time = 1_000_000, allowed = true, generation = 'FIXTURE_CREDENTIAL_GENERATION', credential = new AbortController()
+    let time = 1_000_000, allowed = true, generationOverride: string | undefined, credential = new AbortController()
     let method: ApprovedDeviceMethod = { kind: 'device-code-link-v1', resource: source.server.url, issuer: 'https://issuer.example/', clientId: 'fixture-public-client', scope: 'notes.read notes.write',
         deviceEndpoint: 'https://issuer.example/device', tokenEndpoint: 'https://issuer.example/token', verificationUri: 'https://issuer.example/activate' }
     const shutdown = new AbortController()
@@ -50,10 +51,16 @@ async function fixture() {
                 check() { signal.throwIfAborted(); if (!allowed) throw new Error('revoked') } }
         }),
         method: vi.fn(async (owner: DeviceReviewAuthority, signal: AbortSignal) => {
-            const row = await store.read(owner.owner, owner.name), captured = generation, selected = digest(method), current = credential
-            if (row.revision !== owner.revision || row.url !== owner.url || row.bearer || row.transport !== 'http') throw new Error('registration changed')
-            return { value: { registrationId: row.id, method: structuredClone(method), credentialGeneration: captured, validUntil: 2_000_000 }, signal: current.signal,
-                check() { signal.throwIfAborted(); current.signal.throwIfAborted(); if (generation !== captured || digest(method) !== selected) throw new Error('method or generation changed') } }
+            const watch = store.lifecycle.watchCredentials(owner.owner, owner.name)
+            const current = await store.credentialState(owner.owner, owner.name)
+            const override = generationOverride, selected = digest(method), credentialSignal = credential.signal
+            if (!current || current.revision !== owner.revision || current.resource !== owner.url) throw new Error('registration changed')
+            const generation = override ?? credentialGenerationToken(key(), owner.owner, owner.name, current, current.sealed)
+            return { value: { registrationId: current.registrationId, method: structuredClone(method), credentialGeneration: generation, validUntil: 2_000_000 }, signal: credentialSignal,
+                check() {
+                    signal.throwIfAborted(); credentialSignal.throwIfAborted(); watch()
+                    if (generationOverride !== override || digest(method) !== selected) throw new Error('method or generation changed')
+                } }
         }),
         stopCustody: vi.fn(async (approval: DeviceApproval) => { await custody?.stop(approval) }),
     }
@@ -66,7 +73,7 @@ async function fixture() {
     return { db, source, target, identity, ports, review, make, bind, signal, start, poll, service, store, reviewStore, shutdown,
         request: { identity, toolCallId: 'start-id', action: 'start', name: 'docs' },
         advance: (ms = 5000) => { time += ms }, deny: () => { allowed = false },
-        changeGeneration: () => { credential.abort(); generation = 'FIXTURE_GENERATION_2'; credential = new AbortController() },
+        changeGeneration: () => { credential.abort(); generationOverride = 'FIXTURE_GENERATION_2'; credential = new AbortController() },
         changeMethod: (change: Partial<ApprovedDeviceMethod>) => { method = { ...method, ...change } },
         async approve() {
             const view = await review.review(source, signal)

@@ -37,12 +37,12 @@ async function fixture() {
     let approval: unknown = structuredClone(initialApproval), time = 1_000_000, allowed = true
     const revoked = new AbortController(), shutdown = new AbortController(), lifecycle = remoteMcpLifecycle()
     const start = vi.fn(async () => started as unknown), poll = vi.fn(async () => authorized as unknown)
-    const writeCredential = vi.fn(async () => {})
+    const writeCredential = vi.fn<DeviceCustodyPorts['writeCredential']>(async (_approval, _token, _signal, settle) => { await settle(db) })
     const ports: DeviceCustodyPorts = {
         store, shutdown: shutdown.signal, now: () => time,
         approval: vi.fn(async () => allowed ? { approval, signal: revoked.signal, check: () => { if (!allowed) throw new Error('revoked') } } : null),
         lifecycle: (current, controller) => lifecycle.admit(current.owner, current.name, controller),
-        broker: { start, poll }, writeCredential,
+        broker: { start, poll }, assertCredentialCurrent: async () => {}, writeCredential,
     }
     const make = () => createApprovedMcpDeviceCustody(ports)
     const custody = make(), signal = new AbortController().signal
@@ -63,7 +63,7 @@ describe('approved MCP device custody (offline sources)', () => {
         f.advance(5000)
         const view = await f.complete()
         expect(view).toEqual({ state: 'connected', tools: [] })
-        expect(f.writeCredential).toHaveBeenCalledWith(initialApproval, expect.objectContaining({ accessToken: 'FIXTURE_ACCESS_SECRET', resource: target.url }), expect.any(AbortSignal))
+        expect(f.writeCredential).toHaveBeenCalledWith(initialApproval, expect.objectContaining({ accessToken: 'FIXTURE_ACCESS_SECRET', resource: target.url }), expect.any(AbortSignal), expect.any(Function))
         expect(JSON.stringify([waiting, view])).not.toMatch(/FIXTURE_|deviceCode|accessToken|refreshToken/)
         expect((await f.store.read(initialApproval))?.value.deviceCode).toBeUndefined()
     })

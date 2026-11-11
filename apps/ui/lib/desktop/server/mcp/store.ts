@@ -19,6 +19,7 @@ export function bindRemoteTransportDrain(store: Pick<RemoteMcpStore, 'lifecycle'
 }
 export type OAuthTokenBundle={refreshPending?:string;accessToken:string;refreshToken?:string;expiresAt:number;resource:string;issuer:string;tokenEndpoint:string;clientId:string;scope?:string}
 export type BrowserOAuthWriteAdmission = { requestId: string; attemptId: string; sealedApproval: string; expiresAt: number }
+export type SettleOAuthWrite = (transaction: Pick<Client, 'execute'>) => Promise<void>
 export function remoteMcpStore(db: Client, key: () => Buffer) {
     const lifecycle = remoteMcpLifecycle()
     function seal(agent: string, name: string, value: string) {
@@ -37,13 +38,11 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
         const result = await db.execute({ sql: 'SELECT id,transport,name,url,revision,bearer IS NOT NULL AS has_bearer FROM desktop_remote_mcp WHERE agent_id=? ORDER BY name', args:[agent] })
         return result.rows.map(r => ({ id:String(r.id), transport:String(r.transport) as 'http' | 'sse', name:String(r.name), url:String(r.url), revision:String(r.revision), hasBearer:!!r.has_bearer }))
     }
-    function commitOAuth(agent:string,name:string,revision:string,bundle:OAuthTokenBundle,signal:AbortSignal,expected?:{registrationId:string;sealed:string|null},approval?:BrowserOAuthWriteAdmission) {
+    function commitOAuth(agent:string,name:string,revision:string,bundle:OAuthTokenBundle,signal:AbortSignal,expected?:{registrationId:string;sealed:string|null},approval?:BrowserOAuthWriteAdmission,settle?:SettleOAuthWrite) {
         return lifecycle.commitCredentials(agent,name,signal,async check=>{
             check()
             const remote=(await db.execute({sql:'SELECT transport FROM desktop_remote_mcp WHERE agent_id=? AND name=?',args:[agent,name]})).rows[0]
             if(remote?.transport==='sse'){const drain=transportDrains.get(lifecycle);if(!drain)throw new Error('SSE cleanup unavailable');await drain(agent,name);check()}
-            const previous=(await db.execute({sql:'SELECT revision,bundle FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=?',args:[agent,name]})).rows[0]
-            check()
             const encrypted=seal(agent,`oauth:${name}`,JSON.stringify(bundle))
             const predicate = expected ? ' AND id=? AND (SELECT bundle FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=?) IS ?' : ''
             const match = expected ? [expected.registrationId, agent, name, expected.sealed] : []
@@ -55,17 +54,39 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
                     AND r.active_attempt_id=a.attempt_id AND a.state='pending' AND r.status='connecting'
             )` : ''
             const approved = approval ? [approval.expiresAt, approval.sealedApproval, approval.attemptId, approval.requestId, agent] : []
-            try {
-                const result=await db.execute({sql:`INSERT INTO desktop_remote_mcp_oauth(agent_id,name,revision,bundle) SELECT agent_id,name,revision,? FROM desktop_remote_mcp WHERE agent_id=? AND name=? AND revision=?${predicate}${active} ON CONFLICT(agent_id,name) DO UPDATE SET revision=excluded.revision,bundle=excluded.bundle`,args:[encrypted,agent,name,revision,...match,...approved]})
+            async function write(query: Pick<Client, 'execute'>) {
+                check()
+                const result = await query.execute({
+                    sql: `INSERT INTO desktop_remote_mcp_oauth(agent_id,name,revision,bundle)
+                        SELECT agent_id,name,revision,? FROM desktop_remote_mcp
+                        WHERE agent_id=? AND name=? AND revision=?${predicate}${active}
+                        ON CONFLICT(agent_id,name) DO UPDATE SET revision=excluded.revision,bundle=excluded.bundle`,
+                    args: [encrypted, agent, name, revision, ...match, ...approved],
+                })
                 check()
                 if(result.rowsAffected!==1)throw new Error(expected ? 'MCP credential generation changed.' : 'MCP server changed')
-            } catch(error) {
-                // Restore only the row displaced by this exact write. In particular, a
-                // cancelled refresh must retain its prior uncertain-rotation receipt,
-                // rather than looking anonymous on the next request or after restart.
-                if(previous)await db.execute({sql:'UPDATE desktop_remote_mcp_oauth SET revision=?,bundle=? WHERE agent_id=? AND name=? AND bundle=?',args:[String(previous.revision),String(previous.bundle),agent,name,encrypted]})
-                else await db.execute({sql:'DELETE FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=? AND bundle=?',args:[agent,name,encrypted]})
-                throw error
+            }
+            if (settle) {
+                const transaction = await db.transaction('write')
+                try {
+                    await write(transaction)
+                    await settle(transaction)
+                    check()
+                    await transaction.commit()
+                } catch (error) {
+                    await transaction.rollback().catch(() => undefined)
+                    throw error
+                } finally { transaction.close() }
+            } else {
+                const previous=(await db.execute({sql:'SELECT revision,bundle FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=?',args:[agent,name]})).rows[0]
+                try { await write(db) }
+                catch(error) {
+                    // Restore only the row displaced by this exact write. In particular, a
+                    // cancelled refresh must retain its prior uncertain-rotation receipt.
+                    if(previous)await db.execute({sql:'UPDATE desktop_remote_mcp_oauth SET revision=?,bundle=? WHERE agent_id=? AND name=? AND bundle=?',args:[String(previous.revision),String(previous.bundle),agent,name,encrypted]})
+                    else await db.execute({sql:'DELETE FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=? AND bundle=?',args:[agent,name,encrypted]})
+                    throw error
+                }
             }
             lifecycle.invalidateCredentials(agent,name)
             return encrypted
@@ -93,8 +114,8 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
         async writeOAuth(agent:string,name:string,revision:string,bundle:OAuthTokenBundle,signal:AbortSignal) {
             await commitOAuth(agent,name,revision,bundle,signal)
         },
-        replaceOAuth(agent:string,name:string,expected:{registrationId:string;revision:string;sealed:string|null},bundle:OAuthTokenBundle,signal:AbortSignal,approval?:BrowserOAuthWriteAdmission) {
-            return commitOAuth(agent,name,expected.revision,bundle,signal,expected,approval)
+        replaceOAuth(agent:string,name:string,expected:{registrationId:string;revision:string;sealed:string|null},bundle:OAuthTokenBundle,signal:AbortSignal,approval?:BrowserOAuthWriteAdmission,settle?:SettleOAuthWrite) {
+            return commitOAuth(agent,name,expected.revision,bundle,signal,expected,approval,settle)
         },
         async read(agent: string, name: string): Promise<Omit<RemoteServer, 'hasBearer'> & { bearer: string }> {
             const row = (await db.execute({ sql:'SELECT * FROM desktop_remote_mcp WHERE agent_id=? AND name=?',args:[agent,name] })).rows[0]

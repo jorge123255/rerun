@@ -55,11 +55,11 @@ export function createDeviceCustodyStore(db: Client, crypto: DesktopSecretCrypto
             } catch { await tx.rollback().catch(() => undefined); throw new Error('MCP device custody could not reserve the attempt') }
             finally { tx.close() }
         },
-        async replace(approval: DeviceApproval, previous: SavedDeviceRecord, value: DeviceRecord, check: () => void): Promise<SavedDeviceRecord> {
+        async replace(approval: DeviceApproval, previous: SavedDeviceRecord, value: DeviceRecord, check: () => void, query: Pick<Client, 'execute'> = db): Promise<SavedDeviceRecord> {
             const version = previous.version + 1
             const sealed = await seal(approval, version, value)
             check()
-            const result = await db.execute({ sql: 'UPDATE desktop_mcp_device_custody SET version=?,sealed=? WHERE workspace_id=? AND agent_id=? AND slot=? AND version=?', args: [version, sealed, approval.workspaceId, approval.owner, slotOf(approval), previous.version] })
+            const result = await query.execute({ sql: 'UPDATE desktop_mcp_device_custody SET version=?,sealed=? WHERE workspace_id=? AND agent_id=? AND slot=? AND version=?', args: [version, sealed, approval.workspaceId, approval.owner, slotOf(approval), previous.version] })
             if (result.rowsAffected !== 1) throw new Error('MCP device custody changed; reconcile the existing attempt')
             return { version, value }
         },

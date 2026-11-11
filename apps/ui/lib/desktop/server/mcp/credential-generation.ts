@@ -1,6 +1,6 @@
 import 'server-only'
 import { createHmac } from 'node:crypto'
-import type { OAuthTokenBundle, RemoteMcpStore } from './store'
+import type { OAuthTokenBundle, RemoteMcpStore, SettleOAuthWrite } from './store'
 
 /**
  * The canonical credential generation of one remote MCP registration, and the one write that may
@@ -47,8 +47,19 @@ export function createMcpCredentialGeneration({ store, key, ttlMs = MCP_CREDENTI
         const state = await store.credentialState(agent, name)
         return state && { ...state, generation: credentialGenerationToken(key(), agent, name, state, state.sealed) }
     }
+    async function requireCurrent(agent: string, name: string, expected: string, resource: string, signal: AbortSignal) {
+        signal.throwIfAborted()
+        const before = await current(agent, name)
+        signal.throwIfAborted()
+        if (!before) throw new Error('MCP device registration is unavailable.')
+        if (before.generation !== expected || before.resource !== resource) throw new Error('MCP credential generation changed.')
+        return before
+    }
 
     return {
+        async assertCurrent(agent: string, name: string, expected: string, resource: string, signal: AbortSignal): Promise<void> {
+            await requireCurrent(agent, name, expected, resource, signal)
+        },
         /** The current generation of this registration, or null when there is no device-capable registration. */
         async read(agent: string, name: string, stop?: AbortSignal): Promise<McpCredentialGenerationLease | null> {
             const signal = stop ?? new AbortController().signal
@@ -87,11 +98,9 @@ export function createMcpCredentialGeneration({ store, key, ttlMs = MCP_CREDENTI
          * current inside the credential commit, so an unrelated write, revoke, registration edit or
          * disable that landed first refuses this one instead of being overwritten.
          */
-        async advance(agent: string, name: string, expected: string, bundle: OAuthTokenBundle, signal: AbortSignal): Promise<{ generation: string }> {
-            const before = await current(agent, name)
-            if (!before) throw new Error('MCP device registration is unavailable.')
-            if (before.generation !== expected) throw new Error('MCP credential generation changed.')
-            const sealed = await store.replaceOAuth(agent, name, before, bundle, signal)
+        async advance(agent: string, name: string, expected: string, bundle: OAuthTokenBundle, signal: AbortSignal, settle?: SettleOAuthWrite): Promise<{ generation: string }> {
+            const before = await requireCurrent(agent, name, expected, bundle.resource, signal)
+            const sealed = await store.replaceOAuth(agent, name, before, bundle, signal, undefined, settle)
             return { generation: credentialGenerationToken(key(), agent, name, before, sealed) }
         },
     }
