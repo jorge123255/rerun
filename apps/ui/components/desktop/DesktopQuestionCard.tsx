@@ -91,7 +91,7 @@ function QuestionCard({ question, disabled, voiceSessionId, onAnswer, files }: D
         return true
     }
     const attachments: QuestionAttachments | undefined = files?.loaded ? {
-        accept: '.txt,.md,.csv,.json,.log,.pdf,.wav,.mp3,.m4a,.ogg',
+        accept: '.png,.jpg,.jpeg,.webp,.txt,.md,.csv,.json,.log,.pdf,.wav,.mp3,.m4a,.ogg',
         onPick: (index, selected) => {
             const start = index * QUESTION_DOCUMENT_POSITIONS
             files.add(selected, { start, end: start + QUESTION_DOCUMENT_POSITIONS })

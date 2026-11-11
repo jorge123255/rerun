@@ -1,7 +1,9 @@
 import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
-import { desktopDocumentScopeSchema, desktopDocumentSelectionSchema, desktopDocumentRevisionActionSchema, desktopDocumentUploadSchema, DESKTOP_DOCUMENT_TEXT_MAX_CHARS, DESKTOP_DOCUMENT_INPUT_MAX_BYTES, type DesktopDocumentAdmission, type DesktopDocumentAttachment, type DesktopDocumentConversion, type DesktopDocumentReference, type DesktopDocumentScope, type DesktopDocumentSelection } from '@rerun/contracts'
+import { desktopDocumentScopeSchema, desktopDocumentSelectionSchema, desktopDocumentRevisionActionSchema, desktopDocumentUploadSchema, DESKTOP_DOCUMENT_IMAGE_MAX_FILES, DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES, DESKTOP_DOCUMENT_TEXT_MAX_CHARS, DESKTOP_DOCUMENT_INPUT_MAX_BYTES, type DesktopDocumentAdmission, type DesktopDocumentAttachment, type DesktopDocumentConversion, type DesktopDocumentReference, type DesktopDocumentScope, type DesktopDocumentSelection } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
+import { inspectStoredComposerImage } from '../composer-image-formats'
+import { questionDocumentId } from '../../question-documents'
 import { inspectDesktopDocumentUpload, readDesktopPlainText } from './bytes'
 import { documentConflict } from './store'
 import type { DesktopDocumentAttachmentRecord, DesktopDocumentAuthorities } from './types'
@@ -66,11 +68,18 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
                 await owner(scope, signal)
                 if (scopeKey(input) !== scopeKey(scope)) throw documentConflict()
                 const inspected = inspectDesktopDocumentUpload(input, bytes)
+                if (inspected.kind === 'image') {
+                    if (!questionDocumentId(scope.tabUid)) throw new DesktopHttpError(415, 'Use the chat composer to attach images to an ordinary message.')
+                    const mimeType = inspected.mimeType
+                    if (mimeType !== 'image/png' && mimeType !== 'image/jpeg' && mimeType !== 'image/webp') throw new DesktopHttpError(415, 'Choose a supported image.')
+                    await inspectStoredComposerImage(mimeType, bytes)
+                    signal.throwIfAborted()
+                }
                 const fingerprint = digest(JSON.stringify([scopeKey(scope), input.attachmentId, input.name, inspected.mimeType, inspected.sha256, inspected.byteLength, input.position]))
                 const now = new Date().toISOString()
                 const conversion: DesktopDocumentConversion = inspected.kind === 'text'
                     ? { mode: 'plain-text', state: 'ready', text: readDesktopPlainText(bytes) }
-                    : initialConversion(inspected.kind)
+                    : inspected.kind === 'image' ? { mode: 'image', state: 'ready' } : initialConversion(inspected.kind)
                 const initial: DesktopDocumentAttachmentRecord = { fingerprint, attachment: { ...inspected, scope, attachmentId: input.attachmentId, name: input.name, position: input.position, uploaded: false, selected: true, admitted: false, conversion, revision: randomUUID(), createdAt: now, updatedAt: now } }
                 await owner(scope, signal)
                 let record = (await store.reserve(initial)).record
@@ -130,7 +139,7 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
             const allowedScopes = await scopes(scope, signal)
             const records: DesktopDocumentAttachmentRecord[] = []
             const references: DesktopDocumentReference[] = [], inputs: DesktopDocumentAdmission['inputs'] = []
-            let textBytes = 0
+            let textBytes = 0, imageBytes = 0, imageCount = 0
             for (const id of selection.attachmentIds) {
                 let record: DesktopDocumentAttachmentRecord | null = null
                 for (const candidate of allowedScopes) { record = await store.read(candidate, id); if (record) break }
@@ -138,10 +147,22 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
                 const a = record.attachment
                 await owner(a.scope, signal)
                 await verified(a.scope, a, signal)
+                const reference: DesktopDocumentReference = { attachmentId: a.attachmentId, scope: a.scope, name: a.name, mimeType: a.mimeType, kind: a.kind, sha256: a.sha256, byteLength: a.byteLength }
+                if (a.kind === 'image' && a.conversion.mode === 'image' && a.conversion.state === 'ready') {
+                    imageCount++
+                    imageBytes += a.byteLength
+                    if (imageCount > DESKTOP_DOCUMENT_IMAGE_MAX_FILES || imageBytes > DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES) {
+                        return { allowed: false, reason: 'Choose at most four images, up to 16 MiB in total.', references: [], inputs: [] }
+                    }
+                    references.push(reference)
+                    inputs.push({ mode: 'file', reference })
+                    records.push(record)
+                    continue
+                }
                 if (a.conversion.state !== 'ready' || !a.conversion.text || !['pdf-text', 'voice-transcript', 'plain-text'].includes(a.conversion.mode)) return { allowed: false, reason: a.conversion.error ?? 'Prepare every selected attachment, or remove unsupported files before sending.', references: [], inputs: [] }
                 textBytes += new TextEncoder().encode(a.conversion.text).byteLength
                 if (textBytes > DESKTOP_DOCUMENT_INPUT_MAX_BYTES) return { allowed: false, reason: 'The selected documents contain more than 128 KiB of text. Choose fewer or shorter documents.', references: [], inputs: [] }
-                references.push({ attachmentId: a.attachmentId, scope: a.scope, name: a.name, mimeType: a.mimeType, kind: a.kind, sha256: a.sha256, byteLength: a.byteLength })
+                references.push(reference)
                 inputs.push({ mode: 'text', text: a.conversion.text })
                 records.push(record)
             }

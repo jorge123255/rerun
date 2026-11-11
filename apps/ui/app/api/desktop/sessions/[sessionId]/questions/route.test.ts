@@ -10,6 +10,7 @@ import type { DesktopPendingQuestion, DesktopQuestionAnswer } from '@/lib/deskto
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { GET, POST } from './route'
 import { POST as TRANSCRIBE } from './transcribe/route'
+import { composerTestPng } from '@/lib/desktop/server/composer-image.test-fixtures'
 import { desktopAuxiliaryStore } from '@/lib/desktop/server/auxiliary/store'
 import { GET as GET_FILES, POST as POST_FILES } from '@/app/api/desktop/coworkers/[agentId]/document-attachments/route'
 import { POST as POST_CHAT } from '@/app/api/desktop/chat/route'
@@ -19,6 +20,7 @@ const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime, alice: DesktopAgent, bob: DesktopAgent, a: DesktopSession, b: DesktopSession
 let rejectBeforeAccept: boolean, foreignHistory: boolean, historyReads: number, modelReads: number
 let sourceUnavailable: boolean
+let fixtureProvider: 'codex' | 'openrouter'
 const histories = new Map<string, Message[]>(), receipts = new Map<string, string>(), dispatches: Record<string, unknown>[] = []
 const questions = [
     { question: 'Which name?', options: [] },
@@ -54,6 +56,7 @@ const transcribe = (input: unknown, sessionId = a.id, headers?: Record<string, s
 
 beforeEach(async () => {
     sourceUnavailable = false
+    fixtureProvider = 'codex'
     root = await mkdtemp(join(tmpdir(), 'rerun-question-api-'))
     histories.clear(); receipts.clear(); dispatches.length = 0; rejectBeforeAccept = false; foreignHistory = false; historyReads = 0; modelReads = 0
     server = createServer(async (req, res) => {
@@ -74,7 +77,7 @@ beforeEach(async () => {
         })
         if (req.method === 'GET' && req.url === '/connections') {
             modelReads++
-            return reply(200, { connections: [{ id: 'provider', name: 'Fixture', provider: 'codex', models: ['workspace-model', 'chat-model'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }], default: { connectionId: 'provider', model: 'workspace-model' } })
+            return reply(200, { connections: [{ id: 'provider', name: 'Fixture', provider: fixtureProvider, models: ['workspace-model', 'chat-model'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }], default: { connectionId: 'provider', model: 'workspace-model' } })
         }
         const agentMatch = req.url?.match(/^\/agents\/(engine-alice|engine-bob)$/)
         if (req.method === 'GET' && agentMatch) return reply(200, { id: agentMatch[1], config: { name: agentMatch[1], enabled: true }, soul: '' })
@@ -219,6 +222,52 @@ test('retains a file-only answer for its exact question and reconciles with the 
     expect(await download.text()).toBe('Original quarterly figures')
 })
 
+test('saves an image with its question, refuses a text-only model, and sends the original PNG with mixed answers', async () => {
+    const question = await pending()
+    const scope = { agentId: alice.id, sessionId: a.id, tabUid: questionDocumentTabUid(question.id) }
+    const url = `${runtime.app.origin}/api/desktop/coworkers/${alice.id}/document-attachments`
+    const headers = { origin: runtime.app.origin, host: new URL(runtime.app.origin).host, 'content-type': 'application/json',
+        cookie: 'rerun-desktop-session=' + runtime.app.sessionToken }
+    const imageBytes = Buffer.from(composerTestPng())
+    const imageId = crypto.randomUUID(), textId = crypto.randomUUID()
+    const image = { ...scope, operation: 'upload', attachmentId: imageId, name: 'sample.png', mimeType: 'image/png',
+        position: QUESTION_DOCUMENT_POSITIONS, audioBase64: imageBytes.toString('base64') }
+    const files = (input: object) => POST_FILES(new Request(url, { method: 'POST', headers, body: JSON.stringify(input) }),
+        { params: Promise.resolve({ agentId: alice.id }) })
+    const corrupt = await files({ ...image, audioBase64: Buffer.from('Wrong file').toString('base64') })
+    expect(corrupt.status).toBe(415)
+    const saved = await files(image)
+    expect(saved.status).toBe(200)
+    const { attachment } = await saved.json()
+    expect(attachment).toMatchObject({ kind: 'image', conversion: { mode: 'image', state: 'ready' } })
+    expect((await files({ ...image, attachmentId: textId, name: 'sample.txt', mimeType: 'text/plain',
+        position: 0, audioBase64: Buffer.from('These are supporting notes').toString('base64') })).status).toBe(200)
+    await restartQuestionFixture()
+    const query = new URLSearchParams({ tabUid: scope.tabUid, sessionId: scope.sessionId, attachmentId: imageId, sha256: attachment.sha256, view: 'preview' })
+    const preview = await GET_FILES(new Request(url + '?' + query, { headers }), { params: Promise.resolve({ agentId: alice.id }) })
+    expect(preview.status).toBe(200)
+    expect(preview.headers.get('content-type')).toBe('image/png')
+    expect(Buffer.from(await preview.arrayBuffer())).toEqual(imageBytes)
+
+    const documents = { scope, admissionId: crypto.randomUUID(), attachmentIds: [textId, imageId] }
+    const body = { ...answer(question, [['Start'], [], [], []]), documents }
+    fixtureProvider = 'openrouter'
+    expect((await post(body)).status).toBe(400)
+    expect((await pending()).attempt).toBeUndefined()
+    expect(dispatches).toHaveLength(0)
+
+    fixtureProvider = 'codex'
+    const result = await post(body)
+    expect(result.status).toBe(200)
+    expect(dispatches[0]).toMatchObject({ desktopDocuments: [
+        { reference: { attachmentId: textId }, text: 'These are supporting notes' },
+        { reference: { attachmentId: imageId, sha256: attachment.sha256 }, dataBase64: image.audioBase64 },
+    ], desktopQueuedTurn: { documents } })
+    await restartQuestionFixture()
+    expect((await post(body)).headers.get('x-run-id')).toBe(body.requestId)
+    expect(dispatches).toHaveLength(1)
+})
+
 test('an unavailable source lookup cannot bypass webhook authority and dispatch an ordinary reply', async () => {
     const body = answer(await pending())
     sourceUnavailable = true
@@ -227,6 +276,7 @@ test('an unavailable source lookup cannot bypass webhook authority and dispatch 
     expect(receipts.size).toBe(0)
     expect((await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_question_answers')).rows).toHaveLength(0)
     sourceUnavailable = false
+    fixtureProvider = 'codex'
     const response = await post(body)
     expect(response.status).toBe(200)
     expect(response.headers.get('x-run-id')).toBe(body.requestId)

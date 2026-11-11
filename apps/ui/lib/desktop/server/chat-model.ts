@@ -9,6 +9,12 @@ import type { DesktopRuntime } from './runtime'
 import { desktopModel, engineOf, readDesktopProviders } from './settings'
 import { findDesktopAgent, findDesktopSession, setDesktopSessionModel, type DesktopAgent, type DesktopSession } from './store'
 
+export async function assertDesktopImageModel(runtime: DesktopRuntime, connectionId: string | undefined) {
+    const { connections } = await readDesktopProviders(runtime)
+    if (connections.find(connection => connection.id === connectionId)?.provider !== 'codex')
+        throw new DesktopHttpError(400, 'Image attachments need a ChatGPT / Codex model. Choose one before sending.')
+}
+
 const WORKSPACE_REQUIRED = 'Connect a provider and choose a default model in Settings.'
 
 export function savedChoice(session: DesktopSession | null): DesktopModelPick | null {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { DESKTOP_DOCUMENT_INPUT_MAX_BYTES, DESKTOP_DOCUMENT_MAX_BYTES, desktopDocumentKindForName } from '@rerun/contracts'
+import { DESKTOP_DOCUMENT_IMAGE_MAX_BYTES, DESKTOP_DOCUMENT_INPUT_MAX_BYTES, DESKTOP_DOCUMENT_MAX_BYTES, desktopDocumentKindForName } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { desktopAudioKind, inspectDesktopAudioBytes } from '../audio-bytes'
 import { inspectDesktopPdfBytes } from '../pdf-bytes'
@@ -15,7 +15,12 @@ export function inspectDesktopDocumentUpload(input: { name: string; mimeType: st
     if (bytes.byteLength < 1 || bytes.byteLength > DESKTOP_DOCUMENT_MAX_BYTES) throw new DesktopHttpError(413, 'Documents can be up to 16 MB.')
     const kind = desktopDocumentKindForName(input.name)
     let mimeType = input.mimeType
-    if (kind === 'text') {
+    if (kind === 'image') {
+        if (bytes.byteLength > DESKTOP_DOCUMENT_IMAGE_MAX_BYTES) throw new DesktopHttpError(413, 'Images can be up to 8 MB.')
+        const extension = input.name.split('.').at(-1)!.toLowerCase()
+        mimeType = extension === 'png' ? 'image/png' : extension === 'webp' ? 'image/webp' : 'image/jpeg'
+        if (input.mimeType !== mimeType && input.mimeType !== 'application/octet-stream') throw new DesktopHttpError(415, 'Image type does not match its contents.')
+    } else if (kind === 'text') {
         // Never serve a browser-supplied active media type for these UTF-8 documents.
         readDesktopPlainText(bytes)
         mimeType = 'text/plain'

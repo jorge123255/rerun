@@ -64,12 +64,12 @@ test('uses the original option form and submits an authoritative answer only onc
     expect(document.querySelector('input[type="file"]')).toBeNull()
 })
 
-test('restores an attachment and submits a file-only answer in the exact conversation', async () => {
+test.each(['text', 'image'] as const)('restores a %s attachment and submits a file-only answer in the exact conversation', async kind => {
     const documentOwner = { agentId: 'coworker', sessionId: 'saved-chat' }
     const scope = { ...documentOwner, tabUid: questionDocumentTabUid(question.id) }
     const saved: DesktopDocumentAttachment = {
-        attachmentId: crypto.randomUUID(), scope, name: 'notes.txt', mimeType: 'text/plain', kind: 'text', byteLength: 5,
-        sha256: 'f'.repeat(64), conversion: { mode: 'plain-text', state: 'ready' }, uploaded: true, selected: true,
+        attachmentId: crypto.randomUUID(), scope, name: kind === 'image' ? 'notes.png' : 'notes.txt', mimeType: kind === 'image' ? 'image/png' : 'text/plain', kind, byteLength: 5,
+        sha256: 'f'.repeat(64), conversion: { mode: kind === 'image' ? 'image' : 'plain-text', state: 'ready' }, uploaded: true, selected: true,
         admitted: false, position: 0, revision: crypto.randomUUID(), createdAt: '', updatedAt: '',
     }
     const admit = vi.fn()
@@ -92,6 +92,10 @@ test('restores an attachment and submits a file-only answer in the exact convers
     })
     expect(document.querySelector('[data-hitl="attach"]')).not.toBeNull()
     expect(document.body.textContent).toContain(saved.name)
+    if (kind === 'image') {
+        expect(document.querySelector<HTMLInputElement>('input[type=file]')?.accept).toContain('.png')
+        expect(document.querySelector('img')?.getAttribute('src')).toContain('view=preview')
+    }
     await click('[data-hitl="next"]')
     const documents = { scope, attachmentIds: [saved.attachmentId], admissionId: expect.any(String) }
     expect(admit).toHaveBeenCalledExactlyOnceWith({ ...scope, operation: 'admission', attachmentIds: documents.attachmentIds, admissionId: documents.admissionId })

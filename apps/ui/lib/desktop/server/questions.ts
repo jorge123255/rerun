@@ -9,6 +9,7 @@ import { DesktopHttpError } from './auth'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { disabledCoworkerMessage } from './coworker-enabled'
 import { startDesktopChat } from './engine'
+import { assertDesktopImageModel, resolveDesktopChatModel } from './chat-model'
 import { withRosterWrite } from './roster-writes'
 import type { DesktopRuntime } from './runtime'
 import { engineOf } from './settings'
@@ -92,11 +93,17 @@ async function questionFileNames(runtime: DesktopRuntime, target: Target, questi
         throw new DesktopHttpError(409, 'These files belong to another question or conversation.')
     }
     const store = desktopDocumentStore(target.db)
+    let hasImage = false
     for (const id of documents.attachmentIds) {
         const record = await store.read(scope, id)
         const index = record && questionDocumentIndex(record.attachment.position)
         if (!record || index === null || !files[index]) throw new DesktopHttpError(409, 'A file is no longer assigned to this question.')
         files[index].push(record.attachment.name)
+        hasImage ||= record.attachment.kind === 'image'
+    }
+    if (hasImage) {
+        const { connectionId } = await resolveDesktopChatModel(runtime, target.agent, target.session)
+        await assertDesktopImageModel(runtime, connectionId)
     }
     await resolveDesktopDocumentAdmission(runtime, target.agent.id, documents, AbortSignal.timeout(20_000))
     return files

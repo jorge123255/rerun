@@ -14,7 +14,7 @@ import { EngineRequestError, cancelRun, chat, createAgent, getAgent, getSessionM
 import type { DesktopCoworkerPatch, DesktopCoworkerSettings } from '../coworker-settings'
 import { publicDesktopHistory, transformEngineMessages, type HistoryMessage } from '@/lib/chat/engine-history'
 import { sanitizeIdentifier } from '@/lib/utils'
-import { resolveDesktopChatModel, savedChoice } from './chat-model'
+import { assertDesktopImageModel, resolveDesktopChatModel, savedChoice } from './chat-model'
 import type { DesktopModelPick } from '../chat-model'
 import { changeDesktopSettings, desktopModel, engineOf, readDesktopProviders } from './settings'
 import { DesktopHttpError } from './auth'
@@ -218,16 +218,12 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     const firstChoice = !regenerate && !existing ? input.modelChoice : undefined
     const { connectionId, model } = replay ? {} : await resolveDesktopChatModel(runtime, agent, existing, firstChoice)
     const images = attachmentPaths.filter((item): item is Exclude<typeof item, string> => typeof item !== 'string')
-    if (!replay && images.length) {
-        const { connections } = await readDesktopProviders(runtime)
-        if (connections.find(connection => connection.id === connectionId)?.provider !== 'codex')
-            throw new DesktopHttpError(400, 'Image attachments need a ChatGPT / Codex model. Choose one before sending.')
-    }
     const files = !replay && !regenerate ? await readDesktopAttachments(runtime, agent.id,
         attachmentPaths.filter((item): item is string => typeof item === 'string')) : []
     const documents = !replay && !regenerate && input.documents ? await admitDesktopChatDocuments(runtime, db, { ...input, documents: input.documents }) : []
+    if (!replay && (images.length || documents.some(item => 'dataBase64' in item))) await assertDesktopImageModel(runtime, connectionId)
     if (documents.length && !regenerate && input.documents?.modelChoice && (input.documents.modelChoice.connectionId !== connectionId || input.documents.modelChoice.model !== model)) throw new DesktopHttpError(409, 'The model changed after the documents were prepared. Review them before sending.')
-    if (files.reduce((sum, file) => sum + file.size, 0) + documents.reduce((sum, file) => sum + Buffer.byteLength(file.text), 0) > DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments must be 128 KiB or smaller in total.')
+    if (files.reduce((sum, file) => sum + file.size, 0) + documents.reduce((sum, file) => sum + ('text' in file ? Buffer.byteLength(file.text) : 0), 0) > DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments must be 128 KiB or smaller in total.')
     const resolvedImages = !replay && images.length ? await readDesktopImageSnapshots(runtime, agent.id, images) : new Map<string, Uint8Array>()
     const resolved: DesktopResolvedAttachment[] = (replay ? [] : attachmentPaths).map(item => typeof item === 'string'
         ? { type: 'text', path: item, content: files.find(file => file.path === item)!.content }

@@ -39,13 +39,15 @@ function OwnedDocumentView({ attachment, onBack }: { attachment: DesktopDocument
     const [view, setView] = useState<{ src?: string; error?: string }>({})
     const media = useRef<HTMLMediaElement | null>(null)
     useEffect(() => {
-        if (attachment.kind !== 'audio' && attachment.kind !== 'video') return
+        if (attachment.kind !== 'audio' && attachment.kind !== 'video' && attachment.kind !== 'image') return
         const controller = new AbortController(); let src = ''
         void (async () => {
             try {
                 const response = await fetchDesktopDocument(attachment, controller.signal)
                 const type = response.headers.get('content-type')?.split(';')[0] ?? ''
-                const accepted = attachment.kind === 'audio' ? ['audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/flac'] : ['video/mp4', 'video/webm', 'video/quicktime']
+                const accepted = attachment.kind === 'image' ? ['image/png', 'image/jpeg', 'image/webp']
+                    : attachment.kind === 'audio' ? ['audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/flac']
+                        : ['video/mp4', 'video/webm', 'video/quicktime']
                 if (!accepted.includes(type)) { await response.body?.cancel(); throw new Error('This attachment has no supported preview.') }
                 const bytes = await readDocumentResponse(response, attachment.byteLength, controller.signal)
                 if (bytes.byteLength !== attachment.byteLength) throw new Error('This attachment changed.')
@@ -56,8 +58,8 @@ function OwnedDocumentView({ attachment, onBack }: { attachment: DesktopDocument
         return () => { controller.abort(); if (media.current) { media.current.pause(); media.current.removeAttribute('src'); media.current.load() } if (src) URL.revokeObjectURL(src) }
     }, [sourceKey])
     if (attachment.kind === 'pdf') return <DesktopFilePdfPreview name={attachment.name} path={attachment.attachmentId} identity={attachment.sha256} srcUrl="" source={source} onBack={onBack} chrome="body" />
-    if (attachment.kind === 'audio' || attachment.kind === 'video') return <div className="flex h-full items-center justify-center overflow-auto bg-muted p-3">
-        {view.error ? <p role="alert" className="text-xs text-destructive">{view.error}</p> : !view.src ? <p role="status" className="text-xs text-muted-foreground">Loading…</p> : attachment.kind === 'audio' ? <audio ref={node => { media.current = node }} controls src={view.src} className="w-full max-w-md" /> : <video ref={node => { media.current = node }} controls src={view.src} className="max-h-full max-w-full" />}
+    if (attachment.kind === 'audio' || attachment.kind === 'video' || attachment.kind === 'image') return <div className="flex h-full items-center justify-center overflow-auto bg-muted p-3">
+        {view.error ? <p role="alert" className="text-xs text-destructive">{view.error}</p> : !view.src ? <p role="status" className="text-xs text-muted-foreground">Loading…</p> : attachment.kind === 'image' ? <img src={view.src} alt={attachment.name} className="max-h-full max-w-full object-contain" /> : attachment.kind === 'audio' ? <audio ref={node => { media.current = node }} controls src={view.src} className="w-full max-w-md" /> : <video ref={node => { media.current = node }} controls src={view.src} className="max-h-full max-w-full" />}
     </div>
     return <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground"><FileIcon className="size-8" /><p className="text-xs">No preview available for this file type</p><DesktopDocumentDownload attachment={attachment} /></div>
 }
