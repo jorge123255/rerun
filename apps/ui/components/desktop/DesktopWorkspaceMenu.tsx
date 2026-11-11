@@ -1,6 +1,9 @@
 'use client'
 
-import { Brain, Database, Folder, Import, KeyRound, LifeBuoy, Package, Keyboard, LayoutGrid, Search, Server, Settings } from 'lucide-react'
+import { Brain, Database, Folder, Import, KeyRound, Package, Keyboard, LayoutGrid, Search, Server, Settings } from 'lucide-react'
+import { ChromePill } from '@rerun/ui/chrome'
+import { TooltipLabeled } from '@/components/ui/tooltip'
+import { HelpCircleIcon } from '@/lib/icons'
 import { Button } from '@/components/ui/button'
 import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import type { DesktopAgentView } from './DesktopApp'
@@ -25,7 +28,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     onWorkspaceSettings?: () => void
     onControlCenter?: () => void
     onShortcuts?: () => void
-    onHelp?: () => void
+    onHelp?: (trigger: HTMLButtonElement) => void
     onSharedData?: () => void
     onSharedFiles?: () => void
     onBrain?: () => void
@@ -65,10 +68,12 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
                 </DropdownMenuItem>)}
             </>} />
         <DesktopWorkspaceSwitchLoader />
-        {onHelp && <Button type="button" variant="outline" size="sm" disabled={navigationDisabled} onClick={onHelp} aria-label="Help"
-            className="h-8 rounded-full bg-background/90 px-2.5 text-xs backdrop-blur-xl">
-            <LifeBuoy /> Help
-        </Button>}
+        {onHelp && <TooltipLabeled label="Help" side="bottom">
+            <ChromePill type="button" start="icon" end="icon" disabled={navigationDisabled} aria-label="Help"
+                onClick={event => onHelp(event.currentTarget)}>
+                <HelpCircleIcon className="size-4 text-muted-foreground" />
+            </ChromePill>
+        </TooltipLabeled>}
         <Button type="button" variant="outline" size="sm" disabled={settingsDisabled} onClick={onSettings} aria-keyshortcuts="Meta+," title="Open model settings"
             className="h-8 rounded-full bg-background/90 px-2.5 text-xs backdrop-blur-xl">
             {providerLabel ? <span role="status" className="flex min-w-0 items-center gap-1.5">

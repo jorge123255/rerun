@@ -49,7 +49,7 @@ test('Help is its own control beside the workspace menu and is not buried in tha
     expect(pill).toBeTruthy()
     expect(help!.compareDocumentPosition(pill!) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(0)
     await act(async () => { help!.click() })
-    expect(onHelp).toHaveBeenCalledOnce()
+    expect(onHelp).toHaveBeenCalledExactlyOnceWith(help)
     pill!.focus()
     await act(async () => { pill!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })) })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)) })
