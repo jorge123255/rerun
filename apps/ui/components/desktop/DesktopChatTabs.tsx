@@ -132,21 +132,27 @@ export function DesktopChatTabs({ agent, sessions, pendingChatSummaries, initial
 
     const protectedUids = useCallback(() => new Set(current.current.tabs.filter(t => !t.id || !activityRef.current[t.uid] || activityRef.current[t.uid]?.busy || activityRef.current[t.uid]?.dirty).map(t => t.uid)), [])
     const open = useCallback((id: string | null, title: string) => {
-        if (isDesktopQuitting()) return
+        if (isDesktopQuitting()) return false
         const previous = current.current
         const general = id ? sessions.find(session => session.id === id && session.agentId === agent.id && session.kind === 'general') : undefined
         if (id && (general || previous.tabs.some(tab => isGeneralTab(tab) && tab.id === id))) {
             const adopted = adoptGeneralId(ensureDesktopGeneralTab(agent.id, previous, id), id)
             void change({ tabs: adopted.tabs, activeIndex: 0 })
-            return
+            return true
         }
-        if (pendingForks.current.size && previous.tabs.filter(tab => !isGeneralTab(tab)).length + pendingForks.current.size >= MAX_REMEMBERED_TABS && !previous.tabs.some(t => t.id === id)) {
+        const alreadyOpen = previous.tabs.some(tab => tab.id === id && (id !== null || !isGeneralTab(tab)))
+        if (pendingForks.current.size && previous.tabs.filter(tab => !isGeneralTab(tab)).length + pendingForks.current.size >= MAX_REMEMBERED_TABS && !alreadyOpen) {
             setNotice('Close an idle tab to open another conversation.')
-            return
+            return false
         }
         const next = openSessionTab(previous, id, title, protectedUids())
-        setNotice(next === previous && !previous.tabs.some(tab => tab.id === id) ? 'Close an idle tab to open another conversation.' : '')
-        change(next)
+        if (next === previous && !alreadyOpen) {
+            setNotice('Close an idle tab to open another conversation.')
+            return false
+        }
+        setNotice('')
+        void change(next)
+        return true
     }, [agent.id, change, protectedUids, sessions])
 
     useLayoutEffect(() => {
@@ -352,7 +358,9 @@ export function DesktopChatTabs({ agent, sessions, pendingChatSummaries, initial
                     onChatSession={(id, sourceDraft) => bindSession(tab.uid, id, sourceDraft)}
                     onOpenCoworkerChat={onOpenCoworkerChat}
                     modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
-                    renderHistory={(_busy, control) => <DesktopChatHistory control={control} agentId={agent.id} pendingChatSummaries={pendingChatSummaries} count={sessions.length} selectedId={tab.id} busy={false} onSelect={id => open(id, sessions.find(s => s.id === id)?.title ?? 'Conversation')} />}
+                    renderHistory={(_busy, control) => <DesktopChatHistory control={control} agentId={agent.id} pendingChatSummaries={pendingChatSummaries}
+                        count={sessions.length} selectedId={tab.id} busy={false} onCreate={() => open(null, 'New conversation')}
+                        onSelect={id => open(id, sessions.find(s => s.id === id)?.title ?? 'Conversation')} />}
                     renderRunHistory={control => <DesktopRunHistory agent={agent} dialogControl={control} />} />
             </div>
         })}

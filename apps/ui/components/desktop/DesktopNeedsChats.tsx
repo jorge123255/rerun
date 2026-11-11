@@ -5,6 +5,7 @@ import { InboxRow } from '@rerun/ui/inbox'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { CheckCheckIcon } from '@/lib/icons'
+import { conversationSearchKey } from '@/lib/desktop/chat-search'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { DESKTOP_PENDING_INBOX_URL, desktopPendingInboxSchema, type DesktopPendingInboxItem } from '@/lib/desktop/pending-inbox'
 import { useDesktopPendingInbox, type DesktopPendingInboxController } from './useDesktopPendingInbox'
@@ -13,6 +14,11 @@ import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { shortRelativeTime } from '@rerun/i18n/format'
 
 type Notice = 'busy' | 'requestChanged' | 'requestCheckFailed'
+
+export function matchingPendingChats(items: DesktopPendingInboxItem[], query: string) {
+    const needle = conversationSearchKey(query.trim())
+    return needle ? items.filter(item => conversationSearchKey(`${item.title} ${item.summary}`).includes(needle)) : items
+}
 
 function inboxStatus(kind: DesktopPendingInboxItem['kind']) {
     if (kind === 'info') return 'awaiting_ack'
@@ -23,8 +29,8 @@ function inboxStatus(kind: DesktopPendingInboxItem['kind']) {
 
 // AgentChatsList's Needs you surface, backed by the same durable receipts as the Mac inbox.
 // Opening navigates only; Mark as read never supplies an answer or an approval.
-export function DesktopNeedsChats({ agentId, query, onSelect, busy = false, inbox: supplied }: {
-    agentId: string; query: string; onSelect: (id: string) => void; busy?: boolean; inbox?: DesktopPendingInboxController
+export function DesktopNeedsChats({ agentId, query, onSelect, busy = false, inbox: supplied, inline = false }: {
+    agentId: string; query: string; onSelect: (id: string) => void; busy?: boolean; inbox?: DesktopPendingInboxController; inline?: boolean
 }) {
     const { language, t } = useDesktopLocale()
     const locale = desktopLocaleTag(language.locale)
@@ -58,10 +64,10 @@ export function DesktopNeedsChats({ agentId, query, onSelect, busy = false, inbo
             live.current.onSelect(target.sessionId)
         } catch { if (current(item) && !controller.signal.aborted && read.current === controller) setNotice('requestCheckFailed') }
     }
-    const shown = inbox.items.filter(item => `${item.title} ${item.summary}`.toLowerCase().includes(query.trim().toLowerCase()))
+    const shown = matchingPendingChats(inbox.items, query)
     const unavailable = inbox.status === 'failed' || inbox.unavailableAgentIds.includes(agentId)
-    return <div className="max-h-[420px] min-h-0 space-y-0.5 overflow-y-auto px-2 pb-2">
-        {inbox.items.length > 0 && <div className="flex justify-end">
+    return <>
+        {!inline && inbox.items.length > 0 && <div className="flex justify-end">
             <Button size="xs" variant="ghost" className="text-muted-foreground" onClick={() => { if (!isDesktopQuitting()) { interaction.current.epoch++; read.current?.abort(); setConfirm(inbox.items) } }}><CheckCheckIcon className="size-3.5" />{t('threadHistory.markAllRead.confirm')}</Button>
         </div>}
         {shown.map(item => {
@@ -73,17 +79,17 @@ export function DesktopNeedsChats({ agentId, query, onSelect, busy = false, inbo
                     time: Number.isFinite(Date.parse(updatedAt)) ? shortRelativeTime(updatedAt, locale) : '' }}
                 onOpen={() => { void open(item) }} onMarkRead={() => { if (current(item)) inbox.markRead(item) }} />
         })}
-        {inbox.status === 'loading' && <p role="status" className="px-3 py-6 text-center text-xs text-muted-foreground">{t('threadHistory.pendingLoading')}</p>}
+        {!inline && inbox.status === 'loading' && <p role="status" className="px-3 py-6 text-center text-xs text-muted-foreground">{t('threadHistory.pendingLoading')}</p>}
         {(unavailable || inbox.readError || notice) && <div role="status" className="space-y-2 p-3 text-xs text-muted-foreground">
             <p>{t(notice ? `threadHistory.${notice}` : inbox.readError ? 'threadHistory.markReadFailed' : 'threadHistory.pendingFailed')}</p>
             <Button size="sm" variant="outline" onClick={() => { setNotice(null); inbox.retry() }}>{t('threadHistory.retry')}</Button>
         </div>}
-        {inbox.status === 'ready' && !unavailable && shown.length === 0 && <p className="px-3 py-6 text-center text-xs text-muted-foreground">{t(query.trim() ? 'threadHistory.noMatches' : 'emptyNeeds')}</p>}
+        {!inline && inbox.status === 'ready' && !unavailable && shown.length === 0 && <p className="px-3 py-6 text-center text-xs text-muted-foreground">{t(query.trim() ? 'threadHistory.noMatches' : 'emptyNeeds')}</p>}
         <ConfirmDialog open={confirm !== null} onOpenChange={open => { if (!open) setConfirm(null) }} title={t('threadHistory.markAllRead.title')}
             description={t('threadHistory.markAllRead.description', { count: confirm?.length ?? 0 })}
             confirmLabel={t('threadHistory.markAllRead.confirm')} cancelLabel={t('cancel')} confirmVariant="default" onConfirm={() => {
                 if (confirm && live.current.mounted && live.current.agentId === agentId && !isDesktopQuitting()) inbox.markAllRead(confirm)
                 setConfirm(null)
             }} />
-    </div>
+    </>
 }

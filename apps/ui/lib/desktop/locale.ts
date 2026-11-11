@@ -224,6 +224,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         },
         threadHistory: {
             ...desktopThreadHistoryCopy[locale],
+            close: source.agent.agentChatsList.close,
             markAllRead: source.agent.agentChatsList.markAllRead,
             markRead: source.kit.inbox.markRead,
             status: source.kit.inbox.sentences,

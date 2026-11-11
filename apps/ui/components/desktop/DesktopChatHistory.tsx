@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button'
 import { Chip } from '@/components/ui/chip'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { CalendarClock, LoaderIcon, MessageCircle, MessageCircleQuestionIcon, WebhookIcon } from '@/lib/icons'
+import { SkeletonPanelRows } from '@/components/ui/skeleton'
+import { CalendarClock, MessageCircle, MessageCircleQuestionIcon, PlusIcon, WebhookIcon, XIcon } from '@/lib/icons'
 import {
     DESKTOP_CHAT_FILTERS,
     desktopChatHistorySchema,
@@ -21,7 +22,7 @@ import {
 import { fullDateTime, messageTime } from '@rerun/i18n/format'
 import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { cn } from '@/lib/utils'
-import { DesktopNeedsChats } from './DesktopNeedsChats'
+import { DesktopNeedsChats, matchingPendingChats } from './DesktopNeedsChats'
 import { useDesktopPendingInbox } from './useDesktopPendingInbox'
 
 function ChatHistoryRow({ conversation, pendingSummary, active, busy, onOpen }: {
@@ -70,9 +71,10 @@ function ClassificationFilterNote({ onRetry, partial }: { onRetry: () => void; p
     )
 }
 
-function ChatHistoryList({ history, filter, query, selectedId, busy, pendingChatSummaries, onSelect, onRetry }: {
+function ChatHistoryList({ history, filter, query, selectedId, busy, pendingChatSummaries, inlinePendingIds, onSelect, onRetry }: {
     history: DesktopChatHistory
     pendingChatSummaries?: ReadonlyMap<string, string>
+    inlinePendingIds: ReadonlySet<string>
     filter: Exclude<DesktopChatFilter, 'needs'>
     query: string
     selectedId: string | null
@@ -81,14 +83,14 @@ function ChatHistoryList({ history, filter, query, selectedId, busy, pendingChat
     onRetry: () => void
 }) {
     const { language, t } = useDesktopLocale()
-    const shown = filterDesktopChats(history.conversations, filter, query)
+    const shown = filterDesktopChats(history.conversations, filter, query).filter(row => !inlinePendingIds.has(row.id))
     const groups = groupDesktopChats(shown, { locale: desktopLocaleTag(language.locale), unknownDate: t('threadHistory.dateUnavailable') })
     const classificationUnavailable = (filter === 'chats' || filter === 'automations') && history.enrichment === 'unavailable'
     const empty = query.trim()
         ? t('threadHistory.noMatches')
         : t(filter === 'automations' ? 'emptyAutomations' : 'emptyThreads')
     return (
-        <div className="max-h-[min(420px,50dvh)] min-h-0 overflow-y-auto">
+        <>
             {history.enrichment === 'unavailable' && !classificationUnavailable && (
                 <p className="px-2.5 py-1 text-[11px] text-muted-foreground">{t('threadHistory.unavailableActivity')}</p>
             )}
@@ -103,20 +105,22 @@ function ChatHistoryList({ history, filter, query, selectedId, busy, pendingChat
                     ))}
                 </div>
             ))}
-            {shown.length === 0 && !classificationUnavailable && (
+            {shown.length === 0 && inlinePendingIds.size === 0 && !classificationUnavailable && (
                 <p className="px-3 py-6 text-center text-xs text-muted-foreground">{empty}</p>
             )}
-        </div>
+        </>
     )
 }
 
-function ChatHistoryPanel({ agentId, selectedId, busy, pendingChatSummaries, onSelect, titleId, descriptionId, initialFilter = 'all' }: {
+function ChatHistoryPanel({ agentId, selectedId, busy, pendingChatSummaries, onSelect, onCreate, onClose, titleId, descriptionId, initialFilter = 'all' }: {
     initialFilter?: DesktopChatFilter
     agentId: string
     pendingChatSummaries?: ReadonlyMap<string, string>
     selectedId: string | null
     busy: boolean
     onSelect: (id: string) => void
+    onCreate?: () => void
+    onClose: () => void
     titleId: string
     descriptionId: string
 }) {
@@ -127,6 +131,7 @@ function ChatHistoryPanel({ agentId, selectedId, busy, pendingChatSummaries, onS
     const [query, setQuery] = useState('')
     const [filter, setFilter] = useState<DesktopChatFilter>(initialFilter)
     const inbox = useDesktopPendingInbox(true, [agentId])
+    const inlinePendingIds = new Set(filter === 'all' ? matchingPendingChats(inbox.items, query).map(item => item.sessionId) : [])
 
     useEffect(() => {
         const controller = new AbortController()
@@ -155,10 +160,20 @@ function ChatHistoryPanel({ agentId, selectedId, busy, pendingChatSummaries, onS
     return (
         <>
             <div className="shrink-0 px-2 pt-1">
-                <h2 id={titleId} className="flex items-center gap-2 text-sm font-semibold">
-                    <MessageCircle aria-hidden className="size-4 text-muted-foreground" />
-                    {t('threads')}
-                </h2>
+                <div className="flex items-center justify-between gap-2">
+                    <h2 id={titleId} className="flex items-center gap-2 text-sm font-semibold">
+                        <MessageCircle aria-hidden className="size-4 text-muted-foreground" />
+                        {t('threads')}
+                    </h2>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                        {onCreate && <Button type="button" variant="outline" size="sm" aria-label={t('newThread')} disabled={busy} onClick={onCreate}>
+                            <PlusIcon aria-hidden className="size-3.5" /> {t('newThread')}
+                        </Button>}
+                        <Button type="button" variant="ghost" size="icon-sm" aria-label={t('threadHistory.close')} onClick={onClose}>
+                            <XIcon aria-hidden />
+                        </Button>
+                    </div>
+                </div>
                 <p id={descriptionId} className="mt-1 text-xs text-muted-foreground">{t('threadHistory.dates')}</p>
             </div>
             <Input className="shrink-0" type="search" aria-label={t('searchChats')} placeholder={t('searchChats') + '…'} value={query}
@@ -175,31 +190,37 @@ function ChatHistoryPanel({ agentId, selectedId, busy, pendingChatSummaries, onS
                     </Chip>
                 ))}
             </div>
-            {filter === 'needs' ? <DesktopNeedsChats agentId={agentId} query={query} onSelect={onSelect} busy={busy} inbox={inbox} /> : error ? (
-                <div role="alert" className="flex flex-col items-center gap-2 px-3 py-6 text-center text-xs">
-                    <p className="text-destructive">{t('threadHistory.loadFailed')}</p>
-                    <Button type="button" size="sm" variant="outline" onClick={retry}>{t('retryConversations')}</Button>
-                </div>
-            ) : history === null ? (
-                <p role="status" className="flex items-center justify-center gap-2 px-3 py-6 text-xs text-muted-foreground">
-                    <LoaderIcon aria-hidden className="size-3.5 animate-spin" />
-                    {t('threadHistory.loading')}
-                </p>
-            ) : (
-                <ChatHistoryList history={history} filter={filter} query={query} selectedId={selectedId} busy={busy} pendingChatSummaries={pendingChatSummaries} onSelect={onSelect} onRetry={retry} />
-            )}
+            <div className="max-h-[min(420px,50dvh)] min-h-0 space-y-0.5 overflow-y-auto px-1 pb-2">
+                {(filter === 'all' || filter === 'needs') && <DesktopNeedsChats key={filter} inline={filter === 'all'}
+                    agentId={agentId} query={query} onSelect={onSelect} busy={busy} inbox={inbox} />}
+                {filter !== 'needs' && (error ? (
+                    <div role="alert" className="flex flex-col items-center gap-2 px-3 py-6 text-center text-xs">
+                        <p className="text-destructive">{t('threadHistory.loadFailed')}</p>
+                        <Button type="button" size="sm" variant="outline" onClick={retry}>{t('retryConversations')}</Button>
+                    </div>
+                ) : history === null ? (
+                    <div role="status" aria-busy="true">
+                        <span className="sr-only">{t('threadHistory.loading')}</span>
+                        <SkeletonPanelRows rows={4} aria-hidden="true" />
+                    </div>
+                ) : (
+                    <ChatHistoryList history={history} filter={filter} query={query} selectedId={selectedId} busy={busy} pendingChatSummaries={pendingChatSummaries}
+                        inlinePendingIds={inlinePendingIds} onSelect={onSelect} onRetry={retry} />
+                ))}
+            </div>
         </>
     )
 }
 
-export function DesktopChatHistory({ agentId, count, selectedId, busy, pendingChatSummaries, onSelect, control }: {
+export function DesktopChatHistory({ agentId, count, selectedId, busy, pendingChatSummaries, onSelect, onCreate, control }: {
     control?: { needsRequest: number | null; active: boolean; onOpenChange: (open: boolean) => void }
     agentId: string
     pendingChatSummaries?: ReadonlyMap<string, string>
     count?: number
     selectedId: string | null
     busy: boolean
-    onSelect: (id: string) => void
+    onSelect: (id: string) => boolean | void
+    onCreate?: () => boolean
 }) {
     const { t } = useDesktopLocale()
     const [open, setOpen] = useState(false)
@@ -228,7 +249,9 @@ export function DesktopChatHistory({ agentId, count, selectedId, busy, pendingCh
                 className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1.5rem)] gap-2 overflow-hidden p-2">
                 {visible && <ChatHistoryPanel key={`${agentId}/${seenRequest}`} initialFilter={initialFilter} agentId={agentId} selectedId={selectedId} busy={busy} pendingChatSummaries={pendingChatSummaries}
                     titleId={titleId} descriptionId={descriptionId}
-                    onSelect={id => { onSelect(id); setOpen(false) }} />}
+                    onClose={() => setOpen(false)}
+                    onCreate={onCreate && (() => { if (onCreate()) setOpen(false) })}
+                    onSelect={id => { if (onSelect(id) !== false) setOpen(false) }} />}
             </PopoverContent>
         </Popover>
     )

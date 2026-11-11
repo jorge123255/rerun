@@ -156,6 +156,48 @@ test('combines the original filters with search and opens the local question or 
     } finally { await act(async () => { root.unmount() }) }
 })
 
+test('puts current requests before saved rows in All and rechecks them before opening', async () => {
+    const saved = conversation(session('saved', 'alice', 'Saved draft'))
+    const waiting = { ...conversation(session('approval', 'alice', 'Meeting notes')), needsYou: true, pendingQuestion: 'Review the café notes' }
+    let pending = inboxOf([waiting]).items
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+        expect(init?.method ?? 'GET').toBe('GET')
+        if (url === '/api/desktop/pending-inbox') return Response.json({ ...inboxOf([]), items: pending })
+        return Response.json({ conversations: [saved, waiting], enrichment: 'ok', questions: 'not-requested' })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const root = createRoot(document.body.appendChild(document.createElement('div')))
+    const select = vi.fn()
+    const dialog = () => document.querySelector('[role="dialog"]')!
+    const requestRow = () => [...dialog().querySelectorAll<HTMLElement>('[role="button"]')].find(row => row.textContent?.includes('Meeting notes'))
+    try {
+        await act(async () => { root.render(<DesktopChatHistory agentId="alice" count={2} selectedId={null} busy={false} onSelect={select} />) })
+        await click('Conversation history (2)')
+        expect(requestRow()?.textContent).toContain('Review the café notes')
+        expect(dialog().querySelector('[data-thread-row="approval"]')).toBeNull()
+        const savedRow = dialog().querySelector('[data-thread-row="saved"]')!
+        expect(requestRow()!.compareDocumentPosition(savedRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+        expect(dialog().textContent).not.toContain('Mark all as read')
+
+        await enter(dialog().querySelector<HTMLInputElement>('input[type="search"]')!, 'CAFE\u0301')
+        expect(requestRow()).toBeTruthy()
+        expect(dialog().textContent).not.toContain('No matching conversations.')
+        expect(dialog().querySelector('[data-thread-row="saved"]')).toBeNull()
+
+        pending = pending.map(item => ({ ...item, id: 'new-review', summary: 'Review the revised café notes' }))
+        await act(async () => { requestRow()!.click() })
+        await settle(100)
+        expect(select).not.toHaveBeenCalled()
+        expect(dialog().textContent).toContain('This request changed')
+        expect(requestRow()?.textContent).toContain('Review the revised café notes')
+        await act(async () => { requestRow()!.click() })
+        await settle(100)
+        expect(select).toHaveBeenCalledExactlyOnceWith('approval')
+        expect(document.querySelector('[role="dialog"]')).toBeNull()
+        expect(fetcher.mock.calls.every(([, init]) => (init?.method ?? 'GET') === 'GET')).toBe(true)
+    } finally { await act(async () => { root.unmount() }) }
+})
+
 test('shows retry states instead of empty filters when classification or pending requests are unavailable', async () => {
     const known = { ...conversation(session('saved', 'alice', 'Saved routine')), source: 'schedule' as const, needsYou: true, pendingQuestion: 'Approve the title' }
     let reads = 0
@@ -337,8 +379,20 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
         await history()
         await choose('Apples')
         expect(visible().textContent).toContain('Apples answer')
-        await click('New thread')
+        await enter(visible().querySelector<HTMLTextAreaElement>('#desktop-message')!, 'Keep the Apples draft')
+        await settle(500)
+        await history()
+        await click('Close')
+        expect(document.querySelector('[role="dialog"]')).toBeNull()
+        expect(visible().querySelector<HTMLTextAreaElement>('#desktop-message')?.value).toBe('Keep the Apples draft')
+        await history()
+        const historyCreate = document.querySelector<HTMLButtonElement>('[role="dialog"] [aria-label="New thread"]')
+        expect(historyCreate).toBeTruthy()
+        await act(async () => { historyCreate!.click() })
+        await settle(100)
+        expect(document.querySelector('[role="dialog"]')).toBeNull()
         expect(visible().textContent).not.toContain('Apples answer')
+        expect(visible().querySelector<HTMLTextAreaElement>('#desktop-message')?.value).toBe('')
         await enter(container.querySelector<HTMLTextAreaElement>('#desktop-message')!, 'Dates')
         await act(async () => { visible().querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
         expect(sent).toEqual([{ agentId: 'alice', tabUid: expect.any(String), text: 'Dates' }])
@@ -372,6 +426,7 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
         await history()
         await choose('Apples')
         expect(visible().textContent).toContain('Apples answer')
+        expect(visible().querySelector<HTMLTextAreaElement>('#desktop-message')?.value).toBe('Keep the Apples draft')
     } finally { await act(async () => { root.unmount() }) }
 })
 
