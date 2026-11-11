@@ -4,9 +4,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { DesktopWorkspaceRoutinesClient } from '@/lib/desktop/workspace-routines/client'
 import type { DesktopWorkspaceRoutine } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
+import { DesktopLocale } from '../../DesktopLocale'
 import { DesktopWorkspaceRoutines } from './DesktopWorkspaceRoutines'
 
 vi.mock('@rerun/ui/iso-grid', () => ({ AgentBuddy: () => null }))
+vi.mock('../../DesktopTaskNotifyField', () => ({ DesktopTaskNotifyField: () => null }))
 const roots: Root[] = []
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 afterEach(async () => {
@@ -24,9 +28,10 @@ function client(routines: DesktopWorkspaceRoutine[] = [routine]): DesktopWorkspa
         mutate: vi.fn(async () => ({ routine, chat: routine.lastResult!.chat })),
     }
 }
-async function mount(api = client(), onOpenChat = vi.fn(), onOpenRoutine = vi.fn()) {
+async function mount(api = client(), onOpenChat = vi.fn(), onOpenRoutine = vi.fn(), language?: DesktopLanguage) {
     const root = createRoot(document.body.appendChild(document.createElement('div'))); roots.push(root)
-    await act(async () => root.render(<DesktopWorkspaceRoutines client={api} agentNameOf={() => 'Ada'} onOpenChat={onOpenChat} onOpenRoutine={onOpenRoutine} docked />))
+    const list = <DesktopWorkspaceRoutines client={api} agentNameOf={() => 'Ada'} onOpenChat={onOpenChat} onOpenRoutine={onOpenRoutine} docked className="pt-24" />
+    await act(async () => root.render(language ? <DesktopLocale initial={language}>{list}</DesktopLocale> : list))
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)) })
     return { root, onOpenChat, onOpenRoutine }
 }
@@ -125,4 +130,29 @@ test('Keep my draft adopts the new reviewed revision without replacing text', as
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)) })
     await click('Keep my draft'); await click('Save changes')
     expect(api.mutate).toHaveBeenCalledWith(expect.objectContaining({ action: 'edit', expectedRevision: 'v2', input: expect.objectContaining({ name: 'My draft' }) }))
+})
+
+
+test('French editing and running keep the reviewed revision, raw schedule and exact result chat', async () => {
+    const api = client()
+    const language: DesktopLanguage = { preference: 'fr', locale: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) }
+    const { onOpenChat } = await mount(api, vi.fn(), vi.fn(), language)
+    expect(document.body.textContent).toContain('Tous les jours à')
+    expect(document.querySelector('[aria-label="Mettre en pause Daily"]')).toBeTruthy()
+    await click('Options de Daily')
+    await click('Modifier')
+    expect(document.querySelector('.pt-24')?.textContent).toContain('Modifier la tâche')
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Nom"]')!
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Résumé quotidien')
+    await act(async () => input.dispatchEvent(new Event('input', { bubbles: true })))
+    expect(document.querySelector<HTMLInputElement>('input[aria-label="Expression cron"]')?.value).toBe(routine.cron)
+    await click('Enregistrer')
+    expect(api.mutate).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'edit', agentId: routine.agentId, slug: routine.slug, expectedRevision: routine.revision,
+        input: { name: 'Résumé quotidien', description: routine.description, body: routine.body, enabled: true, timezone: 'UTC', cron: routine.cron, runAt: null },
+    }))
+    await click('Options de Daily')
+    await click('Lancer maintenant')
+    expect(api.mutate).toHaveBeenCalledWith(expect.objectContaining({ action: 'run', agentId: 'agent-a', slug: 'daily', expectedRevision: 'v1' }))
+    expect(onOpenChat).toHaveBeenCalledExactlyOnceWith(routine.lastResult!.chat)
 })

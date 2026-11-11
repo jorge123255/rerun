@@ -7,6 +7,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { PencilIcon } from '@/lib/icons'
 import { scheduleSummary } from '@/lib/schedules/cron'
 import { createDesktopScheduleParser, validateDesktopSchedulePreview, type DesktopScheduleParser, type DesktopSchedulePreview, type DesktopScheduleSelection } from '@/lib/desktop/schedule-description'
+import { desktopLocaleTag } from '@/lib/desktop/locale'
+import { useDesktopLocale } from '../DesktopLocale'
 import type { DesktopProvider } from '@/lib/desktop/settings'
 
 export function DesktopScheduleDescription({mode,cron,runAt,timezone,agentId,connectionId,provider,model,routine,disabled=false,onChange,parser}: {
@@ -23,6 +25,7 @@ export function DesktopScheduleDescription({mode,cron,runAt,timezone,agentId,con
     onChange:(next:DesktopScheduleSelection)=>void
     parser?:DesktopScheduleParser
 }) {
+    const { t, language } = useDesktopLocale()
     const effectiveParser=parser??createDesktopScheduleParser({agentId,connectionId,provider,model,slug:routine?.slug,expectedRevision:routine?.revision})
     const [open,setOpen]=useState(false),[description,setDescription]=useState(''),[busy,setBusy]=useState(false)
     const [error,setError]=useState(''),[preview,setPreview]=useState<DesktopSchedulePreview|null>(null)
@@ -42,31 +45,31 @@ export function DesktopScheduleDescription({mode,cron,runAt,timezone,agentId,con
             if(result.status==='ok'){
                 const valid=validateDesktopSchedulePreview(result.value,timezone)
                 if(valid)setPreview(valid)
-                else setError('Could not understand that schedule. Edit the description or enter cron or an ISO time manually.')
+                else setError(t('routines.invalidPreview'))
             }else setError(result.message.slice(0,300))
         }catch{
-            if(own===epoch.current&&!controller.signal.aborted)setError('Could not parse that schedule. Edit the description or enter cron or an ISO time manually.')
+            if(own===epoch.current&&!controller.signal.aborted)setError(t('routines.parseFailed'))
         }finally{
             if(own===epoch.current){setBusy(false);request.current=undefined}
         }
     }
-    const summary=scheduleSummary({cron:mode==='cron'?cron:null,runAt:mode==='runAt'?runAt:null,timezone})
-    return <Field label="When">
+    const summary=scheduleSummary({cron:mode==='cron'?cron:null,runAt:mode==='runAt'?runAt:null,timezone}, (key, values) => t(`routines.${key}`, values), desktopLocaleTag(language.locale))
+    return <Field label={t('routines.when')}>
         <div className="flex items-center gap-1.5">
             <div className="flex h-8 flex-1 items-center rounded-md border border-input bg-muted/40 px-3 text-sm"><span className={summary==='—'?'text-muted-foreground':''}>{summary}</span></div>
             <Popover open={open} onOpenChange={changeOpen}>
-                <PopoverTrigger asChild><Button type="button" size="icon-sm" variant="outline" disabled={disabled} aria-label="Describe schedule"><PencilIcon className="size-3.5"/><span className="sr-only">Describe schedule</span></Button></PopoverTrigger>
+                <PopoverTrigger asChild><Button type="button" size="icon-sm" variant="outline" disabled={disabled} aria-label={t('routines.describeButton')}><PencilIcon className="size-3.5"/><span className="sr-only">{t('routines.describeButton')}</span></Button></PopoverTrigger>
                 <PopoverContent align="end" className="w-80 space-y-3 p-3">
-                    <Input label="Describe the schedule" aria-label="Describe the schedule" hideRequired autoFocus value={description} onChange={event=>setDescription(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();void previewSchedule()}}} placeholder="every weekday at 8am" className="h-8 text-sm" disabled={busy}/>
+                    <Input label={t('routines.describeField')} aria-label={t('routines.describeField')} hideRequired autoFocus value={description} onChange={event=>setDescription(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();void previewSchedule()}}} placeholder={t('routines.describePlaceholder')} className="h-8 text-sm" disabled={busy}/>
                     {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
-                    {preview && <div className="rounded-md border border-input bg-muted/30 p-2 text-xs" aria-label="Schedule preview">
+                    {preview && <div className="rounded-md border border-input bg-muted/30 p-2 text-xs" aria-label={t('routines.preview')}>
                         <p className="font-medium">{preview.label}</p>
                         <p className="mt-1 font-mono break-all">{preview.selection.mode==='cron'?preview.selection.cron:preview.selection.runAt}</p>
                         <p className="mt-1 text-muted-foreground">{preview.selection.timezone}</p>
                     </div>}
                     <div className="flex justify-end gap-2">
-                        <Button type="button" size="sm" variant="ghost" onClick={()=>changeOpen(false)}>Cancel</Button>
-                        {preview ? <Button type="button" size="sm" disabled={disabled} onClick={()=>{onChange(preview.selection);setDescription('');changeOpen(false)}}>Use schedule</Button> : <Button type="button" size="sm" loading={busy} disabled={disabled||busy||!description.trim()} onClick={()=>void previewSchedule()}>Preview schedule</Button>}
+                        <Button type="button" size="sm" variant="ghost" onClick={()=>changeOpen(false)}>{t('cancel')}</Button>
+                        {preview ? <Button type="button" size="sm" disabled={disabled} onClick={()=>{onChange(preview.selection);setDescription('');changeOpen(false)}}>{t('routines.useSchedule')}</Button> : <Button type="button" size="sm" loading={busy} disabled={disabled||busy||!description.trim()} onClick={()=>void previewSchedule()}>{t('routines.makePreview')}</Button>}
                     </div>
                 </PopoverContent>
             </Popover>

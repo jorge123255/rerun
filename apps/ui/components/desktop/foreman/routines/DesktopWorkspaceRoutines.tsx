@@ -9,9 +9,11 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { CalendarClockIcon, EllipsisIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { RoutineList, routineKey } from '@rerun/ui/foreman'
-import { nextRunAt } from '@/lib/schedules/cron'
+import { nextRunAt, routineFrequency } from '@/lib/schedules/cron'
 import type { DesktopWorkspaceRoutinesClient } from '@/lib/desktop/workspace-routines/client'
 import type { DesktopScheduleEditInput, DesktopWorkspaceRoutine, DesktopWorkspaceRoutineChat, DesktopWorkspaceRoutinesView } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
+import { desktopLocaleTag } from '@/lib/desktop/locale'
+import { useDesktopLocale } from '../../DesktopLocale'
 import { DesktopWorkspaceRoutineEditor } from './DesktopWorkspaceRoutineEditor'
 
 const RUN_SETTLE_MS = 1500
@@ -36,6 +38,8 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, dock
     refreshKey?: string | number
     workingSessions?: string
 }) {
+    const { t, language } = useDesktopLocale()
+    const locale = desktopLocaleTag(language.locale)
     const [data, setData] = useState<DesktopWorkspaceRoutinesView | null>(null)
     const [loadError, setLoadError] = useState<string | null>(null)
     const [saving, setSaving] = useState<string[]>([])
@@ -65,12 +69,12 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, dock
             })
         } catch (cause) {
             if (own !== listEpoch.current) return
-            setLoadError(cause instanceof Error ? cause.message : 'Routines could not be loaded.')
+            setLoadError(cause instanceof Error ? cause.message : t('routines.loadFailed'))
             setData(current => current ?? { routines: [], canRename: false })
         } finally {
             loaded.current = true
         }
-    }, [client])
+    }, [client, t])
 
     useEffect(() => {
         if (!active) return
@@ -88,9 +92,9 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, dock
             const key = routineKey(routine)
             const held = heldNextRuns[key]
             const stillHeld = key in heldNextRuns && (held === null || new Date(held).getTime() > now)
-            return { ...routine, nextRunAt: stillHeld ? held : nextRunAt({ ...routine, lastRunAt: routine.lastRunAt ?? null }, at) }
+            return { ...routine, frequency: routineFrequency(routine, (key, values) => t(`routines.${key}`, values), locale), nextRunAt: stillHeld ? held : nextRunAt({ ...routine, lastRunAt: routine.lastRunAt ?? null }, at) }
         })
-    }, [data, now, heldNextRuns])
+    }, [data, now, heldNextRuns, locale, t])
 
     const patch = (key: string, change: Partial<DesktopWorkspaceRoutine>) => setData(current => current && { ...current, routines: current.routines.map(routine => routineKey(routine) === key ? { ...routine, ...change } : routine) })
     const requestId = (action: string, revision: string) => {
@@ -113,7 +117,7 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, dock
             await load()
         } catch (cause) {
             patch(key, { enabled: !enabled })
-            toast.error(`Couldn't ${enabled ? 'resume' : 'pause'} ${routine.name}`, { description: cause instanceof Error ? cause.message : undefined })
+            toast.error(t(enabled ? 'routines.resumeFailed' : 'routines.pauseFailed', { name: routine.name }), { description: cause instanceof Error ? cause.message : undefined })
         } finally {
             setSaving(current => current.filter(value => value !== key))
         }
@@ -129,7 +133,7 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, dock
             await load()
         } catch (cause) {
             patch(key, { name: routine.name })
-            toast.error(`Couldn't rename ${routine.name}`, { description: cause instanceof Error ? cause.message : undefined })
+            toast.error(t('routines.renameFailed', { name: routine.name }), { description: cause instanceof Error ? cause.message : undefined })
         }
     }
 
@@ -146,17 +150,17 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, dock
             requestIds.current.delete(`${key}:${routine.revision}`)
             if (own !== lifetime.current) return
             if (result.chat) onOpenChat(result.chat)
-            else toast.success(`${routine.name} started`)
+            else toast.success(t('routines.started', { name: routine.name }))
             await load()
         } catch (cause) {
-            if (own === lifetime.current) toast.error(`Couldn't run ${routine.name}`, { description: cause instanceof Error ? cause.message : undefined })
+            if (own === lifetime.current) toast.error(t('routines.runFailed', { name: routine.name }), { description: cause instanceof Error ? cause.message : undefined })
         } finally { acting.current.delete(key) }
     }
 
     const openEditor = (routine: DesktopWorkspaceRoutine) => setEditing({ routine, externalChange: false, generation: 0 })
     const openResult = (routine: DesktopWorkspaceRoutine) => {
         if (routine.lastResult?.chat) onOpenChat(routine.lastResult.chat)
-        else toast.error('No result chat is available for this routine yet.')
+        else toast.error(t('routines.noResult'))
     }
     const saveEdit = async (input: DesktopScheduleEditInput) => {
         if (!editing || editing.externalChange) return
@@ -169,24 +173,27 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, dock
 
     if (editing) {
         const latest = data?.routines.find(routine => routineKey(routine) === routineKey(editing.routine))
-        return <DesktopWorkspaceRoutineEditor
-            key={`${editing.routine.agentId}:${editing.routine.slug}:${editing.generation}`}
-            routine={editing.routine}
-            externalChange={editing.externalChange}
-            onBack={() => setEditing(null)}
-            onSave={saveEdit}
-            onRun={runNow}
-            onRefresh={() => setEditing(latest ? { routine: latest, externalChange: false, generation: editing.generation + 1 } : null)}
-            onKeep={() => setEditing(current => current && latest ? { ...current, routine: latest, externalChange: false } : current)}
-        />
+        return <div className={cn('flex flex-col', className)}>
+            <DesktopWorkspaceRoutineEditor
+                key={`${editing.routine.agentId}:${editing.routine.slug}:${editing.generation}`}
+                routine={editing.routine}
+                externalChange={editing.externalChange}
+                onBack={() => setEditing(null)}
+                onSave={saveEdit}
+                onRun={runNow}
+                onRefresh={() => setEditing(latest ? { routine: latest, externalChange: false, generation: editing.generation + 1 } : null)}
+                onKeep={() => setEditing(current => current && latest ? { ...current, routine: latest, externalChange: false } : current)}
+            />
+        </div>
     }
     if (!upToDate || !data) return <RoutinesSkeleton className={className} />
-    if (loadError && !data.routines.length) return <EmptyState icon={CalendarClockIcon} title="Routines unavailable" description={loadError} className={className} />
-    if (!upToDate.length) return <div className={cn('flex flex-col', className)}><EmptyState icon={CalendarClockIcon} title="No routines yet" description="Ask a coworker to do something on a schedule (a daily report, a weekly digest) and it will show up here." /></div>
+    if (loadError && !data.routines.length) return <EmptyState icon={CalendarClockIcon} title={t('routines.unavailable')} description={loadError} className={className} />
+    if (!upToDate.length) return <div className={cn('flex flex-col', className)}><EmptyState icon={CalendarClockIcon} title={t('routines.emptyTitle')} description={t('routines.emptyDescription')} /></div>
 
     return <RoutineList
         routines={upToDate}
         now={now}
+        copy={(key, values) => t(`routines.${key}`, values)}
         agentNameOf={agentNameOf}
         onOpen={openEditor}
         onToggle={toggle}
@@ -201,16 +208,17 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, dock
 }
 
 function RoutineMenu({ routine, canRename, onRename, onEdit, onRunNow, onOpenResult }: { routine: DesktopWorkspaceRoutine; canRename: boolean; onRename: () => void; onEdit: () => void; onRunNow: () => void; onOpenResult: () => void }) {
+    const { t } = useDesktopLocale()
     return <DropdownMenu>
         <DropdownMenuTrigger asChild>
-            <Button size="icon-sm" variant="ghost" aria-label={`${routine.name} options`} className="text-muted-foreground"><EllipsisIcon /></Button>
+            <Button size="icon-sm" variant="ghost" aria-label={t('routines.options', { name: routine.name })} className="text-muted-foreground"><EllipsisIcon /></Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" onCloseAutoFocus={event => event.preventDefault()}>
-            {canRename && <DropdownMenuItem onSelect={onRename}>Rename</DropdownMenuItem>}
-            <DropdownMenuItem onSelect={onEdit}>Edit</DropdownMenuItem>
-            <DropdownMenuItem disabled={!routine.lastResult?.chat} onSelect={onOpenResult}>Open result chat</DropdownMenuItem>
+            {canRename && <DropdownMenuItem onSelect={onRename}>{t('routines.rename')}</DropdownMenuItem>}
+            <DropdownMenuItem onSelect={onEdit}>{t('routines.edit')}</DropdownMenuItem>
+            <DropdownMenuItem disabled={!routine.lastResult?.chat} onSelect={onOpenResult}>{t('routines.openResult')}</DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem disabled={routine.setupPending && !routine.enabled} onSelect={onRunNow}>Run now</DropdownMenuItem>
+            <DropdownMenuItem disabled={routine.setupPending && !routine.enabled} onSelect={onRunNow}>{t('routines.runNow')}</DropdownMenuItem>
         </DropdownMenuContent>
     </DropdownMenu>
 }

@@ -10,7 +10,9 @@ function timezones(): string[] {
     return supported ? supported('timeZone') : ['UTC']
 }
 
-export function TimezoneCombobox({ value, onChange, placeholder = 'Select timezone' }: { value: string; onChange: (tz: string) => void; placeholder?: string }) {
+export function TimezoneCombobox({ value, onChange, placeholder = 'Select timezone', searchPlaceholder = 'Search timezone…', emptyLabel = 'No timezone found' }: {
+    value: string; onChange: (tz: string) => void; placeholder?: string; searchPlaceholder?: string; emptyLabel?: string
+}) {
     const [open, setOpen] = useState(false)
     const zones = useMemo(() => timezones(), [])
 
@@ -27,9 +29,9 @@ export function TimezoneCombobox({ value, onChange, placeholder = 'Select timezo
             </PopoverTrigger>
             <PopoverContent align="start" className="w-(--radix-popover-trigger-width) p-0">
                 <Command>
-                    <CommandInput placeholder="Search timezone…" className="h-8 text-sm" />
+                    <CommandInput placeholder={searchPlaceholder} className="h-8 text-sm" />
                     <CommandList>
-                        <CommandEmpty>No timezone found</CommandEmpty>
+                        <CommandEmpty>{emptyLabel}</CommandEmpty>
                         <CommandGroup>
                             {zones.map(tz => (
                                 <CommandItem

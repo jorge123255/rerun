@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { nextRunAt, routineFrequency } from '@/lib/schedules/cron'
+import { humanCron, nextRunAt, routineFrequency } from '@/lib/schedules/cron'
 
 const NOW = new Date('2026-09-30T10:00:00.000Z')
 const RECURRING = { enabled: true, cron: '0 9 * * *', runAt: null, timezone: 'Europe/Paris', lastRunAt: null }
@@ -46,5 +46,14 @@ describe('routineFrequency', () => {
 
     it('reads a one-off as its date', () => {
         expect(routineFrequency({ cron: null, runAt: '2026-10-24T11:00:00.000Z' })).toMatch(/^Once, Oct 24, /)
+    })
+})
+
+
+describe('localized cron descriptions', () => {
+    it('loads French and Brazilian Portuguese for cron rules outside the shortcut patterns', () => {
+        expect(humanCron('0 9-17 * * *', 'fr')).toBe('Toutes les heures, de 09:00 à 17:00')
+        expect(humanCron('0 9-17 * * *', 'pt-BR')).toBe('A cada hora, entre 09:00 e 17:00')
+        expect(humanCron('not a cron', 'fr')).toBeNull()
     })
 })
