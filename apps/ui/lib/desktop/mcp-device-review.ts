@@ -7,6 +7,15 @@ export type McpDeviceReviewDecision = {
     operation: 'approve-device-method' | 'decline-device-method' | 'stop-device-method'
 }
 
+/** Scoped renderer response. Codes never enter engine status or tool results. */
+export type McpDeviceAuthorization = {
+    reviewId: string
+    revision: string
+    verificationUri: string
+    userCode: string
+    expiresAt: number
+}
+
 /** Human-only projection. Never include this in an engine/model status or continuation. */
 export type McpDeviceMethodReview = {
     reviewId: string

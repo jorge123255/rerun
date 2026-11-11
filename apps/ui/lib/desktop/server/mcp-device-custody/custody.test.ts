@@ -165,6 +165,24 @@ describe('approved MCP device custody (offline sources)', () => {
         expect(f.start).toHaveBeenCalledTimes(1); expect(f.poll).not.toHaveBeenCalled()
     })
 
+    it('clears both codes when the issuer requires a longer interval than custody supports', async () => {
+        const f = await fixture()
+        const approval = { ...initialApproval, method: { ...initialApproval.method, kind: 'device-code-rfc8628-v1' as const } }
+        f.change(approval)
+        f.start.mockResolvedValueOnce({ ...started, interval: 60, userCode: 'FIXTURE-HUMAN-CODE' })
+        await expect(f.startAttempt()).resolves.toMatchObject({ state: 'waiting' })
+        f.advance(60_000)
+        f.poll.mockResolvedValueOnce({ state: 'slow_down' })
+        await expect(f.complete()).resolves.toEqual({ state: 'failed' })
+        const saved = (await f.store.read(approval))?.value
+        expect(saved?.phase).toBe('failed')
+        expect(saved?.deviceCode).toBeUndefined()
+        expect(saved?.userCode).toBeUndefined()
+        f.advance(55_000)
+        await expect(f.complete('complete-b')).resolves.toEqual({ state: 'failed' })
+        expect(f.poll).toHaveBeenCalledTimes(1)
+    })
+
     it.each(['stop', 'revoke', 'edit', 'shutdown'] as const)('refuses late token publication after %s', async action => {
         const f = await fixture(); await f.startAttempt(); f.advance(5000)
         const result = deferred<unknown>(), entered = deferred<void>()

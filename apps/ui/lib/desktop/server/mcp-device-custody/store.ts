@@ -26,8 +26,8 @@ export function createDeviceCustodyStore(db: Client, crypto: DesktopSecretCrypto
         finally { bytes.fill(0) }
     }
     return {
-        async read(approval: DeviceApproval): Promise<SavedDeviceRecord | null> {
-            const row = (await db.execute({ sql: 'SELECT version,sealed FROM desktop_mcp_device_custody WHERE workspace_id=? AND agent_id=? AND slot=?', args: [approval.workspaceId, approval.owner, slotOf(approval)] })).rows[0]
+        async read(approval: DeviceApproval, query: Pick<Client, 'execute'> = db): Promise<SavedDeviceRecord | null> {
+            const row = (await query.execute({ sql: 'SELECT version,sealed FROM desktop_mcp_device_custody WHERE workspace_id=? AND agent_id=? AND slot=?', args: [approval.workspaceId, approval.owner, slotOf(approval)] })).rows[0]
             if (!row) return null
             let bytes: Uint8Array | undefined
             try {

@@ -23,7 +23,9 @@ export async function publicOAuthAddress(value:string,signal:AbortSignal) {
  return addresses[0]
 }
 export type OAuthJson=(url:string,signal:AbortSignal,body?:URLSearchParams|Record<string,unknown>)=>Promise<Record<string,unknown>>
-export const oauthJson:OAuthJson=async(value,stop,body)=>{
+type OAuthResponse = { status: number; body: Record<string, unknown> }
+export type OAuthDeviceForm = (url: string, signal: AbortSignal, body: URLSearchParams, acceptTokenError: boolean) => Promise<OAuthResponse>
+async function oauthResponse(value:string,stop:AbortSignal,body?:URLSearchParams|Record<string,unknown>,acceptTokenError=false):Promise<OAuthResponse>{
  const signal=AbortSignal.any([stop,AbortSignal.timeout(10_000)])
  const url=oauthHttps(value),address=await publicOAuthAddress(value,signal)
  const bytes=body?Buffer.from(body instanceof URLSearchParams?body.toString():JSON.stringify(body)):undefined
@@ -34,16 +36,25 @@ export const oauthJson:OAuthJson=async(value,stop,body)=>{
   // Keeping the options in a structural value preserves the runtime flag and pinned lookup.
   const connectionOptions={method:body?'POST':'GET',signal,family:address.family,autoSelectFamily:false,lookup:((_host:unknown,_options:unknown,done:(error:null,address:string,family:number)=>void)=>done(null,address.address,address.family)) as import('node:http').RequestOptions['lookup'],headers:{Accept:'application/json',...(bytes?{'Content-Type':body instanceof URLSearchParams?'application/x-www-form-urlencoded':'application/json','Content-Length':String(bytes.length)}:{})}}
   const req=request(url,connectionOptions,res=>{
-   if(!res.statusCode || res.statusCode<200 || res.statusCode>=300 || !res.headers['content-type']?.toLowerCase().startsWith('application/json')){res.destroy();reject(new Error('OAuth endpoint refused request'));return}
+   const status = res.statusCode ?? 0
+   const success = status >= 200 && status < 300
+   const json = res.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase() === 'application/json'
+   if ((!success && !(acceptTokenError && status === 400)) || !json) {
+    res.destroy()
+    reject(new Error('OAuth endpoint refused request'))
+    return
+   }
    let count=0;const chunks:Buffer[]=[]
    res.on('data',(chunk:Buffer)=>{count+=chunk.length;if(count>65_536){res.destroy(new Error('OAuth response exceeds limit'));return}chunks.push(chunk)})
    res.on('error',()=>reject(new Error('OAuth response unavailable')))
-   res.on('end',()=>{try{const data=JSON.parse(Buffer.concat(chunks).toString('utf8'));if(!data || typeof data!=='object' || Array.isArray(data))throw new Error();resolve(data)}catch{reject(new Error('Invalid OAuth response'))}})
+   res.on('end',()=>{try{const data=JSON.parse(Buffer.concat(chunks).toString('utf8'));if(!data || typeof data!=='object' || Array.isArray(data))throw new Error();resolve({status,body:data})}catch{reject(new Error('Invalid OAuth response'))}})
   })
   req.on('error',()=>reject(new Error('OAuth request cancelled or unavailable')))
   req.end(bytes)
  })
 }
+export const oauthJson:OAuthJson=async (url,signal,body)=>(await oauthResponse(url,signal,body)).body
+export const oauthDeviceForm:OAuthDeviceForm=(url,signal,body,acceptTokenError)=>oauthResponse(url,signal,body,acceptTokenError)
 export type OAuthMetadata={resource:string;issuer:string;authorization:string;token:string;registration:string;scope?:string}
 export async function discoverLoopbackOAuth(resource:string,signal:AbortSignal,json:OAuthJson=oauthJson):Promise<OAuthMetadata> {
  const url=oauthHttps(resource)

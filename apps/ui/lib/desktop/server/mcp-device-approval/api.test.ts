@@ -44,3 +44,18 @@ it('keeps the review response human-only and forwards an exact identity-only dec
     expect(service.review).not.toHaveBeenCalled()
     expect(response.headers.get('cache-control')).toBe('no-store')
 })
+
+it('returns an exact human authorization as no-store and refuses code injection or a foreign conversation', async () => {
+    const body = { action: 'read-device-authorization', source, reviewId: randomUUID(), revision: randomUUID() }
+    const authorization = { reviewId: body.reviewId, revision: body.revision, verificationUri: 'https://issuer.example/activate', userCode: 'HUMAN-QA', expiresAt: 200_000 }
+    const service = { readAuthorization: vi.fn().mockResolvedValue(authorization) }
+    const resolve = vi.fn().mockResolvedValue(service)
+    const api = createDesktopMcpDeviceReviewApi(resolve)
+    expect((await api(request({ ...body, userCode: 'INJECTED' }), 'local-chat')).status).toBe(409)
+    expect((await api(request(body), 'foreign-chat')).status).toBe(409)
+    expect(resolve).not.toHaveBeenCalled()
+    const response = await api(request(body), 'local-chat')
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(await response.json()).toEqual({ authorization })
+    expect(service.readAuthorization).toHaveBeenCalledWith(source, body.reviewId, body.revision, expect.any(AbortSignal))
+})

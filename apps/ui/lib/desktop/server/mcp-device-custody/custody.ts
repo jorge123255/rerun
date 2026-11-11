@@ -77,7 +77,7 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
         if (saved.value.expiresAt > now() || ['connected', 'unknown', 'expired', 'cancelled', 'failed'].includes(saved.value.phase)) return saved
         await admitted.recheck()
         return ports.store.replace(admitted.approval, saved, {
-            ...saved.value, phase: inFlight(saved.value.phase) ? 'unknown' : 'expired', deviceCode: undefined,
+            ...saved.value, phase: inFlight(saved.value.phase) ? 'unknown' : 'expired', deviceCode: undefined, userCode: undefined,
         }, admitted.check)
     }
     function receiptView(value: DeviceRecord, result?: ReceiptResult): DeviceView {
@@ -135,10 +135,12 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
             if (action === 'start') {
                 const start = parsePrivate(deviceStartSchema, await abortable(ports.broker.start(approval.method, signal), signal))
                 await admitted.recheck(); check()
-                if (start.verificationUri !== approval.method.verificationUri) throw new Error('Unsupported verification destination')
+                if (start.verificationUri !== approval.method.verificationUri
+                    || (approval.method.kind === 'device-code-rfc8628-v1') !== (start.userCode !== undefined)
+                    || start.userCode === start.deviceCode) throw new Error('Unsupported verification destination')
                 const expiresAt = Math.min(saved.value.expiresAt, saved.value.startedAt + start.expiresIn * 1000)
                 if (expiresAt <= now()) throw new Error('MCP device attempt expired')
-                saved = await settle(admitted, saved, key, 'waiting', 'waiting', { deviceCode: start.deviceCode, expiresAt, interval: start.interval, nextPollAt: now() + start.interval * 1000 })
+                saved = await settle(admitted, saved, key, 'waiting', 'waiting', { deviceCode: start.deviceCode, userCode: start.userCode, expiresAt, interval: start.interval, nextPollAt: now() + start.interval * 1000 })
                 check()
                 return waiting(saved.value)
             }
@@ -147,17 +149,21 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
             await admitted.recheck(); check()
             if (saved.value.expiresAt <= now()) throw new Error('MCP device attempt expired')
             if (result.state === 'pending' || result.state === 'slow_down') {
-                const interval = Math.min(60, saved.value.interval + (result.state === 'slow_down' ? 5 : 0))
+                const interval = saved.value.interval + (result.state === 'slow_down' ? 5 : 0)
+                if (interval > DEVICE_CUSTODY_LIMITS.intervalSeconds) {
+                    await settle(admitted, saved, key, 'failed', 'failed', { deviceCode: undefined, userCode: undefined })
+                    check(); return { state: 'failed' }
+                }
                 await settle(admitted, saved, key, 'waiting', 'pending', { interval, nextPollAt: now() + interval * 1000 })
                 check(); return { state: 'pending' }
             }
             if (result.state === 'denied' || result.state === 'expired') {
-                await settle(admitted, saved, key, result.state === 'expired' ? 'expired' : 'failed', 'failed', { deviceCode: undefined })
+                await settle(admitted, saved, key, result.state === 'expired' ? 'expired' : 'failed', 'failed', { deviceCode: undefined, userCode: undefined })
                 check(); return { state: 'failed' }
             }
             if (result.state !== 'authorized') throw new Error('Unsupported device response')
             if (result.token.scope !== undefined && result.token.scope !== approval.method.scope) throw new Error('Device token scope changed')
-            saved = await ports.store.replace(approval, saved, { ...saved.value, phase: 'committing', deviceCode: undefined }, check)
+            saved = await ports.store.replace(approval, saved, { ...saved.value, phase: 'committing', deviceCode: undefined, userCode: undefined }, check)
             await admitted.recheck(); check()
             const method = approval.method
             const committing = saved
@@ -180,7 +186,7 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
         } catch {
             // A reserved effect may have reached the provider or credential store. Never poll/start it again.
             if (saved && effectReserved) {
-                await ports.store.replace(approval, saved, { ...saved.value, phase: 'unknown', deviceCode: undefined }, () => {}).catch(() => undefined)
+                await ports.store.replace(approval, saved, { ...saved.value, phase: 'unknown', deviceCode: undefined, userCode: undefined }, () => {}).catch(() => undefined)
                 return { state: 'unknown' }
             }
             throw new Error('MCP device custody unavailable; reconcile the existing attempt')
@@ -215,7 +221,7 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
                 if (!saved || ['connected', 'cancelled', 'expired', 'failed', 'unknown'].includes(saved.value.phase)) return
                 try {
                     await ports.store.replace(approval, saved, { ...saved.value,
-                        phase: inFlight(saved.value.phase) ? 'unknown' : 'cancelled', deviceCode: undefined,
+                        phase: inFlight(saved.value.phase) ? 'unknown' : 'cancelled', deviceCode: undefined, userCode: undefined,
                     }, () => {})
                     return
                 } catch { /* A concurrent settlement must be inspected before declaring cleanup. */ }
