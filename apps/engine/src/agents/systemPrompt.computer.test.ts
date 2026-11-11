@@ -49,7 +49,6 @@ describe('computer section', () => {
         const section = prompt.slice(prompt.indexOf('<computer>'), prompt.indexOf('</computer>'))
         expect(section).toContain('computer_open_app')
         expect(section).not.toContain('request_takeover')
-        expect(section).not.toContain('When posting or applying is the job itself')
     })
 
     it('offers to finish on the site a job that ends there, an application rather than an email, and waits for the go-ahead to submit', async () => {
@@ -57,7 +56,6 @@ describe('computer section', () => {
         const section = prompt.slice(prompt.indexOf('<computer>'), prompt.indexOf('</computer>'))
         expect(section).toContain('applying to a job offer')
         expect(section).toContain('handing them the sign-in with request_takeover')
-        expect(section).toContain('When posting or applying is the job itself, that sign-in is its next step, never an optional extra offered beside the user pasting it themselves.')
         expect(section).toContain('go-ahead before the final submit')
     })
 

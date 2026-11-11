@@ -3,7 +3,7 @@ import { agentConfigSchema, type AgentConfig } from '@rerun/contracts'
 import type { LoadedAgent } from '../agents/types.js'
 import { buildSystemPrompt, systemPromptText } from '../agents/systemPrompt.js'
 
-const SKIPPED_ANSWER = 'A question the user skipped is answered: go on with what you have, state in one line the assumption you made in its place, deliver, and never ask it again unless they bring it up.'
+const SKIPPED_ANSWER = 'An explicit Skip answers the question without supplying a value or granting approval. Continue the parts you can complete with what you have. State any assumption in one line and explain any part that still requires information or permission. Do not ask the skipped question again unless the user brings it up.'
 const CLICK_SENDS_TEXT = 'A click only sends text, so a reply never says the user did something outside the chat (approved, clicked a button, signed in).'
 const VALUE_ONLY_THE_USER_HAS = 'never when your message waits for something only the user has (a URL, an ID, a name, an email, a file, an access)'
 
@@ -69,4 +69,15 @@ it('leaves quick-reply click limits out when that block is not offered', async (
     expect(prompt).toContain(SKIPPED_ANSWER)
     expect(prompt).not.toContain(CLICK_SENDS_TEXT)
     expect(prompt).not.toContain('<quick_replies>')
+})
+
+
+it('keeps delegated children out of the question prompt and preserves the Foreman setting', async () => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    const child = coworker(true)
+    child.config = agentConfigSchema.parse({ ...child.config, ephemeral: true })
+    expect(systemPromptText(await buildSystemPrompt(child, { source: 'chat' }))).not.toContain(SKIPPED_ANSWER)
+    const foreman = coworker(false, true, { askUser: true })
+    foreman.config = agentConfigSchema.parse({ ...foreman.config, kind: 'foreman' })
+    expect(systemPromptText(await buildSystemPrompt(foreman, { source: 'chat' }))).toContain(SKIPPED_ANSWER)
 })
