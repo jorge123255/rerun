@@ -6,14 +6,16 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
     EMPTY_DRAFT,
+    foremanRevisionSchema,
     type DesktopForemanBuild,
     type DesktopForemanChatRef,
     type DesktopForemanIntakeCompletionReceipt,
     type DesktopForemanRevision,
 } from '@rerun/contracts'
 import type { DesktopRuntime } from '../runtime'
+import type { ForemanCreationAuthority } from './authority'
 
-const state = vi.hoisted(() => ({ db: null as unknown as Client, agentCount: 0 }))
+const state = vi.hoisted(() => ({ db: null as unknown as Client, agentCount: 0, creation: {} as Partial<ForemanCreationAuthority> }))
 vi.mock('../database', () => ({ openDesktopDatabase: async () => state.db }))
 vi.mock('../settings', () => ({
     engineOf: (runtime: DesktopRuntime) => ({ baseUrl: runtime.engine.origin, apiKey: runtime.engine.apiKey }),
@@ -22,7 +24,7 @@ vi.mock('../settings', () => ({
 }))
 vi.mock('../spaces', () => ({ readDesktopBoardState: async () => ({ spaces: [] }) }))
 vi.mock('../store', () => ({ listDesktopAgents: async () => Array.from({ length: state.agentCount }, () => ({ id: 'existing-coworker' })) }))
-vi.mock('./creation', () => ({ createDesktopForemanCreationAuthority: async () => ({ creation: {}, setup: {} }) }))
+vi.mock('./creation', () => ({ createDesktopForemanCreationAuthority: async () => ({ creation: state.creation, setup: {} }) }))
 vi.mock('../company-discovery', () => ({
     createCompanyDiscoverySqliteStore: vi.fn(),
     createCompanyDiscoveryRuntime: () => ({ reconcile: async () => {}, close: async () => {} }),
@@ -45,6 +47,7 @@ import { createDesktopLocalStarterOffers, type DesktopLocalStarterOffer } from '
 import { createSqliteDesktopForemanIntakeStore } from '../foreman-intake/store'
 import { initializeDesktopRound41 } from '../round41-schema'
 import { POST as foremanAction } from '@/app/api/desktop/foreman/route'
+import { projectPlanCard, revisionToTrustedSnapshot } from '@/lib/desktop/foreman-client/plan-view'
 
 const chat = { workspaceId: '1', chatId: 'fmc_phaseprimary01' }
 const answers = { companyUrl: 'acme.com', industry: 'saas' as const, decidedIndustry: null, industryLabel: null, position: 'Founder', firstName: 'Ada' }
@@ -74,6 +77,7 @@ describe('production Foreman intake phase and model brief', () => {
         vi.mocked(getSessionMessages).mockResolvedValue([])
         vi.mocked(getRun).mockImplementation(async (_engine, _agent, id) => ({ id, agentId: 'foreman', sessionId: 'original-session', status: 'done' }) as Awaited<ReturnType<typeof getRun>>)
         state.agentCount = 0
+        state.creation = {}
         directory = await mkdtemp(join(tmpdir(), 'rerun-intake-phase-'))
         state.db = open()
         await state.db.executeMultiple([DESKTOP_FOREMAN_CHAT_SCHEMA, ...DESKTOP_FOREMAN_SCHEMA_STATEMENTS, DESKTOP_FOREMAN_INTAKE_SCHEMA_SQL,
@@ -94,8 +98,21 @@ describe('production Foreman intake phase and model brief', () => {
     })
     afterEach(async () => { state.db.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); await rm(directory, { recursive: true, force: true }) })
 
-    it('resumes the exact saved starter answer once after a lost response and refuses it after Stop', async () => {
-        const app = await desktopForeman(runtime)
+    async function authenticatedStarterAction() {
+        const runtimeFile = join(directory, 'runtime.json')
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        vi.stubEnv('RERUN_DESKTOP_DATA_DIR', directory)
+        vi.stubEnv('RERUN_DESKTOP_RUNTIME_FILE', runtimeFile)
+        await writeFile(runtimeFile, JSON.stringify(runtime), { mode: 0o600 })
+        return (scope: DesktopForemanChatRef, input: unknown, authenticated = true) => foremanAction(new Request(runtime.app.origin + '/api/desktop/foreman', {
+            method: 'POST',
+            headers: { host: new URL(runtime.app.origin).host, origin: runtime.app.origin,
+                ...(authenticated && { cookie: 'rerun-desktop-session=' + runtime.app.sessionToken }) },
+            body: JSON.stringify({ action: 'starter', chat: scope, input }),
+        }))
+    }
+
+    async function prepareStarter() {
         const store = createSqliteDesktopForemanIntakeStore(state.db, { schemaReady: true })
         const saved = await store.save({ chat, requestId: randomUUID(), baseRevision: 0, stepIndex: 2,
             draft: { ...EMPTY_DRAFT, companyUrl: answers.companyUrl, industry: answers.industry, position: answers.position, firstName: answers.firstName },
@@ -114,23 +131,18 @@ describe('production Foreman intake phase and model brief', () => {
         })
         expect(receipt.state).toBe('acknowledged')
         expect(offer).toBeTruthy()
-        const prepared = (await offers.read(chat, receipt.requestId))!
+        return { prepared: (await offers.read(chat, receipt.requestId))!, receipt }
+    }
+
+    it('resumes the exact saved starter answer once after a lost response and refuses it after Stop', async () => {
+        const app = await desktopForeman(runtime)
+        const { prepared, receipt } = await prepareStarter()
         const choice = { offerId: prepared.id, digest: prepared.digest, intakeRequestId: receipt.requestId,
             choice: { kind: 'text' as const, text: 'Design a support coworker' } }
-        const runtimeFile = join(directory, 'runtime.json')
-        vi.stubEnv('RERUN_DESKTOP_APP', '1')
-        vi.stubEnv('RERUN_DESKTOP_DATA_DIR', directory)
-        vi.stubEnv('RERUN_DESKTOP_RUNTIME_FILE', runtimeFile)
-        await writeFile(runtimeFile, JSON.stringify(runtime), { mode: 0o600 })
-        const answerFromApp = (scope = chat, input: { offerId: string; digest: string; intakeRequestId: string; choice: unknown } = choice, authenticated = true) => foremanAction(new Request(runtime.app.origin + '/api/desktop/foreman', {
-            method: 'POST',
-            headers: { host: new URL(runtime.app.origin).host, origin: runtime.app.origin,
-                ...(authenticated && { cookie: 'rerun-desktop-session=' + runtime.app.sessionToken }) },
-            body: JSON.stringify({ action: 'starter', chat: scope, input }),
-        }))
+        let answerFromApp = await authenticatedStarterAction()
         expect((await answerFromApp(chat, choice, false)).status).toBe(401)
-        expect((await answerFromApp({ ...chat, workspaceId: '2' })).status).toBe(404)
-        expect((await answerFromApp(chat, { ...choice, choice: { kind: 'cards', chosen: ['a'.repeat(32)] } })).status).toBe(409)
+        expect((await answerFromApp({ ...chat, workspaceId: '2' }, choice)).status).toBe(404)
+        expect((await answerFromApp(chat, { ...choice, choice: { kind: 'cards', chosen: ['f'.repeat(32)] } })).status).toBe(409)
         expect((await state.db.execute('SELECT offer_id FROM desktop_foreman_local_starter_decisions')).rows).toEqual([])
         const transport = vi.mocked(fetch).getMockImplementation()!
         vi.mocked(fetch).mockImplementationOnce(async (url, init) => {
@@ -145,11 +157,11 @@ describe('production Foreman intake phase and model brief', () => {
         state.db.close()
         state.db = open()
         runtime = { ...runtime, launchNonce: randomUUID() }
-        await writeFile(runtimeFile, JSON.stringify(runtime))
+        answerFromApp = await authenticatedStarterAction()
         const reopened = await desktopForeman(runtime)
         await expect(reopened.send(chat, prepared.id, choice.choice.text, model)).rejects.toMatchObject({ status: 409 })
         await expect(reopened.answerStarter(chat, { ...choice, choice: { kind: 'text', text: 'Another job' } }, AbortSignal.timeout(5000))).rejects.toMatchObject({ status: 409 })
-        const accepted = await answerFromApp()
+        const accepted = await answerFromApp(chat, choice)
         expect(accepted.status).toBe(200)
         expect(await accepted.json()).toEqual({ runId: prepared.id })
         await expect(reopened.answerStarter(chat, choice, AbortSignal.timeout(5000))).resolves.toEqual({ runId: prepared.id })
@@ -161,6 +173,58 @@ describe('production Foreman intake phase and model brief', () => {
         expect(cancelRun).toHaveBeenCalledWith(expect.anything(), 'foreman', prepared.id)
         await expect(reopened.answerStarter(chat, choice, AbortSignal.timeout(5000))).rejects.toMatchObject({ status: 409 })
         expect(sent).toHaveLength(2)
+    })
+
+    it.each(['confirm', 'stop', 'replaced template'] as const)('preserves an exact starter plan across reopen and handles %s', async outcome => {
+        const validate = vi.fn(async () => {})
+        const ensureBox = vi.fn(async () => ({ spaceId: randomUUID() }))
+        const install = vi.fn(async () => ({ agentIds: [randomUUID()] }))
+        state.creation = { assertTemplateRevision: validate, ensureBox, installTemplate: install }
+        const { prepared, receipt } = await prepareStarter()
+        const card = prepared.cards[0]!
+        const input = { offerId: prepared.id, intakeRequestId: receipt.requestId, digest: prepared.digest,
+            choice: { kind: 'cards' as const, chosen: [card.templateId] } }
+        const answerFromApp = await authenticatedStarterAction()
+        const response = await answerFromApp(chat, input)
+        expect(response.status).toBe(200)
+        const shown = await response.json() as { revision: unknown }
+        const revision = foremanRevisionSchema.parse(shown.revision)
+        expect(shown.revision).toMatchObject({ starter: { offerId: prepared.id, digest: prepared.digest }, runId: null, toolCallId: null, model: null,
+            state: 'shown', plan: { items: [{ kind: 'template', templateId: card.templateId, templateRevision: card.revision }] } })
+        const projected = projectPlanCard(revisionToTrustedSnapshot(revision))
+        expect(projected).toMatchObject({ revisionId: revision.revisionId, decision: null, streaming: false })
+        expect(projected.view?.groups[0]?.items[0]?.name).toBe(card.title)
+        expect(ensureBox).not.toHaveBeenCalled()
+        expect(install).not.toHaveBeenCalled()
+        expect(sent).toEqual([])
+
+        state.db.close()
+        state.db = open()
+        const reopened = await desktopForeman({ ...runtime, launchNonce: randomUUID() })
+        expect((await reopened.core.readView(chat)).revisions).toEqual([shown.revision])
+        await expect(reopened.answerStarter(chat, input, AbortSignal.timeout(5000))).resolves.toEqual(shown)
+        const confirmation = { decision: 'confirm', requestId: randomUUID(), chat, planId: revision.planId, revisionId: revision.revisionId, digest: revision.digest }
+        if (outcome === 'stop') {
+            await reopened.stop(chat)
+            expect((await reopened.core.readView(chat)).revisions[0]?.state).toBe('superseded')
+            await expect(reopened.core.decide(confirmation)).rejects.toMatchObject({ code: 'stale_revision' })
+            expect(ensureBox).not.toHaveBeenCalled()
+            expect(install).not.toHaveBeenCalled()
+        } else {
+            if (outcome === 'replaced template') validate.mockRejectedValueOnce(new Error('Selected template revision changed.'))
+            const confirmed = await reopened.core.decide(confirmation)
+            await reopened.core.runBuild(confirmed.buildId!)
+            expect(validate).toHaveBeenCalledWith(card.templateId, card.revision)
+            if (outcome === 'replaced template') {
+                expect((await reopened.core.readView(chat)).build).toMatchObject({ state: 'failed', items: [{ failure: 'template_failed' }] })
+                expect(ensureBox).not.toHaveBeenCalled()
+                expect(install).not.toHaveBeenCalled()
+            } else {
+                expect((await reopened.core.readView(chat)).build?.state).toBe('completed')
+                expect(install).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ templateId: card.templateId, templateRevision: card.revision }))
+            }
+        }
+        expect(sent).toEqual([])
     })
 
     it('reserves an answer for the exact completed question and reconciles a lost acknowledgement without another send', async () => {

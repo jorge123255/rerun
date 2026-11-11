@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { desktopTemplateRevisionSchema } from './desktop-templates.js'
 
 // Local Foreman (E11). Renderer DTOs carry opaque local identities only: no engine ids, provider
 // credentials, connection secrets or host paths. Compatibility: version 1. Additive fields only;
@@ -110,24 +111,34 @@ export const foremanBoxKeySchema = z.string().regex(/^box-[0-9]{1,2}$/)
 export const foremanSealedPlanSchema = z.strictObject({
     title: z.string(),
     boxes: z.array(foremanPlanBoxSchema.extend({ key: foremanBoxKeySchema })),
-    items: z.array(z.intersection(foremanPlanItemSchema, z.object({ key: foremanItemKeySchema, boxKey: foremanBoxKeySchema }))),
+    items: z.array(z.intersection(z.discriminatedUnion('kind', [
+        foremanAgentItemSchema,
+        foremanTemplateItemSchema.extend({ templateRevision: desktopTemplateRevisionSchema.optional() }),
+    ]), z.object({ key: foremanItemKeySchema, boxKey: foremanBoxKeySchema }))),
 })
 export type DesktopForemanSealedPlan = z.infer<typeof foremanSealedPlanSchema>
 
 export const FOREMAN_REVISION_STATES = ['shown', 'confirmed', 'changes_requested', 'superseded'] as const
+const foremanStarterPlanSourceSchema = z.strictObject({ offerId: z.uuid(), digest: foremanDigestSchema })
 export const foremanRevisionSchema = z.strictObject({
     planId: foremanPlanIdSchema,
     revisionId: foremanRevisionIdSchema,
     revision: z.number().int().min(1),
     digest: foremanDigestSchema,
     chat: foremanChatRefSchema,
-    runId: foremanRunIdSchema,
-    toolCallId: z.string().min(1).max(256),
-    model: foremanModelRefSchema,
+    runId: foremanRunIdSchema.nullable(),
+    toolCallId: z.string().min(1).max(256).nullable(),
+    model: foremanModelRefSchema.nullable(),
+    starter: foremanStarterPlanSourceSchema.optional(),
     plan: foremanSealedPlanSchema,
     state: z.enum(FOREMAN_REVISION_STATES),
     shownAt: z.string(),
-})
+}).refine(value => value.starter
+    ? value.runId === null && value.toolCallId === null && value.model === null
+        && value.plan.items.length > 0 && value.plan.items.every(item => item.kind === 'template' && !!item.templateRevision)
+    : value.runId !== null && value.toolCallId !== null && value.model !== null
+        && value.plan.items.every(item => item.kind !== 'template' || !item.templateRevision),
+{ message: 'The plan must name its engine call or its saved starter offer.' })
 export type DesktopForemanRevision = z.infer<typeof foremanRevisionSchema>
 
 // Decisions only come from the user's explicit click on the exact displayed revision.

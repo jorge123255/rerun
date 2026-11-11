@@ -44,7 +44,6 @@ export async function POST(request: Request) {
             if (input.action === 'send') return Response.json(await app.send(input.chat, input.requestId, input.text, input.modelChoice))
             if (input.action === 'answer') return Response.json(await app.answerQuestion(input.chat, input.input))
             if (input.action === 'starter') {
-                if (input.input.choice.kind === 'cards') throw new DesktopHttpError(409, 'Starter template review is unavailable.')
                 return Response.json(await app.answerStarter(input.chat, input.input, AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])),
                     { headers: { 'cache-control': 'no-store' } })
             }

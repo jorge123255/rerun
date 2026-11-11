@@ -241,6 +241,13 @@ async function createBinding(runtime: DesktopRuntime) {
             }
             return withForemanChatWrite(db, async () => {
                 const { offer, choice } = await starterDecisions.reserve(chat, input, signal)
+                const assertCurrent = () => { signal.throwIfAborted(); assertDesktopWorkspaceAdmission(runtime) }
+                assertCurrent()
+                if (choice.kind === 'cards') {
+                    const cards = offer.cards.filter(card => choice.chosen.includes(card.templateId))
+                    const revision = await core.recordStarterPlan(chat, { offerId: offer.id, digest: offer.digest }, cards, assertCurrent)
+                    return { offerId: offer.id, choice, runId: null, revision }
+                }
                 return { offerId: offer.id, choice, runId: null }
             })
         },

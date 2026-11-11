@@ -171,6 +171,24 @@ test('Foreman template reservations are separate from UI attempts and install di
     expect(state.posts.filter(item=>item.path==='/desktop/templates/install')).toHaveLength(1)
 })
 
+test('an exact starter template revision is required before the import can run', async () => {
+    const { creation } = await bind()
+    const spaceId = (await readDesktopBoardState(db)).spaces[0]!.id
+    const input = { requestId: randomUUID(), templateId, spaceId, templateRevision: 'f'.repeat(64) }
+    await expect(creation.assertTemplateRevision!(templateId, input.templateRevision)).rejects.toMatchObject({ failure: 'template_failed' })
+    await expect(creation.installTemplate(input)).rejects.toMatchObject({ failure: 'template_failed' })
+    expect(state.posts.filter(item => item.path === '/desktop/templates/install')).toHaveLength(0)
+    expect(state.agents.size).toBe(0)
+    await creation.assertTemplateRevision!(templateId, revision)
+    const correct = { ...input, requestId: randomUUID(), templateRevision: revision }
+    const result = await creation.installTemplate(correct)
+    expect(state.posts.filter(item => item.path === '/desktop/templates/install')).toEqual([
+        expect.objectContaining({ body: expect.objectContaining({ templateId, revision, foremanDisabled: true }) }),
+    ])
+    const reopened = await reopen()
+    expect(await reopened.creation.installTemplate(correct)).toEqual(result)
+})
+
 test('deleted coworker receipts never create another coworker and a replaced workspace has no effects',async()=>{
     const a=await bind(),input=await spec(),one=await a.creation.createCoworker(input)
     await db.execute({sql:'DELETE FROM desktop_space_placements WHERE agent_id=?',args:[one.agentId]});await db.execute({sql:'DELETE FROM desktop_agents WHERE id=?',args:[one.agentId]})

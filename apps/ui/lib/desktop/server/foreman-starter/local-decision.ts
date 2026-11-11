@@ -84,6 +84,7 @@ export function createDesktopLocalStarterDecisions(runtime: DesktopRuntime, db: 
                         AND json_type(i.body,'$.followUp.runId')='null'
                         AND NOT EXISTS (SELECT 1 FROM desktop_foreman_local_starter_stops s WHERE s.intake_request_id=i.request_id)
                         AND NOT EXISTS (SELECT 1 FROM desktop_foreman_turns t WHERE t.chat_id=o.chat_id)
+                        AND NOT EXISTS (SELECT 1 FROM desktop_foreman_revisions p WHERE p.workspace_id=o.workspace_id AND p.chat_id=o.chat_id)
                       ON CONFLICT(offer_id) DO NOTHING`,
                 args: [JSON.stringify(input.choice), offer.id, chat.workspaceId, chat.chatId, offer.digest],
             })
