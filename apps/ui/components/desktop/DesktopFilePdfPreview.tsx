@@ -6,7 +6,7 @@ import { PanelEditorHeader } from '@/components/ui/panel-editor'
 import { Skeleton } from '@/components/ui/skeleton'
 import { desktopPdfFindMessage, desktopPdfSamePointSize, desktopPdfTextOf, desktopPdfTextSearchable, findDesktopPdfText, DESKTOP_PDF_TEXT_MAX_RESPONSE, type DesktopPdfTextDocument, type DesktopPdfTextMatch } from '@/lib/desktop/pdf-text'
 import { ChevronLeftIcon, ChevronRightIcon, MinusIcon, PlusIcon } from '@/lib/icons'
-import { useEffect, useRef, useState, type Ref } from 'react'
+import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react'
 import { DesktopFilePdfFind } from './DesktopFilePdfFind'
 import { DesktopFilePdfTextLayer } from './DesktopFilePdfTextLayer'
 import { FileSiblingControls } from './DesktopFileSiblingNav'
@@ -31,6 +31,7 @@ type Props = {
     source?: DesktopPdfPageSource
     onBack: () => void
     siblings?: SiblingFiles | null
+    headerActions?: ReactNode
     viewerRef?: Ref<HTMLDivElement>
     onPreviewIdentity?: (hash: string | null) => void
     /** `files` keeps the Files header and sibling arrows. `body` is the page frame for a lightbox that already has a title. */
@@ -46,7 +47,7 @@ export function DesktopFilePdfPreview(props: Props) {
 }
 
 /** Rerun's FileDetail header and white PDF frame. The page is a PNG; selection and Find sit on top of it. */
-function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = null, viewerRef, onPreviewIdentity, chrome = 'files' }: Props) {
+function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = null, viewerRef, headerActions, onPreviewIdentity, chrome = 'files' }: Props) {
     const [page, setPage] = useState(1)
     const [scale, setScale] = useState(1)
     const [pages, setPages] = useState<number | null>(null)
@@ -183,7 +184,7 @@ function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = 
     }
 
     return <div ref={viewerRef} className="flex min-h-0 flex-1 flex-col">
-        {chrome === 'files' && <PanelEditorHeader title={name} onBack={onBack} mono><FileSiblingControls siblings={siblings} /></PanelEditorHeader>}
+        {chrome === 'files' && <PanelEditorHeader title={name} onBack={onBack} mono><FileSiblingControls siblings={siblings} />{headerActions}</PanelEditorHeader>}
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2 text-xs">
             <div className="flex items-center gap-1">
                 <Button type="button" variant="ghost" size="icon-xs" aria-label="Previous page" disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}><ChevronLeftIcon className="size-3.5" /></Button>

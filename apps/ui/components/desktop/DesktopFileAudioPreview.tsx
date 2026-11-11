@@ -3,7 +3,7 @@
 import { PanelEditorHeader } from '@/components/ui/panel-editor'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { SiblingFiles } from '@/components/files/useSiblingFiles'
-import { useCallback, useEffect, useRef, useState, type Ref } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from 'react'
 import { FileSiblingControls } from './DesktopFileSiblingNav'
 
 const AUDIO_TYPES = new Set(['audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/flac'])
@@ -24,6 +24,7 @@ export type DesktopFileAudioPreviewProps = {
     srcUrl: string
     onBack: () => void
     siblings?: SiblingFiles | null
+    headerActions?: ReactNode
     viewerRef?: Ref<HTMLDivElement>
     onPreviewIdentity?: (hash: string | null) => void
 }
@@ -31,7 +32,7 @@ export type DesktopFileAudioPreviewProps = {
 type View = { loading: true } | { error: string } | { src: string }
 
 /** FileDetail header and FilePreview audio controls, filled from the authenticated desktop route. */
-export function DesktopFileAudioPreview({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef, onPreviewIdentity }: DesktopFileAudioPreviewProps) {
+export function DesktopFileAudioPreview({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef, headerActions, onPreviewIdentity }: DesktopFileAudioPreviewProps) {
     const audioRef = useRef<HTMLAudioElement | null>(null)
     const failed = useRef(false)
     const [view, setView] = useState<View>({ loading: true })
@@ -90,7 +91,7 @@ export function DesktopFileAudioPreview({ name, path, identity, srcUrl, onBack, 
 
     return <div ref={viewerRef} className="flex min-h-0 flex-1 flex-col">
         <PanelEditorHeader title={name} onBack={onBack} mono>
-            <FileSiblingControls siblings={siblings} />
+            <FileSiblingControls siblings={siblings} />{headerActions}
         </PanelEditorHeader>
         <div key={path} className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {'src' in view ? <div className="flex h-full items-center justify-center p-4">

@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { ArrowLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, PencilIcon, RefreshCwIcon, Trash2Icon, XIcon } from '@/lib/icons'
+import { ArrowLeftIcon, ChevronRightIcon, DownloadIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, PencilIcon, RefreshCwIcon, Trash2Icon, XIcon } from '@/lib/icons'
 import { DesktopFileAudioPreview, isDesktopAudioName } from './DesktopFileAudioPreview'
 import { DesktopFileImagePreview, isDesktopRasterName } from './DesktopFileImagePreview'
 import { DesktopFilePdfPreview, isDesktopPdfName } from './DesktopFilePdfPreview'
@@ -26,8 +26,10 @@ import type { DesktopAgentView } from './DesktopApp'
 import { desktopFileDraftHost, holdDraftAdmission } from '@/lib/desktop/draft-writes'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 
-type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string }
-type Preview = { path: string; content: string; truncated: boolean; hash?: string; identity?: string } | { path: string; error: string } | { path: string; loading: true } | { path: string; conflict: FileConflict }
+type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string; exportVersion?: string }
+type OpenFile = { path: string; name: string; identity?: string; exportVersion?: string }
+type SaveCoworkerFile = (file: { agentId: string; path: string; version: string }) => Promise<boolean>
+type Preview = { path: string; content: string; truncated: boolean; hash?: string; identity?: string; exportVersion?: string } | { path: string; error: string } | { path: string; loading: true } | { path: string; conflict: FileConflict }
 
 /** FileList’s name field: the stem is selected, Enter saves, and Escape cancels. */
 function RenameField({ name, onSubmit, onCancel }: { name: string; onSubmit: (next: string) => void; onCancel: () => void }) {
@@ -78,10 +80,10 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     const base = `/api/desktop/agents/${encodeURIComponent(agent.id)}/files`
     const [error, setError] = useState('')
     const [preview, setPreview] = useState<Preview | null>(null)
-    const [image, setImage] = useState<{ path: string; name: string; identity?: string } | null>(null)
-    const [audio, setAudio] = useState<{ path: string; name: string; identity?: string } | null>(null)
-    const [video, setVideo] = useState<{ path: string; name: string; identity?: string } | null>(null)
-    const [pdf, setPdf] = useState<{ path: string; name: string; identity?: string } | null>(null)
+    const [image, setImage] = useState<OpenFile | null>(null)
+    const [audio, setAudio] = useState<OpenFile | null>(null)
+    const [video, setVideo] = useState<OpenFile | null>(null)
+    const [pdf, setPdf] = useState<OpenFile | null>(null)
     const [renaming, setRenaming] = useState<string | null>(null)
     const [menuName, setMenuName] = useState<string | null>(null)
     const renameAfterMenu = useRef<string | null>(null)
@@ -129,20 +131,16 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
 
     useEffect(() => {
         // A replaced listing identity must not keep the previous bytes. A missing name stays put.
-        const adopt = (current: { path: string; name: string; identity?: string } | null, apply: (identity: string | undefined) => void) => {
+        const adopt = (current: OpenFile | null, set: (next: OpenFile) => void) => {
             if (!current || folderOf(current.path) !== currentPath) return
-            const entry = entries.find(item => item.type !== 'dir' && item.name === current.name)
+            const entry = entries.find(item => item.type === 'file' && item.name === current.name)
             if (!entry || entry.identity === current.identity) return
-            apply(entry.identity)
+            set({ ...current, identity: entry.identity, exportVersion: entry.exportVersion })
         }
-        const applyMedia = (identity: string | undefined, current: { path: string; name: string; identity?: string }, set: (next: { path: string; name: string; identity?: string } | null) => void) => {
-            if (current.identity === identity) return
-            set(identity ? { ...current, identity } : { path: current.path, name: current.name })
-        }
-        adopt(image, identity => { if (image) applyMedia(identity, image, setImage) })
-        adopt(audio, identity => { if (audio) applyMedia(identity, audio, setAudio) })
-        adopt(video, identity => { if (video) applyMedia(identity, video, setVideo) })
-        adopt(pdf, identity => { if (pdf) applyMedia(identity, pdf, setPdf) })
+        adopt(image, setImage)
+        adopt(audio, setAudio)
+        adopt(video, setVideo)
+        adopt(pdf, setPdf)
     }, [currentPath, entries, image, audio, video, pdf])
 
     previewNow.current = preview
@@ -180,6 +178,29 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         return () => controller.abort()
     }, [base, openPath, textIdentity, editingPath])
 
+    const [saveNotice, setSaveNotice] = useState<{ path: string; message: string; ok: boolean } | null>(null)
+    const [savingFile, setSavingFile] = useState(false)
+    const savingNow = useRef(false)
+    const nativeSave = typeof window === 'undefined' ? undefined : (window as Window & { desktopApp?: { saveCoworkerFile?: SaveCoworkerFile } }).desktopApp?.saveCoworkerFile
+    const saveAs = async (path: string, version: string) => {
+        if (!nativeSave || savingNow.current) return
+        savingNow.current = true
+        setSavingFile(true)
+        setSaveNotice(null)
+        try {
+            if (await nativeSave({ agentId: agent.id, path, version })) {
+                setSaveNotice({ path, message: `Saved ${nameOf(path)}`, ok: true })
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not save this file.'
+            setSaveNotice({ path, message, ok: false })
+        } finally {
+            savingNow.current = false
+            setSavingFile(false)
+        }
+    }
+    const showSaveNotice = (visible: boolean) => visible && saveNotice && <p role={saveNotice.ok ? 'status' : 'alert'} className={`text-xs ${saveNotice.ok ? 'text-muted-foreground' : 'text-destructive'}`}>{saveNotice.message}</p>
+
     const [notice, setNotice] = useState<{ ok: boolean; text: string; folder: string } | null>(null)
 
     const openListed = useCallback((name: string) => {
@@ -188,7 +209,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         if (!entry) return
         const path = currentPath ? `${currentPath}/${name}` : name
         setSelected(path)
-        const file = { path, name: entry.name, ...(entry.identity && { identity: entry.identity }) }
+        const file: OpenFile = { path, name: entry.name, identity: entry.identity, exportVersion: entry.exportVersion }
         setEditingPath(null)
         if (isDesktopRasterName(entry.name)) {
             setAudio(null); setVideo(null); setPdf(null); setPreview(null); setImage(file)
@@ -206,6 +227,13 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     const openEntry = openPathname && folderOf(openPathname) === currentPath
         ? entries.find(entry => entry.type !== 'dir' && entry.name === nameOf(openPathname))
         : undefined
+    const previewSaveAction = (path: string, version?: string) => nativeSave && openEntry?.exportVersion && version
+        ? <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={savingFile} onClick={() => void saveAs(path, version)}>Save As</Button>
+        : null
+    const mediaActions = (file: OpenFile) => <>
+        {previewSaveAction(file.path, file.exportVersion)}
+        {showSaveNotice(saveNotice?.path === file.path)}
+    </>
     const navigationLocked = renamePending || deletePending || renaming !== null || deleting !== null || editingPath !== null || (!!preview && 'conflict' in preview)
     blockSiblingNav.current = navigationLocked
     const openSibling = useCallback((name: string) => {
@@ -281,6 +309,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
 
     const breadcrumbs = currentPath.split('/').filter(Boolean)
     const menuEntry = menuName ? entries.find(entry => entry.name === menuName) : undefined
+    const menuVersion = menuEntry?.type === 'file' ? menuEntry.exportVersion : undefined
 
     // Keyed on the path (as FileDetail does), so opening another file leaves the editor by itself.
     const editing = !!preview && editingPath === preview.path
@@ -330,37 +359,37 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     if (preview && 'conflict' in preview) {
         return <FileEditor base={base} path={preview.path} content={preview.conflict.content} hash={preview.conflict.hash} identity={preview.conflict.identity} initialConflict={preview.conflict} registerCloseGuard={registerCloseGuard}
             onClose={() => setPreview(null)}
-            onSaved={(content, hash, identity) => { setPreview({ path: preview.path, content, truncated: false, hash, identity }); setEditingPath(null) }} />
+            onSaved={(content, hash, identity, exportVersion) => { setPreview({ path: preview.path, content, truncated: false, hash, identity, exportVersion }); setEditingPath(null) }} />
     }
 
     if (preview && editing && 'hash' in preview && preview.hash) {
         return <FileEditor base={base} path={preview.path} content={preview.content} hash={preview.hash} identity={preview.identity} registerCloseGuard={registerCloseGuard}
             onClose={() => setEditingPath(null)}
-            onSaved={(content, hash, identity) => { setPreview({ path: preview.path, content, truncated: false, hash, identity }); setEditingPath(null) }} />
+            onSaved={(content, hash, identity, exportVersion) => { setPreview({ path: preview.path, content, truncated: false, hash, identity, exportVersion }); setEditingPath(null) }} />
     }
 
     if (image) {
         const params = new URLSearchParams({ path: image.path })
         if (image.identity) params.set('identity', image.identity)
-        return <DesktopFileImagePreview name={image.name} path={image.path} identity={image.identity} srcUrl={`${base}/image?${params.toString()}`} onBack={() => setImage(null)} siblings={shownSiblings} viewerRef={viewerRef} />
+        return <DesktopFileImagePreview name={image.name} path={image.path} identity={image.identity} srcUrl={`${base}/image?${params.toString()}`} onBack={() => setImage(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(image)} />
     }
 
     if (audio) {
         const params = new URLSearchParams({ path: audio.path })
         if (audio.identity) params.set('identity', audio.identity)
-        return <DesktopFileAudioPreview name={audio.name} path={audio.path} identity={audio.identity} srcUrl={`${base}/audio?${params.toString()}`} onBack={() => setAudio(null)} siblings={shownSiblings} viewerRef={viewerRef} />
+        return <DesktopFileAudioPreview name={audio.name} path={audio.path} identity={audio.identity} srcUrl={`${base}/audio?${params.toString()}`} onBack={() => setAudio(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(audio)} />
     }
 
     if (video) {
         const params = new URLSearchParams({ path: video.path })
         if (video.identity) params.set('identity', video.identity)
-        return <DesktopFileVideoPreview name={video.name} path={video.path} identity={video.identity} srcUrl={`${base}/video?${params.toString()}`} onBack={() => setVideo(null)} siblings={shownSiblings} viewerRef={viewerRef} />
+        return <DesktopFileVideoPreview name={video.name} path={video.path} identity={video.identity} srcUrl={`${base}/video?${params.toString()}`} onBack={() => setVideo(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(video)} />
     }
 
     if (pdf) {
         const params = new URLSearchParams({ path: pdf.path })
         if (pdf.identity) params.set('identity', pdf.identity)
-        return <DesktopFilePdfPreview name={pdf.name} path={pdf.path} identity={pdf.identity} srcUrl={`${base}/pdf?${params.toString()}`} onBack={() => setPdf(null)} siblings={shownSiblings} viewerRef={viewerRef} />
+        return <DesktopFilePdfPreview name={pdf.name} path={pdf.path} identity={pdf.identity} srcUrl={`${base}/pdf?${params.toString()}`} onBack={() => setPdf(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(pdf)} />
     }
 
     if (preview) {
@@ -371,9 +400,11 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                 <Button type="button" variant="ghost" size="sm" aria-label="Back to folder" onClick={() => setPreview(null)}><ArrowLeftIcon className="size-4" /></Button>
                 <span className="min-w-0 flex-1 truncate font-medium" title={preview.path}>{name}</span>
                 {shownSiblings && <div className="flex shrink-0 items-center gap-1"><FileSiblingControls siblings={shownSiblings} /></div>}
+                {previewSaveAction(preview.path, 'content' in preview ? preview.exportVersion : 'error' in preview ? openEntry?.exportVersion : undefined)}
                 {'content' in preview && <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={!editable}
                     title={editable ? undefined : 'Only complete UTF-8 text files up to 256 KiB can be edited here.'} onClick={() => setEditingPath(preview.path)}>Edit</Button>}
             </div>
+            {showSaveNotice(saveNotice?.path === preview.path)}
             {'loading' in preview ? <p role="status" className="text-sm text-muted-foreground">Loading preview…</p>
                 : 'error' in preview ? <p role="alert" className="text-sm text-destructive">{preview.error}</p>
                 : <>
@@ -398,6 +429,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
             <FilesImportMenu onPick={imports.enqueueEntries} disabled={pending || loading || busy || !!error} />
             <button type="button" aria-label="Refresh files" disabled={pending} onClick={reload} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground"><RefreshCwIcon className="size-3.5" /></button>
         </nav>
+        {showSaveNotice(!!saveNotice && folderOf(saveNotice.path) === currentPath)}
         {renamePending && <p role="status" className="pt-2 text-xs text-muted-foreground">Renaming…</p>}
         {deletePending && <p role="status" className="pt-2 text-xs text-muted-foreground">Deleting…</p>}
         {notice?.folder === currentPath && <p role={notice.ok ? 'status' : 'alert'} data-testid="import-notice" className={`pt-2 text-xs ${notice.ok ? 'text-muted-foreground' : 'text-destructive'}`}>{notice.text}</p>}
@@ -408,22 +440,24 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                 : error ? <p role="alert" className="text-sm text-destructive">{error}</p>
                 : <ContextMenu onOpenChange={open => { if (!open) setMenuName(null) }}>
                     <ContextMenuTrigger asChild>
-                        <DesktopFilesGrid
-                            entries={entries}
-                            currentPath={currentPath}
-                            filesBase={base}
-                            selectedName={selectedHere}
-                            renamingName={renaming}
-                            pending={pending}
-                            textHeads={heads}
-                            onRequestText={request}
-                            onOpenFile={name => openListed(name)}
-                            onOpenDir={name => { setSelected(childPath(name)); enter(name) }}
-                            onGoUp={currentPath ? goUp : undefined}
-                            onContextMenu={name => setMenuName(name)}
-                            onClearMenu={() => setMenuName(null)}
-                            renderRename={name => <RenameField name={name} onSubmit={next => { setRenaming(null); void renameEntry(name, next) }} onCancel={() => setRenaming(null)} />}
-                        />
+                        <div>
+                            <DesktopFilesGrid
+                                entries={entries}
+                                currentPath={currentPath}
+                                filesBase={base}
+                                selectedName={selectedHere}
+                                renamingName={renaming}
+                                pending={pending}
+                                textHeads={heads}
+                                onRequestText={request}
+                                onOpenFile={name => openListed(name)}
+                                onOpenDir={name => { setSelected(childPath(name)); enter(name) }}
+                                onGoUp={currentPath ? goUp : undefined}
+                                onContextMenu={name => setMenuName(name)}
+                                onClearMenu={() => setMenuName(null)}
+                                renderRename={name => <RenameField name={name} onSubmit={next => { setRenaming(null); void renameEntry(name, next) }} onCancel={() => setRenaming(null)} />}
+                            />
+                        </div>
                     </ContextMenuTrigger>
                     {menuEntry && <ContextMenuContent onCloseAutoFocus={event => {
                         const name = renameAfterMenu.current
@@ -435,6 +469,11 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                         setRenaming(name)
                     }}>
                         <ContextMenuLabel className="max-w-56 truncate">{menuEntry.name}</ContextMenuLabel>
+                        {nativeSave && menuVersion && <ContextMenuItem disabled={pending || savingFile}
+                            onSelect={() => void saveAs(childPath(menuEntry.name), menuVersion)}>
+                            <DownloadIcon className="size-4" />
+                            Save As
+                        </ContextMenuItem>}
                         <ContextMenuItem disabled={pending} onSelect={() => { renameAfterMenu.current = menuEntry.name }}>
                             <PencilIcon className="size-4" />
                             Rename
@@ -456,14 +495,14 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
 }
 
 type FileConflict = { content: string; hash: string; identity?: string; stale?: boolean; recovery?: { draft: string; external: string } }
-type SaveResponse = { path: string; hash: string; identity?: string } | { error: string; conflict?: true; stale?: boolean; current?: { content: string; hash: string; identity?: string } | null; recovery?: { draft: string; external: string } }
+type SaveResponse = { path: string; hash: string; identity?: string; exportVersion?: string } | { error: string; conflict?: true; stale?: boolean; current?: { content: string; hash: string; identity?: string } | null; recovery?: { draft: string; external: string } }
 
 /**
  * Original FileEditorDialog layout and editor, with desktop conflict details. Every close path
  * guards the draft, including the Files dialog behind this modal. Overwrite retries against the
  * version shown, so another change still produces a conflict.
  */
-function FileEditor({ base, path, content, hash, identity, initialConflict = null, registerCloseGuard, onClose, onSaved }: { base: string; path: string; content: string; hash: string; identity?: string; initialConflict?: FileConflict | null; registerCloseGuard: (guard: CloseGuard | null) => void; onClose: () => void; onSaved: (content: string, hash: string, identity?: string) => void }) {
+function FileEditor({ base, path, content, hash, identity, initialConflict = null, registerCloseGuard, onClose, onSaved }: { base: string; path: string; content: string; hash: string; identity?: string; initialConflict?: FileConflict | null; registerCloseGuard: (guard: CloseGuard | null) => void; onClose: () => void; onSaved: (content: string, hash: string, identity?: string, exportVersion?: string) => void }) {
     const [opened, setOpened] = useState(() => ({ ...splitEol(content), hash, identity }))
     const [draft, setDraft] = useState(opened.text)
     const [saving, setSaving] = useState(false)
@@ -496,7 +535,7 @@ function FileEditor({ base, path, content, hash, identity, initialConflict = nul
         try {
             const response = await fetch(`${base}/content`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path, content: next, baseHash, ...(fileIdentity && { identity: fileIdentity }) }) })
             const body = await response.json().catch(() => ({ error: 'Could not save this file.' })) as SaveResponse
-            if (response.ok && 'hash' in body) { onSaved(next, body.hash, body.identity); return }
+            if (response.ok && 'hash' in body) { onSaved(next, body.hash, body.identity, body.exportVersion); return }
             if ('conflict' in body && body.conflict && body.current) setConflict({ ...body.current, ...(body.recovery && { recovery: body.recovery }), ...(body.stale ? { stale: true } : {}) })
             else setError('error' in body && body.error ? `${body.error} Your edits are still here; try again.` : 'Could not save this file. Your edits are still here; try again.')
         } catch {

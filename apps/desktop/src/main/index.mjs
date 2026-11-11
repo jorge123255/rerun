@@ -14,7 +14,7 @@ import { createDesktopCoworkerShareFiles } from './coworker-share-files.mjs'
 import { createNativeRemoteMachines } from './remote-machines/binding.mjs'
 import { createRemoteMachineIpc } from './remote-machines/ipc.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
-import { createDesktopResultFileSave } from './result-files.mjs'
+import { createDesktopFileSaves } from './result-files.mjs'
 import { handleFindInPage } from './find-in-page.mjs'
 import { installMacApplicationMenu } from './application-menu.mjs'
 
@@ -36,7 +36,7 @@ let quittingNow = false
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const draftQuit = new BeforeQuitDrafts()
-const saveResultFile = createDesktopResultFileSave({ dialog, context: () => {
+const { saveResultFile, saveCoworkerFile } = createDesktopFileSaves({ dialog, context: () => {
     if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
     return { runtime, window }
 } })
@@ -205,6 +205,7 @@ async function launch() {
     ipcMain.handle('desktop:template-pick', event => { trusted(event); return templateFiles.pickImport() })
     ipcMain.handle('desktop:template-save', (event, value) => { trusted(event); return templateFiles.saveArtifact(value) })
     ipcMain.handle('desktop:result-save', (event, value) => { trusted(event); return saveResultFile(value) })
+    ipcMain.handle('desktop:coworker-file-save', (event, value) => { trusted(event); return saveCoworkerFile(value) })
     ipcMain.handle('desktop:notify', (event, value) => {
         trusted(event)
         const scope = clickScope()

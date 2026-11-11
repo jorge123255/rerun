@@ -1,9 +1,9 @@
 import { canonicalDesktopEngineRoot } from './runtime'
 import 'server-only'
-import { DESKTOP_ATTACHMENT_MAX_BYTES, isDesktopAttachmentPath } from '@rerun/contracts'
-import { constants } from 'node:fs'
+import { DESKTOP_ATTACHMENT_MAX_BYTES, MAX_UPLOAD_FILE_BYTES, isDesktopAttachmentPath } from '@rerun/contracts'
+import { constants, type BigIntStats } from 'node:fs'
 import { execFile } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
 import { link, lstat, mkdir, open, readdir, realpath, rename, rmdir, unlink, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -21,9 +21,9 @@ import { withRosterWrite } from './roster-writes'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { assertPrivateBackupBudget, assertPrivateDirectories, assertPrivateSnapshot, privateFileLocation, readPrivateSnapshot, readPrivateTextAt, type PrivateFileSnapshot } from './private-file-tools/snapshot'
 
-export type CoworkerFileEntry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string }
+export type CoworkerFileEntry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string; exportVersion?: string }
 /** `hash` is set only when the whole file can be edited as UTF-8 text. */
-export type CoworkerFilePreview = { path: string; content: string; size: number; truncated: boolean; hash?: string; identity?: string }
+export type CoworkerFilePreview = { path: string; content: string; size: number; truncated: boolean; hash?: string; identity?: string; exportVersion?: string }
 
 const PREVIEW_BYTES = 256 * 1024
 const SAFE_ENGINE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -131,6 +131,7 @@ async function listFiles(runtime: DesktopRuntime, agentId: string, path: string,
             entries.push({
                 name, type: info.isDirectory() ? 'dir' : 'file', size: Number(info.size), modifiedAt: info.mtime.toISOString(),
                 ...(entryIdentity && { identity: `${entryIdentity.dev}:${entryIdentity.ino}` }),
+                ...(entryIdentity?.isFile() && canExportFile(name, entryIdentity) && { exportVersion: exportFileVersion(entryIdentity) }),
             })
         }
     } finally {
@@ -172,10 +173,11 @@ async function readFileInWorkspace(runtime: DesktopRuntime, agentId: string, pat
 async function readResolvedFile(target: string, rel: string, mode: 'preview' | 'attach'): Promise<CoworkerFilePreview> {
     const handle = await openResolved(target)
     try {
-        const info = await handle.stat()
-        if (!info.isFile()) throw new DesktopHttpError(400, 'That path is not a file.')
-        if (mode === 'attach' && info.size > DESKTOP_ATTACHMENT_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments must be 32 KiB or smaller.')
-        const buffer = Buffer.alloc(Math.min(info.size, PREVIEW_BYTES))
+        const opened = await handle.stat({ bigint: true })
+        if (!opened.isFile()) throw new DesktopHttpError(400, 'That path is not a file.')
+        const size = Number(opened.size)
+        if (mode === 'attach' && size > DESKTOP_ATTACHMENT_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments must be 32 KiB or smaller.')
+        const buffer = Buffer.alloc(Math.min(size, PREVIEW_BYTES))
         let bytesRead = 0
         while (bytesRead < buffer.length) {
             const read = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead)
@@ -186,20 +188,80 @@ async function readResolvedFile(target: string, rel: string, mode: 'preview' | '
         if (bytes.includes(0)) throw new DesktopHttpError(415, mode === 'attach' ? 'Attachments must contain UTF-8 text.' : 'Only text files can be previewed.')
         let content: string
         if (mode === 'attach') {
-            const after = await handle.stat()
-            if (bytesRead !== info.size || info.size !== after.size || info.ctimeMs !== after.ctimeMs) throw new DesktopHttpError(409, 'This file changed while it was being read. Try sending again.')
+            const after = await handle.stat({ bigint: true })
+            if (bytesRead !== size || opened.size !== after.size || opened.ctimeNs !== after.ctimeNs) throw new DesktopHttpError(409, 'This file changed while it was being read. Try sending again.')
             try { content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }
             catch { throw new DesktopHttpError(415, 'Attachments must contain UTF-8 text.') }
             if (bytes.some(byte => (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) || byte === 127)) throw new DesktopHttpError(415, 'Attachments must contain UTF-8 text.')
         } else content = bytes.toString('utf8')
-        const truncated = info.size > bytesRead
+        const truncated = size > bytesRead
         const identified = await handle.stat({ bigint: true })
         const text = mode === 'preview' && !truncated && identified.size === BigInt(bytesRead)
             && canEditCoworkerFileName(basename(rel)) && canEditCoworkerFileName(basename(target)) ? editableText(bytes) : null
-        return { path: rel, content, size: info.size, truncated, identity: `${identified.dev}:${identified.ino}`, ...(text !== null ? { hash: hashText(text) } : {}) }
+        const exportVersion = mode === 'preview' && canExportFile(basename(rel), identified)
+            && exportFileVersion(opened) === exportFileVersion(identified) ? exportFileVersion(identified) : undefined
+        return { path: rel, content, size, truncated, identity: `${identified.dev}:${identified.ino}`,
+            ...(text !== null && { hash: hashText(text) }), ...(exportVersion && { exportVersion }) }
     } finally {
         await handle.close()
     }
+}
+
+function canExportFile(name: string, file: BigIntStats): boolean {
+    return simpleName(name) && name.length <= 255 && !name.startsWith('.') && !/\p{Cc}/u.test(name)
+        && file.isFile() && file.nlink === BigInt(1) && typeof process.getuid === 'function' && file.uid === BigInt(process.getuid())
+}
+
+function exportFileVersion(file: BigIntStats): string {
+    return createHash('sha256').update([file.dev, file.ino, file.size, file.mtimeNs, file.ctimeNs].join(':')).digest('hex')
+}
+
+/** Save the original file at the version selected in Files, including binary and rendered formats. */
+export function readCoworkerFileDownload(runtime: DesktopRuntime, agentId: string, path: string, version: string, signal: AbortSignal) {
+    return withCoworkerFiles(runtime, agentId, async () => {
+        const parts = path.split('/')
+        const name = parts.at(-1)!
+        if (path.length > 4096 || parts.length > 64 || parts.some(part => !simpleName(part) || reservedName(part.normalize('NFKC').toLowerCase()) || /\p{Cc}/u.test(part))
+            || name.startsWith('.') || !/^[a-f0-9]{64}$/.test(version)) {
+            throw new DesktopHttpError(400, 'Choose a file in this coworker’s workspace.')
+        }
+        const checkOpen = () => {
+            if (signal.aborted) throw new DesktopHttpError(499, 'Save As was cancelled.')
+        }
+        checkOpen()
+        const root = await coworkerWorkspace(runtime, agentId)
+        const uid = currentUid('File export is only available on this Mac.')
+        const parents = await assertCoworkerDirectories(root, parts.slice(0, -1), uid, name, 'file')
+        const target = join(/* turbopackIgnore: true */ root, ...parts)
+        const file = await openResolved(target).catch(error => {
+            if (missing(error)) throw new DesktopHttpError(404, 'This file was not found.')
+            throw error
+        })
+        const changed = () => new DesktopHttpError(409, 'This file changed. Reopen it in Files before saving.')
+        try {
+            const before = await file.stat({ bigint: true })
+            if (!canExportFile(name, before)) throw new DesktopHttpError(400, 'Choose a regular file without other links.')
+            if (before.size > BigInt(MAX_UPLOAD_FILE_BYTES)) throw new DesktopHttpError(413, 'Files can be up to 100 MiB.')
+            if (exportFileVersion(before) !== version) throw changed()
+            const bytes = new Uint8Array(Number(before.size))
+            let offset = 0
+            while (offset < bytes.length) {
+                checkOpen()
+                const read = await file.read(bytes, offset, bytes.length - offset, offset)
+                if (!read.bytesRead) break
+                offset += read.bytesRead
+            }
+            const [after, named] = await Promise.all([file.stat({ bigint: true }), fileStat(target)])
+            if (offset !== bytes.length || !canExportFile(name, after) || !named || !canExportFile(name, named)
+                || exportFileVersion(after) !== version || exportFileVersion(named) !== version) throw changed()
+            for (const parent of parents) {
+                const current = await fileStat(parent.path)
+                if (!current?.isDirectory() || current.uid !== uid || !sameFile(current, parent)) throw changed()
+            }
+            checkOpen()
+            return { name, bytes }
+        } finally { await file.close() }
+    })
 }
 
 export type CoworkerImagePreview = { path: string; name: string; bytes: Uint8Array; contentType: DesktopImageContentType; identity: string; width: number; height: number }
@@ -231,9 +293,9 @@ async function readImage(runtime: DesktopRuntime, agentId: string, path: string,
     const uid = currentUid()
     const parentRel = parts.slice(0, -1).join('/')
     const parentPath = join(/* turbopackIgnore: true */ root.root, parentRel)
-    await assertImageDirectories(root.root, parts.slice(0, -1), uid, name)
+    await assertCoworkerDirectories(root.root, parts.slice(0, -1), uid, name)
     await recoverInterruptedCoworkerEdits(parentPath, root.root)
-    const parents = await assertImageDirectories(root.root, parts.slice(0, -1), uid, name)
+    const parents = await assertCoworkerDirectories(root.root, parts.slice(0, -1), uid, name)
     const located = join(/* turbopackIgnore: true */ parentPath, name)
     const listed = await fileStat(located)
     if (!listed) throw new DesktopHttpError(404, `“${name}” was not found.`)
@@ -507,7 +569,7 @@ function currentUid(unavailable = 'Image preview is only available on this Mac.'
     return BigInt(process.getuid())
 }
 
-async function assertImageDirectories(root: string, directories: string[], uid: bigint, fileName: string): Promise<Array<FileIdentity & { path: string }>> {
+async function assertCoworkerDirectories(root: string, directories: string[], uid: bigint, fileName: string, kind: 'file' | 'image' = 'image'): Promise<Array<FileIdentity & { path: string }>> {
     const parents: Array<FileIdentity & { path: string }> = []
     let directory = root
     const rootInfo = await fileStat(directory)
@@ -518,7 +580,7 @@ async function assertImageDirectories(root: string, directories: string[], uid: 
         directory = join(/* turbopackIgnore: true */ directory, part)
         const info = await fileStat(directory)
         if (!info) throw new DesktopHttpError(404, `“${fileName}” was not found.`)
-        if (info.isSymbolicLink()) throw new DesktopHttpError(400, 'Choose an image file, not a symlink.')
+        if (info.isSymbolicLink()) throw new DesktopHttpError(400, kind === 'image' ? 'Choose an image file, not a symlink.' : 'Choose a file in a regular folder.')
         if (!info.isDirectory()) throw new DesktopHttpError(400, 'That path is not a folder.')
         if (info.uid !== uid) throw new DesktopHttpError(403, 'This file belongs to another user. It was left unopened.')
         parents.push({ path: directory, dev: info.dev, ino: info.ino })
@@ -639,7 +701,7 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
     const privateLocation = publication ? await privateFileLocation(workspace, path) : null
     if (!publication) await recoverInterruptedCoworkerEdits(target, resolved.root!)
     const rasterUid = currentUid()
-    const rasterParents = await assertImageDirectories(resolved.root!, relative(resolved.root!, target).split(sep).filter(Boolean), rasterUid, name)
+    const rasterParents = await assertCoworkerDirectories(resolved.root!, relative(resolved.root!, target).split(sep).filter(Boolean), rasterUid, name)
     const assertRasterParents = async () => {
         for (const parent of rasterParents) {
             const current = await fileStat(parent.path)
@@ -789,7 +851,7 @@ function editableText(bytes: Uint8Array): string | null {
     } catch { return null }
 }
 
-export type SaveCoworkerFileResult = { path: string; hash: string; size: number; identity?: string }
+export type SaveCoworkerFileResult = { path: string; hash: string; size: number; identity?: string; exportVersion?: string }
 export type CoworkerFileRecovery = { draft: string; external: string }
 /** Thrown when the file on disk is not what the editor opened; carries the newer text so neither version is lost. */
 export class CoworkerFileConflict extends Error {
@@ -1186,6 +1248,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
             await assertPrivateBackupBudget(publication.snapshot)
         }
         let savedIdentity: string | undefined
+        let savedVersion: string | undefined
         const interrupted = publication ? undefined : (await recoverInterruptedCoworkerEdits(folder, root!)).find(item => item.final === finalName)
         claim(folder, finalName)
         try {
@@ -1439,6 +1502,12 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
                 committed = true
                 await removeName(tempPath)
                 await removeName(journalPath)
+                // Removing the draft link changes ctime. Capture the final single-link version.
+                const saved = !publication ? await fileStat(finalPath).catch(() => null) : null
+                if (saved && canExportFile(finalName, saved) && sameFile(saved, linked)
+                    && saved.mtimeNs === linked.mtimeNs && saved.size === BigInt(bytes.byteLength)) {
+                    savedVersion = exportFileVersion(saved)
+                }
             } catch (error) {
                 if (!committed) {
                     await restoreBackup()
@@ -1456,7 +1525,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
         } finally {
             await dir.close()
         }
-        return { path: rel, hash: hashText(content), size: bytes.byteLength, identity: savedIdentity }
+        return { path: rel, hash: hashText(content), size: bytes.byteLength, identity: savedIdentity, ...(savedVersion && { exportVersion: savedVersion }) }
         } finally {
             unclaim(folder, finalName)
         }
