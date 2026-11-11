@@ -929,8 +929,10 @@ function CoworkerChat({ agent, attention, overview, requested, requestedPanel, o
             })
             if (restoreTabs) setBootstrap({ layout: body.tabs ?? null })
             if (!background) setError(null)
+            return true
         } catch (cause) {
             if (!background && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load conversations')
+            if (!controller.signal.aborted) return false
         } finally {
             if (sessionRead.current === controller) sessionRead.current = null
             if (checking && !controller.signal.aborted) setCheckedRequest(checking)

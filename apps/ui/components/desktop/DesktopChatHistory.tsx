@@ -24,9 +24,12 @@ import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { cn } from '@/lib/utils'
 import { DesktopNeedsChats, matchingPendingChats } from './DesktopNeedsChats'
 import { useDesktopPendingInbox } from './useDesktopPendingInbox'
+import type { DesktopSessionView } from './DesktopApp'
 
-function ChatHistoryRow({ conversation, pendingSummary, active, busy, onOpen }: {
+function ChatHistoryRow({ conversation, detail, verifiedRunStatus, pendingSummary, active, busy, onOpen }: {
     conversation: DesktopChatHistoryConversation
+    detail?: DesktopSessionView
+    verifiedRunStatus: boolean
     pendingSummary?: string
     active: boolean
     busy: boolean
@@ -35,6 +38,10 @@ function ChatHistoryRow({ conversation, pendingSummary, active, busy, onOpen }: 
     const { language, t } = useDesktopLocale()
     const locale = desktopLocaleTag(language.locale)
     const automated = isAutomatedChat(conversation)
+    const matchingDetail = detail?.source === conversation.source ? detail : undefined
+    const routine = automated && matchingDetail?.automationName !== conversation.title ? matchingDetail?.automationName : null
+    const caller = conversation.source === 'agent' || conversation.source === 'delegate' ? matchingDetail?.originAgentName : null
+    const status = verifiedRunStatus ? matchingDetail?.runStatus : null
     const SourceIcon = conversation.source === 'trigger' ? WebhookIcon : CalendarClock
     const updatedAt = Number.isFinite(Date.parse(conversation.updatedAt)) ? conversation.updatedAt : null
     return (
@@ -42,12 +49,19 @@ function ChatHistoryRow({ conversation, pendingSummary, active, busy, onOpen }: 
             className={cn('flex min-h-11 w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-muted/40 disabled:opacity-50', active && 'bg-muted/60')}>
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="flex min-w-0 items-center gap-1.5">
-                    {automated && <SourceIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
+                    {automated && !routine && <SourceIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
                     <span title={conversation.title} className={cn('min-w-0 flex-1 truncate text-sm font-medium',
-                        automated && conversation.automationOutcome === 'nothing' && 'text-muted-foreground')}>{conversation.title}</span>
+                        status === 'error' ? 'text-destructive' : automated && conversation.automationOutcome === 'nothing' && 'text-muted-foreground')}>{conversation.title}</span>
+                    {status === 'running' && <Badge size="xs" tone="green" glow={false} className="shrink-0">{t('running')}</Badge>}
+                    {status === 'error' && <span className="sr-only">{t('error')}</span>}
                     {pendingSummary !== undefined && <Badge size="xs" tone="orange" glow={false} className="shrink-0">{t('needs')}</Badge>}
                 </span>
                 {conversation.firstMessage && <span className="truncate text-xs text-muted-foreground">{conversation.firstMessage}</span>}
+                {routine && <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                    <SourceIcon aria-hidden className="size-3 shrink-0" />
+                    <span className="truncate">{routine}</span>
+                </span>}
+                {caller && <span className="truncate text-xs text-muted-foreground">{t('threadHistory.startedBy', { name: caller })}</span>}
                 {pendingSummary && (
                     <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
                         <MessageCircleQuestionIcon aria-hidden className="size-3 shrink-0" />
@@ -71,8 +85,10 @@ function ClassificationFilterNote({ onRetry, partial }: { onRetry: () => void; p
     )
 }
 
-function ChatHistoryList({ history, filter, query, selectedId, busy, pendingChatSummaries, inlinePendingIds, onSelect, onRetry }: {
+function ChatHistoryList({ history, details, verifiedRunStatus, filter, query, selectedId, busy, pendingChatSummaries, inlinePendingIds, onSelect, onRetry }: {
     history: DesktopChatHistory
+    details: ReadonlyMap<string, DesktopSessionView>
+    verifiedRunStatus: boolean
     pendingChatSummaries?: ReadonlyMap<string, string>
     inlinePendingIds: ReadonlySet<string>
     filter: Exclude<DesktopChatFilter, 'needs'>
@@ -83,7 +99,12 @@ function ChatHistoryList({ history, filter, query, selectedId, busy, pendingChat
     onRetry: () => void
 }) {
     const { language, t } = useDesktopLocale()
-    const shown = filterDesktopChats(history.conversations, filter, query).filter(row => !inlinePendingIds.has(row.id))
+    const conversations = history.conversations.map(row => {
+        const current = details.get(row.id)
+        return current?.automationOutcome && current.source === row.source && isAutomatedChat(row)
+            ? { ...row, title: current.title, automationOutcome: current.automationOutcome } : row
+    })
+    const shown = filterDesktopChats(conversations, filter, query).filter(row => !inlinePendingIds.has(row.id))
     const groups = groupDesktopChats(shown, { locale: desktopLocaleTag(language.locale), unknownDate: t('threadHistory.dateUnavailable') })
     const classificationUnavailable = (filter === 'chats' || filter === 'automations') && history.enrichment === 'unavailable'
     const empty = query.trim()
@@ -100,7 +121,8 @@ function ChatHistoryList({ history, filter, query, selectedId, busy, pendingChat
                 <div key={day} className="pb-1">
                     <p className="px-2.5 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{day}</p>
                     {entries.map(conversation => (
-                        <ChatHistoryRow key={conversation.id} conversation={conversation} pendingSummary={pendingChatSummaries?.get(conversation.id)} active={selectedId === conversation.id}
+                        <ChatHistoryRow key={conversation.id} conversation={conversation} detail={details.get(conversation.id)}
+                            verifiedRunStatus={verifiedRunStatus} pendingSummary={pendingChatSummaries?.get(conversation.id)} active={selectedId === conversation.id}
                             busy={busy} onOpen={() => onSelect(conversation.id)} />
                     ))}
                 </div>
@@ -112,9 +134,11 @@ function ChatHistoryList({ history, filter, query, selectedId, busy, pendingChat
     )
 }
 
-function ChatHistoryPanel({ agentId, selectedId, busy, pendingChatSummaries, onSelect, onCreate, onClose, titleId, descriptionId, initialFilter = 'all' }: {
+function ChatHistoryPanel({ agentId, selectedId, sessions, verifiedRunStatus, busy, pendingChatSummaries, onSelect, onCreate, onClose, titleId, descriptionId, initialFilter = 'all' }: {
     initialFilter?: DesktopChatFilter
     agentId: string
+    sessions: readonly DesktopSessionView[]
+    verifiedRunStatus: boolean
     pendingChatSummaries?: ReadonlyMap<string, string>
     selectedId: string | null
     busy: boolean
@@ -132,6 +156,7 @@ function ChatHistoryPanel({ agentId, selectedId, busy, pendingChatSummaries, onS
     const [filter, setFilter] = useState<DesktopChatFilter>(initialFilter)
     const inbox = useDesktopPendingInbox(true, [agentId])
     const inlinePendingIds = new Set(filter === 'all' ? matchingPendingChats(inbox.items, query).map(item => item.sessionId) : [])
+    const details = new Map(sessions.filter(session => session.agentId === agentId && session.source).map(session => [session.id, session]))
 
     useEffect(() => {
         const controller = new AbortController()
@@ -204,7 +229,7 @@ function ChatHistoryPanel({ agentId, selectedId, busy, pendingChatSummaries, onS
                         <SkeletonPanelRows rows={4} aria-hidden="true" />
                     </div>
                 ) : (
-                    <ChatHistoryList history={history} filter={filter} query={query} selectedId={selectedId} busy={busy} pendingChatSummaries={pendingChatSummaries}
+                    <ChatHistoryList history={history} details={details} verifiedRunStatus={verifiedRunStatus} filter={filter} query={query} selectedId={selectedId} busy={busy} pendingChatSummaries={pendingChatSummaries}
                         inlinePendingIds={inlinePendingIds} onSelect={onSelect} onRetry={retry} />
                 ))}
             </div>
@@ -212,9 +237,11 @@ function ChatHistoryPanel({ agentId, selectedId, busy, pendingChatSummaries, onS
     )
 }
 
-export function DesktopChatHistory({ agentId, count, selectedId, busy, pendingChatSummaries, onSelect, onCreate, control }: {
+export function DesktopChatHistory({ agentId, count, selectedId, sessions = [], verifiedRunStatus = false, busy, pendingChatSummaries, onSelect, onCreate, control }: {
     control?: { needsRequest: number | null; active: boolean; onOpenChange: (open: boolean) => void }
     agentId: string
+    sessions?: readonly DesktopSessionView[]
+    verifiedRunStatus?: boolean
     pendingChatSummaries?: ReadonlyMap<string, string>
     count?: number
     selectedId: string | null
@@ -248,6 +275,7 @@ export function DesktopChatHistory({ agentId, count, selectedId, busy, pendingCh
                 onEscapeKeyDown={event => { if (document.querySelector('[role="alertdialog"][data-state="open"]')) event.preventDefault() }} aria-labelledby={titleId} aria-describedby={descriptionId}
                 className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1.5rem)] gap-2 overflow-hidden p-2">
                 {visible && <ChatHistoryPanel key={`${agentId}/${seenRequest}`} initialFilter={initialFilter} agentId={agentId} selectedId={selectedId} busy={busy} pendingChatSummaries={pendingChatSummaries}
+                    sessions={sessions} verifiedRunStatus={verifiedRunStatus}
                     titleId={titleId} descriptionId={descriptionId}
                     onClose={() => setOpen(false)}
                     onCreate={onCreate && (() => { if (onCreate()) setOpen(false) })}

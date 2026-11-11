@@ -301,6 +301,9 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
     const unrelated = { ...pending, id: 'foreign-alpha', agentId: 'bob', agentName: 'Bob', sessionId: 'alpha', summary: 'Foreign status' }
     const info = { ...pending, id: 'info-alpha', kind: 'info', sessionId: 'alpha', summary: 'Informational notice' }
     let boardItems: typeof pending[] = []
+    let routineStatus: DesktopSessionView['runStatus'] = 'running'
+    let threadMetadataAvailable = true
+    const threadMetadataReads: string[] = []
     let finish!: () => void
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
         const recentResponse = recent.handle(url, init)
@@ -321,7 +324,19 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
         const history = url.match(/^\/api\/desktop\/agents\/([^/]+)\/chat-history\?view=saved$/)
         if (history) {
             historyReads.push(url)
-            return Response.json(historyOf(saved.filter(s => s.agentId === history[1])))
+            const listing = historyOf(saved.filter(s => s.agentId === history[1]))
+            return Response.json({ ...listing, conversations: listing.conversations.map(row => ({
+                ...row, source: row.id === 'beta' ? 'schedule' : row.id === 'alpha' ? 'agent' : row.source,
+            })) })
+        }
+        const threadDetails = url.match(/^\/api\/desktop\/agents\/([^/]+)\/sessions\?view=threads$/)
+        if (threadDetails) {
+            threadMetadataReads.push(url)
+            if (!threadMetadataAvailable) return Response.json({ error: 'Unavailable' }, { status: 503 })
+            const local = saved.filter(s => s.agentId === threadDetails[1]).map(row => row.id === 'beta'
+                ? { ...row, source: 'schedule', automationName: 'Morning digest', runStatus: routineStatus }
+                : row.id === 'alpha' ? { ...row, source: 'agent', originAgentName: 'Local caller' } : row)
+            return Response.json({ sessions: local })
         }
         const list = url.match(/^\/api\/desktop\/agents\/([^/]+)\/sessions$/)
         if (list) return Response.json({ sessions: saved.filter(s => s.agentId === list[1]), tabs: layouts.get(list[1]) ?? null })
@@ -367,15 +382,30 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
         await history()
         const thread = (id: string) => document.querySelector(`[role="dialog"] [data-thread-row="${id}"]`)
         expect(historyReads).toEqual(['/api/desktop/agents/alice/chat-history?view=saved'])
+        expect(threadMetadataReads).toEqual(['/api/desktop/agents/alice/sessions?view=threads'])
         expect(thread('beta')?.textContent).toContain('Review the board draft')
+        expect(thread('beta')?.textContent).toContain('Morning digest')
+        expect(thread('beta')?.textContent).toContain('Running')
+        expect(thread('alpha')?.textContent).toContain('Started by Local caller')
+        expect(thread('alpha')?.textContent).not.toContain('Running')
         expect(thread('alpha')?.textContent).not.toMatch(/Foreign status|Informational notice|Needs you/)
         boardItems = []
-        await settle(3100)
+        threadMetadataAvailable = false
+        await settle(5100)
         expect(thread('beta')?.textContent).not.toContain('Review the board draft')
+        expect(thread('beta')?.textContent).not.toContain('Running')
+        expect(thread('beta')?.textContent).toContain('Morning digest')
+        threadMetadataAvailable = true
+        routineStatus = 'error'
+        await settle(5000)
+        expect(thread('beta')?.querySelector('.text-destructive')?.textContent).toBe('Bananas')
         expect(historyReads).toHaveLength(1)
         await choose('Bananas')
         expect(visible().textContent).toContain('Bananas answer')
         expect(visible().textContent).not.toContain('Apples answer')
+        const readsAfterClose = threadMetadataReads.length
+        await settle(5100)
+        expect(threadMetadataReads).toHaveLength(readsAfterClose)
         await history()
         await choose('Apples')
         expect(visible().textContent).toContain('Apples answer')

@@ -197,7 +197,7 @@ function scheduledRunOf(message: UIMessage) {
     return parseScheduledRun(prompt)
 }
 
-export function DesktopConversation({ agent, sessionId, sessions, pendingChatSummaries, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: {
+export function DesktopConversation({ agent, sessionId, sessions, pendingChatSummaries, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, onHistoryVisibility, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: {
     agent: DesktopAgentView
     sessionId: string | null
     sessions: DesktopSessionView[]
@@ -214,6 +214,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
     onTabActivity?: (uid: string, state: TabActivity) => void
     onChatSession: (id: string, sourceDraft?: ComposerDraft) => void | boolean | Promise<boolean>
     renderHistory?: (busy: boolean, control: { needsRequest: number | null; active: boolean; onOpenChange: (open: boolean) => void }) => ReactNode
+    onHistoryVisibility?: (tabUid: string, visible: boolean) => void
     renderRunHistory?: (control: DesktopDialogControl) => ReactNode
     onOpenCoworkerChat?: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel?: () => void
@@ -254,6 +255,10 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
     useEffect(()=>()=>{appsFlow.current?.settle(new Error('This conversation was closed.'));serviceStream.current?.cancelStream()},[agent.id,sessionId,active])
     const [needsRequest, setNeedsRequest] = useState<number | null>(null)
     const [chatsOpen, setChatsOpen] = useState(false)
+    const onChatsOpenChange = useCallback((visible: boolean) => {
+        setChatsOpen(visible)
+        if (tabUid) onHistoryVisibility?.(tabUid, visible)
+    }, [tabUid, onHistoryVisibility])
     const [detailPanel, setDetailPanel] = useState<Exclude<DesktopCoworkerPanel, 'chat'> | null>(null)
     const [focusedSkill, setFocusedSkill] = useState<string | null>(null)
     const [panelNotice, setPanelNotice] = useState('')
@@ -1260,7 +1265,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
         }}>
             <header className="relative z-40 grid shrink-0 grid-cols-[minmax(2.5rem,1fr)_minmax(0,max-content)_minmax(2.5rem,1fr)] items-center gap-1 px-3 pt-3">
                 <div className="flex min-w-0 items-center justify-start">
-                    {renderHistory ? renderHistory(busy, { needsRequest, active: active && !cardOpen && !detailPanel, onOpenChange: setChatsOpen }) : sessions.length > 0 && (
+                    {renderHistory ? renderHistory(busy, { needsRequest, active: active && !cardOpen && !detailPanel, onOpenChange: onChatsOpenChange }) : sessions.length > 0 && (
                         <select
                             disabled={busy}
                             aria-label="Conversation history"

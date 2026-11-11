@@ -30,8 +30,8 @@ type Props = {
     onPanelRequestHandled?: (request: DesktopCoworkerPanelRequest) => void
     selected: boolean
     onVisibleSession?: (agentId: string, sessionId: string | null) => void
-    refreshSessions: () => Promise<void>
-    refreshThreads?: () => Promise<void>
+    refreshSessions: () => Promise<unknown>
+    refreshThreads?: () => Promise<boolean | undefined>
     reload: () => void
     onOpenCoworkerChat?: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel: () => void
@@ -75,12 +75,23 @@ export function DesktopChatTabs({ agent, sessions, pendingChatSummaries, initial
     const pendingForks = useRef(new Set<string>())
     const generalFork = useRef<{ sourceUid: string; sessionId: string } | null>(null)
     const active = layout.tabs[layout.activeIndex]
+    const [history, setHistory] = useState<{ uid: string; verified: boolean } | null>(null)
+    const trackHistory = useCallback((uid: string, visible: boolean) => {
+        setHistory(current => {
+            if (!visible) return current?.uid === uid ? null : current
+            return current?.uid === uid ? current : { uid, verified: false }
+        })
+    }, [])
+    const historyUid = history?.uid === active.uid ? active.uid : null
     const refreshVisibleThreads = useCallback(async () => {
-        if (!isDesktopQuitting()) await refreshThreads?.()
-    }, [refreshThreads])
+        if (isDesktopQuitting()) return
+        const verified = await refreshThreads?.()
+        if (historyUid && verified !== undefined) setHistory(current =>
+            current?.uid === historyUid && current.verified !== verified ? { uid: historyUid, verified } : current)
+    }, [refreshThreads, historyUid])
     useVisibleInterval(refreshVisibleThreads, 5000, {
-        enabled: !!refreshThreads && selected && canMountChats && !rejectedRequest && isGeneralTab(active),
-        immediate: false,
+        enabled: !!refreshThreads && selected && canMountChats && !rejectedRequest && (isGeneralTab(active) || historyUid !== null),
+        immediate: historyUid !== null,
     })
     const [visited, setVisited] = useState<string[]>([active.uid])
     const lastRequest = useRef(requested)
@@ -358,7 +369,9 @@ export function DesktopChatTabs({ agent, sessions, pendingChatSummaries, initial
                     onChatSession={(id, sourceDraft) => bindSession(tab.uid, id, sourceDraft)}
                     onOpenCoworkerChat={onOpenCoworkerChat}
                     modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
+                    onHistoryVisibility={trackHistory}
                     renderHistory={(_busy, control) => <DesktopChatHistory control={control} agentId={agent.id} pendingChatSummaries={pendingChatSummaries}
+                        sessions={sessions} verifiedRunStatus={history?.uid === tab.uid && history.verified}
                         count={sessions.length} selectedId={tab.id} busy={false} onCreate={() => open(null, 'New conversation')}
                         onSelect={id => open(id, sessions.find(s => s.id === id)?.title ?? 'Conversation')} />}
                     renderRunHistory={control => <DesktopRunHistory agent={agent} dialogControl={control} />} />
