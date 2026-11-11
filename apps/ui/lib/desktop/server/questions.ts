@@ -1,21 +1,21 @@
-import { withoutStoppedWebhookForms } from './trigger-requests/stopped'
 import 'server-only'
 import { createHash } from 'node:crypto'
 import type { Client, Row } from '@libsql/client'
 import { desktopQuestionGuardSchema, findDesktopQuestion, HITL_CANCELLED, serializeAnswers, type DesktopQuestion, type DesktopQuestionGuard } from '@rerun/contracts'
-import { chat, EngineRequestError, getSessionMessages } from '@/lib/engine/client'
+import { chat, EngineRequestError } from '@/lib/engine/client'
 import { desktopQuestionPayloadSchema, type DesktopQuestionAnswer, type DesktopQuestionPayload, type DesktopQuestionView } from '../questions'
 import { DesktopHttpError } from './auth'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { disabledCoworkerMessage } from './coworker-enabled'
-import { openDesktopDatabase } from './database'
 import { startDesktopChat } from './engine'
 import { withRosterWrite } from './roster-writes'
 import type { DesktopRuntime } from './runtime'
 import { engineOf } from './settings'
-import { findDesktopAgent, findDesktopSession, type DesktopAgent, type DesktopSession } from './store'
+import {
+    readDesktopHumanRequestMessages, readDesktopHumanRequestTarget, type DesktopHumanRequestTarget, type DesktopHumanRequestReadOptions,
+} from './human-request-history'
 
-type Target = { db: Client; agent: DesktopAgent; session: DesktopSession }
+type Target = DesktopHumanRequestTarget
 type Receipt = { requestId: string; agentId: string; sessionId: string; questionId: string; guard: DesktopQuestionGuard; payload: DesktopQuestionPayload; text: string; accepted: boolean }
 const answerLocks = globalThis as typeof globalThis & { desktopQuestionWrites?: Map<string, Promise<void>> }
 
@@ -28,25 +28,13 @@ function withAnswerWrite<T>(key: string, action: () => Promise<T>): Promise<T> {
     return result
 }
 
-async function targetOf(runtime: DesktopRuntime, sessionId: string): Promise<Target> {
-    const db = await openDesktopDatabase(runtime.dataRoot)
-    const session = await findDesktopSession(db, sessionId)
-    if (!session) throw new DesktopHttpError(404, 'Conversation not found')
-    await assertCoworkerNotDeleting(db, session.agentId)
-    const agent = await findDesktopAgent(db, session.agentId)
-    if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
-    return { db, agent, session }
-}
-
 function identity(target: Target, question: DesktopQuestion): string {
     return createHash('sha256').update(JSON.stringify([target.agent.id, target.session.id, question.sourceMessageId, question.toolCallId, question.fingerprint])).digest('hex')
 }
 
-async function pendingQuestion(runtime: DesktopRuntime, target: Target, options: { signal?: AbortSignal } = {}): Promise<DesktopQuestion | null> {
+async function pendingQuestion(runtime: DesktopRuntime, target: Target, options: DesktopHumanRequestReadOptions = {}): Promise<DesktopQuestion | null> {
     try {
-        const messages = await getSessionMessages(engineOf(runtime), target.agent.engineAgentId, target.session.engineSessionId, { requireSuccess: true, ...(options.signal && { signal: options.signal }) })
-        if (messages.some(message => message.sessionId !== target.session.engineSessionId)) throw new Error('Foreign conversation history')
-        return findDesktopQuestion(await withoutStoppedWebhookForms(target.db,target.agent.id,target.session.id,messages))
+        return findDesktopQuestion(await readDesktopHumanRequestMessages(runtime, target, options))
     } catch (cause) {
         if (cause instanceof EngineRequestError && cause.status === 404) throw new DesktopHttpError(404, 'Conversation not found')
         throw new DesktopHttpError(502, 'Could not read this coworker’s question. Try again.')
@@ -87,8 +75,8 @@ function answerText(question: DesktopQuestion, payload: DesktopQuestionPayload):
 
 // Read-only by design: history filters can use this same resolver without creating a receipt,
 // starting a turn, or inventing an unfinished run when the original question turn is already done.
-export async function readDesktopQuestion(runtime: DesktopRuntime, sessionId: string, options: { signal?: AbortSignal } = {}): Promise<DesktopQuestionView> {
-    const target = await targetOf(runtime, sessionId)
+export async function readDesktopQuestion(runtime: DesktopRuntime, sessionId: string, options: DesktopHumanRequestReadOptions = {}): Promise<DesktopQuestionView> {
+    const target = await readDesktopHumanRequestTarget(runtime, sessionId)
     const pending = await pendingQuestion(runtime, target, options)
     if (!pending) return { question: null }
     const id = identity(target, pending)
@@ -154,7 +142,7 @@ async function reserve(target: Target, input: DesktopQuestionAnswer, payload: De
 
 export function answerDesktopQuestion(runtime: DesktopRuntime, sessionId: string, input: DesktopQuestionAnswer): Promise<Response> {
     return withAnswerWrite(runtime.dataRoot + '\0' + sessionId, async () => {
-        const target = await targetOf(runtime, sessionId)
+        const target = await readDesktopHumanRequestTarget(runtime, sessionId)
         const payload = payloadOf(input)
         const known = await byRequest(target.db, input.requestId) ?? await byQuestion(target.db, sessionId, input.questionId)
         let receipt: Receipt
