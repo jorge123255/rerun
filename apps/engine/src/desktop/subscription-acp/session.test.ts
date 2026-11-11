@@ -74,7 +74,7 @@ function fakeRunner(
 }
 
 function wire() {
-    const channel = { input: new PassThrough(), output: new PassThrough() };
+    const channel = { input: new PassThrough(), output: new PassThrough(), dispose: vi.fn(async () => {}) };
     const requests: Request[] = [];
     const send = (message: object) => channel.input.write(record(message));
     return { channel, requests, send, reply: (request: Request, result: unknown) => send({ id: request.id, result }) };
@@ -102,6 +102,8 @@ describe('desktop subscription ACP sessions', () => {
         await expect(session.prompt({ text: 'Say hello' })).resolves.toEqual({ text: 'Hello', stopReason: 'end_turn' });
         await expect(session.prompt({ text: 'Do not reuse the session' })).rejects.toMatchObject({ code: 'busy' });
         expect(runner.channel.input.destroyed && runner.channel.output.destroyed).toBe(true);
+        await session.close();
+        expect(runner.channel.dispose).toHaveBeenCalledTimes(1);
     });
 
     it('never switches to API-key authentication', async () => {
@@ -109,6 +111,7 @@ describe('desktop subscription ACP sessions', () => {
         await expect(open(runner, 'grok-build')).rejects.toMatchObject({ code: 'auth-required' });
         expect(runner.requests.map(({ method }) => method)).toEqual(['initialize']);
         expect(runner.channel.output.destroyed).toBe(true);
+        expect(runner.channel.dispose).toHaveBeenCalledTimes(1);
     });
 
     it('redacts provider errors and refuses to create a session without a login', async () => {
@@ -283,6 +286,35 @@ describe('desktop subscription ACP sessions', () => {
             text: 'complete', stopReason: 'end_turn',
         });
         expect(runner.requests.some(({ method }) => method === 'session/cancel')).toBe(false);
+    });
+
+    it('does not report a successful turn until the runner has been stopped', async () => {
+        const stopped = Promise.withResolvers<void>();
+        const disposalStarted = Promise.withResolvers<void>();
+        const runner = fakeRunner();
+        runner.channel.dispose.mockImplementation(() => {
+            disposalStarted.resolve();
+            return stopped.promise;
+        });
+        const session = await open(runner);
+        const completed = vi.fn();
+        const result = session.prompt({ text: 'Example' }).then(completed);
+        const rejection = expect(result).rejects.toMatchObject({ code: 'shutdown-unconfirmed' });
+        await disposalStarted.promise;
+        expect(completed).not.toHaveBeenCalled();
+        stopped.reject(new Error('private runner failure'));
+        await rejection;
+        expect(completed).not.toHaveBeenCalled();
+    });
+
+    it('bounds shutdown if runner termination is never confirmed', async () => {
+        vi.useFakeTimers();
+        const runner = fakeRunner();
+        runner.channel.dispose.mockImplementation(() => new Promise(() => {}));
+        const session = await open(runner);
+        const rejection = expect(session.close()).rejects.toMatchObject({ code: 'shutdown-unconfirmed' });
+        await vi.advanceTimersByTimeAsync(3000);
+        await rejection;
     });
 
     it.each(['oversized', 'malformed', 'out-of-sequence'])('closes an %s wire response', async (kind) => {

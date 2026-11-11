@@ -3,9 +3,10 @@ import type { Readable, Writable } from 'node:stream';
 const MAX_FRAME_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 15_000;
 const CANCEL_TIMEOUT_MS = 2_000;
+const SHUTDOWN_TIMEOUT_MS = 3_000;
 
 type Failure = 'closed' | 'protocol' | 'rejected' | 'timeout' | 'cancelled'
-    | 'auth-required' | 'selection-unavailable' | 'busy';
+    | 'auth-required' | 'selection-unavailable' | 'busy' | 'shutdown-unconfirmed';
 
 const messages: Record<Failure, string> = {
     closed: 'The subscription provider connection closed.',
@@ -16,6 +17,7 @@ const messages: Record<Failure, string> = {
     'auth-required': 'Sign in to the subscription provider first.',
     'selection-unavailable': 'The selected subscription model or reasoning level is unavailable.',
     busy: 'The subscription provider connection is already in use.',
+    'shutdown-unconfirmed': 'The subscription provider did not stop cleanly.',
 };
 
 export class SubscriptionAcpError extends Error {
@@ -28,6 +30,8 @@ export class SubscriptionAcpError extends Error {
 export interface AcpChannel {
     readonly input: Readable;
     readonly output: Writable;
+    // The runtime owns termination and must confirm its runner has stopped.
+    dispose(): Promise<void>;
 }
 
 type RpcObject = Record<string, unknown>;
@@ -57,6 +61,7 @@ export class AcpPeer {
     private nextId = 1;
     private pending: Pending | undefined;
     private failure: SubscriptionAcpError | undefined;
+    private disposal: Promise<boolean> | undefined;
 
     constructor(
         private readonly channel: AcpChannel,
@@ -125,6 +130,19 @@ export class AcpPeer {
         this.channel.input.off('data', this.onData);
         this.channel.input.destroy();
         this.channel.output.destroy();
+        this.disposal = new Promise((resolve) => {
+            const timer = setTimeout(() => resolve(false), SHUTDOWN_TIMEOUT_MS);
+            const finish = (stopped: boolean) => {
+                clearTimeout(timer);
+                resolve(stopped);
+            };
+            void Promise.resolve().then(() => this.channel.dispose()).then(() => finish(true), () => finish(false));
+        });
+    }
+
+    async shutdown(): Promise<void> {
+        this.close();
+        if (!await this.disposal) throw new SubscriptionAcpError('shutdown-unconfirmed');
     }
 
     private send(message: RpcObject): void {

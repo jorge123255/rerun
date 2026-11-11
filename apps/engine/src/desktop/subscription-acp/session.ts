@@ -162,18 +162,18 @@ export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd
             },
         });
     } catch (error) {
-        peer.close();
+        await peer.shutdown();
         throw error;
     }
     const openedSession = sessionId;
     if (openedSession === undefined) {
-        peer.close();
+        await peer.shutdown();
         throw new SubscriptionAcpError('protocol');
     }
 
     return {
         getSelectors: (): Selector[] => structuredClone(selectors),
-        close: () => peer.close(),
+        close: () => peer.shutdown(),
         async prompt(options: PromptOptions): Promise<{ text: string; stopReason: StopReason }> {
             if (used) throw new SubscriptionAcpError('busy');
             used = true;
@@ -211,7 +211,7 @@ export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd
             } finally {
                 onChunk = undefined;
                 activeSelection = undefined;
-                peer.close();
+                await peer.shutdown();
             }
         },
     };
