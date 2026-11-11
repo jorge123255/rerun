@@ -19,7 +19,7 @@ import { withPortableLibraryLease } from './portable-lock.ts'
 import { TemplateRequestError } from './errors.ts'
 import { isReservedTemplateMetadataPath, readConfined, writeExclusiveFile } from './files.ts'
 import { canonicalJson, sha256 } from './hash.ts'
-import { recordUnusedScreen } from '../isolated-screen/ownership.js'
+import { writeUnusedScreenMarker } from '../isolated-screen/ownership-file.ts'
 import { renameSkillEntry } from '../skill-publication-native.ts'
 import { readOwnJson, replaceOwnJson, templateHome, writeOwnJson, requestHome } from './store.ts'
 
@@ -223,7 +223,7 @@ async function installManifestUnlocked(input: {
                 await writeOwnJson(staged, '.desktop-template-import.json', {...bound,folder:{dev:String(identity.dev),ino:String(identity.ino)}})
                 // An index row without a folder is not proof that this ID is new.
                 const priorIndex = await input.readIndex(engineAgentId).catch(() => undefined)
-                if (priorIndex === null) await recordUnusedScreen(engineAgentId, staged)
+                if (priorIndex === null) await writeUnusedScreenMarker(engineAgentId, staged)
                 await renameSkillEntry(input.agentsRoot, await lstat(input.agentsRoot, { bigint: true }), staged.split('/').at(-1)!, await lstat(staged, { bigint: true }), engineAgentId)
             } finally { await rm(staged, { recursive: true, force: true }) }
         }

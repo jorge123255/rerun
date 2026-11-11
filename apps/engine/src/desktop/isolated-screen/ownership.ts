@@ -5,29 +5,14 @@ import { dataDir, pathSegment } from '../../config/paths.js'
 import { desktopDeletionActive } from '../agent-lifecycle.js'
 import { openWithoutLinks, readBoundedFileWithoutLinks } from '../open-without-links.js'
 import { IsolatedScreenRefusal } from './refusal.js'
+import { UNUSED_SCREEN_MARKER, openOwnerFolder, unusedScreenMarkerText, writeUnusedScreenMarker } from './ownership-file.js'
 
-export const UNUSED_SCREEN_MARKER = '.desktop-screen-unused.json'
+export { UNUSED_SCREEN_MARKER } from './ownership-file.js'
 const usageDirectory = '.desktop-screen-usage'
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT'
 
 async function agentPath(id: string, parent = 'agents') {
     return join(await realpath(dataDir()), parent, pathSegment(id, 'agent id'))
-}
-
-async function openOwnerFolder(path: string) {
-    const handle = await openWithoutLinks(path, true)
-    try {
-        const stat = await handle.stat({ bigint: true })
-        const uid = process.getuid?.()
-        if (!stat.isDirectory() || uid === undefined || stat.uid !== BigInt(uid) || (stat.mode & 0o022n) !== 0n) {
-            throw new IsolatedScreenRefusal('The screen owner folder could not be verified.', 'conflict')
-        }
-        const pinned = process.platform === 'darwin' ? `/.vol/${stat.dev}/${stat.ino}` : `/proc/self/fd/${handle.fd}`
-        return { handle, pinned, dev: String(stat.dev), ino: String(stat.ino) }
-    } catch (error) {
-        await handle.close()
-        throw error
-    }
 }
 
 // Docker ownership survives a replaced or restored coworker directory.
@@ -65,17 +50,8 @@ async function mayHaveScreenResources(id: string): Promise<boolean> {
     }
 }
 
-// Call only while creating a new agent directory, before publishing its config or index.
 export async function recordUnusedScreen(id: string, directory?: string): Promise<void> {
-    const folder = await openOwnerFolder(directory ?? await agentPath(id))
-    try {
-        const file = await open(join(folder.pinned, UNUSED_SCREEN_MARKER), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
-        try {
-            await file.writeFile(JSON.stringify([id, folder.dev, folder.ino]), 'utf8')
-            await file.sync()
-        } finally { await file.close() }
-        await folder.handle.sync()
-    } finally { await folder.handle.close() }
+    await writeUnusedScreenMarker(id, directory ?? await agentPath(id))
 }
 
 export async function knownUnusedScreen(id: string): Promise<boolean> {
@@ -92,7 +68,7 @@ export async function knownUnusedScreen(id: string): Promise<boolean> {
             const current = await openOwnerFolder(path)
             try {
                 return current.dev === folder.dev && current.ino === folder.ino
-                    && bytes.toString('utf8') === JSON.stringify([id, folder.dev, folder.ino])
+                    && bytes.toString('utf8') === unusedScreenMarkerText(id, folder.dev, folder.ino)
             } finally { await current.handle.close() }
         } finally { await folder.handle.close() }
     } catch { return false }
