@@ -12,6 +12,7 @@ import { createCustomProviderRuntime } from './runtime.js'
 import { handleCustomProviderRequest } from './router.js'
 import { createCustomConnectionStore, isCustomConnectionId, withCustomConnectionWrite } from './store.js'
 import { customCatalogReasoning } from './catalog.js'
+import type { KimiConversation } from './kimi-reasoning.js'
 
 let installed: ReturnType<typeof createBinding> | undefined
 
@@ -52,10 +53,10 @@ function createBinding(workspaceId: number, launchNonce: string, stopping: () =>
                 ...(reasoning.length && { customReasoning: Object.fromEntries(reasoning) }) }, env: {}, custom: snapshot }
         },
         ids: store.ids,
-        model(snapshot: CustomProviderSnapshot, modelId: string, signal: AbortSignal, effort?: string) {
+        model(snapshot: CustomProviderSnapshot, modelId: string, signal: AbortSignal, effort?: string, conversation?: KimiConversation) {
             assertActive()
             const { workspaceId, connectionId, revision } = snapshot
-            return runtime.model({ workspaceId, connectionId, revision }, modelId, AbortSignal.any([signal, lifetime.signal]), effort)
+            return runtime.model({ workspaceId, connectionId, revision }, modelId, AbortSignal.any([signal, lifetime.signal]), effort, conversation)
         },
         abort() { lifetime.abort(); lifetime = new AbortController() },
         close() { closed = true; lifetime.abort(); runtime.close() },

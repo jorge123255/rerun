@@ -563,7 +563,7 @@ export type ResolvedModel = { model: LanguageModel; close: () => Promise<void>; 
 
 const noClose = async (): Promise<void> => {}
 
-export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: RunMcpServer[], system?: string, screenshots?: ScreenshotLookup, nativeWorker?: DesktopNativeWorker, imageRun?: DesktopCodexImageRun, reasoningEffort?: string): ResolvedModel {
+export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: RunMcpServer[], system?: string, screenshots?: ScreenshotLookup, nativeWorker?: DesktopNativeWorker, imageRun?: DesktopCodexImageRun, reasoningEffort?: string, sessionId?: string): ResolvedModel {
     const { provider, model } = pairFor(agent, override)
     // `wrapLanguageModel` runs the list from the end: the guard sits nearest the model, so no other
     // middleware ever reads a fake tool call, the card tags go next, and the quick replies read the
@@ -576,7 +576,7 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
         return { model: wrapLanguageModel({ model: subscription.model, middleware: [replies.middleware, cardTags, guard] }), close: subscription.close, quickReplies: replies.read }
     }
     if (provider === 'custom') {
-        const custom = customInferenceModel(agent.resolved.connection, model, reasoningEffort)
+        const custom = customInferenceModel(agent.resolved.connection, model, reasoningEffort, sessionId ? { agentId: agent.id, sessionId } : undefined)
         return { model: wrapLanguageModel({ model: custom.model, middleware: [replies.middleware, cardTags, guard] }), close: custom.close, quickReplies: replies.read }
     }
     if (provider === 'codex') {

@@ -1,9 +1,12 @@
+import { randomUUID } from 'node:crypto'
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { createOpenAI } from '@ai-sdk/openai'
 import { generateText, streamText, wrapLanguageModel, type Prompt } from 'ai'
 import { CUSTOM_DEFAULT_CONTEXT_WINDOW, type CustomProviderAuthority, type CustomProviderIdentity, type CustomProviderModel, type CustomProviderProbe } from '@rerun/contracts'
 import { openrouterReasoningMiddleware } from '../../agents/openrouter-reasoning.js'
 import { createPinnedProviderFetch, endpointBase } from './network.js'
 import { customCatalogReasoning, customModelCatalog } from './catalog.js'
+import { isKimiPlatform, kimiReasoningMiddleware, kimiReasoningScope, type KimiConversation } from './kimi-reasoning.js'
 
 type CustomGenerateInput = Omit<Parameters<typeof generateText>[0], 'model' | 'prompt' | 'messages'> & Prompt
 type CustomStreamInput = Omit<Parameters<typeof streamText>[0], 'model' | 'prompt' | 'messages'> & Prompt
@@ -28,7 +31,7 @@ export function createCustomProviderRuntime(authority: CustomProviderAuthority) 
             return { snapshot, key, network, check, close, signal }
         } catch { close(); throw new Error('Custom connection unavailable or stale.') }
     }
-    async function resolveModel(identity: CustomProviderIdentity, modelId: string, stop: AbortSignal, effort?: string) {
+    async function resolveModel(identity: CustomProviderIdentity, modelId: string, stop: AbortSignal, effort?: string, conversation?: KimiConversation) {
             const bound = await lease(identity, stop)
             const selected = bound.snapshot.config.models.find(row => row.id === modelId)
             if (!selected) { bound.close(); throw new Error('Choose a model offered by this exact connection.') }
@@ -40,7 +43,8 @@ export function createCustomProviderRuntime(authority: CustomProviderAuthority) 
             catch (error) { bound.close(); throw error }
             const discovered = bound.snapshot.catalog.models.find(row => row.id === modelId)
             const window = discovered?.contextWindow ?? selected.contextWindow ?? bound.snapshot.config.contextWindow ?? CUSTOM_DEFAULT_CONTEXT_WINDOW
-            const provider = createOpenAI({ baseURL: endpointBase(bound.snapshot.config), apiKey: bound.key ?? 'none', fetch: async (url, init) => {
+            const baseURL = endpointBase(bound.snapshot.config)
+            const options: NonNullable<Parameters<typeof createOpenAI>[0]> = { baseURL, apiKey: bound.key ?? 'none', fetch: async (url, init) => {
                 const headers = new Headers(init?.headers)
                 if (!bound.key) headers.delete('authorization')
                 if (effort) {
@@ -48,8 +52,14 @@ export function createCustomProviderRuntime(authority: CustomProviderAuthority) 
                     verifyEffort(await authority.read(identity, bound.signal))
                 }
                 return bound.network(url, { ...init, headers })
-            } })
-            const model = wrapLanguageModel({ model: provider.chat(modelId), middleware: [openrouterReasoningMiddleware, {
+            } }
+            const kimi = isKimiPlatform(bound.snapshot.config)
+            const scope = kimi ? (conversation && kimiReasoningScope(bound.snapshot, modelId, conversation)) ?? randomUUID() : undefined
+            const providerModel = kimi
+                ? createOpenAICompatible({ ...options, baseURL, name: 'kimi-platform', includeUsage: true,
+                    supportsStructuredOutputs: true, supportedUrls: () => ({ 'image/*': [/^https?:\/\//] }) }).chatModel(modelId)
+                : createOpenAI(options).chat(modelId)
+            const model = wrapLanguageModel({ model: providerModel, middleware: [scope ? kimiReasoningMiddleware(scope) : openrouterReasoningMiddleware, {
                 specificationVersion: 'v3',
                 transformParams: async ({ params }) => {
                     if (params.maxOutputTokens && params.maxOutputTokens >= window) throw new Error('Requested output exceeds custom model context window.')

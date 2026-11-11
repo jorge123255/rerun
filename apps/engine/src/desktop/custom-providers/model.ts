@@ -1,12 +1,13 @@
 import type { LoadedConnection } from '../../connections/types.js'
 import { desktopCustomProviderBinding } from './binding.js'
+import type { KimiConversation } from './kimi-reasoning.js'
 import type { createCustomProviderRuntime } from './runtime.js'
 
 type Model = Awaited<ReturnType<ReturnType<typeof createCustomProviderRuntime>['model']>>['model']
 type Call = Parameters<Model['doGenerate']>[0]
 
 /** Lease the exact registered revision for every SDK request, including compaction and one-shots. */
-export function customInferenceModel(connection: LoadedConnection | null, modelId: string, effort?: string) {
+export function customInferenceModel(connection: LoadedConnection | null, modelId: string, effort?: string, conversation?: KimiConversation) {
     const binding = desktopCustomProviderBinding()
     const snapshot = connection?.custom
     if (!binding || !snapshot || snapshot.state !== 'configured' || snapshot.workspaceId !== binding.workspaceId
@@ -16,7 +17,7 @@ export function customInferenceModel(connection: LoadedConnection | null, modelI
     const stop = new AbortController()
     async function lease(params: Call) {
         const signal = params.abortSignal ? AbortSignal.any([stop.signal, params.abortSignal]) : stop.signal
-        const bound = await binding!.model(snapshot!, modelId, signal, effort)
+        const bound = await binding!.model(snapshot!, modelId, signal, effort, conversation)
         const image = params.prompt.some(message => message.role === 'user'
             && message.content.some(part => part.type === 'file' && part.mediaType.startsWith('image/')))
         if (image && !bound.vision) {
