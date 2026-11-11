@@ -1,7 +1,7 @@
 import { assertDesktopRunAdmission } from '../desktop/workspace-admission.js'
 import { desktopDocumentContextParts } from '@rerun/contracts'
 import { streamText, type LanguageModelUsage, type ModelMessage, type StepResult, type StreamTextResult, type ToolSet, type UIMessageStreamWriter } from 'ai'
-import { RERUN_CONNECTION_ID, desktopCoworkerMentionContextParts, contextTextPart, workspaceAttachmentParts, desktopResolvedAttachmentParts, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, RERUN_CONNECTION_ID, desktopCoworkerMentionContextParts, contextTextPart, workspaceAttachmentParts, desktopResolvedAttachmentParts, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
 import { applyCaching, withTailBreakpoint } from '../agents/caching.js'
 import { desktopCodexEffort, mergeProviderOptions, reasoningProviderOptions } from '../agents/reasoning.js'
 import { prepareRunHistory } from './compaction/compact.js'
@@ -21,7 +21,7 @@ import type { LoadedAgent } from '../agents/types.js'
 import { turnOrder } from '../agents/turn-order.js'
 import { answeringModel } from '../agents/rerun-upstream.js'
 import { listAgentIndex, setAgentStatus } from '../db/repos/agents.js'
-import { appendMessage, completeQueuedUser, lastMessageId, listSessionAuthorIds, setMessageToolCalls, storedContent } from '../db/repos/messages.js'
+import { appendMessage, completeQueuedUser, extractText, lastMessageId, listSessionAuthorIds, setMessageToolCalls, storedContent } from '../db/repos/messages.js'
 import type { MessageRow } from '../db/schema.js'
 import { isSharedConversation, signHistoryMessage, signText } from './message-authors.js'
 import { bumpRunStep, cancelRun, failRun, finishRun, setRunContext, startRun } from '../db/repos/runs.js'
@@ -330,14 +330,21 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         let costMicros: number | null = null
 
         const messages = canonicalizeHitlNames('messages' in settlement ? settlement.messages ?? [] : [])
+        const rows = desktopSourceRows(messages, sourceSteps)
+        if (settlement.kind === 'done') pending = findPendingHitl(messages)
+        const foremanReply = settlement.kind === 'done' && desktopApp() && agent.id === FOREMAN_AGENT_ID &&
+            agent.config.kind === 'foreman' && queuedUser && !pending
+            ? rows.findLast(({ message }) => message.role === 'assistant' && extractText(message.content).trim()) : undefined
         let answerRow: MessageRow | undefined
-        for (const { message, sources } of desktopSourceRows(messages, sourceSteps)) {
-            const row = await appendMessage(agent.id, sessionId, message, undefined, sources).catch(() => undefined)
+        for (const entry of rows) {
+            const { message, sources } = entry
+            const source = entry === foremanReply && queuedUser
+                ? { runId: run.id, userMessageId: queuedUser.id } : undefined
+            const row = await appendMessage(agent.id, sessionId, message, undefined, sources, source).catch(() => undefined)
             if (row?.role === 'assistant') answerRow = row
         }
 
         if (settlement.kind === 'done') {
-            pending = findPendingHitl(messages)
             // A turn that ends on a card ignores the replies: the card already says how to answer.
             const replies = quickReplies?.()
             if (replies && answerRow && !pending) await setMessageToolCalls(agent.id, answerRow.id, [quickRepliesCall(replies)]).catch(() => {})
