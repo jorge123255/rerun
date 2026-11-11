@@ -6,8 +6,8 @@ import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
 import { link, lstat, mkdir, open, readdir, realpath, rename, rmdir, unlink, type FileHandle } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { hashText, looksBinary } from '@/lib/files/editable'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { fileEditBlockReason, hashText, looksBinary } from '@/lib/files/editable'
 import { DesktopHttpError } from './auth'
 import { DESKTOP_AUDIO_MAX_BYTES, DesktopAudioBytesError, desktopAudioKind, inspectDesktopAudioBytes, type DesktopAudioContentType } from './audio-bytes'
 import { DESKTOP_VIDEO_MAX_BYTES, DesktopVideoBytesError, desktopVideoKind, inspectDesktopVideoBytes, type DesktopVideoContentType } from './video-bytes'
@@ -22,7 +22,7 @@ import { assertCoworkerNotDeleting } from './coworker-delete'
 import { assertPrivateBackupBudget, assertPrivateDirectories, assertPrivateSnapshot, privateFileLocation, readPrivateSnapshot, readPrivateTextAt, type PrivateFileSnapshot } from './private-file-tools/snapshot'
 
 export type CoworkerFileEntry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string }
-/** `hash` is set only when the whole file was read as valid UTF-8 .txt/.md, i.e. when it can be edited. */
+/** `hash` is set only when the whole file can be edited as UTF-8 text. */
 export type CoworkerFilePreview = { path: string; content: string; size: number; truncated: boolean; hash?: string; identity?: string }
 
 const PREVIEW_BYTES = 256 * 1024
@@ -194,8 +194,9 @@ async function readResolvedFile(target: string, rel: string, mode: 'preview' | '
         } else content = bytes.toString('utf8')
         const truncated = info.size > bytesRead
         const identified = await handle.stat({ bigint: true })
-        const hash = mode === 'preview' && !truncated && EDITABLE.test(rel) ? editableText(bytes) : null
-        return { path: rel, content, size: info.size, truncated, identity: `${identified.dev}:${identified.ino}`, ...(hash !== null ? { hash: hashText(hash) } : {}) }
+        const text = mode === 'preview' && !truncated && identified.size === BigInt(bytesRead)
+            && canEditCoworkerFileName(basename(rel)) && canEditCoworkerFileName(basename(target)) ? editableText(bytes) : null
+        return { path: rel, content, size: info.size, truncated, identity: `${identified.dev}:${identified.ino}`, ...(text !== null ? { hash: hashText(text) } : {}) }
     } finally {
         await handle.close()
     }
@@ -772,8 +773,12 @@ async function createWorkspace(runtime: DesktopRuntime, workspace: string): Prom
     }
 }
 
-const EDITABLE = /\.(txt|md)$/i
+const PRIVATE_TOOL_EDITABLE = /\.(txt|md)$/i
 export const EDIT_BYTES = PREVIEW_BYTES
+
+function canEditCoworkerFileName(name: string): boolean {
+    return simpleName(name) && !name.startsWith('.') && fileEditBlockReason({ name, truncated: false, content: null }) === null
+}
 
 /** The strict UTF-8 text of `bytes`, or null when saving it back as text would change it. */
 function editableText(bytes: Uint8Array): string | null {
@@ -888,11 +893,15 @@ async function inodeMayBeHeld(path: string): Promise<boolean> {
 }
 
 async function recoveryLinks(directory: string, finalName: string, tempPath: string, backupPath: string): Promise<CoworkerFileRecovery> {
-    const extension = finalName.toLowerCase().endsWith('.md') ? '.md' : '.txt'
-    const stem = finalName.slice(0, -extension.length)
+    const extension = extname(finalName)
+    const stem = basename(finalName, extension)
     const token = randomBytes(6).toString('hex')
-    const draftName = `${stem}.draft-${token}${extension}`
-    const externalName = `${stem}.external-${token}${extension}`
+    const recoveryName = (kind: 'draft' | 'external') => {
+        const name = `${stem}.${kind}-${token}${extension}`
+        return Buffer.byteLength(name) <= 255 ? name : `file.${kind}-${token}.txt`
+    }
+    const draftName = recoveryName('draft')
+    const externalName = recoveryName('external')
     const externalPath = join(directory, externalName)
     await link(backupPath, externalPath)
     try { await link(tempPath, join(directory, draftName)) } catch (error) {
@@ -1152,13 +1161,16 @@ export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string,
 async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string, identity?: string, publication?: PrivateToolPublication): Promise<SaveCoworkerFileResult> {
     const bytes = Buffer.from(content, 'utf8')
     if (bytes.byteLength > EDIT_BYTES) throw new DesktopHttpError(413, 'Files over 256 KB can’t be edited here.')
-    if (content.includes('\0') || looksBinary(content)) throw new DesktopHttpError(415, 'Only text can be saved here.')
+    if (editableText(bytes) !== content) throw new DesktopHttpError(415, 'Only UTF-8 text can be saved here.')
     const workspace=await coworkerWorkspace(runtime,agentId)
     if(publication)await assertPrivateToolLocation(workspace,path,true)
     const { root, target, rel } = await containedPath(workspace, path)
     if(publication && target!==join(/* turbopackIgnore: true */ root ?? '',path))throw new DesktopHttpError(400,'Private file tools cannot follow symlinks.')
-    const name = rel.split('/').pop() ?? ''
-    if (!rel || name.startsWith('.') || !EDITABLE.test(name)) throw new DesktopHttpError(415, 'Only .txt and .md files can be edited here.')
+    const name = basename(rel)
+    if (publication && !PRIVATE_TOOL_EDITABLE.test(name)) throw new DesktopHttpError(415, 'Only .txt and .md files can be edited here.')
+    if (!canEditCoworkerFileName(name) || target && !canEditCoworkerFileName(basename(target))) {
+        throw new DesktopHttpError(415, 'Only visible UTF-8 text files can be edited here.')
+    }
     if (!root || !target) throw new DesktopHttpError(404, 'File not found')
     if (!baseHash) throw new DesktopHttpError(400, 'The opened file version is required for every save.')
     const outside = () => new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')

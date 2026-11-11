@@ -372,7 +372,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                 <span className="min-w-0 flex-1 truncate font-medium" title={preview.path}>{name}</span>
                 {shownSiblings && <div className="flex shrink-0 items-center gap-1"><FileSiblingControls siblings={shownSiblings} /></div>}
                 {'content' in preview && <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={!editable}
-                    title={editable ? undefined : 'Only UTF-8 .txt and .md files up to 256 KB can be edited here.'} onClick={() => setEditingPath(preview.path)}>Edit</Button>}
+                    title={editable ? undefined : 'Only complete UTF-8 text files up to 256 KiB can be edited here.'} onClick={() => setEditingPath(preview.path)}>Edit</Button>}
             </div>
             {'loading' in preview ? <p role="status" className="text-sm text-muted-foreground">Loading preview…</p>
                 : 'error' in preview ? <p role="alert" className="text-sm text-destructive">{preview.error}</p>

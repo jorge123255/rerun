@@ -5,7 +5,7 @@ import { desktopRoute } from '@/lib/desktop/server/http'
 export const dynamic = 'force-dynamic'
 type Context = { params: Promise<{ agentId: string }> }
 
-/** Save edited text over an existing .txt/.md file (FileDetail → writeFileAction with baseHash). */
+/** Save edited text over an existing file using the version the editor opened. */
 export function PUT(request: Request, { params }: Context) {
     return desktopRoute(request, async runtime => {
         const { agentId } = await params
