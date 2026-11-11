@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { BookOpenIcon, HandshakeIcon, KeyboardIcon, ListChecksIcon, UsersIcon } from '@/lib/icons'
 import { desktopGettingStartedAvailable, subscribeDesktopGettingStartedAvailability } from '@/lib/desktop/help/availability'
 import { desktopHelpEntries, desktopHelpKeepsFocus, type DesktopHelpEntry } from '@/lib/desktop/help/entries'
+import { useDesktopLocale } from '../DesktopLocale'
 
 const ICONS = {
     getting_started: ListChecksIcon,
@@ -26,6 +27,7 @@ type DesktopHelpDialogProps = {
 
 /** Local help. Docs use the approved docs origin. Shortcuts opens the Mac dialog. No hosted feed or support chat. */
 export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingStarted, onShortcuts, onCloseAutoFocus }: DesktopHelpDialogProps) {
+    const { t } = useDesktopLocale()
     const gettingStarted = useSyncExternalStore(
         subscribeDesktopGettingStartedAvailability,
         () => desktopGettingStartedAvailable(workspaceId),
@@ -50,7 +52,7 @@ export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingSt
                 }}
             >
                 <DialogHeader>
-                    <DialogTitle>Help</DialogTitle>
+                    <DialogTitle>{t('help')}</DialogTitle>
                     <DialogDescription>Docs and shortcuts for this Mac. Getting started stays here after you hide the checklist.</DialogDescription>
                 </DialogHeader>
                 <ul className="flex flex-col py-1">

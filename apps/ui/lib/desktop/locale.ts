@@ -119,6 +119,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         automatic: source.account.language.automatic,
         languageFailed: source.account.language.failed,
         settings: source.layout.workspaceMenu.settings,
+        help: source.layout.help.label,
         workspaceSettings: source.workspace.settings.title,
         providers: source.layout.workspaceMenu.aiProviders,
         defaultModel: source.connections.models.defaultModel,

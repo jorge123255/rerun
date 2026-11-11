@@ -269,6 +269,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }, [])
     const [panelInsetRight, setPanelInsetRight] = useState(0)
     const boardFrame = useRef<HTMLDivElement>(null)
+    const helpReturnFocus = useRef<HTMLButtonElement | null>(null)
     const panelContent = useRef<HTMLElement>(null)
     const [requestedSession, setRequestedSession] = useState<DesktopChatRequest | null>(null)
     const [requestedPanel, setRequestedPanel] = useState<DesktopCoworkerPanelRequest | null>(null)
@@ -668,7 +669,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         } catch (cause) { if (current()) toast.error('The fresh copy is saved, but could not be opened.', { description: cause instanceof Error ? cause.message : 'Try again.' }) }
     }
     const openShortcuts = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setShortcutsOpen(true) }
-    const openHelp = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setHelpOpen(true) }
+    const openHelp = (trigger?: HTMLButtonElement) => {
+        if (creationAdmission.current.blocked || controlCenterDisabled || isDesktopQuitting()) return
+        helpReturnFocus.current = trigger ?? null
+        setHelpOpen(true)
+    }
     const openNotifications = (agentId?: string) => {
         if (creationAdmission.current.blocked || controlCenterDisabled || isDesktopQuitting() || (agentId && !currentAgents.current.some(owner => owner.id === agentId))) return
         notificationReturnFocus.current = panelOpen
@@ -813,7 +818,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 onGettingStarted={() => { showBoard(); requestDesktopGettingStartedReopen() }}
                 onShortcuts={() => { if (!creationAdmission.current.blocked && !isDesktopQuitting()) setShortcutsOpen(true) }}
                 onCloseAutoFocus={event => {
-                    const target = boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
+                    const trigger = helpReturnFocus.current
+                    helpReturnFocus.current = null
+                    const target = trigger?.isConnected && !trigger.disabled && !trigger.closest('[inert]')
+                        ? trigger : boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                     if (target && !isDesktopQuitting()) { event.preventDefault(); target.focus({ preventScroll: true }) }
                 }} />
             <DesktopNotificationsDialog open={!!notificationsTarget} pinnedCoworkerId={notificationsTarget?.agentId}
