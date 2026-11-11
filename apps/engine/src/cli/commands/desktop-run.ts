@@ -1,3 +1,7 @@
+import { createDesktopOpencodeConnectionStore } from '../../desktop/opencode/connection-store.js'
+import { desktopOpencodeConnectionRoutes } from '../../desktop/opencode/connection-routes.js'
+import { desktopOpencodeListedModels } from '../../desktop/opencode/catalog.js'
+import { readBoxDefault } from '../../connections/default.js'
 import { initializeDesktopCompanyBriefStore } from '../../desktop/company-brief/runtime.js'
 import { bindDesktopComputerPanel } from '../../desktop/computer-panel/binding.js'
 import { bindDesktopGuestShell } from '../../desktop/guest-shell/runtime.js'
@@ -108,6 +112,16 @@ export async function desktopRunCommand(): Promise<void> {
     await initializeDesktopCompanyBriefStore()
     await initializeDesktopExternalMcp()
     const customProviders = bindDesktopCustomProviders(runtime.workspaceId, runtime.launchNonce, () => stopping)
+    const opencodeConnection = createDesktopOpencodeConnectionStore({
+        path: resolve(expectedEngineRoot, 'desktop-opencode.env'),
+        workspaceId: runtime.workspaceId,
+        admit(epoch) {
+            if (stopping) throw new Error('This workspace is stopping.')
+            return assertDesktopRunAdmission(epoch)
+        },
+        knownModels: () => desktopOpencodeListedModels(runtime.workspaceId).map(model => model.id),
+        readDefault: readBoxDefault,
+    })
     const subscriptionLogin = bindDesktopSubscriptionDeviceLogin()
     observeDesktopAdmissionChange(async () => {
         let frozen = true
@@ -200,6 +214,7 @@ export async function desktopRunCommand(): Promise<void> {
     installDesktopDelegation(delegation)
     app.route('/desktop/computer-panel', computerPanel.routes)
     app.route('/desktop/custom-providers', customProviders.routes)
+    app.route('/desktop/opencode/connection', desktopOpencodeConnectionRoutes(opencodeConnection, runtime.launchNonce))
     app.route('/desktop/coworker-share-database', createPrivateDatabaseShareRoutes(runtime.workspaceId))
     app.route('/desktop/foreman', createDesktopForemanRoutes(undefined, { workspaceId: runtime.workspaceId, launchNonce: runtime.launchNonce }))
     app.route('/desktop/external-mcp', createDesktopExternalMcpRouter(getExternalMcpService))

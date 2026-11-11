@@ -259,6 +259,32 @@ export function desktopOpencodeKeyProblem(value: string): string | null {
     return null
 }
 
+export const DESKTOP_OPENCODE_CONNECTION_ID = 'opencode-desktop'
+
+const connectionModels = {
+    enabledModelIds: z.array(z.string().min(1).max(256)).max(256),
+    defaultModelId: z.string().min(1).max(256),
+    consoleEnabled: z.boolean(),
+}
+
+export const desktopOpencodeConnectionView = z.object({
+    workspaceId: desktopWorkspaceIdSchema,
+    connectionId: z.literal(DESKTOP_OPENCODE_CONNECTION_ID),
+    revision: z.uuid(),
+    name: z.string().trim().min(1).max(100),
+    ...connectionModels,
+})
+
+const changeScope = { workspaceId: desktopWorkspaceIdSchema, expectedRevision: z.uuid() }
+
+export const desktopOpencodeConnectionChange = z.discriminatedUnion('action', [
+    z.strictObject({ ...changeScope, action: z.literal('key'), expectedRevision: z.uuid().nullable(), apiKey: z.string().trim().min(1).max(4096) }),
+    z.strictObject({ ...changeScope, action: z.literal('models'), ...connectionModels }),
+    z.strictObject({ ...changeScope, action: z.literal('rename'), name: desktopOpencodeConnectionView.shape.name }),
+    z.strictObject({ ...changeScope, action: z.literal('disconnect') }),
+])
+export type DesktopOpencodeConnectionChange = z.infer<typeof desktopOpencodeConnectionChange>
+
 export const desktopOpencodeWindowSchema = z.strictObject({
     kind: z.enum(['session', 'weekly', 'monthly']),
     label: z.null(),
