@@ -1,7 +1,7 @@
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAI } from '@ai-sdk/openai'
-import { DESKTOP_OPENCODE_MAX_OUTPUT_TOKENS, DESKTOP_OPENCODE_ONE_SHOT_SESSION, DESKTOP_OPENCODE_SESSION_HEADER, desktopOpencodeKeyProblem, type DesktopOpencodeModel } from '@rerun/contracts'
+import { DESKTOP_OPENCODE_MAX_OUTPUT_TOKENS, DESKTOP_OPENCODE_ONE_SHOT_SESSION, DESKTOP_OPENCODE_SESSION_HEADER, desktopOpencodeKeyProblem, desktopOpencodeModelEnabled, type DesktopOpencodeModel } from '@rerun/contracts'
 import type { LanguageModel, LanguageModelMiddleware } from 'ai'
 import { googleToolSchemaMiddleware } from '../../agents/google-tool-schema.js'
 import { openrouterStreamRetryMiddleware } from '../../agents/openrouter-stream-retry.js'
@@ -51,6 +51,7 @@ export function desktopOpencodeLanguageModel(input: {
     if (resolved.kind === 'retired') throw new DesktopOpencodeModelError(`OpenCode no longer offers ${input.modelId}. Pick another model.`)
     if (resolved.kind === 'missing') throw new DesktopOpencodeModelError(`OpenCode does not offer ${input.modelId}. Pick another model.`)
     if (resolved.model.plan === 'console' && !input.consoleEnabled) throw new DesktopOpencodeModelError('Console stays off until you switch it on.')
+    if (!desktopOpencodeModelEnabled(resolved.model, input.enabledModelIds)) throw new DesktopOpencodeModelError('Choose a model this connection has switched on.')
     const apiKey = input.apiKey
     const entry = resolved.model
     const sessionId = input.sessionId || DESKTOP_OPENCODE_ONE_SHOT_SESSION

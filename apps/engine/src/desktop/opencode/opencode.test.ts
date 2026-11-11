@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DESKTOP_OPENCODE_SNAPSHOT, desktopOpencodeEnableProblem, desktopOpencodeKeyProblem, desktopOpencodeModelRows, desktopOpencodeVisionModel, desktopOpencodeWindows, parseDesktopOpencodeCatalog } from '@rerun/contracts'
+import { DESKTOP_OPENCODE_SNAPSHOT, desktopOpencodeDefaultModelIds, desktopOpencodeEnableProblem, isFreeDesktopOpencodeModel, desktopOpencodeKeyProblem, desktopOpencodeModelRows, desktopOpencodeVisionModel, desktopOpencodeWindows, parseDesktopOpencodeCatalog } from '@rerun/contracts'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { desktopOpencodeCatalogView, desktopOpencodeDispatchModel, refreshDesktopOpencodeCatalog, refreshStaleDesktopOpencodeCatalog, resetDesktopOpencodeCatalogForTests } from './catalog.js'
 import { executeDesktopOpencode } from './execute.js'
@@ -28,12 +28,13 @@ function catalogs(go: unknown, consoleBody: unknown, fail = false): typeof fetch
 const dispatch = { workspaceId: 1, connectionId: 'oc', connectionRevision: 'rev-1', consoleEnabled: false, modelId: 'go/deepseek-v4-pro', purpose: 'chat' as const, runId: 'run-1', requestId: 'req-1', sessionId: 'session-1', stream: true }
 
 describe('desktop OpenCode contract', () => {
-    it('parses a captured catalog and skips free, non-chat, and off-origin rows', () => {
+    it('lists free Go models while rejecting free Console, non-chat, and off-origin rows', () => {
         const models = parseDesktopOpencodeCatalog(captured, 'go')
-        expect(models.map(model => model.id)).toEqual(['go/deepseek-v4-pro'])
-        expect(models[0]?.wire).toBe('chat')
-        expect(models[0]?.images).toBe(false)
-        expect(DESKTOP_OPENCODE_SNAPSHOT).toHaveLength(96)
+        expect(models.map(model => model.id)).toEqual(['go/big-pickle-free', 'go/deepseek-v4-pro'])
+        expect(models[0] && isFreeDesktopOpencodeModel(models[0].price)).toBe(true)
+        expect(models[1]).toMatchObject({ wire: 'chat', images: false })
+        expect(parseDesktopOpencodeCatalog(captured, 'console').map(model => model.id)).toEqual(['console/deepseek-v4-pro'])
+        expect(DESKTOP_OPENCODE_SNAPSHOT).toHaveLength(103)
         expect(DESKTOP_OPENCODE_SNAPSHOT.some(model => model.id === 'go/deepseek-v4-pro')).toBe(true)
         expect(DESKTOP_OPENCODE_SNAPSHOT.some(model => model.id === 'console/claude-haiku-5-5')).toBe(true)
     })
@@ -54,6 +55,16 @@ describe('desktop OpenCode contract', () => {
         expect(desktopOpencodeWindows({ nope: true })).toEqual([])
     })
 
+    it('lists the bundled free Go models as switched off and preserves the paid default', () => {
+        const defaults = desktopOpencodeDefaultModelIds()
+        expect(defaults[0]).toBe('go/deepseek-v4-pro')
+        const rows = desktopOpencodeModelRows({ models: DESKTOP_OPENCODE_SNAPSHOT, source: 'snapshot', enabledModelIds: defaults, consoleEnabled: false })
+        const free = rows.filter(row => row.description === 'Free')
+        expect(free.map(row => row.id)).toEqual(['go/beam-free', 'go/iceman-contributor-free', 'go/longcat-2.5-free'])
+        expect(free.every(row => !row.enabled && !row.locked)).toBe(true)
+        expect(rows.find(row => row.id === defaults[0])).toMatchObject({ enabled: true, description: 'Included in Go' })
+    })
+
     it('keeps Console locked until it is switched on and keeps the default in the enabled set', () => {
         const known = DESKTOP_OPENCODE_SNAPSHOT.map(model => model.id)
         expect(desktopOpencodeEnableProblem({ enabledModelIds: ['console/claude-haiku-5-5'], defaultModelId: 'console/claude-haiku-5-5', consoleEnabled: false, knownIds: known })).toMatch(/Console/)
@@ -65,8 +76,9 @@ describe('desktop OpenCode contract', () => {
     })
 
     it('picks the cheapest seeing Go model and never a Console model', () => {
-        const enabled = DESKTOP_OPENCODE_SNAPSHOT.filter(model => model.id === 'go/deepseek-v4-pro' || model.id === 'go/gpt-6-luna' || model.id === 'console/claude-haiku-5-5')
+        const enabled = DESKTOP_OPENCODE_SNAPSHOT.filter(model => model.id === 'go/deepseek-v4-pro' || model.id === 'go/gpt-6-luna' || model.id === 'go/longcat-2.5-free' || model.id === 'console/claude-haiku-5-5')
         expect(desktopOpencodeVisionModel(enabled)).toBe('go/gpt-6-luna')
+        expect(desktopOpencodeVisionModel(enabled.filter(model => model.id !== 'go/gpt-6-luna'))).toBeNull()
         expect(desktopOpencodeVisionModel(enabled.filter(model => !model.images))).toBeNull()
     })
 })
@@ -189,6 +201,23 @@ describe('desktop OpenCode catalog, limits, and dispatch', () => {
         expect(limited.message).toMatch(/OpenCode Go limit reached: 5-hour window/)
         const plain = await executeDesktopOpencode({ dispatch: { ...dispatch, requestId: 'plain', connectionId: 'plain' }, apiKey: 'oc_sk_test', fetch: async url => String(url).includes('/usage') ? new Response('no', { status: 500 }) : new Response('slow', { status: 429 }) })
         expect(plain).toMatchObject({ status: 'unknown', code: 'unavailable', sent: true })
+    })
+
+    it('requires the free Go model to be enabled before either dispatch path can use it', async () => {
+        const modelId = 'go/longcat-2.5-free'
+        const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(fixture('chat-go.sse')))
+        const call = { dispatch: { ...dispatch, modelId }, apiKey: 'oc_sk_test', fetch }
+        const sdk = { workspaceId: 1, connectionId: 'oc', apiKey: 'oc_sk_test', modelId, fetch }
+        for (const enabledModelIds of [undefined, ['go/deepseek-v4-pro']]) {
+            expect(await executeDesktopOpencode({ ...call, enabledModelIds })).toMatchObject({ code: 'grant', sent: false })
+            expect(() => desktopOpencodeLanguageModel({ ...sdk, enabledModelIds })).toThrow(/switched on/)
+        }
+        expect(fetch).not.toHaveBeenCalled()
+        const enabledModelIds = [modelId]
+        expect(desktopOpencodeLanguageModel({ ...sdk, enabledModelIds }).entry.id).toBe(modelId)
+        expect(await executeDesktopOpencode({ ...call, enabledModelIds })).toMatchObject({ status: 'saved', sent: true })
+        expect(fetch).toHaveBeenCalledOnce()
+        expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)).model).toBe('longcat-2.5-free')
     })
 
     it('builds an SDK model only for an explicit Go key and refuses Console by default', () => {

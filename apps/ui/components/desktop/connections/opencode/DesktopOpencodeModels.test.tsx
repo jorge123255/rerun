@@ -46,6 +46,19 @@ it('protects the default model and requires explicit Console opt-in', async () =
     expect(onModelsChange).toHaveBeenCalledWith({ enabledModelIds: ['go/deepseek-v4-pro', 'go/kimi-k3'], consoleEnabled: false })
 })
 
+it('badges a free Go model and switches it on independently of Console', async () => {
+    const free = { ...model('go/beam-free', 'Beam Free'), price: { input: 0, output: 0, cacheRead: 0 } }
+    const onModelsChange = await mount({ catalog: catalog([model('go/deepseek-v4-pro'), free, model('console/gpt-5')]) })
+    expect(document.body.textContent).toContain('The free ones are off until you switch them on.')
+    const toggle = document.querySelector('[aria-label="Turn on Beam Free"]')
+    expect(toggle?.getAttribute('aria-checked')).toBe('false')
+    expect([...toggle!.closest('li')!.querySelectorAll('span')].some(item => item.textContent === 'Free')).toBe(true)
+    expect(onModelsChange).not.toHaveBeenCalled()
+    await click('Turn on Beam Free')
+    expect(onModelsChange).toHaveBeenCalledOnce()
+    expect(onModelsChange).toHaveBeenCalledWith({ enabledModelIds: ['go/deepseek-v4-pro', 'go/beam-free'], consoleEnabled: false })
+})
+
 it('keeps retired selected models visible for removal and filters both plans', async () => {
     const onModelsChange = await mount({ catalog: catalog([model('go/deepseek-v4-pro', 'DeepSeek V4 Pro'), model('go/kimi-k3', 'Kimi K3'), model('console/gpt-5', 'GPT-5')]), enabledModelIds: ['go/deepseek-v4-pro', 'go/retired'], defaultModelId: 'go/deepseek-v4-pro' })
     expect(document.body.textContent).toContain('go/retired')

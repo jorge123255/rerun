@@ -1,4 +1,4 @@
-import { DESKTOP_OPENCODE_MAX_OUTPUT_TOKENS, DESKTOP_OPENCODE_ONE_SHOT_SESSION, desktopOpencodeKeyProblem, desktopOpencodeResultSchema, type DesktopOpencodeDispatch, type DesktopOpencodeModel, type DesktopOpencodeResult } from '@rerun/contracts'
+import { DESKTOP_OPENCODE_MAX_OUTPUT_TOKENS, DESKTOP_OPENCODE_ONE_SHOT_SESSION, desktopOpencodeKeyProblem, desktopOpencodeModelEnabled, desktopOpencodeResultSchema, type DesktopOpencodeDispatch, type DesktopOpencodeModel, type DesktopOpencodeResult } from '@rerun/contracts'
 import { desktopOpencodeDispatchModel, refreshDesktopOpencodeCatalog } from './catalog.js'
 import { refreshDesktopOpencodeLimits, spentDesktopOpencodeWindow } from './limits.js'
 import { desktopOpencodeCost, desktopOpencodeErrorEnvelope, desktopOpencodeHttpRequest, desktopOpencodeRefusalMessage, findDesktopOpencodeUsage, parseDesktopOpencodeSse, type DesktopOpencodeUsage } from './wire.js'
@@ -134,7 +134,7 @@ export async function executeDesktopOpencode(input: DesktopOpencodeCall): Promis
     if (resolved.kind === 'retired') return refused(`OpenCode no longer offers ${dispatch.modelId}. Pick another model.`, 'retired', false)
     if (resolved.kind === 'missing') return refused(`OpenCode does not offer ${dispatch.modelId}. Pick another model.`, 'unavailable', false)
     if (resolved.model.plan === 'console' && !dispatch.consoleEnabled) return refused('Console stays off until you switch it on.', 'console', false)
-    if (input.enabledModelIds && !input.enabledModelIds.includes(resolved.model.id)) return refused('Choose a model this connection has switched on.', 'grant', false)
+    if (!desktopOpencodeModelEnabled(resolved.model, input.enabledModelIds)) return refused('Choose a model this connection has switched on.', 'grant', false)
 
     const request = desktopOpencodeHttpRequest(resolved.model, input.apiKey!, dispatch.sessionId || DESKTOP_OPENCODE_ONE_SHOT_SESSION, dispatch.stream, input.userAgent)
     const body = withPrompt(resolved.model, request.body, input.prompt)
