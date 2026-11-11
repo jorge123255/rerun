@@ -564,7 +564,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 setForemanCommand(current => current?.id === id ? null : current)
                 if (error) reject(error); else resolve()
             }
-            const abort = () => settle(new Error('Ask Rerun was cancelled.'))
+            const abort = () => settle(new Error('The Chief of Staff request was cancelled.'))
             signal.addEventListener('abort', abort, { once: true })
             setForemanCommand({ id, chat, text, signal, settle }); engageForeman()
         })
@@ -747,7 +747,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
 
                     <DesktopForemanPanel controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout}
                         hidden={controlCenterDisabled || controlCenterOpen || panelOpen || settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
-                        centerOpen={controlCenterOpen} onOpenTranscriptionSettings={() => { setSettingsTab('Tool services'); setSettings(true) }} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('Foreman was closed.')); setForemanOpen(false) }}
+                        centerOpen={controlCenterOpen} onOpenTranscriptionSettings={() => { setSettingsTab('Tool services'); setSettings(true) }} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('The Chief of Staff chat was closed.')); setForemanOpen(false) }}
                         onOpenCoworker={openForemanCoworker} onOpenBox={openForemanBox} onReviewTemplate={reviewTemplate} workspaceModel={modelLabel} workspaceModelChoice={defaultProvider && providers.default ? { connectionId: defaultProvider.id, model: providers.default.model } : undefined}
                         agentNameOf={id => currentAgents.current.find(agent => agent.id === id)?.name ?? 'Coworker'} />
                 </div>}

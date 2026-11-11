@@ -40,6 +40,17 @@ const button = (label: string) => {
     return target
 }
 
+it.each(['en', 'fr', 'es', 'pt', 'de'] as const)('uses the upstream Chief of Staff name in the %s Mac language pack', async locale => {
+    const upstream = await loadMessages(locale)
+    const copy = desktopMessages(locale, upstream)
+    expect(copy.foreman.name).toBe('Chief of Staff')
+    expect(copy.foreman.ask).toBe(upstream.kit.foreman.orbLabel)
+    expect(copy.foreman.tabs.assistant).toBe(upstream.kit.foreman.tabsLabel)
+    expect(copy.controlCenter.askRerun).toBe(upstream.layout.controlCenter.askRerun)
+    expect(copy.shortcutDialog.actions.holdToTalk).toBe(upstream.dialogs.shortcuts.actions.holdToTalk)
+    expect([copy.foreman.ask, copy.foreman.message, copy.controlCenter.askRerun].join(' ')).not.toMatch(/\bForeman\b|Ask Rerun/)
+})
+
 it('translates the composer and tabs while keeping the draft and tab identity', async () => {
     const send = vi.fn()
     const stop = vi.fn()
@@ -47,10 +58,10 @@ it('translates the composer and tabs while keeping the draft and tab identity', 
     const draft = 'Prépare une synthèse.\nGarde les deux étapes.'
     const composer = { draft, onDraftChange: vi.fn(), onSend: send, onStop: stop }
     await show(<><DesktopForemanTabs tab="assistant" onTabChange={change} /><DesktopForemanComposer {...composer} /></>)
-    expect(button('Demander').getAttribute('aria-selected')).toBe('true')
+    expect(button('Chief of Staff').getAttribute('aria-selected')).toBe('true')
     await act(async () => button('Routines').dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true })))
     expect(change).toHaveBeenCalledExactlyOnceWith('routines')
-    expect(document.querySelector('[data-desktop-foreman-composer]')?.getAttribute('aria-label')).toBe('Écrire au Foreman')
+    expect(document.querySelector('[data-desktop-foreman-composer]')?.getAttribute('aria-label')).toBe('Écrire au Chief of Staff')
     await act(async () => button('Envoyer').click())
     expect(send).toHaveBeenCalledExactlyOnceWith(draft)
     await show(<DesktopForemanComposer {...composer} busy />)

@@ -34,7 +34,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     return desktopRoute(request, async runtime => {
         const parsed = inputSchema.safeParse(await readDesktopJson(request, 128 * 1024))
-        if (!parsed.success) throw new DesktopHttpError(400, 'This Foreman action was not understood.')
+        if (!parsed.success) throw new DesktopHttpError(400, 'This Chief of Staff action was not understood.')
         const input = parsed.data, app = await desktopForeman(runtime)
         const chat = 'chat' in input ? input.chat : input.input.chat
         if (chat.workspaceId !== String(runtime.workspaceId)) throw new DesktopHttpError(404, 'Conversation not found.')
@@ -56,7 +56,7 @@ export async function POST(request: Request) {
                 const row = (await app.db.execute({ sql: 'SELECT ui_revision,ui FROM desktop_foreman_chats WHERE chat_id=?', args: [chat.chatId] })).rows[0]!
                 const value = JSON.stringify(input.snapshot), revision = Number(row.ui_revision)
                 if (row.ui === value) return Response.json({ revision })
-                if (revision !== input.expectedRevision) throw new DesktopHttpError(409, 'The saved Foreman view changed. Reopen the panel before editing it.')
+                if (revision !== input.expectedRevision) throw new DesktopHttpError(409, 'The saved Chief of Staff view changed. Reopen the panel before editing it.')
                 await app.db.execute({ sql: 'UPDATE desktop_foreman_chats SET ui=?,ui_revision=ui_revision+1 WHERE chat_id=? AND ui_revision=?', args: [value, chat.chatId, revision] })
                 return Response.json({ revision: revision + 1 })
             })

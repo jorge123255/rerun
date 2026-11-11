@@ -54,12 +54,12 @@ export function DesktopForemanPanel(props: DesktopForemanPanelProps) {
             if (controller.signal.aborted) return
             const next = await readDesktopForemanState(AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]))
             if (!controller.signal.aborted) { setInitial(next); setError(null) }
-        })().catch(error => { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'Could not open Foreman.') })
+        })().catch(error => { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'Could not open the Chief of Staff chat.') })
         return () => controller.abort()
     }, [retry])
     useEffect(() => { if (error && props.command) props.command.settle(new Error(error)) }, [error, props.command])
     if (initial) return <ConnectedForeman key={`${initial.chat.workspaceId}:${initial.chat.chatId}`} {...props} initial={initial} />
-    return <section className={props.className} aria-label="Foreman"><div className="flex min-h-40 flex-col items-start gap-3 rounded-3xl border bg-background p-5"><p role={error ? 'alert' : 'status'}>{error ?? t('foreman.opening')}</p>{error && <Button size="sm" onClick={() => setRetry(value => value + 1)}>{t('creation.tryAgain')}</Button>}<Button size="sm" variant="ghost" onClick={props.onClose}>{t('foreman.close')}</Button></div></section>
+    return <section className={props.className} aria-label={t('foreman.name')}><div className="flex min-h-40 flex-col items-start gap-3 rounded-3xl border bg-background p-5"><p role={error ? 'alert' : 'status'}>{error ?? t('foreman.opening')}</p>{error && <Button size="sm" onClick={() => setRetry(value => value + 1)}>{t('creation.tryAgain')}</Button>}<Button size="sm" variant="ghost" onClick={props.onClose}>{t('foreman.close')}</Button></div></section>
 }
 function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { initial: DesktopForemanClientState }) {
     const { t } = useDesktopLocale()
@@ -93,7 +93,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         const currentFeed = (value: number) => !cancelled && value === generation && !isDesktopQuitting()
         const poll = async (value: number) => {
             if (!currentFeed(value)) return
-            try { await client.refresh() } catch (error) { if (currentFeed(value)) setError(error instanceof Error ? error.message : 'Could not refresh Foreman.') }
+            try { await client.refresh() } catch (error) { if (currentFeed(value)) setError(error instanceof Error ? error.message : 'Could not refresh the Chief of Staff chat.') }
             if (currentFeed(value)) timer = setTimeout(() => void poll(value), 1500)
         }
         const pauseFeed = () => {
@@ -128,13 +128,13 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         const signal = command.signal
         void (async () => {
             signal.throwIfAborted()
-            if (command.chat.chatId !== initial.chat.chatId || command.chat.workspaceId !== initial.chat.workspaceId) throw new Error('Foreman conversation changed.')
-            if (intakeOpen && command.text.trim()) throw new Error('Finish the company questions before asking the Foreman to plan your team.')
-            if (command.text.trim() && !await client.ports.conversation.sendMessage(command.text.trim(), signal)) throw new Error('Foreman did not accept this message.')
+            if (command.chat.chatId !== initial.chat.chatId || command.chat.workspaceId !== initial.chat.workspaceId) throw new Error('The Chief of Staff conversation changed.')
+            if (intakeOpen && command.text.trim()) throw new Error('Finish the company questions before asking your Chief of Staff to plan your team.')
+            if (command.text.trim() && !await client.ports.conversation.sendMessage(command.text.trim(), signal)) throw new Error('Your Chief of Staff did not accept this message.')
             if (!command.text.trim()) signal.throwIfAborted()
             setFocusRequest(command.id)
             command.settle()
-        })().catch(error => command.settle(error instanceof Error ? error : new Error('Could not ask Foreman.')))
+        })().catch(error => command.settle(error instanceof Error ? error : new Error('Could not ask your Chief of Staff.')))
     }, [client, props.command, initial.chat.chatId, initial.chat.workspaceId, intakeOpen, intakeEligible, intake.restored])
     const close = useCallback(() => { if (active.current) current.current.onClose() }, [])
     if (!client) return <div role="status" className={props.className}>{t('foreman.opening')}</div>

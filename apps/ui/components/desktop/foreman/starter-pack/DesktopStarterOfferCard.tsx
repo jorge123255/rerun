@@ -23,7 +23,7 @@ export function DesktopStarterOfferCard({ offer, disabled, onAnswer, onStop }: {
     return (
         <section aria-label="Starter team">
             {choice ? <div className="mb-2 space-y-2">
-                <p role="status" className="text-sm">Foreman is waiting to finish your starter choice.</p>
+                <p role="status" className="text-sm">Your Chief of Staff is waiting to finish your starter choice.</p>
                 <Button type="button" size="sm" disabled={disabled} onClick={() => onAnswer(choice)}>Retry choice</Button>
             </div> : (
                 <fieldset disabled={disabled} className="min-w-0">
