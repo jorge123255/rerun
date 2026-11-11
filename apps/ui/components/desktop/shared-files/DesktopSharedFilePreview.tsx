@@ -7,7 +7,7 @@ import type { SaveFileResult } from '@/app/api/_services/file.service'
 import { filePreviewKind } from '@/lib/files/preview'
 import { useSiblingFiles } from '@/components/files/useSiblingFiles'
 import { Button } from '@/components/ui/button'
-import { holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { desktopFileDraftHost, holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { readDesktopSharedPreview, replaceDesktopSharedText, type DesktopSharedEntry, type DesktopSharedTextIdentity } from '@/lib/desktop/shared-workspace-files'
 import { saveDesktopSharedFile, sharedMediaUrl } from '@/lib/desktop/shared-file-previews'
 import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, FileIcon, FolderIcon } from '@/lib/icons'
@@ -159,6 +159,7 @@ export function DesktopSharedFilePreview({ path, entries, onOpen, editWorkspaceI
                 <FileEditorDialog
                     fileName={name}
                     initialContent={ready.content}
+                    host={desktopFileDraftHost()}
                     onSave={saveText}
                     onSaved={content => {
                         setPreview({ ...ready, content, editIdentity: editBase.current })

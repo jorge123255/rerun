@@ -2,6 +2,7 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
+import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
 import { hashText } from '@/lib/files/editable'
 import type { FileCodeMirrorProps } from '@/components/files/FileCodeMirror'
 import { DesktopConversation } from './DesktopConversation'
@@ -260,4 +261,26 @@ test('reopening an interrupted save shows the recovered conflict in the original
     expect(recovery).toContain('docs/brief.draft-crash.md')
     expect(recovery).toContain('docs/brief.external-crash.md')
     act(() => root.unmount())
+})
+
+
+test('native quit stays blocked until a coworker file edit is explicitly saved', async () => {
+    const files = { alice: 'original' }
+    const { fetcher, puts } = disk(files)
+    vi.stubGlobal('fetch', fetcher)
+    vi.stubGlobal('desktopApp', { onBeforeQuit: vi.fn() })
+    const root = mount()
+    try {
+        await openFile(root, 'alice')
+        await click('Edit')
+        await type('keep me')
+        await act(async () => { expect(await flushDesktopDrafts()).toBe(false) })
+        expect(puts).toHaveLength(0)
+        act(cancelDraftShutdown)
+        expect(document.querySelector<HTMLTextAreaElement>('[data-testid="file-editor"] textarea')!.value).toBe('keep me')
+        await click('Save changes')
+        await flush()
+        expect(files.alice).toBe('keep me')
+        await act(async () => { expect(await flushDesktopDrafts()).toBe(true) })
+    } finally { act(cancelDraftShutdown); act(() => root.unmount()) }
 })

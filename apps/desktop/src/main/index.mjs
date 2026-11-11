@@ -103,9 +103,9 @@ else {
             },
             confirmDiscard: async () => {
                 const options = {
-                    type: 'warning', title: 'Unsent drafts could not be saved',
-                    message: 'Some unsent drafts could not be saved.',
-                    detail: 'Stay in Rerun to try again, or quit without saving the latest draft changes.',
+                    type: 'warning', title: 'Unsaved changes',
+                    message: 'Some changes haven’t been saved.',
+                    detail: 'Stay in Rerun to review or save your changes, or quit without saving them.',
                     buttons: ['Stay', 'Quit without saving'], defaultId: 0, cancelId: 0, noLink: true,
                 }
                 const parent = window && !window.isDestroyed() ? window : null

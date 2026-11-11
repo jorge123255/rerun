@@ -2,6 +2,7 @@
 import { act, type ComponentProps } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
 import { DesktopBrainFile } from './DesktopBrainFiles'
 import { DesktopSharedFilePreview } from '../../shared-files/DesktopSharedFilePreview'
 
@@ -94,4 +95,25 @@ test('a workspace Files preview and a truncated Brain preview do not mount an ed
     fetchFile.mockResolvedValueOnce(Response.json({ path, content: 'partial', truncated: true, editIdentity: original }))
     await act(async () => root.render(<DesktopBrainFile path={path} workspaceId={2} files={files} onSelect={vi.fn()} />))
     expect(button('Edit')).toBeUndefined()
+})
+
+
+test('native quit requires confirmation for an unsaved Brain file and Stay preserves the draft', async () => {
+    vi.stubGlobal('desktopApp', { onBeforeQuit: vi.fn() })
+    try {
+        await act(async () => root.render(<DesktopBrainFile path={path} workspaceId={2} files={files} onSelect={vi.fn()} />))
+        await click('Edit')
+        await edit('draft to keep')
+        expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(false)
+        await act(async () => { expect(await flushDesktopDrafts()).toBe(false) })
+        expect(fetchFile).toHaveBeenCalledTimes(1)
+        // The native dialog owns the choice to discard, including the subsequent unload.
+        expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(true)
+        act(cancelDraftShutdown)
+        expect(field().value).toBe('draft to keep')
+        expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(false)
+        await click('Cancel')
+        await click('Discard changes')
+        await act(async () => { expect(await flushDesktopDrafts()).toBe(true) })
+    } finally { act(cancelDraftShutdown) }
 })

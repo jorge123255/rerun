@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { FileTextEditor } from '@/components/files/FileTextEditor'
+import { useFileUnloadGuard } from '@/components/files/useFileUnloadGuard'
 import { useFileNavigation } from '@/components/files/useFileNavigation'
 import { useSiblingFiles } from '@/components/files/useSiblingFiles'
 import { Button } from '@/components/ui/button'
@@ -22,6 +23,7 @@ import { DesktopFileVideoPreview, isDesktopVideoName } from './DesktopFileVideoP
 import { applyEol, splitEol } from '@/lib/files/editable'
 import { Badge } from '@rerun/ui/primitives'
 import type { DesktopAgentView } from './DesktopApp'
+import { desktopFileDraftHost, holdDraftAdmission } from '@/lib/desktop/draft-writes'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 
 type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string }
@@ -482,14 +484,12 @@ function FileEditor({ base, path, content, hash, identity, initialConflict = nul
         return () => registerCloseGuard(null)
     }, [registerCloseGuard, requestClose])
 
-    useEffect(() => {
-        if (!dirty) return
-        const warn = (event: BeforeUnloadEvent) => event.preventDefault()
-        window.addEventListener('beforeunload', warn)
-        return () => window.removeEventListener('beforeunload', warn)
-    }, [dirty])
+    const draftHost = desktopFileDraftHost()
+    useFileUnloadGuard(dirty || setAside !== null, draftHost)
 
     const save = async (baseHash: string, fileIdentity = opened.identity) => {
+        if (draftHost?.isClosing()) return
+        const release = holdDraftAdmission()
         setSaving(true)
         setError('')
         const next = applyEol(draft, opened.eol)
@@ -503,6 +503,7 @@ function FileEditor({ base, path, content, hash, identity, initialConflict = nul
             setError('Could not save this file. Your edits are still here; try again.')
         } finally {
             setSaving(false)
+            release()
         }
     }
 
@@ -527,7 +528,7 @@ function FileEditor({ base, path, content, hash, identity, initialConflict = nul
                 <Button size="icon-sm" variant="ghost" onClick={() => requestClose()} disabled={saving} title="Close editor" aria-label="Close editor"><XIcon className="size-4" /></Button>
             </div>
             <div className="min-h-0 flex-1 overflow-hidden">
-                <FileTextEditor value={draft} onChange={setDraft} fileName={name ?? path} readOnly={saving} autoFocus onSave={saveDraft} />
+                <FileTextEditor value={draft} onChange={text => { if (!draftHost?.isClosing()) setDraft(text) }} fileName={name ?? path} readOnly={saving} autoFocus onSave={saveDraft} />
             </div>
             {setAside !== null && <div className="shrink-0 space-y-1 border-t border-border p-3 text-xs" data-testid="set-aside">
                 <p className="text-muted-foreground">Reloaded the newer version. Your previous edits, not saved:</p>
