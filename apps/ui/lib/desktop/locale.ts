@@ -25,6 +25,14 @@ import workspace from '@rerun/i18n/messages/en/workspace.json'
 const englishSource = { account, agent, chat, common, connections, dialogs, foreman, kit, layout, mobileSettings, notifications, workspace }
 type DesktopMessageSource = typeof englishSource
 
+const aiProviderTool = {
+    en: { label: 'See its AI providers', description: 'Read the model in use, workspace provider availability, and reported subscription limits.' },
+    fr: { label: "Voir ses fournisseurs d'IA", description: 'Consulter le modèle utilisé, les fournisseurs de l’espace de travail et les limites d’abonnement connues.' },
+    es: { label: 'Ver sus proveedores de IA', description: 'Consulta el modelo en uso, los proveedores del espacio de trabajo y los límites conocidos de la suscripción.' },
+    pt: { label: 'Ver seus provedores de IA', description: 'Consulta o modelo em uso, os provedores do espaço de trabalho e os limites conhecidos da assinatura.' },
+    de: { label: 'Eigene KI-Anbieter sehen', description: 'Liest das verwendete Modell, die Anbieter des Arbeitsbereichs und gemeldete Abolimits.' },
+} satisfies Record<Locale, { label: string; description: string }>
+
 // The shared packs already contain the standard controls. These labels are specific to the Mac shell.
 const mac = {
     en: {
@@ -180,6 +188,7 @@ const desktopControlCenterCopy = {
 export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
     return {
         ...mac[locale],
+        aiProviderTool: aiProviderTool[locale],
         actions: desktopActionMessages(locale, source.kit),
         notificationSettings: source.notifications.settings,
         notificationUI: desktopNotificationMessages(locale),

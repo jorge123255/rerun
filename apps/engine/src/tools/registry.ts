@@ -77,6 +77,7 @@ import { desktopTableViewTools } from '../desktop/table-view-tools/index.js'
 import { desktopVisionTools } from '../desktop/vision-tools/tools.js'
 import { bindDesktopTeamReads, desktopTeamReadPorts, readDesktopTeamAdmit, readDesktopTeamReadGrantFromDisk, readDesktopTeamReads } from '../desktop/team-reads/index.js'
 import { desktopTeamDirectory } from '../desktop/team-reads/directory.js'
+import { desktopAiStatusTools } from '../desktop/ai-status.js'
 
 let downloadPermissionBound = false
 function ensureDesktopDownloadPermission() {
@@ -121,6 +122,7 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
         if (calls && hasDesktopToolGrant(ctx.agent.config, 'callAgent') && !ctx.agent.config.ephemeral) Object.assign(tools, desktopCallAgentTools(ctx, calls))
         const teamReads = readDesktopTeamReads()
         if (teamReads && !ctx.agent.config.ephemeral && hasDesktopToolGrant(ctx.agent.config, 'teamRead')) Object.assign(tools, teamReads.tools(ctx))
+        Object.assign(tools, desktopAiStatusTools(ctx))
         if (hasDesktopToolGrant(ctx.agent.config, 'vision')) Object.assign(tools, desktopVisionTools(ctx))
         if (hasDesktopToolGrant(ctx.agent.config, 'notify')) Object.assign(tools, desktopNotifyTools(ctx))
         if (ctx.agent.config.setup?.required && ctx.agent.install && desktopSetupRunAllowed(ctx.agent, ctx.sessionId)) Object.assign(tools, desktopSetupTools(ctx))

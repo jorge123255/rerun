@@ -13,7 +13,7 @@ export function hasDesktopToolGrant(config: AgentConfig, id: DesktopRerunGrantId
     if (id === 'skills') return config.tools.skills !== false
     if (id === 'sharedFilesRead' || id === 'sharedFilesWrite') return config.tools.shared !== false
     if (id === 'privateFileWrite') return config.tools.filesystem
-    if (id === 'download') return !config.ephemeral && config.kind !== 'foreman'
+    if (id === 'download' || id === 'aiProviders') return !config.ephemeral && config.kind !== 'foreman'
     if (id === 'vision') return config.tools.vision === true && config.tools.filesystem === true
     if (id === 'memoryRecall') return config.tools.memory
     if (id === 'memoryWrite') return config.selfImprovement.enabled && config.selfImprovement.autoMemory
