@@ -125,7 +125,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
 
     const mod = useModKeyLabel()
     const page = pages[pages.length - 1]
-    const { scope, text } = parseQuery(query)
+    const { scope, text } = parseQuery(query.normalize('NFC'))
     const pageCoworker = page.kind === 'coworker' || page.kind === 'move' ? coworkers.find(coworker => coworker.id === page.coworkerId) : undefined
     const pageSpace = page.kind === 'box' ? board?.spaces.find(space => space.id === page.spaceId) : undefined
     const membership = (coworkerId: string) => board?.placements.find(placed => placed.agentId === coworkerId)?.spaceId

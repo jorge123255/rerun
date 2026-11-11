@@ -1,6 +1,7 @@
 import { desktopAutomationResultSchema, sessionSourceSchema } from '@rerun/contracts'
 import { z } from 'zod'
 import { messageDayLabel } from '@rerun/i18n/format'
+import { conversationSearchKey } from './chat-search'
 
 export const desktopChatFilterSchema = z.enum(['all', 'chats', 'automations', 'needs'])
 export type DesktopChatFilter = z.infer<typeof desktopChatFilterSchema>
@@ -53,7 +54,7 @@ export function sortDesktopChats(conversations: readonly DesktopChatHistoryConve
 }
 
 export function filterDesktopChats(conversations: readonly DesktopChatHistoryConversation[], filter: DesktopChatFilter, query: string): DesktopChatHistoryConversation[] {
-    const needle = query.trim().toLocaleLowerCase()
+    const needle = conversationSearchKey(query.trim())
     const seen = new Set<string>()
     return sortDesktopChats(conversations.filter(conversation => {
         if (seen.has(conversation.id) || conversation.kind === 'general') return false
@@ -61,7 +62,7 @@ export function filterDesktopChats(conversations: readonly DesktopChatHistoryCon
         if (filter === 'automations' && !isAutomatedChat(conversation)) return false
         if (filter === 'chats' && !isOrdinaryChat(conversation)) return false
         if (filter === 'needs' && !conversation.needsYou) return false
-        const haystack = `${conversation.title}\n${conversation.firstMessage ?? ''}`.toLocaleLowerCase()
+        const haystack = conversationSearchKey(`${conversation.title}\n${conversation.firstMessage ?? ''}`)
         return !needle || haystack.includes(needle)
     }))
 }

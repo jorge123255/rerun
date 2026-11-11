@@ -98,4 +98,5 @@ test('the thread list leaves General out and can match an opening line', () => {
     })
     expect(filterDesktopChats([row('General', 'general', null), row('Notes', 'thread', 'Check the funnel')], 'all', '').map(item => item.id)).toEqual(['Notes'])
     expect(filterDesktopChats([row('Notes', 'thread', 'Check the funnel')], 'all', 'funnel').map(item => item.id)).toEqual(['Notes'])
+    expect(filterDesktopChats([row('Notes', 'thread', 'E\u0301VALUATION')], 'all', 'évaluation').map(item => item.id)).toEqual(['Notes'])
 })
