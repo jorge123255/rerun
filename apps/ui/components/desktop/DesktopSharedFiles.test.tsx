@@ -59,11 +59,20 @@ afterEach(async () => {
     document.body.innerHTML = ''
 })
 
-test('uses the shared folder layout and read preview without inactive mutation menus', async () => {
+test('keeps the read preview and offers rename only for files without exposing Delete', async () => {
     await open()
-    expect(document.querySelector('[aria-label="Actions for note.txt"]')).toBeNull()
-    expect(document.body.textContent).not.toContain('Rename')
-    expect(document.body.textContent).not.toContain('Delete')
+    expect(button('Actions for docs')).toBeUndefined()
+    const actions = button('Actions for note.txt')
+    expect(actions).toBeDefined()
+    await act(async () => {
+        actions!.focus()
+        actions!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    })
+    await flush()
+    const menu = document.querySelector('[role="menu"]')
+    expect([...menu!.querySelectorAll('[role="menuitem"]')].map(item => item.textContent?.trim())).toEqual(['Rename'])
+    await act(async () => { menu!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+    await flush()
     await row('note.txt')
     expect(document.querySelector('pre')?.textContent).toBe('shared body')
     expect(api.read).toHaveBeenCalledWith('note.txt', expect.any(AbortSignal))
