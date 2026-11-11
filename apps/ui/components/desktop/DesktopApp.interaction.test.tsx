@@ -10,6 +10,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { DesktopApp } from './DesktopApp'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
+import { generalTabUid } from '@/lib/desktop/general-threads'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -456,4 +457,52 @@ test('freezes before the first awaited quit drain and leaves failed voice custod
         act(() => cancelled())
         expect(isDesktopQuitting()).toBe(false)
     } finally { unlisten(); undock(); unvoice(); cancelDraftShutdown(); await act(async () => root.unmount()); desktopWindow.desktopApp = previous }
+})
+
+test('open General picks up a saved sibling without rewriting the active layout', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const coworker = { id: 'researcher', name: 'Researcher', description: '', createdAt: '', updatedAt: '' }
+    const base = { agentId: coworker.id, createdAt: '2026-11-11T12:00:00.000Z', updatedAt: '2026-11-11T12:00:00.000Z' }
+    const general = { ...base, id: 'general', title: 'General', kind: 'general', firstMessage: null }
+    const sibling = { ...base, id: 'sibling', title: 'Existing thread', kind: 'thread', firstMessage: 'Existing marker' }
+    const newSibling = { ...base, id: 'new-sibling', title: 'New thread', kind: 'thread', firstMessage: 'Saved on another surface' }
+    const path = '/api/desktop/agents/researcher/sessions'
+    const initial = { sessions: [general, sibling], tabs: { revision: 2, activeIndex: 0, tabs: [{ uid: generalTabUid(coworker.id), id: general.id, title: 'General' }] } }
+    let background: Response | undefined
+    const fetcher = mockDesktopFetch((url, init) => {
+        if (url === settingsUrl) return Response.json(disconnected)
+        if (url === path) return Response.json(initial)
+        if (url === path + '?view=threads') return background?.clone() ?? Response.json({ sessions: [general, sibling, newSibling] })
+        if (url === '/api/desktop/sessions/general/messages') return Response.json({ messages: [] })
+        if (url.endsWith('/tabs') && init?.method === 'PUT') return Response.json({ tabs: { revision: 3 } })
+    })
+    const tick = () => act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    try {
+        await act(async () => root.render(<MotionConfig reducedMotion="always"><ThemeProvider>
+            <DesktopApp initialData={{ ...disconnected, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [coworker] }} />
+        </ThemeProvider></MotionConfig>))
+        const tile = container.querySelector<HTMLElement>('[aria-label="Open chat with Researcher"]')!
+        await act(async () => tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+        expect(container.querySelector('[data-thread-row="sibling"]')).not.toBeNull()
+        background = Response.json({ error: 'Temporary read failure' }, { status: 503 })
+        await tick()
+        expect(container.querySelector('[data-thread-row="sibling"]')).not.toBeNull()
+        expect(container.textContent).not.toContain('Temporary read failure')
+        background = undefined
+        await tick()
+        expect(container.querySelector('[data-thread-row="new-sibling"]')?.textContent ?? '').toContain('Saved on another surface')
+        expect(fetcher.mock.calls.filter(([url, options]) => url.endsWith('/tabs') && options?.method === 'PUT')).toHaveLength(0)
+        await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Close panel"]')!.click())
+        const requests = fetcher.mock.calls.filter(([url]) => url === path + '?view=threads').length
+        await tick()
+        expect(fetcher.mock.calls.filter(([url]) => url === path + '?view=threads')).toHaveLength(requests)
+    } finally {
+        await act(async () => root.unmount())
+        visibility.mockRestore()
+        vi.useRealTimers()
+    }
 })

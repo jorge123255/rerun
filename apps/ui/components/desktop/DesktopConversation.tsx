@@ -1321,20 +1321,24 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     )}
                     {sessionId && active && <DesktopNativeWritebackReview agentId={agent.id} sessionId={sessionId} refreshKey={`${status}/${transcript.length}`}/>}
                     {transcript.map((message, messageIndex) => {
+                        const branches = threadRows.after.get(messageIndex) ?? []
+                        const withBranches = (content: ReactNode) => branches.length === 0 ? content
+                            : <div key={message.id}>{content}{branches.map(thread =>
+                                <DesktopThreadBranch key={thread.id} thread={thread} onOpen={() => onSelectSession(thread.id, thread.title)} />
+                            )}</div>
                         const scheduledRun = scheduledRunOf(message)
                         const triggerPayload = message.role === 'user' ? parseTriggerPayload(message.parts.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n')) : null
                         // Reuse Rerun's routine divider and prompt dialog. No hosted file-link
                         // navigation: the desktop Files panel owns this coworker's documents.
                         const install = message.role==='user' ? parseInstallMessage(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
-                        if(install)return <AgentInstallBlock key={message.id} agentId={agent.id} agentName={agent.name} guide={install.guide} installing={setup.view?.completedAt == null} />
+                        if(install)return withBranches(<AgentInstallBlock key={message.id} agentId={agent.id} agentName={agent.name} guide={install.guide} installing={setup.view?.completedAt == null} />)
                         const hitl = message.role === 'user' ? parseHitlReply(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
                         const secretReceipt = message.role === 'user' ? parseDesktopSecretReceiptSummary(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
-                        if (secretReceipt) return <DesktopSecretSummaryReceipt key={message.id} entries={secretReceipt} />
-                        if (hitl?.kind === 'mcp' || hitl?.kind === 'cancelled' && hitl.of === 'mcp') return <DesktopMcpSignInSummary key={message.id} name={hitl.kind === 'mcp' ? hitl.name : undefined} />
-                        if(hitl?.kind==='service')return <DesktopServiceRequestReceipt key={message.id} entries={hitl.entries} />
-                        if (triggerPayload) return <DesktopWebhookRunBlock key={message.id} agentId={agent.id} payload={triggerPayload} />
-                        if (scheduledRun) return <DesktopScheduledRunBlock key={message.id} run={scheduledRun} />
-                        const branches = threadRows.after.get(messageIndex) ?? []
+                        if (secretReceipt) return withBranches(<DesktopSecretSummaryReceipt key={message.id} entries={secretReceipt} />)
+                        if (hitl?.kind === 'mcp' || hitl?.kind === 'cancelled' && hitl.of === 'mcp') return withBranches(<DesktopMcpSignInSummary key={message.id} name={hitl.kind === 'mcp' ? hitl.name : undefined} />)
+                        if(hitl?.kind==='service')return withBranches(<DesktopServiceRequestReceipt key={message.id} entries={hitl.entries} />)
+                        if (triggerPayload) return withBranches(<DesktopWebhookRunBlock key={message.id} agentId={agent.id} payload={triggerPayload} />)
+                        if (scheduledRun) return withBranches(<DesktopScheduledRunBlock key={message.id} run={scheduledRun} />)
                         const view = (
                         <div key={message.id} className={cn('flex min-w-0 items-end', message.role === 'user' && 'justify-end gap-2')}>
                             <Message from={message.role} className="min-w-0">
@@ -1367,8 +1371,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                             {message.role === 'user' && <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"><UserRoundIcon className="size-4" /></span>}
                         </div>
                         )
-                        if (!branches.length) return view
-                        return <div key={message.id}>{view}{branches.map(thread => <DesktopThreadBranch key={thread.id} thread={thread} onOpen={() => onSelectSession(thread.id, thread.title)} />)}</div>
+                        return withBranches(view)
                     })}
                     {sessionId && <DesktopToolInstallPending agentId={agent.id} sessionId={sessionId} messages={transcript} active={active && ready} disabled={draft.quitting || inactive || generating || stopping} />}
                     {active && takeover && !webhookOwns('takeover', takeover.id) && <DesktopBrowserCard key={takeover.id} agentId={agent.id} takeover={takeover} disabled={draft.quitting || inactive || generating || stopping || !ready} onAction={async payload => {

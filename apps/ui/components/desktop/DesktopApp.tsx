@@ -873,28 +873,42 @@ function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelReque
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/sessions`
     const sessionRead = useRef<AbortController | null>(null)
 
-    const readSessions = useCallback(async (restoreTabs = false, checking?: DesktopChatRequest) => {
+    const readSessions = useCallback(async ({ restoreTabs = false, checking, background = false }: {
+        restoreTabs?: boolean; checking?: DesktopChatRequest; background?: boolean
+    } = {}) => {
+        if (background && sessionRead.current) return
         sessionRead.current?.abort()
         const controller = new AbortController()
         sessionRead.current = controller
         try {
             if (restoreTabs) await pendingTabWrite(agent.id)
-            const body = await json<{ sessions: DesktopSessionView[]; tabs?: DesktopTabLayout | null }>(await fetch(url, { signal: controller.signal, cache: 'no-store' }))
+            const body = await json<{ sessions: DesktopSessionView[]; tabs?: DesktopTabLayout | null }>(await fetch(background ? url + '?view=threads' : url, { signal: controller.signal, cache: 'no-store' }))
             if (controller.signal.aborted) return
-            setSessions(body.sessions)
+            if (!Array.isArray(body.sessions)) throw new Error('Could not load conversations')
+            setSessions(previous => {
+                if (!background || !previous || previous.length !== body.sessions.length) return body.sessions
+                return previous.every((session, index) => {
+                    const next = body.sessions[index]
+                    return session.id === next.id && session.agentId === next.agentId && session.title === next.title
+                        && session.kind === next.kind && session.firstMessage === next.firstMessage
+                        && session.createdAt === next.createdAt && session.updatedAt === next.updatedAt
+                }) ? previous : body.sessions
+            })
             if (restoreTabs) setBootstrap({ layout: body.tabs ?? null })
-            setError(null)
+            if (!background) setError(null)
         } catch (cause) {
-            if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load conversations')
+            if (!background && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load conversations')
         } finally {
+            if (sessionRead.current === controller) sessionRead.current = null
             if (checking && !controller.signal.aborted) setCheckedRequest(checking)
         }
     }, [agent.id, url])
+    const refreshThreads = useCallback(() => readSessions({ background: true }), [readSessions])
 
     useEffect(() => {
         // State changes in readSessions happen only after the asynchronous request.
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        void readSessions(true)
+        void readSessions({ restoreTabs: true })
         return () => sessionRead.current?.abort()
     }, [readSessions])
 
@@ -904,10 +918,10 @@ function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelReque
         // Refresh its owner-scoped list while preserving the live tab/draft instances.
         // readSessions changes state only after its asynchronous read.
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        if (bootstrap && missing && requested && checkedRequest !== requested) void readSessions(false, requested)
+        if (bootstrap && missing && requested && checkedRequest !== requested) void readSessions({ checking: requested })
     }, [bootstrap, missing, requested, checkedRequest, readSessions])
     const dismiss = <Button type="button" variant="ghost" size="icon-sm" aria-label="Close panel" className="absolute right-3 top-3" onClick={onClosePanel}><X /></Button>
-    const reload = () => { setBootstrap(null); void readSessions(true) }
+    const reload = () => { setBootstrap(null); void readSessions({ restoreTabs: true }) }
     return <>
         {(error || (missing && checkedRequest === requested)) && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">
             {error ?? 'This conversation is no longer available for this coworker.'}
@@ -918,6 +932,6 @@ function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelReque
         {!bootstrap || !sessions ? dismiss : <DesktopChatTabs onOpenCoworkerChat={onOpenCoworkerChat}
             agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
-            refreshSessions={readSessions} reload={reload} modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}
+            refreshSessions={readSessions} refreshThreads={refreshThreads} reload={reload} modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}
     </>
 }

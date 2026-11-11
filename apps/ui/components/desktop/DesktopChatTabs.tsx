@@ -2,6 +2,7 @@
 
 import type { ConnectionSummary } from '@rerun/contracts'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import { OpenChatsTabStrip } from '@/components/agent/sheet/OpenChatsTabStrip'
 import { CloseRunningTabDialog } from '@/components/dialogs/CloseRunningTabDialog'
 import { Button } from '@/components/ui/button'
@@ -28,6 +29,7 @@ type Props = {
     selected: boolean
     onVisibleSession?: (agentId: string, sessionId: string | null) => void
     refreshSessions: () => Promise<void>
+    refreshThreads?: () => Promise<void>
     reload: () => void
     onOpenCoworkerChat?: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel: () => void
@@ -51,7 +53,7 @@ function initialTabs(agentId: string, layout: DesktopTabLayout | null, sessions:
     return id && session ? openSessionTab(pinned, id, session.title) : pinned
 }
 
-export function DesktopChatTabs({ agent, sessions, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, reload, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: Props) {
+export function DesktopChatTabs({ agent, sessions, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, refreshThreads, reload, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: Props) {
     const [layout, setLayout] = useState(() => initialTabs(agent.id, initialLayout, sessions, requested))
     const [rejectedRequest, setRejectedRequest] = useState<DesktopChatRequest | null>(() => {
         const pinned = initialTabs(agent.id, initialLayout, sessions, requested)
@@ -70,6 +72,13 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
     const pendingForks = useRef(new Set<string>())
     const generalFork = useRef<{ sourceUid: string; sessionId: string } | null>(null)
     const active = layout.tabs[layout.activeIndex]
+    const refreshVisibleThreads = useCallback(async () => {
+        if (!isDesktopQuitting()) await refreshThreads?.()
+    }, [refreshThreads])
+    useVisibleInterval(refreshVisibleThreads, 5000, {
+        enabled: !!refreshThreads && selected && canMountChats && !rejectedRequest && isGeneralTab(active),
+        immediate: false,
+    })
     const [visited, setVisited] = useState<string[]>([active.uid])
     const lastRequest = useRef(requested)
     const save = useCallback((next: SessionTabsState): Promise<boolean> => {
