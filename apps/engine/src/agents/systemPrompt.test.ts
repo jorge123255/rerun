@@ -431,6 +431,41 @@ describe('quick replies section', () => {
     })
 })
 
+describe('desktop data and setup guidance', () => {
+    afterEach(() => vi.unstubAllEnvs())
+
+    it('keeps legacy hosted tools and credit instructions out of Mac chat and automation prompts', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const local = { ...agent, config: agentConfigSchema.parse({ name: 'Mac analyst', tools: {
+            hub: true, paidData: true, web: true, desktopToolGrants: { webFetch: true },
+        } }) }
+        for (const trigger of [{ source: 'chat' }, { source: 'schedule', slug: 'digest', name: 'Daily digest' }] as const) {
+            const prompt = await buildSystemPrompt(local, trigger)
+            expect(prompt).toContain('web_fetch reads public HTTP(S) text')
+            expect(prompt).not.toMatch(/paid_data|request_spend|200 credits|rerun_hub_service_|publish_file|<service_catalog>/)
+            expect(prompt).not.toContain('web_search')
+        }
+    })
+
+    it('asks a Mac coworker for a checked first result and preserves required setup when an optional app is skipped', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const local = { ...agent, install: 'Prepare a public preview before connecting any apps.',
+            config: agentConfigSchema.parse({ name: 'Mac setup', setup: { required: true }, tools: {
+                paidData: true, hub: true, desktopToolGrants: { suggestService: true },
+            } }) }
+        const prompt = await buildSystemPrompt(local)
+        const setup = prompt.slice(prompt.indexOf('<setup>'), prompt.indexOf('</setup>'))
+        expect(setup).toContain('Show a checked first result')
+        expect(setup).toContain('Label sample data')
+        expect(setup).toContain('keep setup pending')
+        expect(setup).toContain('When install_complete is available')
+        expect(prompt).toContain('call suggest_service')
+        expect(prompt).not.toMatch(/paid_data|request_spend|rerun_hub_service_|publish_file/)
+        expect(setup).not.toContain('with request_secret')
+        expect(setup).not.toContain('with memory_write')
+    })
+})
+
 describe('paid data section', () => {
     const paidDataSection = async () => {
         const prompt = await buildSystemPrompt(agentWith({ paidData: true }), { source: 'chat' })
