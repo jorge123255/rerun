@@ -30,6 +30,7 @@ export const messageSchema = z.object({
     sourcesJson: z.string().nullish(),
     // Absent on an engine older than message attribution, null when nobody typed the message.
     authorId: z.string().nullish(),
+    authorName: z.string().nullish(),
     createdAt: z.string(),
 })
 export type Message = z.infer<typeof messageSchema>

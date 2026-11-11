@@ -50,6 +50,24 @@ const mac = {
 
 type Source = { chat: typeof chat; foreman: typeof foreman; kit: typeof kit }
 
+const alternateCopy = {
+    en: { title: 'Reply retries', original: 'Original conversation', entry: 'Retry {number}', check: 'Check retry', loading: 'Opening retry…',
+        confirm: 'Draft another answer in a separate conversation using the saved chat and original model.',
+        status: { prepared: 'Ready to start.', uncertain: 'Preparation is unconfirmed.', running: 'Drafting a reply…', error: 'The retry failed.', cancelled: 'Retry stopped.' } },
+    fr: { title: 'Nouvelles réponses', original: 'Conversation originale', entry: 'Tentative {number}', check: 'Vérifier la tentative', loading: 'Ouverture…',
+        confirm: 'Rédigez une autre réponse dans une conversation distincte avec l’historique et le modèle d’origine.',
+        status: { prepared: 'Prêt à démarrer.', uncertain: 'La préparation reste à confirmer.', running: 'Rédaction de la réponse…', error: 'La tentative a échoué.', cancelled: 'Tentative arrêtée.' } },
+    es: { title: 'Reintentos de respuesta', original: 'Conversación original', entry: 'Intento {number}', check: 'Comprobar intento', loading: 'Abriendo intento…',
+        confirm: 'Redacta otra respuesta en una conversación aparte con el historial y el modelo original.',
+        status: { prepared: 'Listo para empezar.', uncertain: 'La preparación está por confirmar.', running: 'Redactando una respuesta…', error: 'El intento falló.', cancelled: 'Intento detenido.' } },
+    pt: { title: 'Novas tentativas', original: 'Conversa original', entry: 'Tentativa {number}', check: 'Verificar tentativa', loading: 'Abrindo tentativa…',
+        confirm: 'Escreva outra resposta em uma conversa separada com o histórico e o modelo original.',
+        status: { prepared: 'Tudo pronto para começar.', uncertain: 'A preparação ainda precisa de confirmação.', running: 'Escrevendo uma resposta…', error: 'A tentativa falhou.', cancelled: 'Tentativa interrompida.' } },
+    de: { title: 'Neue Antwortversuche', original: 'Ursprüngliche Unterhaltung', entry: 'Versuch {number}', check: 'Versuch prüfen', loading: 'Versuch wird geöffnet…',
+        confirm: 'Entwirf eine weitere Antwort in einer separaten Unterhaltung mit dem gespeicherten Verlauf und dem ursprünglichen Modell.',
+        status: { prepared: 'Bereit zum Start.', uncertain: 'Die Vorbereitung ist noch nicht bestätigt.', running: 'Antwort wird entworfen…', error: 'Der Versuch ist fehlgeschlagen.', cancelled: 'Versuch gestoppt.' } },
+} satisfies Record<Locale, { title: string; original: string; entry: string; check: string; loading: string; confirm: string; status: Record<'prepared' | 'uncertain' | 'running' | 'error' | 'cancelled', string> }>
+
 export function desktopForemanMessages(locale: Locale, source: Source) {
     const { welcome, plan, dock } = source.foreman
     return {
@@ -64,6 +82,7 @@ export function desktopForemanMessages(locale: Locale, source: Source) {
         send: source.foreman.pill.send,
         stop: source.chat.promptInput.stop,
         retry: source.kit.chat.skillProposal.retry,
+        alternates: { ...alternateCopy[locale], regenerate: source.chat.message.regenerate, cancel: source.chat.composer.editor.cancel },
         welcome: { title: welcome.title, preparing: welcome.preparing },
         failedReply: dock.failedReply,
         plan: {

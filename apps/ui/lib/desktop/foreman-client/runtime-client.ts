@@ -4,7 +4,7 @@ import { z } from 'zod'
 import type { UIMessage } from 'ai'
 import {
     foremanChatRefSchema, foremanConversationViewSchema, foremanModelRefSchema, foremanDecisionInputSchema,
-    foremanDecisionSchema, foremanBuildSchema, foremanLiveEventSchema, visibleText,
+    foremanDecisionSchema, foremanBuildSchema, foremanLiveEventSchema, foremanDigestSchema, visibleText,
     type DesktopForemanModelRef, type DesktopForemanLiveEvent,
 } from '@rerun/contracts'
 import { answeredQuestionRecapsForMessage, desktopAnsweredQuestionRecapSchema } from '@/lib/desktop/foreman/answered-question-recap'
@@ -27,6 +27,7 @@ const stateSchema = z.strictObject({
     question: desktopPendingQuestionSchema.nullable().optional(),
     starter: desktopStarterViewSchema.nullable().optional(),
     answeredQuestions: z.array(desktopAnsweredQuestionRecapSchema).max(2048).optional(),
+    retrySnapshot: foremanDigestSchema.optional(),
     messages: z.array(z.object({ id: z.string().max(256), role: z.enum(['user', 'assistant']), parts: z.array(z.unknown()).max(4096) })).max(5000),
     ui: z.strictObject({ snapshot: desktopForemanSavedUiSchema.nullable(), revision: z.number().int().nonnegative() }),
 }).refine(value => sameForemanChat(value.chat, value.view.chat) && (!value.ui.snapshot || sameForemanChat(value.chat, value.ui.snapshot)), 'Foreman state belongs to another chat.')

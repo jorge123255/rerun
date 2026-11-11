@@ -145,7 +145,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     {!intakeOpen && <DesktopCompanyResearch chat={state.chat} active={!!props.controlledOpen && !props.hidden} refreshKey={JSON.stringify(state.view)} />}
     <DesktopForemanColumn
         controlledOpen={props.controlledOpen} hidden={props.hidden} centerOpen={props.centerOpen} onOpenChange={props.onOpenChange} onLayout={props.onLayout}
-        dockFeed={dockFeed} voiceSlot={voiceSlot} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)}
+        dockFeed={dockFeed} voiceSlot={voiceSlot} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)} retrySnapshot={state.retrySnapshot}
         question={state.question} onAnswerQuestion={client.answerQuestion}
         starter={state.starter} onStarterAnswer={client.answerStarter} intakeFinished={intake.finished}
         streaming={!!state.view.live} orbState={state.view.live ? 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}

@@ -3,6 +3,7 @@ import type { Client, InStatement } from '@libsql/client'
 import { FOREMAN_AGENT_ID, type DesktopForemanChatRef } from '@rerun/contracts'
 import type { MessageRow } from '../schema.js'
 import { getSystemDb } from '../systemDb.js'
+import { foremanTranscriptRevision } from '../../desktop/foreman/transcript-revision.js'
 
 export type ForemanReplyTurn = { runId: string; userMessageId: string }
 export type ForemanReplyTarget = DesktopForemanChatRef & { sessionId: string; assistantMessageId: string }
@@ -62,13 +63,14 @@ export async function readForemanReplySnapshot(reader: Pick<Client, 'execute'>, 
         typeof reply?.content_json !== 'string' || saved.reply_digest !== digest(reply.content_json)) return null
 
     // Return only an internal comparison token, never the raw message or tool content.
-    const revision = createHash('sha256')
-    revision.update(JSON.stringify(['foreman-transcript-v1', target.workspaceId, target.chatId, target.sessionId]))
-    for (const row of rows) {
-        revision.update(JSON.stringify([row.id, row.role, row.content_json, row.tool_calls_json,
-            row.sources_json, row.created_at, row.author_id, row.author_name]))
-    }
+    const transcriptRevision = foremanTranscriptRevision(target, target.sessionId, rows.map(row => ({
+        id: String(row.id), role: String(row.role), contentJson: String(row.content_json), createdAt: String(row.created_at),
+        toolCallsJson: typeof row.tool_calls_json === 'string' ? row.tool_calls_json : null,
+        sourcesJson: typeof row.sources_json === 'string' ? row.sources_json : null,
+        authorId: typeof row.author_id === 'string' ? row.author_id : null,
+        authorName: typeof row.author_name === 'string' ? row.author_name : null,
+    })))
     const proof = { ...target, sourceRunId: saved.run_id, precedingUserMessageId: saved.user_message_id,
-        replyDigest: saved.reply_digest, transcriptRevision: revision.digest('hex') }
+        replyDigest: saved.reply_digest, transcriptRevision }
     return { proof, rows }
 }

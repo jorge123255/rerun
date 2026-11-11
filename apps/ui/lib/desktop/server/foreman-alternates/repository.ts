@@ -37,12 +37,12 @@ export function createForemanAlternateRepository(db: Client, authority: Alternat
         return { row, fingerprint }
     }
     return {
-        async request(raw: AlternateInput): Promise<AlternateReceipt> {
+        async request(raw: AlternateInput, mode: 'prepare' | 'recover' = 'prepare'): Promise<AlternateReceipt> {
             const input = alternateInputSchema.parse(raw)
             const reservation = await write(async tx => {
                 const { row, fingerprint } = await owned(tx, input)
                 if (row) return { receipt: JSON.parse(String(row.body)) as AlternateReceipt, fresh: false }
-                if (!engine) throw refusal()
+                if (!engine || mode === 'recover') throw refusal()
                 const proof = await authority.target(tx, input)
                 if (!proof || proof.workspaceId !== input.workspaceId || proof.chatId !== input.chatId || proof.messageId !== input.messageId || proof.transcriptRevision !== input.transcriptRevision || !proof.sourceSessionId || !proof.sourceRunId || !proof.textDigest || !proof.precedingUserId || !proof.completed || proof.activeTurn || proof.activeBuild || proof.pendingDecision) throw refusal()
                 const receipt: AlternateReceipt = { input, proof, state: 'reserved', alternate: null }

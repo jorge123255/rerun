@@ -1,19 +1,33 @@
 import 'server-only'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
-import { foremanAlternateRequestSchema, foremanAlternateReservationSchema, foremanAlternateRunSchema, foremanModelRefSchema, foremanReplySourceSchema, type ForemanAlternateRequest, type ForemanAlternateRunRequest } from '@rerun/contracts'
-import { EngineRequestError, request } from '@/lib/engine/client'
+import { foremanAlternateListEntrySchema, foremanAlternateRequestSchema, foremanAlternateReservationSchema, foremanAlternateRunSchema, foremanModelRefSchema, foremanReplySourceSchema, visibleText, type DesktopForemanChatRef, type ForemanAlternateRequest, type ForemanAlternateRunRequest } from '@rerun/contracts'
+import { EngineRequestError, getSessionMessages, request } from '@/lib/engine/client'
+import { publicDesktopHistory, transformEngineMessages } from '@/lib/chat/engine-history'
 import { DesktopHttpError } from '../auth'
 import { desktopForeman } from '../foreman/binding'
 import { foremanTurn, ownedForemanChat, withForemanChatWrite } from '../foreman/chat-store'
 import type { DesktopRuntime } from '../runtime'
 import { engineOf } from '../settings'
 import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
-import { createForemanAlternateRepository, type AlternateInput, type AlternateProof, type AlternateReceipt } from './repository'
+import { createForemanAlternateRepository, type AlternateInput, type AlternateProof, type AlternateReceipt, type AlternateTarget } from './repository'
+import { foremanAlternateSnapshot, matchesForemanAlternateSnapshot } from './snapshot'
 
 const refused = () => new DesktopHttpError(409, 'This saved Chief of Staff reply is no longer available for a retry.')
 const sourceResponse = z.strictObject({ source: foremanReplySourceSchema.nullable() })
 const alternateResponse = z.strictObject({ alternate: foremanAlternateReservationSchema.nullable() })
+
+async function sourceFor(runtime: DesktopRuntime, chat: DesktopForemanChatRef, sessionId: string, messageId: string, signal: AbortSignal, expectedRevision?: string) {
+    const expected = { ...chat, sessionId, assistantMessageId: messageId.slice('engine-'.length) }
+    const query = new URLSearchParams({ ...expected, ...(expectedRevision && { expectedTranscriptRevision: expectedRevision }) })
+    const { source } = await request(engineOf(runtime), '/desktop/foreman/reply-source?' + query, {
+        cache: 'no-store', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+    }, value => sourceResponse.parse(value))
+    if (!source || (expectedRevision && source.transcriptRevision !== expectedRevision) ||
+        source.workspaceId !== expected.workspaceId || source.chatId !== expected.chatId ||
+        source.sessionId !== expected.sessionId || source.assistantMessageId !== expected.assistantMessageId) return null
+    return source
+}
 
 function engineTarget(input: AlternateInput, proof: AlternateProof): ForemanAlternateRequest {
     return foremanAlternateRequestSchema.parse({
@@ -48,15 +62,8 @@ export async function bindForemanAlternates(runtime: DesktopRuntime, signal: Abo
         async target(tx, input) {
             const chat = { workspaceId: input.workspaceId, chatId: input.chatId }
             const owner = await ownedForemanChat(tx, chat)
-            const expected = { ...chat, sessionId: owner.sessionId,
-                assistantMessageId: input.messageId.slice('engine-'.length) }
-            const query = new URLSearchParams({ ...expected, expectedTranscriptRevision: input.transcriptRevision })
-            const { source } = await request(engineOf(runtime), '/desktop/foreman/reply-source?' + query, {
-                cache: 'no-store', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
-            }, value => sourceResponse.parse(value))
-            if (!source || source.transcriptRevision !== input.transcriptRevision ||
-                source.workspaceId !== expected.workspaceId || source.chatId !== expected.chatId ||
-                source.sessionId !== expected.sessionId || source.assistantMessageId !== expected.assistantMessageId) return null
+            const source = await sourceFor(runtime, chat, owner.sessionId, input.messageId, signal, input.transcriptRevision)
+            if (!source) return null
             assertDesktopWorkspaceAdmission(runtime)
             return { workspaceId: input.workspaceId, chatId: input.chatId, sourceSessionId: source.sessionId, messageId: input.messageId,
                 sourceRunId: source.sourceRunId, transcriptRevision: source.transcriptRevision, textDigest: source.replyDigest,
@@ -71,11 +78,11 @@ export async function bindForemanAlternates(runtime: DesktopRuntime, signal: Abo
         lookup: (input, proof) => sendEngine('lookup', input, proof),
     })
     return {
-        request: (input: AlternateInput) => withForemanChatWrite(app.db, async () => {
+        request: (input: AlternateInput, mode: 'prepare' | 'recover' = 'prepare') => withForemanChatWrite(app.db, async () => {
             signal.throwIfAborted()
             const existing = (await app.db.execute({ sql: 'SELECT 1 FROM desktop_foreman_alternates WHERE request_id=?', args: [input.requestId] })).rows[0]
-            if (!existing) await app.assertAlternateIdle({ workspaceId: input.workspaceId, chatId: input.chatId })
-            return repository.request(input)
+            if (mode === 'prepare' && !existing) await app.assertAlternateIdle({ workspaceId: input.workspaceId, chatId: input.chatId })
+            return repository.request(input, mode)
         }),
     }
 }
@@ -113,11 +120,7 @@ export async function changeForemanAlternateRun(runtime: DesktopRuntime, command
             if (saved.rowsAffected !== 1) throw refused()
         }
         try {
-            const result = await request(engineOf(runtime), '/desktop/foreman/alternate/run', {
-                method: 'POST', body: JSON.stringify({ action: command.action, target }), redirect: 'error',
-                signal: AbortSignal.any([signal, AbortSignal.timeout(25_000)]),
-            }, value => foremanAlternateRunSchema.parse(value))
-            if (result.sessionId !== receipt.alternate.sessionId || result.runId !== receipt.alternate.runId) throw refused()
+            const result = await engineRun(runtime, command.action, target, receipt.alternate, signal)
             return { requestId: command.requestId, status: result.status }
         } catch (error) {
             if (error instanceof EngineRequestError && error.status === 409) throw refused()
@@ -125,6 +128,59 @@ export async function changeForemanAlternateRun(runtime: DesktopRuntime, command
             throw new DesktopHttpError(503, 'The retry status could not be confirmed. Check this same retry before starting another.')
         }
     })
+}
+
+async function engineRun(runtime: DesktopRuntime, action: ForemanAlternateRunRequest['action'], target: ForemanAlternateRequest, alternate: AlternateTarget, signal: AbortSignal) {
+    const result = await request(engineOf(runtime), '/desktop/foreman/alternate/run', {
+        method: 'POST', body: JSON.stringify({ action, target }), redirect: 'error',
+        signal: AbortSignal.any([signal, AbortSignal.timeout(25_000)]),
+    }, value => foremanAlternateRunSchema.parse(value))
+    if (result.sessionId !== alternate.sessionId || result.runId !== alternate.runId) throw refused()
+    return result
+}
+
+export async function reviewForemanAlternate(runtime: DesktopRuntime, input: { chat: DesktopForemanChatRef; messageId: string; snapshot: string }, signal: AbortSignal) {
+    const app = await desktopForeman(runtime)
+    await app.assertAlternateIdle(input.chat)
+    const owner = await ownedForemanChat(app.db, input.chat)
+    const source = await sourceFor(runtime, owner.chat, owner.sessionId, input.messageId, signal)
+    if (!source || !matchesForemanAlternateSnapshot(input.snapshot,
+        foremanAlternateSnapshot(runtime, owner.chat, owner.sessionId, source.transcriptRevision))) throw refused()
+    assertDesktopWorkspaceAdmission(runtime)
+    return source
+}
+
+export async function recoverForemanAlternate(runtime: DesktopRuntime, chat: DesktopForemanChatRef, requestId: string, signal: AbortSignal) {
+    const { receipt } = await ownedAlternateReceipt(runtime, chat, requestId)
+    return (await bindForemanAlternates(runtime, signal)).request(receipt.input, 'recover')
+}
+
+export async function listForemanAlternates(runtime: DesktopRuntime, chat: DesktopForemanChatRef) {
+    assertDesktopWorkspaceAdmission(runtime)
+    if (chat.workspaceId !== String(runtime.workspaceId)) throw refused()
+    const app = await desktopForeman(runtime)
+    await ownedForemanChat(app.db, chat)
+    const { rows } = await app.db.execute({
+        sql: 'SELECT request_id, body FROM desktop_foreman_alternates WHERE workspace_id=? AND chat_id=? ORDER BY rowid DESC',
+        args: [chat.workspaceId, chat.chatId],
+    })
+    return rows.map(row => foremanAlternateListEntrySchema.parse({
+        requestId: row.request_id, messageId: (JSON.parse(String(row.body)) as AlternateReceipt).input.messageId,
+    }))
+}
+
+export async function readForemanAlternate(runtime: DesktopRuntime, chat: DesktopForemanChatRef, requestId: string, signal: AbortSignal) {
+    const { receipt, target } = await ownedAlternateReceipt(runtime, chat, requestId)
+    if (receipt.state !== 'ready' || !receipt.alternate) return { requestId, status: 'uncertain', messages: [] }
+    const run = await engineRun(runtime, 'status', target, receipt.alternate, signal)
+    const raw = await getSessionMessages(engineOf(runtime), 'foreman', run.sessionId, {
+        requireSuccess: true, signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+    })
+    assertDesktopWorkspaceAdmission(runtime)
+    const messages = publicDesktopHistory(transformEngineMessages(raw))
+        .map(({ id, role, parts }) => ({ id, role, text: visibleText(parts, '\n') }))
+        .filter(message => message.text.trim())
+    return { requestId, status: run.status, messages }
 }
 
 // The engine callback must not reacquire the chat lock held by the app's request.

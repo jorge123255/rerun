@@ -87,6 +87,23 @@ export const foremanAlternateRunRequestSchema = z.strictObject({
     requestId: z.uuid(),
 })
 export type ForemanAlternateRunRequest = z.infer<typeof foremanAlternateRunRequestSchema>
+export const foremanAlternateMessageIdSchema = z.string().regex(/^engine-[A-Za-z0-9_-]{1,128}$/)
+export const foremanAlternateReviewSchema = z.strictObject({
+    chat: foremanChatRefSchema,
+    messageId: foremanAlternateMessageIdSchema,
+    snapshot: foremanDigestSchema,
+})
+export const foremanAlternateBrowserRequestSchema = z.discriminatedUnion('action', [
+    foremanAlternateReviewSchema.extend({ action: z.literal('review') }),
+    foremanAlternateReviewSchema.extend({ action: z.literal('prepare'), requestId: z.uuid() }),
+    z.strictObject({ action: z.literal('recover'), chat: foremanChatRefSchema, requestId: z.uuid() }),
+])
+export const foremanAlternateListEntrySchema = z.strictObject({ requestId: z.uuid(), messageId: foremanAlternateMessageIdSchema })
+export const foremanAlternateViewSchema = z.strictObject({
+    requestId: z.uuid(),
+    status: z.enum(['prepared', 'uncertain', 'running', 'done', 'error', 'cancelled']),
+    messages: z.array(z.strictObject({ id: z.string(), role: z.enum(['user', 'assistant']), text: z.string() })),
+})
 export const foremanAlternateRunSchema = z.strictObject({
     sessionId: z.uuid(),
     runId: z.uuid(),

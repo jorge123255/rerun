@@ -27,6 +27,11 @@ import type { DesktopLocalStarterDecision, DesktopStarterView } from '@/lib/desk
 import { DesktopQuestionCard } from '@/components/desktop/DesktopQuestionCard'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import type { DesktopTemplateIdentity } from '@/components/desktop/templates/types'
+import { Button } from '@/components/ui/button'
+import { RotateCwIcon } from '@/lib/icons'
+import { useDesktopLocale } from '../DesktopLocale'
+import { DesktopForemanAlternateReview, DesktopForemanAlternates } from './DesktopForemanAlternates'
+import { useDesktopForemanAlternates } from './useDesktopForemanAlternates'
 
 function anchorOf(placement: DesktopForemanPlacement): ForemanAnchor {
     if (placement.mode === 'float') return 'float'
@@ -38,6 +43,7 @@ export type DesktopForemanColumnProps = {
     ports: DesktopForemanActionPorts
     live: { runId: string } | null
     messages: DesktopForemanMessage[]
+    retrySnapshot?: string
     streaming?: boolean
     question?: DesktopPendingQuestion | null
     onAnswerQuestion?: (answer: DesktopQuestionAnswer) => Promise<void>
@@ -76,6 +82,7 @@ export function DesktopForemanColumn({
     ports,
     live,
     messages,
+    retrySnapshot,
     streaming,
     question, onAnswerQuestion,
     agentNameOf,
@@ -84,6 +91,7 @@ export function DesktopForemanColumn({
     renderBoardOverlay,
     className, onClose, openOnMount, refreshKey, composerTrailing, focusRequest, controlledOpen, hidden, centerOpen, dockFeed, voiceSlot, intake, intakeFinished, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
+    const { t } = useDesktopLocale()
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
     const savedAnswers = messages.some(message => message.role === 'assistant' && !!message.text.trim())
     const answerFeedback = useDesktopForemanFeedback(chat, !hidden && foreman.restored && savedAnswers)
@@ -96,6 +104,12 @@ export function DesktopForemanColumn({
     const composerScope = useRef({ chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft })
     composerScope.current = { chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft }
     const pendingStarter = !!starter && !starter.decision?.settled
+    const onRoutines = ui.tab === 'routines'
+    const alternates = useDesktopForemanAlternates({
+        chat, snapshot: retrySnapshot, active: !!retrySnapshot && ui.open && !hidden && !onRoutines && !intake && foreman.restored,
+        eligible: !!retrySnapshot && !streaming && !question && !pendingStarter && !foreman.blocked && ui.decision.status !== 'pending',
+    })
+    const { close: closeAlternates, open: alternatesOpen } = alternates
     const starterInFlight = useRef(false)
     const [starterBusy, setStarterBusy] = useState(false)
     const [starterError, setStarterError] = useState<{ offerId: string; message: string } | null>(null)
@@ -142,6 +156,7 @@ export function DesktopForemanColumn({
         if (!focusRequest || !foreman.restored || consumedFocus.current === focusRequest) return
         if (!ui.open) { changeOpen(true); return }
         if (ui.tab !== 'assistant') { foreman.setTab('assistant'); return }
+        if (alternatesOpen) { closeAlternates(); return }
         let focused = false
         const focus = () => {
             const target = column.current?.querySelector<HTMLInputElement | HTMLTextAreaElement>(intake ? '[data-foreman-intake] input:not([disabled])' : 'textarea[data-desktop-foreman-composer]')
@@ -151,9 +166,8 @@ export function DesktopForemanColumn({
         observer.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['inert'] })
         queueMicrotask(focus)
         return () => { focused = true; observer.disconnect() }
-    }, [focusRequest, foreman.restored, ui.open, ui.tab, foreman.setOpen, foreman.setTab, changeOpen, intake?.restored])
+    }, [focusRequest, foreman.restored, ui.open, ui.tab, foreman.setOpen, foreman.setTab, changeOpen, intake?.restored, alternatesOpen, closeAlternates])
     const routinesClient = useMemo(() => createDesktopWorkspaceRoutinesClient(), [])
-    const onRoutines = ui.tab === 'routines'
     const plan = projectPlanCard(foreman.planSnapshot)
     const docked = ui.placement.mode === 'dock'
     // The rail takes the empty conversation's place instead of sitting under the welcome orb.
@@ -172,9 +186,14 @@ export function DesktopForemanColumn({
                     tab={ui.tab}
                     onTabChange={foreman.setTab}
                     onClose={() => changeOpen(false)}
-                    actions={headerActions}
+                    actions={<>
+                        {headerActions}
+                        {retrySnapshot && !onRoutines && !intake && alternates.items.length > 0 && !alternates.open &&
+                            <Button type="button" size="icon-xs" variant="ghost" aria-label={t('foreman.alternates.title')}
+                                title={t('foreman.alternates.title')} onClick={alternates.openList}><RotateCwIcon /></Button>}
+                    </>}
                 />
-                <div className={onRoutines ? 'hidden' : 'contents'}>
+                <div className={onRoutines || alternates.open ? 'hidden' : 'contents'}>
                     {intake ? <>
                         <div className="relative flex min-h-0 flex-1 flex-col justify-center overflow-y-auto px-3 py-6">
                             <DesktopForemanIntakeHeader intake={intake} />
@@ -194,7 +213,7 @@ export function DesktopForemanColumn({
                         nextSteps={foreman.nextSteps}
                         leadState={foreman.leadState}
                         live={foreman.live}
-                        error={(starterError?.offerId === starter?.offerId ? starterError?.message : null) || foreman.error || (foreman.blocked ? `Blocked: ${foreman.blocked.replaceAll('_', ' ')}` : null)}
+                        error={(starterError?.offerId === starter?.offerId ? starterError?.message : null) || alternates.error || foreman.error || (foreman.blocked ? `Blocked: ${foreman.blocked.replaceAll('_', ' ')}` : null)}
                         onConfirmPlan={foreman.confirmPlan}
                         onAskChanges={() => foreman.askChanges()}
                         onRetryDecision={foreman.retryDecision}
@@ -206,6 +225,8 @@ export function DesktopForemanColumn({
                         onOpenCoworker={input => foreman.navigate({ kind: 'open_coworker', agentId: input.agentId, sessionId: input.sessionId })}
                         onOpenBox={spaceId => foreman.navigate({ kind: 'open_box', spaceId })}
                         answerFeedback={{ ratingOf: answerFeedback.ratingOf, onRate: answerFeedback.rate, disabled: hidden }}
+                        replyRetry={retrySnapshot ? { review: id => void alternates.reviewReply(id),
+                            disabled: !!streaming || !!question || pendingStarter || !!foreman.blocked || alternates.busy || ui.decision.status === 'pending' } : undefined}
                         className="min-h-0 flex-1"
                     >
                         {starterPack && onReviewTemplate && <DesktopStarterPack
@@ -230,6 +251,9 @@ export function DesktopForemanColumn({
                         onStop={() => void foreman.stop()}
                     />
                 </div>
+                {!onRoutines && alternates.open && <DesktopForemanAlternates ui={alternates}
+                    sourceText={id => messages.find(message => message.id === id)?.text} />}
+                <DesktopForemanAlternateReview ui={alternates} />
                 {onRoutines && (
                     <DesktopWorkspaceRoutines
                         key={`${chat.workspaceId}:${chat.chatId}`}

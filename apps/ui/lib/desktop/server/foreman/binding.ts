@@ -30,6 +30,8 @@ import type { DesktopQuestionAnswer } from '../../questions'
 import { createDesktopLocalStarterDecisions, type DesktopLocalStarterDecision } from '../foreman-starter/local-decision'
 import { createDesktopLocalStarterOffers } from '../foreman-starter/local-offer'
 import { FOREMAN_ALTERNATE_SQL } from '../foreman-alternates/repository'
+import { foremanAlternateSnapshot } from '../foreman-alternates/snapshot'
+import { foremanTranscriptRevision } from '../../../../../engine/src/desktop/foreman/transcript-revision.ts'
 
 const KEY = Symbol.for('rerun.desktop.foreman.binding.v1')
 const SHUTDOWN_KEY = Symbol.for('rerun.desktop.foreman.shutdown.v1')
@@ -305,7 +307,9 @@ async function createBinding(runtime: DesktopRuntime) {
             const attempt = saved?.questionId === pending?.view.id && saved
             const history = await hideDesktopForemanIntakeKickoff(runtime, db, owner, publicDesktopHistory(transformEngineMessages(messages)))
             const answeredQuestions = await readAnsweredQuestionRecaps(db, owner.chat.chatId, history)
-            return { ...owner, view, messages: history, answeredQuestions, starter: await starterDecisions.view(owner.chat),
+            const retrySnapshot = foremanAlternateSnapshot(runtime, owner.chat, owner.sessionId,
+                foremanTranscriptRevision(owner.chat, owner.sessionId, messages))
+            return { ...owner, view, messages: history, retrySnapshot, answeredQuestions, starter: await starterDecisions.view(owner.chat),
                 question: pending ? { ...pending.view, ...(attempt && { attempt: attempt.action === 'cancel'
                     ? { action: 'cancel' as const, requestId: attempt.requestId }
                     : { action: 'answer' as const, requestId: attempt.requestId, answers: attempt.answers } }) } : null }
