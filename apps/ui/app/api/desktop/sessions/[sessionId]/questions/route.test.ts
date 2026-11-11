@@ -226,6 +226,50 @@ test('expired unaccepted attempts and cancel/answer races cannot act on a newer 
     expect((await post(invalid, b.id)).status).toBe(400)
 })
 
+test('an explicit skip is an accepted answer, survives relaunch, and stays separate from a pending or dismissed request', async () => {
+    expect((await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_question_answers')).rows).toHaveLength(0)
+    const question = await pending()
+    const skipped = question.questions.map(() => [] as string[])
+    const body = answer(question, skipped)
+    const response = await post(body)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('x-question-id')).toBe(question.id)
+    const text = String(dispatches[0].message)
+    expect(text).toBe(serializeAnswers(question.questions.map(item => ({ question: item.question, answers: [] }))))
+    expect(text).toContain('[skipped]')
+    expect(text).not.toBe(HITL_CANCELLED.question)
+    const saved = (await (await openDesktopDatabase(root)).execute('SELECT payload, answer_text, accepted FROM desktop_question_answers')).rows[0]
+    expect(JSON.parse(String(saved.payload))).toEqual({ action: 'answer', answers: skipped.map(() => []) })
+    expect(saved.answer_text).toBe(text)
+    expect(saved.accepted).toBe(1)
+    await closeDesktopDatabase(root)
+    runtime.launchNonce = 'skip-relaunch'
+    await writeFile(join(root, 'runtime.json'), JSON.stringify(runtime), { mode: 0o600 })
+    expect(await pending()).toBeNull()
+    const other = await pending(b.id)
+    expect(other.id).not.toBe(question.id)
+    const dismissed = await post({ questionId: other.id, requestId: crypto.randomUUID(), action: 'cancel' }, b.id)
+    expect(dismissed.status).toBe(200)
+    expect(dispatches.at(-1)?.message).toBe(HITL_CANCELLED.question)
+    expect(String(dispatches.at(-1)?.message)).not.toContain('[skipped]')
+})
+
+test('a rejected ask_user result and a disabled coworker cannot be recorded as a skip', async () => {
+    const question = await pending()
+    histories.get('engine-a')![1].contentJson = JSON.stringify([{ type: 'tool-result', toolCallId: 'call-1', output: { type: 'error-text', value: 'Rejected' } }])
+    const skipped = question.questions.map(() => [] as string[])
+    expect((await post(answer(question, skipped))).status).toBe(409)
+    expect(dispatches).toHaveLength(0)
+    expect((await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_question_answers')).rows).toHaveLength(0)
+    histories.set('engine-a', questionRows('engine-a'))
+    const restored = await pending()
+    await (await openDesktopDatabase(root)).execute({ sql: 'UPDATE desktop_agents SET enabled = 0 WHERE id = ?', args: [alice.id] })
+    expect((await post(answer(restored, skipped))).status).toBe(403)
+    const row = (await (await openDesktopDatabase(root)).execute('SELECT accepted FROM desktop_question_answers')).rows[0]
+    expect(Number(row?.accepted ?? 0)).toBe(0)
+    expect((await pending())?.id).toBe(restored.id)
+})
+
 test('cancel serializes the original dismissal protocol and its retries keep the same run', async () => {
     const question = await pending(), body: DesktopQuestionAnswer = { questionId: question.id, requestId: crypto.randomUUID(), action: 'cancel' }
     const response = await post(body)
