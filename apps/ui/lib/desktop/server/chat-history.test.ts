@@ -43,6 +43,16 @@ test('engine and individual pending-request failures retain saved chats and know
     expect(filterDesktopChats(history.conversations, 'needs', '').map(row => row.id)).toEqual(['known'])
 })
 
+test('missing General metadata does not make the Threads filters incomplete', async () => {
+    const history = await readDesktopChatHistory({
+        listLocalSessions: async () => [{ ...local('general'), kind: 'general' }, local('routine')],
+        listEngineSessions: async () => [remote('routine', 'schedule')],
+        pendingQuestionFor: async () => null,
+    }, agent)
+    expect(history.enrichment).toBe('ok')
+    expect(filterDesktopChats(history.conversations, 'automations', '').map(row => row.id)).toEqual(['routine'])
+})
+
 test('bounds pending-request reads while processing the full saved list beyond one screen', async () => {
     const sessions = Array.from({ length: 75 }, (_, index) => local(String(index)))
     let active = 0, maximum = 0

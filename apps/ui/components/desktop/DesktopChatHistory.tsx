@@ -64,10 +64,10 @@ function NeedsFilterNote({ onRetry }: { onRetry: () => void }) {
     )
 }
 
-function ClassificationFilterNote({ onRetry }: { onRetry: () => void }) {
+function ClassificationFilterNote({ onRetry, partial }: { onRetry: () => void; partial: boolean }) {
     return (
         <div role="status" className="flex flex-col items-center gap-2 px-3 py-5 text-center text-xs text-muted-foreground">
-            <span>Conversation types could not be loaded.</span>
+            <span>{partial ? 'Some conversation types could not be loaded.' : 'Conversation types could not be loaded.'}</span>
             <Button type="button" size="sm" variant="outline" onClick={onRetry}>Retry</Button>
         </div>
     )
@@ -99,7 +99,9 @@ function ChatHistoryList({ history, filter, query, selectedId, busy, onSelect, o
                 <p className="px-2.5 py-1 text-[11px] text-muted-foreground">Recent activity could not be read. Showing saved dates.</p>
             )}
             {filter === 'needs' && questionsUnavailable && <NeedsFilterNote onRetry={onRetry} />}
-            {classificationUnavailable ? <ClassificationFilterNote onRetry={onRetry} /> : groups.map(({ day, entries }) => (
+            {classificationUnavailable && <ClassificationFilterNote onRetry={onRetry}
+                partial={history.conversations.some(row => row.kind !== 'general' && row.source !== null)} />}
+            {groups.map(({ day, entries }) => (
                 <div key={day} className="pb-1">
                     <p className="px-2.5 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{day}</p>
                     {entries.map(conversation => (

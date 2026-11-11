@@ -189,6 +189,40 @@ test('a delayed old coworker response cannot replace the newly selected coworker
     } finally { await act(async () => { root.unmount() }) }
 })
 
+test('keeps verified threads and automations selectable when other conversation types are unknown', async () => {
+    const rows = [
+        conversation(session('manual', 'alice', 'Verified thread')),
+        { ...conversation(session('routine', 'alice', 'Verified routine')), source: 'schedule' },
+        { ...conversation(session('unclassified', 'alice', 'Unclassified conversation')), source: null },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url === '/api/desktop/pending-inbox') return Response.json(inboxOf([]))
+        return Response.json({ conversations: rows, enrichment: 'unavailable', questions: 'ok' })
+    }))
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container), select = vi.fn()
+    const dialog = () => document.querySelector('[role="dialog"]')!
+    try {
+        await act(async () => { root.render(<DesktopChatHistory agentId="alice" count={3} selectedId={null} busy={false} onSelect={select} />) })
+        await click('Conversation history (3)')
+        await click('Threads')
+        expect(dialog().textContent).toContain('Verified thread')
+        expect(dialog().textContent).not.toContain('Unclassified conversation')
+        await click('Automations')
+        expect(dialog().textContent).toContain('Verified routine')
+        expect(dialog().textContent).not.toContain('Unclassified conversation')
+        expect(dialog().textContent).not.toContain('Verified thread')
+        const warning = dialog().querySelector('[role="status"]')
+        expect(warning?.textContent).toContain('Some conversation types could not be loaded.')
+        expect(warning?.textContent).toContain('Retry')
+        const routine = dialog().querySelector<HTMLButtonElement>('[data-thread-row="routine"]')
+        expect(routine?.textContent).toContain('Verified routine')
+        await act(async () => { routine!.click() })
+        expect(select).toHaveBeenCalledExactlyOnceWith('routine')
+    } finally { await act(async () => { root.unmount() }) }
+})
+
 test('switches distinct transcripts, keeps New chat separate, reopens, and isolates coworkers', async () => {
     const agents = ['Alice', 'Bob'].map(name => ({ id: name.toLowerCase(), name, description: '', createdAt, updatedAt: createdAt }))
     const saved = [session('alpha', 'alice', 'Apples'), session('beta', 'alice', 'Bananas'), session('gamma', 'bob', 'Carrots')]

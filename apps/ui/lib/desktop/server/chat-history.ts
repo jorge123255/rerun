@@ -112,5 +112,7 @@ export async function readDesktopChatHistory(dependencies: DesktopChatHistoryDep
         } satisfies DesktopChatHistoryConversation
     }).sort((a, b) => updatedTime(b.updatedAt) - updatedTime(a.updatedAt) || updatedTime(b.createdAt) - updatedTime(a.createdAt) || a.id.localeCompare(b.id))
 
-    return { conversations, enrichment: engineSessions === null || ownedSessions.some(session => !engineById.has(session.engineSessionId)) ? 'unavailable' : 'ok', questions }
+    // General has its own tab and never needs classification in the Threads filters.
+    const missingThreadMetadata = ownedSessions.some(session => session.kind !== 'general' && !engineById.has(session.engineSessionId))
+    return { conversations, enrichment: engineSessions === null || missingThreadMetadata ? 'unavailable' : 'ok', questions }
 }
