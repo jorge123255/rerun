@@ -59,13 +59,16 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
                 {onServers && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onServers() }}><Server /> Servers</DropdownMenuItem>}
                 {onWorkspaceSettings && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onWorkspaceSettings() }}><Settings /> Workspace settings</DropdownMenuItem>}
                 {onShortcuts && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onShortcuts() }}><Keyboard /> Keyboard shortcuts</DropdownMenuItem>}
-                {onHelp && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onHelp() }}><LifeBuoy /> Help</DropdownMenuItem>}
                 {agents.length > 0 && <><DropdownMenuSeparator /><DropdownMenuLabel>Coworkers</DropdownMenuLabel></>}
                 {agents.map(agent => <DropdownMenuItem key={agent.id} disabled={navigationDisabled} aria-current={selected === agent.id ? 'true' : undefined} onSelect={() => onCoworker(agent.id)}>
                     <span className="truncate">{agent.name}</span>
                 </DropdownMenuItem>)}
             </>} />
         <DesktopWorkspaceSwitchLoader />
+        {onHelp && <Button type="button" variant="outline" size="sm" disabled={navigationDisabled} onClick={onHelp} aria-label="Help"
+            className="h-8 rounded-full bg-background/90 px-2.5 text-xs backdrop-blur-xl">
+            <LifeBuoy /> Help
+        </Button>}
         <Button type="button" variant="outline" size="sm" disabled={settingsDisabled} onClick={onSettings} aria-keyshortcuts="Meta+," title="Open model settings"
             className="h-8 rounded-full bg-background/90 px-2.5 text-xs backdrop-blur-xl">
             {providerLabel ? <span role="status" className="flex min-w-0 items-center gap-1.5">
