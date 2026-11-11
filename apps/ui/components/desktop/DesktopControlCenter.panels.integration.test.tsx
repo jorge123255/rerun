@@ -239,7 +239,21 @@ async function openBoardChat(container: HTMLElement, name = 'Reviewer') {
     return until(composer)
 }
 
-test('original coworker Open rows use existing dialogs without remounting the current board, reply or draft', async () => {
+test.each([
+    { surface: 'Apps, Knowledge and Files', targets: [
+        ['Apps', 'Apps', 'Connections for Reviewer'],
+        ['Knowledge', 'Memories', 'Reviewer private memory'],
+        ['Files', 'Files', 'notes.md'],
+        ['Files', 'Files', 'notes.md'],
+    ] },
+    { surface: 'coworker capabilities and settings', targets: [
+        ['Capabilities', 'Tools', 'Reviewer file access'],
+        ['Skills', 'Skills', 'No skills yet'],
+        ['Monitoring', 'Monitoring', 'No runs in the last 7 days'],
+        ['Logs', 'Recent runs', 'Reviewer model'],
+        ['Settings', 'Edit coworker', 'Reply length'],
+    ] },
+])('original coworker Open rows retain the board, reply and draft through $surface', async ({ targets }) => {
     const app = fixture()
     const mounted = await app.mount()
     const board = mounted.container.querySelector('[aria-label="Team board"]')!
@@ -248,22 +262,12 @@ test('original coworker Open rows use existing dialogs without remounting the cu
     await until(() => chat.textContent?.includes(app.answer(`${reviewer.id}-first`)))
     await enter(input, 'Reviewer keeps this draft')
     const readsBefore = [...app.messageReads]
-    const targets = [
-        ['Apps', 'Apps', 'Connections for Reviewer'],
-        ['Knowledge', 'Memories', 'Reviewer private memory'],
-        ['Files', 'Files', 'notes.md'],
-        ['Capabilities', 'Tools', 'Reviewer file access'],
-        ['Skills', 'Skills', 'No skills yet'],
-        ['Monitoring', 'Monitoring', 'No runs in the last 7 days'],
-        ['Logs', 'Recent runs', 'Reviewer model'],
-        ['Settings', 'Edit coworker', 'Reply length'],
-        ['Files', 'Files', 'notes.md'],
-    ]
     for (const [row, title, expected] of targets) {
         await openCoworkerPage('Reviewer')
         await chooseOpenRow(row)
         const dialog = await until(() => panelDialog(title))
         await until(() => dialog.textContent?.includes(expected))
+        if (row === 'Apps') await until(() => dialog.querySelector('[data-state="empty"]'))
         expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
         expect(mounted.container.querySelector('[aria-label="Team board"]')).toBe(board)
         expect(input.isConnected).toBe(true)
@@ -280,7 +284,8 @@ test('original coworker Open rows use existing dialogs without remounting the cu
     expect(input.value).toBe('Reviewer keeps this draft')
     expect(app.messageReads).toEqual(readsBefore)
     expect(app.contentWrites).toEqual([])
-    expect(app.panelReads.every(path => path.includes(`/agents/${reviewer.id}/`))).toBe(true)
+    expect(app.panelReads.every(path => path.startsWith(`/api/desktop/agents/${reviewer.id}/`) ||
+        path === `/api/desktop/coworkers/${reviewer.id}/service-accounts`)).toBe(true)
 })
 
 test('a contextual action launched from the board binds to the chosen coworker, including identical file names', async () => {
