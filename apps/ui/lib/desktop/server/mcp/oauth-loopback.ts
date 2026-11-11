@@ -162,12 +162,12 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   const server=await authority(agent,name,revision,signal,check)
   const slot=key(agent,name),live=attempts.get(slot)
   if(live && live.revision===revision && live.url===server.url)return live.attemptId===attemptId?live.status:{state:'idle'}
-  const previous=terminal.get(slot)
-  if(previous?.revision===revision && previous.url===server.url && previous.attemptId===attemptId)return previous.status
   const token=await abortable(store.readOAuth(agent,name),signal);check();signal.throwIfAborted()
   if(token && token.expiresAt<=Date.now()+60_000 && !token.refreshToken)return {state:'error',message:'Authorization expired. Reconnect required.'}
   if(token?.refreshPending)return {state:'error',message:'Refresh acknowledgement unavailable. Reconnect required.'}
-  return token?.resource===server.url?{state:'connected'}:{state:'idle'}
+  if(token?.resource===server.url)return {state:'connected'}
+  const previous=terminal.get(slot)
+  return previous?.revision===revision && previous.url===server.url && previous.attemptId===attemptId?previous.status:{state:'idle'}
  }
  async function credential(agent:string,name:string,revision:string,stop:AbortSignal):Promise<string|null> {
   if(closed)throw new Error('OAuth stopped')

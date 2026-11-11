@@ -234,6 +234,16 @@ it('cancels an interrupted browser reservation only from its saved chat attempt'
  await expect(oauth.start('a','x',revision,signal)).resolves.toMatchObject({status:{state:'waiting'}})
 })
 
+it('reports a verified device credential after an older browser attempt failed', async () => {
+ const {store,revision,oauth,json}=await setup()
+ const signal=new AbortController().signal
+ vi.mocked(json).mockRejectedValue(new Error('fixture browser unavailable'))
+ await expect(oauth.start('a','x',revision,signal)).resolves.toMatchObject({status:{state:'unsupported'}})
+ await expect(oauth.status('a','x',revision,signal)).resolves.toMatchObject({state:'unsupported'})
+ await store.writeOAuth('a','x',revision,{accessToken:'device-fixture',expiresAt:Date.now()+3_600_000,resource,issuer,tokenEndpoint:issuer+'token',clientId:'device-client'},signal)
+ await expect(oauth.status('a','x',revision,signal)).resolves.toEqual({state:'connected'})
+})
+
 it('rolls back a browser token if its reservation expires before the credential transaction', async () => {
  const {db,store,revision,oauth,exchanges}=await setup()
  const signal=new AbortController().signal, row=await store.read('a','x')

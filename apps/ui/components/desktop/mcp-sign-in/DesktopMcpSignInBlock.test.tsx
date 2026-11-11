@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { DesktopMcpSignInOAuthView, DesktopMcpSignInView } from '../../../../../packages/contracts/src/desktop-mcp-sign-in'
 import { DesktopMcpSignInBlock } from './DesktopMcpSignInBlock'
+import type { McpDeviceMethodReview } from '@/lib/desktop/mcp-device-review'
 
 vi.mock('@rerun/ui', () => ({ BorderBeam: () => null }))
 const roots: Root[] = []
@@ -65,6 +66,50 @@ test('fresh connected readiness enables Continue and one acknowledged follow-up'
     await click('Connect')
     await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
     expect(document.body.textContent).toContain('Connected')
+    await click('Continue')
+    expect(onAccepted).toHaveBeenCalledTimes(1)
+})
+
+test('approves a reviewed device method, displays the human code, and continues the original chat after connection', async () => {
+    const review: McpDeviceMethodReview = { reviewId: 'review', revision: 'revision', workspaceId: 'workspace', owner: request.source.agentId,
+        localSessionId: 'chat', serverName: request.source.server.name, registrationRevision: request.source.server.revision,
+        expiresAt: Date.now() + 300_000, state: 'pending', method: { kind: 'device-code-rfc8628-v1', resource: request.source.server.url,
+            issuer: 'https://auth.example/', deviceEndpoint: 'https://auth.example/device', tokenEndpoint: 'https://auth.example/token',
+            verificationUri: 'https://auth.example/activate', clientId: 'public-client' } }
+    let approved = false
+    const authorization = { reviewId: review.reviewId, revision: review.revision, verificationUri: review.method.verificationUri,
+        userCode: 'FIXTURE-HUMAN', expiresAt: Date.now() + 120_000 }
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body))
+        if (body.action === 'complete') return acknowledged()
+        expect(url).toBe('/api/desktop/sessions/chat/mcp-device-sign-in')
+        expect(body.source).toEqual(request.source)
+        if (body.action === 'review-device-method') return response({ review: { ...review, state: approved ? 'approved' : 'pending' } })
+        if (body.action === 'decide-device-method') { approved = true; return response({ review: { ...review, state: 'approved' } }) }
+        if (body.action === 'start-device-authorization') return response({ attempt: { state: 'waiting', authorization } })
+        if (body.action === 'read-device-authorization') return response({ authorization })
+        if (body.action === 'check-device-authorization') return response({ attempt: { state: 'connected', authorization: null } })
+        throw new Error('Unexpected action')
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const { root, onAccepted } = await mount(request, vi.fn(), { state: 'idle', deviceAvailable: true })
+    await click('Use a device code')
+    await click('Review device sign-in')
+    expect(button('Start device sign-in')).toBeUndefined()
+    await click('Approve device method')
+    await click('Start device sign-in')
+    expect(document.querySelector('code')?.textContent).toBe('FIXTURE-HUMAN')
+    expect(document.querySelector('a')?.href).toBe(review.method.verificationUri)
+    await act(async () => root.render(null))
+    expect(document.querySelector('code')).toBeNull()
+    await act(async () => root.render(<DesktopMcpSignInBlock sessionId="chat" request={request} initialOAuth={{ state: 'idle', deviceAvailable: true }} onAccepted={onAccepted} />))
+    await click('Use a device code')
+    await click('Review device sign-in')
+    expect(document.querySelector('code')?.textContent).toBe('FIXTURE-HUMAN')
+    expect(fetcher.mock.calls.filter(([, init]) => JSON.parse(String(init?.body)).action === 'start-device-authorization')).toHaveLength(1)
+    await click('Check authorization')
+    expect(document.querySelector('code')).toBeNull()
+    expect(onAccepted).not.toHaveBeenCalled()
     await click('Continue')
     expect(onAccepted).toHaveBeenCalledTimes(1)
 })

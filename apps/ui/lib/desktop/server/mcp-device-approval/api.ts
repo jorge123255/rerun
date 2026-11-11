@@ -11,6 +11,7 @@ const requestSchema = z.discriminatedUnion('action', [
     z.object({ action: z.literal('review-device-method'), source: desktopMcpSignInSourceSchema }).strict(),
     z.object({ action: z.literal('decide-device-method'), source: desktopMcpSignInSourceSchema, decision: deviceReviewDecisionSchema }).strict(),
     z.object({ action: z.literal('read-device-authorization'), source: desktopMcpSignInSourceSchema, reviewId: z.uuid(), revision: z.uuid() }).strict(),
+    z.object({ action: z.enum(['start-device-authorization', 'check-device-authorization']), source: desktopMcpSignInSourceSchema, reviewId: z.uuid(), revision: z.uuid(), requestId: z.uuid() }).strict(),
 ])
 
 /** Root mounts on the existing human session route after reviewing the broker adapter. */
@@ -30,7 +31,13 @@ export function createDesktopMcpDeviceReviewApi(resolve: (runtime: DesktopRuntim
                 signal.throwIfAborted()
                 return Response.json({ authorization }, { headers })
             }
-            const review = input.action === 'review-device-method' ? await service.review(input.source, signal) : await service.decide(input.source, input.decision, signal)
+            if (input.action === 'start-device-authorization' || input.action === 'check-device-authorization') {
+                const attempt = await service.operate(input.source, input.reviewId, input.revision, input.requestId,
+                    input.action === 'start-device-authorization' ? 'start' : 'complete', signal)
+                signal.throwIfAborted()
+                return Response.json({ attempt }, { headers })
+            }
+            const review = input.action === 'decide-device-method' ? await service.decide(input.source, input.decision, signal) : await service.review(input.source, signal)
             signal.throwIfAborted()
             return Response.json({ review }, { headers })
         } catch (error) {

@@ -1,4 +1,5 @@
 import type { ApprovedDeviceMethod } from './server/mcp-device-custody/model'
+import type { DeviceView } from '../../../engine/src/desktop/mcp-login-tools/contract'
 
 export type McpDeviceReviewDecision = {
     reviewId: string
@@ -15,6 +16,7 @@ export type McpDeviceAuthorization = {
     userCode: string
     expiresAt: number
 }
+export type McpDeviceAttemptView = { state: DeviceView['state']; authorization: McpDeviceAuthorization | null }
 
 /** Human-only projection. Never include this in an engine/model status or continuation. */
 export type McpDeviceMethodReview = {

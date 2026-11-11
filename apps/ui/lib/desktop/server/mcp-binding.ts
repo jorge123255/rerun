@@ -33,6 +33,7 @@ import { remoteMcpStore, bindRemoteTransportDrain } from './mcp/store'
 import { initializeDesktopMcp } from './mcp/schema'
 import { loopbackMcpOAuth } from './mcp/oauth-loopback'
 import { createMcpOAuthAttempts } from './mcp/oauth-attempt'
+import { bindTrustedMcpDeviceMethodReview } from './mcp-device-approval/binding'
 import { createDesktopMcpBrowserApprovals } from './mcp-sign-in/browser-approval'
 import { loopbackOAuthApi } from './mcp/oauth-api'
 import { desktopMcpBridge, desktopMcpBridgeRequest, type McpRunIdentity } from './mcp/bridge'
@@ -258,7 +259,9 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         })),
     })
     const bridge = desktopMcpBridge(store, remote, authorizeRun, sse)
-    return { store, references, runtime: remote, bridge, access, authorizeRun, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),
+    const deviceReview = bindTrustedMcpDeviceMethodReview({ runtime, db, key: masterKey, store, shutdown: entry.shutdown.signal })
+    entry.shutdown.signal.addEventListener('abort', deviceReview.dispose, { once: true })
+    return { store, references, runtime: remote, bridge, access, authorizeRun, deviceReview, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),
         browserApprovals: (scope: Omit<Parameters<typeof createDesktopMcpBrowserApprovals>[3], 'workspaceId'>) =>
             createDesktopMcpBrowserApprovals(db, store, masterKey, { ...scope, workspaceId: String(runtime.workspaceId) }),
         localRuntime, localBridge, localApi: stdioApi(localStore, localRuntime, localAuthority), writebackApi: nativeWritebackApi(writeback),

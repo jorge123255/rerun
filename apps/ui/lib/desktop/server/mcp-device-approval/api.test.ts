@@ -59,3 +59,17 @@ it('returns an exact human authorization as no-store and refuses code injection 
     expect(await response.json()).toEqual({ authorization })
     expect(service.readAuthorization).toHaveBeenCalledWith(source, body.reviewId, body.revision, expect.any(AbortSignal))
 })
+
+it('requires an exact human request ID for starting or checking the saved review', async () => {
+    const ids = { reviewId: randomUUID(), revision: randomUUID(), requestId: randomUUID() }
+    const operate = vi.fn().mockResolvedValue({ state: 'pending', authorization: null })
+    const api = createDesktopMcpDeviceReviewApi(vi.fn().mockResolvedValue({ operate }))
+    const body = { action: 'check-device-authorization', source, ...ids }
+    expect((await api(request({ ...body, requestId: 'invalid' }), 'local-chat')).status).toBe(409)
+    expect((await api(request({ ...body, deviceCode: 'INJECTED' }), 'local-chat')).status).toBe(409)
+    expect(operate).not.toHaveBeenCalled()
+    const result = await api(request(body), 'local-chat')
+    expect(result.headers.get('cache-control')).toBe('no-store')
+    expect(await result.json()).toEqual({ attempt: { state: 'pending', authorization: null } })
+    expect(operate).toHaveBeenCalledExactlyOnceWith(source, ids.reviewId, ids.revision, ids.requestId, 'complete', expect.any(AbortSignal))
+})

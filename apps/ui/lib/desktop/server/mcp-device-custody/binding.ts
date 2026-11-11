@@ -9,6 +9,29 @@ import { createApprovedMcpDeviceCustody, type DeviceApprovalLease, type DeviceCu
 import { createEncryptedDeviceCustodyStore } from './store'
 import { deviceApprovalSchema, parsePrivate, type DeviceAuthorityTarget } from './model'
 
+type DeviceStorageBinding = {
+    db: Client
+    key(): Buffer
+    store: RemoteMcpStore
+    shutdown: AbortSignal
+    broker?: DeviceCustodyPorts['broker']
+    approval: DeviceCustodyPorts['approval']
+    now?: () => number
+}
+
+export function bindMcpDeviceStorage(ports: DeviceStorageBinding) {
+    const store = createEncryptedDeviceCustodyStore(ports.db, ports.key, createMcpOAuthAttempts(ports.db, ports.now))
+    const credentials = createMcpCredentialGeneration({ store: ports.store, key: ports.key, now: ports.now })
+    return createApprovedMcpDeviceCustody({
+        store, approval: ports.approval, broker: ports.broker, shutdown: ports.shutdown, now: ports.now,
+        lifecycle: (target, controller) => ports.store.lifecycle.admit(target.owner, target.name, controller),
+        assertCredentialCurrent: (approved, signal) => credentials.assertCurrent(approved.owner, approved.name, approved.credentialGeneration, approved.method.resource, signal),
+        async writeCredential(approved, token, signal, settle) {
+            await credentials.advance(approved.owner, approved.name, approved.credentialGeneration, token, signal, settle)
+        },
+    })
+}
+
 export type CanonicalDeviceCustodyBinding = {
     db: Client
     key(): Buffer
@@ -23,8 +46,6 @@ export type CanonicalDeviceCustodyBinding = {
 
 /** Concrete canonical SQLite/encryption/MCP credential/lifecycle binding; no ambient accounts or fetch. */
 export function bindApprovedMcpDeviceCustody(ports: CanonicalDeviceCustodyBinding) {
-    const store = createEncryptedDeviceCustodyStore(ports.db, ports.key, createMcpOAuthAttempts(ports.db, ports.now))
-    const credentials = createMcpCredentialGeneration({ store: ports.service.store, key: ports.key, now: ports.now })
     const approval: DeviceCustodyPorts['approval'] = async (target, stop) => {
         const signal = AbortSignal.any([stop, ports.service.shutdownSignal])
         const ownerCheck = ports.watchOwner(target.owner)
@@ -46,14 +67,7 @@ export function bindApprovedMcpDeviceCustody(ports: CanonicalDeviceCustodyBindin
         check(); lease.check()
         return { approval: approved, signal: AbortSignal.any([signal, lease.signal]), check: () => { check(); lease.check() } }
     }
-    const custody = createApprovedMcpDeviceCustody({
-        store, approval, broker: ports.broker, shutdown: ports.service.shutdownSignal, now: ports.now,
-        lifecycle: (target, controller) => ports.service.store.lifecycle.admit(target.owner, target.name, controller),
-        assertCredentialCurrent: (approved, signal) => credentials.assertCurrent(approved.owner, approved.name, approved.credentialGeneration, approved.method.resource, signal),
-        async writeCredential(approved, token, signal, settle) {
-            await credentials.advance(approved.owner, approved.name, approved.credentialGeneration, token, signal, settle)
-        },
-    })
+    const custody = bindMcpDeviceStorage({ ...ports, store: ports.service.store, shutdown: ports.service.shutdownSignal, approval })
     const shutdown = () => custody.dispose()
     ports.service.shutdownSignal.addEventListener('abort', shutdown, { once: true })
     return { ...custody,

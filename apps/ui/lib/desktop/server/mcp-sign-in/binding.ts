@@ -106,6 +106,12 @@ export async function desktopMcpSignInPorts(runtime: DesktopRuntime, sessionId: 
                         return { state: 'error', message: 'Browser sign-in was interrupted. Cancel this attempt to reconnect.' }
                     }
                     if (!target.attemptId && status.state === 'waiting') return { state: 'idle' }
+                    if (!target.attemptId && status.state !== 'connected') {
+                        const current = (await service.store.listSettings(agent!.id)).find(row => row.name === target.source.server.name
+                            && row.revision === target.source.server.revision && row.url === target.source.server.url)
+                        await owner(signal)
+                        if (current?.deviceClient) return { ...status, deviceAvailable: true }
+                    }
                     return status
                 }
                 catch { await owner(signal); return { state: 'unsupported', message: 'This server or its permission changed. Choose Not now, or restore its configuration before signing in.' } }

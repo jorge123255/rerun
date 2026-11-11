@@ -10,7 +10,7 @@ import {
 } from './model'
 import type { DeviceCustodyStore, SavedDeviceRecord } from './store'
 
-export type DeviceApprovalLease = { approval: unknown; check(): void; signal: AbortSignal }
+export type DeviceApprovalLease = { approval: unknown; check(): void; signal: AbortSignal; assertCommit?: SettleOAuthWrite }
 export type DeviceCustodyPorts = {
     store: DeviceCustodyStore
     shutdown: AbortSignal
@@ -25,7 +25,7 @@ export type DeviceCustodyPorts = {
     now?: () => number
 }
 
-type Admitted = { approval: DeviceApproval; signal: AbortSignal; check(): void; recheck(): Promise<void> }
+type Admitted = { approval: DeviceApproval; signal: AbortSignal; check(): void; recheck(): Promise<void>; assertCommit?: SettleOAuthWrite }
 type ReceiptResult = NonNullable<DeviceRecord['requests'][string]['result']>
 const inFlight = (phase: DeviceRecord['phase']) => phase === 'starting' || phase === 'polling' || phase === 'committing'
 function settledRecord(saved: SavedDeviceRecord, key: string, phase: DeviceRecord['phase'], result: ReceiptResult, fields: Partial<DeviceRecord> = {}): DeviceRecord {
@@ -39,11 +39,11 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
     const now = ports.now ?? Date.now
     const active = new Map<string, { controller: AbortController; approvalId: string }>()
     let disposed = false
-    async function admit(target: DeviceAuthorityTarget, stop: AbortSignal): Promise<Admitted | null> {
+    async function admit(target: DeviceAuthorityTarget, stop: AbortSignal, authority = ports.approval): Promise<Admitted | null> {
         const signal = AbortSignal.any([stop, ports.shutdown, AbortSignal.timeout(DEVICE_CUSTODY_LIMITS.operationMs)])
         signal.throwIfAborted()
         if (disposed) throw new Error('MCP device custody is stopped')
-        const lease = await abortable(ports.approval(target, signal), signal)
+        const lease = await abortable(authority(target, signal), signal)
         if (!lease) return null
         const approval = parsePrivate(deviceApprovalSchema, lease.approval)
         const expiresIn = Math.max(1, Math.min(DEVICE_CUSTODY_LIMITS.operationMs, Math.ceil(approval.approvedUntil - now())))
@@ -56,9 +56,9 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
                 || approval.method.resource !== target.url) throw new Error('MCP device approval is no longer current')
         }
         check()
-        return { approval, signal: bound, check, async recheck() {
+        return { approval, signal: bound, check, assertCommit: lease.assertCommit, async recheck() {
             check()
-            const current = await abortable(ports.approval(target, bound), bound)
+            const current = await abortable(authority(target, bound), bound)
             check(); current?.check()
             if (!current || current.signal.aborted || digest(parsePrivate(deviceApprovalSchema, current.approval)) !== digest(approval)) throw new Error('MCP device approval changed')
             check()
@@ -89,8 +89,8 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
         await admitted.recheck()
         return ports.store.replace(admitted.approval, saved, settledRecord(saved, key, phase, result, fields), admitted.check)
     }
-    async function operate(action: 'start' | 'complete', target: DeviceTarget, stop: AbortSignal): Promise<DeviceView> {
-        const admitted = await admit(target, stop)
+    async function operate(action: 'start' | 'complete', target: DeviceTarget, stop: AbortSignal, authority?: DeviceCustodyPorts['approval']): Promise<DeviceView> {
+        const admitted = await admit(target, stop, authority)
         if (!admitted || admitted.approval.approvalId !== target.approvalId) return { state: 'approval_required' }
         if (!ports.broker) return { state: 'unsupported' }
         const { approval } = admitted, slot = slotOf(approval), key = requestKey(target), fingerprint = requestFingerprint(action, target)
@@ -178,6 +178,7 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
                     signal.throwIfAborted()
                     if (committing.value.expiresAt <= now() || approval.approvedUntil <= now()) throw new Error('MCP device attempt expired')
                 }
+                await admitted.assertCommit?.(query)
                 await ports.store.replace(approval, committing, settledRecord(committing, key, 'connected', 'connected'), checkDeadline, query)
                 checkDeadline()
             }), signal)
@@ -202,7 +203,7 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
         start: (target, signal) => operate('start', target, signal),
         complete: (target, signal) => operate('complete', target, signal),
     }
-    return { fallback,
+    return { fallback, operate,
         async inspect(target: DeviceAuthorityTarget, stop: AbortSignal): Promise<DeviceView> {
             const admitted = await admit(target, stop)
             if (!admitted) return { state: 'approval_required' }

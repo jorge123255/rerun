@@ -15,6 +15,8 @@ import { createMcpDeviceBroker } from '../mcp-device-custody/broker'
 import { createEncryptedDeviceCustodyStore, desktopMcpDeviceCustodySchema } from '../mcp-device-custody/store'
 import type { ApprovedDeviceMethod, DeviceApproval } from '../mcp-device-custody/model'
 import { randomUUID } from 'node:crypto'
+import { desktopMcpSignInSchema } from '../mcp-sign-in/schema'
+import { createDesktopMcpSignInStore } from '../mcp-sign-in/store'
 const mocks = vi.hoisted(() => ({ context: vi.fn(), ports: vi.fn(), discover: vi.fn() }))
 vi.mock('../mcp-sign-in/binding', () => ({ desktopMcpSignInPorts: mocks.ports }))
 vi.mock('../mcp/oauth-network', async original => ({ ...await original<typeof import('../mcp/oauth-network')>(), discoverDeviceOAuth: mocks.discover }))
@@ -31,11 +33,14 @@ async function fixture(kind: ApprovedDeviceMethod['kind'] = 'device-code-link-v1
     const root = await mkdtemp(join(tmpdir(), 'rerun-device-method-binding-')); roots.push(root)
     const db = createClient({ url: `file:${join(root, 'fixture.db')}` }); clients.push(db)
     await db.executeMultiple(`CREATE TABLE desktop_agents(id TEXT PRIMARY KEY); INSERT INTO desktop_agents VALUES('coworker');
+        CREATE TABLE desktop_sessions(id TEXT PRIMARY KEY); INSERT INTO desktop_sessions VALUES('local-chat');
         CREATE TABLE desktop_remote_mcp(id TEXT, transport TEXT, agent_id TEXT, name TEXT, url TEXT, revision TEXT, bearer TEXT, PRIMARY KEY(agent_id,name));
         INSERT INTO desktop_remote_mcp VALUES('registration','http','coworker','docs','https://docs.example/mcp','r1',NULL);
-        ${remoteMcpOAuthSchema} ${remoteMcpOAuthAttemptSchema} ${remoteMcpDeviceClientSchema} ${desktopMcpDeviceReviewSchema} ${desktopMcpDeviceCustodySchema}`)
+        ${remoteMcpOAuthSchema} ${remoteMcpOAuthAttemptSchema} ${remoteMcpDeviceClientSchema} ${desktopMcpDeviceReviewSchema} ${desktopMcpDeviceCustodySchema} ${desktopMcpSignInSchema}`)
     const signal = new AbortController().signal, runtime = { workspaceId: 1 } as DesktopRuntime
     const source = { agentId: 'coworker', sessionId: 'local-chat', runId: 'source-run', sourceMessageId: 'message', toolCallId: 'tool', fingerprint: 'exact', server: { name: 'docs', revision: 'r1', url: 'https://docs.example/mcp', displayName: 'Docs' } }
+    const signIn = createDesktopMcpSignInStore(db)
+    const request = await signIn.publish({ name: source.server.name, source })
     const owner: DeviceReviewAuthority = { workspaceId: '1', owner: source.agentId, engineAgentId: 'engine-coworker', sessionId: 'engine-chat', name: source.server.name, revision: 'r1', url: source.server.url, signal, check() {} }
     mocks.context.mockResolvedValue(owner)
     const key = () => Buffer.alloc(32, 17), store = remoteMcpStore(db, key)
@@ -48,7 +53,7 @@ async function fixture(kind: ApprovedDeviceMethod['kind'] = 'device-code-link-v1
     const now = () => time
     const review = bindTrustedMcpDeviceMethodReview({ db, key, store, runtime, shutdown: signal, method, stopCustody, now })
     cleanup.push(review.dispose)
-    return { db, key, store, now, advance: (ms = 5000) => { time += ms }, source, owner, signal, runtime, method, review, stopCustody, custody: createEncryptedDeviceCustodyStore(db, key) }
+    return { db, key, store, signIn, request, now, advance: (ms = 5000) => { time += ms }, source, owner, signal, runtime, method, review, stopCustody, custody: createEncryptedDeviceCustodyStore(db, key) }
 }
 
 it('reuses the existing canonical human-source context and current immutable registration', async () => {
@@ -57,6 +62,57 @@ it('reuses the existing canonical human-source context and current immutable reg
     expect(mocks.ports).toHaveBeenCalledWith(f.runtime, 'local-chat')
     expect(mocks.context).toHaveBeenCalledWith(f.source, expect.any(AbortSignal), 'review')
     expect(f.method).toHaveBeenCalledWith(expect.objectContaining({ owner: 'coworker', engineAgentId: 'engine-coworker', sessionId: 'engine-chat', registrationId: 'registration', revision: 'r1' }), expect.any(AbortSignal))
+})
+
+it('starts only after human approval, reopens the same code, and commits a checked credential once', async () => {
+    const f = await fixture('device-code-rfc8628-v1')
+    const start = vi.fn(async () => ({ deviceCode: 'FIXTURE-PRIVATE-DEVICE', userCode: 'FIXTURE-HUMAN', verificationUri: 'https://issuer.example/activate', expiresIn: 120, interval: 5 }))
+    const poll = vi.fn(async () => ({ state: 'authorized', token: { tokenType: 'Bearer', accessToken: 'FIXTURE-PRIVATE-TOKEN', expiresIn: 900, scope: 'read' } }))
+    const make = () => {
+        const binding = bindTrustedMcpDeviceMethodReview({ ...f, shutdown: f.signal, broker: { start, poll } })
+        cleanup.push(binding.dispose)
+        return binding
+    }
+    const service = make(), review = await service.review(f.source, f.signal)
+    const startId = randomUUID()
+    await expect(service.operate(f.source, review.reviewId, review.revision, startId, 'start', f.signal)).resolves.toEqual({ state: 'approval_required', authorization: null })
+    expect(start).not.toHaveBeenCalled()
+    await service.decide(f.source, { reviewId: review.reviewId, revision: review.revision, decisionId: randomUUID(), operation: 'approve-device-method' }, f.signal)
+    const waiting = await service.operate(f.source, review.reviewId, review.revision, startId, 'start', f.signal)
+    expect(waiting).toMatchObject({ state: 'waiting', authorization: { userCode: 'FIXTURE-HUMAN' } })
+    expect(JSON.stringify(waiting)).not.toContain('FIXTURE-PRIVATE')
+    service.dispose()
+    const reopened = make()
+    expect(await reopened.readAuthorization(f.source, review.reviewId, review.revision, f.signal)).toEqual(waiting.authorization)
+    expect(await reopened.operate(f.source, review.reviewId, review.revision, randomUUID(), 'start', f.signal)).toEqual(waiting)
+    expect(start).toHaveBeenCalledTimes(1)
+    f.advance()
+    expect(await reopened.operate(f.source, review.reviewId, review.revision, randomUUID(), 'complete', f.signal)).toEqual({ state: 'connected', authorization: null })
+    expect(poll).toHaveBeenCalledTimes(1)
+    expect(await f.store.readOAuth(f.owner.owner, f.owner.name)).toMatchObject({ accessToken: 'FIXTURE-PRIVATE-TOKEN' })
+    expect(await reopened.readAuthorization(f.source, review.reviewId, review.revision, f.signal)).toBeNull()
+})
+
+it('rolls back credential publication if the same chat declines while the provider reply is being settled', async () => {
+    const f = await fixture('device-code-rfc8628-v1')
+    const service = bindTrustedMcpDeviceMethodReview({ ...f, shutdown: f.signal, broker: {
+        start: async () => ({ deviceCode: 'FIXTURE-DEVICE', userCode: 'FIXTURE-HUMAN', verificationUri: 'https://issuer.example/activate', expiresIn: 120, interval: 5 }),
+        poll: async () => ({ state: 'authorized', token: { tokenType: 'Bearer', accessToken: 'FIXTURE-TOKEN', expiresIn: 900, scope: 'read' } }),
+    } })
+    cleanup.push(service.dispose)
+    const review = await service.review(f.source, f.signal)
+    await service.decide(f.source, { reviewId: review.reviewId, revision: review.revision, decisionId: randomUUID(), operation: 'approve-device-method' }, f.signal)
+    await service.operate(f.source, review.reviewId, review.revision, randomUUID(), 'start', f.signal)
+    f.advance()
+    const replace = f.store.replaceOAuth
+    const spy = vi.spyOn(f.store, 'replaceOAuth').mockImplementationOnce(async (...args) => {
+        await f.signIn.seal({ requestId: f.request.requestId, expectedRevision: f.request.revision, source: f.source, attemptId: randomUUID(), operation: 'decline' }, 'declined', { check() {} })
+        return replace(...args)
+    })
+    try {
+        expect(await service.operate(f.source, review.reviewId, review.revision, randomUUID(), 'complete', f.signal)).toEqual({ state: 'unknown', authorization: null })
+        expect(await f.store.readOAuth(f.owner.owner, f.owner.name)).toBeNull()
+    } finally { spy.mockRestore() }
 })
 
 it('derives review from the saved public client and refuses an unconfigured or changed registration', async () => {
