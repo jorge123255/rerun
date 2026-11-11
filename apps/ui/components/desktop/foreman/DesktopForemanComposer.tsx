@@ -13,6 +13,7 @@ export function DesktopForemanComposer({
     onStop,
     busy,
     disabled,
+    sendDisabled,
     placeholder,
     maxLength = 20_000,
     trailing,
@@ -25,6 +26,7 @@ export function DesktopForemanComposer({
     onStop?: () => void
     busy?: boolean
     disabled?: boolean
+    sendDisabled?: boolean
     placeholder?: string
     maxLength?: number
     trailing?: ReactNode
@@ -36,7 +38,7 @@ export function DesktopForemanComposer({
     const composing = useRef(false)
     const text = draft.trim()
     const overLimit = draft.length > maxLength
-    const canSend = !!text && !overLimit && !disabled && !busy
+    const canSend = !!text && !overLimit && !disabled && !sendDisabled && !busy
     const submit = (event: FormEvent) => {
         event.preventDefault()
         if (canSend) onSend(text)

@@ -10,7 +10,7 @@ import {
 import { answeredQuestionRecapsForMessage, desktopAnsweredQuestionRecapSchema } from '@/lib/desktop/foreman/answered-question-recap'
 import { foremanHistoryParts } from '@/components/desktop/foreman/transcript/parts'
 import { desktopPendingQuestionSchema, type DesktopQuestionAnswer } from '@/lib/desktop/questions'
-import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { fromContractBuild } from './build-progress'
 import { revisionToTrustedSnapshot } from './plan-view'
 import { createPlanDecisionRequestId } from './decision'
@@ -82,6 +82,7 @@ export type DesktopForemanClientOptions = {
     onOpenCoworker: (target: { agentId: string; sessionId?: string }) => void | Promise<void>
     onOpenBox: (spaceId: string) => void | Promise<void>
     modelChoice?: () => DesktopForemanModelRef | undefined
+    workspaceModel?: () => DesktopForemanModelRef | undefined
 }
 /** One adapter per exact chat. Ordinary state reads never replay navigation or creation effects. */
 export function createDesktopForemanClient(initial: DesktopForemanClientState, options: DesktopForemanClientOptions) {
@@ -89,6 +90,7 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
     let lastUi: DesktopForemanPersistedUi = initial.ui.snapshot ?? emptyUi(initial.chat)
     let pendingSend = initial.ui.snapshot?.pendingSend
     let sending = false
+    let modelGeneration = 0
     let closed = false, refreshing: Promise<DesktopForemanClientState> | undefined
     const requests = new Set<AbortController>()
     const discoveryListeners = new Set<(event: Extract<DesktopForemanLiveEvent, { type: 'discovery' }>['event']) => void>()
@@ -104,10 +106,12 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
     const publish = (next: DesktopForemanClientState) => { owned(next.chat); state = next; options.onState(next) }
     const refresh = () => {
         if (refreshing) return refreshing
+        const generation = modelGeneration
         const controller = new AbortController(); requests.add(controller)
         refreshing = readDesktopForemanState(AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)])).then(next => {
-            publish(next)
-            return next
+            const value = generation === modelGeneration ? next : { ...next, model: state.model }
+            publish(value)
+            return value
         }).finally(() => { refreshing = undefined; requests.delete(controller) })
         return refreshing
     }
@@ -156,7 +160,7 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
                 let reserved = false, dispatched = false
                 try {
                     const picked = options.modelChoice?.()
-                    const choice = pendingSend && picked === undefined ? pendingSend.modelChoice : picked ?? null
+                    const choice = pendingSend && picked === undefined ? pendingSend.modelChoice : picked ?? state.model ?? options.workspaceModel?.() ?? null
                     if (pendingSend && (pendingSend.text !== text || JSON.stringify(pendingSend.modelChoice) !== JSON.stringify(choice))) throw new Error('Retry the previous message with its original model before sending a different message.')
                     if (!await flushDesktopForemanUiSaves()) throw new Error('Save this Foreman draft before sending.')
                     signal?.throwIfAborted(); owned(chat)
@@ -265,5 +269,19 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
             if (!matches(current) || !current?.decision?.settled || JSON.stringify(current.decision.choice) !== JSON.stringify(input.choice)) throw error
         } finally { sending = false; changed() }
     }
-    return { answerQuestion, answerStarter, ports, refresh, acceptEvent, close: () => { closed = true; for (const request of requests) request.abort(); requests.clear(); discoveryListeners.clear() } }
+    async function setModel(expected: DesktopForemanModelRef | null, model: DesktopForemanModelRef | null) {
+        owned(chat)
+        if (isDesktopQuitting() || sending || pendingSend || state.view.live || state.question) {
+            throw new Error('Resolve the current Chief of Staff work before changing the model.')
+        }
+        sending = true
+        const release = holdDraftAdmission()
+        try {
+            const saved = z.strictObject({ model: foremanModelRefSchema.nullable() }).parse(await act({ action: 'model', chat, expected, model }))
+            if (saved.model?.connectionId !== model?.connectionId || saved.model?.model !== model?.model) throw new Error('The model change could not be confirmed.')
+            modelGeneration++
+            publish({ ...state, model: saved.model })
+        } finally { sending = false; release(); changed() }
+    }
+    return { answerQuestion, answerStarter, setModel, ports, refresh, acceptEvent, close: () => { closed = true; for (const request of requests) request.abort(); requests.clear(); discoveryListeners.clear() } }
 }

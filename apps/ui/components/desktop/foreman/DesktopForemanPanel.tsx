@@ -3,7 +3,7 @@
 import { useDesktopLocale } from '../DesktopLocale'
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import type { DesktopForemanChatRef, DesktopForemanModelRef } from '@rerun/contracts'
+import type { ConnectionsList, DesktopForemanChatRef, DesktopForemanModelRef } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 import { isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 import { flushDesktopForemanUiSaves } from '@/lib/desktop/foreman-client'
@@ -19,6 +19,8 @@ import { DesktopForemanColumn } from './DesktopForemanColumn'
 import { useDesktopForemanIntake } from '@/lib/desktop/foreman-intake'
 import { createDesktopForemanIntakeClient } from '@/lib/desktop/foreman-intake/client'
 import { DesktopForemanFilePermissions } from './DesktopForemanFilePermissions'
+import { buildDesktopModelView } from '@/lib/desktop/chat-model'
+import { DesktopForemanModelPill } from './DesktopForemanModelPill'
 
 export type DesktopForemanCommand = { id: string; chat: DesktopForemanChatRef; text: string; signal: AbortSignal; settle: (error?: Error) => void }
 export type DesktopForemanPanelProps = {
@@ -29,9 +31,9 @@ export type DesktopForemanPanelProps = {
     agentNameOf: (agentId: string) => string
     /** Opens the template library on one local template's review. Nothing is installed from it. */
     onReviewTemplate?: (template: { templateId: string; revision: string }) => void
-    workspaceModel?: string
+    providers?: ConnectionsList
     modelChoice?: DesktopForemanModelRef
-    workspaceModelChoice?: DesktopForemanModelRef
+    onOpenModelSettings?: () => void
     composerTrailing?: ReactNode
     controlledOpen?: boolean
     hidden?: boolean
@@ -71,7 +73,8 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const pendingStarter = !!state.starter && !state.starter.decision?.settled
     const projectFeed = useMemo(() => createClientDockFeed(initial.chat), [initial.chat.workspaceId, initial.chat.chatId])
     const [dockFeed, setDockFeed] = useState(() => projectFeed(initial))
-    const [voiceSlot, setVoiceSlot] = useState<ReactNode>(null)
+    const [voice, setVoice] = useState<{ slot: ReactNode; busy: boolean } | null>(null)
+    const [modelSaving, setModelSaving] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const current = useRef(props)
     current.current = props
@@ -84,6 +87,10 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
             onOpenCoworker: target => { if (active.current && !isDesktopQuitting()) return current.current.onOpenCoworker(target) },
             onOpenBox: spaceId => { if (active.current && !isDesktopQuitting()) return current.current.onOpenBox(spaceId) },
             modelChoice: () => current.current.modelChoice,
+            workspaceModel: () => {
+                const selected = current.current.providers?.default
+                return selected ? { connectionId: selected.connectionId, model: selected.model } : undefined
+            },
         })
         setClient(client)
         active.current = true
@@ -138,29 +145,48 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     }, [client, props.command, initial.chat.chatId, initial.chat.workspaceId, intakeOpen, intakeEligible, intake.restored])
     const close = useCallback(() => { if (active.current) current.current.onClose() }, [])
     if (!client) return <div role="status" className={props.className}>{t('foreman.opening')}</div>
+    const providers = props.providers
+    const view = providers && buildDesktopModelView({
+        connections: providers.connections.filter(connection => !connection.credentialRejected),
+        workspace: providers.default,
+        conversation: state.model,
+        coworker: null,
+    })
+    const effective = view?.effective
+    const voiceModel = props.modelChoice ?? state.model ?? (effective?.available && effective.connectionId && effective.model
+        ? { connectionId: effective.connectionId, model: effective.model } : undefined)
     return <>
-    {(props.modelChoice ?? state.model ?? props.workspaceModelChoice) && <ForemanVoiceOwner target={{ chat: state.chat, model: (props.modelChoice ?? state.model ?? props.workspaceModelChoice)! }}
-        active={!props.hidden && !state.view.live && !state.question && !intakeOpen && !pendingStarter} engage={() => {}}
-        accepted={() => { void client.refresh() }} onSlot={setVoiceSlot} onSettings={props.onOpenTranscriptionSettings} />}
+    {voiceModel && <ForemanVoiceOwner target={{ chat: state.chat, model: voiceModel }}
+        active={!props.hidden && !state.view.live && !state.question && !intakeOpen && !pendingStarter && !modelSaving} engage={() => {}}
+        accepted={() => { void client.refresh() }} onSlot={setVoice} onSettings={props.onOpenTranscriptionSettings} />}
     {!intakeOpen && <DesktopCompanyResearch chat={state.chat} active={!!props.controlledOpen && !props.hidden} refreshKey={JSON.stringify(state.view)} />}
     <DesktopForemanColumn
         controlledOpen={props.controlledOpen} hidden={props.hidden} centerOpen={props.centerOpen} onOpenChange={props.onOpenChange} onLayout={props.onLayout}
-        dockFeed={dockFeed} voiceSlot={voiceSlot} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)} retrySnapshot={state.retrySnapshot}
+        dockFeed={dockFeed} voiceSlot={voiceModel ? voice?.slot : undefined} sendDisabled={modelSaving} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)} retrySnapshot={state.retrySnapshot}
         question={state.question} onAnswerQuestion={client.answerQuestion}
         starter={state.starter} onStarterAnswer={client.answerStarter} intakeFinished={intake.finished}
         streaming={!!state.view.live} orbState={state.view.live ? 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
         headerActions={<><DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} />{error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}</>}
-        composerTrailing={props.composerTrailing ?? <span className="truncate text-xs text-muted-foreground">{state.model?.model ?? props.workspaceModel ?? 'Workspace default'}</span>}
+        composerTrailing={props.composerTrailing ?? (!props.hidden && props.controlledOpen !== false && view && <DesktopForemanModelPill view={view} saving={modelSaving} onSettings={props.onOpenModelSettings}
+            disabled={!!state.view.live || !!state.question || !!state.ui.snapshot?.pendingSend || !!voice?.busy}
+            onPick={async model => {
+                setModelSaving(true)
+                try { await client.setModel(state.model, model) } finally { setModelSaving(false) }
+            }} />)}
     /></>
 }
 
 function ForemanVoiceOwner({ target, active, engage, accepted, onSlot, onSettings }: {
     target: import('@rerun/contracts').ForemanVoiceTarget; active: boolean; engage(): void; accepted(): void
-    onSlot(slot: ReactNode): void; onSettings?: () => void
+    onSlot(controls: { slot: ReactNode; busy: boolean } | null): void; onSettings?: () => void
 }) {
     const voice = useForemanVoiceSlot({ target, active, onEngage: engage, onAccepted: accepted, releasePolicy: 'send' })
     useEffect(() => registerForemanVoiceQuit(() => voice.controller.prepareForQuit()), [voice.controller])
-    useEffect(() => { onSlot(<ForemanVoiceSlot voice={voice} onOpenTranscriptionSettings={onSettings ?? (() => {})} />); return () => onSlot(null) }, [voice.view, voice.stream, voice.active, voice.controller, onSettings, onSlot])
+    useEffect(() => {
+        onSlot({ slot: <ForemanVoiceSlot voice={voice} onOpenTranscriptionSettings={onSettings ?? (() => {})} />,
+            busy: voice.view.phase !== 'sent' && (!!voice.view.pending || ['restoring', 'starting', 'listening', 'saving', 'transcribing', 'sending'].includes(voice.view.phase)) })
+        return () => onSlot(null)
+    }, [voice.view, voice.stream, voice.active, voice.controller, onSettings, onSlot])
     return null
 }

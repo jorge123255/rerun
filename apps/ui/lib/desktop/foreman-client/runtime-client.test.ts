@@ -55,6 +55,35 @@ it('persists immutable send identity before execution and recovers the same requ
     expect(sends.every(body => JSON.stringify(body.modelChoice) === JSON.stringify(model))).toBe(true)
     expect(server.ui.snapshot?.pendingSend).toBeUndefined()
 })
+it('uses an acknowledged model immediately and ignores a state read that predates the change', async () => {
+    const transport = vi.mocked(fetch).getMockImplementation()!
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let read = false
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+        if (!init?.body && !read) {
+            read = true
+            const prior = structuredClone(server)
+            await gate
+            return Response.json(prior)
+        }
+        const body = init?.body && JSON.parse(String(init.body))
+        if (body?.action === 'model') {
+            bodies.push(body)
+            server.model = body.model
+            return Response.json({ model: server.model })
+        }
+        return transport(url, init)
+    })
+    const client = connect()
+    const earlierRead = client.refresh()
+    await client.setModel(null, model)
+    release()
+    expect((await earlierRead).model).toEqual(model)
+    expect(await client.ports.conversation.sendMessage('Use the selected model')).toBe(true)
+    expect(bodies.find(body => body.action === 'model')).toEqual({ action: 'model', chat, expected: null, model })
+    expect(bodies.find(body => body.action === 'send')?.modelChoice).toEqual(model)
+})
 it('recovers only an exact saved snapshot after a lost UI ACK and then advances the CAS revision', async () => {
     const transport = vi.mocked(fetch).getMockImplementation()!
     let lost = false

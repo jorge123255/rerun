@@ -21,6 +21,7 @@ import { cancelCompanyBriefChat, observeCompanyBrief } from '../company-brief/cl
 import { createCompanyDiscoveryRuntime, createCompanyDiscoverySqliteStore, CompanyDiscoveryError } from '../company-discovery'
 import { confinedCompanyDns, confinedCompanyReader, runCompanyCollectors } from '../../../../../engine/src/desktop/company-discovery/index.ts'
 import type { CanonicalForemanVoiceSend } from '../foreman-voice/runtime'
+import { foremanVoiceStore } from '../foreman-voice/store'
 import { ForemanRefusal } from './authority'
 import { desktopForemanIntakePhase, readDesktopForemanIntakeProfile } from './intake-profile'
 import { foremanIntakeMessage } from './intake'
@@ -145,7 +146,7 @@ async function createBinding(runtime: DesktopRuntime) {
     }
     await core.reconcile()
 
-    async function assertAlternateIdle(chat: DesktopForemanChatRef) {
+    async function assertChatIdle(chat: DesktopForemanChatRef, conflict: string) {
         assertDesktopWorkspaceAdmission(runtime)
         if (chat.workspaceId !== workspaceId) throw new DesktopHttpError(404, 'Conversation not found.')
         const owner = await ownedForemanChat(db, chat)
@@ -161,7 +162,7 @@ async function createBinding(runtime: DesktopRuntime) {
         ])
         if (view.live || view.blocked || view.build?.state === 'reserved' || view.build?.state === 'running'
             || view.build?.setup.state === 'pending' || view.discovery?.status === 'running' || question || (starter && !starter.decision?.settled)) {
-            throw new DesktopHttpError(409, 'Resolve the current Chief of Staff work before preparing a retry.')
+            throw new DesktopHttpError(409, conflict)
         }
         assertDesktopWorkspaceAdmission(runtime)
     }
@@ -240,7 +241,11 @@ async function createBinding(runtime: DesktopRuntime) {
             } else if (question) {
                 throw new DesktopHttpError(409, 'Answer or dismiss the Foreman question before sending another message.')
             }
-            let model = requested ?? owner.model
+            // A question continues the exact producing run even when the workspace default changed.
+            const source = answer && question ? await foremanTurn(db, question.guard.runId) : null
+            const original = source?.body.sessionId === owner.sessionId && source.body.binding.chatId === chat.chatId
+                && source.body.binding.workspaceId === chat.workspaceId ? source.body.binding.model : null
+            let model = original ?? requested ?? owner.model
             if (!model) { const fallback = await desktopModel(runtime); model = { connectionId: fallback.connection.id, model: fallback.model } }
             if (!await modelAvailable(model)) throw new ForemanRefusal('model_unavailable', 'Choose a connected model in Settings.')
             const { view, companyProfile } = await intakeContext(chat, requestId, text)
@@ -257,15 +262,37 @@ async function createBinding(runtime: DesktopRuntime) {
             await checkVoice(guard)
             starter?.signal.throwIfAborted()
             await assertDesktopWorkspaceAdmission(runtime)
-            await db.batch([
-                { sql: "INSERT INTO desktop_foreman_turns(request_id,chat_id,fingerprint,body,status,created_at) VALUES(?,?,?,?,'pending',?)", args: [requestId, chat.chatId, fingerprint, JSON.stringify(turn), new Date().toISOString()] },
-                { sql: 'UPDATE desktop_foreman_chats SET model=? WHERE chat_id=?', args: [JSON.stringify(model), chat.chatId] },
-            ], 'write')
+            await db.execute({ sql: "INSERT INTO desktop_foreman_turns(request_id,chat_id,fingerprint,body,status,created_at) VALUES(?,?,?,?,'pending',?)",
+                args: [requestId, chat.chatId, fingerprint, JSON.stringify(turn), new Date().toISOString()] })
             return dispatch(turn, false, guard)
         })
     }
     return {
-        core, db, send, isLive, companyDiscovery, starterOffers, assertAlternateIdle,
+        core, db, send, isLive, companyDiscovery, starterOffers,
+        assertAlternateIdle: (chat: DesktopForemanChatRef) => assertChatIdle(chat, 'Resolve the current Chief of Staff work before preparing a retry.'),
+        async setModel(chat: DesktopForemanChatRef, expected: DesktopForemanModelRef | null, model: DesktopForemanModelRef | null) {
+            return withForemanChatWrite(db, async () => {
+                await assertChatIdle(chat, 'Resolve the current Chief of Staff work before changing the model.')
+                const owner = await ownedForemanChat(db, chat)
+                if (owner.model?.connectionId !== expected?.connectionId || owner.model?.model !== expected?.model) {
+                    throw new DesktopHttpError(409, 'The saved model changed. Review the current selection and try again.')
+                }
+                const row = (await db.execute({ sql: "SELECT json_extract(ui, '$.pendingSend') AS pending FROM desktop_foreman_chats WHERE chat_id=?", args: [chat.chatId] })).rows[0]
+                if (row?.pending) throw new DesktopHttpError(409, 'Retry the previous message before changing the model.')
+                const providers = await readDesktopProviders(runtime)
+                if (model && !usableConnection(providers.connections, model)) {
+                    throw new DesktopHttpError(400, 'Choose a model offered by a connected provider.')
+                }
+                const currentModel = owner.model ?? providers.default
+                if (currentModel && await foremanVoiceStore(db, { chat, model: currentModel }).pending()) {
+                    throw new DesktopHttpError(409, 'Finish or discard the current recording before changing the model.')
+                }
+                assertDesktopWorkspaceAdmission(runtime)
+                await db.execute({ sql: 'UPDATE desktop_foreman_chats SET model=? WHERE workspace_id=? AND chat_id=?',
+                    args: [model ? JSON.stringify(model) : null, chat.workspaceId, chat.chatId] })
+                return { model }
+            })
+        },
         answerQuestion: (chat: DesktopForemanChatRef, answer: DesktopQuestionAnswer) => send(chat, answer.requestId, '', undefined, undefined, answer),
         async answerStarter(chat: DesktopForemanChatRef, input: DesktopLocalStarterDecision, signal: AbortSignal) {
             if (input.choice.kind === 'text') {

@@ -1,4 +1,5 @@
 import type { Locale } from '@rerun/i18n'
+import type agent from '@rerun/i18n/messages/en/agent.json'
 import type chat from '@rerun/i18n/messages/en/chat.json'
 import type foreman from '@rerun/i18n/messages/en/foreman.json'
 import type kit from '@rerun/i18n/messages/en/kit.json'
@@ -10,6 +11,7 @@ const en = {
     working: 'Working…',
     confirming: 'Confirming…',
     decisionUncertain: 'Decision acknowledgement is uncertain.',
+    modelUnavailable: 'The saved model is unavailable.',
 }
 
 const mac = {
@@ -21,6 +23,7 @@ const mac = {
         working: 'En cours…',
         confirming: 'Confirmation en cours…',
         decisionUncertain: 'La réception de votre décision n’a pas pu être confirmée.',
+        modelUnavailable: 'Le modèle enregistré est indisponible.',
     },
     es: {
         conversation: 'Conversación con el Chief of Staff',
@@ -29,6 +32,7 @@ const mac = {
         working: 'En curso…',
         confirming: 'Confirmando…',
         decisionUncertain: 'No se pudo confirmar la recepción de tu decisión.',
+        modelUnavailable: 'El modelo guardado no está disponible.',
     },
     pt: {
         conversation: 'Conversa com o Chief of Staff',
@@ -37,6 +41,7 @@ const mac = {
         working: 'Em andamento…',
         confirming: 'Confirmando…',
         decisionUncertain: 'Não foi possível confirmar o recebimento da sua decisão.',
+        modelUnavailable: 'O modelo salvo não está disponível.',
     },
     de: {
         conversation: 'Unterhaltung mit dem Chief of Staff',
@@ -45,10 +50,11 @@ const mac = {
         working: 'In Arbeit…',
         confirming: 'Wird bestätigt…',
         decisionUncertain: 'Der Eingang deiner Entscheidung konnte nicht bestätigt werden.',
+        modelUnavailable: 'Das gespeicherte Modell ist nicht verfügbar.',
     },
 } satisfies Record<Locale, typeof en>
 
-type Source = { chat: typeof chat; foreman: typeof foreman; kit: typeof kit }
+type Source = { agent: typeof agent; chat: typeof chat; foreman: typeof foreman; kit: typeof kit }
 
 const alternateCopy = {
     en: { title: 'Reply retries', original: 'Original conversation', entry: 'Retry {number}', check: 'Check retry', loading: 'Opening retry…',
@@ -75,6 +81,7 @@ export function desktopForemanMessages(locale: Locale, source: Source) {
         ask: source.kit.foreman.orbLabel,
         placeholder: `${source.foreman.pill.ask}…`,
         ownEntryPlaceholder: source.foreman.ownEntryPlaceholder,
+        modelPicker: source.agent.modelSelector,
         name: source.kit.foreman.tabsLabel,
         tabs: { ...source.kit.foreman.tabs, assistant: source.kit.foreman.tabsLabel },
         close: source.kit.close,

@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
-import { act, type ReactNode } from 'react'
+import { act, useState, type ReactNode } from 'react'
+import type { ConnectionSummary, DesktopForemanModelRef } from '@rerun/contracts'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { loadMessages } from '@rerun/i18n/messages'
@@ -9,6 +10,8 @@ import { DesktopLocale } from '../DesktopLocale'
 import { DesktopForemanComposer } from './DesktopForemanComposer'
 import { DesktopForemanTabs } from './DesktopForemanTabs'
 import { DesktopPlanCard } from './plan/DesktopPlanCard'
+import { DesktopForemanModelPill } from './DesktopForemanModelPill'
+import { buildDesktopModelView } from '@/lib/desktop/chat-model'
 
 vi.mock(import('@rerun/ui/iso-grid'), async original => {
     const { memo } = await import('react')
@@ -108,6 +111,36 @@ it('keeps an over-limit saved entry editable and refuses to submit it', async ()
     await show(<DesktopForemanComposer {...composer} draft="Résumé" />)
     await act(async () => button('Envoyer').click())
     expect(send).toHaveBeenCalledExactlyOnceWith('Résumé')
+})
+
+it('selects a connected model and returns to the translated workspace default without submitting the draft', async () => {
+    const connection: ConnectionSummary = { id: 'fixture', name: 'Fixture', provider: 'openrouter', createdAt: '', connected: true,
+        credentialRejected: false, planLimits: null, models: ['workspace-fixture', 'chosen-fixture'], extraModels: [] }
+    const workspace = { connectionId: connection.id, model: 'workspace-fixture' }
+    const chosen = { connectionId: connection.id, model: 'chosen-fixture' }
+    const submit = vi.fn()
+    const changes = vi.fn()
+    function Harness() {
+        const [conversation, setConversation] = useState<DesktopForemanModelRef | null>(null)
+        const view = buildDesktopModelView({ connections: [connection], workspace, conversation, coworker: null })
+        return <form onSubmit={submit}><DesktopForemanModelPill view={view} disabled={false} saving={false} onPick={async model => {
+            changes(model)
+            setConversation(model)
+        }} /></form>
+    }
+    await show(<Harness />)
+    const trigger = () => Array.from(document.querySelectorAll('button')).find(node => node.getAttribute('aria-haspopup') === 'dialog')!
+    expect(trigger().textContent).toContain(workspace.model)
+    await act(async () => trigger().click())
+    await act(async () => button(chosen.model).click())
+    expect(changes).toHaveBeenLastCalledWith(chosen)
+    expect(trigger().textContent).toContain(chosen.model)
+    await act(async () => trigger().click())
+    const follow = Array.from(document.querySelectorAll('button')).find(node => node.textContent?.startsWith(french.messages.foreman.modelPicker.workspaceDefault))!
+    await act(async () => follow.click())
+    expect(changes).toHaveBeenLastCalledWith(null)
+    expect(trigger().textContent).toContain(workspace.model)
+    expect(submit).not.toHaveBeenCalled()
 })
 
 it('translates plan review without changing the revision, target text or confirmation gate', async () => {

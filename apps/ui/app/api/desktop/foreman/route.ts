@@ -16,6 +16,7 @@ import { localStarterDecisionSchema } from '@/lib/desktop/server/foreman-starter
 export const runtime = 'nodejs'
 const inputSchema = z.discriminatedUnion('action', [
     z.strictObject({ action: z.literal('send'), chat: foremanChatRefSchema, requestId: z.uuid(), text: z.string().trim().min(1).max(20_000), modelChoice: foremanModelRefSchema.optional() }),
+    z.strictObject({ action: z.literal('model'), chat: foremanChatRefSchema, expected: foremanModelRefSchema.nullable(), model: foremanModelRefSchema.nullable() }),
     z.strictObject({ action: z.literal('answer'), chat: foremanChatRefSchema, input: desktopQuestionAnswerSchema }),
     z.strictObject({ action: z.literal('starter'), chat: foremanChatRefSchema, input: localStarterDecisionSchema }),
     z.strictObject({ action: z.literal('stop'), chat: foremanChatRefSchema }),
@@ -42,6 +43,7 @@ export async function POST(request: Request) {
         if (input.action !== 'ui' && input.action !== 'stop') await assertDesktopWorkspaceAdmission(runtime)
         try {
             if (input.action === 'send') return Response.json(await app.send(input.chat, input.requestId, input.text, input.modelChoice))
+            if (input.action === 'model') return Response.json(await app.setModel(input.chat, input.expected, input.model))
             if (input.action === 'answer') return Response.json(await app.answerQuestion(input.chat, input.input))
             if (input.action === 'starter') {
                 return Response.json(await app.answerStarter(input.chat, input.input, AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])),

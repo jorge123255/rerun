@@ -57,6 +57,7 @@ export type DesktopForemanColumnProps = {
     openOnMount?: boolean
     refreshKey?: string | number
     composerTrailing?: ReactNode
+    sendDisabled?: boolean
     focusRequest?: string
     controlledOpen?: boolean
     hidden?: boolean
@@ -89,7 +90,7 @@ export function DesktopForemanColumn({
     orbState = 'idle',
     headerActions,
     renderBoardOverlay,
-    className, onClose, openOnMount, refreshKey, composerTrailing, focusRequest, controlledOpen, hidden, centerOpen, dockFeed, voiceSlot, intake, intakeFinished, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
+    className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, controlledOpen, hidden, centerOpen, dockFeed, voiceSlot, intake, intakeFinished, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
     const { t } = useDesktopLocale()
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
@@ -247,6 +248,7 @@ export function DesktopForemanColumn({
                         draft={ui.draft}
                         onDraftChange={foreman.setDraft}
                         busy={!!streaming}
+                        sendDisabled={sendDisabled}
                         disabled={!!question || !foreman.restored || !!foreman.blocked || ui.decision.status === 'pending'
                             || pendingStarter && (!onStarterAnswer || starterBusy || !!starter?.decision)
                             || Boolean(intake && (!intake.restored || intake.submitting || intake.quitting || intake.conflicted))}
