@@ -212,7 +212,7 @@ test('the root page remembers a selection as Recent and exposes only the three s
         expect(rows()[0]!.textContent).toContain('Ada')
         expect(dialog()!.textContent).toContain('Actions')
         expect(dialog()!.textContent).toContain('Settings')
-        for (const absent of ['Billing', 'Browse templates', 'Ask Rerun', 'Shared files', 'Contact Support', 'What’s new', 'Company Brain', 'Workspace settings', 'Recenter the board', 'Switch to light theme', 'Switch to dark theme']) {
+        for (const absent of ['Billing', 'Browse templates', 'Ask Rerun', 'Ask your Chief of Staff', 'Shared files', 'Contact Support', 'What’s new', 'Company Brain', 'Workspace settings', 'Recenter the board', 'Switch to light theme', 'Switch to dark theme']) {
             expect(dialog()!.textContent).not.toContain(absent)
         }
         await clickRow('New agent')

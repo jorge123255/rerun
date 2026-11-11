@@ -386,7 +386,7 @@ test('the /hotkeys command opens the original help view with the eight supported
     ])
     expect(dialog.textContent).toContain('Previous file')
     expect(dialog.textContent).toContain('Next file')
-    expect(dialog.textContent).not.toMatch(/Ask Rerun|Hold to talk|Search in the page|×2/)
+    expect(dialog.textContent).not.toMatch(/Ask (?:Rerun|your Chief of Staff)|Hold to talk|Search in the page|×2/)
     view.unchanged(true)
     await closeShortcutsWithEscape(dialog)
     expect(commandField()).toBeNull()
