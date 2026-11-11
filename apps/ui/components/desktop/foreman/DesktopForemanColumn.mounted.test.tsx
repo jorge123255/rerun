@@ -18,7 +18,7 @@ vi.mock('./dock', () => ({
 vi.mock('@rerun/ui/primitives/use-is-mobile', () => ({ useIsMobile: () => false }))
 vi.mock('./DesktopForemanHeader', () => ({ DesktopForemanHeader: (props: HeaderProps) => <button onClick={() => props.onTabChange('routines')}>Routines tab</button> }))
 vi.mock('./DesktopForemanComposer', () => ({ DesktopForemanComposer: (props: ComposerProps) => <div><textarea data-desktop-foreman-composer aria-label="Message the Foreman" />{props.trailing}{props.controls}</div> }))
-vi.mock('./DesktopForemanChatLayer', () => ({ DesktopForemanChatLayer: () => <div>Chat</div> }))
+vi.mock('./DesktopForemanChatLayer', () => ({ DesktopForemanChatLayer: ({ children }: ComponentProps<typeof import('./DesktopForemanChatLayer').DesktopForemanChatLayer>) => <div>Chat{children}</div> }))
 vi.mock('./routines/DesktopWorkspaceRoutines', () => ({ DesktopWorkspaceRoutines: () => <div>Routines content</div> }))
 vi.mock('./plan/DesktopPlanBoardPreview', () => ({ DesktopPlanBoardPreview: () => null }))
 import { DesktopForemanColumn } from './DesktopForemanColumn'
@@ -38,7 +38,7 @@ beforeEach(() => {
         build: { readProgress: vi.fn(async () => null) }, decisions: { submit: vi.fn() }, discovery: { capabilities: () => ({ available: false }), subscribe: vi.fn() }, navigation: { dispatch: vi.fn() }, conversation: { sendMessage: vi.fn(), stop: vi.fn() }, routines: { list: vi.fn() },
     } as unknown as DesktopForemanActionPorts
 })
-afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; document.body.innerHTML = ''; cancelDraftShutdown() })
+afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; document.body.innerHTML = ''; cancelDraftShutdown(); vi.unstubAllGlobals() })
 it('restores a closed saved view under controlled open without echoing the old value back to its owner', async () => {
     root = createRoot(document.body.appendChild(document.createElement('div')))
     await act(async () => root!.render(<Host />))
@@ -59,4 +59,46 @@ it('consumes command focus once so closing or choosing Routines does not reopen 
     await click('Open parked'); await click('Routines tab')
     expect(document.body.textContent).toContain('Routines content')
     expect(document.querySelectorAll('[data-voice-view]')).toHaveLength(1)
+})
+
+it('shows current and saved Chief of Staff tasks and stops only the selected task in the active turn', async () => {
+    const revision = crypto.randomUUID()
+    const tasks = ['Review launch notes', 'Summarize feedback'].map(title => ({
+        taskId: crypto.randomUUID(), title, status: 'running', steps: 1, toolCalls: 0, failures: 0, preview: '', calls: [],
+        cleanup: 'pending', stopRevision: crypto.randomUUID(),
+    }))
+    const live = { runId: 'active-run' }
+    const active = { delegationId: crypto.randomUUID(), revision, parentAgentId: 'foreman',
+        parentSessionId: chat.chatId, parentRunId: live.runId, toolCallId: 'repeated-tool-id', tasks }
+    const saved = { ...active, delegationId: crypto.randomUUID(), parentRunId: 'older-run',
+        tasks: [{ ...tasks[0], taskId: crypto.randomUUID(), title: 'Archived task', status: 'done', cleanup: 'complete' }] }
+    const stopBody = vi.fn()
+    const fetchDelegations = vi.fn(async (url: string, init?: RequestInit) => {
+        expect(url).toBe(`/api/desktop/foreman/${chat.chatId}/delegation`)
+        if (init?.method === 'POST') {
+            stopBody(JSON.parse(String(init.body)))
+            active.tasks = [{ ...tasks[0]!, status: 'stopped', cleanup: 'complete' }, tasks[1]!]
+            return Response.json({ delegation: active })
+        }
+        return Response.json({ delegations: [saved, active] })
+    })
+    vi.stubGlobal('fetch', fetchDelegations)
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    const column = (turn: typeof live | null) => <DesktopForemanColumn chat={chat} ports={ports} live={turn} messages={[]}
+        sessionId="engine-session" agentNameOf={id => id} controlledOpen />
+    await act(async () => root!.render(column(live)))
+    const stops = () => [...document.querySelectorAll<HTMLButtonElement>('button[aria-label="Stop this task"]')]
+    expect(document.body.textContent).toContain('Review launch notes')
+    expect(document.body.textContent).toContain('Summarize feedback')
+    expect(stops()).toHaveLength(2)
+    await act(async () => stops()[0]!.click())
+    expect(stopBody).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ delegationId: active.delegationId,
+        taskId: tasks[0]!.taskId, expectedRevision: tasks[0]!.stopRevision }))
+    expect(stops()).toHaveLength(1)
+    expect(ports.conversation.stop).not.toHaveBeenCalled()
+    await act(async () => root!.render(column(null)))
+    expect(stops()).toHaveLength(0)
+    const archived = document.querySelector<HTMLButtonElement>(`[data-delegation-id="${saved.delegationId}"] button[aria-expanded]`)!
+    await act(async () => archived.click())
+    expect(document.body.textContent).toContain('Archived task')
 })

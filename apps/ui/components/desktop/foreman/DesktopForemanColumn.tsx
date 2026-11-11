@@ -32,12 +32,13 @@ import { RotateCwIcon } from '@/lib/icons'
 import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopForemanAlternateReview, DesktopForemanAlternates } from './DesktopForemanAlternates'
 import { useDesktopForemanAlternates } from './useDesktopForemanAlternates'
-import { foremanDocumentScope, type DesktopCoworkerCallTarget, type DesktopCoworkerMention } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, foremanDocumentScope, type DesktopCoworkerCallTarget, type DesktopCoworkerMention } from '@rerun/contracts'
 import type { MentionSkill } from '@/components/chat/MentionAutocomplete'
 import { useDesktopMentionAutocomplete } from '../mentions/useDesktopMentionAutocomplete'
 import { useDesktopDocumentAttachments } from '@/lib/desktop/document-attachments/useDesktopDocumentAttachments'
 import { DesktopDocumentAttachmentControls } from '../document-attachments/DesktopDocumentAttachmentControls'
 import { DesktopDocumentPicker } from '../document-attachments/DesktopDocumentPicker'
+import { DesktopDelegationMount } from '../delegation/DesktopDelegationMount'
 
 function anchorOf(placement: DesktopForemanPlacement): ForemanAnchor {
     if (placement.mode === 'float') return 'float'
@@ -271,6 +272,9 @@ export function DesktopForemanColumn({
                             disabled: !!streaming || !!question || pendingStarter || !!foreman.blocked || alternates.busy || ui.decision.status === 'pending' } : undefined}
                         className="min-h-0 flex-1"
                     >
+                        {sessionId && ui.open && !hidden && !onRoutines && !alternates.open && foreman.restored &&
+                            <DesktopDelegationMount key={`${chat.workspaceId}:${chat.chatId}`} scope="foreman" sessionId={chat.chatId}
+                                agentId={FOREMAN_AGENT_ID} followLive={!!live} stopRunId={live?.runId ?? null} />}
                         {starterPack && onReviewTemplate && <DesktopStarterPack
                             workspaceId={chat.workspaceId}
                             active={ui.open && !hidden}

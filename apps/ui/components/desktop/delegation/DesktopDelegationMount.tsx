@@ -14,6 +14,7 @@ import {
     visibleDelegations,
     type DesktopDelegationClient,
     type DesktopDelegationFilter,
+    type DesktopDelegationScope,
 } from '@/lib/desktop/delegation-client'
 import type { DesktopDelegationSnapshot } from '@rerun/contracts'
 import { DesktopDelegationBlock } from './DesktopDelegationBlock'
@@ -24,6 +25,9 @@ export type DesktopDelegationView = 'live' | 'history'
 
 export type DesktopDelegationMountProps = {
     sessionId: string
+    scope?: DesktopDelegationScope
+    /** Restrict Stop to this parent run. Null makes the saved tasks read-only. */
+    stopRunId?: string | null
     agentId?: string
     toolCallId?: string
     /** Exact parent run from D's snapshot. Leave unset for saved messages. */
@@ -89,6 +93,8 @@ function Poller({ onPoll }: { onPoll: () => void }) {
 
 export function DesktopDelegationMount({
     sessionId,
+    scope = 'coworker',
+    stopRunId,
     agentId,
     toolCallId,
     parentRunId,
@@ -108,6 +114,7 @@ export function DesktopDelegationMount({
     const supplied = useRef(false)
     const alive = useRef(true)
     const readAbort = useRef<AbortController | null>(null)
+    const previousStopRun = useRef(stopRunId)
     const rowCount = useRef(0)
     const rowsRef = useRef<DesktopDelegationSnapshot[]>([])
     const filterRef = useRef<DesktopDelegationFilter>({ sessionId, agentId, toolCallId, parentRunId })
@@ -162,7 +169,7 @@ export function DesktopDelegationMount({
     }, [load])
 
     useEffect(() => {
-        const current = client ?? createDesktopDelegationClient()
+        const current = client ?? createDesktopDelegationClient(undefined, scope)
         clientRef.current = current
         alive.current = true
         return () => {
@@ -171,7 +178,7 @@ export function DesktopDelegationMount({
             clientRef.current = null
             if (!client) current.dispose()
         }
-    }, [client])
+    }, [client, scope])
 
     useEffect(() => {
         const generation = ++epoch.current
@@ -183,7 +190,13 @@ export function DesktopDelegationMount({
         readAbort.current = controller
         void load(controller.signal, generation)
         return () => controller.abort()
-    }, [filterKey, load, replaceRows, client])
+    }, [filterKey, load, replaceRows, client, scope])
+
+    useEffect(() => {
+        const previous = previousStopRun.current
+        previousStopRun.current = stopRunId
+        if (previous && previous !== stopRunId) retry()
+    }, [stopRunId, retry])
 
     useEffect(() => {
         if (suppliedKey === '') return
@@ -262,7 +275,7 @@ export function DesktopDelegationMount({
     }, [load])
 
     return (
-        <div className="min-w-0" data-state={phase} data-view={view}>
+        <div className="min-w-0 empty:hidden" data-state={phase} data-view={view}>
             {polling && <Poller onPoll={poll} />}
             {banner && (
                 <div className="mb-1 flex items-center gap-2" data-read={banner.kind}>
@@ -279,7 +292,7 @@ export function DesktopDelegationMount({
                     errorText={errorText}
                     dense={dense}
                     showLiveClock={view === 'live' && isLive(snapshot)}
-                    onStopTask={taskId => stopTask(snapshot, taskId)}
+                    onStopTask={stopRunId === undefined || stopRunId === snapshot.parentRunId ? taskId => stopTask(snapshot, taskId) : undefined}
                 />
             )) : fallback}
         </div>
