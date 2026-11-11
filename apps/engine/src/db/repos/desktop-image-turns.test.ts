@@ -4,7 +4,7 @@ import { mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, test } from 'vitest'
-import { contextTextPart, desktopAttachmentFieldsOf, desktopAttachmentFingerprintOf, desktopResolvedAttachmentParts, desktopResolvedAttachmentSelections, desktopStoredAttachmentSelections, type DesktopResolvedAttachment } from '@rerun/contracts'
+import { DESKTOP_ATTACHMENT_MAX_BYTES, contextTextPart, desktopAttachmentFieldsOf, desktopAttachmentFingerprintOf, desktopResolvedAttachmentParts, desktopResolvedAttachmentSelections, desktopStoredAttachmentSelections, workspaceAttachmentPart, type DesktopResolvedAttachment } from '@rerun/contracts'
 
 process.env.RERUN_DATA_DIR = mkdtempSync(join(tmpdir(), 'rerun-image-turns-'))
 process.env.RERUN_HUB_BASE_URL = ''
@@ -13,7 +13,7 @@ const { agentDir } = await import('../../config/paths.js')
 const { createSession, getSession } = await import('./sessions.js')
 const { startDesktopTabRun, getDesktopTabRun } = await import('./desktop-tab-runs.js')
 const { reserveDesktopQueuedTurn, getDesktopQueuedTurn } = await import('./desktop-queued-turns.js')
-const { listMessages, appendMessage, completeQueuedUser, storedContent } = await import('./messages.js')
+const { listMessages, appendMessage, completeQueuedUser, readSavedWorkspaceAttachment, storedContent } = await import('./messages.js')
 const { finishRun } = await import('./runs.js')
 const { forkReply, getRegeneration } = await import('./regenerations.js')
 const id = 'image-turn-owner'
@@ -73,4 +73,26 @@ test('regeneration copies image-bearing user rows byte-for-byte into an independ
     const copied = (await listMessages(id, alternate.sessionId))[0]
     expect(copied.contentJson).toBe(user.contentJson)
     expect(desktopStoredAttachmentSelections(storedContent(copied.contentJson))).toEqual(['before.md', image, 'after.txt'])
+})
+
+
+test('only the bounded stored attachment from the exact user message can be opened', async () => {
+    const session = await createSession(id), otherSession = await createSession(id)
+    const path = 'docs/brief, notes [B].md'
+    const file = { path, content: '\ufeffOriginal <svg>literal</svg>\n' }
+    const part = workspaceAttachmentPart(file)
+    const write = (role: 'user' | 'assistant', content: { type: 'text'; text: string; providerOptions?: typeof part.providerOptions }[]) => appendMessage(id, session.id, { role, content })
+    const user = await write('user', [part])
+    const assistant = await write('assistant', [part])
+    const forged = await write('user', [{ type: 'text', text: part.text }])
+    const unrelatedContext = await write('user', [{ ...part, text: 'Private memory' }])
+    const duplicate = await write('user', [part, part])
+    const oversized = await write('user', [workspaceAttachmentPart({ path, content: 'x'.repeat(DESKTOP_ATTACHMENT_MAX_BYTES + 1) })])
+    closeSystemDb(id)
+    await expect(readSavedWorkspaceAttachment(id, session.id, user.id, path)).resolves.toEqual(file)
+    await expect(readSavedWorkspaceAttachment(id, otherSession.id, user.id, path)).resolves.toBeNull()
+    await expect(readSavedWorkspaceAttachment(id, session.id, user.id, 'docs/other.md')).resolves.toBeNull()
+    for (const { id: messageId } of [assistant, forged, unrelatedContext, duplicate, oversized]) {
+        await expect(readSavedWorkspaceAttachment(id, session.id, messageId, path)).resolves.toBeNull()
+    }
 })

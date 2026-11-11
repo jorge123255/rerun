@@ -28,21 +28,30 @@ function selectionState(selected: readonly string[], sizes: ReadonlyMap<string, 
     return { unknown, invalid, total }
 }
 
-export function AttachmentChip({ path, size, onRemove, disabled }: { path: string; size?: number; onRemove?: () => void; disabled?: boolean }) {
+export function AttachmentChip({ path, size, onRemove, onPreview, disabled }: {
+    path: string; size?: number; onRemove?: () => void; onPreview?: () => void; disabled?: boolean
+}) {
     const name = path.split('/').pop()
     return <span title={path} className="inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-0.5 text-xs">
         <FileTextIcon aria-hidden className="size-3.5 shrink-0" />
-        <span className="sr-only">Attached file: </span><span className="truncate">{name}</span>
+        {onPreview
+            ? <button type="button" aria-label={`Preview ${name}`} disabled={disabled} onClick={onPreview}
+                className="min-w-0 truncate rounded-sm hover:underline focus-visible:outline-ring disabled:opacity-50">{name}</button>
+            : <><span className="sr-only">Attached file: </span><span className="truncate">{name}</span></>}
         {size !== undefined && <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{formatBytes(size)}</span>}
         {onRemove && <Button type="button" size="icon-sm" variant="ghost" disabled={disabled} aria-label={`Remove attachment ${name}`} onClick={onRemove}><XIcon className="size-3" /></Button>}
     </span>
 }
 
 /** The composer's ordered attachment chips, matching the original attachment row. */
-export function AttachmentChips({ paths, disabled, locked, onRemove }: { paths: readonly string[]; disabled?: boolean; locked?: readonly string[]; onRemove?: (path: string) => void }) {
+export function AttachmentChips({ paths, disabled, locked, onRemove, onPreview }: {
+    paths: readonly string[]; disabled?: boolean; locked?: readonly string[]
+    onRemove?: (path: string) => void; onPreview?: (index: number) => void
+}) {
     if (!paths.length) return null
     return <div className="flex flex-wrap items-center gap-1">
-        {paths.map(path => <AttachmentChip key={path} path={path} disabled={disabled || !!locked?.includes(path)} onRemove={onRemove ? () => onRemove(path) : undefined} />)}
+        {paths.map((path, index) => <AttachmentChip key={path} path={path} disabled={disabled || !!locked?.includes(path)}
+            onRemove={onRemove && (() => onRemove(path))} onPreview={onPreview && (() => onPreview(index))} />)}
     </div>
 }
 

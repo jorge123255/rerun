@@ -73,6 +73,7 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (path === '/desktop/subscription-login') return method === 'GET' || method === 'POST'
     if (/^\/agents\/(?:import|foreman|default)(?:\/|$)/.test(path)) return false
     const id = '[A-Za-z0-9_-]+'
+    if (new RegExp(`^/agents/${id}/sessions/${id}/messages/${id}/attachment$`).test(path)) return method === 'GET'
     if (new RegExp(`^/agents/${id}/sessions/${id}/mcp-sign-in-source$`).test(path)) return method === 'POST'
     if (new RegExp(`^/agents/${id}/sessions/${id}/secret-request-source$`).test(path)) return method === 'POST'
     if (new RegExp(`^/agents/${id}/memories/semantic/status$`).test(path)) return method === 'GET'

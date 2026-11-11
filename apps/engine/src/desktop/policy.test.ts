@@ -216,3 +216,16 @@ test('desktop Foreman questions and logical database capture expose only their e
         expect(desktopRouteAllowed(method, '/desktop/coworker-share-database/capture/arbitrary')).toBe(false)
     }
 })
+
+
+test('allows only the exact saved workspace attachment read for a regular coworker', () => {
+    const attachment = '/agents/owner/sessions/chat/messages/turn/attachment'
+    expect(desktopRouteAllowed('GET', attachment)).toBe(true)
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) expect(desktopRouteAllowed(method, attachment)).toBe(false)
+    for (const path of [
+        '/agents/foreman/sessions/chat/messages/turn/attachment',
+        '/agents/owner/sessions/chat/attachment',
+        '/agents/owner/sessions/chat/messages/turn/attachment/other',
+        '/agents/owner/sessions/chat/messages/turn%2Fother/attachment',
+    ]) expect(desktopRouteAllowed('GET', path)).toBe(false)
+})

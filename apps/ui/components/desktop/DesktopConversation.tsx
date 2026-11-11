@@ -78,6 +78,7 @@ import type { DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
 import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-request'
 import { AttachmentChips, DesktopAttachmentPicker } from './DesktopAttachmentPicker'
+import { DesktopWorkspaceAttachmentLightbox, type WorkspaceAttachmentSource } from './DesktopWorkspaceAttachmentLightbox'
 import { useDesktopDocumentAttachments } from '@/lib/desktop/document-attachments/useDesktopDocumentAttachments'
 import { DesktopDocumentAttachmentControls } from './document-attachments/DesktopDocumentAttachmentControls'
 import { DesktopDocumentLightbox } from './document-attachments/DesktopDocumentLightbox'
@@ -360,6 +361,10 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
     })
     const documents = useDesktopDocumentAttachments({ agentId: agent.id, tabUid: tabUid ?? sessionId ?? 'legacy-draft', sessionId: sessionId ?? undefined, enabled: active && !draft.quitting && !!tabUid })
     const [documentPreview, setDocumentPreview] = useState<{ attachments: DesktopDocumentReference[]; index: number } | null>(null)
+    const [workspacePreview, setWorkspacePreview] = useState<{
+        owner: string; source: WorkspaceAttachmentSource; paths: readonly string[]; index: number
+    } | null>(null)
+    if (workspacePreview && workspacePreview.owner !== uploadOwner) setWorkspacePreview(null)
     useEffect(() => { setDocumentPreview(null) }, [agent.id, tabUid, sessionId, active])
     const { items: uploadItems, remove: removeUpload, retry: retryUpload } = textUploads
     const uploadScope = useRef({ owner: uploadOwner, live: active && !draft.quitting })
@@ -1353,7 +1358,10 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                                         const images = files.length ? files.map((part, index) => ({ path: `${index}/${part.filename ?? 'image.png'}`, url: part.url }))
                                             : selections.filter((item): item is DesktopImageSnapshot => typeof item !== 'string').map((image, index) => ({ path: `${index}/${image.name}`, url: `/api/desktop/agents/${encodeURIComponent(agent.id)}/images?snapshot=${encodeURIComponent(JSON.stringify(image))}` }))
                                         const refs = message.metadata && typeof message.metadata === 'object' && 'documents' in message.metadata ? desktopDocumentReferenceSchema.array().safeParse(message.metadata.documents) : null
-                                        return <>{refs?.success && refs.data.length > 0 && <div className="mb-1 flex flex-wrap gap-1">{refs.data.map((ref, index) => <Button type="button" variant="secondary" size="sm" key={ref.attachmentId} onClick={() => setDocumentPreview({ attachments: refs.data, index })}>{ref.name}</Button>)}</div>}{paths.length > 0 && <div className="mb-1"><AttachmentChips paths={paths} /></div>}
+                                        const messageId = message.id.startsWith('engine-') ? message.id.slice('engine-'.length) : ''
+                                        return <>{refs?.success && refs.data.length > 0 && <div className="mb-1 flex flex-wrap gap-1">{refs.data.map((ref, index) => <Button type="button" variant="secondary" size="sm" key={ref.attachmentId} onClick={() => setDocumentPreview({ attachments: refs.data, index })}>{ref.name}</Button>)}</div>}{paths.length > 0 && <div className="mb-1"><AttachmentChips paths={paths} onPreview={sessionId && messageId
+                                            ? index => setWorkspacePreview({ owner: uploadOwner, source: { sessionId, messageId }, paths, index })
+                                            : undefined} /></div>}
                                             {images.length > 0 && <MessageAttachments paths={images.map(item => item.path)} rawUrlFor={path => images.find(item => item.path === path)?.url ?? ''} />}</>
                                     })()}
                                     {message.role === 'assistant'
@@ -1458,6 +1466,9 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                     disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onAnswer={answerQuestion} />}
                 {approval && !webhookOwns('approval', approval.id) && <DesktopApprovalCard key={approval.id} approval={approval} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onDecide={decideApproval} />}
                 {documentPreview && <DesktopDocumentLightbox {...documentPreview} onIndexChange={index => setDocumentPreview(value => value ? { ...value, index } : null)} onClose={() => setDocumentPreview(null)} />}
+                {active && workspacePreview?.owner === uploadOwner && <DesktopWorkspaceAttachmentLightbox {...workspacePreview}
+                    onIndexChange={index => setWorkspacePreview(value => value && { ...value, index })}
+                    onClose={() => setWorkspacePreview(null)} />}
                 <MarkdownEditorDialog key={editorSession} open={active && editorOpen} onOpenChange={setEditorOpen} initialValue={input} title="Write your message" description="Room to structure a long message. Enter starts a new line." hint="Send with Cmd + Enter" closeLabel="Cancel" submitLabel="Send" submitIcon={<SendIcon className="size-4" />} submitting={preparingSend || stopping}
                     onDraftChange={setInput}
                     onClose={markdown => { setInput(markdown); queueMicrotask(() => composerForm.current?.querySelector('textarea')?.focus()) }}
@@ -1477,6 +1488,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                             ? <AttachmentChips key={`${index}:${item}`} paths={[item]}
                                 disabled={draft.quitting || !!regenerationSource || stopping || queue.pending || uploadsActive}
                                 locked={pendingAttachment.current?.key === draftKey ? pendingAttachment.current.attachments.filter((path): path is string => typeof path === 'string') : undefined}
+                                onPreview={() => setWorkspacePreview({ owner: uploadOwner, source: { agentId: agent.id }, paths: textAttachments, index: textAttachments.indexOf(item) })}
                                 onRemove={path => setDraftAttachments(draftKey, attachmentPaths.filter(item => item !== path))} />
                             : <ChatAttachmentChip key={`${index}:${item.sha256}`}
                                 file={{ id: item.sha256, type: 'file', mediaType: item.mediaType, filename: item.name,

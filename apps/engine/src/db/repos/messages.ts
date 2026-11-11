@@ -1,8 +1,8 @@
 import { and, asc, desc, eq, getTableColumns, gt, gte, isNotNull, sql } from 'drizzle-orm'
 import type { ModelMessage } from 'ai'
-import { FOREMAN_AGENT_ID, visibleText, type DesktopSourcePart, type MessageAuthor } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, desktopWorkspaceAttachmentSchema, isContextPart, visibleText, workspaceAttachmentPart, type DesktopSourcePart, type MessageAuthor } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
-import { messages, type MessageRow } from '../schema.js'
+import { messages, sessions, type MessageRow } from '../schema.js'
 import { newId, nowIso } from '../../lib/ids.js'
 import type { InStatement, InValue } from '@libsql/client'
 import { foremanReplySourceUpdate, type ForemanReplyTurn } from './foreman-reply-sources.js'
@@ -82,6 +82,25 @@ export async function listMessages(agentId: string, sessionId: string, throughMe
     const through = throughMessageId === undefined ? undefined
         : sql`(created_at, rowid) <= (SELECT created_at, rowid FROM messages WHERE id = ${throughMessageId} AND session_id = ${sessionId})`
     return db.select().from(messages).where(and(eq(messages.sessionId, sessionId), through)).orderBy(asc(messages.createdAt), asc(sql`rowid`))
+}
+
+/** Read only the text attachment explicitly stored with this user message. */
+export async function readSavedWorkspaceAttachment(agentId: string, sessionId: string, messageId: string, path: string) {
+    const { db } = await getSystemDb(agentId)
+    const [row] = await db.select({ contentJson: messages.contentJson }).from(messages)
+        .innerJoin(sessions, and(eq(sessions.id, messages.sessionId), eq(sessions.agentId, agentId)))
+        .where(and(eq(messages.id, messageId), eq(messages.sessionId, sessionId), eq(messages.role, 'user')))
+        .limit(1)
+    if (!row) return null
+    const parts = storedContent(row.contentJson)
+    if (!Array.isArray(parts)) return null
+    const matches = parts.filter(part => part?.type === 'text' && isContextPart(part) && part.providerOptions?.rerun?.attachmentPath === path)
+    if (matches.length !== 1) return null
+    const [part] = matches
+    const prefix = workspaceAttachmentPart({ path, content: '' }).text
+    if (part.type !== 'text' || typeof part.text !== 'string' || !part.text.startsWith(prefix)) return null
+    const parsed = desktopWorkspaceAttachmentSchema.safeParse({ path, content: part.text.slice(prefix.length) })
+    return parsed.success ? parsed.data : null
 }
 
 // Two messages of one turn can share a millisecond, so the insertion order breaks the tie.
