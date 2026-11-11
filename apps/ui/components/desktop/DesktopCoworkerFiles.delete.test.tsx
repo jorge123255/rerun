@@ -54,10 +54,14 @@ function disk(files: Record<string, string>, fail?: string) {
             return Response.json({ path: body.path })
         }
         const path = url.searchParams.get('path') ?? ''
+        if (url.pathname.endsWith('/image') && files[path] !== undefined) {
+            const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 1])
+            return new Response(png, { headers: { 'content-type': 'image/png' } })
+        }
         if (url.pathname.endsWith('/read')) {
             const content = files[path]
             return content === undefined ? Response.json({ error: 'Not found' }, { status: 404 })
-                : Response.json({ path, content, hash: hashText(content), identity: '9:9', truncated: false })
+                : Response.json({ path, content, hash: hashText(content), identity: `4:${path.split('/').at(-1)!.length}`, truncated: false })
         }
         const prefix = path ? `${path}/` : ''
         const entries = new Map<string, { name: string; type: 'dir' | 'file'; size: number; modifiedAt: string; identity: string }>()
@@ -149,7 +153,76 @@ test('the open editor does not offer Delete', async () => {
     await click('notes.md')
     await flush()
     await click('Edit')
+    expect(button('Delete file')).toBeUndefined()
     expect(document.querySelector('[role="menuitem"]')).toBeNull()
     expect(alertDialog()).toBeNull()
+    expect(fixture.deletes).toEqual([])
+})
+
+test('deletes the confirmed preview and returns to its folder without opening a sibling', async () => {
+    const fixture = disk({ 'docs/notes.md': 'Alice', 'docs/other.md': 'Sibling' })
+    vi.stubGlobal('fetch', fixture.fetcher)
+    await mount()
+    await click('docs')
+    await flush()
+    await click('notes.md')
+    await flush()
+    await click('Delete file')
+    expect(alertDialog()?.textContent).toContain('Delete notes.md?')
+    await clickAlert('Cancel')
+    expect(fixture.deletes).toEqual([])
+    expect(document.querySelector('[data-testid="file-preview"]')?.textContent).toBe('Alice')
+    await click('Delete file')
+    await clickAlert('Delete')
+    await flush()
+    expect(fixture.deletes).toEqual([{ path: 'docs/notes.md', identity: '4:8' }])
+    expect(document.querySelector('[data-testid="file-preview"]')).toBeNull()
+    expect(button('other.md')?.getAttribute('aria-selected')).toBe('false')
+    expect(fixture.files).toEqual({ 'docs/other.md': 'Sibling' })
+})
+
+test('keeps the preview open and shows the reason when its delete is refused', async () => {
+    const fixture = disk({ 'notes.md': 'Alice' }, '“notes.md” was renamed or replaced. It was left unchanged.')
+    vi.stubGlobal('fetch', fixture.fetcher)
+    await mount()
+    await click('notes.md')
+    await flush()
+    await click('Delete file')
+    await clickAlert('Delete')
+    await flush()
+    expect(fixture.deletes).toEqual([{ path: 'notes.md', identity: '4:8' }])
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('left unchanged')
+    expect(document.querySelector('[data-testid="file-preview"]')?.textContent).toBe('Alice')
+    expect(fixture.files['notes.md']).toBe('Alice')
+})
+
+test('the image preview deletes the same file identity it requested', async () => {
+    const fixture = disk({ 'photo.png': 'Image', 'notes.md': 'Keep' })
+    vi.stubGlobal('fetch', fixture.fetcher)
+    await mount()
+    await click('photo.png')
+    await flush()
+    expect(document.querySelector('[data-testid="file-image-preview"]')).not.toBeNull()
+    expect(fixture.fetcher.mock.calls.some(([url]) => String(url).includes('/image?path=photo.png&identity=4%3A9'))).toBe(true)
+    await click('Delete file')
+    await clickAlert('Delete')
+    await flush()
+    expect(fixture.deletes).toEqual([{ path: 'photo.png', identity: '4:9' }])
+    expect(document.querySelector('[data-testid="file-image-preview"]')).toBeNull()
+    expect(fixture.files).toEqual({ 'notes.md': 'Keep' })
+})
+
+test('a file read from a newer identity than the listing offers no preview delete', async () => {
+    const fixture = disk({ 'notes.md': 'Alice' })
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        const response = await fixture.fetcher(input, init)
+        if (!String(input).includes('/read?')) return response
+        return Response.json({ ...await response.json(), identity: '10:8' })
+    })
+    await mount()
+    await click('notes.md')
+    await flush()
+    expect(document.querySelector('[data-testid="file-preview"]')?.textContent).toBe('Alice')
+    expect(button('Delete file')).toBeUndefined()
     expect(fixture.deletes).toEqual([])
 })

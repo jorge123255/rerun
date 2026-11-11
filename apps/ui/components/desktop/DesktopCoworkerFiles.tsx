@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { FileTextEditor } from '@/components/files/FileTextEditor'
 import { useFileUnloadGuard } from '@/components/files/useFileUnloadGuard'
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { PanelDeleteButton } from '@/components/ui/panel-editor'
 import { ArrowLeftIcon, ChevronRightIcon, DownloadIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, PencilIcon, RefreshCwIcon, Trash2Icon, XIcon } from '@/lib/icons'
 import { DesktopFileAudioPreview, isDesktopAudioName } from './DesktopFileAudioPreview'
 import { DesktopFileImagePreview, isDesktopRasterName } from './DesktopFileImagePreview'
@@ -28,6 +29,7 @@ import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/deskto
 
 type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string; exportVersion?: string }
 type OpenFile = { path: string; name: string; identity?: string; exportVersion?: string }
+type DeleteTarget = Pick<Entry, 'name' | 'type' | 'identity'> & { path: string }
 type SaveCoworkerFile = (file: { agentId: string; path: string; version: string }) => Promise<boolean>
 type Preview = { path: string; content: string; truncated: boolean; hash?: string; identity?: string; exportVersion?: string } | { path: string; error: string } | { path: string; loading: true } | { path: string; conflict: FileConflict }
 
@@ -89,7 +91,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     const renameAfterMenu = useRef<string | null>(null)
     const [selected, setSelected] = useState<string | null>(null)
     const [renamePending, setRenamePending] = useState(false)
-    const [deleting, setDeleting] = useState<{ name: string; type: 'file' | 'dir'; identity?: string } | null>(null)
+    const [deleting, setDeleting] = useState<DeleteTarget | null>(null)
     const [deletePending, setDeletePending] = useState(false)
     const renamingNow = useRef(false)
     const deletingNow = useRef(false)
@@ -230,8 +232,14 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     const previewSaveAction = (path: string, version?: string) => nativeSave && openEntry?.exportVersion && version
         ? <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={savingFile} onClick={() => void saveAs(path, version)}>Save As</Button>
         : null
+    const previewDeleteAction = (path: string, identity?: string) => {
+        if (!identity || openEntry?.identity !== identity) return null
+        return <PanelDeleteButton type="button" label="Delete file" confirm={false} disabled={pending || savingFile}
+            onClick={() => setDeleting({ path, name: openEntry.name, type: 'file', identity })} />
+    }
     const mediaActions = (file: OpenFile) => <>
         {previewSaveAction(file.path, file.exportVersion)}
+        {previewDeleteAction(file.path, file.identity)}
         {showSaveNotice(saveNotice?.path === file.path)}
     </>
     const navigationLocked = renamePending || deletePending || renaming !== null || deleting !== null || editingPath !== null || (!!preview && 'conflict' in preview)
@@ -273,18 +281,18 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         }
     }
     // Clear only the deleted path. Do not select a sibling, and do not retarget a chat attachment.
-    const commitDelete = async (target: { name: string; type: 'file' | 'dir'; identity?: string }) => {
+    const commitDelete = async (target: DeleteTarget) => {
         if (deletingNow.current) return
         deletingNow.current = true
         setDeletePending(true)
-        const path = childPath(target.name)
+        const { path } = target
         setNotice(null)
         let removed = false
         try {
             const response = await fetch(`${base}/delete`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path, ...(target.identity && { identity: target.identity }) }) })
             const body = await response.json().catch(() => null) as { path?: string; error?: string } | null
             if (!response.ok || body?.path !== path) {
-                setNotice({ ok: false, folder: currentPath, text: body?.error ?? `Could not delete “${target.name}”.` })
+                setNotice({ ok: false, folder: folderOf(path), text: body?.error ?? `Could not delete “${target.name}”.` })
                 return
             }
             removed = true
@@ -298,7 +306,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
             setEditingPath(previous => covered(previous) ? null : previous)
             setRenaming(previous => previous === target.name ? null : previous)
         } catch {
-            setNotice({ ok: false, folder: currentPath, text: `Could not delete “${target.name}”.` })
+            setNotice({ ok: false, folder: folderOf(path), text: `Could not delete “${target.name}”.` })
         } finally {
             deletingNow.current = false
             setDeletePending(false)
@@ -306,6 +314,12 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         }
         if (removed) reload()
     }
+    const deleteConfirmation = deleting && <ConfirmDialog open pending={deletePending} onOpenChange={open => { if (!open && !deletingNow.current) setDeleting(null) }}
+        title={`Delete ${deleting.name}?`}
+        description={deleting.type === 'dir' ? 'The folder and everything inside it are deleted from the box. This cannot be undone.' : 'The file is deleted from the box. This cannot be undone.'}
+        onConfirm={event => { event.preventDefault(); void commitDelete(deleting) }} />
+    const folderNotice = notice?.folder === currentPath && <p role={notice.ok ? 'status' : 'alert'} data-testid="import-notice" className={`pt-2 text-xs ${notice.ok ? 'text-muted-foreground' : 'text-destructive'}`}>{notice.text}</p>
+    const withPreviewFeedback = (view: ReactNode) => <>{view}{folderNotice}{deleteConfirmation}</>
 
     const breadcrumbs = currentPath.split('/').filter(Boolean)
     const menuEntry = menuName ? entries.find(entry => entry.name === menuName) : undefined
@@ -371,31 +385,31 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     if (image) {
         const params = new URLSearchParams({ path: image.path })
         if (image.identity) params.set('identity', image.identity)
-        return <DesktopFileImagePreview name={image.name} path={image.path} identity={image.identity} srcUrl={`${base}/image?${params.toString()}`} onBack={() => setImage(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(image)} />
+        return withPreviewFeedback(<DesktopFileImagePreview name={image.name} path={image.path} identity={image.identity} srcUrl={`${base}/image?${params.toString()}`} onBack={() => setImage(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(image)} />)
     }
 
     if (audio) {
         const params = new URLSearchParams({ path: audio.path })
         if (audio.identity) params.set('identity', audio.identity)
-        return <DesktopFileAudioPreview name={audio.name} path={audio.path} identity={audio.identity} srcUrl={`${base}/audio?${params.toString()}`} onBack={() => setAudio(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(audio)} />
+        return withPreviewFeedback(<DesktopFileAudioPreview name={audio.name} path={audio.path} identity={audio.identity} srcUrl={`${base}/audio?${params.toString()}`} onBack={() => setAudio(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(audio)} />)
     }
 
     if (video) {
         const params = new URLSearchParams({ path: video.path })
         if (video.identity) params.set('identity', video.identity)
-        return <DesktopFileVideoPreview name={video.name} path={video.path} identity={video.identity} srcUrl={`${base}/video?${params.toString()}`} onBack={() => setVideo(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(video)} />
+        return withPreviewFeedback(<DesktopFileVideoPreview name={video.name} path={video.path} identity={video.identity} srcUrl={`${base}/video?${params.toString()}`} onBack={() => setVideo(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(video)} />)
     }
 
     if (pdf) {
         const params = new URLSearchParams({ path: pdf.path })
         if (pdf.identity) params.set('identity', pdf.identity)
-        return <DesktopFilePdfPreview name={pdf.name} path={pdf.path} identity={pdf.identity} srcUrl={`${base}/pdf?${params.toString()}`} onBack={() => setPdf(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(pdf)} />
+        return withPreviewFeedback(<DesktopFilePdfPreview name={pdf.name} path={pdf.path} identity={pdf.identity} srcUrl={`${base}/pdf?${params.toString()}`} onBack={() => setPdf(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(pdf)} />)
     }
 
     if (preview) {
         const name = preview.path.split('/').pop()
         const editable = 'hash' in preview && !!preview.hash
-        return <div ref={viewerRef} className="flex min-h-0 flex-1 flex-col gap-2">
+        return withPreviewFeedback(<div ref={viewerRef} className="flex min-h-0 flex-1 flex-col gap-2">
             <div className="flex items-center gap-2 text-sm">
                 <Button type="button" variant="ghost" size="sm" aria-label="Back to folder" onClick={() => setPreview(null)}><ArrowLeftIcon className="size-4" /></Button>
                 <span className="min-w-0 flex-1 truncate font-medium" title={preview.path}>{name}</span>
@@ -403,6 +417,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                 {previewSaveAction(preview.path, 'content' in preview ? preview.exportVersion : 'error' in preview ? openEntry?.exportVersion : undefined)}
                 {'content' in preview && <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={!editable}
                     title={editable ? undefined : 'Only complete UTF-8 text files up to 256 KiB can be edited here.'} onClick={() => setEditingPath(preview.path)}>Edit</Button>}
+                {previewDeleteAction(preview.path, 'content' in preview ? preview.identity : 'error' in preview ? openEntry?.identity : undefined)}
             </div>
             {showSaveNotice(saveNotice?.path === preview.path)}
             {'loading' in preview ? <p role="status" className="text-sm text-muted-foreground">Loading preview…</p>
@@ -411,7 +426,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                     <pre data-testid="file-preview" className="min-h-0 flex-1 overflow-auto rounded-md border bg-muted/30 p-3 font-mono text-xs whitespace-pre-wrap break-words">{preview.content}</pre>
                     {preview.truncated && <p className="text-xs text-muted-foreground">Preview shows the first 256 KB.</p>}
                 </>}
-        </div>
+        </div>)
     }
 
     return <div className="flex min-h-0 flex-1 flex-col">
@@ -432,7 +447,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         {showSaveNotice(!!saveNotice && folderOf(saveNotice.path) === currentPath)}
         {renamePending && <p role="status" className="pt-2 text-xs text-muted-foreground">Renaming…</p>}
         {deletePending && <p role="status" className="pt-2 text-xs text-muted-foreground">Deleting…</p>}
-        {notice?.folder === currentPath && <p role={notice.ok ? 'status' : 'alert'} data-testid="import-notice" className={`pt-2 text-xs ${notice.ok ? 'text-muted-foreground' : 'text-destructive'}`}>{notice.text}</p>}
+        {folderNotice}
         <div className={`relative min-h-0 flex-1 overflow-y-auto py-2 ${busy || pending ? 'pointer-events-none opacity-60' : ''}`}
             onDragOver={imports.onDragOver} onDragLeave={imports.onDragLeave} onDrop={imports.onDrop}>
             {imports.dragOver && <p role="status" className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-md border border-dashed bg-background/80 text-sm">Drop files or folders to import</p>}
@@ -479,7 +494,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                             Rename
                         </ContextMenuItem>
                         <ContextMenuSeparator />
-                        <ContextMenuItem variant="destructive" disabled={pending} onSelect={() => setDeleting({ name: menuEntry.name, type: menuEntry.type, ...(menuEntry.identity && { identity: menuEntry.identity }) })}>
+                        <ContextMenuItem variant="destructive" disabled={pending} onSelect={() => setDeleting({ path: childPath(menuEntry.name), name: menuEntry.name, type: menuEntry.type, identity: menuEntry.identity })}>
                             <Trash2Icon className="size-4" />
                             Delete
                         </ContextMenuItem>
@@ -487,10 +502,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                 </ContextMenu>}
             <FilesImportTray items={imports.items} onCancel={imports.cancel} onRetry={imports.retry} onDismiss={imports.dismiss} />
         </div>
-        {deleting && <ConfirmDialog open pending={deletePending} onOpenChange={open => { if (!open && !deletingNow.current) setDeleting(null) }}
-            title={`Delete ${deleting.name}?`}
-            description={deleting.type === 'dir' ? 'The folder and everything inside it are deleted from the box. This cannot be undone.' : 'The file is deleted from the box. This cannot be undone.'}
-            onConfirm={event => { event.preventDefault(); if (deleting) void commitDelete(deleting) }} />}
+        {deleteConfirmation}
     </div>
 }
 
