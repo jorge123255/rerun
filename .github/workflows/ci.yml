@@ -38,6 +38,10 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @rerun/contracts build
+      - name: Use a canonical temporary directory for macOS tests
+        run: |
+          test_tmp="$(mktemp -d "$RUNNER_TEMP/rerun-tests.XXXXXX")"
+          printf 'TMPDIR=%s\n' "$(cd "$test_tmp" && pwd -P)" >> "$GITHUB_ENV"
       - name: Run the complete engine suite on the supported desktop host
         run: pnpm --filter rerun-engine test
       - name: Run desktop file publication and interruption suites
