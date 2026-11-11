@@ -91,7 +91,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         signal.throwIfAborted()
         return { enabled: detail.config.enabled, granted: detail.config.tools.desktopToolGrants?.[grant] === true && (grant !== 'privateFileWrite' || detail.config.tools.filesystem === true) && (grant !== 'sharedFilesWrite' || detail.config.tools.shared !== false) }
     }
-    const oauth = loopbackMcpOAuth(store, access)
+    const oauth = loopbackMcpOAuth(store, access, undefined, store)
     const material: DesktopMcpMaterialSource = (...args) => references.material(...args)
     const remote = remoteMcpRuntime(store, access, fetch, oauth.credential, material)
     const authorizeRun = async (identity: McpRunIdentity, stop: AbortSignal, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' | 'services' | 'webSearch' | 'sharedFilesWrite' = 'mcp') => {

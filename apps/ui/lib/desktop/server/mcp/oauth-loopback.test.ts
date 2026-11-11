@@ -32,7 +32,7 @@ async function setup(){
  const store=remoteMcpStore(db,()=>Buffer.alloc(32,7));await store.save('a',{name:'x',url:resource})
  const revision=(await store.list('a'))[0].revision,fixture_=fixture()
  let granted=true
- const oauth=loopbackMcpOAuth(store,async()=>({enabled:true,granted}),fixture_.json);services.push(oauth)
+ const oauth=loopbackMcpOAuth(store,async()=>({enabled:true,granted}),fixture_.json,store);services.push(oauth)
  return {db,store,revision,oauth,...fixture_,revoke:()=>{granted=false}}
 }
 function callback(state:string,iss=issuer){
@@ -60,6 +60,45 @@ it('rejects wrong state, consumes a valid callback once, and encrypts tokens out
  expect((await store.read('a','x')).bearer).toBe('')
  expect(String((await db.execute('SELECT bundle FROM desktop_remote_mcp_oauth')).rows[0].bundle)).not.toContain('rotating')
  expect(await oauth.credential('a','x',revision,new AbortController().signal)).toBe('access')
+})
+for (const duringExchange of [false, true]) it(`preserves a newer credential when it is saved ${duringExchange ? 'during' : 'before'} the browser exchange`, async () => {
+ const {store, revision, db, json, exchanges}=await setup()
+ let notifyExchange!: () => void
+ let resumeExchange!: () => void
+ const entered=new Promise<void>(resolve=>{notifyExchange=resolve})
+ const resumed=new Promise<void>(resolve=>{resumeExchange=resolve})
+ const delayed:OAuthJson=async(url,signal,body)=>{
+  if(body instanceof URLSearchParams && body.get('grant_type')==='authorization_code'){
+   notifyExchange()
+   if(duringExchange)await resumed
+  }
+  return json(url,signal,body)
+ }
+ const oauth=loopbackMcpOAuth(store,async()=>({enabled:true,granted:true}),delayed,store)
+ services.push(oauth)
+ const signal=new AbortController().signal
+ const started=await oauth.start('a','x',revision,signal)
+ const state=new URL(started.authorizationUrl!).searchParams.get('state')!
+ const inFlight=duringExchange ? callback(state) : undefined
+ if(duringExchange)await entered
+ try {
+  // A separate store shares durable state without sharing process-local lifecycle tickets.
+  const writer=remoteMcpStore(db,()=>Buffer.alloc(32,7))
+  await writer.writeOAuth('a','x',revision,{accessToken:'newer-approval',expiresAt:Date.now()+3_600_000,resource,issuer,tokenEndpoint:issuer+'token',clientId:'public-client'},signal)
+ } finally {
+  resumeExchange()
+ }
+ const response=inFlight ?? callback(state)
+ await vi.waitFor(()=>expect(response.writeHead).toHaveBeenCalled())
+ expect((await store.readOAuth('a','x'))?.accessToken).toBe('newer-approval')
+ expect(response.writeHead).toHaveBeenCalledWith(400,expect.anything())
+ expect(exchanges()).toBe(duringExchange ? 1 : 0)
+ oauth.shutdown()
+ const restored=remoteMcpStore(db,()=>Buffer.alloc(32,7))
+ const reopened=loopbackMcpOAuth(restored,async()=>({enabled:true,granted:true}),json,restored)
+ services.push(reopened)
+ expect(await reopened.status('a','x',revision,signal)).toEqual({state:'connected'})
+ expect(await reopened.credential('a','x',revision,signal)).toBe('newer-approval')
 })
 for(const change of ['disconnect','edit','revoke','quit'] as const)it(`invalidates callback on ${change}`,async()=>{
  const {oauth,revision,store,exchanges,revoke}=await setup()

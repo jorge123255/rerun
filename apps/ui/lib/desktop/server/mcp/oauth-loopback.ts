@@ -6,7 +6,8 @@ import {abortable,type McpAccess} from './remote'
 import {discoverLoopbackOAuth,oauthJson,publicOAuthAddress,type OAuthJson,type OAuthMetadata} from './oauth-network'
 export type OAuthStatus={state:'idle'|'waiting'|'connected'|'error'|'unsupported';message?:string}
 type Attempt={slot:string;ended:boolean;controller:AbortController;server?:Server;timer:ReturnType<typeof setTimeout>;status:OAuthStatus;revision:string;url:string;used:boolean;release:()=>void}
-export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'writeOAuth'|'lifecycle'>,access:McpAccess,json:OAuthJson=oauthJson) {
+type BrowserCredentialStore=Pick<RemoteMcpStore,'credentialState'|'replaceOAuth'>
+export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'writeOAuth'|'lifecycle'>,access:McpAccess,json:OAuthJson=oauthJson,credentials?:BrowserCredentialStore) {
  const attempts=new Map<string,Attempt>(),refreshes=new Map<string,Promise<string>>()
  const terminal=new Map<string,{revision:string;url:string;status:OAuthStatus}>()
  const key=(agent:string,name:string)=>JSON.stringify([agent,name])
@@ -44,6 +45,13 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   const admission=store.lifecycle.watch(agent,name)
   const admitted=await authority(agent,name,revision,AbortSignal.any([stop,AbortSignal.timeout(30_000)]),admission)
   if(admitted.bearer)throw new Error('Clear the configured bearer before OAuth')
+  const expected=await credentials?.credentialState(agent,name)
+  if(credentials && (!expected || expected.registrationId!==admitted.id || expected.revision!==revision))throw new Error('MCP OAuth credential unavailable')
+  async function assertCredentialCurrent(signal:AbortSignal) {
+   if(!credentials || !expected)return
+   const current=await abortable(credentials.credentialState(agent,name),signal)
+   if(!current || current.registrationId!==expected.registrationId || current.revision!==expected.revision || current.sealed!==expected.sealed)throw new Error('MCP credential generation changed.')
+  }
   admission();stop.throwIfAborted()
   const slot=key(agent,name),old=attempts.get(slot)
   if(attempts.size>=128 && !old)throw new Error('OAuth unavailable')
@@ -77,9 +85,14 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
       if(url.searchParams.has('error') || url.searchParams.getAll('code').length!==1 || !url.searchParams.get('code') || url.searchParams.getAll('iss').length!==1 || url.searchParams.get('iss')!==meta.issuer)throw new Error('Authorization refused or issuer missing')
       const current=await authority(agent,name,revision,callbackSignal,ticket.assertCurrent)
       if(current.url!==attempt.url)throw new Error('Server changed')
+      await assertCredentialCurrent(callbackSignal)
+      ticket.assertCurrent();callbackSignal.throwIfAborted()
       const token=await json(meta.token,callbackSignal,new URLSearchParams({grant_type:'authorization_code',code:url.searchParams.get('code')!,redirect_uri:redirectUri,client_id:clientId,code_verifier:verifier,resource:meta.resource}))
       await authority(agent,name,revision,callbackSignal,ticket.assertCurrent)
-      await abortable(store.writeOAuth(agent,name,revision,tokens(token,meta,clientId),callbackSignal),callbackSignal)
+      const bundle=tokens(token,meta,clientId)
+      // The browser may have been open while another writer changed the credential.
+      if(credentials && expected)await abortable(credentials.replaceOAuth(agent,name,expected,bundle,callbackSignal),callbackSignal)
+      else await abortable(store.writeOAuth(agent,name,revision,bundle,callbackSignal),callbackSignal)
       await authority(agent,name,revision,callbackSignal,ticket.assertCurrent)
       answer(200,'Connected. You can close this window.');end(attempt,{state:'connected'})
      }catch{answer(400,'Authorization failed. Return to Rerun and retry.');end(attempt,{state:'error',message:'Authorization failed. Retry.'})}
@@ -102,6 +115,7 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
    for(const [k,v] of Object.entries({response_type:'code',client_id:clientId,redirect_uri:redirectUri,state,code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256',resource:meta.resource,...(meta.scope?{scope:meta.scope}:{})}))url.searchParams.set(k,v)
    if(url.href.length>8192)throw new Error('Authorization link exceeds limit')
    await authority(agent,name,revision,signal,ticket.assertCurrent)
+   await assertCredentialCurrent(signal)
    ticket.assertCurrent();signal.throwIfAborted()
    return {authorizationUrl:url.href,status:attempt.status}
   }catch{end(attempt,signal.aborted?{state:'error',message:'Authorization cancelled or timed out. Retry.'}:{state:'unsupported',message:'Unsupported or unavailable provider. Public PKCE and dynamic loopback registration are required.'});return {status:attempt.status}}
