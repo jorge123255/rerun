@@ -188,6 +188,35 @@ describe.skipIf(process.platform !== 'darwin')('bundled Claude runner boundary',
         expect(await readdir(join(data, 'claude'))).toEqual([])
     })
 
+    it('confirms the confined child is gone after a transient permission denial during Stop', async () => {
+        const data = await prepare()
+        const runtime = desktopClaudeRuntime('mac-claude', GEN_TOKEN, harness(GEN))
+        const child = spawnChild(runtime)
+        const read = reader(child)
+        child.stdin.write('ping\n')
+        expect(JSON.parse(await deadline(read.next()))).toEqual(generation(GEN_TOKEN))
+        const group = -(child.pid as number)
+        const kill = process.kill.bind(process)
+        let denied = false
+        const probe = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+            if (pid === group && signal === 0 && !denied) {
+                denied = true
+                throw Object.assign(new Error('Permission denied during group teardown'), { code: 'EPERM' })
+            }
+            return kill(pid, signal)
+        })
+        try {
+            const exit = exited(child)
+            await stopDesktopClaudeWorkers()
+            expect(denied).toBe(true)
+            expect(await deadline(exit)).toEqual({ code: null, signal: 'SIGTERM' })
+            expect(() => kill(group, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+            expect(await readdir(join(data, 'claude'))).toEqual([])
+        } finally {
+            probe.mockRestore()
+        }
+    })
+
     it('drains the confined child on quit and abort-Stop; close is idempotent and removes the profile', async () => {
         const data = await prepare()
         const first = desktopClaudeRuntime('mac-claude', GEN_TOKEN, harness(GEN))

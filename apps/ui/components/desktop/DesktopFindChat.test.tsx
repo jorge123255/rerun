@@ -12,7 +12,11 @@ import { DesktopFindChat } from './DesktopFindChat'
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let drafts: ReturnType<typeof createDesktopDraftFixture>
 let recent: ReturnType<typeof createDesktopRecentFixture>
-beforeEach(() => { drafts = createDesktopDraftFixture(); recent = createDesktopRecentFixture() })
+beforeEach(() => {
+    drafts = createDesktopDraftFixture()
+    recent = createDesktopRecentFixture()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+})
 const hits = [
     { id: 'alice-shared', agentId: 'alice', agentName: 'Alice', title: 'Shared plan' },
     { id: 'bob-shared', agentId: 'bob', agentName: 'Bob', title: 'Shared plan' },
@@ -27,12 +31,16 @@ const type = (text: string) => act(async () => {
     input.dispatchEvent(new Event('input', { bubbles: true }))
     input.dispatchEvent(new Event('change', { bubbles: true }))
 })
-const settle = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 350)) })
+const settle = (ms = 250) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
 const select = (name: string) => act(async () => {
     const item = [...document.querySelectorAll<HTMLElement>('[cmdk-item]')].find(item => item.textContent?.includes(name))
     expect(item, name).toBeTruthy(); item!.click()
 })
-afterEach(() => { document.body.innerHTML = ''; vi.unstubAllGlobals() })
+afterEach(() => {
+    document.body.innerHTML = ''
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+})
 
 test('same-title results open their exact older transcripts, preserve Chats selection, and reopen after remount', async () => {
     const agents = ['Alice', 'Bob'].map(name => ({ id: name.toLowerCase(), name, description: '', createdAt: '', updatedAt: '' }))
@@ -112,7 +120,11 @@ test('debounces, aborts stale queries, reports failures distinctly and retries',
         await act(async () => { root.render(<DesktopFindChat onSelect={vi.fn()} />) })
         await click('Find chat')
         await type('S'); await settle(); expect(fetcher).not.toHaveBeenCalled()
-        await type('Sh'); await type('Shared'); await settle(); expect(fetcher).toHaveBeenCalledTimes(1)
+        await type('Sh'); await settle(249)
+        await type('Shared'); await settle(249)
+        expect(fetcher).not.toHaveBeenCalled()
+        await settle(1)
+        expect(fetcher.mock.calls.map(([url]) => url)).toEqual(['/api/desktop/conversations/search?q=Shared'])
         await type('Other'); await settle()
         expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true)
         expect(document.querySelector('[role="alert"]')?.textContent).toContain('Could not search saved chats')
@@ -121,6 +133,11 @@ test('debounces, aborts stale queries, reports failures distinctly and retries',
         expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain('Shared plan')
         await click('Retry search'); await settle()
         expect(document.querySelector('[role="dialog"]')?.textContent).toContain('No matching chats.')
+        expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+            '/api/desktop/conversations/search?q=Shared',
+            '/api/desktop/conversations/search?q=Other',
+            '/api/desktop/conversations/search?q=Other',
+        ])
     } finally { await act(async () => { root.unmount() }) }
 })
 

@@ -110,7 +110,8 @@ test('interrupt worker', async () => {
     throw new Error(`unknown interrupt mode ${mode}`)
 }, 20_000)
 
-test('a new process finds the original or published file after each publication interruption', async () => {
+// macOS can confirm the closed inode and recover without publishing extra recovery names.
+test.runIf(process.platform === 'darwin')('a new process finds the original or published file after each publication interruption', async () => {
     if (process.env.RERUN_INTERRUPT_WORKER === '1') return
     const scratch = await mkdtemp(join(tmpdir(), 'rerun-publish-meta-'))
     const seen: { step: string, status: number, content: string | null, names: string[] }[] = []

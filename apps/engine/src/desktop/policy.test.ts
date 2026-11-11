@@ -132,7 +132,7 @@ test('desktop Skills permits proposal reads and exact review decisions, but neve
 })
 
 test('run details permit only the existing authenticated step and tool reads', () => {
-    for (const path of ['/agents/a/runs/r', '/agents/a/runs/r/steps', '/agents/a/runs/r/tools']) {
+    for (const path of ['/agents/a/runs/r', '/agents/a/runs/r/steps', '/agents/a/runs/r/tools', '/desktop/foreman/reply-source']) {
         expect(desktopRouteAllowed('GET', path)).toBe(true)
         for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) expect(desktopRouteAllowed(method, path)).toBe(false)
     }

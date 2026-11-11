@@ -74,7 +74,17 @@ export function desktopClaudeRuntime(connectionId: string | undefined, token: st
         const terminate = (signal: NodeJS.Signals) => { try { process.kill(-pid, signal) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw new Error('Claude shutdown was not confirmed') } }
         terminate('SIGTERM')
         for (let i = 0; i < 30; i++) {
-            try { process.kill(-pid, 0) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') { children.delete(child); return }; throw error }
+            try {
+                process.kill(-pid, 0)
+            } catch (error) {
+                const { code } = error as NodeJS.ErrnoException
+                if (code === 'ESRCH') {
+                    children.delete(child)
+                    return
+                }
+                // macOS can deny a group probe during exit. Only ESRCH confirms shutdown.
+                if (code !== 'EPERM') throw error
+            }
             if (i === 5) terminate('SIGKILL')
             await new Promise<void>(resolve => setTimeout(resolve, 100))
         }
