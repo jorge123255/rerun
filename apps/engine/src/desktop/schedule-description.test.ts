@@ -37,9 +37,9 @@ const input = { description: 'weekdays at 8', nowIso: '2026-11-09T12:00:00-06:00
 const exactInput = { ...input, connectionId: 'conn-b', provider: 'openai' as const, model: 'gpt-exact' }
 const agent = { id: 'agent-a', config: { connectionId: null, provider: null, model: null }, resolved: { provider: 'openai', model: 'default-model', connection: { id: 'default' } } }
 const defaultResolution = { provider: 'openai', model: 'default-model' }
-const connections = new Map<string, { id: string }>()
+const connections = new Map<string, { id: string; config: { provider: string } }>()
 function connectionFor(id: string) {
-    if (!connections.has(id)) connections.set(id, { id })
+    if (!connections.has(id)) connections.set(id, { id, config: { provider: 'openai' } })
     return connections.get(id)!
 }
 
@@ -163,10 +163,72 @@ describe('describeDesktopSchedule authority and lifecycle', () => {
         expect(mocks.releaseWork).toHaveBeenCalledTimes(1)
     })
 
+    it.each([
+        ['opencode', 'opencode-desktop', { opencode: { workspaceId: 1, revision: 'rev-1' } }],
+        ['grok-build', 'mac-grok-build-6f1833e1-4567-4f18-9e55-31c88dcc7813', {}],
+        ['kimi-code', 'mac-kimi-code-6f1833e1-4567-4f18-9e55-31c88dcc7813', {}],
+    ] as const)('accepts a fresh projection of the same %s connection', async (provider, id, fields) => {
+        const connection = { id, config: { provider }, ...fields }
+        mocks.resolveRunModel.mockResolvedValue({ connection, provider, model: 'exact' })
+        mocks.findConnection.mockImplementation(async () => structuredClone(connection))
+
+        await expect(describeDesktopSchedule('agent-a', { ...input, connectionId: id, provider, model: 'exact' }))
+            .resolves.toMatchObject({ status: 'ok' })
+        expect(mocks.generateText).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+        ['revision', { workspaceId: 1, revision: 'rev-2' }],
+        ['workspace', { workspaceId: 2, revision: 'rev-1' }],
+    ] as const)('refuses a different OpenCode %s before dispatch', async (_case, latest) => {
+        const connection = { id: 'opencode-desktop', config: { provider: 'opencode' }, opencode: { workspaceId: 1, revision: 'rev-1' } }
+        mocks.resolveRunModel.mockResolvedValue({ connection, provider: 'opencode', model: 'exact' })
+        mocks.findConnection.mockResolvedValue({ ...connection, opencode: latest })
+
+        await expect(describeDesktopSchedule('agent-a', { ...input, connectionId: connection.id, provider: 'opencode', model: 'exact' }))
+            .resolves.toMatchObject({ status: 'unavailable' })
+        expect(mocks.generateText).not.toHaveBeenCalled()
+        expect(mocks.releaseAuth).toHaveBeenCalledTimes(1)
+        expect(mocks.releaseWork).toHaveBeenCalledTimes(1)
+    })
+
+    it('rejects a subscription preview when the selected model is no longer offered', async () => {
+        const provider = 'kimi-code'
+        const connection = { id: 'mac-kimi-code-6f1833e1-4567-4f18-9e55-31c88dcc7813', config: { provider } }
+        mocks.resolveRunModel.mockResolvedValue({ connection, provider, model: 'exact' })
+        mocks.findConnection.mockImplementation(async () => structuredClone(connection))
+        mocks.generateText.mockImplementation(async () => {
+            state.usable = false
+            return { text: state.text }
+        })
+
+        await expect(describeDesktopSchedule('agent-a', { ...input, connectionId: connection.id, provider, model: 'exact' }))
+            .resolves.toMatchObject({ status: 'unavailable' })
+        expect(mocks.generateText).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not dispatch if cancelled while authentication is preparing', async () => {
+        const controller = new AbortController()
+        mocks.ensureAuth.mockImplementation(async () => {
+            controller.abort(new Error('preview cancelled during authentication'))
+            return mocks.releaseAuth
+        })
+
+        await expect(describeDesktopSchedule('agent-a', input, controller.signal))
+            .rejects.toThrow('preview cancelled during authentication')
+        expect(mocks.generateText).not.toHaveBeenCalled()
+        expect(mocks.releaseAuth).toHaveBeenCalledTimes(1)
+        expect(mocks.releaseWork).toHaveBeenCalledTimes(1)
+    })
+
     it('refuses a changed connection after generation', async () => {
-        state.sameConnection = false
+        mocks.generateText.mockImplementation(async () => {
+            state.sameConnection = false
+            return { text: state.text }
+        })
 
         await expect(describeDesktopSchedule('agent-a', input)).resolves.toMatchObject({ status: 'unavailable' })
+        expect(mocks.generateText).toHaveBeenCalledTimes(1)
         expect(mocks.releaseAuth).toHaveBeenCalledTimes(1)
         expect(mocks.releaseWork).toHaveBeenCalledTimes(1)
     })

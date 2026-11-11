@@ -1,13 +1,14 @@
 import { generateText, NoObjectGeneratedError, Output } from 'ai'
 import { Cron } from 'croner'
 import { z } from 'zod'
-import { providerSchema } from '@rerun/contracts'
+import { parseDesktopSubscriptionConnectionId, providerSchema } from '@rerun/contracts'
 import { isUsable, resolveConfiguredModel, resolveRunModel } from '../agents/availability.js'
 import { getAgent } from '../agents/registry.js'
 import { modelFor } from '../agents/providers.js'
 import type { LoadedAgent } from '../agents/types.js'
 import { ensureCliAuth } from '../connections/cli-auth.js'
 import { findConnection } from '../connections/registry.js'
+import type { LoadedConnection } from '../connections/types.js'
 import { HttpError } from '../lib/errors.js'
 import { isValidTimezone } from '../schedules/next-run.js'
 import { readSchedule } from '../schedules/loader.js'
@@ -98,6 +99,23 @@ Respond with ONLY a JSON object, no prose, no code fences:
 { "mode": "cron" | "runAt", "cron": "...", "runAt": "...", "timezone": "...", "label": "..." }`
 }
 
+function sameScheduleConnection(expected: LoadedConnection, current: LoadedConnection): boolean {
+    if (current.id !== expected.id || current.config.provider !== expected.config.provider) return false
+    if (expected.opencode) return current.opencode?.workspaceId === expected.opencode.workspaceId && current.opencode.revision === expected.opencode.revision
+    if (expected.custom) return current.custom?.revision === expected.custom.revision
+    // Registry projections for subscriptions have a credential generation in the connection ID.
+    return current === expected || parseDesktopSubscriptionConnectionId(expected.id)?.provider === expected.config.provider
+}
+
+async function assertCurrentScheduleConnection(expected: LoadedConnection, model: string, signal: AbortSignal) {
+    signal.throwIfAborted()
+    const current = await findConnection(expected.id)
+    signal.throwIfAborted()
+    if (!current || !sameScheduleConnection(expected, current) || !isUsable(current, model)) {
+        throw new HttpError(409, 'The selected connection changed. Preview was not accepted.')
+    }
+}
+
 async function completeDesktopScheduleDescription(agent: LoadedAgent, input: DesktopScheduleDescriptionInput, signal: AbortSignal): Promise<string> {
     const releaseWork = beginDesktopApiConnectionWork()
     if (!releaseWork) throw new HttpError(409, 'A provider connection is being removed. Nothing new was started.')
@@ -111,6 +129,7 @@ async function completeDesktopScheduleDescription(agent: LoadedAgent, input: Des
         signal.throwIfAborted()
         const releaseAuth = await ensureCliAuth(resolved.provider, connection)
         try {
+            await assertCurrentScheduleConnection(connection, resolved.model, signal)
             let text: string
             try {
                 const result = await generateText({
@@ -122,11 +141,7 @@ async function completeDesktopScheduleDescription(agent: LoadedAgent, input: Des
                 if (NoObjectGeneratedError.isInstance(error) && error.text) text = error.text
                 else throw error
             }
-            signal.throwIfAborted()
-            const current = await findConnection(connection.id)
-            if (current !== connection && (!connection.custom || current?.custom?.revision !== connection.custom.revision)) {
-                throw new HttpError(409, 'The selected connection changed. Preview was not accepted.')
-            }
+            await assertCurrentScheduleConnection(connection, resolved.model, signal)
             return text
         } finally { releaseAuth() }
     } finally { releaseWork() }
