@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { DesktopRuntime } from '../runtime'
 import type { DeviceReviewAuthority } from './service'
 import { desktopMcpDeviceReviewSchema } from './store'
-import { remoteMcpOAuthSchema, remoteMcpStore } from '../mcp/store'
+import { remoteMcpDeviceClientSchema, remoteMcpOAuthSchema, remoteMcpStore } from '../mcp/store'
 import { credentialGenerationToken } from '../mcp/credential-generation'
 import { remoteMcpOAuthAttemptSchema } from '../mcp/oauth-attempt'
 import type { OAuthDeviceForm } from '../mcp/oauth-network'
@@ -15,8 +15,9 @@ import { createMcpDeviceBroker } from '../mcp-device-custody/broker'
 import { createEncryptedDeviceCustodyStore, desktopMcpDeviceCustodySchema } from '../mcp-device-custody/store'
 import type { ApprovedDeviceMethod, DeviceApproval } from '../mcp-device-custody/model'
 import { randomUUID } from 'node:crypto'
-const mocks = vi.hoisted(() => ({ context: vi.fn(), ports: vi.fn() }))
+const mocks = vi.hoisted(() => ({ context: vi.fn(), ports: vi.fn(), discover: vi.fn() }))
 vi.mock('../mcp-sign-in/binding', () => ({ desktopMcpSignInPorts: mocks.ports }))
+vi.mock('../mcp/oauth-network', async original => ({ ...await original<typeof import('../mcp/oauth-network')>(), discoverDeviceOAuth: mocks.discover }))
 import { bindTrustedMcpDeviceMethodReview } from './binding'
 
 const clients: Client[] = [], roots: string[] = [], cleanup: (() => void)[] = []
@@ -25,14 +26,14 @@ afterEach(async () => {
     clients.splice(0).forEach(db => db.close())
     await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
-beforeEach(() => { mocks.context.mockReset(); mocks.ports.mockReset(); mocks.ports.mockResolvedValue({ deviceMethodAuthority: mocks.context }) })
+beforeEach(() => { mocks.context.mockReset(); mocks.ports.mockReset(); mocks.discover.mockReset(); mocks.ports.mockResolvedValue({ deviceMethodAuthority: mocks.context }) })
 async function fixture(kind: ApprovedDeviceMethod['kind'] = 'device-code-link-v1') {
     const root = await mkdtemp(join(tmpdir(), 'rerun-device-method-binding-')); roots.push(root)
     const db = createClient({ url: `file:${join(root, 'fixture.db')}` }); clients.push(db)
     await db.executeMultiple(`CREATE TABLE desktop_agents(id TEXT PRIMARY KEY); INSERT INTO desktop_agents VALUES('coworker');
         CREATE TABLE desktop_remote_mcp(id TEXT, transport TEXT, agent_id TEXT, name TEXT, url TEXT, revision TEXT, bearer TEXT, PRIMARY KEY(agent_id,name));
         INSERT INTO desktop_remote_mcp VALUES('registration','http','coworker','docs','https://docs.example/mcp','r1',NULL);
-        ${remoteMcpOAuthSchema} ${remoteMcpOAuthAttemptSchema} ${desktopMcpDeviceReviewSchema} ${desktopMcpDeviceCustodySchema}`)
+        ${remoteMcpOAuthSchema} ${remoteMcpOAuthAttemptSchema} ${remoteMcpDeviceClientSchema} ${desktopMcpDeviceReviewSchema} ${desktopMcpDeviceCustodySchema}`)
     const signal = new AbortController().signal, runtime = { workspaceId: 1 } as DesktopRuntime
     const source = { agentId: 'coworker', sessionId: 'local-chat', runId: 'source-run', sourceMessageId: 'message', toolCallId: 'tool', fingerprint: 'exact', server: { name: 'docs', revision: 'r1', url: 'https://docs.example/mcp', displayName: 'Docs' } }
     const owner: DeviceReviewAuthority = { workspaceId: '1', owner: source.agentId, engineAgentId: 'engine-coworker', sessionId: 'engine-chat', name: source.server.name, revision: 'r1', url: source.server.url, signal, check() {} }
@@ -56,6 +57,30 @@ it('reuses the existing canonical human-source context and current immutable reg
     expect(mocks.ports).toHaveBeenCalledWith(f.runtime, 'local-chat')
     expect(mocks.context).toHaveBeenCalledWith(f.source, expect.any(AbortSignal), 'review')
     expect(f.method).toHaveBeenCalledWith(expect.objectContaining({ owner: 'coworker', engineAgentId: 'engine-coworker', sessionId: 'engine-chat', registrationId: 'registration', revision: 'r1' }), expect.any(AbortSignal))
+})
+
+it('derives review from the saved public client and refuses an unconfigured or changed registration', async () => {
+    const f = await fixture('device-code-rfc8628-v1')
+    const review = bindTrustedMcpDeviceMethodReview({ ...f, shutdown: f.signal, method: undefined })
+    cleanup.push(review.dispose)
+    await expect(review.review(f.source, f.signal)).rejects.toThrow('Device method review is unavailable')
+    expect(mocks.discover).not.toHaveBeenCalled()
+
+    const { method } = (await f.method()).value
+    const deviceClient = { clientId: method.clientId, verificationUri: method.verificationUri }
+    const [saved] = await f.store.save(f.owner.owner, { name: f.owner.name, url: f.owner.url, revision: f.owner.revision, deviceClient })
+    const source = { ...f.source, server: { ...f.source.server, revision: saved.revision } }
+    mocks.context.mockResolvedValue({ ...f.owner, revision: saved.revision })
+    mocks.discover.mockResolvedValue(method)
+    await expect(review.review(source, f.signal)).resolves.toMatchObject({ state: 'pending', method, registrationRevision: saved.revision })
+    expect(mocks.discover).toHaveBeenCalledWith(f.owner.url, deviceClient, expect.any(AbortSignal))
+
+    const anotherStore = remoteMcpStore(f.db, f.key)
+    mocks.discover.mockImplementationOnce(async () => {
+        await anotherStore.save(f.owner.owner, { name: f.owner.name, url: f.owner.url, revision: saved.revision })
+        return method
+    })
+    await expect(review.review(source, f.signal)).rejects.toThrow('Device method review is unavailable')
 })
 
 it('refuses source/permission failure or a changed registration before trusted discovery', async () => {

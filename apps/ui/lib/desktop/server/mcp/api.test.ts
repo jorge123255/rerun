@@ -5,7 +5,57 @@ import {MCP_ADMISSION_TIMEOUT_MS,remoteMcpApi} from './api'
 import type {RemoteMcpStore} from './store'
 import type {remoteMcpRuntime} from './remote'
 import {remoteMcpLifecycle} from './lifecycle'
+import {mkdtemp,rm} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+import {createClient} from '@libsql/client'
+import {remoteMcpStore} from './store'
+import {initializeDesktopMcp} from './schema'
+import {migrateDesktopSse} from '../mcp-sse/schema'
+import type {discoverDeviceOAuth} from './oauth-network'
 afterEach(()=>vi.useRealTimers())
+
+it('saves a validated public device client for one exact registration and restores it after reopening', async () => {
+ const root=await mkdtemp(join(tmpdir(),'rerun-mcp-client-'))
+ const url=`file:${join(root,'app.db')}`
+ const db=createClient({url})
+ const reopened=createClient({url})
+ try {
+  await db.executeMultiple("CREATE TABLE desktop_agents(id TEXT PRIMARY KEY);INSERT INTO desktop_agents VALUES('a'),('b');")
+  await initializeDesktopMcp(db)
+  await migrateDesktopSse(db)
+  const key=()=>Buffer.alloc(32,17),store=remoteMcpStore(db,key)
+  const resource='https://docs.example/mcp',issuer='https://login.example/'
+  const deviceClient={clientId:'public-client',verificationUri:issuer+'verify'}
+  const discover=vi.fn<typeof discoverDeviceOAuth>().mockResolvedValue({
+   kind:'device-code-rfc8628-v1',resource,issuer,deviceEndpoint:issuer+'device',tokenEndpoint:issuer+'token',...deviceClient,
+  })
+  const api=remoteMcpApi(store,{} as ReturnType<typeof remoteMcpRuntime>,async()=>({enabled:true,granted:true}),discover)
+  const save=(extra:Record<string,unknown>)=>api(new Request('https://localhost/mcp',{method:'PUT',body:JSON.stringify({name:'docs',url:resource,deviceClient,...extra})}),'a')
+  const response=await save({})
+  expect(response.ok).toBe(true)
+  const [saved]=await response.json()
+  expect(saved.deviceClient).toEqual(deviceClient)
+  expect(discover).toHaveBeenCalledExactlyOnceWith(resource,deviceClient,expect.any(AbortSignal))
+  expect((await store.list('a'))[0]).not.toHaveProperty('deviceClient')
+  const restored=remoteMcpStore(reopened,key)
+  expect(await restored.listSettings('a')).toEqual([saved])
+  expect(await restored.listSettings('b')).toEqual([])
+
+  expect((await save({revision:saved.revision,bearer:'fixture-only'})).status).toBe(400)
+  expect((await save({revision:saved.revision,deviceClient:{...deviceClient,verificationUri:issuer+'verify?code=fixture'}})).status).toBe(400)
+  discover.mockRejectedValueOnce(new Error('unsupported'))
+  expect((await save({revision:saved.revision})).status).toBe(400)
+  expect(await restored.listSettings('a')).toEqual([saved])
+
+  expect((await save({revision:saved.revision,deviceClient:null})).ok).toBe(true)
+  expect((await restored.listSettings('a'))[0]).not.toHaveProperty('deviceClient')
+  const callsBeforeStaleSave=discover.mock.calls.length
+  expect((await save({revision:saved.revision})).status).toBe(409)
+  expect(discover).toHaveBeenCalledTimes(callsBeforeStaleSave)
+  expect((await restored.listSettings('a'))[0]).not.toHaveProperty('deviceClient')
+ } finally {reopened.close();db.close();await rm(root,{recursive:true,force:true})}
+})
 
 it('a stale disconnect cannot cancel a newly configured server',async()=>{
  const store={read:vi.fn(async()=>({revision:'new'}))} as unknown as RemoteMcpStore

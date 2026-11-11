@@ -1,9 +1,8 @@
 import 'server-only'
-import { oauthDeviceForm, oauthHttps, type OAuthDeviceForm } from '../mcp/oauth-network'
+import { deviceGrant, oauthDeviceForm, oauthHttps, type OAuthDeviceForm } from '../mcp/oauth-network'
 import { approvedDeviceMethodSchema, devicePollSchema, deviceStartSchema, parsePrivate, type ApprovedDeviceMethod } from './model'
 import type { DeviceCustodyPorts } from './custody'
 
-const deviceGrant = 'urn:ietf:params:oauth:grant-type:device_code'
 const pollOutcomes = new Map([
     ['authorization_pending', 'pending'], ['slow_down', 'slow_down'],
     ['access_denied', 'denied'], ['expired_token', 'expired'],

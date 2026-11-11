@@ -4,7 +4,7 @@ vi.mock('server-only',()=>({}))
 const mock = vi.hoisted(() => ({ request: vi.fn() }))
 vi.mock('node:https', () => ({ request: mock.request }))
 vi.mock('node:dns/promises',()=>({lookup:vi.fn(async(host:string)=>host==='mixed.example'?[{address:'93.184.216.34',family:4},{address:'127.0.0.1',family:4}]:[{address:'93.184.216.34',family:4}])}))
-import {discoverLoopbackOAuth,oauthDeviceForm,oauthHttps,oauthJson,publicOAuthAddress,type OAuthJson} from './oauth-network'
+import {deviceGrant,discoverDeviceOAuth,discoverLoopbackOAuth,oauthDeviceForm,oauthHttps,oauthJson,publicOAuthAddress,type OAuthJson} from './oauth-network'
 beforeEach(() => mock.request.mockReset())
 it('refuses non-HTTPS, credentialed, nonstandard-port, private, mapped and mixed DNS destinations',async()=>{
  for(const value of ['http://example.com','https://user:secret@example.com','https://example.com:8443','https://example.com/#fragment','https://localhost','https://router.local','https://service.internal','https://example.com.','https://exam\nple.com'])expect(()=>oauthHttps(value)).toThrow()
@@ -36,6 +36,47 @@ function respond(status: number, body: unknown) {
         return request
     })
 }
+
+it('discovers public device endpoints from the exact issuer using only the saved client and verification page', async () => {
+    const resource = 'https://mcp.example/mcp', issuer = 'https://login.example/tenant'
+    const client = { clientId: 'configured-public-client', verificationUri: 'https://login.example/verify' }
+    const json = vi.fn<OAuthJson>().mockResolvedValueOnce({ resource, authorization_servers: [issuer], scopes_supported: ['read'] })
+        .mockResolvedValueOnce({
+            issuer, token_endpoint_auth_methods_supported: ['none'], grant_types_supported: [deviceGrant],
+            device_authorization_endpoint: issuer + '/device', token_endpoint: issuer + '/token',
+            client_id: 'untrusted-advertised-client', verification_uri: 'https://another.example/',
+        })
+    const signal = new AbortController().signal
+    await expect(discoverDeviceOAuth(resource, client, signal, json)).resolves.toEqual({
+        kind: 'device-code-rfc8628-v1', resource, issuer, deviceEndpoint: issuer + '/device', tokenEndpoint: issuer + '/token', scope: 'read', ...client,
+    })
+    expect(json.mock.calls).toEqual([
+        ['https://mcp.example/.well-known/oauth-protected-resource/mcp', signal],
+        ['https://login.example/.well-known/oauth-authorization-server/tenant', signal],
+    ])
+})
+
+it.each([
+    { grant_types_supported: ['authorization_code'] },
+    { token_endpoint_auth_methods_supported: ['client_secret_basic'] },
+    { issuer: 'https://login.example/wrong-tenant' },
+    { device_authorization_endpoint: 'https://another.example/device' },
+    { token_endpoint: 'https://login.example/token?key=wrong' },
+])('refuses unsuitable device metadata %j', async overrides => {
+    const resource = 'https://mcp.example/mcp', issuer = 'https://login.example/tenant'
+    const json = vi.fn<OAuthJson>().mockResolvedValueOnce({ resource, authorization_servers: [issuer] })
+        .mockResolvedValueOnce({ issuer, token_endpoint_auth_methods_supported: ['none'], grant_types_supported: [deviceGrant],
+            device_authorization_endpoint: issuer + '/device', token_endpoint: issuer + '/token', ...overrides })
+    await expect(discoverDeviceOAuth(resource, { clientId: 'public', verificationUri: 'https://login.example/verify' }, new AbortController().signal, json)).rejects.toThrow()
+    expect(json).toHaveBeenCalledTimes(2)
+})
+
+it('refuses a different issuer origin before contacting it', async () => {
+    const resource = 'https://mcp.example/mcp'
+    const json = vi.fn<OAuthJson>().mockResolvedValue({ resource, authorization_servers: ['https://another.example/'] })
+    await expect(discoverDeviceOAuth(resource, { clientId: 'public', verificationUri: 'https://login.example/verify' }, new AbortController().signal, json)).rejects.toThrow('issuer')
+    expect(json).toHaveBeenCalledTimes(1)
+})
 
 it('permits a bounded OAuth 400 only for device poll and keeps the public TLS lookup pinned', async () => {
     const signal = new AbortController().signal, form = new URLSearchParams({ client_id: 'fixture' })

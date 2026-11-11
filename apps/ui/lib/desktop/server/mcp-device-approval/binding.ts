@@ -3,7 +3,8 @@ import type { Client } from '@libsql/client'
 import { desktopMcpSignInSourceSchema, type DesktopMcpSignInSource } from '../../../../../../packages/contracts/src/desktop-mcp-sign-in'
 import type { McpDeviceAuthorization } from '../../mcp-device-review'
 import { desktopMcpSignInPorts } from '../mcp-sign-in/binding'
-import { credentialGenerationToken } from '../mcp/credential-generation'
+import { credentialGenerationToken, MCP_CREDENTIAL_GENERATION_TTL_MS } from '../mcp/credential-generation'
+import { discoverDeviceOAuth } from '../mcp/oauth-network'
 import { abortable } from '../mcp/remote'
 import type { RemoteMcpStore } from '../mcp/store'
 import type { DesktopRuntime } from '../runtime'
@@ -19,8 +20,8 @@ export type CanonicalDeviceMethodReviewBinding = {
     key(): Buffer
     store: RemoteMcpStore
     shutdown: AbortSignal
-    /** Trusted broker metadata plus canonical credential-generation lease; no default implementation. */
-    method(target: DeviceReviewAuthority & { registrationId: string }, signal: AbortSignal): Promise<TrustedDeviceMethodLease>
+    /** Optional fixture adapter. The default reads only the saved public client and trusted OAuth metadata. */
+    method?(target: DeviceReviewAuthority & { registrationId: string }, signal: AbortSignal): Promise<TrustedDeviceMethodLease>
     stopCustody: DeviceMethodReviewPorts['stopCustody']
     now?: () => number
 }
@@ -30,6 +31,25 @@ export function bindTrustedMcpDeviceMethodReview(ports: CanonicalDeviceMethodRev
     const reviews = createDeviceReviewStore(ports.db, ports.key)
     const workspaceId = String(ports.runtime.workspaceId)
     const now = ports.now ?? Date.now
+    const configuredMethod: NonNullable<CanonicalDeviceMethodReviewBinding['method']> = async (target, signal) => {
+        const watch = ports.store.lifecycle.watchCredentials(target.owner, target.name)
+        const check = () => { signal.throwIfAborted(); target.check(); watch() }
+        const configuration = (await abortable(ports.store.listSettings(target.owner), signal))
+            .find(row => row.id === target.registrationId && row.name === target.name && row.revision === target.revision && row.url === target.url)
+        if (!configuration?.deviceClient) throw new Error('Device sign-in is unavailable for this registration')
+        const before = await abortable(ports.store.credentialState(target.owner, target.name), signal)
+        check()
+        if (!before || before.registrationId !== target.registrationId || before.revision !== target.revision || before.resource !== target.url) throw new Error('Device method registration changed')
+        const method = await discoverDeviceOAuth(target.url, configuration.deviceClient, signal)
+        const after = await abortable(ports.store.credentialState(target.owner, target.name), signal)
+        check()
+        if (!after || after.registrationId !== before.registrationId || after.revision !== before.revision || after.resource !== before.resource
+            || after.sealed !== before.sealed) throw new Error('Device method credentials changed')
+        return { value: {
+            registrationId: after.registrationId, method, credentialGeneration: credentialGenerationToken(ports.key(), target.owner, target.name, after, after.sealed),
+            validUntil: now() + MCP_CREDENTIAL_GENERATION_TTL_MS,
+        }, signal, check }
+    }
     const authority: DeviceMethodReviewPorts['authority'] = async (source, stop, mode) => {
         const signal = AbortSignal.any([stop, ports.shutdown])
         return (await abortable(desktopMcpSignInPorts(ports.runtime, source.sessionId), signal)).deviceMethodAuthority(source, signal, mode)
@@ -45,7 +65,7 @@ export function bindTrustedMcpDeviceMethodReview(ports: CanonicalDeviceMethodRev
             const row = await abortable(ports.store.read(owner.owner, owner.name), signal)
             check()
             if (!row.id || row.name !== owner.name || row.revision !== owner.revision || row.url !== owner.url || row.transport !== 'http' || row.bearer) throw new Error('Device method registration changed')
-            const lease = await abortable(ports.method({ ...owner, registrationId: row.id }, signal), signal)
+            const lease = await abortable((ports.method ?? configuredMethod)({ ...owner, registrationId: row.id }, signal), signal)
             check(); lease.check(); lease.signal.throwIfAborted()
             const value = parsePrivate(trustedDeviceMethodSchema, lease.value)
             if (value.registrationId !== row.id) throw new Error('Device method registration changed')
