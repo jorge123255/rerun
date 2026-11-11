@@ -1,4 +1,4 @@
-import { canonicalDesktopEngineRoot } from './runtime'
+import { canonicalDesktopEngineRoot, readDesktopRuntime } from './runtime'
 import 'server-only'
 import { DesktopHttpError } from './auth'
 import type { DesktopRuntime } from './runtime'
@@ -10,11 +10,14 @@ import {
     listSharedDirectory,
     readSharedText,
     renameSharedFile,
+    replaceSharedText,
     resolveEngineSharedDirectory,
     SharedWorkspaceFileError,
     type SharedDirectoryListing,
     type SharedFileAccess,
     type SharedImportResult,
+    type SharedTextReplacement,
+    type SharedTextReplacementResult,
     type SharedTextPage,
 } from '../../../../engine/src/desktop/shared-workspace-files'
 
@@ -63,5 +66,25 @@ export async function renameDesktopSharedFile(runtime: DesktopRuntime, path: str
         return await renameSharedFile(await desktopSharedDirectory(runtime, signal), path, name, {
             signal, beforeCommit: () => assertDesktopWorkspaceAdmission(runtime),
         })
+    } catch (error) { rethrowDesktopSharedFileError(error) }
+}
+
+export async function replaceDesktopSharedText(runtime: DesktopRuntime, workspaceId: number, input: SharedTextReplacement, signal: AbortSignal): Promise<SharedTextReplacementResult> {
+    if (workspaceId !== runtime.workspaceId) throw new DesktopHttpError(409, 'The shared-file workspace changed.')
+    const identity = (value: DesktopRuntime) => JSON.stringify([
+        value.workspaceId, value.launchNonce, value.dataRoot, value.engineRoot, value.installRoot,
+        value.installId, value.buildId, value.app.origin, value.app.sessionToken, value.engine.origin,
+    ])
+    const expected = identity(runtime)
+    const beforeCommit = async () => {
+        signal.throwIfAborted()
+        const current = await readDesktopRuntime().catch(() => null)
+        if (!current || identity(current) !== expected) throw new DesktopHttpError(409, 'The shared-file workspace changed.')
+        signal.throwIfAborted()
+        assertDesktopWorkspaceAdmission(runtime)
+    }
+    try {
+        await beforeCommit()
+        return await replaceSharedText(await desktopSharedDirectory(runtime, signal), input, { signal, beforeCommit })
     } catch (error) { rethrowDesktopSharedFileError(error) }
 }

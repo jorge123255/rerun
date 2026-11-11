@@ -3,11 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest'
 import { prepareSkillHelperFixture } from '../../../../../engine/src/desktop/skill-publication.test-support'
+import { readDesktopRuntime } from '@/lib/desktop/server/runtime'
+import { setDesktopWorkspaceFrozen } from '@/lib/desktop/server/workspace-admission'
 
 vi.mock('server-only', () => ({}))
 
 import { GET as readShared } from './read/route'
-import { GET, POST } from './route'
+import { GET, POST, PUT } from './route'
 
 const env = { ...process.env }
 const origin = 'http://127.0.0.1:3189'
@@ -86,6 +88,43 @@ test('a private file, a symlink, and a hard link are not opened as shared text',
     expect(names).toContain('note.txt')
     expect(names).not.toContain('secret.txt')
     expect(names).not.toContain('linked.txt')
+})
+
+test.skipIf(process.platform !== 'darwin')('replaces a current preview through the authenticated workspace and refuses stale or foreign writes', async () => {
+    const path = 'note.md'
+    expect((await POST(request('', 'POST', form(path, 'original\r\n', '')))).status).toBe(201)
+    const query = '/read?path=note.md'
+    const original = await (await readShared(request(query))).json()
+    const input = { workspaceId: 1, path, content: 'saved\r\n', base: original.editIdentity }
+    const replace = (body: typeof input, headers = request('').headers) => PUT(new Request(request('').url, {
+        method: 'PUT', headers, body: JSON.stringify(body),
+    }))
+    const unauthenticated = request('').headers
+    unauthenticated.delete('cookie')
+    expect((await replace(input, unauthenticated)).status).toBe(401)
+    const foreignOrigin = request('').headers
+    foreignOrigin.set('origin', 'http://127.0.0.1:8080')
+    expect((await replace(input, foreignOrigin)).status).toBe(403)
+    expect((await replace({ ...input, workspaceId: 2 })).status).toBe(409)
+    expect((await replace({ ...input, path: '../agents/alice/workspace/secret.txt' })).status).toBe(400)
+    const injectedRoot = { ...input, root: root }
+    expect((await replace(injectedRoot)).status).toBe(400)
+    const runtime = await readDesktopRuntime()
+    setDesktopWorkspaceFrozen(runtime, true)
+    try { expect((await replace(input)).status).toBe(409) }
+    finally { setDesktopWorkspaceFrozen(runtime, false) }
+    expect(await (await readShared(request(query))).json()).toMatchObject({ content: 'original\r\n' })
+
+    const response = await replace(input)
+    expect(response.status).toBe(200)
+    const saved = await response.json()
+    expect(saved).toMatchObject({ ok: true, workspaceId: 1, path, recoveryPath: expect.stringMatching(/^shared-edit-recovery-/) })
+    const stale = await replace({ ...input, content: 'stale draft' })
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toMatchObject({ error: expect.stringContaining('changed') })
+    expect(await (await readShared(request(query))).json()).toMatchObject({ content: 'saved\r\n', editIdentity: saved.editIdentity })
+    const recovery = await readShared(request(`/read?path=${encodeURIComponent(saved.recoveryPath)}`))
+    expect(await recovery.json()).toMatchObject({ content: 'original\r\n', editIdentity: original.editIdentity })
 })
 
 test('rejects an oversized multipart stream before parsing, even without Content-Length', async () => {

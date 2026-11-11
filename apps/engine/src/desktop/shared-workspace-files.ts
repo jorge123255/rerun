@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { lstat, mkdir, open, readdir, realpath, unlink, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { TEXT_FILE_PAGE_CHARS } from '@rerun/contracts'
-import { acquireSkillLease, renameSkillEntry } from './skill-publication-native.ts'
+import { acquireSkillLease, renameSkillEntry, replaceSharedEntry } from './skill-publication-native.ts'
 import { SkillBoundaryError } from './skill-publication-error.ts'
 
 // One filesystem boundary for the workspace shared folder. The desktop UI and the
@@ -493,7 +493,7 @@ export async function importSharedText(root: string, folder: string, name: strin
 }
 
 /** Use the same native root lock as imports and renames for a prepared write. */
-export function withSharedPublicationLease<T>(root: string, signal: AbortSignal | undefined, publish: (guard: () => Promise<void>) => Promise<T>): Promise<T> {
+export function withSharedPublicationLease<T>(root: string, signal: AbortSignal | undefined, publish: (guard: () => Promise<void>, rootPin: Pin) => Promise<T>): Promise<T> {
     return withRoot(root, { signal }, openSharedRoot, async rootPin => {
         const lease = await acquireSkillLease(rootPin.path, rootPin, signal)
         const guard = async () => {
@@ -502,11 +502,100 @@ export function withSharedPublicationLease<T>(root: string, signal: AbortSignal 
         }
         try {
             await guard()
-            const result = await publish(guard)
+            const result = await publish(guard, rootPin)
             await guard()
             return result
         } finally { await lease.release() }
     }, false, true)
+}
+
+export type SharedTextReplacement = { path: string; content: string; expectedBytes: number; expectedSha256: string }
+export type SharedTextReplacementResult = {
+    ok: true; path: string; size: number; editIdentity: NonNullable<SharedTextPage['editIdentity']>; recoveryPath?: string
+}
+
+/** Stage complete UTF-8, then publish while retaining the displaced inode. */
+export async function replaceSharedText(root: string, input: SharedTextReplacement, access?: SharedFileAccess): Promise<SharedTextReplacementResult> {
+    const parts = partsOf(input.path, 'reject'), name = parts.at(-1)!, path = parts.join('/')
+    if (!TEXT_NAME.test(name) || typeof input.content !== 'string' || !Number.isSafeInteger(input.expectedBytes) || input.expectedBytes < 0
+        || input.expectedBytes > 256 * 1024 || !/^[a-f0-9]{64}$/.test(input.expectedSha256)) {
+        throw new SharedWorkspaceFileError(400, 'Choose one fully read UTF-8 shared text file.')
+    }
+    const bytes = Buffer.from(input.content, 'utf8')
+    if (bytes.length > 256 * 1024 || input.content.length > TEXT_FILE_PAGE_CHARS) {
+        throw new SharedWorkspaceFileError(413, 'This text is too large to edit here.')
+    }
+    const binary = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/
+    if (binary.test(input.content) || new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) !== input.content) {
+        throw new SharedWorkspaceFileError(415, 'Only complete UTF-8 text can be saved.')
+    }
+    const editIdentity = { expectedBytes: bytes.length, expectedSha256: createHash('sha256').update(bytes).digest('hex') }
+    const conflict = () => new SharedWorkspaceFileError(409, 'This file changed. Reopen it before saving again.')
+    let publicationUncertain = false
+    try {
+        return await withSharedPublicationLease(root, access?.signal, async (guard, rootPin) => {
+            const child = await descend(root, rootPin, parts.slice(0, -1), access?.signal)
+            const parent = child.pin, target = join(/* turbopackIgnore: true */ parent.pinned, name)
+            const suffix = randomBytes(12).toString('hex')
+            const stage = `.rerun-shared-replace-${suffix}`, recovery = `shared-edit-recovery-${suffix}${name.slice(name.lastIndexOf('.'))}`
+            const stagedPath = join(/* turbopackIgnore: true */ parent.pinned, stage)
+            let handle: FileHandle | undefined, staged: { dev: bigint; ino: bigint } | undefined
+            try {
+                await commit(access)
+                const original = await lstat(target, { bigint: true })
+                if (!original.isFile() || original.uid !== currentUid() || original.nlink !== 1n) throw outside()
+                const preview = await readSharedText(root, path, 0, { signal: access?.signal })
+                if (preview.truncated || !preview.editIdentity || binary.test(preview.content)) {
+                    throw new SharedWorkspaceFileError(415, 'Reopen one complete UTF-8 text file before editing.')
+                }
+                if (preview.editIdentity.expectedBytes !== input.expectedBytes || preview.editIdentity.expectedSha256 !== input.expectedSha256) throw conflict()
+                const sameOriginal = async () => {
+                    const entry = await lstat(target, { bigint: true }).catch(error => { if (missing(error)) throw conflict(); throw error })
+                    return entry.dev === original.dev && entry.ino === original.ino && entry.ctimeNs === original.ctimeNs
+                        && entry.size === original.size && entry.nlink === 1n && entry.isFile() && entry.uid === currentUid()
+                }
+                if (!await sameOriginal()) throw conflict()
+                if (preview.content === input.content) return { ok: true, path, size: bytes.length, editIdentity }
+                if ((await readdir(/* turbopackIgnore: true */ parent.pinned)).filter(value => value.startsWith('.rerun-shared-replace-')).length >= 16) {
+                    throw new SharedWorkspaceFileError(409, 'Unfinished text saves need review before another save.')
+                }
+                handle = await open(stagedPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
+                    | (process.platform === 'darwin' ? O_NOFOLLOW_ANY : constants.O_NOFOLLOW), 0o600)
+                staged = await handle.stat({ bigint: true })
+                await handle.writeFile(bytes)
+                await handle.sync()
+                await commit(access)
+                if (!await sameOriginal()) throw conflict()
+                await assertPin(parent, true)
+                await guard()
+                publicationUncertain = true
+                const published = await replaceSharedEntry(parent.path, parent, stage, staged, name, original, recovery)
+                if (published === 'conflict' || published === 'refused') {
+                    publicationUncertain = false
+                    if (published === 'conflict') throw conflict()
+                    throw new SharedWorkspaceFileError(415, 'This file could not be replaced with its original permissions and metadata.')
+                }
+                if (published !== 'published') throw new Error('Native replacement acknowledgement unavailable')
+                const confirmed = await readSharedText(root, path, 0, { signal: access?.signal })
+                const entry = await lstat(target, { bigint: true })
+                if (confirmed.truncated || confirmed.editIdentity?.expectedSha256 !== editIdentity.expectedSha256
+                    || confirmed.editIdentity.expectedBytes !== editIdentity.expectedBytes
+                    || entry.dev !== staged.dev || entry.ino !== staged.ino || entry.nlink !== 1n) throw new Error('Native replacement readback changed')
+                const recoveryPath = [...parts.slice(0, -1), recovery].join('/')
+                return { ok: true, path, size: bytes.length, editIdentity, recoveryPath }
+            } finally {
+                await handle?.close()
+                if (!publicationUncertain && staged) {
+                    const current = await lstat(stagedPath, { bigint: true }).catch(() => null)
+                    if (current?.dev === staged.dev && current.ino === staged.ino && current.nlink === 1n) await unlink(stagedPath).catch(() => {})
+                }
+                if (child.close) await parent.handle.close()
+            }
+        })
+    } catch (error) {
+        if (publicationUncertain) throw new SharedWorkspaceFileError(503, 'The save could not be confirmed. Reopen this file and inspect Shared files for a recovery copy before retrying.')
+        throw error
+    }
 }
 
 /** Rename a listed ordinary file in the same shared directory without replacing an arrival. */

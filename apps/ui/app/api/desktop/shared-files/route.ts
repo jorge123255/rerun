@@ -1,5 +1,5 @@
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
-import { SHARED_IMPORT_BYTES, importDesktopSharedFile, listDesktopSharedFiles, renameDesktopSharedFile } from '@/lib/desktop/server/shared-workspace-files'
+import { SHARED_IMPORT_BYTES, importDesktopSharedFile, listDesktopSharedFiles, renameDesktopSharedFile, replaceDesktopSharedText, rethrowDesktopSharedFileError } from '@/lib/desktop/server/shared-workspace-files'
 import { z } from 'zod'
 import { readDesktopJson } from '@/lib/desktop/server/request-json'
 import { desktopRoute } from '@/lib/desktop/server/http'
@@ -81,5 +81,28 @@ export function PATCH(request: Request) {
         return Response.json(await renameDesktopSharedFile(runtime, input.data.path, input.data.name, request.signal), {
             headers: { 'cache-control': 'no-store' },
         })
+    })
+}
+
+const replaceInput = z.strictObject({
+    workspaceId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    path: z.string().min(1).max(4096),
+    content: z.string().max(256 * 1024),
+    base: z.strictObject({
+        expectedBytes: z.number().int().min(0).max(256 * 1024),
+        expectedSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    }),
+})
+
+/** Replace one complete preview within the authenticated active workspace. */
+export function PUT(request: Request) {
+    return desktopRoute(request, async runtime => {
+        const body = await readDesktopJson(request, 2 * 1024 * 1024).catch(rethrowDesktopSharedFileError)
+        const input = replaceInput.safeParse(body)
+        if (!input.success) throw new DesktopHttpError(400, 'Send one text file and its exact preview identity.')
+        const { workspaceId, path, content, base } = input.data
+        const signal = AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])
+        const result = await replaceDesktopSharedText(runtime, workspaceId, { path, content, ...base }, signal)
+        return Response.json({ ...result, workspaceId }, { headers: { 'cache-control': 'no-store' } })
     })
 }

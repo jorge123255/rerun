@@ -523,7 +523,7 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
             case 'folder':
                 return <DesktopBrainFolder key={dropWorkspace} path={selection.path} files={files} onSelect={select} onUpload={uploadFiles} importResults={importResults} importing={importing} onRetryImport={result => void retryImport(result)} />
             case 'file':
-                return <DesktopBrainFile path={selection.path} files={files} onSelect={select} />
+                return <DesktopBrainFile path={selection.path} files={files} onSelect={select} workspaceId={workspaceId} />
             case 'database':
                 if (!tables || tables.length > 0) return <PageSkeleton />
                 return (

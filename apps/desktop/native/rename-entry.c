@@ -12,6 +12,12 @@
 #include <unistd.h>
 #include <poll.h>
 #include <time.h>
+#ifdef __APPLE__
+#include <copyfile.h>
+#include <sys/acl.h>
+#include <sys/xattr.h>
+#include <strings.h>
+#endif
 #ifdef __linux__
 #include <sys/syscall.h>
 #include <linux/fs.h>
@@ -126,8 +132,149 @@ static void test_barrier(const char *phase) {
 #else
 #define test_barrier(phase) ((void)0)
 #endif
+
+static int replacement_failure(int error, int before_swap) {
+    printf("{\"ok\":false,\"code\":\"%s\",\"beforeSwap\":%s}\n", error_name(error), before_swap ? "true" : "false");
+    return 1;
+}
+
+#ifdef __APPLE__
+static int shared_regular(const struct stat *info) {
+    return S_ISREG(info->st_mode) && info->st_uid == getuid() && info->st_nlink == 1;
+}
+
+static int attributes_match(int from, int to) {
+    char names[65536];
+    const ssize_t length = flistxattr(from, names, sizeof(names), 0);
+    if (length < 0 || (to >= 0 && flistxattr(to, NULL, 0, 0) != length)) return 0;
+    ssize_t total = 0;
+    for (ssize_t offset = 0; offset < length;) {
+        const char *name = names + offset;
+        const size_t size = strnlen(name, (size_t)(length - offset));
+        if (!size || size >= (size_t)(length - offset)) return 0;
+        offset += (ssize_t)size + 1;
+        const ssize_t bytes = fgetxattr(from, name, NULL, 0, 0, 0);
+        if (bytes < 0 || bytes > 1024 * 1024 - total) return 0;
+        total += bytes;
+        if (to < 0) continue;
+        if (fgetxattr(to, name, NULL, 0, 0, 0) != bytes) return 0;
+        const size_t capacity = bytes > 0 ? (size_t)bytes : 1;
+        void *left = malloc(capacity), *right = malloc(capacity);
+        const int equal = left && right && fgetxattr(from, name, left, capacity, 0, 0) == bytes
+            && fgetxattr(to, name, right, capacity, 0, 0) == bytes && !memcmp(left, right, (size_t)bytes);
+        free(left); free(right);
+        if (!equal) return 0;
+    }
+    return 1;
+}
+
+static int acls_match(int from, int to) {
+    errno = 0;
+    acl_t original = acl_get_fd_np(from, ACL_TYPE_EXTENDED);
+    const int original_error = errno;
+    errno = 0;
+    acl_t staged = acl_get_fd_np(to, ACL_TYPE_EXTENDED);
+    const int staged_error = errno;
+    int equal = !original && !staged && original_error == ENOENT && staged_error == ENOENT;
+    if (original && staged) {
+        const ssize_t size = acl_size(original);
+        if (size > 0 && size <= 65536 && acl_size(staged) == size) {
+            void *left = malloc((size_t)size), *right = malloc((size_t)size);
+            equal = left && right && acl_copy_ext(left, original, size) == size
+                && acl_copy_ext(right, staged, size) == size && !memcmp(left, right, (size_t)size);
+            free(left); free(right);
+        }
+    }
+    if (original) acl_free(original);
+    if (staged) acl_free(staged);
+    return equal;
+}
+
+static int same_file(const struct stat *left, const struct stat *right) {
+    return shared_regular(left) && left->st_dev == right->st_dev && left->st_ino == right->st_ino;
+}
+
+static int same_snapshot(const struct stat *left, const struct stat *right) {
+    return same_file(left, right) && left->st_size == right->st_size
+        && left->st_ctimespec.tv_sec == right->st_ctimespec.tv_sec && left->st_ctimespec.tv_nsec == right->st_ctimespec.tv_nsec;
+}
+
+static int replace_shared(const char *path, uintmax_t parent_dev, uintmax_t parent_ino,
+                          const char *stage, uintmax_t stage_dev, uintmax_t stage_ino,
+                          const char *target, uintmax_t target_dev, uintmax_t target_ino,
+                          uintmax_t size, uintmax_t seconds, uintmax_t nanos, const char *recovery) {
+    int parent = -1, original = -1, replacement = -1, error = ESTALE, swapped = 0;
+    struct stat old_info, stage_info, current, named;
+    parent = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW_ANY);
+    if (parent < 0) { error = errno; goto done; }
+    if (!owner_matches(parent, path, parent_dev, parent_ino)) goto done;
+    original = openat(parent, target, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    replacement = openat(parent, stage, O_RDWR | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (original < 0 || replacement < 0 || fstat(original, &old_info) || fstat(replacement, &stage_info)
+        || !shared_regular(&old_info) || !shared_regular(&stage_info)
+        || !is_identity(&old_info, target_dev, target_ino) || !is_identity(&stage_info, stage_dev, stage_ino)
+        || (uintmax_t)old_info.st_size != size || (uintmax_t)old_info.st_ctimespec.tv_sec != seconds
+        || (uintmax_t)old_info.st_ctimespec.tv_nsec != nanos || old_info.st_flags != 0
+        || (old_info.st_mode & (S_ISUID | S_ISGID))) goto done;
+    if (!fstatat(parent, recovery, &named, AT_SYMLINK_NOFOLLOW)) { error = EEXIST; goto done; }
+    if (errno != ENOENT) { error = errno; goto done; }
+    // Bound the copy and require exact ACL and extended attribute equality before swapping names.
+    if (!attributes_match(original, -1) || fchown(replacement, old_info.st_uid, old_info.st_gid)
+        || fchmod(replacement, old_info.st_mode & 0777) || fcopyfile(original, replacement, NULL, COPYFILE_ACL | COPYFILE_XATTR)
+        || !acls_match(original, replacement) || !attributes_match(original, replacement) || fsync(replacement)) {
+        error = EACCES; goto done;
+    }
+    if (!owner_matches(parent, path, parent_dev, parent_ino)
+        || fstatat(parent, target, &current, AT_SYMLINK_NOFOLLOW) || !same_snapshot(&current, &old_info)
+        || fstatat(parent, stage, &named, AT_SYMLINK_NOFOLLOW) || !same_file(&named, &stage_info)
+        || named.st_size != stage_info.st_size || named.st_mtimespec.tv_sec != stage_info.st_mtimespec.tv_sec
+        || named.st_mtimespec.tv_nsec != stage_info.st_mtimespec.tv_nsec
+        || named.st_mode != old_info.st_mode || named.st_gid != old_info.st_gid || named.st_flags != old_info.st_flags) goto done;
+    test_barrier("before-shared-swap");
+    if (renameatx_np(parent, stage, parent, target, RENAME_SWAP | RENAME_NOFOLLOW_ANY)) { error = errno; goto done; }
+    swapped = 1;
+    // The displaced inode survives at the stage name. Publish it to a unique visible
+    // recovery name, even when a competing writer arrived immediately before the swap.
+    if (!owner_matches(parent, path, parent_dev, parent_ino)
+        || fstatat(parent, stage, &current, AT_SYMLINK_NOFOLLOW) || !shared_regular(&current)
+        || fstatat(parent, target, &named, AT_SYMLINK_NOFOLLOW) || !same_file(&named, &stage_info)) goto done;
+    const int expected = same_file(&current, &old_info) && current.st_size == old_info.st_size
+        && current.st_mtimespec.tv_sec == old_info.st_mtimespec.tv_sec && current.st_mtimespec.tv_nsec == old_info.st_mtimespec.tv_nsec
+        && current.st_mode == old_info.st_mode && current.st_gid == old_info.st_gid && current.st_flags == old_info.st_flags
+        && acls_match(original, replacement) && attributes_match(original, replacement);
+    if (exclusive_rename(parent, stage, recovery)) { error = errno; goto done; }
+    if (fsync(parent) || !owner_matches(parent, path, parent_dev, parent_ino)
+        || fstatat(parent, target, &named, AT_SYMLINK_NOFOLLOW) || !same_file(&named, &stage_info)
+        || fstatat(parent, recovery, &named, AT_SYMLINK_NOFOLLOW) || !same_file(&named, &current) || !expected) goto done;
+    error = 0;
+done:
+    if (replacement >= 0) close(replacement);
+    if (original >= 0) close(original);
+    if (parent >= 0) close(parent);
+    if (error) return replacement_failure(error, !swapped);
+    puts("{\"ok\":true}");
+    return 0;
+}
+#endif
+
 int main(int argc, char **argv) {
     uintmax_t parent_dev, parent_ino, source_dev, source_ino;
+    if (argc > 1 && !strcmp(argv[1], "--replace-shared-text")) {
+#ifdef __APPLE__
+        uintmax_t target_dev, target_ino, size, seconds, nanos;
+        if (argc != 15 || argv[2][0] != '/' || !number(argv[3], &parent_dev) || !number(argv[4], &parent_ino)
+            || !name_ok(argv[5]) || strncmp(argv[5], ".rerun-shared-replace-", 22)
+            || !number(argv[6], &source_dev) || !number(argv[7], &source_ino) || !name_ok(argv[8]) || argv[8][0] == '.'
+            || !number(argv[9], &target_dev) || !number(argv[10], &target_ino) || !number(argv[11], &size) || size > 256 * 1024
+            || !number(argv[12], &seconds) || !number(argv[13], &nanos) || nanos >= 1000000000
+            || !name_ok(argv[14]) || strncmp(argv[14], "shared-edit-recovery-", 21) || !strcmp(argv[8], argv[14])) return replacement_failure(EINVAL, 1);
+        const char *suffix = strrchr(argv[8], '.');
+        if (!suffix || (strcasecmp(suffix, ".txt") && strcasecmp(suffix, ".md"))) return replacement_failure(EINVAL, 1);
+        return replace_shared(argv[2], parent_dev, parent_ino, argv[5], source_dev, source_ino, argv[8], target_dev, target_ino, size, seconds, nanos, argv[14]);
+#else
+        return replacement_failure(ENOTSUP, 1);
+#endif
+    }
     if (argc == 5 && !strcmp(argv[1], "--skill-lock")) {
         if (argv[2][0] != '/' || !number(argv[3], &parent_dev) || !number(argv[4], &parent_ino)) return failure(EINVAL);
         return skill_lock(argv[2], parent_dev, parent_ino);

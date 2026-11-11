@@ -92,12 +92,19 @@ export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResu
 }
 
 /** The existing desktop preview. Back returns to the folder that contains the file. */
-export function DesktopBrainFile({ path, files, onSelect }: { path: string; files: SharedFilesTree; onSelect: (selection: BrainSelection) => void }) {
+export function DesktopBrainFile({ path, files, onSelect, workspaceId }: { path: string; files: SharedFilesTree; onSelect: (selection: BrainSelection) => void; workspaceId?: number | null }) {
     const dir = parentPath(path)
     const { expand } = files
     useEffect(() => { expand(dir) }, [dir, expand])
     const listed = files.entriesOf(dir)
     const entries: DesktopSharedEntry[] | undefined = listed?.map(entry => ({ name: entry.name, type: entry.type === 'dir' ? 'dir' : 'file', size: entry.size, modified: entry.modified }))
 
-    return <DesktopSharedFilePreview path={path} entries={entries} onOpen={(next, directory) => onSelect(directory ? { kind: 'folder', path: next } : { kind: 'file', path: next })} />
+    return <DesktopSharedFilePreview
+        key={JSON.stringify([workspaceId, path])}
+        path={path}
+        entries={entries}
+        editWorkspaceId={workspaceId}
+        onTextSaved={() => { void files.refresh(dir) }}
+        onOpen={(next, directory) => onSelect(directory ? { kind: 'folder', path: next } : { kind: 'file', path: next })}
+    />
 }
