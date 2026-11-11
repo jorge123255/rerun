@@ -70,6 +70,46 @@ it('translates the composer and tabs while keeping the draft and tab identity', 
     expect(send).toHaveBeenCalledOnce()
 })
 
+it('sends on Return while preserving multiline, IME, and Stop behavior', async () => {
+    const send = vi.fn()
+    const stop = vi.fn()
+    const composer = { draft: 'Prépare une synthèse.', onDraftChange: vi.fn(), onSend: send, onStop: stop }
+    const press = async (options: KeyboardEventInit = {}) => {
+        const field = document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')!
+        const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...options })
+        await act(async () => { field.dispatchEvent(event) })
+        return event
+    }
+    await show(<DesktopForemanComposer {...composer} />)
+    expect((await press({ shiftKey: true })).defaultPrevented).toBe(false)
+    expect((await press({ isComposing: true })).defaultPrevented).toBe(false)
+    expect(send).not.toHaveBeenCalled()
+    expect((await press()).defaultPrevented).toBe(true)
+    expect(send).toHaveBeenCalledExactlyOnceWith(composer.draft)
+    expect(document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')?.value).toBe(composer.draft)
+    await show(<DesktopForemanComposer {...composer} busy />)
+    await press()
+    expect(send).toHaveBeenCalledOnce()
+    await act(async () => button('Arrêter').click())
+    expect(stop).toHaveBeenCalledOnce()
+})
+
+it('keeps an over-limit saved entry editable and refuses to submit it', async () => {
+    const send = vi.fn()
+    const composer = { draft: 'Résumé trop long', onDraftChange: vi.fn(), onSend: send, maxLength: 8 }
+    await show(<DesktopForemanComposer {...composer} />)
+    const field = document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')!
+    expect(field.disabled).toBe(false)
+    expect(field.maxLength).toBe(8)
+    expect(field.value).toBe(composer.draft)
+    expect(button('Envoyer').disabled).toBe(true)
+    await act(async () => field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })))
+    expect(send).not.toHaveBeenCalled()
+    await show(<DesktopForemanComposer {...composer} draft="Résumé" />)
+    await act(async () => button('Envoyer').click())
+    expect(send).toHaveBeenCalledExactlyOnceWith('Résumé')
+})
+
 it('translates plan review without changing the revision, target text or confirmation gate', async () => {
     const confirm = vi.fn()
     const target = 'Dossiers <archives> et factures'

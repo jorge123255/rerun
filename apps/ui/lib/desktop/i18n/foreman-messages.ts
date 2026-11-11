@@ -74,6 +74,7 @@ export function desktopForemanMessages(locale: Locale, source: Source) {
         ...mac[locale],
         ask: source.kit.foreman.orbLabel,
         placeholder: `${source.foreman.pill.ask}…`,
+        ownEntryPlaceholder: source.foreman.ownEntryPlaceholder,
         name: source.kit.foreman.tabsLabel,
         tabs: { ...source.kit.foreman.tabs, assistant: source.kit.foreman.tabsLabel },
         close: source.kit.close,

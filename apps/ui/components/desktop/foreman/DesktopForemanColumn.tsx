@@ -240,13 +240,16 @@ export function DesktopForemanColumn({
                     </DesktopForemanChatLayer>
                     </>}
                     <DesktopForemanComposer
-                        trailing={intake || pendingStarter ? undefined : ui.open ? voiceSlot ?? composerTrailing : composerTrailing}
+                        trailing={intake || pendingStarter ? undefined : composerTrailing}
+                        controls={intake || pendingStarter || !ui.open ? undefined : voiceSlot}
+                        placeholder={intake || pendingStarter ? t('foreman.ownEntryPlaceholder') : undefined}
+                        maxLength={intake || pendingStarter ? 4000 : undefined}
                         draft={ui.draft}
                         onDraftChange={foreman.setDraft}
                         busy={!!streaming}
                         disabled={!!question || !foreman.restored || !!foreman.blocked || ui.decision.status === 'pending'
-                            || pendingStarter && (!onStarterAnswer || starterBusy || !!starter?.decision || ui.draft.trim().length > 4000)
-                            || Boolean(intake && (!intake.restored || intake.submitting || intake.quitting || intake.conflicted || ui.draft.trim().length > 4000))}
+                            || pendingStarter && (!onStarterAnswer || starterBusy || !!starter?.decision)
+                            || Boolean(intake && (!intake.restored || intake.submitting || intake.quitting || intake.conflicted))}
                         onSend={send}
                         onStop={() => void foreman.stop()}
                     />
