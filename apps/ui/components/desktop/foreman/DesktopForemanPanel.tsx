@@ -1,5 +1,7 @@
 'use client'
 
+import { useDesktopLocale } from '../DesktopLocale'
+
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { DesktopForemanChatRef, DesktopForemanModelRef } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
@@ -41,6 +43,7 @@ export type DesktopForemanPanelProps = {
 }
 /** Real local Foreman conversation in the original docked column; the board remains mounted. */
 export function DesktopForemanPanel(props: DesktopForemanPanelProps) {
+    const { t } = useDesktopLocale()
     const [initial, setInitial] = useState<DesktopForemanClientState | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [retry, setRetry] = useState(0)
@@ -56,9 +59,10 @@ export function DesktopForemanPanel(props: DesktopForemanPanelProps) {
     }, [retry])
     useEffect(() => { if (error && props.command) props.command.settle(new Error(error)) }, [error, props.command])
     if (initial) return <ConnectedForeman key={`${initial.chat.workspaceId}:${initial.chat.chatId}`} {...props} initial={initial} />
-    return <section className={props.className} aria-label="Foreman"><div className="flex min-h-40 flex-col items-start gap-3 rounded-3xl border bg-background p-5"><p role={error ? 'alert' : 'status'}>{error ?? 'Opening Foreman…'}</p>{error && <Button size="sm" onClick={() => setRetry(value => value + 1)}>Try again</Button>}<Button size="sm" variant="ghost" onClick={props.onClose}>Close</Button></div></section>
+    return <section className={props.className} aria-label="Foreman"><div className="flex min-h-40 flex-col items-start gap-3 rounded-3xl border bg-background p-5"><p role={error ? 'alert' : 'status'}>{error ?? t('foreman.opening')}</p>{error && <Button size="sm" onClick={() => setRetry(value => value + 1)}>{t('creation.tryAgain')}</Button>}<Button size="sm" variant="ghost" onClick={props.onClose}>{t('foreman.close')}</Button></div></section>
 }
 function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { initial: DesktopForemanClientState }) {
+    const { t } = useDesktopLocale()
     const [state, setState] = useState(initial)
     const intakePorts = useMemo(() => createDesktopForemanIntakeClient(), [])
     const intake = useDesktopForemanIntake({ chat: initial.chat, ports: intakePorts, active: !!props.controlledOpen && !props.hidden })
@@ -132,7 +136,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         })().catch(error => command.settle(error instanceof Error ? error : new Error('Could not ask Foreman.')))
     }, [client, props.command, initial.chat.chatId, initial.chat.workspaceId, intakeOpen, intakeEligible, intake.restored])
     const close = useCallback(() => { if (active.current) current.current.onClose() }, [])
-    if (!client) return <div role="status" className={props.className}>Opening Foreman…</div>
+    if (!client) return <div role="status" className={props.className}>{t('foreman.opening')}</div>
     return <>
     {(props.modelChoice ?? state.model ?? props.workspaceModelChoice) && <ForemanVoiceOwner target={{ chat: state.chat, model: (props.modelChoice ?? state.model ?? props.workspaceModelChoice)! }}
         active={!props.hidden && !state.view.live && !state.question && !intakeOpen} engage={() => {}}

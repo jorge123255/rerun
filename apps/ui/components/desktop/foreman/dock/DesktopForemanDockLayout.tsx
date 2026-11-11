@@ -1,5 +1,7 @@
 'use client'
 
+import { useDesktopLocale } from '../../DesktopLocale'
+
 import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode, type PointerEventHandler, type KeyboardEventHandler } from 'react'
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react'
 import type { ForemanPlacement } from '@/lib/foreman-layout'
@@ -22,6 +24,7 @@ export type DesktopForemanDockLayoutProps = {
 
 /** One frame around the existing column CONTENT; the board remains a mounted sibling. */
 export function DesktopForemanDockLayout(props: DesktopForemanDockLayoutProps) {
+    const { t } = useDesktopLocale()
     const reduce = useReducedMotion()
     const geometry = useDockGeometry({ ...props, hidden: !!props.hidden })
     const { placement: p, viewport: v, position } = geometry
@@ -65,9 +68,9 @@ export function DesktopForemanDockLayout(props: DesktopForemanDockLayoutProps) {
         <AnimatePresence>{geometry.preview && <motion.div aria-hidden initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: reduce ? 0 : 0.18 }} style={{ ...rectStyle(boundedPlacement(geometry.preview, v)), position: 'fixed', ...(geometry.preview.mode === 'dock' ? { top: 8, bottom: 8, height: 'auto', [geometry.preview.side]: 8 } : {}), borderRadius: 14 }} className="pointer-events-none z-40 border-2 border-primary/40 bg-primary/5" />}</AnimatePresence>
         <motion.div layout={!position && !reduce} transition={{ duration: reduce ? 0 : 0.22, ease: 'easeOut' }} ref={panel} data-desktop-foreman-panel hidden={!!props.hidden} aria-hidden={!props.open} inert={!props.open || !!props.hidden} animate={{ opacity: props.open ? 1 : 0, y: mobile && !props.open ? '100%' : 0, scale: !props.open && p.mode === 'float' ? 0.95 : 1 }} style={{ ...style, pointerEvents: props.open && !props.hidden ? 'auto' : 'none' }}
             className={cn('z-50 min-h-0 min-w-0 max-w-full rounded-xl border border-border bg-background shadow-2xl motion-reduce:transition-none', mobile && 'rounded-t-2xl', p.mode === 'dock' && !mobile && 'rounded-3xl shadow')}>
-            {mobile && <button type="button" data-sheet-grabber aria-label="Resize chat" className="absolute inset-x-0 top-0 z-30 flex h-6 w-full touch-none items-center justify-center" onPointerDown={e => geometry.begin('sheet', e)} onClick={() => { if (!geometry.consumeClick()) props.onDock({ ...props.dock, sheetDetent: props.dock.sheetDetent === 'medium' ? 'large' : 'medium' }) }}><span className="h-1 w-10 rounded-full bg-muted-foreground/30" /></button>}
+            {mobile && <button type="button" data-sheet-grabber aria-label={t('foreman.resize')} className="absolute inset-x-0 top-0 z-30 flex h-6 w-full touch-none items-center justify-center" onPointerDown={e => geometry.begin('sheet', e)} onClick={() => { if (!geometry.consumeClick()) props.onDock({ ...props.dock, sheetDetent: props.dock.sheetDetent === 'medium' ? 'large' : 'medium' }) }}><span className="h-1 w-10 rounded-full bg-muted-foreground/30" /></button>}
             <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[inherit]">{props.children({ onPointerDown: e => geometry.begin('drag', e) })}</div>
-            {!mobile && <div role="separator" tabIndex={0} aria-label="Resize chat" aria-orientation={p.mode === 'dock' ? 'vertical' : undefined}
+            {!mobile && <div role="separator" tabIndex={0} aria-label={t('foreman.resize')} aria-orientation={p.mode === 'dock' ? 'vertical' : undefined}
                 className={cn('absolute z-30 touch-none border-transparent hover:border-ring/70 focus-visible:border-ring focus-visible:outline-none', p.mode === 'dock' ? `inset-y-0 w-2 cursor-col-resize ${p.side === 'right' ? 'left-0' : 'right-0'}` : `size-4 border-2 ${growLeft ? 'left-0' : 'right-0'} ${growUp ? 'top-0' : 'bottom-0'} ${growLeft === growUp ? 'cursor-nwse-resize' : 'cursor-nesw-resize'}`)}
                 onPointerDown={e => geometry.begin(p.mode === 'dock' ? 'dock-size' : 'float-size', e)} onKeyDown={resizeKey} onDoubleClick={() => props.onPlacement({ ...props.placement, width: 480, height: 720, dockWidth: 480 })} />}
         </motion.div>

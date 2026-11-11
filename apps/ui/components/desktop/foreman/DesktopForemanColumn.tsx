@@ -119,7 +119,7 @@ export function DesktopForemanColumn({
         if (ui.tab !== 'assistant') { foreman.setTab('assistant'); return }
         let focused = false
         const focus = () => {
-            const target = column.current?.querySelector<HTMLInputElement | HTMLTextAreaElement>(intake ? '[data-foreman-intake] input:not([disabled])' : 'textarea[aria-label="Message the Foreman"]')
+            const target = column.current?.querySelector<HTMLInputElement | HTMLTextAreaElement>(intake ? '[data-foreman-intake] input:not([disabled])' : 'textarea[data-desktop-foreman-composer]')
             if (!focused && target?.isConnected && !target.disabled && !target.closest('[inert]')) { focused = true; consumedFocus.current = focusRequest; target.focus({ preventScroll: true }); observer.disconnect() }
         }
         const observer = new MutationObserver(focus)

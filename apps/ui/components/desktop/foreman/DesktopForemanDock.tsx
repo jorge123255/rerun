@@ -1,5 +1,7 @@
 'use client'
 
+import { useDesktopLocale } from '../DesktopLocale'
+
 import { useReducedMotion } from 'motion/react'
 import { useState } from 'react'
 import { Orb, PARKED_ORB_SIZE, PARKED_ORB_SIZE_MOBILE, type OrbActivity } from '@rerun/ui/foreman'
@@ -25,7 +27,7 @@ export function DesktopForemanDock({
     activity = 'idle',
     corner = 'bottom-right',
     mobile = false,
-    label = 'Ask Rerun',
+    label,
 }: {
     open: boolean
     onToggle: () => void
@@ -34,6 +36,8 @@ export function DesktopForemanDock({
     mobile?: boolean
     label?: string
 }) {
+    const { t } = useDesktopLocale()
+    const ask = label ?? t('foreman.ask')
     const reducedMotion = useReducedMotion()
     const [dragged, setDragged] = useState(false)
     const size = mobile ? PARKED_ORB_SIZE_MOBILE : PARKED_ORB_SIZE
@@ -52,14 +56,14 @@ export function DesktopForemanDock({
                     transition: reducedMotion ? undefined : 'opacity 0.22s ease-out, transform 0.22s ease-out',
                 }}
             >
-                <TooltipLabeled side={corner.startsWith('bottom') ? 'top' : 'bottom'} hidden={open} label={label}>
+                <TooltipLabeled side={corner.startsWith('bottom') ? 'top' : 'bottom'} hidden={open} label={ask}>
                     <span className="block">
                         <Orb
                             size={size}
                             state={activity}
                             paused={open}
                             facing={corner.endsWith('left') ? 'right' : 'left'}
-                            label={label}
+                            label={ask}
                             onClick={
                                 open
                                     ? undefined

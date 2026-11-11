@@ -1,5 +1,6 @@
 import { desktopCreationMessages } from './i18n/creation-messages'
 import { desktopCoworkerMessages } from './i18n/coworker-messages'
+import { desktopForemanMessages } from './i18n/foreman-messages'
 import dialogs from '@rerun/i18n/messages/en/dialogs.json'
 import type { Locale } from '@rerun/i18n'
 import { createTranslator } from 'use-intl/core'
@@ -8,12 +9,13 @@ import agent from '@rerun/i18n/messages/en/agent.json'
 import chat from '@rerun/i18n/messages/en/chat.json'
 import common from '@rerun/i18n/messages/en/common.json'
 import connections from '@rerun/i18n/messages/en/connections.json'
+import foreman from '@rerun/i18n/messages/en/foreman.json'
 import kit from '@rerun/i18n/messages/en/kit.json'
 import layout from '@rerun/i18n/messages/en/layout.json'
 import mobileSettings from '@rerun/i18n/messages/en/mobileSettings.json'
 import workspace from '@rerun/i18n/messages/en/workspace.json'
 
-const englishSource = { account, agent, chat, common, connections, dialogs, kit, layout, mobileSettings, workspace }
+const englishSource = { account, agent, chat, common, connections, dialogs, foreman, kit, layout, mobileSettings, workspace }
 type DesktopMessageSource = typeof englishSource
 
 // The shared packs already contain the standard controls. These labels are specific to the Mac shell.
@@ -110,6 +112,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         ...mac[locale],
         coworker: desktopCoworkerMessages(locale, source),
         creation: desktopCreationMessages(locale, source),
+        foreman: desktopForemanMessages(locale, source),
         language: source.account.language.field,
         automatic: source.account.language.automatic,
         languageFailed: source.account.language.failed,

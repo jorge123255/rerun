@@ -1,5 +1,7 @@
 'use client'
 
+import { useDesktopLocale } from '../DesktopLocale'
+
 import type { PointerEvent, ReactNode } from 'react'
 import { ForemanHeaderBar, type ForemanAnchor, type OrbActivity } from '@rerun/ui/foreman'
 import { DesktopForemanTabs } from './DesktopForemanTabs'
@@ -28,12 +30,16 @@ export function DesktopForemanHeader({
     onToggleSheetDetent?: () => void
     actions?: ReactNode
 }) {
+    const { t } = useDesktopLocale()
     return (
         <ForemanHeaderBar
             anchor={anchor}
             orbState={orbState}
             orbPaused={!open}
             onClose={onClose}
+            closeLabel={t('foreman.closeChat')}
+            closeTooltip={t('foreman.close')}
+            resizeLabel={t('foreman.resize')}
             closeDisabledReason={closeDisabledReason}
             onGutter
             onDragPointerDown={onDragPointerDown}
