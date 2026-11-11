@@ -16,6 +16,8 @@
         "dev:docs": "cd apps/docs && npx --yes mint dev --port 3333",
         "check:docs": "cd apps/docs && npx --yes mint validate && npx --yes mint broken-links",
         "typecheck": "pnpm -r --if-present ts-check",
+        "i18n:check": "node scripts/i18n-check.mjs",
+        "i18n:index": "node scripts/i18n-index.mjs",
         "db:new": "supabase migration new",
         "db:start": "supabase start",
         "db:stop": "supabase stop",

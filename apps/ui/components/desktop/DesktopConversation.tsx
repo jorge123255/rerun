@@ -1314,7 +1314,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
             <Conversation key={sessionId ?? 'new'} className="min-h-0" aria-label={t('chatMessages')}>
                 <ConversationContent className="gap-4 px-3.5 py-4">
                     <DesktopConversationFind open={findOpen && active} onOpenChange={setFindOpen} />
-                    {!ready && !historyError && !busy && <p role="status" className="text-sm text-muted-foreground">Loading conversation…</p>}
+                    {!ready && !historyError && !busy && <p role="status" className="text-sm text-muted-foreground">{t('openingSavedChat')}</p>}
                     {threadRows.leading.map(thread => <DesktopThreadBranch key={thread.id} thread={thread} needsYou={pendingChatSummaries?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />)}
                     {ready && transcript.length === 0 && threadRows.leading.length === 0 && !busy && (
                         <div className="py-16 text-center">

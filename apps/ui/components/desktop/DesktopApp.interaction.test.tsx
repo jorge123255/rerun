@@ -8,6 +8,9 @@ import { MotionConfig } from 'motion/react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { DesktopApp } from './DesktopApp'
+import { DesktopLocale } from './DesktopLocale'
+import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
+import { loadMessages } from '@rerun/i18n/messages'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
 import { generalTabUid } from '@/lib/desktop/general-threads'
@@ -387,7 +390,14 @@ test('editing a coworker from the board preserves the chat and only saves change
     } finally { await act(async () => { root.unmount() }) }
 })
 
-test('the chat keeps the composer area in place while opening and retrying saved conversations', async () => {
+test.each([
+    { locale: 'en', open: 'Open chat with Researcher', openingLabel: 'Opening Researcher…', retryLabel: 'Retry conversations', close: 'Close panel' },
+    { locale: 'fr', open: 'Ouvrir la conversation avec Researcher', openingLabel: 'Ouverture de la conversation avec Researcher…', retryLabel: 'Recharger les conversations', close: 'Fermer le panneau' },
+    { locale: 'es', open: 'Abrir el chat con Researcher', openingLabel: 'Abriendo el chat con Researcher…', retryLabel: 'Volver a cargar las conversaciones', close: 'Cerrar panel' },
+    { locale: 'pt', open: 'Abrir conversa com Researcher', openingLabel: 'Abrindo a conversa com Researcher…', retryLabel: 'Recarregar conversas', close: 'Fechar painel' },
+    { locale: 'de', open: 'Chat mit Researcher öffnen', openingLabel: 'Chat mit Researcher wird geöffnet…', retryLabel: 'Unterhaltungen erneut laden', close: 'Panel schließen' },
+] as const)('the chat keeps a localized composer area in place during load and retry ($locale)', async ({ locale, open, openingLabel, retryLabel, close }) => {
+    const language: DesktopLanguage = { locale, preference: locale, messages: desktopMessages(locale, await loadMessages(locale)) }
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
@@ -399,31 +409,31 @@ test('the chat keeps the composer area in place while opening and retrying saved
             return new Promise<Response>(resolve => { resolveSessions = resolve })
         }
     })
-    const panel = () => container.querySelector('[aria-label="Coworker chat"]')!
+    const panel = () => container.querySelector('[data-testid="desktop-coworker-chat"]')!
     const opening = () => {
         const composer = panel().querySelector('[data-slot="desktop-composer"]')
         expect(composer).not.toBeNull()
-        expect(composer?.querySelector('[role="status"]')?.textContent).toBe('Opening Researcher…')
+        expect(composer?.querySelector('[role="status"]')?.textContent).toBe(openingLabel)
         expect(composer?.querySelector('button, textarea, input, form')).toBeNull()
-        expect(panel().querySelector('[aria-label="Close panel"]')).not.toBeNull()
+        expect(panel().querySelector('[aria-label="' + close + '"]')).not.toBeNull()
     }
     try {
-        await act(async () => { root.render(<DesktopApp initialData={{ ...disconnected, profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [agent], theme: 'system' }} />) })
-        const tile = container.querySelector<HTMLElement>('[aria-label="Open chat with Researcher"]')!
+        await act(async () => { root.render(<DesktopLocale initial={language}><DesktopApp initialData={{ ...disconnected, profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [agent], theme: 'system' }} /></DesktopLocale>) })
+        const tile = container.querySelector<HTMLElement>('[aria-label="' + open + '"]')!
         await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
         opening()
         await act(async () => { resolveSessions(Response.json({ error: 'Could not load conversations' }, { status: 500 })) })
         expect(panel().querySelector('[data-slot="desktop-composer"]')).toBeNull()
         const retry = panel().querySelector<HTMLButtonElement>('[role="alert"] button')!
-        expect(retry.textContent).toBe('Retry conversations')
+        expect(retry.textContent).toBe(retryLabel)
         await act(async () => { retry.click() })
         expect(panel().querySelector('[role="alert"]')).toBeNull()
         opening()
         expect(fetcher.mock.calls.some(([url]) => url === '/api/desktop/chat')).toBe(false)
         await act(async () => { resolveSessions(Response.json({ sessions: [] })) })
         expect(panel().querySelector('form[data-slot="desktop-composer"] textarea')).not.toBeNull()
-        expect(panel().textContent).not.toContain('Opening Researcher…')
-        await act(async () => { panel().querySelector<HTMLButtonElement>('[aria-label="Close panel"]')!.click() })
+        expect(panel().textContent).not.toContain(openingLabel)
+        await act(async () => { panel().querySelector<HTMLButtonElement>('[aria-label="' + close + '"]')!.click() })
         expect(document.activeElement).toBe(tile)
     } finally { await act(async () => { root.unmount() }) }
 })

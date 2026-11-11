@@ -882,6 +882,7 @@ function CoworkerChat({ agent, attention, overview, requested, requestedPanel, o
     onOpenCoworkerChat: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel: () => void
 }) {
+    const { t } = useDesktopLocale()
     const [sessions, setSessions] = useState<DesktopSessionView[] | null>(null)
     const pendingChatSummaries = useMemo(() => new Map(attention.items
         .filter(item => item.agentId === agent.id && item.kind !== 'info')
@@ -941,7 +942,7 @@ function CoworkerChat({ agent, attention, overview, requested, requestedPanel, o
         // eslint-disable-next-line react-hooks/set-state-in-effect
         if (missing && requested && checkedRequest !== requested) void readSessions({ checking: requested })
     }, [missing, requested, checkedRequest, readSessions])
-    const dismiss = <Button type="button" variant="ghost" size="icon-sm" aria-label="Close panel" className="absolute right-3 top-3" onClick={onClosePanel}><X /></Button>
+    const dismiss = <Button type="button" variant="ghost" size="icon-sm" aria-label={t('closePanel')} className="absolute right-3 top-3" onClick={onClosePanel}><X /></Button>
     const reload = () => {
         setBootstrap(null)
         setError(null)
@@ -950,13 +951,13 @@ function CoworkerChat({ agent, attention, overview, requested, requestedPanel, o
     }
     return <>
         {(error || (missing && checkedRequest === requested)) && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">
-            {error ?? 'This conversation is no longer available for this coworker.'}
-            <Button type="button" size="sm" variant="outline" onClick={reload}>Retry conversations</Button>
+            {error ?? t('savedChatUnavailable')}
+            <Button type="button" size="sm" variant="outline" onClick={reload}>{t('retryConversations')}</Button>
         </div>}
-        {missing && checkedRequest !== requested && !error && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">Opening conversation…</p>}
+        {missing && checkedRequest !== requested && !error && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">{t('openingSavedChat')}</p>}
         {!error && !bootstrap && <div className="mt-auto shrink-0 border-t p-2.5">
             <div data-slot="desktop-composer" className="min-h-[5.5rem] rounded-xl border border-input bg-muted/40 px-2.5 py-2">
-                <p role="status" className="text-sm text-muted-foreground">Opening {agent.name}…</p>
+                <p role="status" className="text-sm text-muted-foreground">{t('openingCoworkerChat', { name: agent.name })}</p>
             </div>
         </div>}
         {!bootstrap || !sessions ? dismiss : <DesktopChatTabs onOpenCoworkerChat={onOpenCoworkerChat}
