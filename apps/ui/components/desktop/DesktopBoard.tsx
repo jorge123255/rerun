@@ -169,7 +169,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
             const containers: Container[] = renderedBoard.spaces.length ? renderedBoard.spaces.map((space, index) => ({
                 ...space, label: space.name, color: preview?.spaceId === space.id && board && !desktopSpaceRectAllowed(board, space.id, preview.rect, preview.moving) ? '#ef4444' : SPACE_COLOR,
                 ariaLabel: desktopSpaceLabel(space, index, renderedBoard.spaces.length),
-                ...(!renderedBoard.placements.some(placed => placed.spaceId === space.id) ? { cta: 'Add a coworker' } : {}),
+                ...(!renderedBoard.placements.some(placed => placed.spaceId === space.id) ? { cta: t('creation.add') } : {}),
             })) : [{ id: 'desktop-empty-box', label: null, color: SPACE_COLOR, col_start: 0, row_start: 0, col_end: 7, row_end: 7, variant: 'placeholder', placeholderLabel: 'Create your first Box' }]
             return { tiles, containers }
         }
@@ -185,7 +185,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
             id: 'team', label: agents.length ? workspaceName : null, color: SPACE_COLOR,
             ...layout.bounds,
             variant: agents.length ? 'default' : 'placeholder',
-            placeholderLabel: 'Create your first coworker',
+            placeholderLabel: t('creation.first'),
         }
         return { tiles, containers: [box] }
     }, [agents, workspaceName, activity, attentionCounts, layout, renderedBoard, preview, board, t])
@@ -260,7 +260,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
         setPlacement({ ...placement, position: anchor, spaceId: targetSpace, saving: true, error: undefined })
         try {
             const result = targetSpace ? await onDuplicate(placement.sourceId, placement.requestId, anchor, targetSpace) : await onDuplicate(placement.sourceId, placement.requestId, anchor)
-            if (mounted.current) setPlacement(result === 'created' ? null : { ...placement, position: undefined, spaceId: undefined, saving: false, error: 'That spot is no longer available. Choose another.' })
+            if (mounted.current) setPlacement(result === 'created' ? null : { ...placement, position: undefined, spaceId: undefined, saving: false, error: t('creation.spotTaken') })
         } catch (error) {
             if (mounted.current) setPlacement({ ...placement, position: anchor, spaceId: targetSpace, saving: false,
                 error: error instanceof Error ? error.message : 'Could not confirm the copy. Try again.' })
@@ -414,13 +414,13 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                 {placement ? <div className="flex min-w-0 items-center gap-2 pl-3">
                     <div className="min-w-0" role="status">
                         <Shimmer as="span" duration={1.6} className="block truncate text-sm font-medium">
-                            {placement.saving ? `Placing ${placement.name}…` : `Tap a tile to place ${placement.name}`}
+                            {placement.saving ? t('creation.placing', { name: placement.name }) : t('creation.chooseTile', { name: placement.name })}
                         </Shimmer>
                         {templatePlacement && !templatePlacement.submitted && <p className="text-xs text-muted-foreground">{templatePlacement.positions.length + 1} of {templatePlacement.template.agents.length} coworkers{templatePlacement.spaceId ? ' · Keep this team in the same Box' : ' · Choose a Box on the board'}</p>}
                         {placement.error && <p className="text-xs text-destructive" role="alert">{placement.error}</p>}
                     </div>
-                    {!suggestion && !placement.position && <p className="text-xs text-muted-foreground">No free spot. Cancel and add or resize a Box.</p>}
-                    <ChromeButton ref={placeButton} label={placement.position && !placement.saving ? 'Retry' : newCoworker || templatePlacement ? 'Place coworker' : 'Place copy'} disabled={placement.saving || (!suggestion && !placement.position) || gridBlocked}
+                    {!suggestion && !placement.position && <p className="text-xs text-muted-foreground">{t('creation.noRoom')}</p>}
+                    <ChromeButton ref={placeButton} label={placement.position && !placement.saving ? 'Retry' : newCoworker || templatePlacement ? t('creation.place') : 'Place copy'} disabled={placement.saving || (!suggestion && !placement.position) || gridBlocked}
                         onClick={() => { const position = placement.position ?? suggestion; if (position) void placeCopy(position) }} />
                     {templatePlacement?.submitted ? <ChromeButton label="Review installation" disabled={placement.saving || gridBlocked} onClick={onReviewTemplate} />
                         : <ChromeButton label={t('cancel')} disabled={placement.saving || newCoworker?.submitted} onClick={cancelCopy} />}
@@ -430,8 +430,8 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                     {board && onBoardCommand && <><ChromeDivider /><ChromeButton icon={Plus} label={t('addBox')} disabled={gridBlocked} onClick={() => openBoxDialog({ kind: 'create' })} /></>}
                 </>}
             </ChromeBar>
-            {!placement && creationChecking && <p className="rounded-xl border bg-background px-3 py-2 text-xs text-muted-foreground" role="status">Checking previous creation…</p>}
-            {!placement && creationError && <div role="alert" className="flex max-w-sm items-center gap-2 rounded-xl border bg-background px-3 py-2 text-xs"><p>{creationError}</p><Button size="sm" variant="outline" disabled={creationChecking || gridBlocked} onClick={()=>void onRetryCreation?.()}>Retry creation check</Button></div>}
+            {!placement && creationChecking && <p className="rounded-xl border bg-background px-3 py-2 text-xs text-muted-foreground" role="status">{t('creation.checkingBoard')}</p>}
+            {!placement && creationError && <div role="alert" className="flex max-w-sm items-center gap-2 rounded-xl border bg-background px-3 py-2 text-xs"><p>{creationError}</p><Button size="sm" variant="outline" disabled={creationChecking || gridBlocked} onClick={()=>void onRetryCreation?.()}>{t('creation.retryCheck')}</Button></div>}
             </div>
             {!spaceDialog && (commandError || boardError) && <div role="alert" className="absolute bottom-20 left-4 z-40 flex max-w-[calc(100%-2rem)] items-center gap-2 rounded-xl border bg-background px-3 py-2 text-sm shadow-sm">
                 <p>{commandError || boardError}</p>{(onRetryBoard || retryCommand.current) && <Button variant="outline" size="sm" disabled={baseBlocked} onClick={() => void retryBoard()}>Retry</Button>}

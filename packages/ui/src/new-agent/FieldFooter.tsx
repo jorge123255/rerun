@@ -33,6 +33,7 @@ export type FieldFooterProps = {
     schedule: { read: JobSchedule | null; choice: ScheduleChoice; onChoice: (choice: ScheduleChoice) => void; open: boolean; onOpenChange: (open: boolean) => void }
     canCreate: boolean
     creating: boolean
+    createLabel?: string
     /** Omitted means every hosted entry point, so the web dialog keeps both. */
     capabilities?: FieldFooterCapabilities
 }
@@ -42,7 +43,7 @@ const HOSTED_CAPABILITIES: FieldFooterCapabilities = { apps: true, schedule: tru
 // The field's footer: the name, the apps read in the description (or "+ Apps") with their picker,
 // the timing it read (or "Schedule") with its planner, and the create button, which submits the
 // form the field sits in.
-export function FieldFooter({ name, nameProps, catalog, apps, onToggleApp, schedule, canCreate, creating, capabilities = HOSTED_CAPABILITIES }: FieldFooterProps) {
+export function FieldFooter({ name, nameProps, catalog, apps, onToggleApp, schedule, canCreate, creating, createLabel, capabilities = HOSTED_CAPABILITIES }: FieldFooterProps) {
     const shown = apps.flatMap(slug => catalog?.get(slug) ?? [])
     const scheduled = scheduleLabel(schedule.choice) ?? schedule.read?.label ?? null
     const [rowRef, portalContainer] = useDialogPortalContainer<HTMLDivElement>()
@@ -69,7 +70,7 @@ export function FieldFooter({ name, nameProps, catalog, apps, onToggleApp, sched
                 Where the row is too narrow for the sentence at all, on a phone, the button is its arrow
                 and the pill and the timing are the ones that give way. */}
             <Button type="submit" data-aim="create" disabled={!canCreate || creating} className="ml-auto max-w-full min-w-0 shrink @max-[24rem]:w-8 @max-[24rem]:shrink-0 @max-[24rem]:px-0">
-                <span className="truncate @max-[24rem]:sr-only">{name ? `Create ${name}` : 'Create coworker'}</span>
+                <span className="truncate @max-[24rem]:sr-only">{createLabel ?? (name ? `Create ${name}` : 'Create coworker')}</span>
                 <ArrowRightIcon className="size-3.5" />
             </Button>
         </div>
