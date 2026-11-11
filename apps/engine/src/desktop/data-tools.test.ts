@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { ToolSet } from 'ai'
 import { clearCachedEnvForTests } from '../config/env.js'
 import type { RunContext } from '../runtime/context.js'
@@ -52,38 +52,74 @@ it('leaves both databases off by default and opens each grant on its own', () =>
     expect(desktopSharedDbTools(ctx()).shared_db_query).toBeDefined()
 })
 
-it('keeps the private and shared databases, and their permissions, distinct', async () => {
-    grant({ db: true, sharedDb: true })
-    const tools = both()
+describe('private and shared database routing', () => {
+    beforeAll(async () => {
+        grant({ db: true, sharedDb: true })
+        const tools = both()
+        try {
+            expect(await run(tools, 'db_execute', { statements: [
+                { sql: 'CREATE TABLE notes (body TEXT)' },
+                { sql: 'INSERT INTO notes (body) VALUES (?)', params: ['private note'] },
+                { sql: 'CREATE TABLE private_schema_example (body TEXT)' },
+            ] })).toMatch(/^OK, 3 statements?\b/)
+            expect(await run(tools, 'shared_db_execute', { statements: [
+                { sql: 'CREATE TABLE notes (body TEXT)' },
+                { sql: 'INSERT INTO notes (body) VALUES (?)', params: ['shared note'] },
+                { sql: 'CREATE TABLE shared_schema_example (body TEXT)' },
+            ] })).toMatch(/^OK, 3 statements?\b/)
+        } finally {
+            grant({})
+        }
+    })
 
-    expect(await run(tools, 'db_execute', { sql: 'CREATE TABLE IF NOT EXISTS notes (body TEXT)' })).toMatch(/^OK, 1 statement/)
-    expect(await run(tools, 'db_execute', { sql: "INSERT INTO notes (body) VALUES ('private note')" })).toMatch(/^OK, 1 statement/)
-    expect(await run(tools, 'shared_db_execute', { sql: 'CREATE TABLE IF NOT EXISTS notes (body TEXT)' })).toMatch(/^OK, 1 statement/)
-    expect(await run(tools, 'shared_db_execute', { sql: "INSERT INTO notes (body) VALUES ('shared note')" })).toMatch(/^OK, 1 statement/)
+    it('keeps the private and shared databases, and their permissions, distinct', async () => {
+        grant({ db: true, sharedDb: true })
+        const tools = both()
+        expect(await run(tools, 'db_query', { sql: 'SELECT body FROM notes' })).toBe('1 row(s)\n[{"body":"private note"}]')
+        expect(await run(tools, 'shared_db_query', { sql: 'SELECT body FROM notes' })).toBe('1 row(s)\n[{"body":"shared note"}]')
+    })
 
-    expect(await run(tools, 'db_query', { sql: 'SELECT body FROM notes' })).toBe('1 row(s)\n[{"body":"private note"}]')
-    expect(await run(tools, 'shared_db_query', { sql: 'SELECT body FROM notes' })).toBe('1 row(s)\n[{"body":"shared note"}]')
-    expect(await run(tools, 'db_schema')).toContain('notes')
-    expect(await run(tools, 'shared_db_schema')).toContain('notes')
+    it('inspects user tables through each database schema tool', async () => {
+        grant({ db: true, sharedDb: true })
+        const tools = both()
+        const own = await run(tools, 'db_schema')
+        const shared = await run(tools, 'shared_db_schema')
+        expect(own).toContain('private_schema_example')
+        expect(own).not.toContain('shared_schema_example')
+        expect(shared).toContain('shared_schema_example')
+        expect(shared).not.toContain('private_schema_example')
+    })
 })
 
-it('keeps the upstream write path closed: query-only reads, no ATTACH, PRAGMA, VACUUM or file functions', async () => {
+it('admits SELECT queries while refusing writes through the query tool', async () => {
+    grant({ db: true })
+    const tools = desktopDbTools(ctx())
+    await expect(run(tools, 'db_query', { sql: 'DELETE FROM notes' })).rejects.toThrow(/^Query failed: Only a SELECT/)
+    expect(await run(tools, 'db_query', { sql: "SELECT 'attach or pragma' AS s" })).toBe('1 row(s)\n[{"s":"attach or pragma"}]')
+})
+
+it('refuses internal tables in both databases', async () => {
     grant({ db: true, sharedDb: true })
     const tools = both()
 
-    await expect(run(tools, 'db_query', { sql: 'DELETE FROM notes' })).rejects.toThrow(/^Query failed: Only a SELECT/)
-    await expect(run(tools, 'db_query', { sql: "SELECT readfile('/etc/passwd') AS v" })).rejects.toThrow('Query failed: File access is not allowed in SQL.')
     await expect(run(tools, 'db_query', { sql: 'SELECT name FROM sqlite_master' })).rejects.toThrow(/^Query failed: Internal tables are not available here/)
     await expect(run(tools, 'db_query', { sql: 'SELECT * FROM _rerun_views' })).rejects.toThrow(/^Query failed: Internal tables are not available here/)
     await expect(run(tools, 'shared_db_query', { sql: 'SELECT * FROM "_rerun_shared_tables"' })).rejects.toThrow(/^Query failed: Internal tables are not available here/)
+})
 
+it('refuses ATTACH, PRAGMA and VACUUM through the write tool', async () => {
+    grant({ db: true })
+    const tools = desktopDbTools(ctx())
     await expect(run(tools, 'db_execute', { sql: "ATTACH DATABASE '/tmp/other.db' AS other" })).rejects.toThrow(/^Execution failed:/)
     await expect(run(tools, 'db_execute', { sql: 'PRAGMA writable_schema = 1' })).rejects.toThrow('Execution failed: PRAGMA is not available here.')
     await expect(run(tools, 'db_execute', { sql: 'VACUUM' })).rejects.toThrow('Execution failed: VACUUM is not available here.')
-    await expect(run(tools, 'shared_db_execute', { sql: "SELECT writefile('/tmp/pwned', 'x')" })).rejects.toThrow(/^Execution failed:/)
+})
 
-    // A string literal that merely says the words is not a statement.
-    expect(await run(tools, 'db_query', { sql: "SELECT 'attach or pragma' AS s" })).toBe('1 row(s)\n[{"s":"attach or pragma"}]')
+it('refuses file functions through the read and write tools', async () => {
+    grant({ db: true, sharedDb: true })
+    const tools = both()
+    await expect(run(tools, 'db_query', { sql: "SELECT readfile('/etc/passwd') AS v" })).rejects.toThrow('Query failed: File access is not allowed in SQL.')
+    await expect(run(tools, 'shared_db_execute', { sql: "SELECT writefile('/tmp/pwned', 'x')" })).rejects.toThrow(/^Execution failed:/)
 })
 
 it('refuses a statement when the grant was turned off after the tools were prepared', async () => {

@@ -12,6 +12,9 @@ import { GET as list } from '../route'
 import { DELETE as removeCoworker } from '../../route'
 import { PUT as save } from './route'
 
+// These cases require macOS to establish that the displaced inode is no longer held.
+const macTest = test.runIf(process.platform === 'darwin')
+
 const hooks = vi.hoisted(() => ({
     wrapWrite: undefined as undefined | ((target: string, handle: import('node:fs/promises').FileHandle) => import('node:fs/promises').FileHandle),
     beforeReadOpen: undefined as undefined | ((target: string) => Promise<void>),
@@ -130,7 +133,7 @@ test('an external writer on its existing handle wins at publication', async () =
         expect(await readFile(join(workspace('engine-alice'), body.recovery.external), 'utf8')).toBe('NEW EXTERNAL AUTHOR TEXT')
     } finally {await handle.close()}
 })
-test('a losing publication leaves no hidden backup of the original visible in Files',async()=>{
+macTest('a losing publication leaves no hidden backup of the original visible in Files',async()=>{
     const path='docs/notes.md', full=join(workspace('engine-alice'),path), prev=await preview(alice,path)
     hooks.beforePublication=async()=>{ await writeFile(full,'COMPETING WINNER') }
     const response=await put(alice,{path,content:'loser',baseHash:prev.hash})
@@ -270,7 +273,7 @@ test('recovery refuses a folder moved into a sibling coworker before inspecting 
     expect(await readFile(join(workspace('engine-bob'), 'docs/notes.md'), 'utf8')).toBe('# Bob notes')
 })
 
-test('another file save and folder reads cannot recover a publication that is still running', async () => {
+macTest('another file save and folder reads cannot recover a publication that is still running', async () => {
     const docs = join(workspace('engine-alice'), 'docs')
     await writeFile(join(docs, 'second.md'), 'SECOND ORIGINAL')
     let release!: () => void, entered!: () => void
@@ -311,7 +314,7 @@ test('a pending Delete blocks save and recovery through either read endpoint', a
     expect(await readFile(join(workspace('engine-alice'), 'docs/notes.md'), 'utf8')).toBe('# Alice notes')
 })
 
-test('Delete waits for an admitted save and a late editor cannot change a deleted coworker', async () => {
+macTest('Delete waits for an admitted save and a late editor cannot change a deleted coworker', async () => {
     let release!: () => void, entered!: () => void
     const gate = new Promise<void>(resolve => { release = resolve })
     const publishing = new Promise<void>(resolve => { entered = resolve })
@@ -360,7 +363,7 @@ test('Delete waits for an admitted save and a late editor cannot change a delete
     }
 })
 
-test('a different inode arriving at the backup path is not unlinked', async () => {
+macTest('a different inode arriving at the backup path is not unlinked', async () => {
     const path = 'docs/notes.md', prev = await preview(alice, path)
     let replacement = ''
     hooks.beforeBackupUnlink = async target => {
@@ -374,7 +377,7 @@ test('a different inode arriving at the backup path is not unlinked', async () =
     expect(await readFile(replacement, 'utf8')).toBe('DIFFERENT FILE AT BACKUP PATH')
 })
 
-test('rollback does not unlink a different inode at the backup path', async () => {
+macTest('rollback does not unlink a different inode at the backup path', async () => {
     const path = 'docs/notes.md', full = join(workspace('engine-alice'), path), prev = await preview(alice, path)
     let replacement = ''
     hooks.beforePublication = async () => { await writeFile(full, 'COMPETING WINNER') }

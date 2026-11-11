@@ -37,7 +37,10 @@ test.each(['failed', 'unknown', 'unavailable', 'shown'] as const)('receipts pres
         expect(notify).toHaveBeenCalledTimes(1)
         const receipt = fetch.mock.calls.find(([url]) => url.endsWith('/delivery'))
         expect(JSON.parse(String(receipt?.[1]?.body))).toEqual({
-            key: event.key, attemptId: event.attemptId, status: 'shown', nativeStatus,
+            key: event.key, attemptId: event.attemptId,
+            status: nativeStatus === 'shown' ? 'accepted' : 'shown',
+            inAppStatus: 'shown',
+            nativeStatus: nativeStatus === 'shown' ? 'accepted' : nativeStatus,
         })
     } finally { await act(async () => { root.unmount() }) }
 })

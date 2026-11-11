@@ -17,3 +17,8 @@ process.env.STRIPE_PRICE_WHATSAPP_SLOT ??= 'price_whatsapp_slot'
 process.env.STRIPE_PRICE_WHATSAPP_SLOT_YEARLY ??= 'price_whatsapp_slot_yearly'
 process.env.STRIPE_PRICE_BASE_29 ??= 'price_base_29'
 process.env.STRIPE_PRICE_BASE_29_YEARLY ??= 'price_base_29_yearly'
+
+// Components importing the browser client need a syntactically valid Supabase configuration.
+// Tests use fixture transports, and the default address cannot contact a hosted project.
+process.env.NEXT_PUBLIC_SUPABASE_URL ??= 'http://127.0.0.1:1'
+process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??= 'sb_publishable_disposable_offline_fixture'
