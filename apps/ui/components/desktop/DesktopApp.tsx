@@ -47,6 +47,7 @@ import { DesktopTemplateNavigation } from './templates/DesktopTemplateNavigation
 import { DesktopControlCenter } from './DesktopControlCenter'
 import { DesktopShortcutsDialog } from './DesktopShortcutsDialog'
 import { DesktopHelpDialog } from './help'
+import { DesktopChangelog, useDesktopChangelog } from './help/DesktopChangelog'
 import { DesktopNotificationsDialog } from './DesktopNotificationsDialog'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import type { GridPosition } from '@rerun/ui/iso-grid'
@@ -238,22 +239,6 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [templateFlowActive, setTemplateFlowActive] = useState(false)
     const [templateToReview, setTemplateToReview] = useState<DesktopTemplateIdentity | null>(null)
     const templatesActive = templatesOpen || templateFlowActive
-    useEffect(() => {
-        const openFromShortcut = () => {
-            if (!creationAdmission.current.settingsAllowed || workspaceDialogActive || templatesActive || shortcutsOpen || helpOpen
-                || notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || workspaceSettings || boardInteraction
-                || boardState.saving || themeSavingRef.current || isDesktopQuitting()) return false
-            setSettings(true)
-            return true
-        }
-        const keydown = (event: KeyboardEvent) => {
-            if (event.metaKey && event.key === ',' && openFromShortcut()) event.preventDefault()
-        }
-        const bridge = (window as Window & { desktopApp?: { onOpenSettings?: (listener: () => void) => () => void } }).desktopApp
-        const unsubscribe = bridge?.onOpenSettings?.(openFromShortcut)
-        window.addEventListener('keydown', keydown)
-        return () => { unsubscribe?.(); window.removeEventListener('keydown', keydown) }
-    }, [workspaceDialogActive, templatesActive, workspaceSettings, shortcutsOpen, helpOpen, notificationsTarget, sharedDataOpen, sharedFilesOpen, brainOpen, boardInteraction, boardState.saving])
     const [agents, setAgents] = useState(initialData.agents)
     const foremanMentionTargets = useMemo(() => {
         const boxNames = new Map(boardState.board?.spaces.map(box => [box.id, box.name]))
@@ -326,7 +311,26 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const selectedAgent = agents.find(agent => agent.id === selectedAgentId) ?? null
     const currentAgents = useRef(agents)
     currentAgents.current = agents
-    const controlCenterDisabled = workspaceDialogActive || templatesActive || settings || workspaceSettings || shortcutsOpen || helpOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || !!busy || placingCopy || quitting || themeSaving || boardInteraction || boardState.saving || creationNavigationBlocked
+    const modalOrActionActive = workspaceDialogActive || templatesActive || settings || workspaceSettings || shortcutsOpen || helpOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || !!busy || placingCopy || quitting || themeSaving || boardInteraction || boardState.saving || creationNavigationBlocked
+    const changelog = useDesktopChangelog(initialData.runtimeLaunchNonce, !modalOrActionActive && !controlCenterOpen && !panelOpen)
+    const controlCenterDisabled = modalOrActionActive || changelog.open
+
+    useEffect(() => {
+        const openFromShortcut = () => {
+            if (!creationAdmission.current.settingsAllowed || workspaceDialogActive || templatesActive || shortcutsOpen || helpOpen || changelog.open
+                || notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || workspaceSettings || boardInteraction
+                || boardState.saving || themeSavingRef.current || isDesktopQuitting()) return false
+            setSettings(true)
+            return true
+        }
+        const keydown = (event: KeyboardEvent) => {
+            if (event.metaKey && event.key === ',' && openFromShortcut()) event.preventDefault()
+        }
+        const bridge = (window as Window & { desktopApp?: { onOpenSettings?: (listener: () => void) => () => void } }).desktopApp
+        const unsubscribe = bridge?.onOpenSettings?.(openFromShortcut)
+        window.addEventListener('keydown', keydown)
+        return () => { unsubscribe?.(); window.removeEventListener('keydown', keydown) }
+    }, [workspaceDialogActive, templatesActive, workspaceSettings, shortcutsOpen, helpOpen, changelog.open, notificationsTarget, sharedDataOpen, sharedFilesOpen, brainOpen, boardInteraction, boardState.saving])
 
     useEffect(() => {
         if (panelOpen && !settings && !requestedPanel && !workspaceDialogLease.current.active) panelContent.current?.focus({ preventScroll: true })
@@ -838,8 +842,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 const target = boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                 if (target && !isDesktopQuitting()) { event.preventDefault(); target.focus({ preventScroll: true }) }
             }} />
+            <DesktopChangelog state={changelog} />
             <DesktopHelpDialog open={helpOpen} onOpenChange={setHelpOpen} workspaceId={runtimeWorkspaceId}
                 onGettingStarted={() => { showBoard(); requestDesktopGettingStartedReopen() }}
+                onChangelog={initialData.runtimeLaunchNonce ? () => { if (!creationAdmission.current.blocked && !isDesktopQuitting()) changelog.show() } : undefined}
                 onShortcuts={() => { if (!creationAdmission.current.blocked && !isDesktopQuitting()) setShortcutsOpen(true) }}
                 onCloseAutoFocus={event => {
                     const trigger = helpReturnFocus.current
@@ -881,7 +887,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 onTemplates={() => { if (!creationAdmission.current.blocked && !isDesktopQuitting()) setTemplatesOpen(true) }}
                 onOpenDesktop={agentId => { if (creationAdmission.current.blocked || isDesktopQuitting() || !currentAgents.current.some(agent => agent.id === agentId && agent.enabled !== false)) return; focusFromControlCenter(agentId); selectCoworker(agentId); setRequestedPanel({ agentId, panel: 'desktop', nonce: ++panelRequestNonce.current }) }}
                 onAskAssistant={askForeman}
-                onShortcuts={openShortcuts} onHelp={openHelp} onNotifications={openNotifications}
+                onShortcuts={openShortcuts} onHelp={openHelp}
+                onChangelog={initialData.runtimeLaunchNonce ? () => { if (!controlCenterDisabled && !isDesktopQuitting()) changelog.show() } : undefined}
+                onNotifications={openNotifications}
                 onGettingStarted={runtimeWorkspaceId !== null && initialData.runtimeLaunchNonce ? () => {
                     showBoard()
                     requestDesktopGettingStartedReopen()

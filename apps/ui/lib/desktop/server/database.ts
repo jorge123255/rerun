@@ -51,6 +51,12 @@ async function initialize(dataRoot: string): Promise<Client> {
             id INTEGER PRIMARY KEY CHECK (id = 1),
             locale TEXT
         );
+        CREATE TABLE IF NOT EXISTS desktop_changelog (
+            id INTEGER PRIMARY KEY REFERENCES desktop_profile(id),
+            entries TEXT NOT NULL DEFAULT '[]',
+            fetched_at INTEGER NOT NULL DEFAULT 0,
+            seen_at TEXT
+        );
         CREATE TABLE IF NOT EXISTS desktop_workspace (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             profile_id INTEGER NOT NULL REFERENCES desktop_profile(id),

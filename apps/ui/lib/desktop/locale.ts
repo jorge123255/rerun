@@ -17,6 +17,7 @@ import { createTranslator } from 'use-intl/core'
 import account from '@rerun/i18n/messages/en/account.json'
 import agent from '@rerun/i18n/messages/en/agent.json'
 import brain from '@rerun/i18n/messages/en/brain.json'
+import changelog from '@rerun/i18n/messages/en/changelog.json'
 import chat from '@rerun/i18n/messages/en/chat.json'
 import common from '@rerun/i18n/messages/en/common.json'
 import connections from '@rerun/i18n/messages/en/connections.json'
@@ -28,8 +29,16 @@ import notifications from '@rerun/i18n/messages/en/notifications.json'
 import mobileSettings from '@rerun/i18n/messages/en/mobileSettings.json'
 import workspace from '@rerun/i18n/messages/en/workspace.json'
 
-const englishSource = { account, agent, brain, chat, common, connections, data, dialogs, foreman, kit, layout, mobileSettings, notifications, workspace }
+const englishSource = { account, agent, brain, changelog, chat, common, connections, data, dialogs, foreman, kit, layout, mobileSettings, notifications, workspace }
 type DesktopMessageSource = typeof englishSource
+
+const desktopChangelogCopy = {
+    en: { loading: 'Loading updates…', unavailable: 'Updates couldn’t load. Try again when you’re online.', empty: 'No updates have been published.', readUpdate: 'Read the full update', retry: 'Try again', saved: 'Showing saved updates.' },
+    fr: { loading: 'Chargement des nouveautés…', unavailable: 'Impossible de charger les nouveautés. Réessayez lorsque vous êtes en ligne.', empty: 'Aucune nouveauté publiée.', readUpdate: 'Lire la nouveauté complète', retry: 'Réessayer', saved: 'Nouveautés enregistrées.' },
+    es: { loading: 'Cargando novedades…', unavailable: 'No se pudieron cargar las novedades. Inténtalo cuando tengas conexión.', empty: 'No hay novedades publicadas.', readUpdate: 'Leer la novedad completa', retry: 'Reintentar', saved: 'Mostrando las novedades guardadas.' },
+    pt: { loading: 'Carregando novidades…', unavailable: 'Não foi possível carregar as novidades. Tente novamente quando estiver online.', empty: 'Nenhuma novidade foi publicada.', readUpdate: 'Ler a novidade completa', retry: 'Tentar novamente', saved: 'Mostrando as novidades salvas.' },
+    de: { loading: 'Neuigkeiten werden geladen…', unavailable: 'Neuigkeiten konnten nicht geladen werden. Versuche es erneut, sobald du online bist.', empty: 'Es wurden keine Neuigkeiten veröffentlicht.', readUpdate: 'Vollständige Neuigkeit lesen', retry: 'Erneut versuchen', saved: 'Gespeicherte Neuigkeiten werden angezeigt.' },
+}
 
 const aiProviderTool = {
     en: { label: 'See its AI providers', description: 'Read the model in use, workspace provider availability, and reported subscription limits.' },
@@ -253,11 +262,13 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         languageFailed: source.account.language.failed,
         settings: source.layout.workspaceMenu.settings,
         help: source.layout.help.label,
+        changelog: { ...source.changelog, ...desktopChangelogCopy[locale] },
         helpItems: {
             getting_started: source.layout.menu.gettingStarted,
             docs: source.layout.menu.docs,
             community: source.layout.menu.community,
             shortcuts: source.layout.menu.shortcuts,
+            whats_new: source.layout.menu.whatsNew,
             experts: source.layout.menu.hireExpert,
         },
         shortcutDialog: source.dialogs.shortcuts,

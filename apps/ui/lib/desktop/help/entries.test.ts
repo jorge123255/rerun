@@ -5,7 +5,7 @@ import { buildDesktopControlCommands } from '@/lib/desktop/control-center'
 import { DESKTOP_HELP_COMMUNITY_URL, DESKTOP_HELP_EXPERTS_PATH, DESKTOP_HELP_GATED_IDS, desktopHelpEntries, desktopHelpKeepsFocus } from './entries'
 
 describe('desktopHelpEntries', () => {
-    it('lists the local rows and leaves hosted feed and support chat out', () => {
+    it('lists the local rows and leaves unmounted surfaces out', () => {
         const entries = desktopHelpEntries({ gettingStarted: true, shortcuts: true })
         expect(entries.map(entry => entry.id)).toEqual(['getting_started', 'docs', 'community', 'shortcuts', 'experts'])
         for (const gated of DESKTOP_HELP_GATED_IDS) expect(entries.map(entry => entry.id)).not.toContain(gated)
@@ -21,11 +21,17 @@ describe('desktopHelpEntries', () => {
         expect(desktopHelpEntries({ gettingStarted: true, shortcuts: false }).map(entry => entry.id)).not.toContain('shortcuts')
     })
 
-    it('keeps focus only when opening the checklist', () => {
+    it('keeps focus for the checklist or a changelog handoff', () => {
         expect(desktopHelpKeepsFocus('getting_started')).toBe(true)
+        expect(desktopHelpKeepsFocus('whats_new')).toBe(true)
         expect(desktopHelpKeepsFocus('shortcuts')).toBe(false)
         expect(desktopHelpKeepsFocus('link')).toBe(false)
         expect(desktopHelpKeepsFocus('close')).toBe(false)
+    })
+
+    it('opens the published changelog only when its Mac callback is mounted', () => {
+        expect(desktopHelpEntries({ gettingStarted: false, shortcuts: false, changelog: true })).toContainEqual({ id: 'whats_new', kind: 'whats_new' })
+        expect(buildDesktopControlCommands({ changelog: true })).toContainEqual(expect.objectContaining({ id: 'whats_new', group: 'settings' }))
     })
 })
 
