@@ -29,8 +29,21 @@ export type QuestionFormHandle = {
     sync: (text: string) => void
 }
 
+const DEFAULT_LABELS = {
+    typeAnswer: 'Type your answer…',
+    somethingElse: 'Something else',
+    attachFiles: 'Attach files',
+    dropFiles: 'Drop files to attach them',
+    selectAll: 'Select all that apply',
+    dismiss: 'Dismiss questions',
+    skip: 'Skip',
+    submit: 'Submit answers',
+    next: 'Next question',
+}
+
 export type QuestionFormProps = {
     ref?: Ref<QuestionFormHandle>
+    labels?: typeof DEFAULT_LABELS
     questions: QuestionItem[]
     // A rejected promise reopens the form, so a failed attachment can be fixed before answering again.
     onSubmit: (answers: { question: string; answers: string[] }[]) => void | Promise<void>
@@ -50,7 +63,7 @@ type QuestionAnswer = { selected: string[]; custom: string }
 
 const EMPTY_ANSWER: QuestionAnswer = { selected: [], custom: '' }
 
-export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, renderText = text => text, attachments, inline, className, textareaRef, textareaProps }: QuestionFormProps) {
+export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, renderText = text => text, attachments, inline, className, textareaRef, textareaProps, labels = DEFAULT_LABELS }: QuestionFormProps) {
     const form = useForm<Record<string, QuestionAnswer>>({ defaultValues: {} })
     const answers = form.watch()
     const [customOpen, setCustomOpen] = useState<Record<number, boolean>>({})
@@ -187,7 +200,7 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
                     e.preventDefault()
                     pickFiles(current, files)
                 }}
-                placeholder={freeText ? 'Type your answer…' : 'Something else'}
+                placeholder={freeText ? labels.typeAnswer : labels.somethingElse}
                 disabled={locked}
                 className="field-sizing-content max-h-40 min-h-7 flex-1 resize-none bg-transparent py-1 text-sm text-foreground outline-none placeholder:text-muted-foreground"
             />
@@ -202,7 +215,7 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
                         e.stopPropagation()
                         fileInputRef.current?.click()
                     }}
-                    aria-label="Attach files"
+                    aria-label={labels.attachFiles}
                     data-hitl="attach"
                     className="shrink-0 text-muted-foreground"
                 >
@@ -247,7 +260,7 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
             )}
             {dragging && (
                 <div className="pointer-events-none absolute inset-0 z-10 m-0! flex items-center justify-center rounded-lg border border-dashed border-primary bg-background/80 text-sm font-medium text-foreground">
-                    Drop files to attach them
+                    {labels.dropFiles}
                 </div>
             )}
 
@@ -256,12 +269,12 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
                     <motion.div key={current} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} className="min-w-0 flex-1 font-medium leading-snug">
                         {q.header && <span className="mb-1 block truncate text-xs font-medium text-muted-foreground">{q.header}</span>}
                         <ScrollFade className="max-h-24">{renderText(q.question)}</ScrollFade>
-                        {multi && <span className="mt-1 block text-xs font-normal text-muted-foreground">Select all that apply</span>}
+                        {multi && <span className="mt-1 block text-xs font-normal text-muted-foreground">{labels.selectAll}</span>}
                     </motion.div>
                 </AnimatePresence>
                 {onCancel && (
                     <div className="flex shrink-0 items-center gap-0.5">
-                        <Button type="button" size="icon-sm" variant="ghost" disabled={locked} onClick={cancel} aria-label="Dismiss questions" data-hitl="dismiss" className="-my-1 text-muted-foreground">
+                        <Button type="button" size="icon-sm" variant="ghost" disabled={locked} onClick={cancel} aria-label={labels.dismiss} data-hitl="dismiss" className="-my-1 text-muted-foreground">
                             <X className="size-4" />
                         </Button>
                     </div>
@@ -287,7 +300,7 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
                                         ) : renderText(label)} selected={value.selected.includes(label)} multi={multi} disabled={locked} onChoose={() => chooseOption(current, label)} />
                                     })}
 
-                                    <CustomOptionRow open={isCustom} onOpen={() => openCustom(current)}>
+                                    <CustomOptionRow label={labels.somethingElse} open={isCustom} onOpen={() => openCustom(current)}>
                                         {answerInput}
                                     </CustomOptionRow>
                                 </>
@@ -313,9 +326,9 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
                 )}
                 <div className="flex items-center gap-2">
                     <Button type="button" size="sm" variant="outline" disabled={locked} onClick={skip} data-hitl="skip">
-                        Skip
+                        {labels.skip}
                     </Button>
-                    <Button type="button" size="icon-sm" disabled={locked} onClick={() => advance()} aria-label={current === last ? 'Submit answers' : 'Next question'} data-hitl="next">
+                    <Button type="button" size="icon-sm" disabled={locked} onClick={() => advance()} aria-label={current === last ? labels.submit : labels.next} data-hitl="next">
                         <ArrowRight className="size-4" />
                     </Button>
                 </div>

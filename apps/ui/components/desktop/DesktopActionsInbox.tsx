@@ -4,8 +4,9 @@ import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, typ
 import { ChromePill } from '@rerun/ui/chrome'
 import { AttentionBuddy, ATTENTION_STATUS_META } from '@rerun/ui/inbox'
 import { EmptyState } from '@rerun/ui/primitives'
-import { shortRelativeTime } from '@rerun/ui/time'
-import { DISABLED_AGENT_LABEL } from '@rerun/ui/iso-grid'
+import { shortRelativeTime } from '@rerun/i18n/format'
+import { desktopLocaleTag } from '@/lib/desktop/locale'
+import { useDesktopLocale } from './DesktopLocale'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import type { DesktopCompletionItem } from '@/lib/desktop/completed-actions'
@@ -30,17 +31,6 @@ const KIND_STATUS: Record<DesktopPendingInboxItem['kind'], string> = {
     'tool-install': 'awaiting_approval',
     info: 'awaiting_ack',
 }
-const KIND_SENTENCE: Record<DesktopPendingInboxItem['kind'], string> = {
-    question: 'asked you a question',
-    approval: 'needs your approval',
-    takeover: 'needs your browser help',
-    service: 'needs app setup',
-    secret: 'needs credentials',
-    mcp: 'needs tool sign-in',
-    'tool-install': 'needs package installation review',
-    info: 'flagged something for you',
-}
-
 export type DesktopActionsInboxProps = {
     agents?: readonly Pick<DesktopAgentView, 'id' | 'name' | 'enabled'>[]
     /** Navigation only: opens the exact coworker/session, never answers, approves or marks handled. */
@@ -60,6 +50,7 @@ export type DesktopActionsInboxProps = {
 // The row mirrors @rerun/ui/inbox InboxRow with its hover-revealed Mark-as-read button:
 // marking read is an explicit, per-request acknowledgment that never answers, approves or opens.
 function ActionRow({ item, onOpen, onMarkRead }: { item: DesktopPendingInboxItem; onOpen: (item: DesktopPendingInboxItem) => void; onMarkRead: (item: DesktopPendingInboxItem) => void }) {
+    const { language, t } = useDesktopLocale()
     const status = KIND_STATUS[item.kind]
     const meta = ATTENTION_STATUS_META[status]
     const activate = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -81,12 +72,12 @@ function ActionRow({ item, onOpen, onMarkRead }: { item: DesktopPendingInboxItem
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <div className="flex items-baseline justify-between gap-2">
                     <span title={item.summary || undefined} className="truncate text-sm font-medium text-foreground">{item.summary || item.title}</span>
-                    <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{shortRelativeTime(item.requestedAt ?? item.updatedAt)}</span>
+                    <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{shortRelativeTime(item.requestedAt ?? item.updatedAt, desktopLocaleTag(language.locale))}</span>
                 </div>
                 <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                    <span className="truncate">{item.summary ? `${item.agentName} · ${item.title}` : `${item.agentName} ${KIND_SENTENCE[item.kind]}`}</span>
+                    <span className="truncate">{item.summary ? `${item.agentName} · ${item.title}` : t(`actions.sentences.${item.kind}`, { agent: item.agentName })}</span>
                     {item.agentEnabled === false && (
-                        <span className="shrink-0 rounded-full border border-border px-1.5 py-px text-[10px] font-medium tracking-wide text-muted-foreground uppercase">{DISABLED_AGENT_LABEL}</span>
+                        <span className="shrink-0 rounded-full border border-border px-1.5 py-px text-[10px] font-medium tracking-wide text-muted-foreground uppercase">{t('actions.inactive')}</span>
                     )}
                 </span>
             </div>
@@ -95,7 +86,7 @@ function ActionRow({ item, onOpen, onMarkRead }: { item: DesktopPendingInboxItem
                 onClick={event => event.stopPropagation()}
                 onKeyDown={event => event.stopPropagation()}
             >
-                <Button size="icon-sm" variant="ghost" aria-label="Mark as read" title="Mark as read" onClick={() => onMarkRead(item)}>
+                <Button size="icon-sm" variant="ghost" aria-label={t('actions.markRead')} title={t('actions.markRead')} onClick={() => onMarkRead(item)}>
                     <CheckCheckIcon className="size-3.5" />
                 </Button>
             </span>
@@ -107,6 +98,7 @@ function ActionRow({ item, onOpen, onMarkRead }: { item: DesktopPendingInboxItem
 // summary (or the scheduled task's name), « finished its run », a ×count when several runs are
 // folded, and an explicit Mark-as-read button. Marking covers exactly the displayed completion IDs.
 function DoneRow({ item, onOpen, onMarkRead }: { item: DesktopCompletionItem; onOpen: (item: DesktopCompletionItem) => void; onMarkRead: (item: DesktopCompletionItem) => void }) {
+    const { language, t } = useDesktopLocale()
     const meta = ATTENTION_STATUS_META.done
     const activate = (event: KeyboardEvent<HTMLDivElement>) => {
         if (event.key !== 'Enter' && event.key !== ' ') return
@@ -127,12 +119,12 @@ function DoneRow({ item, onOpen, onMarkRead }: { item: DesktopCompletionItem; on
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <div className="flex items-baseline justify-between gap-2">
                     <span title={item.message ?? undefined} className="truncate text-sm font-medium text-foreground">{item.message ?? item.title}</span>
-                    <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{shortRelativeTime(item.completedAt)}</span>
+                    <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{shortRelativeTime(item.completedAt, desktopLocaleTag(language.locale))}</span>
                 </div>
                 <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                    <span className="truncate">{item.message ? `${item.agentName} · ${item.title}` : `${item.agentName} finished its run`}</span>
+                    <span className="truncate">{item.message ? `${item.agentName} · ${item.title}` : t('actions.sentences.done', { agent: item.agentName })}</span>
                     {item.agentEnabled === false && (
-                        <span className="shrink-0 rounded-full border border-border px-1.5 py-px text-[10px] font-medium tracking-wide text-muted-foreground uppercase">{DISABLED_AGENT_LABEL}</span>
+                        <span className="shrink-0 rounded-full border border-border px-1.5 py-px text-[10px] font-medium tracking-wide text-muted-foreground uppercase">{t('actions.inactive')}</span>
                     )}
                     {item.count > 1 && <span className="shrink-0 tabular-nums">×{item.count}</span>}
                 </span>
@@ -142,7 +134,7 @@ function DoneRow({ item, onOpen, onMarkRead }: { item: DesktopCompletionItem; on
                 onClick={event => event.stopPropagation()}
                 onKeyDown={event => event.stopPropagation()}
             >
-                <Button size="icon-sm" variant="ghost" aria-label="Mark as read" title="Mark as read" onClick={() => onMarkRead(item)}>
+                <Button size="icon-sm" variant="ghost" aria-label={t('actions.markRead')} title={t('actions.markRead')} onClick={() => onMarkRead(item)}>
                     <CheckCheckIcon className="size-3.5" />
                 </Button>
             </span>
@@ -151,12 +143,13 @@ function DoneRow({ item, onOpen, onMarkRead }: { item: DesktopCompletionItem; on
 }
 
 function PillContent({ status, items, doneCount, unavailable, failed, open, hasMore }: { status: DesktopPendingInboxRead; items: DesktopPendingInboxItem[]; doneCount: number; unavailable: boolean; failed: boolean; open: boolean; hasMore: boolean }) {
+    const { t } = useDesktopLocale()
     const count = items.length
     if (status === 'loading' && count === 0 && doneCount === 0) {
         return (
             <>
                 {open ? <Loader2Icon className="size-4 animate-spin" /> : <BellIcon className="size-4" />}
-                <span className="text-muted-foreground">{open ? 'Checking…' : 'Pending'}</span>
+                <span className="text-muted-foreground">{open ? t('actions.checking') : t('actions.pending')}</span>
             </>
         )
     }
@@ -166,7 +159,7 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
         return (
             <>
                 <TriangleAlertIcon className="size-4 text-red-400" />
-                <span className="text-red-400">{failed ? 'Unavailable' : 'Partial'}</span>
+                <span className="text-red-400">{failed ? t('actions.unavailable') : t('actions.partial')}</span>
             </>
         )
     }
@@ -178,16 +171,14 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
                     <BellIcon className="size-4" />
                     <span aria-hidden className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-red-500 ring-2 ring-card" />
                 </span>
-                <span className="font-semibold tabular-nums">{count}</span>
-                <span>pending</span>
+                <span className="tabular-nums">{t('actions.pendingCount', { count })}</span>
             </span>
         )
     }
     if (doneCount > 0) {
         parts.push(
             <span key="done" className="flex items-center gap-1 text-emerald-500">
-                <span className="font-semibold tabular-nums">{doneCount}</span>
-                <span>done</span>
+                <span className="tabular-nums">{t('actions.doneCount', { count: doneCount })}</span>
             </span>
         )
     }
@@ -206,7 +197,7 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
     return (
         <>
             <BellIcon className="size-4" />
-            <span className="text-muted-foreground">{hasMore ? 'More activity' : 'No pending'}</span>
+            <span className="text-muted-foreground">{hasMore ? t('actions.more') : t('actions.empty')}</span>
         </>
     )
 }
@@ -221,6 +212,7 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
  * acknowledged with the exact completion IDs it displayed.
  */
 export function DesktopActionsInbox({ agents, onOpenConversation, visibleSessionId, open: openProp, onOpenChange, className }: DesktopActionsInboxProps) {
+    const { language, t } = useDesktopLocale()
     const [internalOpen, setInternalOpen] = useState(false)
     const open = openProp ?? internalOpen
     const change = useCallback(
@@ -359,32 +351,35 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
     const anyFailed = failed || doneFailed || completions.readError
     const anyPartial = partial || doneUnavailable.length > 0
     const hasMore = !!completions.nextCursor || completions.windowFull
-    const pillLabel =
-        anyFailed && items.length === 0 && doneCount === 0 ? 'Actions: unavailable'
-        : checking && items.length === 0 && doneCount === 0 ? 'Actions: checking'
-        : anyPartial && items.length === 0 && doneCount === 0 ? 'Actions: partial — some coworkers unavailable'
-        : items.length > 0 ? `Actions: ${items.length} pending${doneCount > 0 ? ` · ${doneCount} done` : ''}`
-        : doneCount > 0 ? `Actions: ${doneCount} done`
-        : hasMore ? 'Actions: more activity'
-        : 'Actions: no pending'
+    const pendingLabel = t('actions.pendingCount', { count: items.length })
+    const doneLabel = t('actions.doneCount', { count: doneCount })
+    const lower = (label: string) => label.toLocaleLowerCase(desktopLocaleTag(language.locale))
+    const summary =
+        anyFailed && items.length === 0 && doneCount === 0 ? lower(t('actions.unavailable'))
+        : checking && items.length === 0 && doneCount === 0 ? lower(t('actions.checking')).replace(/…$/, '')
+        : anyPartial && items.length === 0 && doneCount === 0 ? t('actions.partialSummary')
+        : items.length > 0 ? `${pendingLabel}${doneCount > 0 ? ` · ${doneLabel}` : ''}`
+        : doneCount > 0 ? doneLabel
+        : lower(hasMore ? t('actions.more') : t('actions.empty'))
+    const pillLabel = t('actions.pill', { title: t('actions.title'), summary })
 
     return (
         <div ref={rootRef} className={cn('relative flex flex-col items-start', className)}>
             {open && (
-                <div id={cardId} role="region" aria-label="Actions inbox" className="mb-2 flex w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+                <div id={cardId} role="region" aria-label={t('actions.region')} className="mb-2 flex w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
                     <div className="flex items-center justify-between gap-3 border-b border-border px-4 pt-3 pb-2">
                         <div className="flex items-baseline gap-2">
-                            <h2 className="text-base font-semibold text-foreground">Actions</h2>
-                            {status === 'ready' && items.length > 0 && <span className="text-xs text-muted-foreground tabular-nums">{items.length} pending</span>}
-                            {doneCount > 0 && <span className="text-xs text-emerald-500 tabular-nums">· {doneCount} done</span>}
+                            <h2 className="text-base font-semibold text-foreground">{t('actions.title')}</h2>
+                            {status === 'ready' && items.length > 0 && <span className="text-xs text-muted-foreground tabular-nums">{pendingLabel}</span>}
+                            {doneCount > 0 && <span className="text-xs text-emerald-500 tabular-nums">· {doneLabel}</span>}
                         </div>
                         <div className="flex items-center gap-1">
                             {(items.length > 0 || doneCount > 0) && (
-                                <Button size="icon-sm" variant="ghost" aria-label="Mark all as read" title="Mark all as read" onClick={openMarkAllConfirm}>
+                                <Button size="icon-sm" variant="ghost" aria-label={t('actions.markAllRead')} title={t('actions.markAllRead')} onClick={openMarkAllConfirm}>
                                     <CheckCheckIcon className="size-4" />
                                 </Button>
                             )}
-                            <Button size="icon-sm" variant="ghost" aria-label="Close actions inbox" onClick={closeToPill}>
+                            <Button size="icon-sm" variant="ghost" aria-label={t('actions.close')} onClick={closeToPill}>
                                 <XIcon className="size-4" />
                             </Button>
                         </div>
@@ -393,97 +388,97 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
                     {partial && (
                         <div role="status" className="mx-3 mt-2 flex items-center gap-2 rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-400">
                             <TriangleAlertIcon className="size-3.5 shrink-0" />
-                            <span className="min-w-0 flex-1">Some coworkers couldn't be reached, so this list may be missing their pending actions.</span>
+                            <span className="min-w-0 flex-1">{t('actions.missingPending')}</span>
                             <Button size="sm" variant="outline" onClick={retry}>
-                                <RefreshCcwIcon className="size-3.5" /> Retry
+                                <RefreshCcwIcon className="size-3.5" /> {t('actions.retry')}
                             </Button>
                         </div>
                     )}
                     {failed && (
                         <div role="alert" className="mx-3 mt-2 flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
                             <AlertCircleIcon className="size-3.5 shrink-0 text-red-400" />
-                            <span className="min-w-0 flex-1 truncate">Couldn't refresh the actions list.</span>
+                            <span className="min-w-0 flex-1 truncate">{t('actions.refreshPendingFailed')}</span>
                             <Button size="sm" variant="outline" onClick={retry}>
-                                <RefreshCcwIcon className="size-3.5" /> Retry
+                                <RefreshCcwIcon className="size-3.5" /> {t('actions.retry')}
                             </Button>
                         </div>
                     )}
                     {doneUnavailable.length > 0 && (
                         <div role="status" className="mx-3 mt-2 flex items-center gap-2 rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-400">
                             <TriangleAlertIcon className="size-3.5 shrink-0" />
-                            <span className="min-w-0 flex-1">Some coworkers couldn't be reached, so the finished-runs list may be missing theirs.</span>
+                            <span className="min-w-0 flex-1">{t('actions.missingDone')}</span>
                             <Button size="sm" variant="outline" onClick={completions.retry}>
-                                <RefreshCcwIcon className="size-3.5" /> Retry
+                                <RefreshCcwIcon className="size-3.5" /> {t('actions.retry')}
                             </Button>
                         </div>
                     )}
                     {doneFailed && (
                         <div role="alert" className="mx-3 mt-2 flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
                             <AlertCircleIcon className="size-3.5 shrink-0 text-red-400" />
-                            <span className="min-w-0 flex-1 truncate">Couldn't refresh finished runs.</span>
+                            <span className="min-w-0 flex-1 truncate">{t('actions.refreshDoneFailed')}</span>
                             <Button size="sm" variant="outline" onClick={completions.retry}>
-                                <RefreshCcwIcon className="size-3.5" /> Retry
+                                <RefreshCcwIcon className="size-3.5" /> {t('actions.retry')}
                             </Button>
                         </div>
                     )}
                     {pendingReadError && (
                         <div role="alert" className="mx-3 mt-2 flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
                             <AlertCircleIcon className="size-3.5 shrink-0 text-red-400" />
-                            <span className="min-w-0 flex-1">Some pending requests couldn't be marked as read. They are still here.</span>
+                            <span className="min-w-0 flex-1">{t('actions.markPendingFailed')}</span>
                             <Button size="sm" variant="outline" onClick={retry}>
-                                <RefreshCcwIcon className="size-3.5" /> Retry
+                                <RefreshCcwIcon className="size-3.5" /> {t('actions.retry')}
                             </Button>
                         </div>
                     )}
                     {completions.readError && (
                         <div role="alert" className="mx-3 mt-2 flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-                            <span className="min-w-0 flex-1">Couldn't mark finished runs as read. They are still here.</span>
-                            <Button size="sm" variant="outline" onClick={completions.retry}><RefreshCcwIcon className="size-3.5" /> Retry</Button>
+                            <span className="min-w-0 flex-1">{t('actions.markDoneFailed')}</span>
+                            <Button size="sm" variant="outline" onClick={completions.retry}><RefreshCcwIcon className="size-3.5" /> {t('actions.retry')}</Button>
                         </div>
                     )}
 
                     <div className="max-h-[min(22rem,50dvh)] overflow-y-auto overscroll-contain px-2 py-2">
                         {checking && items.length === 0 && doneItems.length === 0 ? (
                             <div role="status" className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
-                                <Loader2Icon className="size-4 animate-spin" /> Checking for pending actions…
+                                <Loader2Icon className="size-4 animate-spin" /> {t('actions.checkingPending')}
                             </div>
                         ) : failed && items.length === 0 && doneItems.length === 0 ? (
                             <div className="flex flex-col items-center gap-3 px-6 py-8 text-center">
                                 <AlertCircleIcon className="size-8 text-red-400" />
                                 <div className="space-y-1">
-                                    <p className="text-sm font-medium text-foreground">Can't reach the actions list</p>
-                                    <p className="max-w-[36ch] text-xs text-muted-foreground">Retry, or open a coworker's chat directly — pending questions and approvals still live there.</p>
+                                    <p className="text-sm font-medium text-foreground">{t('actions.noConnection')}</p>
+                                    <p className="max-w-[36ch] text-xs text-muted-foreground">{t('actions.noConnectionHelp')}</p>
                                 </div>
                                 <Button size="sm" variant="outline" onClick={retry}>
-                                    <RefreshCcwIcon className="size-3.5" /> Retry
+                                    <RefreshCcwIcon className="size-3.5" /> {t('actions.retry')}
                                 </Button>
                             </div>
                         ) : partial && items.length === 0 && doneItems.length === 0 ? (
                             <div className="flex flex-col items-center gap-3 px-6 py-8 text-center">
                                 <TriangleAlertIcon className="size-8 text-red-400" />
                                 <div className="space-y-1">
-                                    <p className="text-sm font-medium text-foreground">Some coworkers couldn't be reached</p>
-                                    <p className="max-w-[36ch] text-xs text-muted-foreground">Their pending actions aren't shown. Retry to refresh the list.</p>
+                                    <p className="text-sm font-medium text-foreground">{t('actions.partialTitle')}</p>
+                                    <p className="max-w-[36ch] text-xs text-muted-foreground">{t('actions.partialHelp')}</p>
                                 </div>
                                 <Button size="sm" variant="outline" onClick={retry}>
-                                    <RefreshCcwIcon className="size-3.5" /> Retry
+                                    <RefreshCcwIcon className="size-3.5" /> {t('actions.retry')}
                                 </Button>
                             </div>
                         ) : items.length === 0 && doneItems.length === 0 && !doneFailed && !anyPartial && !hasMore && !completions.loadingMore ? (
-                            <EmptyState icon={InboxIcon} title="Nothing to handle" description="When a coworker needs you or finishes a run, it lands here." className="py-8" />
+                            <EmptyState icon={InboxIcon} title={t('actions.emptyTitle')} description={t('actions.emptyDescription')} className="py-8" />
                         ) : (
                             <>
                                 {items.length > 0 && (
-                                    <section aria-label="Needs you">
-                                        <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Needs you</h3>
+                                    <section aria-label={t('actions.needsYou')}>
+                                        <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{t('actions.needsYou')}</h3>
                                         {sorted.map(item => (
                                             <ActionRow key={item.id} item={item} onOpen={openItem} onMarkRead={markRead} />
                                         ))}
                                     </section>
                                 )}
                                 {doneItems.length > 0 && (
-                                    <section aria-label="Done" className={cn(items.length > 0 && 'mt-1 border-t border-border pt-1')}>
-                                        <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Done</h3>
+                                    <section aria-label={t('actions.done')} className={cn(items.length > 0 && 'mt-1 border-t border-border pt-1')}>
+                                        <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{t('actions.done')}</h3>
                                         {doneItems.map(item => (
                                             <DoneRow key={item.id} item={item} onOpen={openDone} onMarkRead={completions.markRead} />
                                         ))}
@@ -494,14 +489,14 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
                         {(completions.nextCursor || completions.loadingMore) && !completions.windowFull && (
                             <div className="px-2 py-2">
                                 <Button size="sm" variant="outline" disabled={completions.loadingMore} onClick={completions.loadMore}>
-                                    {completions.loadingMore ? <><Loader2Icon className="size-3.5 animate-spin" /> Loading older runs…</> : 'Load older runs'}
+                                    {completions.loadingMore ? <><Loader2Icon className="size-3.5 animate-spin" /> {t('actions.loadingOlder')}</> : t('actions.loadOlder')}
                                 </Button>
                             </div>
                         )}
                         {completions.windowFull && (
                             <div role="status" className="space-y-2 px-2 py-2 text-xs text-muted-foreground">
-                                <p>This view has reached its limit. More unread runs remain saved.</p>
-                                <Button size="sm" variant="outline" onClick={completions.retry}>Refresh finished runs</Button>
+                                <p>{t('actions.limit')}</p>
+                                <Button size="sm" variant="outline" onClick={completions.retry}>{t('actions.refreshDone')}</Button>
                             </div>
                         )}
                     </div>
@@ -521,9 +516,10 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
             <ConfirmDialog
                 open={confirmAllOpen}
                 onOpenChange={next => { if (!next) markAllTargets.current = null; setConfirmAllOpen(next) }}
-                title="Mark everything as read?"
-                description={`${confirmCount} item${confirmCount !== 1 ? 's' : ''} will leave this list. Requests still waiting on an answer are cleared too, without being answered.`}
-                confirmLabel="Mark all as read"
+                title={t('actions.confirmRead')}
+                description={t('actions.confirmDescription', { count: confirmCount })}
+                confirmLabel={t('actions.markAllRead')}
+                cancelLabel={t('cancel')}
                 confirmVariant="default"
                 onConfirm={() => confirmMarkAll()}
             />

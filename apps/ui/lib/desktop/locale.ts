@@ -1,8 +1,10 @@
+import { desktopActionMessages } from './i18n/action-messages'
 import { desktopCreationMessages } from './i18n/creation-messages'
 import { desktopCoworkerMessages } from './i18n/coworker-messages'
 import { desktopForemanMessages } from './i18n/foreman-messages'
 import { desktopGettingStartedMessages } from './i18n/getting-started-messages'
 import { desktopRoutineMessages } from './i18n/routine-messages'
+import { desktopQuestionMessages } from './i18n/question-messages'
 import dialogs from '@rerun/i18n/messages/en/dialogs.json'
 import type { Locale } from '@rerun/i18n'
 import { createTranslator } from 'use-intl/core'
@@ -155,6 +157,9 @@ const desktopControlCenterCopy = {
 export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
     return {
         ...mac[locale],
+        actions: desktopActionMessages(locale, source.kit),
+        questionForm: source.kit.chat.question,
+        question: desktopQuestionMessages(locale),
         controlCenter: {
             ...source.layout.controlCenter,
             ...desktopControlCenterCopy[locale],
