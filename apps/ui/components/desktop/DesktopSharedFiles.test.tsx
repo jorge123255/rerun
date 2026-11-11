@@ -118,6 +118,7 @@ test('failed listing and preview stay visible and can retry without claiming an 
 test('empty shared files describes only supported import and reading', async () => {
     api.list.mockResolvedValue({ path: '', entries: [], truncated: false })
     await open()
-    expect(document.body.textContent).toContain('Import supported documents, images, audio, video, or PDFs')
+    expect(document.body.textContent).toContain('Import text, images, audio, video, or PDFs')
+    expect(document.body.textContent).toContain('Coworkers with Read shared files can read shared .txt and .md files.')
     expect(document.body.textContent).not.toContain('Anything a coworker downloads')
 })
