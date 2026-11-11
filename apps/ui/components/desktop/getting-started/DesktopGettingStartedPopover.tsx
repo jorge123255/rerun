@@ -7,6 +7,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import type { DesktopGettingStartedStep, DesktopGettingStartedStepId } from '@/lib/desktop/getting-started/progress'
 import { desktopGettingStartedSummary } from '@/lib/desktop/getting-started/progress'
 import { DesktopGettingStartedPanel, DesktopGettingStartedProgressMark } from './DesktopGettingStartedPanel'
+import { useDesktopLocale } from '../DesktopLocale'
 
 const HOVER_CLOSE_DELAY_MS = 150
 
@@ -19,6 +20,7 @@ export function DesktopGettingStartedPopover({ steps, open, onOpenChange, onStep
     onHide: () => void
 }) {
     const summary = desktopGettingStartedSummary(steps)
+    const { t } = useDesktopLocale()
     const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
     const openedByHover = useRef(false)
     const cancelClose = () => {
@@ -57,7 +59,7 @@ export function DesktopGettingStartedPopover({ steps, open, onOpenChange, onStep
                     start="gauge"
                     beamTone="brand"
                     beamAnimated={!summary.complete}
-                    aria-label={`Getting started: ${summary.done} of ${summary.total} done`}
+                    aria-label={t('gettingStarted.pillLabel', { done: summary.done, total: summary.total })}
                     onPointerEnter={openOnHover}
                     onPointerLeave={closeOnLeave}
                     onClick={keepHoverOpen}

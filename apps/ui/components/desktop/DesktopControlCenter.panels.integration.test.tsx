@@ -10,9 +10,12 @@ import { cancelDraftShutdown, flushDesktopDrafts, forgetCoworkerDrafts } from '@
 import { resetDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import { fxCameraWriteSchema } from '@/lib/desktop/fx-repairs/board-camera'
 import { desktopGettingStartedResponse } from '@/lib/desktop/getting-started/progress'
+import { desktopMessages, desktopTranslator, type DesktopLanguage } from '@/lib/desktop/locale'
+import { loadMessages } from '@rerun/i18n/messages'
 import type { DesktopBoardState } from '@/lib/desktop/spaces'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import { DesktopApp, type DesktopBootstrap } from './DesktopApp'
+import { DesktopLocale } from './DesktopLocale'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -216,14 +219,15 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false) {
     }))
     return {
         panelReads, messageReads, contentWrites, layouts, answer,
-        async mount() {
+        async mount(language?: DesktopLanguage) {
             const container = document.createElement('div')
             document.body.append(container)
             const root = createRoot(container)
             roots.add(root)
             const initialData: DesktopBootstrap = { ...providers, theme: 'dark', profile: { id: 1, displayName: 'Local' },
                 workspace: { id: 1, name: 'Panel studio' }, ...(productionBoard ? { runtimeWorkspaceId: 2, runtimeLaunchNonce: 'test-board-launch', board } : {}), agents: coworkers, recentCoworkers: recent.snapshot() }
-            await act(async () => { root.render(<DesktopApp initialData={initialData} />) })
+            const app = <DesktopApp initialData={initialData} />
+            await act(async () => { root.render(language ? <DesktopLocale initial={language}>{app}</DesktopLocale> : app) })
             return { container, async unmount() {
                 await act(async () => { root.unmount() })
                 roots.delete(root)
@@ -468,4 +472,31 @@ test('opens the current Box overview from the board and restores the checklist d
     await enter(await until(commandField), 'Getting started')
     await chooseOpenRow('Getting started')
     await until(() => restarted.container.querySelector(`[aria-label="${pill}"]`))
+})
+
+test('reopens the localized workspace checklist from Help after a persisted dismissal', async () => {
+    const app = fixture(undefined, true)
+    const language: DesktopLanguage = { locale: 'fr', preference: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) }
+    const t = desktopTranslator(language)
+    const pill = t('gettingStarted.pillLabel', { done: 1, total: 3 })
+    const hide = t('gettingStarted.hide')
+    const mounted = await app.mount(language)
+    await until(() => mounted.container.querySelector(`[aria-label="${pill}"]`))
+    await click(pill)
+    await until(() => document.querySelector(`[aria-label="${hide}"]`))
+    expect(document.body.textContent).toContain('Connecter un modèle')
+    expect(document.body.textContent).toContain(t('gettingStarted.steps.schedule.title'))
+    await click(hide)
+    await until(() => !mounted.container.querySelector(`[aria-label="${pill}"]`))
+    await mounted.unmount()
+
+    const restarted = await app.mount(language)
+    expect(restarted.container.querySelector(`[aria-label="${pill}"]`)).toBeNull()
+    await click('Aide')
+    const help = await until(() => panelDialog('Aide'))
+    await click('Premiers pas', help)
+    await until(() => restarted.container.querySelector(`[aria-label="${pill}"]`))
+    await until(() => document.querySelector(`[aria-label="${hide}"]`))
+    expect(document.body.textContent).toContain('Connecter un modèle')
+    expect(app.contentWrites).toEqual([])
 })

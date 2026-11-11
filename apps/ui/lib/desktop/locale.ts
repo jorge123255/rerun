@@ -1,6 +1,7 @@
 import { desktopCreationMessages } from './i18n/creation-messages'
 import { desktopCoworkerMessages } from './i18n/coworker-messages'
 import { desktopForemanMessages } from './i18n/foreman-messages'
+import { desktopGettingStartedMessages } from './i18n/getting-started-messages'
 import { desktopRoutineMessages } from './i18n/routine-messages'
 import dialogs from '@rerun/i18n/messages/en/dialogs.json'
 import type { Locale } from '@rerun/i18n'
@@ -129,6 +130,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         coworker: desktopCoworkerMessages(locale, source),
         creation: desktopCreationMessages(locale, source),
         foreman: desktopForemanMessages(locale, source),
+        gettingStarted: desktopGettingStartedMessages(locale, source.foreman.gettingStarted),
         routines: desktopRoutineMessages(locale, source),
         language: source.account.language.field,
         automatic: source.account.language.automatic,
