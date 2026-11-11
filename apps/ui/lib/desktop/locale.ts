@@ -10,14 +10,17 @@ import { desktopThreadHistoryCopy } from './i18n/thread-history-messages'
 import { desktopMonitoringCopy } from './i18n/monitoring-messages'
 import { desktopRunHistoryCopy } from './i18n/run-history-messages'
 import { desktopControlCenterDetails } from './i18n/control-center-messages'
+import { desktopBrainCopy } from './i18n/brain-messages'
 import dialogs from '@rerun/i18n/messages/en/dialogs.json'
 import type { Locale } from '@rerun/i18n'
 import { createTranslator } from 'use-intl/core'
 import account from '@rerun/i18n/messages/en/account.json'
 import agent from '@rerun/i18n/messages/en/agent.json'
+import brain from '@rerun/i18n/messages/en/brain.json'
 import chat from '@rerun/i18n/messages/en/chat.json'
 import common from '@rerun/i18n/messages/en/common.json'
 import connections from '@rerun/i18n/messages/en/connections.json'
+import data from '@rerun/i18n/messages/en/data.json'
 import foreman from '@rerun/i18n/messages/en/foreman.json'
 import kit from '@rerun/i18n/messages/en/kit.json'
 import layout from '@rerun/i18n/messages/en/layout.json'
@@ -25,7 +28,7 @@ import notifications from '@rerun/i18n/messages/en/notifications.json'
 import mobileSettings from '@rerun/i18n/messages/en/mobileSettings.json'
 import workspace from '@rerun/i18n/messages/en/workspace.json'
 
-const englishSource = { account, agent, chat, common, connections, dialogs, foreman, kit, layout, mobileSettings, notifications, workspace }
+const englishSource = { account, agent, brain, chat, common, connections, data, dialogs, foreman, kit, layout, mobileSettings, notifications, workspace }
 type DesktopMessageSource = typeof englishSource
 
 const aiProviderTool = {
@@ -191,6 +194,12 @@ const desktopControlCenterCopy = {
 export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
     return {
         ...mac[locale],
+        brain: source.brain,
+        brainDesktop: desktopBrainCopy[locale],
+        sharedData: {
+            emptyTitle: source.data.shared.emptyTitle,
+            emptyDescription: source.data.shared.emptyDescription,
+        },
         aiProviderTool: aiProviderTool[locale],
         actions: desktopActionMessages(locale, source.kit),
         notificationSettings: source.notifications.settings,

@@ -1,6 +1,7 @@
 'use client'
 
 import type { BrainSelection } from '@/components/brain/selection'
+import { useBrainTranslations } from '@/components/brain/brain-translations'
 import { BrainTopBar, type BrainCrumb } from '@/components/brain/BrainTopBar'
 import { joinPath, parentPath, type SharedFilesTree } from '@/components/brain/useSharedFilesTree'
 import { DesktopSharedFilePreview } from '@/components/desktop/shared-files/DesktopSharedFilePreview'
@@ -13,12 +14,10 @@ import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 
-const ROOT = 'Files'
-
-function folderCrumbs(path: string, onSelect: (selection: BrainSelection) => void): BrainCrumb[] {
+function folderCrumbs(path: string, rootLabel: string, onSelect: (selection: BrainSelection) => void): BrainCrumb[] {
     const parts = path.split('/').filter(Boolean)
     return [
-        { label: ROOT, icon: FolderIcon, onClick: () => onSelect({ kind: 'folder', path: '' }) },
+        { label: rootLabel, icon: FolderIcon, onClick: () => onSelect({ kind: 'folder', path: '' }) },
         ...parts.map((part, index) => ({ label: part, onClick: () => onSelect({ kind: 'folder', path: parts.slice(0, index + 1).join('/') }) })),
     ]
 }
@@ -38,6 +37,8 @@ export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResu
     importing: boolean
     onRetryImport: (result: DesktopSharedImportResult) => void
 }) {
+    const t = useBrainTranslations()
+    const rootLabel = t('files.root')
     const { expand } = files
     const pending = useRef<AbortController | null>(null)
     const scope = useRef(path)
@@ -74,11 +75,11 @@ export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResu
 
     return (
         <div className="flex min-h-0 flex-1 flex-col">
-            <BrainTopBar crumbs={folderCrumbs(path, onSelect)} status={truncatedOf(files, path) ? 'Showing the first 512 entries' : undefined} />
+            <BrainTopBar crumbs={folderCrumbs(path, rootLabel, onSelect)} status={truncatedOf(files, path) ? 'Showing the first 512 entries' : undefined} />
             <DesktopSharedImportResults results={results} disabled={importing} onRetry={onRetryImport} onOpen={next => onSelect({ kind: 'file', path: next })} />
             {importing && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">Importing files…</p>}
             <FileList
-                title={path.split('/').filter(Boolean).pop() ?? ROOT}
+                title={path.split('/').filter(Boolean).pop() ?? rootLabel}
                 entries={files.entriesOf(path)}
                 onOpen={entry => onSelect({ kind: entry.type === 'dir' ? 'folder' : 'file', path: joinPath(path, entry.name) })}
                 onRename={(name, next) => void rename(name, next)}
