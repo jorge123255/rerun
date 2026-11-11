@@ -1,8 +1,11 @@
+import { desktopNotificationMessages } from './i18n/notification-messages'
+import { desktopActionMessages } from './i18n/action-messages'
 import { desktopCreationMessages } from './i18n/creation-messages'
 import { desktopCoworkerMessages } from './i18n/coworker-messages'
 import { desktopForemanMessages } from './i18n/foreman-messages'
 import { desktopGettingStartedMessages } from './i18n/getting-started-messages'
 import { desktopRoutineMessages } from './i18n/routine-messages'
+import { desktopQuestionMessages } from './i18n/question-messages'
 import dialogs from '@rerun/i18n/messages/en/dialogs.json'
 import type { Locale } from '@rerun/i18n'
 import { createTranslator } from 'use-intl/core'
@@ -14,10 +17,11 @@ import connections from '@rerun/i18n/messages/en/connections.json'
 import foreman from '@rerun/i18n/messages/en/foreman.json'
 import kit from '@rerun/i18n/messages/en/kit.json'
 import layout from '@rerun/i18n/messages/en/layout.json'
+import notifications from '@rerun/i18n/messages/en/notifications.json'
 import mobileSettings from '@rerun/i18n/messages/en/mobileSettings.json'
 import workspace from '@rerun/i18n/messages/en/workspace.json'
 
-const englishSource = { account, agent, chat, common, connections, dialogs, foreman, kit, layout, mobileSettings, workspace }
+const englishSource = { account, agent, chat, common, connections, dialogs, foreman, kit, layout, mobileSettings, notifications, workspace }
 type DesktopMessageSource = typeof englishSource
 
 // The shared packs already contain the standard controls. These labels are specific to the Mac shell.
@@ -155,6 +159,11 @@ const desktopControlCenterCopy = {
 export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
     return {
         ...mac[locale],
+        actions: desktopActionMessages(locale, source.kit),
+        notificationSettings: source.notifications.settings,
+        notificationUI: desktopNotificationMessages(locale),
+        questionForm: source.kit.chat.question,
+        question: desktopQuestionMessages(locale),
         controlCenter: {
             ...source.layout.controlCenter,
             ...desktopControlCenterCopy[locale],

@@ -3,6 +3,9 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer } from '@/lib/desktop/questions'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
+import { DesktopLocale } from './DesktopLocale'
 import { DesktopQuestionCard } from './DesktopQuestionCard'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -147,4 +150,22 @@ test('a different question has an independent intent and never receives a late p
     await click('[data-hitl="option-0"]')
     expect(nextAnswer.mock.calls[0][0].questionId).toBe(next.id)
     expect(nextAnswer.mock.calls[0][0].requestId).not.toBe(onAnswer.mock.calls[0][0].requestId)
+})
+
+
+test('French question controls preserve the question text and the exact Skip intent', async () => {
+    const language: DesktopLanguage = { locale: 'fr', preference: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) }
+    const onAnswer = vi.fn(async (_payload: DesktopQuestionAnswer) => {})
+    const root = mount()
+    await act(async () => {
+        root.render(<DesktopLocale initial={language}>
+            <DesktopQuestionCard question={question} onAnswer={onAnswer} />
+        </DesktopLocale>)
+    })
+    expect(document.body.textContent).toContain('Which color?')
+    expect(document.querySelector('[data-hitl="skip"]')?.textContent?.trim()).toBe(language.messages.questionForm.skip)
+    expect(document.querySelector('[data-hitl="dismiss"]')?.getAttribute('aria-label')).toBe(language.messages.questionForm.dismiss)
+    expect(document.querySelector('[data-hitl="next"]')?.getAttribute('aria-label')).toBe(language.messages.questionForm.submit)
+    await click('[data-hitl="skip"]')
+    expect(onAnswer).toHaveBeenCalledExactlyOnceWith({ questionId: question.id, requestId: expect.any(String), action: 'answer', answers: [[]] })
 })

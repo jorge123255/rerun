@@ -404,7 +404,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
                 leading: { kind: 'icon', icon: BoxIcon }, onSelect: enter, onDrill: enter })
         }
         if (onNotifications) rows.push({
-            id: 'coworker-notifications', label: 'Notifications', detail: 'When this agent reaches you', keywords: ['alerts'],
+            id: 'coworker-notifications', label: copy.agent.notifications, detail: copy.agent.notificationsDetail, keywords: ['alerts', 'notifications'],
             leading: { kind: 'icon', icon: BellIcon }, onSelect: () => {
                 const current = latest.current
                 if (!available() || !current.onNotifications || !current.coworkers.some(owner => owner.id === coworkerId)) return

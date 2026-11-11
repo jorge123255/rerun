@@ -3,6 +3,7 @@
 import { QuestionForm } from '@rerun/ui/chat'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { useDesktopLocale } from './DesktopLocale'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer, DesktopQuestionPayload } from '@/lib/desktop/questions'
 
 export type DesktopQuestionCardProps = {
@@ -12,6 +13,7 @@ export type DesktopQuestionCardProps = {
 }
 
 function QuestionCard({ question, disabled, onAnswer }: DesktopQuestionCardProps) {
+    const { language, t } = useDesktopLocale()
     const latest = useRef({ question, disabled, onAnswer })
     latest.current = { question, disabled, onAnswer }
     const requests = useRef(new Map<string, string>())
@@ -43,10 +45,10 @@ function QuestionCard({ question, disabled, onAnswer }: DesktopQuestionCardProps
     async function send(payload: DesktopQuestionAnswer) {
         const current = latest.current
         if (!mounted.current || current.disabled || claimed.current || payload.questionId !== current.question.id) {
-            throw new Error('This question cannot be answered right now.')
+            throw new Error(t('question.unavailable'))
         }
         if (current.question.attempt && payload.requestId !== current.question.attempt.requestId) {
-            throw new Error('An answer is already saved for this question. Retry that answer.')
+            throw new Error(t('question.retrySaved'))
         }
         // The original cancel callback is synchronous and cannot release its form latch on an
         // error. Keep its exact intent in the recovery view instead of reopening an empty form.
@@ -61,7 +63,7 @@ function QuestionCard({ question, disabled, onAnswer }: DesktopQuestionCardProps
             claimed.current = false
             if (mounted.current) {
                 setStatus('idle')
-                setError(cause instanceof Error ? cause.message : 'Could not send this answer. Try again.')
+                setError(cause instanceof Error ? cause.message : t('question.failed'))
             }
             // QuestionForm catches this and releases its own submission latch without losing
             // the selected answers. A retry of the same answers keeps the same request ID.
@@ -80,18 +82,18 @@ function QuestionCard({ question, disabled, onAnswer }: DesktopQuestionCardProps
                     <p className="text-sm font-medium leading-snug">{item.question}</p>
                     {attempt.answers[index]?.length
                         ? attempt.answers[index].map((answer, answerIndex) => <p key={answerIndex} className="whitespace-pre-wrap wrap-anywhere text-sm text-muted-foreground">{answer}</p>)
-                        : <p className="text-sm italic text-muted-foreground">Skipped</p>}
+                        : <p className="text-sm italic text-muted-foreground">{t('question.skipped')}</p>}
                 </div>
-            )) : <p className="text-sm text-muted-foreground">You chose to dismiss these questions.</p>}
+            )) : <p className="text-sm text-muted-foreground">{t('question.dismissed')}</p>}
             <p role="status" className="text-xs text-muted-foreground">{status === 'sent'
-                ? attempt.action === 'cancel' ? 'Cancellation sent.' : 'Answer sent.'
+                ? attempt.action === 'cancel' ? t('question.sentCancellation') : t('question.sent')
                 : status === 'sending'
-                    ? attempt.action === 'cancel' ? 'Sending cancellation…' : 'Sending answer…'
-                    : attempt.action === 'cancel' ? 'Retry to confirm the cancellation.' : 'Retry the saved answer to finish sending it.'}</p>
+                    ? attempt.action === 'cancel' ? t('question.sendingCancellation') : t('question.sending')
+                    : attempt.action === 'cancel' ? t('question.retryCancellationHint') : t('question.retryHint')}</p>
             <Button type="button" size="sm" variant="outline" disabled={locked} onClick={() => { void send(attempt).catch(() => {}) }}>
-                {attempt.action === 'cancel' ? 'Retry cancellation' : 'Retry answer'}
+                {attempt.action === 'cancel' ? t('question.retryCancellation') : t('question.retry')}
             </Button>
-        </div> : <QuestionForm inline questions={question.questions} disabled={locked}
+        </div> : <QuestionForm inline labels={language.messages.questionForm} questions={question.questions} disabled={locked}
             onSubmit={answers => send(identify({ action: 'answer', answers: answers.map(item => item.answers) }))}
             onCancel={() => { void send(identify({ action: 'cancel' })).catch(() => {}) }} />}
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}

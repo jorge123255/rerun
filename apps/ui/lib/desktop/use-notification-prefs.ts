@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo } from 'react'
+import { useDesktopLocale } from '@/components/desktop/DesktopLocale'
 import { toast } from 'sonner'
 import { create } from 'zustand'
 import { z } from 'zod'
@@ -64,6 +65,7 @@ export function refreshDesktopNotificationPrefs(): Promise<void> {
 }
 
 export function useDesktopNotificationPrefs() {
+    const { t } = useDesktopLocale()
     const confirmed = useDesktopPrefsStore(state => state.confirmed)
     const pending = useDesktopPrefsStore(state => state.pending)
     const readError = useDesktopPrefsStore(state => state.readError)
@@ -95,7 +97,7 @@ export function useDesktopNotificationPrefs() {
                 useDesktopPrefsStore.setState({ confirmed: saved })
             } catch {
                 useDesktopPrefsStore.setState({ saveError: SAVE_ERROR })
-                toast.error(SAVE_ERROR)
+                toast.error(t('notificationUI.saveFailed'))
             } finally {
                 const index = queued.findIndex(item => item.id === entry.id)
                 if (index >= 0) queued.splice(index, 1)
@@ -103,9 +105,11 @@ export function useDesktopNotificationPrefs() {
                 release()
             }
         })
-    }, [])
+    }, [t])
     const setCoworkerRule = useCallback((agentId: string, rule: CoworkerRule) => update({ coworkers: { [agentId]: rule } }), [update])
     const ruleOf = useCallback((agentId: string | null | undefined) => coworkerRuleOf(prefs, agentId), [prefs])
     return { prefs, update, setCoworkerRule, ruleOf, ready: confirmed !== null && !readError, loading: busy,
-        readError, saveError, refresh: refreshDesktopNotificationPrefs }
+        readError: readError ? t('notificationUI.loadFailed') : null,
+        saveError: saveError ? t(saveError === SAVE_ERROR ? 'notificationUI.saveFailed' : 'notificationUI.invalid') : null,
+        refresh: refreshDesktopNotificationPrefs }
 }

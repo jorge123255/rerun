@@ -4,6 +4,9 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { DESKTOP_NOTIFICATION_PREFS_URL } from '@/lib/desktop/notifications'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
+import { DesktopLocale } from './DesktopLocale'
 import { DesktopNotificationSettings } from './DesktopNotificationSettings'
 import { mergeNotificationPrefs, normalizeNotificationPrefs } from '@rerun/contracts'
 
@@ -36,7 +39,7 @@ afterEach(async () => {
     vi.unstubAllGlobals(); vi.restoreAllMocks()
 })
 
-async function render(initial: unknown = defaults, reply?: Response) {
+async function render(initial: unknown = defaults, reply?: Response, language?: DesktopLanguage) {
     stored = initial
     putReply = reply
     const putsLocal: unknown[] = []
@@ -53,7 +56,8 @@ async function render(initial: unknown = defaults, reply?: Response) {
     document.body.append(container)
     const root = createRoot(container)
     roots.push(root)
-    await act(async () => { root.render(<DesktopNotificationSettings />) })
+    const settings = <DesktopNotificationSettings />
+    await act(async () => { root.render(language ? <DesktopLocale initial={language}>{settings}</DesktopLocale> : settings) })
     return { puts: putsLocal }
 }
 
@@ -121,4 +125,22 @@ test('Quit rejects new changes and waits for an already admitted write receipt',
     expect(globalThis.fetch).toHaveBeenCalledTimes(1)
     await act(async () => finish(Response.json({ ...defaults, sound: false })))
     expect(lifecycle.held).toBe(0)
+})
+
+
+test('French notification controls write the original scope and only the selected coworker rule', async () => {
+    const language: DesktopLanguage = { locale: 'fr', preference: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) }
+    const { puts } = await render({ ...defaults, coworkers: { researcher: { mode: 'everything' } } }, undefined, language)
+    expect(dialog().querySelector('[role="radiogroup"]')?.getAttribute('aria-label')).toBe('Me notifier pour')
+    expect(switches().map(control => control.getAttribute('aria-label'))).toEqual(['Notification de bureau', 'Son'])
+    await act(async () => { radios().find(radio => radio.textContent?.includes('Rien'))!.click() })
+    expect(puts[0]).toEqual({ scope: 'nothing' })
+    expect(switches().every(control => control.disabled)).toBe(true)
+    const row = dialog().querySelector<HTMLButtonElement>('[aria-label="Notifications pour Reviewer"]')
+    expect(row).not.toBeNull()
+    await act(async () => { row!.click() })
+    const mute = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(option => option.textContent?.trim() === 'En sourdine')
+    expect(mute).toBeTruthy()
+    await act(async () => { mute!.click() })
+    expect(puts.at(-1)).toEqual({ coworkers: { researcher: { mode: 'muted' } } })
 })

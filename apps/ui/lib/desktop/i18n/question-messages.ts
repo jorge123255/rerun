@@ -1,0 +1,63 @@
+import type { Locale } from '@rerun/i18n'
+
+const local = {
+    en: {
+        unavailable: 'This question cannot be answered right now.',
+        retrySaved: 'An answer is already saved for this question. Retry that answer.',
+        failed: 'Could not send this answer. Try again.',
+        skipped: 'Skipped', dismissed: 'You chose to dismiss these questions.',
+        sent: 'Answer sent.', sentCancellation: 'Cancellation sent.',
+        sending: 'Sending answer…', sendingCancellation: 'Sending cancellation…',
+        retry: 'Retry answer', retryCancellation: 'Retry cancellation',
+        retryHint: 'Retry the saved answer to finish sending it.',
+        retryCancellationHint: 'Retry to confirm the cancellation.',
+    },
+    fr: {
+        unavailable: 'Vous ne pouvez pas répondre à cette question pour le moment.',
+        retrySaved: 'Une réponse est déjà enregistrée pour cette question. Réessayez de l’envoyer.',
+        failed: 'Impossible d’envoyer cette réponse. Réessayez.',
+        skipped: 'Ignorée', dismissed: 'Vous avez choisi de fermer ces questions.',
+        sent: 'Réponse envoyée.', sentCancellation: 'Annulation envoyée.',
+        sending: 'Envoi de la réponse…', sendingCancellation: 'Envoi de l’annulation…',
+        retry: 'Renvoyer la réponse', retryCancellation: 'Renvoyer l’annulation',
+        retryHint: 'Réessayez d’envoyer la réponse enregistrée.',
+        retryCancellationHint: 'Réessayez pour confirmer l’annulation.',
+    },
+    es: {
+        unavailable: 'No se puede responder a esta pregunta ahora.',
+        retrySaved: 'Ya hay una respuesta guardada para esta pregunta. Intenta enviarla de nuevo.',
+        failed: 'No se pudo enviar esta respuesta. Vuelve a intentarlo.',
+        skipped: 'Omitida', dismissed: 'Elegiste descartar estas preguntas.',
+        sent: 'Respuesta enviada.', sentCancellation: 'Cancelación enviada.',
+        sending: 'Enviando respuesta…', sendingCancellation: 'Enviando cancelación…',
+        retry: 'Reenviar respuesta', retryCancellation: 'Reenviar cancelación',
+        retryHint: 'Intenta enviar de nuevo la respuesta guardada.',
+        retryCancellationHint: 'Vuelve a intentarlo para confirmar la cancelación.',
+    },
+    pt: {
+        unavailable: 'Não é possível responder a esta pergunta agora.',
+        retrySaved: 'Já existe uma resposta salva para esta pergunta. Tente enviá-la novamente.',
+        failed: 'Não foi possível enviar esta resposta. Tente novamente.',
+        skipped: 'Ignorada', dismissed: 'Você escolheu descartar essas perguntas.',
+        sent: 'Resposta enviada.', sentCancellation: 'Cancelamento enviado.',
+        sending: 'Enviando resposta…', sendingCancellation: 'Enviando cancelamento…',
+        retry: 'Reenviar resposta', retryCancellation: 'Reenviar cancelamento',
+        retryHint: 'Tente enviar novamente a resposta salva.',
+        retryCancellationHint: 'Tente novamente para confirmar o cancelamento.',
+    },
+    de: {
+        unavailable: 'Diese Frage kann gerade nicht beantwortet werden.',
+        retrySaved: 'Zu dieser Frage ist bereits eine Antwort gespeichert. Versuche erneut, sie zu senden.',
+        failed: 'Die Antwort konnte nicht gesendet werden. Versuche es erneut.',
+        skipped: 'Übersprungen', dismissed: 'Du hast diese Fragen verworfen.',
+        sent: 'Antwort gesendet.', sentCancellation: 'Abbruch gesendet.',
+        sending: 'Antwort wird gesendet…', sendingCancellation: 'Abbruch wird gesendet…',
+        retry: 'Antwort erneut senden', retryCancellation: 'Abbruch erneut senden',
+        retryHint: 'Versuche erneut, die gespeicherte Antwort zu senden.',
+        retryCancellationHint: 'Versuche es erneut, um den Abbruch zu bestätigen.',
+    },
+} satisfies Record<Locale, Record<string, string>>
+
+export function desktopQuestionMessages(locale: Locale): Record<keyof typeof local.en, string> {
+    return local[locale]
+}

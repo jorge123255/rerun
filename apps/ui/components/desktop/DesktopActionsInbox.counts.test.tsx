@@ -5,6 +5,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { completionIdentityOf, type DesktopCompletionItem } from '@/lib/desktop/completed-actions'
 import type { DesktopPendingInboxItem } from '@/lib/desktop/pending-inbox'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
+import { DesktopLocale } from './DesktopLocale'
 import { DesktopActionsInbox } from './DesktopActionsInbox'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -253,4 +256,24 @@ test('confirmed per-row reads update the closed count and a later request or tas
     expect(labelOf(container)).toBe('Actions: 1 pending · 2 done')
     expect(panelOf(container)).toBeNull()
     expect(posts(fetcher)).toHaveLength(2)
+})
+
+
+test('French Actions keeps pending counts and opens the exact request without acknowledging it', async () => {
+    const language: DesktopLanguage = { locale: 'fr', preference: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) }
+    const fetcher = api(() => pendingResponse([question]), () => doneResponse([doneChat]))
+    vi.stubGlobal('fetch', fetcher)
+    const open = vi.fn()
+    const { container } = await mount(<DesktopLocale initial={language}>
+        <DesktopActionsInbox open onOpenConversation={open} />
+    </DesktopLocale>)
+    const panel = container.querySelector('[aria-label="Boîte des actions"]')
+    expect(panel?.textContent).toContain('1 en attente')
+    expect(panel?.textContent).toContain(question.summary)
+    expect(panel?.querySelector('button[aria-label="' + language.messages.actions.markRead + '"]')).not.toBeNull()
+    const row = panel?.querySelector<HTMLElement>('[data-actions-inbox-item="question-first"]')
+    expect(row).not.toBeNull()
+    await act(async () => { row!.click() })
+    expect(open).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: question.sessionId, agentId: question.agentId }))
+    expect(posts(fetcher)).toEqual([])
 })
