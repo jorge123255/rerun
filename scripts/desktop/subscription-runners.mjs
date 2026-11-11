@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, realpath, lstat, chmod, rename, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, realpath, lstat, chmod, rename, rm, readFile, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import { existsSync, repoRoot, sha256File } from './lib.mjs'
 
@@ -15,6 +15,7 @@ const runners = [
 ]
 const directory = engine => join(engine, 'subscription-runners')
 const policyPath = engine => join(directory(engine), 'rerun-subscriptions.sb')
+const loginPolicyName = 'rerun-subscription-device.sb'
 const runnerPath = (engine, runner) => join(directory(engine), runner.name, 'runner')
 
 export const requestedSubscriptionRunners = (env = process.env) => runners.some(runner => !!env[runner.env])
@@ -38,7 +39,10 @@ export async function stageSubscriptionRunners(engine, env = process.env) {
             await verifyRunner(target, runner)
             await chmod(target, 0o755)
         }
-        await copyFile(join(repoRoot, 'scripts/desktop/subscription-runner.sb'), join(staged, 'rerun-subscriptions.sb'))
+        const policy = await readFile(join(repoRoot, 'scripts/desktop/subscription-runner.sb'), 'utf8')
+        await writeFile(join(staged, 'rerun-subscriptions.sb'), policy)
+        await writeFile(join(staged, loginPolicyName), policy +
+            '\n(allow network-outbound (remote ip (param "AUTH_RELAY")))\n')
         await rename(staged, directory(engine))
     } finally {
         await rm(staged, { recursive: true, force: true })
@@ -62,6 +66,9 @@ export async function stagedSubscriptionManifest(engine, resources) {
     if (Object.keys(manifest).length) {
         if (!(await lstat(policyPath(engine))).isFile()) throw new Error('Invalid subscription runner policy.')
         manifest.subscriptionSandboxPath = relative(resources, policyPath(engine))
+        const loginPolicy = join(directory(engine), loginPolicyName)
+        if (!(await lstat(loginPolicy)).isFile()) throw new Error('Invalid subscription device sign-in policy.')
+        manifest.subscriptionLoginSandboxPath = relative(resources, loginPolicy)
     }
     return manifest
 }

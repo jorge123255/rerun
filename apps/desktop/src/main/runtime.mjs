@@ -21,6 +21,10 @@ export async function loadBundle(resources) {
     const baseFields = ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath', 'claudePath', 'claudeSandboxPath', 'renameHelperPath', 'pdfHelperPath', 'pdfTextHelperPath']
     const runners = ['grokBuildPath', 'kimiCodePath'].filter(field => Object.hasOwn(manifest, field))
     const runnerFields = runners.length ? [...runners, 'subscriptionSandboxPath'] : []
+    if (Object.hasOwn(manifest, 'subscriptionLoginSandboxPath')) {
+        if (!runners.length) throw new Error('Invalid bundled subscription sign-in manifest')
+        runnerFields.push('subscriptionLoginSandboxPath')
+    }
     if (Object.hasOwn(manifest, 'subscriptionSandboxPath') !== (runners.length > 0)) {
         throw new Error('Invalid bundled subscription runner manifest')
     }

@@ -1,8 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { lstatSync, mkdirSync, realpathSync } from 'node:fs'
+import { linkSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { dataDir } from '../../config/paths.js'
+import type { DesktopSubscriptionProvider } from '@rerun/contracts'
 import { openDesktopSubscriptionAcpSession } from './session.js'
 
 const runners = {
@@ -10,15 +11,16 @@ const runners = {
         variable: 'RERUN_DESKTOP_GROK_BUILD_RUNNER',
         home: 'GROK_HOME',
         args: ['--no-auto-update', 'agent', 'stdio'],
+        login: ['--no-auto-update', 'login', '--device-auth'],
     },
     'kimi-code': {
         variable: 'RERUN_DESKTOP_KIMI_CODE_RUNNER',
         home: 'KIMI_CODE_HOME',
         args: ['acp'],
+        login: ['login', '--region', 'global'],
     },
 } as const
 
-export type DesktopSubscriptionProvider = keyof typeof runners
 const unavailable = () => new Error('The subscription provider runner is unavailable.')
 const shutdownUnconfirmed = () => new Error('The subscription provider runner did not stop cleanly.')
 type Worker = () => Promise<void>
@@ -58,12 +60,7 @@ export function desktopSubscriptionRunnerAvailable(provider: DesktopSubscription
     }
 }
 
-function privateDirectory(path: string) {
-    try {
-        mkdirSync(path, { mode: 0o700 })
-    } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw unavailable()
-    }
+function ownedDirectory(path: string) {
     try {
         const info = lstatSync(path)
         if (info.isDirectory() && info.uid === process.getuid?.() && (info.mode & 0o077) === 0 &&
@@ -72,6 +69,15 @@ function privateDirectory(path: string) {
         // Keep account paths out of errors.
     }
     throw unavailable()
+}
+
+function privateDirectory(path: string) {
+    try {
+        mkdirSync(path, { mode: 0o700 })
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw unavailable()
+    }
+    return ownedDirectory(path)
 }
 
 function workspaceRoot() {
@@ -85,16 +91,88 @@ function workspaceRoot() {
     throw unavailable()
 }
 
-function accountDirectories(provider: DesktopSubscriptionProvider) {
+function providerDirectory(provider: DesktopSubscriptionProvider, create: boolean) {
     const root = workspaceRoot()
-    const base = privateDirectory(join(root, 'subscription-providers'))
-    const profile = privateDirectory(join(base, provider))
+    const directory = create ? privateDirectory : ownedDirectory
+    return directory(join(directory(join(root, 'subscription-providers')), provider))
+}
+
+function accountDirectories(profile: string) {
     return {
         profile,
         cwd: privateDirectory(join(profile, 'work')),
         home: privateDirectory(join(profile, 'home')),
         vendorHome: privateDirectory(join(profile, 'account')),
         temp: privateDirectory(join(profile, 'tmp')),
+    }
+}
+
+const attemptIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+function attemptPath(providerRoot: string, attemptId: string) {
+    if (!attemptIdPattern.test(attemptId)) throw unavailable()
+    return join(providerRoot, 'device-' + attemptId)
+}
+
+export function desktopSubscriptionDeviceLoginAvailable(provider: DesktopSubscriptionProvider) {
+    try {
+        ownedFile(process.env.RERUN_DESKTOP_SUBSCRIPTION_LOGIN_SANDBOX)
+        return desktopSubscriptionRunnerAvailable(provider)
+    } catch {
+        return false
+    }
+}
+
+function readApproval(provider: DesktopSubscriptionProvider) {
+    try {
+        const providerRoot = providerDirectory(provider, false)
+        const receipt = ownedFile(join(providerRoot, 'device-approval.json'))
+        const info = lstatSync(receipt)
+        if (info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0 || info.size > 100) return null
+        const { id } = JSON.parse(readFileSync(receipt, 'utf8'))
+        if (typeof id !== 'string') return null
+        return { receipt, profile: ownedDirectory(attemptPath(providerRoot, id)) }
+    } catch {
+        return null
+    }
+}
+
+export function desktopSubscriptionDeviceApproved(provider: DesktopSubscriptionProvider) {
+    return readApproval(provider) !== null
+}
+
+export function forgetDesktopSubscriptionDeviceApproval(provider: DesktopSubscriptionProvider) {
+    if (workers.has(provider)) throw unavailable()
+    const saved = readApproval(provider)
+    if (!saved) return
+    unlinkSync(saved.receipt)
+    rmSync(saved.profile, { recursive: true, force: true })
+}
+
+export function createDesktopSubscriptionDeviceAttempt(provider: DesktopSubscriptionProvider, id: string) {
+    if (!desktopSubscriptionDeviceLoginAvailable(provider) || workers.has(provider)) throw unavailable()
+    const providerRoot = providerDirectory(provider, true)
+    const profile = attemptPath(providerRoot, id)
+    mkdirSync(profile, { mode: 0o700 })
+    const account = accountDirectories(ownedDirectory(profile))
+    return {
+        launch(proxy: string, port: number) {
+            const { binary } = bundlePaths(provider)
+            const sandbox = ownedFile(process.env.RERUN_DESKTOP_SUBSCRIPTION_LOGIN_SANDBOX)
+            return spawnRunner(provider, { binary, sandbox }, account, runners[provider].login, { proxy, port })
+        },
+        approve() {
+            if (workers.has(provider)) throw unavailable()
+            ownedDirectory(profile)
+            const temp = join(providerRoot, id + '.receipt.tmp')
+            writeFileSync(temp, JSON.stringify({ id }), { flag: 'wx', mode: 0o600 })
+            try { linkSync(temp, join(providerRoot, 'device-approval.json')) }
+            finally { unlinkSync(temp) }
+        },
+        discard() {
+            if (workers.has(provider)) throw unavailable()
+            rmSync(ownedDirectory(profile), { recursive: true, force: true })
+        },
     }
 }
 
@@ -109,13 +187,28 @@ async function stopChild(child: ChildProcess, exited: Promise<true>) {
 
 /** Qualifies the installed runner using a workspace-owned account and an offline policy. */
 export async function openOfflineDesktopSubscriptionRunner(provider: DesktopSubscriptionProvider) {
+    const paths = bundlePaths(provider)
+    const account = accountDirectories(providerDirectory(provider, true))
+    const { child, dispose } = spawnRunner(provider, paths, account, runners[provider].args)
+    child.stderr.resume()
+    return openDesktopSubscriptionAcpSession({
+        provider, cwd: account.cwd, channel: { input: child.stdout, output: child.stdin, dispose },
+    })
+}
+
+function spawnRunner(
+    provider: DesktopSubscriptionProvider,
+    { binary, sandbox }: ReturnType<typeof bundlePaths>,
+    { profile, cwd, home, vendorHome, temp }: ReturnType<typeof accountDirectories>,
+    args: readonly string[],
+    relay?: { proxy: string; port: number },
+) {
     if (stopping || workers.has(provider)) throw unavailable()
-    const { binary, sandbox } = bundlePaths(provider)
-    const { profile, cwd, home, vendorHome, temp } = accountDirectories(provider)
     const definition = runners[provider]
     const child = spawn('/usr/bin/sandbox-exec', [
         '-D', `RUNNER=${binary}`, '-D', `RUNNER_DIR=${dirname(binary)}`, '-D', `PROFILE=${profile}`,
-        '-f', sandbox, binary, ...definition.args,
+        ...(relay ? ['-D', `AUTH_RELAY=localhost:${relay.port}`] : []),
+        '-f', sandbox, binary, ...args,
     ], {
         cwd,
         env: {
@@ -127,9 +220,13 @@ export async function openOfflineDesktopSubscriptionRunner(provider: DesktopSubs
             TZ: 'UTC',
             [definition.home]: vendorHome,
             ...(provider === 'kimi-code' ? { KIMI_DISABLE_TELEMETRY: '1' } : {}),
+            ...(relay ? {
+                HTTPS_PROXY: relay.proxy, HTTP_PROXY: relay.proxy,
+                https_proxy: relay.proxy, http_proxy: relay.proxy,
+            } : {}),
         },
         shell: false,
-        stdio: ['pipe', 'pipe', 'ignore'],
+        stdio: ['pipe', 'pipe', 'pipe'],
     })
     child.on('error', () => child.stdout.destroy())
     const exited = new Promise<true>(resolve => child.once('exit', () => resolve(true)))
@@ -141,9 +238,7 @@ export async function openOfflineDesktopSubscriptionRunner(provider: DesktopSubs
         draining = undefined
     })
     workers.set(provider, dispose)
-    return openDesktopSubscriptionAcpSession({
-        provider, cwd, channel: { input: child.stdout, output: child.stdin, dispose },
-    })
+    return { child, dispose }
 }
 
 export async function stopDesktopSubscriptionRunners() {

@@ -14,6 +14,10 @@ vi.mock('../../desktop/claude-plan/runtime.js', () => ({ stopDesktopClaudeWorker
 vi.mock('../../desktop/subscription-acp/runtime.js', () => ({
     desktopSubscriptionRunnerAvailable: (provider: string) => provider === 'grok-build',
     stopDesktopSubscriptionRunners: vi.fn(async () => {}),
+    desktopSubscriptionDeviceLoginAvailable: (provider: string) => provider === 'grok-build',
+    desktopSubscriptionDeviceApproved: () => false,
+    createDesktopSubscriptionDeviceAttempt: () => { throw new Error('No provider runner in the engine route test') },
+    forgetDesktopSubscriptionDeviceApproval: vi.fn(),
 }))
 vi.mock('../../desktop/guest-shell/runtime.js', () => ({ bindDesktopGuestShell: () => ({ close: vi.fn(async () => {}) }) }))
 vi.mock('../../desktop/custom-providers/binding.js', async () => {
@@ -136,6 +140,10 @@ test('exposes only runner availability to authenticated desktop engine callers',
         'grok-build': { runtimeAvailable: true },
         'kimi-code': { runtimeAvailable: false },
     })
+    await expect((await request('/desktop/subscription-login')).json()).resolves.toEqual({
+        'grok-build': { phase: 'idle' }, 'kimi-code': { phase: 'unavailable' },
+    })
+    expect((await request('/desktop/subscription-login', 'POST')).status).toBe(400)
 })
 
 test('reports an unconfirmed writer drain without releasing process custody and permits cleanup retry',async()=>{

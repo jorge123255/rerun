@@ -5,6 +5,7 @@ import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, type 
 import { ThemeToggle } from '@rerun/ui/theme'
 import { DesktopLanguageSettings } from './DesktopLanguageSettings'
 import { DesktopCodexLogin } from './DesktopCodexLogin'
+import { DesktopSubscriptionLogin } from './DesktopSubscriptionLogin'
 import { DesktopPlanLimitsBlock } from './usage/DesktopPlanLimitsBlock'
 import { DesktopClaudeLogin } from './claude-plan/DesktopClaudeLogin'
 import { DesktopNotificationSettings } from './DesktopNotificationSettings'
@@ -166,6 +167,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                 {provider === 'openrouter' && <CustomModelList models={connection.extraModels} reserved={DEFAULT_CONNECTION_MODELS.openrouter} onChange={extras => changeModels(connection.models, extras)} />}
                             </div>}
                         </div>
+                        <DesktopSubscriptionLogin key={workspaceId ?? 'workspace'} />
                         <p className="text-sm text-muted-foreground">Connect ChatGPT (Codex) or Claude with your subscription, or use an API key for the other providers.</p>
                     </>}
                     {tab === 'Workspace' && <>

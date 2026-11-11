@@ -61,6 +61,7 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (path === '/desktop/codex-login') return (method === 'GET' || method === 'POST') && desktopCodexAvailable()
     if (path === '/desktop/claude-login') return (method === 'GET' || method === 'POST') && desktopClaudeAvailable()
     if (path === '/desktop/subscription-providers') return method === 'GET'
+    if (path === '/desktop/subscription-login') return method === 'GET' || method === 'POST'
     if (/^\/agents\/(?:import|foreman|default)(?:\/|$)/.test(path)) return false
     const id = '[A-Za-z0-9_-]+'
     if (new RegExp(`^/agents/${id}/sessions/${id}/mcp-sign-in-source$`).test(path)) return method === 'POST'

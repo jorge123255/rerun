@@ -4,6 +4,7 @@ import { bindDesktopGuestShell } from '../../desktop/guest-shell/runtime.js'
 import { bindDesktopClaudePlanAuth } from '../../desktop/claude-plan/auth.js'
 import { stopDesktopClaudeWorkers } from '../../desktop/claude-plan/runtime.js'
 import { desktopSubscriptionRunnerAvailable, stopDesktopSubscriptionRunners } from '../../desktop/subscription-acp/runtime.js'
+import { bindDesktopSubscriptionDeviceLogin } from '../../desktop/subscription-acp/device-login.js'
 import { createDesktopTriggerToolRuntime } from '../../desktop/trigger-tools/runtime.js'
 import { ensureForeman } from '../../agents/foreman.js'
 import { bindDesktopForeman } from '../../desktop/foreman/binding.js'
@@ -27,7 +28,7 @@ import { reconcileInterruptedRuns } from '../../runtime/reconcile.js'
 import { abortAllRuns } from '../../runtime/run-control.js'
 import { closeAllMcp } from '../../tools/mcp-pool.js'
 import { env } from '../../config/env.js'
-import { desktopCodexAction, desktopClaudePlanActionSchema } from '@rerun/contracts'
+import { desktopCodexAction, desktopClaudePlanActionSchema, desktopSubscriptionLoginAction } from '@rerun/contracts'
 import { codexLoginAction, codexLoginStatus, stopCodexLogin } from '../../desktop/codex-login.js'
 import { desktopApp, desktopRouteAllowed } from '../../desktop/policy.js'
 import { bindDesktopSchedules } from '../../desktop/schedule-binding.js'
@@ -104,12 +105,13 @@ export async function desktopRunCommand(): Promise<void> {
     await initializeDesktopCompanyBriefStore()
     await initializeDesktopExternalMcp()
     const customProviders = bindDesktopCustomProviders(runtime.workspaceId, runtime.launchNonce, () => stopping)
+    const subscriptionLogin = bindDesktopSubscriptionDeviceLogin()
     observeDesktopAdmissionChange(async () => {
         let frozen = true
         try { assertDesktopRunAdmission(); frozen = false } catch {}
         if (frozen) {
             customProviders.abort()
-            await getExternalMcpService().close()
+            await Promise.all([getExternalMcpService().close(), subscriptionLogin.cancelPending()])
         }
     })
     registerExternalMcpDispatch(createExternalMcpUiDispatch({ recheck: input => getExternalMcpService().recheck(input) }))
@@ -147,6 +149,15 @@ export async function desktopRunCommand(): Promise<void> {
         'grok-build': { runtimeAvailable: desktopSubscriptionRunnerAvailable('grok-build') },
         'kimi-code': { runtimeAvailable: desktopSubscriptionRunnerAvailable('kimi-code') },
     }, 200, { 'Cache-Control': 'no-store' }))
+    app.get('/desktop/subscription-login', c => c.json(subscriptionLogin.snapshot(), 200, { 'Cache-Control': 'no-store' }))
+    app.post('/desktop/subscription-login', async c => {
+        const parsed = desktopSubscriptionLoginAction.safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) return c.json({ error: 'Invalid subscription sign-in action.' }, 400)
+        try { assertDesktopRunAdmission() }
+        catch { return c.json({ error: 'This workspace is switching. Try again when it is ready.' }, 409) }
+        try { return c.json(await subscriptionLogin.action(parsed.data), 200, { 'Cache-Control': 'no-store' }) }
+        catch { return c.json({ error: 'Subscription sign-in could not be confirmed.' }, 409) }
+    })
     app.post('/desktop/codex-login', async c => {
         const parsed = desktopCodexAction.safeParse((await c.req.json().catch(() => null))?.action)
         if (!parsed.success) return c.json({ error: 'Invalid sign-in action.' }, 400)
@@ -200,7 +211,10 @@ export async function desktopRunCommand(): Promise<void> {
             diagnostic.track('guest-shell', () => guestShell.close()),
             diagnostic.track('external-mcp', () => closeDesktopExternalMcp()),
             diagnostic.track('claude-workers', () => stopDesktopClaudeWorkers()),
-            diagnostic.track('subscription-runners', () => stopDesktopSubscriptionRunners()),
+            diagnostic.track('subscription-runners', async () => {
+                await subscriptionLogin.close()
+                await stopDesktopSubscriptionRunners()
+            }),
         ])
         // Preparing scheduled runs already register a controller in runAgent. Signal those
         // before draining preparation, otherwise a stuck provider can prevent its own Stop.
