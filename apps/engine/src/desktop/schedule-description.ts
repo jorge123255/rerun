@@ -1,5 +1,4 @@
 import { generateText, NoObjectGeneratedError, Output } from 'ai'
-import { Cron } from 'croner'
 import { z } from 'zod'
 import { parseDesktopSubscriptionConnectionId, providerSchema } from '@rerun/contracts'
 import { isUsable, resolveConfiguredModel, resolveRunModel } from '../agents/availability.js'
@@ -10,7 +9,7 @@ import { ensureCliAuth } from '../connections/cli-auth.js'
 import { findConnection } from '../connections/registry.js'
 import type { LoadedConnection } from '../connections/types.js'
 import { HttpError } from '../lib/errors.js'
-import { isValidTimezone } from '../schedules/next-run.js'
+import { computeNextRun, isValidTimezone } from '../schedules/next-run.js'
 import { readSchedule } from '../schedules/loader.js'
 import { beginDesktopApiConnectionWork } from './api-connections/admission.js'
 import { assertDesktopProvider } from './policy.js'
@@ -65,15 +64,17 @@ function extractJson(text: string): unknown {
     try { return JSON.parse(match[0]) } catch { return null }
 }
 
-function parseModelSchedule(text: string): DesktopScheduleDescriptionResult {
+function parseModelSchedule(text: string, input: DesktopScheduleDescriptionInput): DesktopScheduleDescriptionResult {
     const parsed = modelOutputSchema.safeParse(extractJson(text))
     if (!parsed.success) return invalid()
     const value = parsed.data
     if (value.timezone && !isValidTimezone(value.timezone)) return invalid()
+    const now = Math.max(Date.now(), Date.parse(input.nowIso))
     if (value.mode === 'cron') {
         if (!value.cron || value.runAt) return invalid()
-        try { new Cron(value.cron, value.timezone ? { timezone: value.timezone } : undefined).nextRun() } catch { return invalid() }
-    } else if (!value.runAt || value.cron || !z.string().datetime({ offset: true }).safeParse(value.runAt).success) return invalid()
+        if (!computeNextRun({ cron: value.cron, timezone: value.timezone ?? input.timezone }, new Date(now)).ok) return invalid()
+    } else if (!value.runAt || value.cron || !z.string().datetime({ offset: true }).safeParse(value.runAt).success
+        || Date.parse(value.runAt) <= now) return invalid()
     return { status: 'ok', value }
 }
 
@@ -168,7 +169,7 @@ export async function describeDesktopSchedule(agentId: string, input: DesktopSch
             signal.throwIfAborted()
             if (desktopScheduleDefinitionRevision(latest) !== parsed.expectedRevision) return changed()
         }
-        return parseModelSchedule(text)
+        return parseModelSchedule(text, parsed)
     } catch (error) {
         if (signal.aborted) throw error
         return unavailable()

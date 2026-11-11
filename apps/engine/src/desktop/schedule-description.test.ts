@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({
     text: '{"mode":"cron","cron":"0 8 * * 1-5","label":"Weekdays at 8"}',
@@ -44,6 +44,8 @@ function connectionFor(id: string) {
 }
 
 beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-09T18:00:00Z'))
     vi.clearAllMocks()
     connections.clear()
     state.text = '{"mode":"cron","cron":"0 8 * * 1-5","label":"Weekdays at 8"}'
@@ -73,6 +75,8 @@ beforeEach(() => {
     })
 })
 
+afterEach(() => vi.useRealTimers())
+
 describe('describeDesktopSchedule output validation', () => {
     it('returns a recurring result', async () => {
         await expect(describeDesktopSchedule('agent-a', input)).resolves.toEqual({
@@ -85,6 +89,14 @@ describe('describeDesktopSchedule output validation', () => {
         await expect(describeDesktopSchedule('agent-a', input)).resolves.toEqual({
             status: 'ok', value: { mode: 'runAt', runAt: '2026-11-10T08:00:00-06:00' },
         })
+    })
+
+    it('rejects a one-shot time that has passed when the model finishes', async () => {
+        mocks.generateText.mockImplementation(async () => {
+            vi.setSystemTime(new Date('2026-11-09T18:01:00Z'))
+            return { text: '{"mode":"runAt","runAt":"2026-11-09T12:01:00-06:00"}' }
+        })
+        await expect(describeDesktopSchedule('agent-a', input)).resolves.toMatchObject({ status: 'invalid' })
     })
 
     it.each([
