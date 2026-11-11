@@ -41,6 +41,7 @@ export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingSt
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent
                 className="sm:max-w-md"
+                closeLabel={t('closeDialog')}
                 onCloseAutoFocus={event => {
                     const keep = desktopHelpKeepsFocus(intent.current)
                     intent.current = 'close'
@@ -53,7 +54,7 @@ export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingSt
             >
                 <DialogHeader>
                     <DialogTitle>{t('help')}</DialogTitle>
-                    <DialogDescription>Docs and shortcuts for this Mac. Getting started stays here after you hide the checklist.</DialogDescription>
+                    <DialogDescription>{t('helpDescription')}</DialogDescription>
                 </DialogHeader>
                 <ul className="flex flex-col py-1">
                     {entries.map(entry => {
@@ -63,7 +64,7 @@ export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingSt
                                 <li key={entry.id}>
                                     <a href={entry.href} target="_blank" rel="noopener noreferrer" className={rowClass}>
                                         <Icon className="size-4" />
-                                        {entry.label}
+                                        {t(`helpItems.${entry.id}`)}
                                     </a>
                                 </li>
                             )
@@ -81,7 +82,7 @@ export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingSt
                                     }}
                                 >
                                     <Icon className="size-4" />
-                                    {entry.label}
+                                    {t(`helpItems.${entry.id}`)}
                                 </button>
                             </li>
                         )

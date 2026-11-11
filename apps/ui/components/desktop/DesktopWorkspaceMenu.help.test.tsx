@@ -1,13 +1,16 @@
 // @vitest-environment happy-dom
-import { act, type ReactNode } from 'react'
+import { act, useState, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { DesktopWorkspaceClient } from '@/lib/desktop/workspaces'
 import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
 import type { DesktopWorkspaceListResult, DesktopWorkspaceRecord } from '@rerun/contracts'
 import { loadMessages } from '@rerun/i18n/messages'
+import { publishDesktopGettingStartedAvailability } from '@/lib/desktop/help/availability'
 import { DesktopLocale } from './DesktopLocale'
+import { DesktopShortcutsDialog } from './DesktopShortcutsDialog'
 import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
+import { DesktopHelpDialog } from './help/DesktopHelpDialog'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -30,6 +33,7 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 const roots: Root[] = []
 afterEach(() => {
     for (const root of roots.splice(0)) act(() => { root.unmount() })
+    publishDesktopGettingStartedAvailability(null)
     document.body.innerHTML = ''
 })
 function mount(node: ReactNode) {
@@ -81,4 +85,41 @@ test('the standalone control uses the shared Help label in French', async () => 
     expect(help).toBeTruthy()
     await act(async () => { help!.click() })
     expect(onHelp).toHaveBeenCalledExactlyOnceWith(help)
+})
+
+test.each(['fr', 'es', 'de', 'pt'] as const)('Help opens the mounted Mac shortcut list in %s', async locale => {
+    const source = await loadMessages(locale)
+    const language: DesktopLanguage = { preference: locale, locale, messages: desktopMessages(locale, source) }
+    const labels = source.layout.menu
+    const shortcuts = source.dialogs.shortcuts
+    publishDesktopGettingStartedAvailability(1)
+
+    function Dialogs() {
+        const [dialog, setDialog] = useState<'help' | 'shortcuts' | null>('help')
+        return <>
+            <DesktopHelpDialog open={dialog === 'help'} onOpenChange={() => setDialog(null)} workspaceId={1}
+                onGettingStarted={vi.fn()} onShortcuts={() => setDialog('shortcuts')} />
+            <DesktopShortcutsDialog open={dialog === 'shortcuts'} onOpenChange={() => setDialog(null)} />
+        </>
+    }
+
+    mount(<DesktopLocale initial={language}><Dialogs /></DesktopLocale>)
+    const help = document.querySelector('[role="dialog"]')!
+    expect(help.querySelector('[data-slot="dialog-title"]')?.textContent).toBe(source.layout.help.label)
+    expect(help.querySelector('[data-slot="dialog-close"]')?.textContent).toBe(source.kit.close)
+    expect([...help.querySelectorAll('a')].map(link => link.textContent?.trim())).toEqual([labels.docs, labels.community, labels.hireExpert])
+    expect(help.textContent).toContain(labels.gettingStarted)
+    const showShortcuts = [...help.querySelectorAll('button')].find(button => button.textContent?.trim() === labels.shortcuts)!
+    await act(async () => { showShortcuts.click() })
+
+    const opened = document.querySelector('[role="dialog"]')!
+    expect(opened.querySelector('[data-slot="dialog-title"]')?.textContent).toBe(shortcuts.title)
+    expect(opened.querySelector('[data-slot="dialog-close"]')?.textContent).toBe(source.kit.close)
+    for (const action of [shortcuts.actions.controlCenter, shortcuts.actions.newConversation,
+        shortcuts.actions.sendMessage, shortcuts.actions.previousFile, shortcuts.actions.nextFile]) {
+        expect(opened.textContent).toContain(action)
+    }
+    expect(opened.textContent).toContain(language.messages.controlCenterOutsideInput)
+    expect(opened.textContent).toContain(language.messages.closeTabOutsideInput)
+    expect(opened.textContent).not.toContain(shortcuts.actions.askRerun)
 })

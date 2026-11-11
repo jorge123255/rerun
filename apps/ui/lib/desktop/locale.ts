@@ -22,6 +22,9 @@ type DesktopMessageSource = typeof englishSource
 // The shared packs already contain the standard controls. These labels are specific to the Mac shell.
 const mac = {
     en: {
+        helpDescription: 'Docs and shortcuts for this Mac. Getting started stays here after you hide the checklist.',
+        controlCenterOutsideInput: 'Open the control center, outside a chat or text field',
+        closeTabOutsideInput: 'Close active tab, outside a text field',
         board: 'Team board',
         boardActions: 'Board actions',
         addBox: 'Add Box',
@@ -39,6 +42,9 @@ const mac = {
         systemLanguage: 'Follows your system: {language}.',
     },
     fr: {
+        helpDescription: 'Documentation et raccourcis pour ce Mac. Les premiers pas restent accessibles ici après avoir masqué la liste.',
+        controlCenterOutsideInput: 'Ouvrir le centre de contrôle en dehors d’une conversation ou d’un champ de texte',
+        closeTabOutsideInput: 'Fermer l’onglet actif en dehors d’un champ de texte',
         board: 'Tableau d’équipe',
         boardActions: 'Actions du tableau',
         addBox: 'Ajouter une Box',
@@ -56,6 +62,9 @@ const mac = {
         systemLanguage: 'Suit la langue du système : {language}.',
     },
     es: {
+        helpDescription: 'Documentación y atajos para este Mac. Puedes volver a Primeros pasos aquí aunque ocultes la lista.',
+        controlCenterOutsideInput: 'Abrir el centro de control fuera de un chat o campo de texto',
+        closeTabOutsideInput: 'Cerrar la pestaña activa fuera de un campo de texto',
         board: 'Tablero del equipo',
         boardActions: 'Acciones del tablero',
         addBox: 'Añadir una Box',
@@ -73,6 +82,9 @@ const mac = {
         systemLanguage: 'Sigue el idioma del sistema: {language}.',
     },
     pt: {
+        helpDescription: 'Documentação e atalhos para este Mac. Você pode voltar a Primeiros passos aqui mesmo depois de ocultar a lista.',
+        controlCenterOutsideInput: 'Abrir a central de controle fora de uma conversa ou de um campo de texto',
+        closeTabOutsideInput: 'Fechar a aba ativa fora de um campo de texto',
         board: 'Quadro da equipe',
         boardActions: 'Ações do quadro',
         addBox: 'Adicionar uma Box',
@@ -90,6 +102,9 @@ const mac = {
         systemLanguage: 'Segue o idioma do sistema: {language}.',
     },
     de: {
+        helpDescription: 'Dokumentation und Tastenkürzel für diesen Mac. Erste Schritte bleiben hier verfügbar, wenn du die Checkliste ausblendest.',
+        controlCenterOutsideInput: 'Kontrollzentrum außerhalb eines Chats oder Textfelds öffnen',
+        closeTabOutsideInput: 'Aktiven Tab außerhalb eines Textfelds schließen',
         board: 'Team-Board',
         boardActions: 'Board-Aktionen',
         addBox: 'Box hinzufügen',
@@ -120,6 +135,15 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         languageFailed: source.account.language.failed,
         settings: source.layout.workspaceMenu.settings,
         help: source.layout.help.label,
+        helpItems: {
+            getting_started: source.layout.menu.gettingStarted,
+            docs: source.layout.menu.docs,
+            community: source.layout.menu.community,
+            shortcuts: source.layout.menu.shortcuts,
+            experts: source.layout.menu.hireExpert,
+        },
+        shortcutDialog: source.dialogs.shortcuts,
+        closeDialog: source.kit.close,
         workspaceSettings: source.workspace.settings.title,
         providers: source.layout.workspaceMenu.aiProviders,
         defaultModel: source.connections.models.defaultModel,
