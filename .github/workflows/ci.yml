@@ -25,7 +25,32 @@ jobs:
       - run: pnpm -r --if-present ts-check
       - run: pnpm --filter rerun lint
       - run: pnpm --filter rerun test
-      - run: pnpm --filter rerun-engine test
+
+  desktop-files:
+    name: macOS engine and desktop file publication
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @rerun/contracts build
+      - name: Use a canonical temporary directory for macOS tests
+        run: |
+          test_tmp="$(mktemp -d "$RUNNER_TEMP/rerun-tests.XXXXXX")"
+          printf 'TMPDIR=%s\n' "$(cd "$test_tmp" && pwd -P)" >> "$GITHUB_ENV"
+      - name: Run the complete engine suite on the supported desktop host
+        run: pnpm --filter rerun-engine test
+      - name: Run desktop file publication and interruption suites
+        run: >-
+          pnpm --filter rerun exec vitest run
+          'app/api/desktop/agents/[agentId]/files/content/route.test.ts'
+          'app/api/desktop/agents/[agentId]/files/content/review-publish.test.ts'
+          'app/api/desktop/agents/[agentId]/files/content/publication-interrupt.test.ts'
+          lib/desktop/server/coworker-share/binding.test.ts
 
   migrations:
     name: Migrations and seed on a fresh database

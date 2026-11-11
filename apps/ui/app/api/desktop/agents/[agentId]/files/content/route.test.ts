@@ -9,6 +9,9 @@ import { hashText } from '@/lib/files/editable'
 import { GET as read } from '../read/route'
 import { PUT as save } from './route'
 
+// These cases require macOS to establish that the displaced inode is no longer held.
+const macTest = test.runIf(process.platform === 'darwin')
+
 const hooks = vi.hoisted(() => ({
     wrapWrite: undefined as undefined | ((target: string, handle: import('node:fs/promises').FileHandle) => import('node:fs/promises').FileHandle),
     beforeReadOpen: undefined as undefined | ((target: string) => Promise<void>),
@@ -62,7 +65,7 @@ afterEach(async () => {
     rmSync(root, { recursive: true, force: true })
 })
 
-test('preview hands out the hash an edit starts from; save replaces only that coworker’s file', async () => {
+macTest('preview hands out the hash an edit starts from; save replaces only that coworker’s file', async () => {
     const opened = await preview(alice, 'docs/notes.md')
     expect(opened.hash).toBe(hashText('# Alice notes'))
     const response = await put(alice, { path: 'docs/notes.md', content: '# Alice edited', baseHash: opened.hash })
@@ -74,7 +77,7 @@ test('preview hands out the hash an edit starts from; save replaces only that co
     expect(await leftovers(join(workspace('engine-alice'), 'docs'))).toEqual([])
 })
 
-test('a stale base hash keeps the newer disk text and returns it with the conflict', async () => {
+macTest('a stale base hash keeps the newer disk text and returns it with the conflict', async () => {
     const opened = await preview(bob, 'docs/notes.md')
     await writeFile(join(workspace('engine-bob'), 'docs/notes.md'), '# Bob by the coworker')
     const response = await put(bob, { path: 'docs/notes.md', content: '# Bob by me', baseHash: opened.hash })
@@ -84,6 +87,26 @@ test('a stale base hash keeps the newer disk text and returns it with the confli
     // Retrying against the version now shown wins.
     expect((await put(bob, { path: 'docs/notes.md', content: '# Bob by me', baseHash: hashText('# Bob by the coworker') })).status).toBe(200)
     expect(await readFile(join(workspace('engine-bob'), 'docs/notes.md'), 'utf8')).toBe('# Bob by me')
+})
+
+test.runIf(process.platform === 'linux')('preserves both versions when Linux cannot confirm that the displaced inode is free', async () => {
+    const path = 'docs/notes.md'
+    const opened = await preview(alice, path)
+    const response = await put(alice, { path, content: '# Alice draft', baseHash: opened.hash })
+    expect(response.status).toBe(409)
+    const body = await response.json()
+    expect(body).toMatchObject({
+        conflict: true,
+        current: { content: '# Alice notes', hash: opened.hash },
+        recovery: { draft: expect.stringMatching(/^docs\/notes\.draft-[a-f0-9]+\.md$/), external: expect.stringMatching(/^docs\/notes\.external-[a-f0-9]+\.md$/) },
+    })
+    const owned = workspace('engine-alice')
+    expect(await readFile(join(owned, path), 'utf8')).toBe('# Alice notes')
+    expect(await readFile(join(owned, body.recovery.draft), 'utf8')).toBe('# Alice draft')
+    expect(await readFile(join(owned, body.recovery.external), 'utf8')).toBe('# Alice notes')
+    expect(await readFile(join(workspace('engine-bob'), path), 'utf8')).toBe('# Bob notes')
+    const visible = (await readdir(join(owned, 'docs'))).filter(name => !name.startsWith('.'))
+    expect(visible.sort()).toEqual(['notes.md', body.recovery.draft.slice(5), body.recovery.external.slice(5)].sort())
 })
 
 test('a change that lands while the save is being written is not overwritten', async () => {
@@ -101,7 +124,7 @@ test('a change that lands while the save is being written is not overwritten', a
     expect(await leftovers(join(workspace('engine-alice'), 'docs'))).toEqual([])
 })
 
-test('a write that fails part way keeps the original and leaves no partial or temp file', async () => {
+macTest('a write that fails part way keeps the original and leaves no partial or temp file', async () => {
     const opened = await preview(alice, 'docs/notes.md')
     hooks.wrapWrite = (target, handle) => !target.includes('.rerun-edit-') ? handle : Object.assign(handle, {
         writeFile: async (data: Uint8Array) => { await handle.write(Buffer.from(data).subarray(0, 3)); throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }) },
@@ -116,7 +139,7 @@ test('a write that fails part way keeps the original and leaves no partial or te
     expect(await readFile(join(workspace('engine-alice'), 'docs/notes.md'), 'utf8')).toBe('# retry')
 })
 
-test('saving keeps the file’s permissions', async () => {
+macTest('saving keeps the file’s permissions', async () => {
     const file = join(workspace('engine-alice'), 'docs/notes.md')
     await chmod(file, 0o600)
     expect((await put(alice, { path: 'docs/notes.md', content: 'x', baseHash: hashText('# Alice notes') })).status).toBe(200)
@@ -177,7 +200,7 @@ test('a save needs the desktop session and same-origin request', async () => {
     expect(await readFile(join(workspace('engine-alice'), 'docs/notes.md'), 'utf8')).toBe('# Alice notes')
 })
 
-test('simultaneous edits on the same base keep one winner and return its version to the loser', async () => {
+macTest('simultaneous edits on the same base keep one winner and return its version to the loser', async () => {
     const path = 'docs/notes.md'
     const prev = await preview(alice, path)
     let entered!: () => void

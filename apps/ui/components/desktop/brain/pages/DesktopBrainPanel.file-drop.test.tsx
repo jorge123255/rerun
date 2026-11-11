@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, type ReactNode } from 'react'
+import { act, createElement, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { SharedFilesTree } from '@/components/brain/useSharedFilesTree'
@@ -8,20 +8,19 @@ import { DesktopBrainPanel } from './DesktopBrainPanel'
 import type { DesktopBrainActions } from './types'
 
 const harness = vi.hoisted(() => {
-    const { createElement } = require('react') as typeof import('react')
     const seen: {
         page: null | { onAcceptFileDrop?: (raw: string) => unknown; onHistory?: () => void }
         newer: null | { onAcceptFileDrop?: (raw: string) => unknown }
         history: null | { onAcceptFileDrop?: (raw: string) => unknown; files?: unknown }
     } = { page: null, newer: null, history: null }
-    const probe = (kind: 'page' | 'newer' | 'history', props: { onAcceptFileDrop?: (raw: string) => unknown; onHistory?: () => void; files?: unknown }) => {
-        seen[kind] = props
-        return createElement('div', { 'data-testid': kind === 'newer' ? 'new-page' : kind },
-            props.onHistory ? createElement('button', { type: 'button', onClick: props.onHistory }, 'Open history') : null,
-        )
-    }
-    return { seen, probe }
+    return { seen }
 })
+function probe(kind: 'page' | 'newer' | 'history', props: { onAcceptFileDrop?: (raw: string) => unknown; onHistory?: () => void; files?: unknown }) {
+    harness.seen[kind] = props
+    return createElement('div', { 'data-testid': kind === 'newer' ? 'new-page' : kind },
+        props.onHistory ? createElement('button', { type: 'button', onClick: props.onHistory }, 'Open history') : null,
+    )
+}
 const drafts = vi.hoisted(() => ({ flush: vi.fn(async () => true) }))
 const shared = vi.hoisted(() => ({
     list: vi.fn(async (path: string) => ({ path, entries: [], truncated: false })),
@@ -34,9 +33,9 @@ vi.mock('@/lib/desktop/data-source', () => ({ desktopDataSource: () => ({ listTa
 vi.mock('@/components/ui/panel-steps', () => ({ PanelSteps: ({ children }: { children: ReactNode }) => <div>{children}</div> }))
 vi.mock('@/components/data/DataBrowser', () => ({ DataBrowser: () => null }))
 vi.mock('@/components/desktop/shared-files/DesktopSharedFilePreview', () => ({ DesktopSharedFilePreview: () => null }))
-vi.mock('./DesktopBrainPage', () => ({ DesktopBrainPage: (props: { onAcceptFileDrop?: (raw: string) => unknown; onHistory: () => void }) => harness.probe('page', props) }))
-vi.mock('./DesktopBrainNewPage', () => ({ DesktopBrainNewPage: (props: { onAcceptFileDrop?: (raw: string) => unknown }) => harness.probe('newer', props) }))
-vi.mock('./DesktopBrainHistory', () => ({ DesktopBrainHistory: (props: { onAcceptFileDrop?: (raw: string) => unknown; files?: unknown }) => harness.probe('history', props) }))
+vi.mock('./DesktopBrainPage', () => ({ DesktopBrainPage: (props: { onAcceptFileDrop?: (raw: string) => unknown; onHistory: () => void }) => probe('page', props) }))
+vi.mock('./DesktopBrainNewPage', () => ({ DesktopBrainNewPage: (props: { onAcceptFileDrop?: (raw: string) => unknown }) => probe('newer', props) }))
+vi.mock('./DesktopBrainHistory', () => ({ DesktopBrainHistory: (props: { onAcceptFileDrop?: (raw: string) => unknown; files?: unknown }) => probe('history', props) }))
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 if (typeof window.matchMedia !== 'function') {

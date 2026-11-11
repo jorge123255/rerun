@@ -13,7 +13,11 @@ import { groupDesktopChats, type DesktopChatHistoryConversation } from '@/lib/de
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let drafts: ReturnType<typeof createDesktopDraftFixture>
 let recent: ReturnType<typeof createDesktopRecentFixture>
-beforeEach(() => { drafts = createDesktopDraftFixture(); recent = createDesktopRecentFixture() })
+beforeEach(() => {
+    drafts = createDesktopDraftFixture()
+    recent = createDesktopRecentFixture()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+})
 
 const createdAt = '2026-01-01T12:00:00.000Z'
 const openTile = (name: string) => act(async () => {
@@ -26,12 +30,13 @@ const inboxOf = (rows: DesktopChatHistoryConversation[]) => ({ items: rows.filte
     id: `pending-${row.id}`, kind: row.id === 'question' ? 'question' : 'approval', agentId: row.agentId, agentName: 'Alice', agentEnabled: true,
     sessionId: row.id, title: row.title, summary: row.pendingQuestion ?? '', requestedAt: row.createdAt, updatedAt: row.updatedAt,
 })), unavailableAgentIds: [], checkedAt: createdAt })
-const click = (label: string) => act(async () => {
+const settle = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+async function click(label: string) {
     const button = [...document.querySelectorAll('button')].find(b => !b.closest('[hidden]') && (b.textContent?.trim() === label || b.getAttribute('aria-label') === label))
     expect(button, `button ${label}`).toBeTruthy()
-    button!.click()
-    await new Promise(resolve => setTimeout(resolve, 100))
-})
+    await act(async () => { button!.click() })
+    await settle(100)
+}
 const enter = (input: HTMLInputElement | HTMLTextAreaElement, value: string) => act(async () => {
     const prototype = input.tagName === 'INPUT' ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype
     Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(input, value)
@@ -39,7 +44,11 @@ const enter = (input: HTMLInputElement | HTMLTextAreaElement, value: string) => 
     input.dispatchEvent(new Event('change', { bubbles: true }))
 })
 
-afterEach(() => { document.body.innerHTML = ''; vi.unstubAllGlobals() })
+afterEach(() => {
+    document.body.innerHTML = ''
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+})
 
 test('groups by engine-enriched activity date while leaving its input unchanged', () => {
     const older = { ...conversation(session('old', 'a', 'Older')), updatedAt: createdAt }
@@ -118,7 +127,8 @@ test('combines the original filters with search and opens the local question or 
         expect(dialog().textContent).toContain('Use the orange heading')
         expect(dialog().textContent).not.toContain('Green routine')
         const approvalRow = [...dialog().querySelectorAll<HTMLElement>('[role="button"]')].find(button => button.textContent?.includes('Orange routine'))!
-        await act(async () => { approvalRow.click(); await new Promise(resolve => setTimeout(resolve, 50)) })
+        await act(async () => { approvalRow.click() })
+        await settle(50)
         expect(select).toHaveBeenCalledExactlyOnceWith('approval')
     } finally { await act(async () => { root.unmount() }) }
 })
@@ -172,7 +182,8 @@ test('a delayed old coworker response cannot replace the newly selected coworker
         await render('alice')
         await click('Conversation history (1)')
         await render('bob')
-        await act(async () => { finishAlice(Response.json(historyOf([session('alice-chat', 'alice', 'Alice only')]))); await new Promise(resolve => setTimeout(resolve, 20)) })
+        await act(async () => { finishAlice(Response.json(historyOf([session('alice-chat', 'alice', 'Alice only')]))) })
+        await settle(20)
         expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Bob only')
         expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain('Alice only')
     } finally { await act(async () => { root.unmount() }) }
@@ -259,7 +270,8 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
         await click('Apples')
         expect(visible().textContent).toContain('Apples answer')
         expect(visible().textContent).not.toContain('Dates answer')
-        await act(async () => { finish(); await new Promise(resolve => setTimeout(resolve, 100)) })
+        await act(async () => { finish() })
+        await settle(100)
         await click('Dates')
         expect(visible().textContent).toContain('Fresh answer')
         await history()
