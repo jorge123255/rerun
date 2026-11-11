@@ -1,7 +1,8 @@
 import { Hono } from 'hono'
-import { getSession, listSessions, sessionBelongsToAgent } from '../../db/repos/sessions.js'
+import { agentExists } from '../../agents/loader.js'
+import { getSession, listDesktopThreadMetadata, listSessions, sessionBelongsToAgent } from '../../db/repos/sessions.js'
 import { listMessages } from '../../db/repos/messages.js'
-import { desktopMcpSignInGuardSchema, desktopMcpSignInSourceResponseSchema } from '@rerun/contracts'
+import { desktopMcpSignInGuardSchema, desktopMcpSignInSourceResponseSchema, desktopThreadMetadataListSchema } from '@rerun/contracts'
 import { readDesktopMcpSignInSource } from '../../desktop/mcp-sign-in/source.js'
 import { desktopSecretRequestGuardSchema, desktopSecretSourceResponseSchema } from '@rerun/contracts'
 import { z } from 'zod'
@@ -30,6 +31,10 @@ sessionRoutes.post('/:sid/mcp-sign-in-source', async c => {
 
 sessionRoutes.get('/', async c => {
     const agentId = c.req.param('id')!
+    if (c.req.query('view') === 'threads') {
+        if (!desktopApp() || !agentExists(agentId)) return c.json({ error: 'Not found' }, 404)
+        return c.json(desktopThreadMetadataListSchema.parse({ threads: await listDesktopThreadMetadata(agentId) }))
+    }
     return c.json({ sessions: await listSessions(agentId) })
 })
 

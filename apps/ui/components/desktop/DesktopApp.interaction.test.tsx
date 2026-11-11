@@ -470,13 +470,22 @@ test('open General picks up a saved sibling without rewriting the active layout'
     const general = { ...base, id: 'general', title: 'General', kind: 'general', firstMessage: null }
     const sibling = { ...base, id: 'sibling', title: 'Existing thread', kind: 'thread', firstMessage: 'Existing marker' }
     const newSibling = { ...base, id: 'new-sibling', title: 'New thread', kind: 'thread', firstMessage: 'Saved on another surface' }
+    const routine = { ...sibling, source: 'schedule', automationName: 'Weekly digest', firstMessage: null }
+    let runStatus = 'running'
+    let waiting = false
     const path = '/api/desktop/agents/researcher/sessions'
     const initial = { sessions: [general, sibling], tabs: { revision: 2, activeIndex: 0, tabs: [{ uid: generalTabUid(coworker.id), id: general.id, title: 'General' }] } }
     let background: Response | undefined
     const fetcher = mockDesktopFetch((url, init) => {
         if (url === settingsUrl) return Response.json(disconnected)
         if (url === path) return Response.json(initial)
-        if (url === path + '?view=threads') return background?.clone() ?? Response.json({ sessions: [general, sibling, newSibling] })
+        if (url === path + '?view=threads') return background?.clone() ?? Response.json({ sessions: [general, { ...routine, runStatus }, newSibling] })
+        if (url === '/api/desktop/board-activity') return Response.json({
+            agents: { [coworker.id]: 'idle' },
+            attention: { items: waiting ? [{ id: 'ask', agentId: coworker.id, agentName: coworker.name, agentEnabled: true,
+                sessionId: sibling.id, title: sibling.title, kind: 'question', summary: 'Synthetic question', updatedAt: base.updatedAt }] : [],
+            checkedAt: base.updatedAt, unavailableAgentIds: [] },
+        })
         if (url === '/api/desktop/sessions/general/messages') return Response.json({ messages: [] })
         if (url.endsWith('/tabs') && init?.method === 'PUT') return Response.json({ tabs: { revision: 3 } })
     })
@@ -495,6 +504,22 @@ test('open General picks up a saved sibling without rewriting the active layout'
         background = undefined
         await tick()
         expect(container.querySelector('[data-thread-row="new-sibling"]')?.textContent ?? '').toContain('Saved on another surface')
+        const branch = () => container.querySelector('[data-thread-row="sibling"]')!
+        expect(branch().textContent).toContain('Scheduled run · Weekly digest')
+        expect(branch().querySelector('[aria-label="Running"]')).not.toBeNull()
+        runStatus = 'error'
+        await tick()
+        expect(branch().querySelector('[aria-label="Running"]')).toBeNull()
+        expect(branch().textContent).toContain('Error')
+        runStatus = 'done'
+        waiting = true
+        await tick()
+        expect(branch().textContent).not.toContain('Error')
+        expect(branch().textContent).toContain('Needs you')
+        expect(container.querySelector('[data-thread-row="new-sibling"]')?.textContent).not.toContain('Needs you')
+        waiting = false
+        await tick()
+        expect(branch().textContent).not.toContain('Needs you')
         expect(fetcher.mock.calls.filter(([url, options]) => url.endsWith('/tabs') && options?.method === 'PUT')).toHaveLength(0)
         await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Close panel"]')!.click())
         const requests = fetcher.mock.calls.filter(([url]) => url === path + '?view=threads').length

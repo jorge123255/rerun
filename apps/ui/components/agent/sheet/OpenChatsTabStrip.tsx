@@ -91,7 +91,7 @@ export function OpenChatsTabStrip({ tabs, activeIndex, onSelect, onClose, onCrea
     )
 }
 
-function StateDot({ state }: { state: TabState }) {
+export function StateDot({ state }: { state: TabState }) {
     if (state === 'quiet') return null
     return (
         <span className="relative flex size-1.5 shrink-0">

@@ -62,7 +62,8 @@ export function adoptGeneralId<T extends DesktopGeneralTab>(state: { tabs: T[]; 
 }
 
 export function threadOpener(thread: { firstMessage?: string | null; source?: string | null; title: string; automationName?: string | null }, originName: string | null): { text: string; generic: boolean } {
-    if (thread.firstMessage) return { text: thread.firstMessage, generic: false }
+    const firstMessage = thread.firstMessage?.trim()
+    if (firstMessage) return { text: firstMessage, generic: false }
     if (thread.source === 'schedule') return { text: `Scheduled run · ${thread.automationName ?? thread.title}`, generic: true }
     if (thread.source === 'trigger') return { text: `Webhook · ${thread.automationName ?? thread.title}`, generic: true }
     if (thread.source === 'agent' || thread.source === 'delegate') return { text: `Asked by ${originName ?? 'another coworker'}`, generic: true }

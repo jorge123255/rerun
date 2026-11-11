@@ -4,15 +4,22 @@ import { Badge, Stripes } from '@rerun/ui/primitives'
 import { ChevronRightIcon, CalendarClock, WebhookIcon } from '@/lib/icons'
 import { threadOpener } from '@/lib/desktop/general-threads'
 import type { DesktopSessionView } from './DesktopApp'
+import { StateDot } from '@/components/agent/sheet/OpenChatsTabStrip'
 import { shortRelativeTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
 const THREAD_STRIPES_INK = 'color-mix(in oklab, var(--foreground) 6%, transparent)'
 
-type ThreadCard = DesktopSessionView & { source?: string | null; automationName?: string | null }
+const BRANCH_TONE = {
+    live: 'border-brand/70',
+    needs: 'border-orange-400/70',
+    error: 'border-red-400/70',
+    done: 'border-border',
+}
 
-export function DesktopThreadBranch({ thread, onOpen }: { thread: ThreadCard; onOpen: () => void }) {
-    const opener = threadOpener(thread, null)
+export function DesktopThreadBranch({ thread, needsYou, onOpen }: { thread: DesktopSessionView; needsYou?: boolean; onOpen: () => void }) {
+    const opener = threadOpener(thread, thread.originAgentName ?? null)
+    const state = thread.runStatus === 'running' ? 'live' : thread.runStatus === 'error' ? 'error' : needsYou ? 'needs' : 'done'
     const automated = thread.source === 'schedule' || thread.source === 'trigger'
     const SourceIcon = thread.source === 'trigger' ? WebhookIcon : CalendarClock
     const when = Number.isFinite(Date.parse(thread.createdAt)) ? shortRelativeTime(thread.createdAt) : ''
@@ -22,12 +29,13 @@ export function DesktopThreadBranch({ thread, onOpen }: { thread: ThreadCard; on
                 <span className="line-clamp-2 pr-0.5 break-words">{opener.text}</span>
             </div>
             <div className="relative w-full pl-7">
-                <span aria-hidden className="absolute -top-2 left-3.5 h-6 w-3 rounded-bl-md border-b border-l border-border" />
-                <button type="button" onClick={onOpen} className="group relative flex h-8 max-w-full items-center gap-2 overflow-hidden rounded-lg border border-border px-2.5 text-left text-sm transition-colors hover:border-foreground/20 [&>:not(:first-child)]:relative">
+                <span aria-hidden className={cn("absolute -top-2 left-3.5 h-6 w-3 rounded-bl-md border-b border-l transition-colors", BRANCH_TONE[state])} />
+                <button type="button" onClick={onOpen} title={thread.automationName && thread.automationName !== thread.title ? thread.automationName : undefined} className="group relative flex h-8 max-w-full items-center gap-2 overflow-hidden rounded-lg border border-border px-2.5 text-left text-sm transition-colors hover:border-foreground/20 [&>:not(:first-child)]:relative">
                     <Stripes fade="right" color={THREAD_STRIPES_INK} band={4} period={8} className="rotate-180 opacity-60 transition-opacity group-hover:opacity-100" />
+                    {state === 'live' && <span role="img" aria-label="Running"><StateDot state="live" /></span>}
                     {automated && <SourceIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
-                    <span className="min-w-0 truncate font-medium">{thread.title}</span>
-                    <Badge size="xs" tone="neutral" glow={false} className="shrink-0">Thread</Badge>
+                    <span className={cn('min-w-0 truncate font-medium', state === 'error' && automated && 'text-destructive')}>{thread.title}</span>
+                    {(state === 'needs' || state === 'error') && <Badge size="xs" tone={state === 'needs' ? 'orange' : 'red'} glow={false} className="shrink-0">{state === 'needs' ? 'Needs you' : 'Error'}</Badge>}
                     {when && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{when}</span>}
                     <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                 </button>

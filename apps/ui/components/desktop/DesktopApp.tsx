@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
 import type { ThemePreference } from '@rerun/ui/theme'
-import { connectionsListSchema, PROVIDER_LABELS, type ConnectionsList } from '@rerun/contracts'
+import { connectionsListSchema, PROVIDER_LABELS, type ConnectionsList, type Run, type SessionSource } from '@rerun/contracts'
 import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import type { SettingsChange } from '@/lib/desktop/settings'
 import { DesktopSettings } from './DesktopSettings'
@@ -41,6 +41,7 @@ import { DesktopNewAgentDialog } from './DesktopNewAgentDialog'
 import type { DesktopCreationIntent } from '@/lib/desktop/new-agent'
 import type { DesktopBoardState } from '@/lib/desktop/spaces'
 import { useBoardActivity } from './useBoardActivity'
+import type { DesktopAttention } from '@/lib/desktop/attention'
 import { DesktopTemplateNavigation } from './templates/DesktopTemplateNavigation'
 import { DesktopControlCenter } from './DesktopControlCenter'
 import { DesktopShortcutsDialog } from './DesktopShortcutsDialog'
@@ -65,7 +66,11 @@ import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
 import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-request'
 
 export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string; position?: GridPosition | null; spaceId?: string; enabled?: boolean }
-export type DesktopSessionView = { id: string; agentId: string; title: string; createdAt: string; updatedAt: string; kind?: 'general' | 'thread'; firstMessage?: string | null }
+export type DesktopSessionView = {
+    id: string; agentId: string; title: string; createdAt: string; updatedAt: string
+    kind?: 'general' | 'thread'; firstMessage?: string | null
+    source?: SessionSource; automationName?: string | null; originAgentName?: string | null; runStatus?: Run['status'] | null
+}
 export type DesktopBootstrap = ConnectionsList & {
     theme: ThemePreference
     profile: { id: number; displayName: string }
@@ -748,7 +753,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                     closePanel()
                                 }
                             }}>
-                            <CoworkerChat onOpenCoworkerChat={openCoworkerChat} key={selectedAgent.id} agent={overview ? { ...selectedAgent, spaceId: overviewBox } : selectedAgent} overview={overview} requested={requestedSession} selected={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
+                            <CoworkerChat attention={boardActivity.attention} onOpenCoworkerChat={openCoworkerChat} key={selectedAgent.id} agent={overview ? { ...selectedAgent, spaceId: overviewBox } : selectedAgent} overview={overview} requested={requestedSession} selected={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
                                 requestedPanel={requestedPanel?.agentId === selectedAgent.id ? requestedPanel : null} onPanelRequestHandled={panelRequestHandled}
                                 onVisibleSession={reportVisibleSession}
                                 onClosePanel={closePanel} modelLabel={modelLabel} connections={providers.connections} onOpenModelSettings={openSettings} />
@@ -852,8 +857,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     )
 }
 
-function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelRequestHandled, selected, modelLabel, connections, onOpenModelSettings, onOpenCoworkerChat, onClosePanel, onVisibleSession }: {
+function CoworkerChat({ agent, attention, overview, requested, requestedPanel, onPanelRequestHandled, selected, modelLabel, connections, onOpenModelSettings, onOpenCoworkerChat, onClosePanel, onVisibleSession }: {
     agent: DesktopAgentView
+    attention: DesktopAttention
     overview?: DesktopConversationOverviewAuthority
     requested: DesktopChatRequest | null
     requestedPanel: DesktopCoworkerPanelRequest | null
@@ -867,6 +873,8 @@ function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelReque
     onClosePanel: () => void
 }) {
     const [sessions, setSessions] = useState<DesktopSessionView[] | null>(null)
+    const needsYouSessions = useMemo(() => new Set(attention.items
+        .filter(item => item.agentId === agent.id && item.kind !== 'info').map(item => item.sessionId)), [agent.id, attention.items])
     const [bootstrap, setBootstrap] = useState<{ layout: DesktopTabLayout | null } | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [checkedRequest, setCheckedRequest] = useState<DesktopChatRequest | null>(null)
@@ -892,6 +900,8 @@ function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelReque
                     return session.id === next.id && session.agentId === next.agentId && session.title === next.title
                         && session.kind === next.kind && session.firstMessage === next.firstMessage
                         && session.createdAt === next.createdAt && session.updatedAt === next.updatedAt
+                        && session.source === next.source && session.automationName === next.automationName
+                        && session.originAgentName === next.originAgentName && session.runStatus === next.runStatus
                 }) ? previous : body.sessions
             })
             if (restoreTabs) setBootstrap({ layout: body.tabs ?? null })
@@ -930,7 +940,7 @@ function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelReque
         {missing && checkedRequest !== requested && !error && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">Opening conversation…</p>}
         {!error && !bootstrap && <p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p>}
         {!bootstrap || !sessions ? dismiss : <DesktopChatTabs onOpenCoworkerChat={onOpenCoworkerChat}
-            agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} sessions={sessions} initialLayout={bootstrap.layout}
+            agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} needsYouSessions={needsYouSessions} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
             refreshSessions={readSessions} refreshThreads={refreshThreads} reload={reload} modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}
     </>

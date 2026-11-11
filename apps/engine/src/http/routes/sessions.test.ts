@@ -60,6 +60,45 @@ describe('GET /agents/:id/sessions', () => {
     })
 })
 
+describe('GET /agents/:id/sessions?view=threads', () => {
+    it('projects only owned branch metadata without returning run errors or the scheduled prompt', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const { startRun, finishRun, failRun } = await import('../../db/repos/runs.js')
+        const { buildScheduledRunMessage } = await import('../../schedules/message.js')
+        try {
+            const routine = await createSession(id, 'schedule: digest', undefined, 'schedule')
+            await appendMessage(id, routine.id, { role: 'user', content: buildScheduledRunMessage({ slug: 'digest', name: 'Weekly & daily', body: 'Private prompt' }) })
+            const run = await startRun(id, routine.id)
+            const child = await createSession(id, 'Called', { originAgentId: 'boss', originSessionId: 'unexposed' }, 'agent')
+            const failed = await startRun(id, child.id)
+            await failRun(id, failed.id, 'Private error')
+            const foreign = await createSession('foreign-thread-owner', 'Foreign')
+
+            async function read() {
+                const response = await app.request(`/agents/${id}/sessions?view=threads`)
+                expect(response.status).toBe(200)
+                return await response.json()
+            }
+
+            let response = await read()
+            expect(response.threads).toEqual(expect.arrayContaining([
+                { id: routine.id, source: 'schedule', originAgentId: null, automationName: 'Weekly & daily', runStatus: 'running' },
+                { id: child.id, source: 'agent', originAgentId: 'boss', automationName: null, runStatus: 'error' },
+            ]))
+            for (const forbidden of [foreign.id, 'Private prompt', 'Private error', 'unexposed']) {
+                expect(JSON.stringify(response)).not.toContain(forbidden)
+            }
+            await finishRun(id, run.id, null, 0)
+            response = await read()
+            expect(response.threads.find((thread: { id: string }) => thread.id === routine.id)?.runStatus).toBe('done')
+            vi.stubEnv('RERUN_DESKTOP_APP', '0')
+            expect((await app.request(`/agents/${id}/sessions?view=threads`)).status).toBe(404)
+        } finally {
+            vi.unstubAllEnvs()
+        }
+    })
+})
+
 describe('GET /agents/:id/sessions/:sid', () => {
     it('returns the session', async () => {
         const session = await createSession(id, 'single')
