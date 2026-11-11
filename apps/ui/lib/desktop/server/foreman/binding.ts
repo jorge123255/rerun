@@ -2,7 +2,7 @@ import { readAnsweredQuestionRecaps } from './answered-question-recap'
 import 'server-only'
 import { createHash } from 'node:crypto'
 import { COMPANY_BRIEF_MODEL_PROVIDERS, type CompanyBriefModelRef, type DesktopForemanBinding, type DesktopForemanChatRef, type DesktopForemanLiveEvent, type DesktopForemanModelRef } from '@rerun/contracts'
-import { EngineRequestError, cancelRun, getRun, getSessionMessages, listRuns } from '@/lib/engine/client'
+import { EngineRequestError, cancelRun, getRun, getSessionMessages } from '@/lib/engine/client'
 import { publicDesktopHistory, transformEngineMessages } from '@/lib/chat/engine-history'
 import { usableConnection } from '../../chat-model'
 import { DesktopHttpError } from '../auth'
@@ -68,11 +68,11 @@ async function createBinding(runtime: DesktopRuntime) {
     }
     const modelAvailable = async (model: DesktopForemanModelRef) => !!usableConnection((await readDesktopProviders(runtime)).connections, model)
     const creation = await createDesktopForemanCreationAuthority(runtime, db)
-    const lookupRun = async (id: string) => {
+    const lookupRun = async (id: string, timeoutMs = 10_000) => {
         const turn = await foremanTurn(db, id)
         if (!turn) return { state: 'absent' as const }
         try {
-            const run = await getRun(engineOf(runtime), 'foreman', id, { signal: AbortSignal.timeout(10_000) })
+            const run = await getRun(engineOf(runtime), 'foreman', id, { signal: AbortSignal.timeout(timeoutMs) })
             if (run.id !== id || run.agentId !== 'foreman' || run.sessionId !== turn.body.sessionId) return { state: 'replaced' as const }
             return { state: 'present' as const, value: { runId: id }, run, turn }
         } catch (error) {
@@ -81,12 +81,14 @@ async function createBinding(runtime: DesktopRuntime) {
         }
     }
     const readContext = async ({ chat, sessionId }: Awaited<ReturnType<typeof ownedForemanChat>>) => {
-        const [run] = await listRuns(engineOf(runtime), 'foreman', { sessionId, status: 'done', limit: 1 }, { signal: AbortSignal.timeout(1500) })
-        if (!run || run.agentId !== 'foreman' || run.sessionId !== sessionId || run.status !== 'done' || !run.finishedAt) return null
-        const turn = (await foremanTurn(db, run.id))?.body
-        if (!turn || turn.sessionId !== sessionId || turn.binding.runId !== run.id || turn.binding.chatId !== chat.chatId
-            || turn.binding.workspaceId !== chat.workspaceId) return null
-        return desktopForemanContext(run, turn.binding.model)
+        const row = (await db.execute({ sql: "SELECT request_id FROM desktop_foreman_turns WHERE chat_id=? AND status IN ('admitted','finished') ORDER BY rowid DESC LIMIT 1",
+            args: [chat.chatId] })).rows[0]
+        if (!row) return null
+        const saved = await lookupRun(String(row.request_id), 1500)
+        if (saved.state !== 'present' || saved.run.status !== 'done' || !saved.run.finishedAt) return null
+        const { binding, sessionId: turnSessionId } = saved.turn.body
+        if (turnSessionId !== sessionId || binding.runId !== saved.run.id || binding.chatId !== chat.chatId || binding.workspaceId !== chat.workspaceId) return null
+        return desktopForemanContext(saved.run, binding.model)
     }
     const live = async (chat: DesktopForemanChatRef) => {
         await ownedForemanChat(db, chat)

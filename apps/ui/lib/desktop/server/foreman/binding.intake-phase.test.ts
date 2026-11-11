@@ -36,9 +36,9 @@ vi.mock('@/lib/engine/client', () => ({
     request: vi.fn(async (_engine, _path, _init, parse) => parse({ question: null })),
     EngineRequestError: class extends Error { constructor(message: string, readonly status: number) { super(message) } },
     getRun: vi.fn(async (_engine: unknown, _agent: string, id: string) => ({ id, agentId: 'foreman', sessionId: 'original-session', status: 'finished' })),
-    getSessionMessages: vi.fn(async () => []), listRuns: vi.fn(async () => []), cancelRun: vi.fn(async () => {}),
+    getSessionMessages: vi.fn(async () => []), cancelRun: vi.fn(async () => {}),
 }))
-import { cancelRun, getRun, getSessionMessages, listRuns, request } from '@/lib/engine/client'
+import { cancelRun, getRun, getSessionMessages, request } from '@/lib/engine/client'
 import { desktopForeman } from './binding'
 import { DESKTOP_FOREMAN_CHAT_SCHEMA, type ForemanTurn } from './chat-store'
 import { FOREMAN_VOICE_SCHEMA_SQL } from '../foreman-voice/store'
@@ -77,7 +77,6 @@ describe('production Foreman intake phase and model brief', () => {
         vi.clearAllMocks()
         vi.mocked(request).mockImplementation(async (_engine, path, _init, parse) => parse(path === '/desktop/templates' ? { templates: [] } : { question: null }))
         vi.mocked(getSessionMessages).mockResolvedValue([])
-        vi.mocked(listRuns).mockResolvedValue([])
         vi.mocked(getRun).mockImplementation(async (_engine, _agent, id) => ({ id, agentId: 'foreman', sessionId: 'original-session', status: 'done' }) as Awaited<ReturnType<typeof getRun>>)
         state.agentCount = 0
         state.creation = {}
@@ -111,21 +110,21 @@ describe('production Foreman intake phase and model brief', () => {
         const run: Run = { id, agentId: 'foreman', sessionId: 'original-session', status: 'done', stepCount: 1, model: model.model,
             usageJson: JSON.stringify(usage), provider: 'codex', startedAt: timestamp, finishedAt: timestamp, error: null,
             triggerSource: 'chat', triggerSlug: null, costMicros: null, inputTokens: 12, outputTokens: 8, cachedInputTokens: null, reasoningTokens: null, totalTokens: 20 }
-        vi.mocked(listRuns).mockResolvedValue([run])
+        vi.mocked(getRun).mockResolvedValue(run)
         expect((await app.state()).context).toEqual({ model, usage, usedTokens: 50, maxTokens: 200, estimated: false })
-        expect(listRuns).toHaveBeenCalledWith(expect.anything(), 'foreman', { sessionId: 'original-session', status: 'done', limit: 1 }, { signal: expect.any(AbortSignal) })
+        expect(getRun).toHaveBeenCalledWith(expect.anything(), 'foreman', id, { signal: expect.any(AbortSignal) })
         for (const mismatched of [{ sessionId: 'foreign-session' }, { id: randomUUID() }, { model: 'another-model' }, { status: 'cancelled' as const }, { usageJson: '{' }]) {
-            vi.mocked(listRuns).mockResolvedValueOnce([{ ...run, ...mismatched }])
+            vi.mocked(getRun).mockResolvedValue({ ...run, ...mismatched })
             expect((await app.state()).context).toBeNull()
         }
         const billed = { totalTokens: 1200 }
-        vi.mocked(listRuns).mockResolvedValueOnce([{ ...run, usageJson: JSON.stringify(billed) }])
+        vi.mocked(getRun).mockResolvedValue({ ...run, usageJson: JSON.stringify(billed) })
         expect((await app.state()).context).toEqual({ model, usage: billed, usedTokens: 1200, maxTokens: 272_000, estimated: true })
         for (const provider of ['claude', 'custom']) {
-            vi.mocked(listRuns).mockResolvedValueOnce([{ ...run, provider, usageJson: JSON.stringify(billed) }])
+            vi.mocked(getRun).mockResolvedValue({ ...run, provider, usageJson: JSON.stringify(billed) })
             expect((await app.state()).context).toBeNull()
         }
-        vi.mocked(listRuns).mockRejectedValueOnce(new Error('Run history temporarily unavailable'))
+        vi.mocked(getRun).mockRejectedValue(new Error('Run history temporarily unavailable'))
         expect(await app.state()).toMatchObject({ context: null, messages: [{ id: 'engine-assistant-fixture' }] })
     })
 
