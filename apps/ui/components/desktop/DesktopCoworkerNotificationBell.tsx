@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { CoworkerBellMenu } from '@/components/notifications/settings/CoworkerBellMenu'
+import { createNotificationSettingsText } from '@/components/notifications/settings/settings-copy'
+import { desktopLocaleTag } from '@/lib/desktop/locale'
+import { useDesktopLocale } from './DesktopLocale'
 import { Button } from '@/components/ui/button'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { DesktopNotificationsDialog } from './DesktopNotificationsDialog'
@@ -21,6 +24,7 @@ export function DesktopCoworkerNotificationBell({ agentId, name, onOpenSettings,
     align?: 'start' | 'end'
     className?: string
 }) {
+    const { language, t } = useDesktopLocale()
     const { prefs, setCoworkerRule, ruleOf, ready, readError, refresh } = useDesktopNotificationPrefs()
     const [scheduledCount, setScheduledCount] = useState(0)
     const [countUnavailable, setCountUnavailable] = useState(false)
@@ -55,6 +59,9 @@ export function DesktopCoworkerNotificationBell({ agentId, name, onOpenSettings,
             name={name}
             rule={ruleOf(agentId)}
             scope={prefs.scope}
+            t={createNotificationSettingsText(desktopLocaleTag(language.locale), language.messages.notificationSettings)}
+            scheduledUnavailableHint={t('notificationUI.scheduledUnavailable')}
+            scheduledCheckFailed={t('notificationUI.scheduledCheckFailed')}
             scheduledCount={scheduledCount}
             scheduledCountUnavailable={countUnavailable}
             disabled={!ready}
@@ -65,7 +72,7 @@ export function DesktopCoworkerNotificationBell({ agentId, name, onOpenSettings,
             modal={modal}
             align={align}
             className={className}
-        />{readError && <Button type="button" size="sm" variant="ghost" onClick={() => void refresh()}>Retry notifications</Button>}</>
+        />{readError && <Button type="button" size="sm" variant="ghost" onClick={() => void refresh()}>{t('notificationUI.retryNotifications')}</Button>}</>
     )
 }
 

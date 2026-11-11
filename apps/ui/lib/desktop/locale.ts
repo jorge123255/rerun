@@ -1,3 +1,4 @@
+import { desktopNotificationMessages } from './i18n/notification-messages'
 import { desktopActionMessages } from './i18n/action-messages'
 import { desktopCreationMessages } from './i18n/creation-messages'
 import { desktopCoworkerMessages } from './i18n/coworker-messages'
@@ -16,10 +17,11 @@ import connections from '@rerun/i18n/messages/en/connections.json'
 import foreman from '@rerun/i18n/messages/en/foreman.json'
 import kit from '@rerun/i18n/messages/en/kit.json'
 import layout from '@rerun/i18n/messages/en/layout.json'
+import notifications from '@rerun/i18n/messages/en/notifications.json'
 import mobileSettings from '@rerun/i18n/messages/en/mobileSettings.json'
 import workspace from '@rerun/i18n/messages/en/workspace.json'
 
-const englishSource = { account, agent, chat, common, connections, dialogs, foreman, kit, layout, mobileSettings, workspace }
+const englishSource = { account, agent, chat, common, connections, dialogs, foreman, kit, layout, mobileSettings, notifications, workspace }
 type DesktopMessageSource = typeof englishSource
 
 // The shared packs already contain the standard controls. These labels are specific to the Mac shell.
@@ -158,6 +160,8 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
     return {
         ...mac[locale],
         actions: desktopActionMessages(locale, source.kit),
+        notificationSettings: source.notifications.settings,
+        notificationUI: desktopNotificationMessages(locale),
         questionForm: source.kit.chat.question,
         question: desktopQuestionMessages(locale),
         controlCenter: {

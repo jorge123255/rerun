@@ -5,12 +5,13 @@ import { cn } from '@/lib/utils'
 import { Badge } from '@rerun/ui/primitives'
 import type { KeyboardEvent } from 'react'
 
+import { englishNotificationSettingsText, type NotificationSettingsText } from './settings-copy'
 import { SCOPE_META } from './scope-meta'
 import { SETTINGS_CARD, SettingsSection } from './SettingsSection'
 
 const RECOMMENDED: NotificationScope = 'mine'
 
-export function ScopeRadioList({ scope, onChange }: { scope: NotificationScope; onChange: (scope: NotificationScope) => void }) {
+export function ScopeRadioList({ scope, onChange, t = englishNotificationSettingsText }: { scope: NotificationScope; onChange: (scope: NotificationScope) => void; t?: NotificationSettingsText }) {
     const moveWithArrows = (event: KeyboardEvent<HTMLDivElement>) => {
         const step = event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1 : event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -1 : 0
         if (!step) return
@@ -21,11 +22,11 @@ export function ScopeRadioList({ scope, onChange }: { scope: NotificationScope; 
     }
 
     return (
-        <SettingsSection title="Notify me about">
-            <div role="radiogroup" aria-label="Notify me about" onKeyDown={moveWithArrows} className={SETTINGS_CARD}>
+        <SettingsSection title={t('scopeTitle')}>
+            <div role="radiogroup" aria-label={t('scopeTitle')} onKeyDown={moveWithArrows} className={SETTINGS_CARD}>
                 {NOTIFICATION_SCOPES.map(option => {
                     const selected = scope === option
-                    const { label, detail, icon: ScopeIcon } = SCOPE_META[option]
+                    const { icon: ScopeIcon } = SCOPE_META[option]
                     return (
                         <button
                             key={option}
@@ -41,14 +42,14 @@ export function ScopeRadioList({ scope, onChange }: { scope: NotificationScope; 
                             <span className="flex min-w-0 flex-col gap-0.5">
                                 <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
                                     <ScopeIcon className="size-4 text-muted-foreground" />
-                                    {label}
+                                    {t(`scopes.${option}.label`)}
                                     {option === RECOMMENDED && (
                                         <Badge size="xs" tone="brand">
-                                            Recommended
+                                            {t('recommended')}
                                         </Badge>
                                     )}
                                 </span>
-                                <span className="text-xs text-muted-foreground">{detail}</span>
+                                <span className="text-xs text-muted-foreground">{t(`scopes.${option}.detail`)}</span>
                             </span>
                         </button>
                     )

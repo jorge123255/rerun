@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { CoworkerRules, type CoworkerPickerProps } from '@/components/notifications/settings/CoworkerRules'
+import { useDesktopLocale } from './DesktopLocale'
+import { desktopLocaleTag } from '@/lib/desktop/locale'
+import { createNotificationSettingsText } from '@/components/notifications/settings/settings-copy'
 import { ScopeRadioList } from '@/components/notifications/settings/ScopeRadioList'
 import { SETTINGS_CARD, SettingsSection, SwitchRow } from '@/components/notifications/settings/SettingsSection'
 import { Button } from '@/components/ui/button'
@@ -21,11 +24,12 @@ type DesktopCoworker = { id: string; name: string }
 // The bell's picker is the coworker combobox upstream; the desktop path avoids the hosted board
 // store and picks from the local roster with the same wording.
 function DesktopCoworkerPicker({ coworkers, exclude, onPick, disabled }: CoworkerPickerProps & { coworkers: readonly DesktopCoworker[]; disabled?: boolean }) {
+    const { t } = useDesktopLocale()
     const available = coworkers.filter(coworker => !exclude.includes(coworker.id))
     return (
         <Select value="" onValueChange={value => { if (value) onPick(value) }}>
-            <SelectTrigger size="sm" className="w-full" aria-label="Choose a coworker" disabled={disabled || available.length === 0}>
-                <SelectValue placeholder="Choose a coworker" />
+            <SelectTrigger size="sm" className="w-full" aria-label={t('notificationUI.choose')} disabled={disabled || available.length === 0}>
+                <SelectValue placeholder={t('notificationUI.choose')} />
             </SelectTrigger>
             <SelectContent>
                 {available.map(coworker => <SelectItem key={coworker.id} value={coworker.id}>{coworker.name}</SelectItem>)}
@@ -35,20 +39,21 @@ function DesktopCoworkerPicker({ coworkers, exclude, onPick, disabled }: Coworke
 }
 
 function DesktopNotificationChannels({ prefs, onChange }: { prefs: NotificationPrefs; onChange: (patch: Partial<Pick<NotificationPrefs, 'toast' | 'sound'>>) => void }) {
+    const { t } = useDesktopLocale()
     const silent = prefs.scope === 'nothing'
     return (
-        <SettingsSection title="How">
+        <SettingsSection title={t('notificationSettings.channels.title')}>
             <div className={SETTINGS_CARD}>
-                <SwitchRow icon={Bell} label="Desktop notification" description="Shows a notification in the app and on your desktop while Rerun is open." checked={prefs.toast} disabled={silent} onChange={toast => onChange({ toast })} />
+                <SwitchRow icon={Bell} label={t('notificationUI.desktop')} description={t('notificationUI.desktopDescription')} checked={prefs.toast} disabled={silent} onChange={toast => onChange({ toast })} />
                 <SwitchRow
                     icon={Volume2}
-                    label="Sound"
-                    description="Only when a coworker needs you or something breaks."
+                    label={t('notificationSettings.channels.sound.label')}
+                    description={t('notificationSettings.channels.sound.description')}
                     checked={prefs.sound}
                     disabled={silent}
                     onChange={sound => onChange({ sound })}
                     extra={
-                        <Button type="button" variant="ghost" size="icon-sm" aria-label="Play notification sound" disabled={silent} onClick={() => playNotificationSound()} className="text-muted-foreground hover:text-foreground">
+                        <Button type="button" variant="ghost" size="icon-sm" aria-label={t('notificationSettings.channels.sound.play')} disabled={silent} onClick={() => playNotificationSound()} className="text-muted-foreground hover:text-foreground">
                             <Play />
                         </Button>
                     }
@@ -61,6 +66,8 @@ function DesktopNotificationChannels({ prefs, onChange }: { prefs: NotificationP
 // Hosted email and cloud push never leave the Mac: the original email rows and the account-emails
 // tab have no local channel to configure, so the settings surface carries nothing for them.
 export function DesktopNotificationSettings({ pinnedCoworkerId }: { pinnedCoworkerId?: string | null }) {
+    const { language, t } = useDesktopLocale()
+    const settingsText = createNotificationSettingsText(desktopLocaleTag(language.locale), language.messages.notificationSettings)
     const { prefs, ready, readError: prefsReadError, saveError: error, update, setCoworkerRule, refresh } = useDesktopNotificationPrefs()
     const [coworkers, setCoworkers] = useState<DesktopCoworker[]>([])
     const [rosterReady, setRosterReady] = useState(false)
@@ -100,21 +107,21 @@ export function DesktopNotificationSettings({ pinnedCoworkerId }: { pinnedCowork
         return (
             <div className="space-y-2">
                 <div role="alert" className="space-y-2 text-sm text-destructive">
-                    <p>Could not load your notification settings. Try again.</p>
-                    <Button type="button" variant="outline" size="sm" onClick={() => { setAttempt(value => value + 1); void refresh() }}>Retry</Button>
+                    <p>{t('notificationUI.loadFailed')}</p>
+                    <Button type="button" variant="outline" size="sm" onClick={() => { setAttempt(value => value + 1); void refresh() }}>{t('actions.retry')}</Button>
                 </div>
             </div>
         )
     }
-    if (!ready || !rosterReady) return <p role="status" className="text-sm text-muted-foreground">Loading your notification settings…</p>
+    if (!ready || !rosterReady) return <p role="status" className="text-sm text-muted-foreground">{t('notificationUI.loading')}</p>
 
-    if (pinnedCoworkerId && !coworkers.some(owner => owner.id === pinnedCoworkerId)) return <p role="alert" className="text-sm text-muted-foreground">This coworker is no longer available.</p>
+    if (pinnedCoworkerId && !coworkers.some(owner => owner.id === pinnedCoworkerId)) return <p role="alert" className="text-sm text-muted-foreground">{t('notificationUI.unavailable')}</p>
 
     return (
         <div className="flex flex-col gap-6">
-            <ScopeRadioList scope={prefs.scope} onChange={scope => update({ scope })} />
+            <ScopeRadioList t={settingsText} scope={prefs.scope} onChange={scope => update({ scope })} />
             <DesktopNotificationChannels prefs={prefs} onChange={update} />
-            <CoworkerRules coworkers={coworkers} rules={prefs.coworkers} pinnedId={pinnedCoworkerId} onChange={setCoworkerRule} detail="Choose a different notification rule for a coworker."
+            <CoworkerRules t={settingsText} coworkers={coworkers} rules={prefs.coworkers} pinnedId={pinnedCoworkerId} onChange={setCoworkerRule} detail={t('notificationUI.ruleDetail')}
                 renderPicker={({ exclude, onPick }) => <DesktopCoworkerPicker coworkers={coworkers} exclude={exclude} onPick={onPick} />} />
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         </div>
