@@ -60,8 +60,8 @@ describe('desktopPlanUsage', () => {
         })
     })
 
-    it('does not project another provider as ChatGPT usage', () => {
-        expect(desktopPlanUsage(connection({ provider: 'claude' }), NOW)).toEqual({
+    it('does not show usage for a provider without subscription readings', () => {
+        expect(desktopPlanUsage(connection({ provider: 'openrouter' }), NOW)).toEqual({
             status: 'unknown', reason: 'unsupported-provider', capturedAt: null, windows: [],
         })
     })
@@ -90,8 +90,14 @@ describe('desktopPlanPillUsage', () => {
         expect(desktopPlanPillUsage(source, Date.parse(FRESH) + 300001)).toBeNull()
     })
 
+    it('uses Claude subscription readings when the desktop runner supplies them', () => {
+        expect(desktopPlanPillUsage(connection({ provider: 'claude' }), NOW)).toMatchObject({
+            inner: 42, outer: 81, label: 'Session 42% used, Weekly 81% used',
+        })
+    })
+
     it('leaves missing and unsupported readings out of the composer', () => {
         expect(desktopPlanPillUsage(connection({ planLimits: null }), NOW)).toBeNull()
-        expect(desktopPlanPillUsage(connection({ provider: 'claude' }), NOW)).toBeNull()
+        expect(desktopPlanPillUsage(connection({ provider: 'openrouter' }), NOW)).toBeNull()
     })
 })
