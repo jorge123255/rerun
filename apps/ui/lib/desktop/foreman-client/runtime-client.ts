@@ -20,6 +20,7 @@ import { DEFAULT_DESKTOP_FOREMAN_PLACEMENT, type DesktopForemanPersistedUi } fro
 
 import { desktopForemanSavedUiSchema } from './ui-schema'
 import { desktopStarterViewSchema, localStarterDecisionSchema, type DesktopLocalStarterDecision } from './starter'
+import { desktopForemanContextSchema } from '../foreman/context'
 export { desktopForemanSavedUiSchema } from './ui-schema'
 const stateSchema = z.strictObject({
     chat: foremanChatRefSchema, sessionId: z.string().min(1).max(128), model: foremanModelRefSchema.nullable(),
@@ -28,6 +29,7 @@ const stateSchema = z.strictObject({
     starter: desktopStarterViewSchema.nullable().optional(),
     answeredQuestions: z.array(desktopAnsweredQuestionRecapSchema).max(2048).optional(),
     retrySnapshot: foremanDigestSchema.optional(),
+    context: desktopForemanContextSchema.nullable().optional(),
     messages: z.array(z.object({ id: z.string().max(256), role: z.enum(['user', 'assistant']), parts: z.array(z.unknown()).max(4096) })).max(5000),
     ui: z.strictObject({ snapshot: desktopForemanSavedUiSchema.nullable(), revision: z.number().int().nonnegative() }),
 }).refine(value => sameForemanChat(value.chat, value.view.chat) && (!value.ui.snapshot || sameForemanChat(value.chat, value.ui.snapshot)), 'Foreman state belongs to another chat.')

@@ -11,6 +11,7 @@ import { DesktopForemanComposer } from './DesktopForemanComposer'
 import { DesktopForemanTabs } from './DesktopForemanTabs'
 import { DesktopPlanCard } from './plan/DesktopPlanCard'
 import { DesktopForemanModelPill } from './DesktopForemanModelPill'
+import { DesktopForemanContext } from './DesktopForemanContext'
 import { buildDesktopModelView } from '@/lib/desktop/chat-model'
 
 vi.mock(import('@rerun/ui/iso-grid'), async original => {
@@ -141,6 +142,20 @@ it('selects a connected model and returns to the translated workspace default wi
     expect(changes).toHaveBeenLastCalledWith(null)
     expect(trigger().textContent).toContain(workspace.model)
     expect(submit).not.toHaveBeenCalled()
+})
+
+it('labels estimated context in French and hides it when the selected model or connection changes', async () => {
+    const model = { connectionId: 'fixture', model: 'test-model' }
+    const effective = { ...model, source: 'workspace' as const, provider: 'codex', name: 'Fixture', label: 'Fixture model', available: true }
+    const context = { model, usage: { inputTokens: 4000 }, usedTokens: 5000, maxTokens: 10_000, estimated: true }
+    await show(<DesktopForemanContext context={context} effective={effective} />)
+    expect(document.querySelector('button')?.getAttribute('aria-label')).toBe('Contexte estimé · 50%')
+    await show(<DesktopForemanContext context={{ ...context, estimated: false }} effective={effective} />)
+    expect(document.querySelector('button')?.getAttribute('aria-label')).toBe(french.messages.foreman.context.usedLabel.replace('{percent}', '50'))
+    await show(<DesktopForemanContext context={context} effective={{ ...effective, connectionId: 'another-account' }} />)
+    expect(document.querySelector('button')).toBeNull()
+    await show(<DesktopForemanContext context={context} effective={{ ...effective, model: 'another-model' }} />)
+    expect(document.querySelector('button')).toBeNull()
 })
 
 it('translates plan review without changing the revision, target text or confirmation gate', async () => {

@@ -12,6 +12,7 @@ const en = {
     confirming: 'Confirming…',
     decisionUncertain: 'Decision acknowledgement is uncertain.',
     modelUnavailable: 'The saved model is unavailable.',
+    contextEstimate: 'Estimated context',
 }
 
 const mac = {
@@ -24,6 +25,7 @@ const mac = {
         confirming: 'Confirmation en cours…',
         decisionUncertain: 'La réception de votre décision n’a pas pu être confirmée.',
         modelUnavailable: 'Le modèle enregistré est indisponible.',
+        contextEstimate: 'Contexte estimé',
     },
     es: {
         conversation: 'Conversación con el Chief of Staff',
@@ -33,6 +35,7 @@ const mac = {
         confirming: 'Confirmando…',
         decisionUncertain: 'No se pudo confirmar la recepción de tu decisión.',
         modelUnavailable: 'El modelo guardado no está disponible.',
+        contextEstimate: 'Contexto estimado',
     },
     pt: {
         conversation: 'Conversa com o Chief of Staff',
@@ -42,6 +45,7 @@ const mac = {
         confirming: 'Confirmando…',
         decisionUncertain: 'Não foi possível confirmar o recebimento da sua decisão.',
         modelUnavailable: 'O modelo salvo não está disponível.',
+        contextEstimate: 'Contexto estimado',
     },
     de: {
         conversation: 'Unterhaltung mit dem Chief of Staff',
@@ -51,6 +55,7 @@ const mac = {
         confirming: 'Wird bestätigt…',
         decisionUncertain: 'Der Eingang deiner Entscheidung konnte nicht bestätigt werden.',
         modelUnavailable: 'Das gespeicherte Modell ist nicht verfügbar.',
+        contextEstimate: 'Geschätzter Kontext',
     },
 } satisfies Record<Locale, typeof en>
 
@@ -82,6 +87,7 @@ export function desktopForemanMessages(locale: Locale, source: Source) {
         placeholder: `${source.foreman.pill.ask}…`,
         ownEntryPlaceholder: source.foreman.ownEntryPlaceholder,
         modelPicker: source.agent.modelSelector,
+        context: source.chat.context,
         name: source.kit.foreman.tabsLabel,
         tabs: { ...source.kit.foreman.tabs, assistant: source.kit.foreman.tabsLabel },
         close: source.kit.close,

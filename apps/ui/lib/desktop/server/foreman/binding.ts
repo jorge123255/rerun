@@ -2,7 +2,7 @@ import { readAnsweredQuestionRecaps } from './answered-question-recap'
 import 'server-only'
 import { createHash } from 'node:crypto'
 import { COMPANY_BRIEF_MODEL_PROVIDERS, type CompanyBriefModelRef, type DesktopForemanBinding, type DesktopForemanChatRef, type DesktopForemanLiveEvent, type DesktopForemanModelRef } from '@rerun/contracts'
-import { EngineRequestError, cancelRun, getRun, getSessionMessages } from '@/lib/engine/client'
+import { EngineRequestError, cancelRun, getRun, getSessionMessages, listRuns } from '@/lib/engine/client'
 import { publicDesktopHistory, transformEngineMessages } from '@/lib/chat/engine-history'
 import { usableConnection } from '../../chat-model'
 import { DesktopHttpError } from '../auth'
@@ -33,6 +33,7 @@ import { createDesktopLocalStarterOffers } from '../foreman-starter/local-offer'
 import { FOREMAN_ALTERNATE_SQL } from '../foreman-alternates/repository'
 import { foremanAlternateSnapshot } from '../foreman-alternates/snapshot'
 import { foremanTranscriptRevision } from '../../../../../engine/src/desktop/foreman/transcript-revision.ts'
+import { desktopForemanContext } from '../../foreman/context'
 
 const KEY = Symbol.for('rerun.desktop.foreman.binding.v1')
 const SHUTDOWN_KEY = Symbol.for('rerun.desktop.foreman.shutdown.v1')
@@ -78,6 +79,14 @@ async function createBinding(runtime: DesktopRuntime) {
             if (error instanceof EngineRequestError && error.status === 404) return { state: 'absent' as const }
             return { state: 'unknown' as const }
         }
+    }
+    const readContext = async ({ chat, sessionId }: Awaited<ReturnType<typeof ownedForemanChat>>) => {
+        const [run] = await listRuns(engineOf(runtime), 'foreman', { sessionId, status: 'done', limit: 1 }, { signal: AbortSignal.timeout(1500) })
+        if (!run || run.agentId !== 'foreman' || run.sessionId !== sessionId || run.status !== 'done' || !run.finishedAt) return null
+        const turn = (await foremanTurn(db, run.id))?.body
+        if (!turn || turn.sessionId !== sessionId || turn.binding.runId !== run.id || turn.binding.chatId !== chat.chatId
+            || turn.binding.workspaceId !== chat.workspaceId) return null
+        return desktopForemanContext(run, turn.binding.model)
     }
     const live = async (chat: DesktopForemanChatRef) => {
         await ownedForemanChat(db, chat)
@@ -333,10 +342,13 @@ async function createBinding(runtime: DesktopRuntime) {
             const saved = pending ? await savedQuestionAttempt(owner.chat) : undefined
             const attempt = saved?.questionId === pending?.view.id && saved
             const history = await hideDesktopForemanIntakeKickoff(runtime, db, owner, publicDesktopHistory(transformEngineMessages(messages)))
-            const answeredQuestions = await readAnsweredQuestionRecaps(db, owner.chat.chatId, history)
+            const [answeredQuestions, context] = await Promise.all([
+                readAnsweredQuestionRecaps(db, owner.chat.chatId, history),
+                !view.live && history.some(message => message.role === 'assistant') ? readContext(owner).catch(() => null) : null,
+            ])
             const retrySnapshot = foremanAlternateSnapshot(runtime, owner.chat, owner.sessionId,
                 foremanTranscriptRevision(owner.chat, owner.sessionId, messages))
-            return { ...owner, view, messages: history, retrySnapshot, answeredQuestions, starter: await starterDecisions.view(owner.chat),
+            return { ...owner, view, messages: history, retrySnapshot, answeredQuestions, context, starter: await starterDecisions.view(owner.chat),
                 question: pending ? { ...pending.view, ...(attempt && { attempt: attempt.action === 'cancel'
                     ? { action: 'cancel' as const, requestId: attempt.requestId }
                     : { action: 'answer' as const, requestId: attempt.requestId, answers: attempt.answers } }) } : null }

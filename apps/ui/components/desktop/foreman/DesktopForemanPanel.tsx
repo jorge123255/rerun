@@ -21,6 +21,7 @@ import { createDesktopForemanIntakeClient } from '@/lib/desktop/foreman-intake/c
 import { DesktopForemanFilePermissions } from './DesktopForemanFilePermissions'
 import { buildDesktopModelView } from '@/lib/desktop/chat-model'
 import { DesktopForemanModelPill } from './DesktopForemanModelPill'
+import { DesktopForemanContext } from './DesktopForemanContext'
 
 export type DesktopForemanCommand = { id: string; chat: DesktopForemanChatRef; text: string; signal: AbortSignal; settle: (error?: Error) => void }
 export type DesktopForemanPanelProps = {
@@ -168,12 +169,15 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         streaming={!!state.view.live} orbState={state.view.live ? 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
         headerActions={<><DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} />{error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}</>}
-        composerTrailing={props.composerTrailing ?? (!props.hidden && props.controlledOpen !== false && view && <DesktopForemanModelPill view={view} saving={modelSaving} onSettings={props.onOpenModelSettings}
-            disabled={!!state.view.live || !!state.question || !!state.ui.snapshot?.pendingSend || !!voice?.busy}
-            onPick={async model => {
-                setModelSaving(true)
-                try { await client.setModel(state.model, model) } finally { setModelSaving(false) }
-            }} />)}
+        composerTrailing={props.composerTrailing ?? (!props.hidden && props.controlledOpen !== false && view && <div className="flex min-w-0 items-center">
+            <DesktopForemanModelPill view={view} saving={modelSaving} onSettings={props.onOpenModelSettings}
+                disabled={!!state.view.live || !!state.question || !!state.ui.snapshot?.pendingSend || !!voice?.busy}
+                onPick={async model => {
+                    setModelSaving(true)
+                    try { await client.setModel(state.model, model) } finally { setModelSaving(false) }
+                }} />
+            <DesktopForemanContext context={state.context} effective={view.effective} />
+        </div>)}
     /></>
 }
 

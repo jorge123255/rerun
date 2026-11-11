@@ -30,7 +30,7 @@ export function DesktopForemanModelPill({ view, disabled, saving, onPick, onSett
     }
     return <Popover open={open} onOpenChange={next => { setOpen(next); if (next) setError(undefined) }}>
         <PopoverTrigger asChild>
-            <Button type="button" variant="ghost" size="sm" disabled={(disabled || saving) && !open} className="max-w-full gap-1 text-xs"
+            <Button type="button" variant="ghost" size="sm" disabled={(disabled || saving) && !open} className="min-w-0 max-w-full gap-1 text-xs"
                 aria-label={`${t('foreman.modelPicker.select')} · ${label}`}>
                 <ProviderIcon provider={effective.provider} className="size-3.5 shrink-0" />
                 <span className="truncate">{label}</span><ChevronDownIcon aria-hidden className="size-3 shrink-0" />
