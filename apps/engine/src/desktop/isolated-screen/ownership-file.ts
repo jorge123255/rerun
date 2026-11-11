@@ -15,7 +15,7 @@ export async function openOwnerFolder(path: string) {
     try {
         const stat = await handle.stat({ bigint: true })
         const uid = process.getuid?.()
-        if (!stat.isDirectory() || uid === undefined || stat.uid !== BigInt(uid) || (stat.mode & 0o022n) !== 0n) {
+        if (!stat.isDirectory() || uid === undefined || stat.uid !== BigInt(uid) || (stat.mode & BigInt(0o022)) !== BigInt(0)) {
             throw new IsolatedScreenRefusal('The screen owner folder could not be verified.', 'conflict')
         }
         const pinned = process.platform === 'darwin' ? `/.vol/${stat.dev}/${stat.ino}` : `/proc/self/fd/${handle.fd}`
