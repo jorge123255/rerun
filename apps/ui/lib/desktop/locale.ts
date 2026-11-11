@@ -7,6 +7,7 @@ import { desktopGettingStartedMessages } from './i18n/getting-started-messages'
 import { desktopRoutineMessages } from './i18n/routine-messages'
 import { desktopQuestionMessages } from './i18n/question-messages'
 import { desktopThreadHistoryCopy } from './i18n/thread-history-messages'
+import { desktopControlCenterDetails } from './i18n/control-center-messages'
 import dialogs from '@rerun/i18n/messages/en/dialogs.json'
 import type { Locale } from '@rerun/i18n'
 import { createTranslator } from 'use-intl/core'
@@ -204,6 +205,8 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         controlCenter: {
             ...source.layout.controlCenter,
             ...desktopControlCenterCopy[locale],
+            details: desktopControlCenterDetails[locale],
+            coworkerTabs: source.agent.agentTabs,
             localCommands: {
                 team_board: mac[locale].board,
                 getting_started: source.layout.menu.gettingStarted,
