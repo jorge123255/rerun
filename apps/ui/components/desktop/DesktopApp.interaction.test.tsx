@@ -108,6 +108,43 @@ test('the open board follows sign-in, default provider changes, and sign-out', a
     }
 })
 
+test('the native Settings menu and the keyboard shortcut share the desktop admission guard', async () => {
+    const { cancelDraftShutdown, freezeDesktopAdmissions } = await import('@/lib/desktop/draft-writes')
+    const desktopWindow = window as Window & { desktopApp?: { onOpenSettings(listener: () => void): () => void } }
+    const previous = desktopWindow.desktopApp
+    const listeners = new Set<() => void>()
+    desktopWindow.desktopApp = { onOpenSettings(listener) {
+        listeners.add(listener)
+        return () => { listeners.delete(listener) }
+    } }
+    const container = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(container)
+    mockDesktopFetch(url => url === settingsUrl ? Response.json(disconnected) : undefined)
+    const settingsNav = () => container.querySelector('nav[aria-label="Settings sections"]')
+    const menu = () => { for (const listener of listeners) listener() }
+    const shortcut = () => window.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true }))
+    try {
+        await act(async () => { root.render(<DesktopApp initialData={{ ...disconnected, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
+        expect(listeners.size).toBe(1)
+        freezeDesktopAdmissions()
+        await act(async () => { menu(); expect(shortcut()).toBe(true) })
+        expect(settingsNav()).toBeNull()
+        cancelDraftShutdown()
+        await act(async () => { menu() })
+        expect(settingsNav()).not.toBeNull()
+        const back = [...container.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Team board')!
+        await act(async () => { back.click() })
+        expect(settingsNav()).toBeNull()
+        await act(async () => { expect(shortcut()).toBe(false) })
+        expect(settingsNav()).not.toBeNull()
+    } finally {
+        cancelDraftShutdown()
+        await act(async () => { root.unmount() })
+        desktopWindow.desktopApp = previous
+    }
+    expect(listeners.size).toBe(0)
+})
+
 test('a reopened workspace can replace a saved key and recover after a failed save', async () => {
     const container = document.createElement('div')
     document.body.append(container)

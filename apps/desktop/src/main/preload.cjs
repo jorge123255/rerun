@@ -73,6 +73,12 @@ contextBridge.exposeInMainWorld('desktopApp', {
             ipcRenderer.send('desktop:drafts-unready', { registrationId: current.registrationId })
         }
     },
+    onOpenSettings: listener => {
+        if (typeof listener !== 'function') throw new TypeError('Expected a Settings listener')
+        const handler = () => listener()
+        ipcRenderer.on('desktop:open-settings', handler)
+        return () => ipcRenderer.removeListener('desktop:open-settings', handler)
+    },
     onQuitCancelled: listener => {
         if (typeof listener !== 'function') throw new TypeError('Expected a quit-cancelled listener')
         const handler = () => listener()

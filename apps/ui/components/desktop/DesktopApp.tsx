@@ -238,11 +238,20 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [templateToReview, setTemplateToReview] = useState<DesktopTemplateIdentity | null>(null)
     const templatesActive = templatesOpen || templateFlowActive
     useEffect(() => {
-        const openSettings = (event: KeyboardEvent) => {
-            if (event.metaKey && event.key === ',' && creationAdmission.current.settingsAllowed && !workspaceDialogActive && !templatesActive && !shortcutsOpen && !helpOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !workspaceSettings && !boardInteraction && !boardState.saving && !themeSavingRef.current && !isDesktopQuitting()) { event.preventDefault(); setSettings(true) }
+        const openFromShortcut = () => {
+            if (!creationAdmission.current.settingsAllowed || workspaceDialogActive || templatesActive || shortcutsOpen || helpOpen
+                || notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || workspaceSettings || boardInteraction
+                || boardState.saving || themeSavingRef.current || isDesktopQuitting()) return false
+            setSettings(true)
+            return true
         }
-        window.addEventListener('keydown', openSettings)
-        return () => window.removeEventListener('keydown', openSettings)
+        const keydown = (event: KeyboardEvent) => {
+            if (event.metaKey && event.key === ',' && openFromShortcut()) event.preventDefault()
+        }
+        const bridge = (window as Window & { desktopApp?: { onOpenSettings?: (listener: () => void) => () => void } }).desktopApp
+        const unsubscribe = bridge?.onOpenSettings?.(openFromShortcut)
+        window.addEventListener('keydown', keydown)
+        return () => { unsubscribe?.(); window.removeEventListener('keydown', keydown) }
     }, [workspaceDialogActive, templatesActive, workspaceSettings, shortcutsOpen, helpOpen, notificationsTarget, sharedDataOpen, sharedFilesOpen, brainOpen, boardInteraction, boardState.saving])
     const [agents, setAgents] = useState(initialData.agents)
     const boardActivity = useBoardActivity(agents.map(agent => agent.id))

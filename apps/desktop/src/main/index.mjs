@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, session } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, safeStorage, shell, session } from 'electron'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { mkdir } from 'node:fs/promises'
@@ -16,6 +16,7 @@ import { createRemoteMachineIpc } from './remote-machines/ipc.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
 import { createDesktopResultFileSave } from './result-files.mjs'
 import { handleFindInPage } from './find-in-page.mjs'
+import { installMacApplicationMenu } from './application-menu.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
@@ -151,6 +152,12 @@ function resumeAfterCancelledQuit() {
 }
 
 async function launch() {
+    if (process.platform === 'darwin') {
+        installMacApplicationMenu({
+            Menu, appName: app.name, isDesktopPage,
+            settingsWindow: () => !quitting && !transitioning && runtimeScope() && draftQuit.ready ? window : null,
+        })
+    }
     const dataRoot = resolve(app.getPath('appData'), 'Rerun Desktop Preview')
     await mkdir(dataRoot, { recursive: true, mode: 0o700 })
     app.setPath('userData', dataRoot)
@@ -245,6 +252,7 @@ async function launch() {
     const identity = await loadIdentity(dataRoot, { encrypt: value => safeStorage.encryptString(value), decrypt: value => safeStorage.decryptString(value) })
     const resources = app.isPackaged ? process.resourcesPath : resolve(directory, '../../resources')
     const bundle = await loadBundle(resources)
+    if (process.platform === 'darwin') app.setAboutPanelOptions({ version: bundle.buildId })
     supervisor = new RuntimeSupervisor({ bundle, root: dataRoot, identity })
     remoteInstallId = identity.installId
     remoteMachines = createNativeRemoteMachines({ dataRoot, installId: identity.installId, safeStorage,
