@@ -9,7 +9,7 @@ process.env.RERUN_DESKTOP_APP = '1'
 const { getSystemDb, closeSystemDb } = await import('../../db/systemDb.js')
 const { agentDir } = await import('../../config/paths.js')
 const { reserveDesktopQueuedTurn, getDesktopQueuedTurn } = await import('../../db/repos/desktop-queued-turns.js')
-const { appendMessage, listMessages } = await import('../../db/repos/messages.js')
+const { appendMessage, listDesktopForemanMessages, listMessages } = await import('../../db/repos/messages.js')
 const { cancelRun, failRun, finishRun, getRun } = await import('../../db/repos/runs.js')
 const { getSession } = await import('../../db/repos/sessions.js')
 const { readForemanReplySource } = await import('../../db/repos/foreman-reply-sources.js')
@@ -63,6 +63,7 @@ test('identical replies in one chat resolve to their own admitted turn after reo
     const firstReply = await saveReply(first, firstUser.id, 'Same response')
     const nextReply = await saveReply(next, nextUser.id, 'Same response')
     const secondWrite = await saveReply(first, firstUser.id, 'Same response')
+    const legacy = await appendMessage(id, first.sessionId, { role: 'user', content: first.message })
     const { client } = await getSystemDb(id)
     await client.execute({ sql: "UPDATE messages SET created_at = 'same' WHERE session_id = ?", args: [first.sessionId] })
     expect(await readForemanReplySource(replyTarget(first, firstReply.id))).toBeNull()
@@ -70,6 +71,11 @@ test('identical replies in one chat resolve to their own admitted turn after reo
     await finishRun(id, next.runId, null, 1)
     closeSystemDb(id)
     expect(await getDesktopQueuedTurn(id, first)).toBe(true)
+    const prompts = new Map((await listDesktopForemanMessages(first.sessionId)).map(row => [row.id, row.foremanRunId]))
+    expect(prompts.get(firstUser.id)).toBe(first.runId)
+    expect(prompts.get(nextUser.id)).toBe(next.runId)
+    expect(prompts.get(legacy.id)).toBeNull()
+    expect(prompts.get(firstReply.id)).toBeNull()
     for (const [input, reply, user] of [[first, firstReply, firstUser], [next, nextReply, nextUser]] as const) {
         const target = replyTarget(input, reply.id)
         expect(await readForemanReplySource(target)).toEqual({ ...target, sourceRunId: input.runId,
