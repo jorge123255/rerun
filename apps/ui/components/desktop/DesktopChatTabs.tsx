@@ -1,5 +1,6 @@
 'use client'
 
+import type { ConnectionSummary } from '@rerun/contracts'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { OpenChatsTabStrip } from '@/components/agent/sheet/OpenChatsTabStrip'
 import { CloseRunningTabDialog } from '@/components/dialogs/CloseRunningTabDialog'
@@ -32,6 +33,7 @@ type Props = {
     onClosePanel: () => void
     onOpenModelSettings: () => void
     modelLabel?: string
+    connections?: ConnectionSummary[]
     overview?: DesktopConversationOverviewAuthority
 }
 
@@ -49,7 +51,7 @@ function initialTabs(agentId: string, layout: DesktopTabLayout | null, sessions:
     return id && session ? openSessionTab(pinned, id, session.title) : pinned
 }
 
-export function DesktopChatTabs({ agent, sessions, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, reload, onOpenCoworkerChat, onClosePanel, modelLabel, onOpenModelSettings, overview }: Props) {
+export function DesktopChatTabs({ agent, sessions, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, reload, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: Props) {
     const [layout, setLayout] = useState(() => initialTabs(agent.id, initialLayout, sessions, requested))
     const [rejectedRequest, setRejectedRequest] = useState<DesktopChatRequest | null>(() => {
         const pinned = initialTabs(agent.id, initialLayout, sessions, requested)
@@ -337,7 +339,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
                     }}
                     onChatSession={(id, sourceDraft) => bindSession(tab.uid, id, sourceDraft)}
                     onOpenCoworkerChat={onOpenCoworkerChat}
-                    modelLabel={modelLabel} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
+                    modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
                     renderHistory={(_busy, control) => <DesktopChatHistory control={control} agentId={agent.id} count={sessions.length} selectedId={tab.id} busy={false} onSelect={id => open(id, sessions.find(s => s.id === id)?.title ?? 'Conversation')} />}
                     renderRunHistory={control => <DesktopRunHistory agent={agent} dialogControl={control} />} />
             </div>

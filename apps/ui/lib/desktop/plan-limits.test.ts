@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { PlanLimitWindow } from '@rerun/contracts'
 import type { BoxConnection } from '@/lib/engine/types'
-import { desktopPlanUsage } from './plan-limits'
+import { desktopPlanPillUsage, desktopPlanUsage } from './plan-limits'
 
 const NOW = Date.parse('2026-11-09T12:00:00.000Z')
 const FRESH = '2026-11-09T11:58:00.000Z'
@@ -71,5 +71,27 @@ describe('desktopPlanUsage', () => {
         const high = { ...weekly, kind: 'model' as const, label: 'GPT-5', usedPercent: 93 }
         expect(desktopPlanUsage(connection({ planLimits: { windows: [low, session, high, weekly], capturedAt: FRESH } }), NOW).windows)
             .toEqual([session, weekly, high])
+    })
+})
+
+describe('desktopPlanPillUsage', () => {
+    it('shows session inside the tightest longer window with names and percentages', () => {
+        const perModel = { ...weekly, kind: 'model' as const, label: 'GPT-5', usedPercent: 93 }
+        expect(desktopPlanPillUsage(connection({ planLimits: { windows: [session, weekly, perModel], capturedAt: FRESH } }), NOW)).toMatchObject({
+            inner: 42, outer: 93, label: 'Session 42% used, GPT-5 weekly 93% used', windows: [session, weekly, perModel],
+        })
+    })
+
+    it('uses a single ring and expires at the first reset or reading deadline', () => {
+        const resetting = { ...weekly, resetsAt: new Date(NOW + 2000).toISOString() }
+        const source = connection({ planLimits: { windows: [resetting], capturedAt: FRESH } })
+        expect(desktopPlanPillUsage(source, NOW)).toMatchObject({ inner: 81, outer: null, nextChangeAt: NOW + 2000 })
+        expect(desktopPlanPillUsage(source, NOW + 2000)).toMatchObject({ inner: 0, nextChangeAt: Date.parse(FRESH) + 300001 })
+        expect(desktopPlanPillUsage(source, Date.parse(FRESH) + 300001)).toBeNull()
+    })
+
+    it('leaves missing and unsupported readings out of the composer', () => {
+        expect(desktopPlanPillUsage(connection({ planLimits: null }), NOW)).toBeNull()
+        expect(desktopPlanPillUsage(connection({ provider: 'claude' }), NOW)).toBeNull()
     })
 })

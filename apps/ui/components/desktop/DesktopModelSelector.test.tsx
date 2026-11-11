@@ -27,7 +27,7 @@ async function click(label: string) {
     expect(target, label).toBeTruthy()
     await act(async () => { target!.click() })
 }
-afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals() })
+afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); vi.useRealTimers() })
 
 test('a click changes one chat, a star pins the coworker, and workspace default clears only that pin', async () => {
     coworker = null
@@ -166,4 +166,54 @@ test('changing the model keeps the typed draft of an already open chat', async (
     expect(patches.at(-1)).toMatchObject({ action: 'conversation', sessionId: 'open', model: 'model-chat' })
     expect(composer.value).toBe('Keep this draft')
     expect(container.textContent).toContain('Saved answer')
+})
+
+test('the usage rings follow the exact chat connection, update with the latest snapshot, and expire', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    vi.setSystemTime(new Date('2026-11-11T12:00:00.000Z'))
+    const capturedAt = new Date().toISOString()
+    const codex: ConnectionSummary = {
+        ...local, id: 'codex', provider: 'codex', name: 'ChatGPT', models: ['model-chatgpt'],
+        planLimits: { capturedAt, windows: [
+            { kind: 'session', label: null, usedPercent: 26, resetsAt: null },
+            { kind: 'weekly', label: null, usedPercent: 81, resetsAt: null },
+        ] },
+    }
+    let saved: DesktopModelPick | null = null
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+        if (init?.method === 'PATCH') {
+            const { connectionId, model } = JSON.parse(String(init.body))
+            saved = { connectionId, model }
+        }
+        return Response.json(buildDesktopModelView({
+            connections: [local, codex], workspace: { connectionId: codex.id, model: codex.models[0] }, coworker: null, conversation: saved,
+        }))
+    }))
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    const render = (connection: ConnectionSummary) => act(async () => root.render(
+        <DesktopModelSelector agentId="alice" sessionId="open" connections={[local, connection]} />,
+    ))
+    const usageRing = () => container.querySelector('[data-slot="model-usage-ring"]')
+    const usageLabel = () => button('ChatGPT · model-chatgpt')?.getAttribute('aria-label')
+    await render(codex)
+    expect(usageRing()?.querySelectorAll('circle')).toHaveLength(4)
+    expect(usageLabel()).toContain('Session 26% used, Weekly 81% used')
+    await click('ChatGPT · model-chatgpt')
+    await click('model-chat')
+    expect(button('Local · model-chat')?.getAttribute('aria-label')).not.toContain('used')
+    expect(usageRing()).toBeNull()
+    await click('model-chatgpt')
+    expect(usageLabel()).toContain('Session 26% used')
+    await render({ ...codex, planLimits: { capturedAt, windows: [{ kind: 'session', label: null, usedPercent: 49, resetsAt: null }] } })
+    expect(usageRing()?.querySelectorAll('circle')).toHaveLength(2)
+    expect(usageLabel()).toContain('Session 49% used')
+    await render({ ...codex, connected: false })
+    expect(usageRing()).toBeNull()
+    await render(codex)
+    expect(usageRing()).not.toBeNull()
+    await act(async () => { await vi.advanceTimersByTimeAsync(300001) })
+    expect(usageRing()).toBeNull()
+    expect(usageLabel()).not.toContain('used')
 })

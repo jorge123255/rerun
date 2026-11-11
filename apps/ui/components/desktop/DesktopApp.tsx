@@ -751,7 +751,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                             <CoworkerChat onOpenCoworkerChat={openCoworkerChat} key={selectedAgent.id} agent={overview ? { ...selectedAgent, spaceId: overviewBox } : selectedAgent} overview={overview} requested={requestedSession} selected={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
                                 requestedPanel={requestedPanel?.agentId === selectedAgent.id ? requestedPanel : null} onPanelRequestHandled={panelRequestHandled}
                                 onVisibleSession={reportVisibleSession}
-                                onClosePanel={closePanel} modelLabel={modelLabel} onOpenModelSettings={openSettings} />
+                                onClosePanel={closePanel} modelLabel={modelLabel} connections={providers.connections} onOpenModelSettings={openSettings} />
                         </section>
                     </SidePanel>
                 </div>}
@@ -852,7 +852,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     )
 }
 
-function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelRequestHandled, selected, modelLabel, onOpenModelSettings, onOpenCoworkerChat, onClosePanel, onVisibleSession }: {
+function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelRequestHandled, selected, modelLabel, connections, onOpenModelSettings, onOpenCoworkerChat, onClosePanel, onVisibleSession }: {
     agent: DesktopAgentView
     overview?: DesktopConversationOverviewAuthority
     requested: DesktopChatRequest | null
@@ -861,6 +861,7 @@ function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelReque
     selected: boolean
     onVisibleSession?: (agentId: string, sessionId: string | null) => void
     modelLabel?: string
+    connections: ConnectionsList['connections']
     onOpenModelSettings: () => void
     onOpenCoworkerChat: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel: () => void
@@ -917,6 +918,6 @@ function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelReque
         {!bootstrap || !sessions ? dismiss : <DesktopChatTabs onOpenCoworkerChat={onOpenCoworkerChat}
             agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
-            refreshSessions={readSessions} reload={reload} modelLabel={modelLabel} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}
+            refreshSessions={readSessions} reload={reload} modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}
     </>
 }
