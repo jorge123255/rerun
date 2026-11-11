@@ -88,6 +88,20 @@ export async function readDesktopQuestion(runtime: DesktopRuntime, sessionId: st
     } }
 }
 
+export async function requireDesktopQuestionForTranscription(runtime: DesktopRuntime, sessionId: string, questionId: string, signal: AbortSignal) {
+    signal.throwIfAborted()
+    const target = await readDesktopHumanRequestTarget(runtime, sessionId)
+    const unavailable = () => new DesktopHttpError(409, 'This question is no longer available for a voice answer.')
+    if (!target.agent.enabled) throw unavailable()
+    const pending = await pendingQuestion(runtime, target, { signal })
+    if (!pending || identity(target, pending) !== questionId || await byQuestion(target.db, sessionId, questionId)) throw unavailable()
+    const current = await readDesktopHumanRequestTarget(runtime, sessionId)
+    signal.throwIfAborted()
+    if (!current.agent.enabled || current.agent.id !== target.agent.id || current.agent.engineAgentId !== target.agent.engineAgentId ||
+        current.session.engineSessionId !== target.session.engineSessionId) throw unavailable()
+    return current
+}
+
 function identified(response: Response, receipt: Receipt) {
     response.headers.set('x-question-id', receipt.questionId)
     return response

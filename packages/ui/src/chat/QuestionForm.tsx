@@ -3,9 +3,9 @@
 import { Button, ScrollFade } from '../primitives'
 import { BorderBeam } from '../BorderBeam'
 import { cn } from '../cn'
-import { ArrowRight, PaperclipIcon, X } from '../icons'
+import { ArrowRight, Check, MicIcon, PaperclipIcon, X } from '../icons'
 import { AnimatePresence, motion } from 'motion/react'
-import { useImperativeHandle, useRef, useState, type ComponentProps, type ReactNode, type Ref, type RefObject } from 'react'
+import { useImperativeHandle, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode, type Ref, type RefObject } from 'react'
 import { useForm } from 'react-hook-form'
 import type { QuestionItem } from '@rerun/contracts'
 import { CustomOptionRow, OptionRow } from './OptionRow'
@@ -19,9 +19,20 @@ export type QuestionAttachments = {
     onPick: (questionIndex: number, files: File[]) => void
     onClear: (questionIndex: number) => void
     count: (questionIndex: number) => number
-    // Rendered inline, between the answer input and the attach button.
+    // Rendered beside the answer input.
     render: (questionIndex: number) => ReactNode
     accept?: string
+}
+
+export type QuestionVoiceStatus = 'idle' | 'starting' | 'recording' | 'transcribing'
+
+// The host records and transcribes. The form owns where the words go.
+export type QuestionVoice = {
+    status: QuestionVoiceStatus
+    start: (deliver: (transcript: string) => void) => void
+    finish: () => void
+    discard: () => void
+    render: () => ReactNode
 }
 
 export type QuestionFormHandle = {
@@ -34,6 +45,9 @@ const DEFAULT_LABELS = {
     somethingElse: 'Something else',
     attachFiles: 'Attach files',
     dropFiles: 'Drop files to attach them',
+    record: 'Answer with your voice',
+    useRecording: 'Use this recording',
+    discardRecording: 'Discard the recording',
     selectAll: 'Select all that apply',
     dismiss: 'Dismiss questions',
     skip: 'Skip',
@@ -51,6 +65,7 @@ export type QuestionFormProps = {
     disabled?: boolean
     renderText?: (text: string) => ReactNode
     attachments?: QuestionAttachments
+    voice?: QuestionVoice
     // Rendered in the conversation's own scroll rather than pinned above the composer: no dock
     // margin, and no autofocus, which would yank the thread down to the block.
     inline?: boolean
@@ -63,7 +78,7 @@ type QuestionAnswer = { selected: string[]; custom: string }
 
 const EMPTY_ANSWER: QuestionAnswer = { selected: [], custom: '' }
 
-export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, renderText = text => text, attachments, inline, className, textareaRef, textareaProps, labels = DEFAULT_LABELS }: QuestionFormProps) {
+export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, renderText = text => text, attachments, voice, inline, className, textareaRef, textareaProps, labels = DEFAULT_LABELS }: QuestionFormProps) {
     const form = useForm<Record<string, QuestionAnswer>>({ defaultValues: {} })
     const answers = form.watch()
     const [customOpen, setCustomOpen] = useState<Record<number, boolean>>({})
@@ -71,6 +86,11 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
     const [current, setCurrent] = useState(0)
     const [dragging, setDragging] = useState(false)
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const voiceDelivery = useRef<object | null>(null)
+    useLayoutEffect(() => {
+        if (disabled) voiceDelivery.current = null
+        return () => { voiceDelivery.current = null }
+    }, [disabled])
     // The state above only drives the disabled styling. Answering the agent twice starts two runs
     // on the same conversation, so the latch that guards it has to be a ref: two callbacks fired
     // from the same render both read the same stale `submitted`.
@@ -86,7 +106,8 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
         setSubmitted(false)
     }
 
-    const locked = disabled || submitted
+    const recording = !!voice && voice.status !== 'idle'
+    const locked = disabled || submitted || recording
     const last = questions.length - 1
 
     const answerAt = (i: number, source: Record<string, QuestionAnswer> = answers): QuestionAnswer => source[String(i)] ?? EMPTY_ANSWER
@@ -134,10 +155,25 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
         setAnswer(i, { ...answerAt(i), custom })
     }
 
+    const startVoice = (i: number) => {
+        if (locked || !voice) return
+        if (questions[i].options.length > 0) openCustom(i)
+        const delivery = {}
+        voiceDelivery.current = delivery
+        voice.start(transcript => {
+            if (voiceDelivery.current !== delivery || submittedRef.current) return
+            voiceDelivery.current = null
+            const words = transcript.trim()
+            if (!words) return
+            const answer = answerAt(i, form.getValues())
+            setAnswer(i, { ...answer, custom: [answer.custom.trim(), words].filter(Boolean).join(' ') })
+        })
+    }
+
     useImperativeHandle(ref, () => ({ sync: text => setCustom(current, text) }))
 
     const submit = async () => {
-        if (!claimSubmit()) return
+        if (locked || !claimSubmit()) return
         const final = form.getValues()
         try {
             await onSubmit(questions.map((q, i) => ({ question: q.question, answers: valuesAt(i, final) })))
@@ -147,12 +183,12 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
     }
 
     const cancel = () => {
-        if (!claimSubmit()) return
+        if (locked || !claimSubmit()) return
         onCancel?.()
     }
 
     const advance = () => {
-        if (disabled || submittedRef.current) return
+        if (locked || submittedRef.current) return
         if (current < last) setCurrent(c => c + 1)
         else void submit()
     }
@@ -172,7 +208,20 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
     const freeText = q.options.length === 0
     const multi = isMultiple(current)
 
-    const answerInput = (
+    const answerInput = recording && voice ? (
+        <div className="flex min-w-0 flex-1 items-center gap-2" onClick={e => e.stopPropagation()}>
+            {voice.render()}
+            <Button type="button" size="icon-sm" variant="ghost" disabled={disabled || voice.status === 'transcribing'}
+                onClick={() => { voiceDelivery.current = null; voice.discard() }}
+                aria-label={labels.discardRecording} data-hitl="record-discard" className="shrink-0 text-muted-foreground">
+                <X className="size-4" />
+            </Button>
+            <Button type="button" size="icon-sm" disabled={disabled || voice.status !== 'recording'} onClick={voice.finish}
+                aria-label={labels.useRecording} data-hitl="record-stop" className="shrink-0">
+                <Check className="size-4" />
+            </Button>
+        </div>
+    ) : (
         <>
             <textarea
                 ref={textareaRef}
@@ -205,23 +254,6 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
                 className="field-sizing-content max-h-40 min-h-7 flex-1 resize-none bg-transparent py-1 text-sm text-foreground outline-none placeholder:text-muted-foreground"
             />
             {attachments?.render(current)}
-            {attachments && (
-                <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="ghost"
-                    disabled={locked}
-                    onClick={e => {
-                        e.stopPropagation()
-                        fileInputRef.current?.click()
-                    }}
-                    aria-label={labels.attachFiles}
-                    data-hitl="attach"
-                    className="shrink-0 text-muted-foreground"
-                >
-                    <PaperclipIcon className="size-4" />
-                </Button>
-            )}
         </>
     )
 
@@ -325,6 +357,18 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
                     <div />
                 )}
                 <div className="flex items-center gap-2">
+                    {(attachments || voice) && <div className="flex items-center">
+                        {attachments && <Button type="button" size="icon-sm" variant="ghost" disabled={locked}
+                            onClick={e => { e.stopPropagation(); fileInputRef.current?.click() }}
+                            aria-label={labels.attachFiles} data-hitl="attach" className="shrink-0 text-muted-foreground">
+                            <PaperclipIcon className="size-4" />
+                        </Button>}
+                        {voice && <Button type="button" size="icon-sm" variant="ghost" disabled={locked}
+                            onClick={e => { e.stopPropagation(); startVoice(current) }}
+                            aria-label={labels.record} data-hitl="record" className="shrink-0 text-muted-foreground">
+                            <MicIcon className="size-4" />
+                        </Button>}
+                    </div>}
                     <Button type="button" size="sm" variant="outline" disabled={locked} onClick={skip} data-hitl="skip">
                         {labels.skip}
                     </Button>

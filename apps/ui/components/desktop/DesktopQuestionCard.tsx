@@ -4,15 +4,17 @@ import { QuestionForm } from '@rerun/ui/chat'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useDesktopLocale } from './DesktopLocale'
+import { useDesktopQuestionVoice } from './voice/useDesktopQuestionVoice'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer, DesktopQuestionPayload } from '@/lib/desktop/questions'
 
 export type DesktopQuestionCardProps = {
     question: DesktopPendingQuestion
     disabled?: boolean
+    voiceSessionId?: string
     onAnswer: (payload: DesktopQuestionAnswer) => Promise<void>
 }
 
-function QuestionCard({ question, disabled, onAnswer }: DesktopQuestionCardProps) {
+function QuestionCard({ question, disabled, voiceSessionId, onAnswer }: DesktopQuestionCardProps) {
     const { language, t } = useDesktopLocale()
     const latest = useRef({ question, disabled, onAnswer })
     latest.current = { question, disabled, onAnswer }
@@ -75,6 +77,7 @@ function QuestionCard({ question, disabled, onAnswer }: DesktopQuestionCardProps
         ? { ...question.attempt, questionId: question.id }
         : cancellation
     const locked = disabled || status !== 'idle'
+    const { voice, error: voiceError } = useDesktopQuestionVoice(voiceSessionId, question.id, !locked && !attempt)
     return <div className="space-y-2" aria-busy={status === 'sending'}>
         {attempt ? <div className="relative space-y-3 overflow-hidden rounded-lg border border-border bg-muted/30 p-3">
             {attempt.action === 'answer' ? question.questions.map((item, index) => (
@@ -93,10 +96,11 @@ function QuestionCard({ question, disabled, onAnswer }: DesktopQuestionCardProps
             <Button type="button" size="sm" variant="outline" disabled={locked} onClick={() => { void send(attempt).catch(() => {}) }}>
                 {attempt.action === 'cancel' ? t('question.retryCancellation') : t('question.retry')}
             </Button>
-        </div> : <QuestionForm inline labels={language.messages.questionForm} questions={question.questions} disabled={locked}
+        </div> : <QuestionForm inline labels={language.messages.questionForm} questions={question.questions} disabled={locked} voice={voice}
             onSubmit={answers => send(identify({ action: 'answer', answers: answers.map(item => item.answers) }))}
             onCancel={() => { void send(identify({ action: 'cancel' })).catch(() => {}) }} />}
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+        {voiceError && <p role="alert" className="text-sm text-destructive">{voiceError}</p>}
     </div>
 }
 

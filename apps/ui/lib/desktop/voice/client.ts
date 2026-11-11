@@ -42,11 +42,16 @@ function base64Of(bytes: Uint8Array): string {
     return btoa(binary)
 }
 
-export async function uploadDesktopVoice(scope: DesktopVoiceScope, attemptId: string, recording: DesktopVoiceRecordingTake, signal?: AbortSignal): Promise<DesktopVoiceDraft> {
+export async function encodeDesktopVoiceRecording(recording: DesktopVoiceRecordingTake, signal?: AbortSignal) {
     signal?.throwIfAborted()
     if (recording.blob.size < 1 || recording.blob.size > DESKTOP_VOICE_MAX_BYTES) throw new Error('This recording exceeds the 2 MB limit.')
     const bytes = new Uint8Array(await recording.blob.arrayBuffer())
     signal?.throwIfAborted()
+    return { format: recording.format, durationMs: recording.durationMs, levels: recording.levels, audioBase64: base64Of(bytes) }
+}
+
+export async function uploadDesktopVoice(scope: DesktopVoiceScope, attemptId: string, recording: DesktopVoiceRecordingTake, signal?: AbortSignal): Promise<DesktopVoiceDraft> {
+    const encoded = await encodeDesktopVoiceRecording(recording, signal)
     return ownedDraft(scope, z.object({ draft: desktopVoiceDraftSchema }).parse(await request(scope.agentId, {
         method: 'POST',
         signal,
@@ -55,10 +60,7 @@ export async function uploadDesktopVoice(scope: DesktopVoiceScope, attemptId: st
             operation: 'upload',
             ...scope,
             attemptId,
-            format: recording.format,
-            durationMs: recording.durationMs,
-            levels: recording.levels,
-            audioBase64: base64Of(bytes),
+            ...encoded,
         }),
     })).draft, attemptId)
 }

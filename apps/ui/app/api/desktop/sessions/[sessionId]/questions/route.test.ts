@@ -2,13 +2,15 @@ import { createServer, type Server } from 'node:http'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, expect, test } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { findDesktopQuestion, HITL_CANCELLED, serializeAnswers, type Message } from '@rerun/contracts'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent, createDesktopSession, type DesktopAgent, type DesktopSession } from '@/lib/desktop/server/store'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { GET, POST } from './route'
+import { POST as TRANSCRIBE } from './transcribe/route'
+import { desktopAuxiliaryStore } from '@/lib/desktop/server/auxiliary/store'
 
 const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime, alice: DesktopAgent, bob: DesktopAgent, a: DesktopSession, b: DesktopSession
@@ -39,6 +41,13 @@ const get = (sessionId = a.id) => GET(request(sessionId), { params: Promise.reso
 const post = (body: unknown, sessionId = a.id, headers?: Record<string, string>) => POST(request(sessionId, 'POST', body, headers), { params: Promise.resolve({ sessionId }) })
 const pending = async (sessionId = a.id) => (await (await get(sessionId)).json()).question as DesktopPendingQuestion
 const answer = (question: DesktopPendingQuestion, answers = values): DesktopQuestionAnswer => ({ questionId: question.id, requestId: crypto.randomUUID(), action: 'answer', answers })
+const recording = {
+    format: { mimeType: 'audio/webm;codecs=opus', extension: 'webm', transcriptionFormat: 'webm' },
+    durationMs: 1000, levels: [0.1], audioBase64: Buffer.from([0x1a, 0x45, 0xdf, 0xa3, ...Buffer.from('fixture-webm')]).toString('base64'),
+}
+const transcribe = (input: unknown, sessionId = a.id, headers?: Record<string, string>) => TRANSCRIBE(
+    request(sessionId, 'POST', input, headers), { params: Promise.resolve({ sessionId }) },
+)
 
 beforeEach(async () => {
     sourceUnavailable = false
@@ -104,9 +113,44 @@ beforeEach(async () => {
     histories.set('engine-a', questionRows('engine-a')); histories.set('engine-b', questionRows('engine-b'))
 })
 afterEach(async () => {
+    vi.unstubAllGlobals()
     await closeDesktopDatabase(root); process.env = { ...originalEnv }
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
     await rm(root, { recursive: true, force: true })
+})
+
+test('transcribes only a current owned question and does not save or dispatch the voice answer', async () => {
+    const question = await pending()
+    const input = { ...recording, questionId: question.id }
+    const db = await openDesktopDatabase(root)
+    process.env.RERUN_DESKTOP_SECRET_KEY = 'ab'.repeat(32)
+    const nativeFetch = globalThis.fetch
+    const provider = vi.fn(async () => Response.json({ text: 'Speak the quarterly review' }))
+    vi.stubGlobal('fetch', (target: string | URL | Request, options?: RequestInit) =>
+        String(target) === 'https://openrouter.ai/api/v1/audio/transcriptions' ? provider() : nativeFetch(target, options))
+
+    expect((await transcribe(input, a.id, { cookie: 'invalid' })).status).toBe(401)
+    expect((await transcribe(input, b.id)).status).toBe(409)
+    expect((await transcribe({ ...input, audioBase64: 'aW52YWxpZA==' })).status).toBe(400)
+    expect((await transcribe(input)).status).toBe(503)
+    expect(provider).not.toHaveBeenCalled()
+    await desktopAuxiliaryStore(db).change({ purpose: 'transcription', expectedRevision: 'unconfigured', key: 'synthetic-key' })
+    const result = await transcribe(input)
+    expect(result.status).toBe(200)
+    expect(result.headers.get('cache-control')).toBe('no-store')
+    expect(await result.json()).toEqual({ transcript: 'Speak the quarterly review' })
+    expect(await pending()).toEqual(question)
+    expect((await db.execute('SELECT * FROM desktop_question_answers')).rows).toEqual([])
+    expect(dispatches).toEqual([])
+    expect(provider).toHaveBeenCalledOnce()
+
+    provider.mockImplementationOnce(async () => {
+        histories.set('engine-a', questionRows('engine-a', 'ask_user', 'new-call'))
+        return Response.json({ text: 'This transcript must not reach the new question' })
+    })
+    expect((await transcribe(input)).status).toBe(409)
+    expect(provider).toHaveBeenCalledTimes(2)
+    expect(dispatches).toEqual([])
 })
 
 test('an unavailable source lookup cannot bypass webhook authority and dispatch an ordinary reply', async () => {
