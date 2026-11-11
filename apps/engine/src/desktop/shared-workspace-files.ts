@@ -530,6 +530,7 @@ export async function replaceSharedText(root: string, input: SharedTextReplaceme
         throw new SharedWorkspaceFileError(415, 'Only complete UTF-8 text can be saved.')
     }
     const editIdentity = { expectedBytes: bytes.length, expectedSha256: createHash('sha256').update(bytes).digest('hex') }
+    const singleLink = BigInt(1)
     const conflict = () => new SharedWorkspaceFileError(409, 'This file changed. Reopen it before saving again.')
     let publicationUncertain = false
     try {
@@ -543,7 +544,7 @@ export async function replaceSharedText(root: string, input: SharedTextReplaceme
             try {
                 await commit(access)
                 const original = await lstat(target, { bigint: true })
-                if (!original.isFile() || original.uid !== currentUid() || original.nlink !== 1n) throw outside()
+                if (!original.isFile() || original.uid !== currentUid() || original.nlink !== singleLink) throw outside()
                 const preview = await readSharedText(root, path, 0, { signal: access?.signal })
                 if (preview.truncated || !preview.editIdentity || binary.test(preview.content)) {
                     throw new SharedWorkspaceFileError(415, 'Reopen one complete UTF-8 text file before editing.')
@@ -552,7 +553,7 @@ export async function replaceSharedText(root: string, input: SharedTextReplaceme
                 const sameOriginal = async () => {
                     const entry = await lstat(target, { bigint: true }).catch(error => { if (missing(error)) throw conflict(); throw error })
                     return entry.dev === original.dev && entry.ino === original.ino && entry.ctimeNs === original.ctimeNs
-                        && entry.size === original.size && entry.nlink === 1n && entry.isFile() && entry.uid === currentUid()
+                        && entry.size === original.size && entry.nlink === singleLink && entry.isFile() && entry.uid === currentUid()
                 }
                 if (!await sameOriginal()) throw conflict()
                 if (preview.content === input.content) return { ok: true, path, size: bytes.length, editIdentity }
@@ -580,14 +581,14 @@ export async function replaceSharedText(root: string, input: SharedTextReplaceme
                 const entry = await lstat(target, { bigint: true })
                 if (confirmed.truncated || confirmed.editIdentity?.expectedSha256 !== editIdentity.expectedSha256
                     || confirmed.editIdentity.expectedBytes !== editIdentity.expectedBytes
-                    || entry.dev !== staged.dev || entry.ino !== staged.ino || entry.nlink !== 1n) throw new Error('Native replacement readback changed')
+                    || entry.dev !== staged.dev || entry.ino !== staged.ino || entry.nlink !== singleLink) throw new Error('Native replacement readback changed')
                 const recoveryPath = [...parts.slice(0, -1), recovery].join('/')
                 return { ok: true, path, size: bytes.length, editIdentity, recoveryPath }
             } finally {
                 await handle?.close()
                 if (!publicationUncertain && staged) {
                     const current = await lstat(stagedPath, { bigint: true }).catch(() => null)
-                    if (current?.dev === staged.dev && current.ino === staged.ino && current.nlink === 1n) await unlink(stagedPath).catch(() => {})
+                    if (current?.dev === staged.dev && current.ino === staged.ino && current.nlink === singleLink) await unlink(stagedPath).catch(() => {})
                 }
                 if (child.close) await parent.handle.close()
             }
