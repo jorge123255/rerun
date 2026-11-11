@@ -158,7 +158,7 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false) {
         if (url.pathname === '/api/desktop/completions') return Response.json({ items: [], unavailableAgentIds: [], enabledAt: date, checkedAt: date, nextCursor: null })
         if (url.pathname === '/api/desktop/pending-inbox') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: date })
         if (url.pathname === '/api/desktop/conversations/search') return Response.json({ hits: [], hasMore: false })
-        const servicesRoute = url.pathname.match(/^\/api\/desktop\/coworkers\/([^/]+)\/services$/)
+        const servicesRoute = url.pathname.match(/^\/api\/desktop\/coworkers\/([^/]+)\/service-accounts$/)
         if (servicesRoute) {
             const agent = coworkers.find(item => item.id === decodeURIComponent(servicesRoute[1]))
             if (!agent || method !== 'GET') throw new Error('Unexpected Apps owner or mutation')
@@ -335,6 +335,7 @@ test('only the selected chat opens a coworker dialog and both distinct drafts re
     await openCoworkerPage('Reviewer')
     await chooseOpenRow('Apps')
     await until(() => panelDialog('Apps')?.textContent?.includes('Connections for Reviewer'))
+    await until(() => panelDialog('Apps')?.querySelector('[data-state="empty"]'))
     expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
     expect(first.value).toBe('First chat unsent draft')
     expect(second.value).toBe('Second chat unsent draft')
@@ -354,6 +355,7 @@ test('only the selected chat opens a coworker dialog and both distinct drafts re
     await openCoworkerPage('Reviewer')
     await chooseOpenRow('Apps')
     await until(() => panelDialog('Apps')?.textContent?.includes('Connections for Reviewer'))
+    await until(() => panelDialog('Apps')?.querySelector('[data-state="empty"]'))
     expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
     await dismissPanel('Apps')
     await openCoworkerPage('Reviewer')
@@ -370,6 +372,9 @@ test('only the selected chat opens a coworker dialog and both distinct drafts re
     await until(() => composer()?.value === 'First chat unsent draft')
     expect(composer()?.closest('[data-desktop-tab-active]')?.textContent).toContain(app.answer(`${reviewer.id}-first`))
     expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(0)
+    expect(app.panelReads.filter(path => path.endsWith('/service-accounts'))).toEqual(
+        Array(4).fill(`/api/desktop/coworkers/${reviewer.id}/service-accounts`),
+    )
     expect(app.contentWrites).toEqual([])
 })
 
