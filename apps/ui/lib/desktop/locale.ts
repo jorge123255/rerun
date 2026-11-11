@@ -7,6 +7,7 @@ import { desktopGettingStartedMessages } from './i18n/getting-started-messages'
 import { desktopRoutineMessages } from './i18n/routine-messages'
 import { desktopQuestionMessages } from './i18n/question-messages'
 import { desktopThreadHistoryCopy } from './i18n/thread-history-messages'
+import { desktopRunHistoryCopy } from './i18n/run-history-messages'
 import { desktopControlCenterDetails } from './i18n/control-center-messages'
 import dialogs from '@rerun/i18n/messages/en/dialogs.json'
 import type { Locale } from '@rerun/i18n'
@@ -195,6 +196,16 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         notificationUI: desktopNotificationMessages(locale),
         questionForm: source.kit.chat.question,
         question: desktopQuestionMessages(locale),
+        runHistory: {
+            ...desktopRunHistoryCopy[locale],
+            button: locale === 'en' ? 'Runs' : source.agent.agentTabs.logs.label,
+            empty: source.agent.agentPanelLogs.empty,
+            tokens: source.agent.agentPanelLogs.tokens,
+            stepCount: source.agent.agentPanelLogs.stepCount,
+            step: source.agent.agentPanelLogs.step,
+            noSteps: source.agent.agentPanelLogs.noSteps,
+            status: source.kit.monitoring.runStatus,
+        },
         threadHistory: {
             ...desktopThreadHistoryCopy[locale],
             markAllRead: source.agent.agentChatsList.markAllRead,

@@ -13,7 +13,7 @@ export type DesktopRunDetailsView = z.infer<typeof desktopRunDetailsSchema>
 export type DesktopRunToolView = z.infer<typeof desktopRunToolSchema>
 
 export function recordedToolOutcome(tool: DesktopRunToolView): string {
-    return tool.isError !== 0 ? 'Failed' : tool.resultJson !== null ? 'Succeeded' : 'Outcome not recorded'
+    return tool.isError !== 0 ? 'outcomeFailed' : tool.resultJson !== null ? 'outcomeSucceeded' : 'outcomeNotRecorded'
 }
 
 // Keep the saved engine telemetry untouched. The local client only receives the bounded
