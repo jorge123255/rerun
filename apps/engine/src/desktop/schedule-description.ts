@@ -7,6 +7,7 @@ import { modelFor } from '../agents/providers.js'
 import type { LoadedAgent } from '../agents/types.js'
 import { ensureCliAuth } from '../connections/cli-auth.js'
 import { findConnection } from '../connections/registry.js'
+import { sameDesktopOpencodeConnection } from '../connections/snapshot.js'
 import type { LoadedConnection } from '../connections/types.js'
 import { HttpError } from '../lib/errors.js'
 import { computeNextRun, isValidTimezone } from '../schedules/next-run.js'
@@ -102,7 +103,7 @@ Respond with ONLY a JSON object, no prose, no code fences:
 
 function sameScheduleConnection(expected: LoadedConnection, current: LoadedConnection): boolean {
     if (current.id !== expected.id || current.config.provider !== expected.config.provider) return false
-    if (expected.opencode) return current.opencode?.workspaceId === expected.opencode.workspaceId && current.opencode.revision === expected.opencode.revision
+    if (expected.opencode) return sameDesktopOpencodeConnection(expected, current)
     if (expected.custom) return current.custom?.revision === expected.custom.revision
     // Registry projections for subscriptions have a credential generation in the connection ID.
     return current === expected || parseDesktopSubscriptionConnectionId(expected.id)?.provider === expected.config.provider

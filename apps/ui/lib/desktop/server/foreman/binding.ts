@@ -1,7 +1,7 @@
 import { readAnsweredQuestionRecaps } from './answered-question-recap'
 import 'server-only'
 import { createHash } from 'node:crypto'
-import type { CompanyBriefModelRef, DesktopForemanBinding, DesktopForemanChatRef, DesktopForemanLiveEvent, DesktopForemanModelRef } from '@rerun/contracts'
+import { COMPANY_BRIEF_MODEL_PROVIDERS, type CompanyBriefModelRef, type DesktopForemanBinding, type DesktopForemanChatRef, type DesktopForemanLiveEvent, type DesktopForemanModelRef } from '@rerun/contracts'
 import { EngineRequestError, cancelRun, getRun, getSessionMessages } from '@/lib/engine/client'
 import { publicDesktopHistory, transformEngineMessages } from '@/lib/chat/engine-history'
 import { usableConnection } from '../../chat-model'
@@ -289,7 +289,7 @@ async function createBinding(runtime: DesktopRuntime) {
             const fallback = owner.model ? null : await desktopModel(runtime)
             const pair = owner.model ?? { connectionId: fallback!.connection.id, model: fallback!.model }
             const connection = usableConnection((await readDesktopProviders(runtime)).connections, pair)
-            if (!connection || !['openai', 'anthropic', 'google', 'openrouter', 'codex', 'claude'].includes(connection.provider)) throw new DesktopHttpError(409, 'Choose a connected model for company research.')
+            if (!connection || !(COMPANY_BRIEF_MODEL_PROVIDERS as readonly string[]).includes(connection.provider)) throw new DesktopHttpError(409, 'Choose a connected model for company research.')
             return { ...pair, provider: connection.provider as CompanyBriefModelRef['provider'], source: 'conversation', agentId: 'foreman', foremanChat: chat }
         },
         voiceShutdownSignal: voiceLifetime.signal,
