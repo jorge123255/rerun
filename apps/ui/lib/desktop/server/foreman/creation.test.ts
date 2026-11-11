@@ -93,7 +93,7 @@ beforeEach(async()=>{
       CREATE TABLE desktop_agents(id TEXT PRIMARY KEY,workspace_id INTEGER,engine_agent_id TEXT UNIQUE,name TEXT,description TEXT,enabled INTEGER DEFAULT 1,created_at TEXT,updated_at TEXT);
       CREATE TABLE desktop_duplicates(request_id TEXT PRIMARY KEY,source_id TEXT,agent_id TEXT,name TEXT,handle TEXT,board_col INTEGER,board_row INTEGER,completed INTEGER DEFAULT 0,space_id TEXT);
       CREATE TABLE desktop_deletions(agent_id TEXT PRIMARY KEY,engine_agent_id TEXT,name TEXT,completed INTEGER DEFAULT 0);
-      CREATE TABLE desktop_sessions(id TEXT PRIMARY KEY,agent_id TEXT,engine_session_id TEXT UNIQUE,title TEXT,created_at TEXT,updated_at TEXT,model_connection_id TEXT,model TEXT,kind TEXT NOT NULL DEFAULT 'thread' CHECK (kind IN ('general', 'thread')),first_message TEXT);
+      CREATE TABLE desktop_sessions(id TEXT PRIMARY KEY,agent_id TEXT,engine_session_id TEXT UNIQUE,title TEXT,title_search TEXT,created_at TEXT,updated_at TEXT,model_connection_id TEXT,model TEXT,kind TEXT NOT NULL DEFAULT 'thread' CHECK (kind IN ('general', 'thread')),first_message TEXT);
     `)
     await initializeDesktopCreation(db);await initializeDesktopSpaces(db);await initializeDesktopTemplates(db);await ensureDesktopSetupSchema(db);await db.executeMultiple(DESKTOP_FOREMAN_CREATION_SCHEMA_SQL + DESKTOP_FOREMAN_SCHEMA_STATEMENTS.map(sql=>`${sql};`).join('\n'))
 })

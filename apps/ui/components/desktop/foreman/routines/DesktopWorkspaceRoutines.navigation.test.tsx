@@ -61,8 +61,9 @@ beforeEach(async () => {
     await state.db.executeMultiple(`CREATE TABLE desktop_agents(id TEXT,engine_agent_id TEXT,workspace_id INTEGER);
         INSERT INTO desktop_agents VALUES('local-copy','engine-copy',1),('local-original','engine-original',1);
         CREATE TABLE desktop_deletions(agent_id TEXT);
-        CREATE TABLE desktop_sessions(id TEXT,agent_id TEXT,engine_session_id TEXT UNIQUE,title TEXT,created_at TEXT,updated_at TEXT);
-        INSERT INTO desktop_sessions VALUES('original-chat','local-original','original-engine-chat','Original conversation','2026-11-01','2026-11-01');`)
+        CREATE TABLE desktop_sessions(id TEXT,agent_id TEXT,engine_session_id TEXT UNIQUE,title TEXT,title_search TEXT,created_at TEXT,updated_at TEXT);
+        INSERT INTO desktop_sessions(id,agent_id,engine_session_id,title,created_at,updated_at)
+            VALUES('original-chat','local-original','original-engine-chat','Original conversation','2026-11-01','2026-11-01');`)
     vi.stubGlobal('fetch', async (_url: string, init?: RequestInit) => {
         // Exercise the production runtime, API schemas, canonical adoption and client
         // parser together. The external engine boundary alone is synthetic.

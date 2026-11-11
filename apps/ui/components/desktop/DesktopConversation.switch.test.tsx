@@ -52,7 +52,7 @@ test('switching, failed loads, retry, and New chat keep drafts and never show an
         expect(container.textContent).toContain('First answer.')
         await switchTo('slow')
         expect(container.textContent).not.toContain('First answer.')
-        expect(container.textContent).toContain('Loading conversation')
+        expect([...container.querySelectorAll('[role="status"]')].map(status => status.textContent)).toContain('Opening conversation…')
         expect(send.disabled).toBe(true)
         await switchTo('second')
         expect(container.querySelector('[role="alert"]')?.textContent).toContain('History unavailable')
