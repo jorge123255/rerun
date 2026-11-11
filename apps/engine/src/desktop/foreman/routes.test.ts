@@ -1,4 +1,6 @@
 import { beforeEach, afterEach, expect, test, vi } from 'vitest'
+import { randomUUID } from 'node:crypto'
+import { foremanDocumentScope } from '@rerun/contracts'
 const question = vi.hoisted(() => ({ read: vi.fn() }))
 vi.mock('./question.js', () => ({ readForemanQuestion: question.read }))
 const state = vi.hoisted(() => ({ replay: false, session: null as null | { id: string; agentId: string; source: string; status: string; originAgentId: null; originSessionId: null }, run: null as null | { id: string; agentId: string; sessionId: string }, reserve: vi.fn(async () => ({ id: 'queued-user' })), model: vi.fn(async () => ({ connection: { id: 'conn' }, provider: 'codex', model: 'terra' })), claim: vi.fn(() => null), release: vi.fn() }))
@@ -17,7 +19,7 @@ import { createDesktopForemanRoutes } from './routes.js'
 import type { createDesktopForemanBridge } from './bridge.js'
 const body = { binding: { workspaceId: '1', chatId: 'fmc_chat-0001', runId: '00000000-0000-4000-8000-000000000001', model: { connectionId: 'conn', model: 'terra' } }, sessionId: '00000000-0000-4000-8000-000000000002', text: 'Plan a team.', brief: { instructions: 'Propose, never approve.', tools: [] } }
 const request = (input: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
-const bridge = () => ({ admit: vi.fn(async () => {}), binding: vi.fn(), request: vi.fn(), close: vi.fn() }) as ReturnType<typeof createDesktopForemanBridge>
+const bridge = () => ({ admit: vi.fn(async () => {}), documents: vi.fn(), binding: vi.fn(), request: vi.fn(), close: vi.fn() }) as ReturnType<typeof createDesktopForemanBridge>
 beforeEach(() => { state.replay = false; state.session = null; state.run = null; vi.clearAllMocks(); question.read.mockResolvedValue(null) })
 afterEach(() => vi.restoreAllMocks())
 test('replay miss creates no session, model resolution, admission or provider work', async () => {
@@ -33,7 +35,23 @@ test('saved exact receipt resumes without needing the original model or an admis
 test('new message reserves its first session atomically only after two exact UI admission checks', async () => {
     const port = bridge(), response = await createDesktopForemanRoutes(() => port).request('/chat', request(body))
     expect(response.status).toBe(200); expect(port.admit).toHaveBeenCalledTimes(2)
-    expect(state.reserve).toHaveBeenCalledWith('foreman', expect.objectContaining({ foreman: { binding: body.binding, brief: body.brief }, message: body.text }), undefined, undefined, undefined, true)
+    expect(state.reserve).toHaveBeenCalledWith('foreman', expect.objectContaining({ foreman: { binding: body.binding, brief: body.brief }, message: body.text }), undefined, undefined, undefined, true, undefined)
+})
+test('admits a file-only turn using the exact conversation-bound manifest and server-resolved bytes', async () => {
+    const scope = foremanDocumentScope(body.binding, body.sessionId)
+    const reference = { scope, attachmentId: randomUUID(), name: 'brief.md', kind: 'text' as const, mimeType: 'text/markdown',
+        sha256: 'a'.repeat(64), byteLength: 15 }
+    const documents = { scope, admissionId: randomUUID(), attachmentIds: [reference.attachmentId], modelChoice: body.binding.model }
+    const turn = { ...body, text: '', documents }
+    const port = bridge(), app = createDesktopForemanRoutes(() => port)
+    const resolved = [{ reference, text: 'Verified upload' }]
+    vi.mocked(port.documents).mockResolvedValueOnce([{ ...resolved[0]!, reference: { ...reference, scope: { ...scope, sessionId: randomUUID() } } }])
+    expect((await app.request('/chat', request(turn))).status).toBe(409)
+    expect(state.reserve).not.toHaveBeenCalled()
+    vi.mocked(port.documents).mockResolvedValueOnce(resolved)
+    expect((await app.request('/chat', request(turn))).status).toBe(200)
+    expect(port.documents).toHaveBeenLastCalledWith(turn, expect.any(AbortSignal))
+    expect(state.reserve).toHaveBeenCalledWith('foreman', expect.objectContaining({ documents }), undefined, undefined, undefined, true, resolved)
 })
 test('hosted tool grants and a foreign existing session are refused without reserving a run', async () => {
     const port = bridge(), app = createDesktopForemanRoutes(() => port)

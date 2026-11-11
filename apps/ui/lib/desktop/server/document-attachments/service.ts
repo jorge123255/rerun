@@ -75,7 +75,7 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
                 const inspected = inspectDesktopDocumentUpload(input, bytes)
                 let rendered: Uint8Array | undefined
                 if (inspected.kind === 'image') {
-                    if (!questionDocumentId(scope.tabUid)) throw new DesktopHttpError(415, 'Use the chat composer to attach images to an ordinary message.')
+                    if (!authorities.allowChatImages && !questionDocumentId(scope.tabUid)) throw new DesktopHttpError(415, 'Use the chat composer to attach images to an ordinary message.')
                     const image = await inspectComposerImageSource(input.name, bytes, signal)
                     if (image.mediaType !== inspected.mimeType) rendered = image.bytes
                     signal.throwIfAborted()

@@ -18,6 +18,9 @@ export function DesktopForemanComposer({
     maxLength = 20_000,
     trailing,
     controls,
+    attachments,
+    hasAttachments,
+    onFiles,
     className,
 }: {
     draft: string
@@ -31,6 +34,9 @@ export function DesktopForemanComposer({
     maxLength?: number
     trailing?: ReactNode
     controls?: ReactNode
+    attachments?: ReactNode
+    hasAttachments?: boolean
+    onFiles?: (files: File[]) => void
     className?: string
 }) {
     const { language: { locale }, t } = useDesktopLocale()
@@ -38,15 +44,27 @@ export function DesktopForemanComposer({
     const composing = useRef(false)
     const text = draft.trim()
     const overLimit = draft.length > maxLength
-    const canSend = !!text && !overLimit && !disabled && !sendDisabled && !busy
+    const canSend = (!!text || !!hasAttachments) && !overLimit && !disabled && !sendDisabled && !busy
     const submit = (event: FormEvent) => {
         event.preventDefault()
         if (canSend) onSend(text)
     }
 
     return (
-        <form onSubmit={submit} className={cn('shrink-0 px-3 py-3', className)}>
+        <form onSubmit={submit} className={cn('shrink-0 px-3 py-3', className)}
+            onDragOver={event => { if (onFiles && event.dataTransfer.types.includes('Files')) event.preventDefault() }}
+            onDrop={event => {
+                if (!onFiles || event.defaultPrevented || !event.dataTransfer.files.length) return
+                event.preventDefault()
+                onFiles(Array.from(event.dataTransfer.files))
+            }}
+            onPaste={event => {
+                if (!onFiles || event.defaultPrevented || !event.clipboardData.files.length) return
+                event.preventDefault()
+                onFiles(Array.from(event.clipboardData.files))
+            }}>
             <InputGroup className="rounded-xl bg-card">
+                {attachments && <InputGroupAddon align="block-start" className="min-w-0">{attachments}</InputGroupAddon>}
                 <InputGroupTextarea
                     value={draft}
                     onChange={event => onDraftChange(event.target.value)}

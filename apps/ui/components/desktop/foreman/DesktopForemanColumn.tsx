@@ -32,6 +32,10 @@ import { RotateCwIcon } from '@/lib/icons'
 import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopForemanAlternateReview, DesktopForemanAlternates } from './DesktopForemanAlternates'
 import { useDesktopForemanAlternates } from './useDesktopForemanAlternates'
+import { foremanDocumentScope } from '@rerun/contracts'
+import { useDesktopDocumentAttachments } from '@/lib/desktop/document-attachments/useDesktopDocumentAttachments'
+import { DesktopDocumentAttachmentControls } from '../document-attachments/DesktopDocumentAttachmentControls'
+import { DesktopDocumentPicker } from '../document-attachments/DesktopDocumentPicker'
 
 function anchorOf(placement: DesktopForemanPlacement): ForemanAnchor {
     if (placement.mode === 'float') return 'float'
@@ -43,6 +47,10 @@ export type DesktopForemanColumnProps = {
     ports: DesktopForemanActionPorts
     live: { runId: string } | null
     messages: DesktopForemanMessage[]
+    sessionId?: string
+    pendingSend?: boolean
+    retryAttachedMessage?: boolean
+    imageModel?: boolean
     retrySnapshot?: string
     streaming?: boolean
     question?: DesktopPendingQuestion | null
@@ -83,6 +91,10 @@ export function DesktopForemanColumn({
     ports,
     live,
     messages,
+    sessionId,
+    pendingSend,
+    retryAttachedMessage,
+    imageModel,
     retrySnapshot,
     streaming,
     question, onAnswerQuestion,
@@ -106,6 +118,11 @@ export function DesktopForemanColumn({
     composerScope.current = { chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft }
     const pendingStarter = !!starter && !starter.decision?.settled
     const onRoutines = ui.tab === 'routines'
+    const [sendingDocuments, setSendingDocuments] = useState(false)
+    const attachmentComposer = !!sessionId && !intake && !pendingStarter && !!intakeFinished && ui.open && !onRoutines
+    const editAttachments = attachmentComposer && !hidden && !question && !streaming && !sendingDocuments
+        && !pendingSend && !foreman.blocked && !sendDisabled && ui.decision.status !== 'pending' && foreman.restored
+    const documents = useDesktopDocumentAttachments({ ...foremanDocumentScope(chat, sessionId ?? ''), load: attachmentComposer, enabled: editAttachments })
     const alternates = useDesktopForemanAlternates({
         chat, snapshot: retrySnapshot, active: !!retrySnapshot && ui.open && !hidden && !onRoutines && !intake && foreman.restored,
         eligible: !!retrySnapshot && !streaming && !question && !pendingStarter && !foreman.blocked && ui.decision.status !== 'pending',
@@ -131,7 +148,18 @@ export function DesktopForemanColumn({
     }
     const send = (text: string) => {
         if (pendingStarter) { void answerStarter({ kind: 'text', text }, true); return }
-        if (!intake) { void foreman.sendMessage(text); return }
+        if (!intake) {
+            if (!attachmentComposer) { void foreman.sendMessage(text); return }
+            setSendingDocuments(true)
+            void foreman.sendMessage(text, async model => {
+                if (!documents.attachments.length) return undefined
+                if (!model) throw new Error(t('foreman.modelUnavailable'))
+                if (!imageModel && documents.attachments.some(item => item.kind === 'image')) throw new Error('Image attachments need a ChatGPT / Codex model. Choose one before sending.')
+                return (await documents.settle(model))?.selection
+            }).then(async accepted => { if (accepted) await documents.refresh().catch(() => {}) })
+                .finally(() => setSendingDocuments(false))
+            return
+        }
         const scope = composerScope.current
         void intake.sendOwn(text).then(confirmed => {
             const current = composerScope.current
@@ -203,6 +231,7 @@ export function DesktopForemanColumn({
                     </> : <>
                     <DesktopForemanChatLayer
                         messages={messages}
+                        attachmentsActive={ui.open && !hidden && !onRoutines && !alternates.open}
                         streaming={streaming}
                         restored={foreman.restored}
                         question={foreman.restored && !streaming && question && onAnswerQuestion
@@ -242,13 +271,20 @@ export function DesktopForemanColumn({
                     </>}
                     <DesktopForemanComposer
                         trailing={intake || pendingStarter ? undefined : composerTrailing}
-                        controls={intake || pendingStarter || !ui.open ? undefined : voiceSlot}
+                        controls={intake || pendingStarter || !ui.open ? undefined : <>
+                            {attachmentComposer && <DesktopDocumentPicker disabled={!editAttachments || !documents.loaded} onFiles={documents.add} />}
+                            {voiceSlot}
+                        </>}
+                        attachments={attachmentComposer && (documents.attachments.length > 0 || documents.error)
+                            ? <DesktopDocumentAttachmentControls controller={documents} disabled={!editAttachments} /> : undefined}
+                        hasAttachments={attachmentComposer && (documents.attachments.length > 0 || retryAttachedMessage)}
+                        onFiles={editAttachments && documents.loaded ? documents.add : undefined}
                         placeholder={intake || pendingStarter ? t('foreman.ownEntryPlaceholder') : undefined}
                         maxLength={intake || pendingStarter ? 4000 : undefined}
                         draft={ui.draft}
                         onDraftChange={foreman.setDraft}
                         busy={!!streaming}
-                        sendDisabled={sendDisabled}
+                        sendDisabled={sendDisabled || attachmentComposer && (sendingDocuments || !pendingSend && (!documents.loaded || documents.busy > 0))}
                         disabled={!!question || !foreman.restored || !!foreman.blocked || ui.decision.status === 'pending'
                             || pendingStarter && (!onStarterAnswer || starterBusy || !!starter?.decision)
                             || Boolean(intake && (!intake.restored || intake.submitting || intake.quitting || intake.conflicted))}

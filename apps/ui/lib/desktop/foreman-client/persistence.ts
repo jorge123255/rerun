@@ -5,6 +5,7 @@ import type { DesktopPlanDecisionStatus } from './decision'
 import type { DesktopForemanBuildProgressView } from './build-progress'
 import type { DesktopDiscoveriesState } from './discovery-view'
 import type { ForemanTab } from '@rerun/ui/foreman'
+import type { DesktopDocumentSendSelection, DesktopForemanModelRef } from '@rerun/contracts'
 
 export type DesktopForemanUiTab = ForemanTab
 
@@ -18,7 +19,7 @@ export type DesktopForemanPersistedUi = {
     decision: DesktopPlanDecisionStatus
     build: DesktopForemanBuildProgressView | null
     discoveries: DesktopDiscoveriesState | null
-    pendingSend?: { requestId: string; text: string; modelChoice: import('@rerun/contracts').DesktopForemanModelRef | null }
+    pendingSend?: { requestId: string; text: string; modelChoice: DesktopForemanModelRef | null; documents?: DesktopDocumentSendSelection }
     dock?: import('@/lib/desktop/foreman-dock/layout').DockExtras
     placement: DesktopForemanPlacement
 }

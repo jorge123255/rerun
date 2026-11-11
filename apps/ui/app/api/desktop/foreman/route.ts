@@ -2,7 +2,7 @@ import { desktopQuestionAnswerSchema } from '@/lib/desktop/questions'
 import { desktopForemanSavedUiSchema } from '@/lib/desktop/foreman-client/ui-schema'
 import { ForemanRefusal } from '@/lib/desktop/server/foreman/authority'
 import { z } from 'zod'
-import { foremanBuildActionSchema, foremanChatRefSchema, foremanDecisionInputSchema, foremanModelRefSchema } from '@rerun/contracts'
+import { desktopDocumentSendSelectionSchema, foremanBuildActionSchema, foremanChatRefSchema, foremanDecisionInputSchema, foremanModelRefSchema } from '@rerun/contracts'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { readDesktopJson } from '@/lib/desktop/server/request-json'
@@ -15,7 +15,9 @@ import { assertDesktopWorkspaceAdmission } from '@/lib/desktop/server/workspace-
 import { localStarterDecisionSchema } from '@/lib/desktop/server/foreman-starter/local-decision'
 export const runtime = 'nodejs'
 const inputSchema = z.discriminatedUnion('action', [
-    z.strictObject({ action: z.literal('send'), chat: foremanChatRefSchema, requestId: z.uuid(), text: z.string().trim().min(1).max(20_000), modelChoice: foremanModelRefSchema.optional() }),
+    z.strictObject({ action: z.literal('send'), chat: foremanChatRefSchema, requestId: z.uuid(), text: z.string().trim().max(20_000),
+        modelChoice: foremanModelRefSchema.optional(), documents: desktopDocumentSendSelectionSchema.optional(),
+    }).refine(input => Boolean(input.text || input.documents)),
     z.strictObject({ action: z.literal('model'), chat: foremanChatRefSchema, expected: foremanModelRefSchema.nullable(), model: foremanModelRefSchema.nullable() }),
     z.strictObject({ action: z.literal('answer'), chat: foremanChatRefSchema, input: desktopQuestionAnswerSchema }),
     z.strictObject({ action: z.literal('starter'), chat: foremanChatRefSchema, input: localStarterDecisionSchema }),
@@ -42,7 +44,7 @@ export async function POST(request: Request) {
         await ownedForemanChat(app.db, chat)
         if (input.action !== 'ui' && input.action !== 'stop') await assertDesktopWorkspaceAdmission(runtime)
         try {
-            if (input.action === 'send') return Response.json(await app.send(input.chat, input.requestId, input.text, input.modelChoice))
+            if (input.action === 'send') return Response.json(await app.send(input.chat, input.requestId, input.text, input.modelChoice, input.documents))
             if (input.action === 'model') return Response.json(await app.setModel(input.chat, input.expected, input.model))
             if (input.action === 'answer') return Response.json(await app.answerQuestion(input.chat, input.input))
             if (input.action === 'starter') {

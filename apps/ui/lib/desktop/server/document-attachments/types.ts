@@ -28,6 +28,7 @@ export type DesktopDocumentAuthorities = {
     readOwner?: (scope: DesktopDocumentScope, attachmentId: string, signal: AbortSignal) => Promise<void>
     readScopes?: (scope: DesktopDocumentScope, signal: AbortSignal) => Promise<DesktopDocumentScope[]>
     references: (scope: DesktopDocumentScope, attachmentId: string) => Promise<boolean>
+    allowChatImages?: boolean
     extractPdfText?: (bytes: Uint8Array, signal: AbortSignal) => Promise<string>
     transcriptionAvailable?: (attachment: DesktopDocumentAttachment) => Promise<boolean>
     transcribeAudio?: (input: { bytes: Uint8Array; mimeType: string; name: string; signal: AbortSignal }) => Promise<string>

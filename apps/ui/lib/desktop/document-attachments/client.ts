@@ -1,8 +1,8 @@
 'use client'
 import { z } from 'zod'
-import { DESKTOP_DOCUMENT_MAX_BYTES, desktopDocumentAdmissionSchema, desktopDocumentAttachmentSchema, type DesktopDocumentScope, type DesktopDocumentAttachment, type DesktopDocumentSelection, type DesktopDocumentReference } from '@rerun/contracts'
+import { DESKTOP_DOCUMENT_MAX_BYTES, FOREMAN_AGENT_ID, desktopDocumentAdmissionSchema, desktopDocumentAttachmentSchema, type DesktopDocumentScope, type DesktopDocumentAttachment, type DesktopDocumentSelection, type DesktopDocumentReference } from '@rerun/contracts'
 
-const endpoint = (agentId: string) => `/api/desktop/coworkers/${encodeURIComponent(agentId)}/document-attachments`
+const endpoint = (agentId: string) => agentId === FOREMAN_AGENT_ID ? '/api/desktop/foreman/document-attachments' : `/api/desktop/coworkers/${encodeURIComponent(agentId)}/document-attachments`
 export async function readDocumentResponse(response: Response, cap: number, signal?: AbortSignal): Promise<Uint8Array> {
     const length = response.headers.get('content-length')
     if (length !== null && (!/^\d+$/.test(length) || Number(length) > cap)) { await response.body?.cancel(); throw new Error('Attachment response exceeds its limit.') }

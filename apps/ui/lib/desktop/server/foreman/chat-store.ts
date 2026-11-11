@@ -1,7 +1,7 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
-import type { DesktopForemanChatRef, DesktopForemanModelRef, DesktopForemanQuestionGuard, ForemanBrief } from '@rerun/contracts'
+import type { DesktopDocumentSendSelection, DesktopForemanChatRef, DesktopForemanModelRef, DesktopForemanQuestionGuard, ForemanBrief } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import type { DesktopQuestionAnswer } from '../../questions'
 import type { DesktopRuntime } from '../runtime'
@@ -26,11 +26,12 @@ export type ForemanTurn = {
     text: string
     brief: ForemanBrief
     question?: DesktopForemanQuestionGuard
+    documents?: DesktopDocumentSendSelection
     answerIntent?: DesktopQuestionAnswer
     starterOfferId?: string
 }
-export function foremanTurnWire({ binding, sessionId, text, brief, question }: ForemanTurn) {
-    return { binding, sessionId, text, brief, ...(question && { question }) }
+export function foremanTurnWire({ binding, sessionId, text, brief, question, documents }: ForemanTurn) {
+    return { binding, sessionId, text, brief, ...(question && { question }), ...(documents && { documents }) }
 }
 const LOCKS = Symbol.for('rerun.desktop.foreman.chat-locks.v1')
 const locks = () => ((globalThis as unknown as Record<symbol, WeakMap<Client, Promise<unknown>>>)[LOCKS] ??= new WeakMap())

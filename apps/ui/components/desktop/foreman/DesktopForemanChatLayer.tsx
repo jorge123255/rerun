@@ -9,7 +9,9 @@ import { DesktopForemanHistoryMessage } from './transcript/DesktopForemanHistory
 import { DesktopForemanAnswerActions } from './DesktopForemanAnswerActions'
 
 import { AnimatePresence, motion } from 'motion/react'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
+import { Button } from '@/components/ui/button'
+import { DesktopDocumentLightbox } from '../document-attachments/DesktopDocumentLightbox'
 import { Conversation, ConversationContent, ConversationScrollButton } from '@/components/ai-elements/conversation'
 import { cn } from '@/lib/utils'
 import { DesktopForemanDocsTool } from './docs/DesktopForemanDocsTool'
@@ -26,7 +28,7 @@ import { DesktopForemanWelcome } from './DesktopForemanWelcome'
 import { DesktopPlanCard } from './plan/DesktopPlanCard'
 import { DesktopForemanBuildProgress } from './DesktopForemanBuildProgress'
 import { DesktopForemanNextSteps } from './DesktopForemanNextSteps'
-import type { MessageFeedbackRating } from '@rerun/contracts'
+import type { DesktopDocumentReference, MessageFeedbackRating } from '@rerun/contracts'
 
 export type DesktopForemanMessage = {
     id: string
@@ -35,10 +37,12 @@ export type DesktopForemanMessage = {
     docs?: UIMessage['parts']
     history?: readonly ForemanHistoryPart[]
     answeredQuestions?: readonly DesktopAnsweredQuestionRecap[]
+    documents?: readonly DesktopDocumentReference[]
 }
 
 export function DesktopForemanChatLayer({
     messages,
+    attachmentsActive = true,
     streaming,
     restored,
     question,
@@ -65,6 +69,7 @@ export function DesktopForemanChatLayer({
     className,
 }: {
     messages: DesktopForemanMessage[]
+    attachmentsActive?: boolean
     streaming?: boolean
     restored: boolean
     question?: ReactNode
@@ -93,6 +98,8 @@ export function DesktopForemanChatLayer({
     className?: string
 }) {
     const { t } = useDesktopLocale()
+    const [preview, setPreview] = useState<{ messageId: string; index: number; trigger: HTMLButtonElement } | null>(null)
+    const previewDocuments = preview && messages.find(message => message.id === preview.messageId)?.documents
     const plan = projectPlanCard(planSnapshot)
     const empty = messages.length === 0 && !error && !plan.view && !build && !question
 
@@ -119,6 +126,10 @@ export function DesktopForemanChatLayer({
                                 message.role === 'user' ? 'ml-auto bg-secondary' : 'bg-transparent text-foreground',
                             )}
                         >
+                            {restored && message.role === 'user' && !!message.documents?.length && <div className="mb-1 flex flex-wrap gap-1">
+                                {message.documents.map((document, index) => <Button key={document.attachmentId} type="button" variant="secondary" size="sm"
+                                    onClick={event => setPreview({ messageId: message.id, index, trigger: event.currentTarget })}>{document.name}</Button>)}
+                            </div>}
                             {restored && message.history ? <>
                                 <DesktopForemanHistoryMessage history={message.history} />
                                 <DesktopForemanAnsweredQuestion recaps={message.answeredQuestions ?? []} />
@@ -173,6 +184,8 @@ export function DesktopForemanChatLayer({
                 </ConversationContent>
                 <ConversationScrollButton />
             </Conversation>
+            {attachmentsActive && preview && previewDocuments && <DesktopDocumentLightbox attachments={previewDocuments} index={preview.index}
+                onIndexChange={index => setPreview({ ...preview, index })} onClose={() => setPreview(null)} returnFocus={() => preview.trigger.focus()} />}
         </div>
     )
 }

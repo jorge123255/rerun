@@ -1,7 +1,7 @@
 import { readAnsweredQuestionRecaps } from './answered-question-recap'
 import 'server-only'
 import { createHash } from 'node:crypto'
-import { COMPANY_BRIEF_MODEL_PROVIDERS, type CompanyBriefModelRef, type DesktopForemanBinding, type DesktopForemanChatRef, type DesktopForemanLiveEvent, type DesktopForemanModelRef } from '@rerun/contracts'
+import { COMPANY_BRIEF_MODEL_PROVIDERS, FOREMAN_AGENT_ID, foremanDocumentScope, type CompanyBriefModelRef, type DesktopDocumentSendSelection, type DesktopForemanBinding, type DesktopForemanChatRef, type DesktopForemanLiveEvent, type DesktopForemanModelRef } from '@rerun/contracts'
 import { EngineRequestError, cancelRun, getRun, getSessionMessages } from '@/lib/engine/client'
 import { publicDesktopHistory, transformEngineMessages } from '@/lib/chat/engine-history'
 import { usableConnection } from '../../chat-model'
@@ -34,6 +34,7 @@ import { FOREMAN_ALTERNATE_SQL } from '../foreman-alternates/repository'
 import { foremanAlternateSnapshot } from '../foreman-alternates/snapshot'
 import { foremanTranscriptRevision } from '../../../../../engine/src/desktop/foreman/transcript-revision.ts'
 import { desktopForemanContext } from '../../foreman/context'
+import { consumeDesktopDocumentAdmission, resolveDesktopDocumentAdmission } from '../document-attachments/binding'
 
 const KEY = Symbol.for('rerun.desktop.foreman.binding.v1')
 const SHUTDOWN_KEY = Symbol.for('rerun.desktop.foreman.shutdown.v1')
@@ -199,6 +200,7 @@ async function createBinding(runtime: DesktopRuntime) {
         }
         if (response.body) void response.body.pipeTo(new WritableStream({ write() {} })).catch(() => {})
         await db.execute({ sql: "UPDATE desktop_foreman_turns SET status='admitted',error=NULL WHERE request_id=?", args: [turn.binding.runId] })
+        if (turn.documents) await consumeDesktopDocumentAdmission(runtime, turn.documents, AbortSignal.timeout(10_000))
         return { runId: turn.binding.runId }
     }
     async function savedQuestionAttempt(chat: DesktopForemanChatRef) {
@@ -207,7 +209,7 @@ async function createBinding(runtime: DesktopRuntime) {
     }
 
     async function send(chat: DesktopForemanChatRef, requestId: string, text: string, requested?: DesktopForemanModelRef, guard?: VoiceGuard,
-        answer?: DesktopQuestionAnswer, starter?: { input: DesktopLocalStarterDecision; signal: AbortSignal }) {
+        answer?: DesktopQuestionAnswer, starter?: { input: DesktopLocalStarterDecision; signal: AbortSignal }, documents?: DesktopDocumentSendSelection) {
         if (chat.workspaceId !== workspaceId) throw new DesktopHttpError(404, 'Conversation not found.')
         await assertDesktopWorkspaceAdmission(runtime)
         return withForemanChatWrite(db, async () => {
@@ -224,7 +226,7 @@ async function createBinding(runtime: DesktopRuntime) {
             }
             const fingerprint = createHash('sha256').update(JSON.stringify(starter
                 ? [chat, text, requested ?? null, 'starter', starter.input.offerId]
-                : [chat, answer ?? text, requested ?? null])).digest('hex')
+                : [chat, answer ?? text, requested ?? null, ...(documents ? [documents] : [])])).digest('hex')
             const previous = await foremanTurn(db, requestId)
             if (previous) {
                 if (previous.fingerprint !== fingerprint || previous.body.binding.chatId !== chat.chatId) throw new DesktopHttpError(409, 'This message ID was used for another message.')
@@ -259,6 +261,17 @@ async function createBinding(runtime: DesktopRuntime) {
             let model = original ?? requested ?? owner.model
             if (!model) { const fallback = await desktopModel(runtime); model = { connectionId: fallback.connection.id, model: fallback.model } }
             if (!await modelAvailable(model)) throw new ForemanRefusal('model_unavailable', 'Choose a connected model in Settings.')
+            if (documents) {
+                const scope = foremanDocumentScope(chat, owner.sessionId)
+                if (answer || starter || guard || documents.scope.agentId !== scope.agentId || documents.scope.tabUid !== scope.tabUid
+                    || documents.scope.sessionId !== scope.sessionId || documents.modelChoice?.connectionId !== model.connectionId
+                    || documents.modelChoice?.model !== model.model) throw new DesktopHttpError(409, 'These attachments do not match this conversation and model.')
+                const admission = await resolveDesktopDocumentAdmission(runtime, FOREMAN_AGENT_ID, documents, AbortSignal.timeout(20_000))
+                if (admission.references.some(item => item.kind === 'image')
+                    && usableConnection((await readDesktopProviders(runtime)).connections, model)?.provider !== 'codex') {
+                    throw new DesktopHttpError(400, 'Image attachments need a ChatGPT / Codex model. Choose one before sending.')
+                }
+            }
             const { view, companyProfile } = await intakeContext(chat, requestId, text)
             const board = await readDesktopBoardState(db)
             const name = String((await db.execute('SELECT name FROM desktop_workspace WHERE id=1')).rows[0]?.name ?? 'My workspace')
@@ -269,7 +282,8 @@ async function createBinding(runtime: DesktopRuntime) {
                 'Questions about Rerun itself must use search_docs and link the retrieved passage; do not guess features, prices or limits. Empty or unavailable documentation stays unavailable.',
                 'When the user asks to design or add coworkers, propose their jobs with show_plan. Nothing is created until they confirm the card. Never treat chat text as approval.'].filter(Boolean).join('\n\n')
             const turn: ForemanTurn = { binding: { ...chat, runId: requestId, model }, sessionId: owner.sessionId, text, brief: { instructions, tools: [] },
-                ...(answer && question && { question: question.guard, answerIntent: answer }), ...(starter && { starterOfferId: starter.input.offerId }) }
+                ...(answer && question && { question: question.guard, answerIntent: answer }), ...(starter && { starterOfferId: starter.input.offerId }),
+                ...(documents && { documents }) }
             await checkVoice(guard)
             starter?.signal.throwIfAborted()
             await assertDesktopWorkspaceAdmission(runtime)
@@ -279,7 +293,9 @@ async function createBinding(runtime: DesktopRuntime) {
         })
     }
     return {
-        core, db, send, isLive, companyDiscovery, starterOffers,
+        core, db, isLive, companyDiscovery, starterOffers,
+        send: (chat: DesktopForemanChatRef, requestId: string, text: string, model?: DesktopForemanModelRef, documents?: DesktopDocumentSendSelection) =>
+            send(chat, requestId, text, model, undefined, undefined, undefined, documents),
         assertAlternateIdle: (chat: DesktopForemanChatRef) => assertChatIdle(chat, 'Resolve the current Chief of Staff work before preparing a retry.'),
         async setModel(chat: DesktopForemanChatRef, expected: DesktopForemanModelRef | null, model: DesktopForemanModelRef | null) {
             return withForemanChatWrite(db, async () => {

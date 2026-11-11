@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { randomUUID } from 'node:crypto'
+import { foremanDocumentScope } from '@rerun/contracts'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { cancelDraftShutdown } from '@/lib/desktop/draft-writes'
 import { DEFAULT_DESKTOP_FOREMAN_PLACEMENT } from './persistence'
@@ -53,6 +54,31 @@ it('persists immutable send identity before execution and recovers the same requ
     const sends = bodies.filter(body => body.action === 'send')
     expect(sends).toHaveLength(2); expect(sends.map(body => body.requestId)).toEqual([request!.requestId, request!.requestId])
     expect(sends.every(body => JSON.stringify(body.modelChoice) === JSON.stringify(model))).toBe(true)
+    expect(server.ui.snapshot?.pendingSend).toBeUndefined()
+})
+it('recovers a file-only send from the composer without preparing or uploading the attachment again', async () => {
+    const transport = vi.mocked(fetch).getMockImplementation()!
+    const documents = { scope: foremanDocumentScope(chat, server.sessionId), admissionId: randomUUID(), attachmentIds: [randomUUID()], modelChoice: model }
+    const prepare = vi.fn(async () => documents)
+    let lost = false
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : null
+        if (body?.action === 'send' && !lost) {
+            lost = true
+            expect(server.ui.snapshot?.pendingSend).toEqual({ requestId: body.requestId, text: '', modelChoice: model, documents })
+            throw new Error('lost file acknowledgement')
+        }
+        return transport(url, init)
+    })
+    const client = connect(server, model)
+    await expect(client.ports.conversation.sendMessage('', undefined, prepare)).rejects.toThrow('lost file acknowledgement')
+    const requestId = server.ui.snapshot?.pendingSend?.requestId
+    client.close()
+    const restored = connect(await readDesktopForemanState())
+    await expect(restored.ports.conversation.sendMessage('')).rejects.toThrow('Retry the attached message')
+    expect(await restored.ports.conversation.sendMessage('', undefined, prepare)).toBe(true)
+    expect(prepare).toHaveBeenCalledExactlyOnceWith(model)
+    expect(bodies.find(body => body.action === 'send')).toMatchObject({ requestId, text: '', modelChoice: model, documents })
     expect(server.ui.snapshot?.pendingSend).toBeUndefined()
 })
 it('uses an acknowledged model immediately and ignores a state read that predates the change', async () => {

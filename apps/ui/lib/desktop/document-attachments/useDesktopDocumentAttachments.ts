@@ -9,7 +9,7 @@ import { planDesktopDocumentAdd, summarizeDesktopDocumentAddError, type DesktopD
 
 export type { DesktopDocumentAddOutcome, DesktopDocumentAddResult, DesktopDocumentAddRejectReason } from './plan-document-add'
 
-export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, enabled = true }: DesktopDocumentScope & { enabled?: boolean }) {
+export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, enabled = true, load = true }: DesktopDocumentScope & { enabled?: boolean; load?: boolean }) {
     const scope = useMemo(() => ({ agentId, tabUid, ...(sessionId ? { sessionId } : {}) }), [agentId, tabUid, sessionId])
     const scopeKey = documentScopeKey(scope), latest = useRef(scopeKey); latest.current = scopeKey
     const [attachments, setAttachments] = useState<DesktopDocumentAttachment[]>([]), rows = useRef(attachments); rows.current = attachments
@@ -30,6 +30,7 @@ export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, enab
         rows.current = merged; setAttachments(merged); setLoaded(true); setError(null)
     }, [current, scope, scopeKey])
     useEffect(() => {
+        if (!load) return
         mounted.current = true; generation.current++
         const key = scopeKey, token = generation.current
         selection.current = null; setPending(new Set()); setLoaded(false); setError(null)
@@ -43,7 +44,7 @@ export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, enab
         })
         for (const item of retainedDocuments(scope)) if (item.work) setPending(old => new Set(old).add(item.id))
         return () => { mounted.current = false; generation.current++; unsubscribe(); for (const controller of operations.current.values()) controller.abort(); operations.current.clear() }
-    }, [scope, scopeKey, current, refresh, update])
+    }, [scope, scopeKey, current, refresh, update, load])
     const add = useCallback((files: readonly File[], positionRange?: { start: number; end: number }): DesktopDocumentAddResult => {
         const empty: DesktopDocumentAddResult = { outcomes: [], attachedIds: [], error: null }
         if (!files.length) return empty

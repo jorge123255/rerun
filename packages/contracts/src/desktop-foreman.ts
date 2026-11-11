@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { desktopTemplateRevisionSchema } from './desktop-templates.js'
+import { desktopDocumentSendSelectionSchema, type DesktopDocumentScope } from './desktop-document-attachments.js'
+import { FOREMAN_AGENT_ID, foremanBriefSchema } from './foreman.js'
 
 // Local Foreman (E11). Renderer DTOs carry opaque local identities only: no engine ids, provider
 // credentials, connection secrets or host paths. Compatibility: version 1. Additive fields only;
@@ -56,6 +58,18 @@ export const foremanBindingSchema = z.strictObject({
 export type DesktopForemanBinding = z.infer<typeof foremanBindingSchema>
 export const foremanChatRefSchema = z.strictObject({ workspaceId: foremanWorkspaceIdSchema, chatId: foremanChatIdSchema })
 export type DesktopForemanChatRef = z.infer<typeof foremanChatRefSchema>
+
+export function foremanDocumentScope(chat: DesktopForemanChatRef, sessionId: string): DesktopDocumentScope {
+    return { agentId: FOREMAN_AGENT_ID, tabUid: chat.chatId, sessionId }
+}
+
+export const desktopForemanTurnSchema = z.strictObject({
+    binding: foremanBindingSchema.extend({ runId: z.uuid() }), sessionId: z.uuid(),
+    text: z.string().max(20_000),
+    brief: foremanBriefSchema.extend({ instructions: z.string().min(1).max(12_000), tools: z.array(z.never()).max(0), hubToken: z.never().optional() }).strict(),
+    question: foremanQuestionGuardSchema.optional(),
+    documents: desktopDocumentSendSelectionSchema.optional(),
+}).refine(turn => Boolean(turn.text.trim() || turn.documents) && !(turn.documents && turn.question))
 
 // Engine and app server only. Renderer requests continue to use their saved message ID.
 export const foremanReplyTargetSchema = foremanChatRefSchema.extend({

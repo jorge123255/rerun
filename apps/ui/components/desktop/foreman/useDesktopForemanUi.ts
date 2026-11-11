@@ -260,13 +260,15 @@ export function useDesktopForemanUi({ chat, ports, live, initialOpen = false, re
             if (valid(generation) && !controller.signal.aborted) commit(current => ({ ...current, leadState: { status: 'failed', agentId: step.agentId, error: messageOf(error) } }), false)
         } finally { owner.controllers.delete(controller) }
     }, [owner, valid, commit, ports.build, navigate])
-    const sendMessage = useCallback(async (text: string) => {
+    const sendMessage = useCallback(async (text: string, prepareDocuments?: import('@/lib/desktop/foreman-client/actions').PrepareForemanDocuments) => {
         if (isDesktopQuitting() || !valid() || !owner.state.restored || owner.state.blocked || owner.sending) return false
         const generation = owner.generation
         owner.sending = true
         const submittedDraft = owner.state.ui.draft
         try {
-            const accepted = await ports.conversation.sendMessage(text)
+            const accepted = prepareDocuments
+                ? await ports.conversation.sendMessage(text, undefined, prepareDocuments)
+                : await ports.conversation.sendMessage(text)
             if (valid(generation) && accepted && owner.state.ui.draft === submittedDraft && submittedDraft.trim() === text) setDraft('')
             return accepted
         } catch (error) {

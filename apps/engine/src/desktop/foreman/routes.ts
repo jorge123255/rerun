@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
-import { FOREMAN_AGENT_ID, foremanAlternateRequestSchema, foremanAlternateRunActionSchema, foremanBindingSchema, foremanBriefSchema, foremanDigestSchema, foremanQuestionGuardSchema, foremanReplyTargetSchema } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, desktopForemanTurnSchema, foremanAlternateRequestSchema, foremanAlternateRunActionSchema, foremanDigestSchema, foremanDocumentScope, foremanQuestionGuardSchema, foremanReplyTargetSchema } from '@rerun/contracts'
 import { withAgentLock } from '../../agents/lock.js'
 import { getAgent } from '../../agents/registry.js'
 import { resolveRunModel } from '../../agents/availability.js'
@@ -22,13 +22,8 @@ import { readForemanQuestion } from './question.js'
 import type { createDesktopForemanBridge } from './bridge.js'
 import { createForemanFilePermissionRoutes } from '../foreman-agent-files/permissions.js'
 import { runForemanAlternate } from './alternate-run.js'
-export const desktopForemanChatSchema = z.strictObject({
-    binding: foremanBindingSchema.extend({ runId: z.uuid() }), sessionId: z.uuid(),
-    text: z.string().min(1).max(20_000).refine(value => !!value.trim()),
-    brief: foremanBriefSchema.extend({ instructions: z.string().min(1).max(12_000), tools: z.array(z.never()).max(0), hubToken: z.never().optional() }).strict(),
-    replayOnly: z.boolean().optional(),
-    question: foremanQuestionGuardSchema.optional(),
-})
+import { assertImageModel, verifyImageBytes } from '../chat-images.js'
+export const desktopForemanChatSchema = desktopForemanTurnSchema.safeExtend({ replayOnly: z.boolean().optional() })
 function isOwnedForemanSession(session: NonNullable<Awaited<ReturnType<typeof getSession>>>) {
     return session.agentId === FOREMAN_AGENT_ID && session.source === 'dashboard'
         && session.status === 'open' && !session.originAgentId && !session.originSessionId
@@ -117,7 +112,7 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
             const raw = await c.req.text()
             if (Buffer.byteLength(raw) > 48 * 1024) throw new HttpError(413, 'Foreman message exceeds limit.')
             const body = desktopForemanChatSchema.parse(JSON.parse(raw)), signal = c.req.raw.signal
-            const turn = { runId: body.binding.runId, sessionId: body.sessionId, message: body.text, foreman: { binding: body.binding, brief: body.brief, ...(body.question && { question: body.question }) } }
+            const turn = { runId: body.binding.runId, sessionId: body.sessionId, message: body.text, documents: body.documents, foreman: { binding: body.binding, brief: body.brief, ...(body.question && { question: body.question }) } }
             return await withAgentLock(FOREMAN_AGENT_ID, async () => {
                 signal.throwIfAborted()
                 const replay = await getDesktopQueuedTurn(FOREMAN_AGENT_ID, turn)
@@ -139,6 +134,22 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
                 const override = body.binding.model, model = await resolveRunModel(agent, override)
                 if (model.connection?.id !== override.connectionId || model.model !== override.model) throw new HttpError(409, 'The selected Foreman model changed.')
                 assertDesktopProvider(model.provider, model.connection?.id)
+                const selection = body.documents
+                const documents = selection && await bridge.documents(exact, signal)
+                if (selection) {
+                    const scope = foremanDocumentScope(body.binding, body.sessionId)
+                    const owned = (candidate: typeof scope) => candidate.agentId === scope.agentId
+                        && candidate.tabUid === scope.tabUid && candidate.sessionId === scope.sessionId
+                    if (!owned(selection.scope) || selection.modelChoice?.connectionId !== override.connectionId || selection.modelChoice.model !== override.model
+                        || !documents || documents.length !== selection.attachmentIds.length || documents.some(({ reference }, index) =>
+                            reference.attachmentId !== selection.attachmentIds[index] || !owned(reference.scope))) {
+                        throw new HttpError(409, 'The Foreman attachment selection changed.')
+                    }
+                }
+                const images = (documents ?? []).flatMap(item => 'dataBase64' in item
+                    ? [{ ...('renderedImage' in item ? item.renderedImage : item.reference), dataBase64: item.dataBase64 }] : [])
+                verifyImageBytes(images)
+                await assertImageModel(model.provider, FOREMAN_AGENT_ID, images.length > 0, session?.id)
                 if (sessionClaim(body.sessionId)) throw new HttpError(409, 'Wait for the Foreman’s current reply to finish.')
                 await bridge.admit(exact, signal)
                 signal.throwIfAborted()
@@ -152,7 +163,7 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
                     }
                     signal.throwIfAborted()
                     assertDesktopRunAdmission()
-                    const queuedUser = await reserveDesktopQueuedTurn(FOREMAN_AGENT_ID, turn, undefined, undefined, undefined, !session)
+                    const queuedUser = await reserveDesktopQueuedTurn(FOREMAN_AGENT_ID, turn, undefined, undefined, undefined, !session, documents)
                     const view = { ...agent, brief: body.brief }
                     return identified(toResumableStreamResponse(turn.runId, async writer => {
                         try {
@@ -160,7 +171,7 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
                             signal.throwIfAborted()
                             assertDesktopRunAdmission()
                             if (readBinding() !== bridge) throw new HttpError(409, 'Foreman app launch changed.')
-                            const result = await runAgent(view, turn.sessionId, turn.message, override, writer, turn.runId, { source: 'chat', queuedUser }); mergeRunStream(writer, result, { provider: model.provider, model: model.model }) }
+                            const result = await runAgent(view, turn.sessionId, turn.message, override, writer, turn.runId, { source: 'chat', queuedUser, desktopDocuments: documents }); mergeRunStream(writer, result, { provider: model.provider, model: model.model }) }
                         catch (error) { await cancelRun(FOREMAN_AGENT_ID, turn.runId); releaseSession(turn.runId); throw error }
                     }), turn.sessionId, turn.runId)
                 } catch (error) { releaseSession(turn.runId); throw error }

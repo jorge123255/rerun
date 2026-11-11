@@ -156,12 +156,15 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const effective = view?.effective
     const voiceModel = props.modelChoice ?? state.model ?? (effective?.available && effective.connectionId && effective.model
         ? { connectionId: effective.connectionId, model: effective.model } : undefined)
+    const pendingSend = state.ui.snapshot?.pendingSend
     return <>
     {voiceModel && <ForemanVoiceOwner target={{ chat: state.chat, model: voiceModel }}
         active={!props.hidden && !state.view.live && !state.question && !intakeOpen && !pendingStarter && !modelSaving} engage={() => {}}
         accepted={() => { void client.refresh() }} onSlot={setVoice} onSettings={props.onOpenTranscriptionSettings} />}
     {!intakeOpen && <DesktopCompanyResearch chat={state.chat} active={!!props.controlledOpen && !props.hidden} refreshKey={JSON.stringify(state.view)} />}
     <DesktopForemanColumn
+        sessionId={state.sessionId} pendingSend={!!pendingSend} retryAttachedMessage={!!pendingSend?.documents && !pendingSend.text}
+        imageModel={providers?.connections.some(connection => connection.id === voiceModel?.connectionId && connection.provider === 'codex')}
         controlledOpen={props.controlledOpen} hidden={props.hidden} centerOpen={props.centerOpen} onOpenChange={props.onOpenChange} onLayout={props.onLayout}
         dockFeed={dockFeed} voiceSlot={voiceModel ? voice?.slot : undefined} sendDisabled={modelSaving} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)} retrySnapshot={state.retrySnapshot}
         question={state.question} onAnswerQuestion={client.answerQuestion}

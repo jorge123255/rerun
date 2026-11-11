@@ -1,12 +1,12 @@
 import { assertDesktopRunAdmission } from '../../desktop/workspace-admission.js'
 import { prepareTriggerHumanAdmission, withoutStoppedTriggerRequests } from '../../desktop/triggers/human.js'
-import { desktopDocumentSendSelectionSchema, desktopResolvedDocumentsSchema, desktopStoredDocumentReferences, DESKTOP_DOCUMENT_IMAGE_MAX_FILES, DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES, desktopMcpSignInGuardSchema } from '@rerun/contracts'
+import { desktopDocumentSendSelectionSchema, desktopResolvedDocumentsSchema, desktopMcpSignInGuardSchema } from '@rerun/contracts'
 import { assertDesktopMcpSignInContinuation } from '../../desktop/mcp-sign-in/admission.js'
 import { readDesktopMcpSignInSource } from '../../desktop/mcp-sign-in/source.js'
 import { desktopCoworkerMentionsSchema, checkedDesktopCoworkerMentions, desktopCoworkerMentionFieldsOf } from '@rerun/contracts'
 import { desktopServiceRequestGuardSchema, desktopTakeoverGuardSchema, findDesktopTakeover } from '@rerun/contracts'
-import { createHash } from 'node:crypto'
-import { chatRequestSchema, desktopApprovalGuardSchema, desktopQuestionGuardSchema, desktopAttachmentSelectionsOf, desktopAttachmentFieldsOf, desktopAttachmentItemsSchema, hasOneDesktopAttachmentField, desktopResolvedAttachmentsSchema, desktopResolvedAttachmentSelections, desktopStoredAttachmentSelections, desktopAttachmentPathsSchema, desktopWorkspaceAttachmentSchema, desktopWorkspaceAttachmentsSchema, findDesktopApproval, findDesktopQuestion, type SessionSource } from '@rerun/contracts'
+import { assertImageModel, verifyImageBytes } from '../../desktop/chat-images.js'
+import { chatRequestSchema, desktopApprovalGuardSchema, desktopQuestionGuardSchema, desktopAttachmentSelectionsOf, desktopAttachmentFieldsOf, desktopAttachmentItemsSchema, hasOneDesktopAttachmentField, desktopResolvedAttachmentsSchema, desktopResolvedAttachmentSelections, desktopAttachmentPathsSchema, desktopWorkspaceAttachmentSchema, desktopWorkspaceAttachmentsSchema, findDesktopApproval, findDesktopQuestion, type SessionSource } from '@rerun/contracts'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { desktopApp } from '../../desktop/policy.js'
@@ -65,30 +65,6 @@ const regenerateRequest = chatRequestSchema.pick({ provider: true, model: true, 
     source: z.literal('dashboard').optional(),
     requestId: z.uuid(),
 }).strict()
-
-function verifyImageBytes(images: ReadonlyArray<{ dataBase64: string; sha256: string; byteLength: number }>) {
-    if (images.length > DESKTOP_DOCUMENT_IMAGE_MAX_FILES || images.reduce((sum, image) => sum + image.byteLength, 0) > DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES) {
-        throw new HttpError(413, 'Choose at most four images, up to 16 MiB in total.')
-    }
-    for (const image of images) {
-        const bytes = Buffer.from(image.dataBase64, 'base64')
-        if (bytes.byteLength !== image.byteLength || bytes.toString('base64') !== image.dataBase64 ||
-            createHash('sha256').update(bytes).digest('hex') !== image.sha256) {
-            throw new HttpError(400, 'The image bytes do not match the selected snapshot.')
-        }
-    }
-}
-async function assertImageModel(provider: string, agentId: string, includesImages: boolean, sessionId?: string, throughMessageId?: string) {
-    if (!desktopApp() || provider === 'codex') return
-    const hasImages = includesImages || (sessionId &&
-        (await listMessages(agentId, sessionId, throughMessageId)).some(row => {
-            if (row.role !== 'user') return false
-            const content = storedContent(row.contentJson)
-            return desktopStoredAttachmentSelections(content).some(item => typeof item !== 'string') ||
-                desktopStoredDocumentReferences(content).some(item => item.kind === 'image')
-        }))
-    if (hasImages) throw new HttpError(400, 'Image attachments need a ChatGPT / Codex model. Choose one before sending.')
-}
 
 function identified(response: Response, sessionId: string, runId: string) {
     response.headers.set('x-session-id', sessionId)

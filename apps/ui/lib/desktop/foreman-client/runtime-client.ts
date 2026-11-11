@@ -21,6 +21,7 @@ import { DEFAULT_DESKTOP_FOREMAN_PLACEMENT, type DesktopForemanPersistedUi } fro
 import { desktopForemanSavedUiSchema } from './ui-schema'
 import { desktopStarterViewSchema, localStarterDecisionSchema, type DesktopLocalStarterDecision } from './starter'
 import { desktopForemanContextSchema } from '../foreman/context'
+import { desktopDocumentReferenceSchema, foremanDocumentScope, DESKTOP_DOCUMENT_MAX_FILES } from '@rerun/contracts'
 export { desktopForemanSavedUiSchema } from './ui-schema'
 const stateSchema = z.strictObject({
     chat: foremanChatRefSchema, sessionId: z.string().min(1).max(128), model: foremanModelRefSchema.nullable(),
@@ -30,7 +31,9 @@ const stateSchema = z.strictObject({
     answeredQuestions: z.array(desktopAnsweredQuestionRecapSchema).max(2048).optional(),
     retrySnapshot: foremanDigestSchema.optional(),
     context: desktopForemanContextSchema.nullable().optional(),
-    messages: z.array(z.object({ id: z.string().max(256), role: z.enum(['user', 'assistant']), parts: z.array(z.unknown()).max(4096) })).max(5000),
+    messages: z.array(z.object({ id: z.string().max(256), role: z.enum(['user', 'assistant']), parts: z.array(z.unknown()).max(4096),
+        metadata: z.object({ documents: z.array(desktopDocumentReferenceSchema).max(DESKTOP_DOCUMENT_MAX_FILES).optional() }).optional(),
+    })).max(5000),
     ui: z.strictObject({ snapshot: desktopForemanSavedUiSchema.nullable(), revision: z.number().int().nonnegative() }),
 }).refine(value => sameForemanChat(value.chat, value.view.chat) && (!value.ui.snapshot || sameForemanChat(value.chat, value.ui.snapshot)), 'Foreman state belongs to another chat.')
 export type DesktopForemanClientState = z.infer<typeof stateSchema>
@@ -60,12 +63,16 @@ export async function readDesktopForemanState(signal?: AbortSignal): Promise<Des
 }
 const post = async (input: unknown, signal?: AbortSignal) => json(await fetch('/api/desktop/foreman', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input), signal }))
 export function desktopForemanMessages(state: DesktopForemanClientState) {
-    return state.messages.map(({ id, role, parts }) => {
+    const scope = foremanDocumentScope(state.chat, state.sessionId)
+    return state.messages.map(({ id, role, parts, metadata }) => {
         const answeredQuestions = answeredQuestionRecapsForMessage(state.answeredQuestions ?? [], id)
+        const documents = role === 'user' ? metadata?.documents?.filter(item => item.scope.agentId === scope.agentId
+            && item.scope.tabUid === scope.tabUid && item.scope.sessionId === scope.sessionId) : undefined
         return {
             id,
             role,
             history: foremanHistoryParts(id, parts),
+            ...(documents?.length && { documents }),
             ...(answeredQuestions.length > 0 && { answeredQuestions }),
             text: visibleText(parts, '\n'),
             docs: parts.filter(part => part && typeof part === 'object' && (
@@ -73,7 +80,7 @@ export function desktopForemanMessages(state: DesktopForemanClientState) {
                 (part as { type?: string; toolName?: string }).type === 'dynamic-tool' && (part as { toolName?: string }).toolName === 'search_docs'
             )) as UIMessage['parts'],
         }
-    }).filter(message => message.history.length > 0)
+    }).filter(message => message.history.length > 0 || message.documents?.length)
 }
 function emptyUi(chat: DesktopForemanChatRef): DesktopForemanPersistedUi {
     return { ...chat, open: true, tab: 'assistant', draft: '', pendingPlanRevisionId: null, decision: { status: 'idle' }, build: null, discoveries: null, placement: DEFAULT_DESKTOP_FOREMAN_PLACEMENT }
@@ -155,7 +162,7 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
             },
         },
         conversation: {
-            sendMessage: async (text, signal) => {
+            sendMessage: async (text, signal, prepareDocuments) => {
                 owned(chat); signal?.throwIfAborted()
                 if (isDesktopQuitting() || sending || state.question || state.starter && !state.starter.decision?.settled) return false
                 sending = true
@@ -164,22 +171,31 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
                     const picked = options.modelChoice?.()
                     const choice = pendingSend && picked === undefined ? pendingSend.modelChoice : picked ?? state.model ?? options.workspaceModel?.() ?? null
                     if (pendingSend && (pendingSend.text !== text || JSON.stringify(pendingSend.modelChoice) !== JSON.stringify(choice))) throw new Error('Retry the previous message with its original model before sending a different message.')
+                    if (pendingSend?.documents && !prepareDocuments) throw new Error('Retry the attached message from your Chief of Staff chat.')
+                    const documents = pendingSend ? pendingSend.documents : await prepareDocuments?.(choice)
+                    if (!text && !documents) return false
                     if (!await flushDesktopForemanUiSaves()) throw new Error('Save this Foreman draft before sending.')
                     signal?.throwIfAborted(); owned(chat)
                     if (isDesktopQuitting()) return false
-                    if (!pendingSend) { pendingSend = { requestId: createPlanDecisionRequestId(), text, modelChoice: choice }; reserved = true }
+                    if (!pendingSend) { pendingSend = { requestId: createPlanDecisionRequestId(), text, modelChoice: choice, ...(documents && { documents }) }; reserved = true }
                     await saveForemanUiIfMatching(ports.persistence, lastUi)
                     signal?.throwIfAborted(); owned(chat)
                     if (isDesktopQuitting()) throw new Error('Rerun is closing.')
                     dispatched = true
-                    const receipt = z.strictObject({ runId: z.string().min(1).max(128) }).parse(await act({ action: 'send', chat, requestId: pendingSend.requestId, text: pendingSend.text, ...(pendingSend.modelChoice ? { modelChoice: pendingSend.modelChoice } : {}) }, signal))
+                    const receipt = z.strictObject({ runId: z.string().min(1).max(128) }).parse(await act({
+                        action: 'send', chat, requestId: pendingSend.requestId, text: pendingSend.text,
+                        ...(pendingSend.modelChoice && { modelChoice: pendingSend.modelChoice }), ...(pendingSend.documents && { documents: pendingSend.documents }),
+                    }, signal))
                     if (receipt.runId !== pendingSend.requestId) throw new Error('Foreman acknowledged a different message.')
                     pendingSend = undefined
                     await saveForemanUiIfMatching(ports.persistence, lastUi)
                     changed()
                     return true
                 } catch (error) {
-                    if (reserved && !dispatched) { pendingSend = undefined; await saveForemanUiIfMatching(ports.persistence, lastUi) }
+                    if (reserved && (!dispatched || pendingSend?.documents && error instanceof ForemanRequestError && error.status === 400)) {
+                        pendingSend = undefined
+                        await saveForemanUiIfMatching(ports.persistence, lastUi)
+                    }
                     throw error
                 } finally { sending = false }
             },
