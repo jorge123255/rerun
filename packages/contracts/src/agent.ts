@@ -75,7 +75,7 @@ export type SelfImprovement = z.infer<typeof selfImprovementSchema>
 export type SelfImprovementKey = keyof SelfImprovement
 export const SELF_IMPROVEMENT_KEYS = Object.keys(selfImprovementSchema.shape) as SelfImprovementKey[]
 
-export const providerSchema = z.enum(['rerun', 'anthropic', 'claude', 'codex', 'openai', 'google', 'openrouter', 'custom', ...desktopSubscriptionProvider.options])
+export const providerSchema = z.enum(['rerun', 'anthropic', 'claude', 'codex', 'openai', 'google', 'openrouter', 'custom', 'opencode', ...desktopSubscriptionProvider.options])
 export type Provider = z.infer<typeof providerSchema>
 
 // The names the boxes know the Rerun models by. Aliases, not OpenRouter ids: the hub proxy resolves
@@ -114,6 +114,7 @@ export const DEFAULT_PROVIDER_MODEL: Record<Provider, string> = {
     openai: 'gpt-5.4',
     google: 'gemini-3.6-flash',
     openrouter: 'anthropic/claude-sonnet-5.5',
+    opencode: 'go/deepseek-v4-pro',
     custom: '', // A custom connection must offer the exact selected model.
     'grok-build': '',
     'kimi-code': '',

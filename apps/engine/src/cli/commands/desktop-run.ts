@@ -1,3 +1,4 @@
+import { registerDesktopOpencodeConnection } from '../../desktop/opencode/registry.js'
 import { createDesktopOpencodeConnectionStore } from '../../desktop/opencode/connection-store.js'
 import { desktopOpencodeConnectionRoutes } from '../../desktop/opencode/connection-routes.js'
 import { desktopOpencodeListedModels } from '../../desktop/opencode/catalog.js'
@@ -122,6 +123,7 @@ export async function desktopRunCommand(): Promise<void> {
         knownModels: () => desktopOpencodeListedModels(runtime.workspaceId).map(model => model.id),
         readDefault: readBoxDefault,
     })
+    registerDesktopOpencodeConnection(opencodeConnection)
     const subscriptionLogin = bindDesktopSubscriptionDeviceLogin()
     observeDesktopAdmissionChange(async () => {
         let frozen = true

@@ -1,6 +1,6 @@
 import { desktopTemplateRouteAllowed } from './templates/allow.js'
 import { DESKTOP_CODEX_ID, desktopCodexAvailable } from './codex-runtime.js'
-import { DESKTOP_CLAUDE_CONNECTION_ID, isDesktopSubscriptionProvider, parseDesktopSubscriptionConnectionId, registeredCustomConnectionIdSchema } from '@rerun/contracts'
+import { DESKTOP_OPENCODE_CONNECTION_ID, DESKTOP_CLAUDE_CONNECTION_ID, isDesktopSubscriptionProvider, parseDesktopSubscriptionConnectionId, registeredCustomConnectionIdSchema } from '@rerun/contracts'
 import { desktopClaudeAvailable } from './claude-plan/runtime.js'
 import { desktopBrainPagesRouteAllowed } from './brain-pages-policy.js'
 import { badRequest } from '../lib/errors.js'
@@ -16,12 +16,13 @@ export function desktopProviderAllowed(provider: string, id?: string) {
         return pin?.provider === provider && desktopSubscriptionChatAvailable(provider) &&
             readDesktopSubscriptionCatalog(provider)?.generation === pin.generation
     }
+    if (provider === 'opencode') return id === DESKTOP_OPENCODE_CONNECTION_ID
     return API_PROVIDERS.has(provider) || (provider === 'custom' && registeredCustomConnectionIdSchema.safeParse(id).success) || (provider === 'codex' && id === DESKTOP_CODEX_ID && desktopCodexAvailable())
         || (provider === 'claude' && id === DESKTOP_CLAUDE_CONNECTION_ID && desktopClaudeAvailable())
 }
 
 export function assertDesktopProvider(provider: string, id?: string): void {
-    if (isDesktopSubscriptionProvider(provider) && !desktopApp()) throw badRequest('This connection requires the Mac app.')
+    if ((provider === 'opencode' || isDesktopSubscriptionProvider(provider)) && !desktopApp()) throw badRequest('This connection requires the Mac app.')
     if (desktopApp() && !desktopProviderAllowed(provider, id)) throw badRequest('This connection is unavailable in the desktop preview.')
 }
 

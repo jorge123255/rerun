@@ -1,3 +1,5 @@
+import { readDesktopOpencodeConnection } from '../desktop/opencode/registry.js'
+import { DESKTOP_OPENCODE_CONNECTION_ID } from '@rerun/contracts'
 import { notFound } from '../lib/errors.js'
 import { clearAgentCache } from '../agents/registry.js'
 import { isPathSegment } from '../config/paths.js'
@@ -13,6 +15,11 @@ import { findDesktopSubscriptionConnection, listDesktopSubscriptionConnections }
 const cache = new Map<string, LoadedConnection>()
 
 export async function getConnection(id: string): Promise<LoadedConnection> {
+    if (id === DESKTOP_OPENCODE_CONNECTION_ID) {
+        const connection = await readDesktopOpencodeConnection()
+        if (!connection) throw notFound('connection')
+        return connection
+    }
     if (parseDesktopSubscriptionConnectionId(id)) {
         const connection = findDesktopSubscriptionConnection(id)
         if (!connection) throw notFound('connection')
@@ -30,6 +37,7 @@ export async function getConnection(id: string): Promise<LoadedConnection> {
 
 export async function findConnection(id: string | null | undefined): Promise<LoadedConnection | null> {
     if (!id || !isPathSegment(id)) return null
+    if (id === DESKTOP_OPENCODE_CONNECTION_ID) return readDesktopOpencodeConnection()
     if (parseDesktopSubscriptionConnectionId(id)) return findDesktopSubscriptionConnection(id)
     const custom = await readRegisteredCustomConnection(id)
     return custom ?? (connectionExists(id) ? getConnection(id) : null)
@@ -38,8 +46,9 @@ export async function findConnection(id: string | null | undefined): Promise<Loa
 export async function listConnections(): Promise<LoadedConnection[]> {
     const ids = await listConnectionIds()
     const custom = await desktopCustomProviderBinding()?.ids() ?? []
-    const stored = await Promise.all([...new Set([...ids.filter(id => !parseDesktopSubscriptionConnectionId(id)), ...custom])].map(id => getConnection(id)))
-    return [...stored, ...listDesktopSubscriptionConnections()]
+    const stored = await Promise.all([...new Set([...ids.filter(id => id !== DESKTOP_OPENCODE_CONNECTION_ID && !parseDesktopSubscriptionConnectionId(id)), ...custom])].map(id => getConnection(id)))
+    const opencode = await readDesktopOpencodeConnection()
+    return [...stored, ...listDesktopSubscriptionConnections(), ...(opencode ? [opencode] : [])]
 }
 
 // Agents hold a reference to the shared instance, so dropping a connection from the cache has to

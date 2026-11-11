@@ -1,20 +1,18 @@
 import { z } from 'zod'
 import type { DesktopOpencodeRefresh, DesktopOpencodeWindow } from '@rerun/contracts'
-import type { DesktopOpencodeAuthoritySnapshot } from '../server/opencode/authority'
 
-export type DesktopOpencodeConnectionSnapshot = DesktopOpencodeAuthoritySnapshot
 export const desktopOpencodeConnectionSnapshotSchema = z.strictObject({
     workspaceId: z.number().int().positive(),
     owner: z.string().min(1),
     connectionId: z.string().min(1),
     connectionRevision: z.string().min(1),
-    apiKey: z.string().nullable(),
+    credentialStored: z.boolean(),
     consoleEnabled: z.boolean(),
     enabledModelIds: z.array(z.string()),
     defaultModelId: z.string().min(1),
     state: z.enum(['active', 'deleted', 'disabled', 'replaced']),
-    launchNonce: z.string().min(1),
 })
+export type DesktopOpencodeConnectionSnapshot = z.infer<typeof desktopOpencodeConnectionSnapshotSchema>
 export type DesktopOpencodeConnectionScope = { workspaceId: number; connectionId: string }
 export type DesktopOpencodeCatalogScope = DesktopOpencodeConnectionScope & { requestId: string; selectedModelId: string }
 export type DesktopOpenableEnableInput = DesktopOpencodeConnectionScope & { enabledModelIds: string[]; defaultModelId: string; consoleEnabled: boolean }
@@ -31,7 +29,7 @@ export type DesktopOpencodeDriver = {
 
 export type DesktopOpencodeSettingsChange =
     | { action: 'key'; provider: 'opencode'; connectionId?: string; apiKey: string; expectedConnectionRevision?: string }
-    | { action: 'models'; connectionId: string; models: string[]; extraModels: string[]; expectedConnectionRevision?: string }
+    | { action: 'models'; connectionId: string; models: string[]; extraModels: string[]; consoleEnabled: boolean; expectedConnectionRevision?: string }
     | { action: 'default'; connectionId: string; model: string; expectedConnectionRevision?: string }
 
 export type DesktopOpencodeDefaultPurpose = 'sidebar' | 'chat' | 'foreman' | 'auxiliary'

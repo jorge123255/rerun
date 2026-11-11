@@ -6,6 +6,7 @@ import {
     desktopOpencodeKeyProblem, type BoxDefaultModel, type DesktopOpencodeConnectionChange,
 } from '@rerun/contracts'
 import { z } from 'zod'
+import { forgetCredentialRejected } from '../../connections/credential-rejections.js'
 import { readEnvFile, writeEnvFile } from '../../lib/env-file.js'
 import { HttpError } from '../../lib/errors.js'
 import { withKeyedLock } from '../../lib/lock.js'
@@ -32,6 +33,13 @@ export function createDesktopOpencodeConnectionStore({ path, workspaceId, admit,
     }
 
     return {
+        async projection() {
+            const saved = await read()
+            return saved && desktopOpencodeConnectionView.parse(saved)
+        },
+        withSelection<T>(work: () => Promise<T>) {
+            return withKeyedLock(path, async () => { admit(); return work() })
+        },
         async view(signal: AbortSignal) {
             const epoch = admit()
             const saved = await read()
@@ -66,6 +74,7 @@ export function createDesktopOpencodeConnectionStore({ path, workspaceId, admit,
                     if (!previous) throw changed()
                     if (workspaceModel) throw new HttpError(409, 'Choose a different workspace default before disconnecting OpenCode.')
                     await rm(path)
+                    forgetCredentialRejected(DESKTOP_OPENCODE_CONNECTION_ID)
                     return null
                 }
 
@@ -95,6 +104,7 @@ export function createDesktopOpencodeConnectionStore({ path, workspaceId, admit,
                     signal.throwIfAborted()
                     admit(epoch)
                 })
+                if (change.action === 'key') forgetCredentialRejected(DESKTOP_OPENCODE_CONNECTION_ID)
                 return desktopOpencodeConnectionView.parse(next)
             })
         },

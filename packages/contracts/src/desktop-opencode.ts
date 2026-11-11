@@ -439,3 +439,16 @@ export function desktopOpencodeVisionModel(enabled: readonly DesktopOpencodeMode
         .sort((a, b) => a.price.input + a.price.output - (b.price.input + b.price.output))
     return seeing[0]?.id ?? null
 }
+
+const catalogScope = { workspaceId: desktopWorkspaceIdSchema, requestId: z.string().min(1).max(200), selectedModelId: z.string().min(1).max(256) }
+export const desktopOpencodeSettingsRequest = z.union([
+    desktopOpencodeConnectionChange,
+    z.strictObject({ ...catalogScope, action: z.literal('catalog') }),
+    z.strictObject({ ...catalogScope, action: z.literal('refresh') }),
+    z.strictObject({ workspaceId: desktopWorkspaceIdSchema, action: z.literal('usage'), refresh: z.boolean().optional() }),
+])
+export const desktopOpencodeUsageView = z.object({
+    windows: z.array(desktopOpencodeWindowSchema),
+    capturedAt: z.string().nullable(),
+    fresh: z.boolean(),
+})

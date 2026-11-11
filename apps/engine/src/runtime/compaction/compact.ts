@@ -3,6 +3,7 @@ import { isContextPart, modelContextWindow, type Provider } from '@rerun/contrac
 import { modelFor, type ModelOverride } from '../../agents/providers.js'
 import { withoutQuickRepliesCalls } from '../../agents/quick-replies-stream.js'
 import { isScopedKimiReasoning, kimiReasoningScope } from '../../desktop/custom-providers/kimi-reasoning.js'
+import { desktopOpencodeModelContext } from '../../desktop/opencode/registry.js'
 import { customConnectionContextWindow } from '../../desktop/custom-providers/binding.js'
 import { CLI_PROVIDERS } from '../../agents/types.js'
 import { ensureCliAuth } from '../../connections/cli-auth.js'
@@ -125,7 +126,7 @@ export async function prepareRunHistory(ctx: RunContext, system: string, overrid
     })
     const working = priorSummary ? [priorSummary, ...live] : live
 
-    const contextWindow = customConnectionContextWindow(ctx.agent.resolved.connection, ctx.model) ?? modelContextWindow(ctx.model, ctx.provider)
+    const contextWindow = desktopOpencodeModelContext(ctx.agent.resolved.connection, ctx.model) ?? customConnectionContextWindow(ctx.agent.resolved.connection, ctx.model) ?? modelContextWindow(ctx.model, ctx.provider)
     if (!contextWindow) return working
     if (estimateTokens(working, system, toolChars) < compactionThreshold(contextWindow, ctx.provider)) return working
 

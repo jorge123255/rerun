@@ -1,4 +1,4 @@
-import { DEFAULT_PROVIDER_MODEL, isDesktopSubscriptionProvider, parseDesktopSubscriptionConnectionId, RERUN_CONNECTION_ID, RERUN_MODEL, type AgentConfig, type Provider } from '@rerun/contracts'
+import { DESKTOP_OPENCODE_CONNECTION_ID, DEFAULT_PROVIDER_MODEL, isDesktopSubscriptionProvider, parseDesktopSubscriptionConnectionId, RERUN_CONNECTION_ID, RERUN_MODEL, type AgentConfig, type Provider } from '@rerun/contracts'
 import { readBoxDefault } from '../connections/default.js'
 import { allowedModel } from '../connections/plan.js'
 import { findConnection, listConnections } from '../connections/registry.js'
@@ -24,6 +24,7 @@ export function isUsable(connection: LoadedConnection | null, model: string | nu
 // the plan runs as is, so the default a box adopts on connect is never a model it cannot run.
 export function defaultModelOf(connection: LoadedConnection): string {
     const { provider, models, extraModels } = connection.config
+    if (connection.opencode) return connection.opencode.defaultModelId
     const offered = [...models, ...extraModels]
     return offered.find(model => allowedModel(provider, model) === model) ?? offered[0] ?? DEFAULT_PROVIDER_MODEL[provider]
 }
@@ -41,6 +42,7 @@ function pick(connection: LoadedConnection, model: string): RunModel {
 export async function boxDefaultModel(): Promise<RunModel> {
     const configured = await readBoxDefault()
     const direct = await findConnection(configured?.connectionId)
+    if (configured?.connectionId === DESKTOP_OPENCODE_CONNECTION_ID) return { connection: direct, provider: 'opencode', model: configured.model }
     const subscription = parseDesktopSubscriptionConnectionId(configured?.connectionId)
     if (configured && subscription) return { connection: direct, provider: subscription.provider, model: configured.model }
     if (configured && direct?.config.provider === 'custom') return pick(direct, configured.model)
@@ -50,7 +52,7 @@ export async function boxDefaultModel(): Promise<RunModel> {
     const rerun = all.find(c => c.id === RERUN_CONNECTION_ID)
     const candidates = [...(rerun ? [rerun] : []), ...all]
     for (const connection of candidates) {
-        if (connection.config.provider === 'custom' || isDesktopSubscriptionProvider(connection.config.provider)) continue
+        if (connection.config.provider === 'custom' || connection.config.provider === 'opencode' || isDesktopSubscriptionProvider(connection.config.provider)) continue
         const model = defaultModelOf(connection)
         if (isUsable(connection, model)) return pick(connection, model)
     }
@@ -63,6 +65,7 @@ export async function boxDefaultModel(): Promise<RunModel> {
 export async function resolveConfiguredModel(config: Pick<AgentConfig, 'connectionId' | 'provider' | 'model'>): Promise<RunModel> {
     if (!config.model) return boxDefaultModel()
     const connection = await resolveConnection(config.connectionId, config.provider)
+    if (config.connectionId === DESKTOP_OPENCODE_CONNECTION_ID) return { connection, provider: 'opencode', model: config.model }
     const provider = connection?.config.provider ?? parseDesktopSubscriptionConnectionId(config.connectionId)?.provider ?? config.provider ?? 'rerun'
     return { connection, provider, model: allowedModel(provider, config.model) }
 }
@@ -71,10 +74,11 @@ export async function resolveConfiguredModel(config: Pick<AgentConfig, 'connecti
 // the provider is always the resolved connection's.
 export async function resolveRunModel(agent: LoadedAgent, override?: ModelOverride): Promise<RunModel> {
     if (!override?.connectionId && !override?.provider && !override?.model) {
-        if (!isDesktopSubscriptionProvider(agent.resolved.provider)) return agent.resolved
+        if (agent.resolved.provider !== 'opencode' && !isDesktopSubscriptionProvider(agent.resolved.provider)) return agent.resolved
         return resolveConfiguredModel(agent.config)
     }
     const connection = await resolveConnection(override.connectionId ?? agent.config.connectionId, override.provider ?? agent.config.provider)
+    if ((override.connectionId ?? agent.config.connectionId) === DESKTOP_OPENCODE_CONNECTION_ID) return { connection, provider: 'opencode', model: override.model ?? agent.resolved.model }
     const provider = connection?.config.provider ?? parseDesktopSubscriptionConnectionId(override.connectionId ?? agent.config.connectionId)?.provider
         ?? override.provider ?? agent.resolved.provider
     return { connection, provider, model: allowedModel(provider, override.model ?? agent.resolved.model) }

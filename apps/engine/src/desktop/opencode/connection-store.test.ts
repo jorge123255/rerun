@@ -86,3 +86,46 @@ it('keeps a write private if the workspace freezes before the encrypted rename',
         await rm(directory, { recursive: true, force: true })
     }
 })
+
+it('uses the exact saved key only at SDK send and refuses a captured model after key replacement', async () => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    vi.stubEnv('RERUN_DESKTOP_SECRET_KEY', 'f3'.repeat(32))
+    const directory = await mkdtemp(join(tmpdir(), 'desktop-opencode-sdk-'))
+    const signal = new AbortController().signal
+    const { registerDesktopOpencodeConnection, readDesktopOpencodeConnection } = await import('./registry.js')
+    const { modelFor } = await import('../../agents/providers.js')
+    const { generateText } = await import('ai')
+    const store = createDesktopOpencodeConnectionStore({ path: join(directory, 'opencode.env'), workspaceId: 1, admit: () => 0,
+        knownModels: () => DESKTOP_OPENCODE_SNAPSHOT.map(model => model.id), readDefault: async () => null })
+    registerDesktopOpencodeConnection(store)
+    try {
+        const initial = await store.change({ action: 'key', workspaceId: 1, expectedRevision: null, apiKey: key }, signal)
+        const connection = (await readDesktopOpencodeConnection())!
+        expect(connection.env).toEqual({})
+        expect(connection.config.models).toContain(initial!.defaultModelId)
+        expect(connection.config.models).not.toContain('go/beam-free')
+        expect(JSON.stringify(connection)).not.toContain(key)
+        const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
+            expect(String(url)).toBe('https://opencode.ai/inference/go/openai/v1/chat/completions')
+            expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${key}`)
+            expect(JSON.parse(String(init?.body)).model).toBe('deepseek-v4-pro')
+            return Response.json({ id: 'completion', created: 1, model: 'deepseek-v4-pro',
+                choices: [{ index: 0, message: { role: 'assistant', content: 'OpenCode fixture answer' }, finish_reason: 'stop' }],
+                usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 } })
+        })
+        vi.stubGlobal('fetch', fetch)
+        const { provider, models: [selected] } = connection.config
+        const agent = { resolved: { connection, provider, model: selected! } } as import('../../agents/types.js').LoadedAgent
+        const model = modelFor(agent)
+        expect(fetch).not.toHaveBeenCalled()
+        const result = await generateText({ model, prompt: 'Synthetic greeting', maxRetries: 0 })
+        expect(result.text).toBe('OpenCode fixture answer')
+        await store.change({ action: 'key', workspaceId: 1, expectedRevision: initial!.revision, apiKey: replacement }, signal)
+        await expect(generateText({ model, prompt: 'Synthetic greeting', maxRetries: 0 })).rejects.toThrow(/connection changed/i)
+        expect(fetch).toHaveBeenCalledOnce()
+    } finally {
+        registerDesktopOpencodeConnection(undefined)
+        vi.unstubAllGlobals()
+        await rm(directory, { recursive: true, force: true })
+    }
+})

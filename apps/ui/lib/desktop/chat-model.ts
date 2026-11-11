@@ -1,3 +1,4 @@
+import { isFreeDesktopOpencodeModel } from '@rerun/contracts'
 import { PROVIDER_LABELS, connectionReasoningOptions, modelLabel, type BoxDefaultModel, type ConnectionSummary, type Provider } from '@rerun/contracts'
 import { z } from 'zod'
 import { desktopProvider } from './settings'
@@ -68,9 +69,11 @@ export const MODEL_SOURCE_LABEL: Record<DesktopModelSource, string> = {
 }
 
 type CatalogConnection = Pick<ConnectionSummary, 'id' | 'name' | 'provider' | 'connected' | 'models' | 'extraModels'
-    | 'codexReasoning' | 'customReasoning' | 'customRevision' | 'subscriptionModels'> & Partial<Pick<ConnectionSummary, 'credentialRejected'>>
+    | 'codexReasoning' | 'customReasoning' | 'customRevision' | 'subscriptionModels' | 'opencodeModels'> & Partial<Pick<ConnectionSummary, 'credentialRejected'>>
 
-export function desktopConnectionModelLabel(connection: Pick<ConnectionSummary, 'subscriptionModels'> | null | undefined, id: string | null) {
+export function desktopConnectionModelLabel(connection: Pick<ConnectionSummary, 'subscriptionModels' | 'opencodeModels'> | null | undefined, id: string | null) {
+    const opencode = connection?.opencodeModels?.find(model => model.id === id)
+    if (opencode) return opencode.label + (isFreeDesktopOpencodeModel(opencode.price) ? ' · Free' : '')
     return connection?.subscriptionModels?.find(model => model.id === id)?.label ?? modelLabel(id)
 }
 
@@ -86,7 +89,7 @@ export function desktopConnections(connections: ConnectionSummary[]): Connection
 export function usableConnection(connections: CatalogConnection[], pick: DesktopModelPick | null): CatalogConnection | null {
     if (!pick) return null
     const connection = connections.find(item => item.id === pick.connectionId)
-    if (!connection?.connected || (connection.provider === 'claude' && connection.credentialRejected) || !offeredModelIds(connection).includes(pick.model)) return null
+    if (!connection?.connected || ((connection.provider === 'claude' || connection.provider === 'opencode') && connection.credentialRejected) || !offeredModelIds(connection).includes(pick.model)) return null
     return connection
 }
 

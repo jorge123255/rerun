@@ -1,3 +1,4 @@
+import { desktopOpencodeModelSchema } from './desktop-opencode.js'
 import { z } from 'zod'
 import { RERUN_MODELS, providerSchema } from './agent.js'
 import { desktopSubscriptionModels, desktopSubscriptionProvider, isDesktopSubscriptionProvider } from './desktop-subscription-login.js'
@@ -23,6 +24,7 @@ export const connectionConfigSchema = z.object({
     codexReasoning: codexReasoningSchema.optional(),
     customReasoning: z.record(z.string(), customProviderReasoningSchema).optional(),
     subscriptionModels: desktopSubscriptionModels.optional(),
+    opencodeModels: z.array(desktopOpencodeModelSchema).optional(),
     // OpenRouter-compatible router of the user's own. Empty falls back to openrouter.ai, and it has
     // to be a valid member of the type since a PATCH cannot clear a field by sending `undefined`.
     baseUrl: z.url().or(z.literal('')).optional(),
@@ -149,6 +151,7 @@ export const CONNECTION_TOKEN_KEY: Record<z.infer<typeof providerSchema>, string
     google: 'GOOGLE_GENERATIVE_AI_API_KEY',
     openrouter: 'OPENROUTER_API_KEY',
     custom: '',
+    opencode: '',
     'grok-build': '',
     'kimi-code': '',
 }
@@ -174,6 +177,7 @@ export const CONNECTION_SATELLITE_KEYS: Record<z.infer<typeof providerSchema>, s
     google: ['GOOGLE_API_KEY'],
     openrouter: [],
     custom: [],
+    opencode: [],
     'grok-build': [],
     'kimi-code': [],
 }
@@ -245,6 +249,7 @@ export const DEFAULT_CONNECTION_MODELS: Record<z.infer<typeof providerSchema>, s
         'minimax/minimax-m3.1-flash',
     ],
     custom: [],
+    opencode: [],
     'grok-build': [],
     'kimi-code': [],
 }
@@ -260,6 +265,7 @@ export const PROVIDER_LABELS: Record<z.infer<typeof providerSchema>, string> = {
     google: 'Google',
     openrouter: 'OpenRouter',
     custom: 'Custom endpoint',
+    opencode: 'OpenCode',
     'grok-build': 'Grok Build',
     'kimi-code': 'Kimi Code',
 }
@@ -293,7 +299,7 @@ export type SetAgentModelInput = z.infer<typeof setAgentModelSchema>
 
 // The AI providers screen of the app, shaped by the hub with the web dialog's own rules (catalog,
 // hidden and locked models, plan windows, credit), since those live in apps/ui.
-export const addableProviderSchema = providerSchema.exclude(['rerun', ...desktopSubscriptionProvider.options])
+export const addableProviderSchema = providerSchema.exclude(['rerun', 'opencode', ...desktopSubscriptionProvider.options])
 export type AddableProvider = z.infer<typeof addableProviderSchema>
 
 export const aiConnectionKindSchema = z.enum(['included', 'plan', 'key'])

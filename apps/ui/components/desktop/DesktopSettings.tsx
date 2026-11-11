@@ -19,7 +19,8 @@ import { enabledModels, modelName } from '@/lib/engine/ai-sources'
 import { ProviderIcon } from '@/lib/engine/provider-icons'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 import { desktopProvider, type SettingsChange } from '@/lib/desktop/settings'
-import { customReasoningUnavailable } from '@/lib/desktop/chat-model'
+import { customReasoningUnavailable, desktopConnectionModelLabel } from '@/lib/desktop/chat-model'
+import { DesktopOpencodeSettings } from './connections/opencode/DesktopOpencodeSettings'
 import { DesktopCustomProviderPage } from './connections/custom/DesktopCustomProviderPage'
 import { ApiConnectionsPanel } from './connections/api/ApiConnectionsPanel'
 import { createApiConnectionsClient } from '@/lib/desktop/api-connections/client'
@@ -55,8 +56,8 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
     const editable = providers.connections.filter(c => !isDesktopSubscriptionProvider(c.provider))
     const current = editable.find(c => c.id === source)
     const provider = current ? desktopProvider.parse(current.provider) : desktopProvider.safeParse(source.replace(/^add:/, '')).data ?? 'openai'
-    const missing = desktopProvider.options.filter(p => p !== 'custom' && !isDesktopSubscriptionProvider(p) && !editable.some(c => c.provider === p))
-    const picks = providers.connections.filter(c => c.connected && !(c.provider === 'claude' && c.credentialRejected)).flatMap(c => enabledModels(c).map(m => ({ connectionId: c.id, model: m.id })))
+    const missing = desktopProvider.options.filter(p => p !== 'custom' && (p !== 'opencode' || !!workspaceId) && !isDesktopSubscriptionProvider(p) && !editable.some(c => c.provider === p))
+    const picks = providers.connections.filter(c => c.connected && !((c.provider === 'claude' || c.provider === 'opencode') && c.credentialRejected)).flatMap(c => enabledModels(c).map(m => ({ connectionId: c.id, model: m.id })))
     const selected = picks.findIndex(p => p.connectionId === providers.default?.connectionId && p.model === providers.default.model)
     const active = providers.default
     const activeConnection = providers.connections.find(c => c.id === active?.connectionId && c.connected)
@@ -81,7 +82,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
 
     function saveKey(event: FormEvent) {
         event.preventDefault()
-        if (key.trim() && provider !== 'codex' && provider !== 'claude' && provider !== 'custom' && !isDesktopSubscriptionProvider(provider)) void save({ action: 'key', provider, connectionId: current?.id, apiKey: key.trim() }, 'API key saved.')
+        if (key.trim() && provider !== 'codex' && provider !== 'claude' && provider !== 'custom' && provider !== 'opencode' && !isDesktopSubscriptionProvider(provider)) void save({ action: 'key', provider, connectionId: current?.id, apiKey: key.trim() }, 'API key saved.')
     }
 
     // A provider that was just added replaces its "add" option with the engine connection.
@@ -114,8 +115,8 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                 if (pick) void save({ action: 'default', ...pick }, 'Default model saved.')
                             }}>
                                 {selected < 0 && <option value={-1} disabled>{picks.length ? 'Choose a model' : 'Connect a provider to choose a model'}</option>}
-                                {providers.connections.filter(c => c.connected && !(c.provider === 'claude' && c.credentialRejected)).map(c => <optgroup key={c.id} label={c.name}>{picks.map((p, index) => p.connectionId === c.id &&
-                                    <option key={p.model} value={index}>{c.subscriptionModels?.find(m => m.id === p.model)?.label ?? modelName(c.id, p.model)}</option>)}</optgroup>)}
+                                {providers.connections.filter(c => c.connected && !((c.provider === 'claude' || c.provider === 'opencode') && c.credentialRejected)).map(c => <optgroup key={c.id} label={c.name}>{picks.map((p, index) => p.connectionId === c.id &&
+                                    <option key={p.model} value={index}>{c.provider === 'opencode' ? desktopConnectionModelLabel(c, p.model) : c.subscriptionModels?.find(m => m.id === p.model)?.label ?? modelName(c.id, p.model)}</option>)}</optgroup>)}
                             </select>
                             {activeConnection && active && (activeConnection.provider === 'codex' || reasoning || staleEffort) && <div className="space-y-2 pt-3">
                                 <label htmlFor="desktop-reasoning-effort" className="font-semibold">Reasoning effort</label>
@@ -144,9 +145,12 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                 {missing.map(p => <option key={p} value={'add:' + p}>Connect {p === 'codex' ? 'ChatGPT (Codex)' : PROVIDER_LABELS[p]}</option>)}
                             </select>
                             <div className="flex items-center gap-2 text-sm"><ProviderIcon provider={provider} className="size-5" /><strong>{provider === 'codex' ? 'ChatGPT (Codex)' : PROVIDER_LABELS[provider]}</strong>
-                                {provider !== 'codex' && provider !== 'claude' && provider !== 'custom' && <span className="text-muted-foreground">{connection?.credentialRejected ? 'Key rejected' : connection?.connected ? 'Key saved' : 'No key saved'}</span>}
+                                {provider !== 'codex' && provider !== 'claude' && provider !== 'custom' && provider !== 'opencode' && <span className="text-muted-foreground">{connection?.credentialRejected ? 'Key rejected' : connection?.connected ? 'Key saved' : 'No key saved'}</span>}
                             </div>
-                            {provider === 'custom' ? workspaceId && (connection === undefined || connection.customRevision) ? <DesktopCustomProviderPage
+                            {provider === 'opencode' ? workspaceId && <DesktopOpencodeSettings key={workspaceId} workspaceId={workspaceId}
+                                rejected={!!connection?.credentialRejected} onProviders={onProviders}
+                                onBack={() => setSource(providers.connections.find(item => item.provider !== 'opencode')?.id ?? 'add:openai')} />
+                            : provider === 'custom' ? workspaceId && (connection === undefined || connection.customRevision) ? <DesktopCustomProviderPage
                                 key={connection?.id ?? 'new-custom'}
                                 workspaceId={workspaceId}
                                 identity={connection?.customRevision ? { workspaceId, connectionId: connection.id, revision: connection.customRevision } : null}
@@ -165,7 +169,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                     <Button type="submit" disabled={busy || !key.trim()}>{connection ? 'Save key' : 'Connect'}</Button>
                                 </div>
                             </form>}
-                            {provider !== 'codex' && provider !== 'custom' && connection && <div inert={busy}>
+                            {provider !== 'codex' && provider !== 'custom' && provider !== 'opencode' && connection && <div inert={busy}>
                                 <ModelBuckets connection={connection} defaultModel={providers.default?.connectionId === connection.id ? providers.default.model : null}
                                     onModelsChange={models => changeModels(models, connection.extraModels)} />
                                 {provider === 'openrouter' && <BaseUrlField key={connection.id + ':' + (connection.baseUrl ?? '')} baseUrl={connection.baseUrl ?? ''}

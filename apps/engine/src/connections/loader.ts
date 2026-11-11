@@ -17,7 +17,7 @@ export function connectionExists(id: string): boolean {
 
 export async function loadConnectionFromDisk(id: string): Promise<LoadedConnection> {
     const config = connectionConfigSchema.parse(JSON.parse(await readFile(connectionConfigPath(id), 'utf8')))
-    if (config.provider === 'custom') throw new Error('Custom connections require registered desktop custody.')
+    if (config.provider === 'custom' || config.provider === 'opencode') throw new Error('Custom connections require registered desktop custody.')
     if (isDesktopSubscriptionProvider(config.provider)) throw new Error('Subscription connections require desktop sign-in.')
     const connEnv = await readEnvFile(connectionEnvPath(id))
     return { id, config, env: connEnv }
@@ -34,6 +34,7 @@ export async function listConnectionIds(): Promise<string[]> {
 // connected when the box knows where to reach the hub and how to authenticate against it.
 export function isConnected(connection: LoadedConnection): boolean {
     if (isDesktopSubscriptionProvider(connection.config.provider)) return findDesktopSubscriptionConnection(connection.id) !== null
+    if (connection.config.provider === 'opencode') return desktopApp() && !!connection.opencode
     if (connection.config.provider === 'custom') return desktopApp() && connection.custom?.state === 'configured'
     if (desktopApp() && connection.config.provider === 'codex') return connection.id === DESKTOP_CODEX_ID && connection.env[signedInFlag] === '1'
     if (connection.id === RERUN_CONNECTION_ID) {

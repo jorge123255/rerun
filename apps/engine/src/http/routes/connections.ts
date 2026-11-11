@@ -1,5 +1,6 @@
+import { withDesktopOpencodeSelection } from '../../desktop/opencode/registry.js'
 import { Hono } from 'hono'
-import { RERUN_CONNECTION_ID, boxDefaultUpdateSchema, connectionReasoningOptions, createConnectionSchema, parseDesktopSubscriptionConnectionId, updateConnectionKeysSchema, updateConnectionSchema } from '@rerun/contracts'
+import { DESKTOP_OPENCODE_CONNECTION_ID, RERUN_CONNECTION_ID, boxDefaultUpdateSchema, connectionReasoningOptions, createConnectionSchema, parseDesktopSubscriptionConnectionId, updateConnectionKeysSchema, updateConnectionSchema } from '@rerun/contracts'
 import { connectionExists, isConnected, toSummary } from '../../connections/loader.js'
 import { findConnection, getConnection, listConnections } from '../../connections/registry.js'
 import { assertConnectionDeletable, createConnection, deleteConnection, patchConnection, updateConnectionKeys } from '../../connections/store.js'
@@ -59,7 +60,7 @@ connectionRoutes.put('/default', async c => {
             }))
         })
     }
-    return selectRegisteredCustomDefault(connectionId, async () => {
+    const select = async () => {
         const connection = await findConnection(connectionId)
         if (!connection) return c.json({ error: 'connection not found' }, 404)
         assertDesktopProvider(connection.config.provider, connection.id)
@@ -78,7 +79,9 @@ connectionRoutes.put('/default', async c => {
             }))
         }
         return c.json(await writeBoxDefault({ connectionId, model }))
-    })
+    }
+    return connectionId === DESKTOP_OPENCODE_CONNECTION_ID && desktopApp()
+        ? withDesktopOpencodeSelection(select) : selectRegisteredCustomDefault(connectionId, select)
 })
 
 connectionRoutes.delete('/default', async c => {

@@ -73,6 +73,10 @@ export function DesktopOpencodeConnection({ workspaceId, connection, driver: sup
         setName(connection?.owner ?? 'OpenCode')
         setCatalog(snapshotCatalog(workspaceId, connection?.defaultModelId))
         setUsage(emptyUsage)
+        setSaving(false)
+        setRefreshingModels(false)
+        setRefreshingUsage(false)
+        setApiKey('')
         setError(null)
         setNotice(null)
         if (!connection) { setLoading(false); return () => controller.abort() }
@@ -100,7 +104,11 @@ export function DesktopOpencodeConnection({ workspaceId, connection, driver: sup
         setError(null)
         try {
             const next = await driver.refresh({ workspaceId, connectionId: connection.connectionId, requestId: refreshModelId.current, selectedModelId: connection.defaultModelId }, reads.current?.signal ?? new AbortController().signal)
-            if (current(value)) { setCatalog(next); setNotice(next.fresh ? 'Model catalog refreshed.' : 'Model catalog updated from cached data.') }
+            if (current(value)) {
+                setCatalog(next)
+                setNotice(next.fresh ? 'Model catalog refreshed.' : 'Model catalog updated from cached data.')
+                await refreshProviders(value)
+            }
         } catch (cause) {
             if (current(value)) setError(cause instanceof Error ? cause.message : 'Could not refresh models.')
         } finally {
@@ -138,7 +146,7 @@ export function DesktopOpencodeConnection({ workspaceId, connection, driver: sup
             await onSave({ action: 'key', provider: 'opencode', ...(connection ? { connectionId: connection.connectionId, expectedConnectionRevision: connection.connectionRevision } : {}), apiKey: trimmed })
             if (!current(value)) return
             setApiKey('')
-            setNotice(connection ? 'API key saved.' : 'OpenCode connected.')
+            setNotice('API key saved.')
             onConnected?.()
             await refreshProviders(value)
         } catch (cause) {
@@ -178,7 +186,7 @@ export function DesktopOpencodeConnection({ workspaceId, connection, driver: sup
             const checked = await driver.enable({ workspaceId, connectionId: connection.connectionId, defaultModelId: connection.defaultModelId, ...change }, reads.current?.signal ?? new AbortController().signal)
             if (!current(value)) return
             if (!checked.ok) { setError(checked.problem); return }
-            await onSave({ action: 'models', connectionId: connection.connectionId, models: change.enabledModelIds, extraModels: [], expectedConnectionRevision: connection.connectionRevision })
+            await onSave({ action: 'models', connectionId: connection.connectionId, models: change.enabledModelIds, extraModels: [], consoleEnabled: change.consoleEnabled, expectedConnectionRevision: connection.connectionRevision })
             if (!current(value)) return
             setNotice('Available models updated.')
             await refreshProviders(value)
@@ -206,7 +214,7 @@ export function DesktopOpencodeConnection({ workspaceId, connection, driver: sup
 
     const dirty = !!apiKey.trim() || name.trim() !== (connection?.owner ?? 'OpenCode')
     const back = () => { cancelling.current = true; if (dirty) setDiscardOpen(true); else onBack() }
-    const connected = !!connection && connection.state === 'active' && !!connection.apiKey && !rejected
+    const connected = !!connection && connection.state === 'active' && connection.credentialStored && !rejected
 
     return (
         <div className="flex min-h-0 flex-1 flex-col">
@@ -227,14 +235,14 @@ export function DesktopOpencodeConnection({ workspaceId, connection, driver: sup
                     )}
                     <span className="truncate text-[11px] text-muted-foreground">OpenCode Go or Console</span>
                 </div>
-                <Badge size="xs" tone={connected ? 'green' : 'orange'} className="shrink-0">{connected ? 'Ready' : rejected ? 'Key rejected' : 'Key missing'}</Badge>
+                <Badge size="xs" tone={connected ? 'green' : 'orange'} className="shrink-0">{connected ? 'Key saved' : rejected ? 'Key rejected' : 'Key missing'}</Badge>
             </div>
             <PanelScroller className="space-y-5 p-4">
                 {error && <p role="alert" className="text-[11px] text-destructive">{error}</p>}
                 {notice && <p role="status" className="text-[11px] text-muted-foreground">{notice}</p>}
                 <DetailBlock title="OpenCode credential">
                     <p className="text-[11px] text-muted-foreground">
-                        {rejected ? 'This key was rejected. Coworkers using it are stopped until you paste a new one.' : connection?.apiKey ? 'Key saved. Paste a replacement only when you want to change it.' : 'No key on file. Coworkers using it are stopped until you paste one.'}
+                        {rejected ? 'This key was rejected. Coworkers using it are stopped until you paste a new one.' : connection?.credentialStored ? 'Key saved. Paste a replacement only when you want to change it.' : 'No key on file. Coworkers using it are stopped until you paste one.'}
                     </p>
                     <Input id={`${credentialFieldsId}-name`} hideRequired label="Name" value={name} onChange={event => setName(event.target.value)} disabled={saving} className="h-8" />
                     <Input id={`${credentialFieldsId}-api-key`} hideRequired label="API key" type="password" autoComplete="off" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder="Paste your key" disabled={saving} className="h-8 font-mono text-xs" />

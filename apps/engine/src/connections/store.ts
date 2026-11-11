@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile, rename } from 'node:fs/promises'
 import {
     PROVIDER_LABELS,
+    DESKTOP_OPENCODE_CONNECTION_ID,
     RERUN_CONNECTION_ID,
     RERUN_MODEL,
     DEFAULT_CONNECTION_MODELS,
@@ -36,6 +37,7 @@ type CodexCatalogFields = Pick<ConnectionConfig, 'codexReasoning'>
 
 export async function createConnection(input: CreateConnectionInput & CodexCatalogFields, id = newId()): Promise<LoadedConnection> {
     if (isDesktopSubscriptionProvider(input.provider) || parseDesktopSubscriptionConnectionId(id)) throw badRequest('Connect this subscription in desktop Settings.')
+    if (input.provider === 'opencode' || id === DESKTOP_OPENCODE_CONNECTION_ID) throw badRequest('Use OpenCode Settings to register this connection.')
     if (input.provider === 'custom') throw badRequest('Use Custom endpoint Settings to register this connection.')
     assertDesktopProvider(input.provider, id)
     const config = connectionConfigSchema.parse({
@@ -56,6 +58,7 @@ export async function createConnection(input: CreateConnectionInput & CodexCatal
 }
 
 export async function patchConnection(id: string, patch: UpdateConnectionInput & CodexCatalogFields): Promise<LoadedConnection> {
+    if (id === DESKTOP_OPENCODE_CONNECTION_ID) throw badRequest('Use OpenCode Settings to change this connection.')
     if (parseDesktopSubscriptionConnectionId(id)) throw badRequest('Refresh subscription models in desktop Settings.')
     if (id === RERUN_CONNECTION_ID && patch.name !== undefined) throw badRequest('The Rerun connection cannot be renamed')
     // Rerun Balanced is the one model a box always has, so switching every model off can never
@@ -72,6 +75,7 @@ export async function patchConnection(id: string, patch: UpdateConnectionInput &
 }
 
 export async function updateConnectionKeys(id: string, { set, remove }: UpdateConnectionKeysInput): Promise<string[]> {
+    if (id === DESKTOP_OPENCODE_CONNECTION_ID) throw badRequest('Use OpenCode Settings to change this connection.')
     if (parseDesktopSubscriptionConnectionId(id)) throw badRequest('Connect this subscription in desktop Settings.')
     return withConnectionLock(id, async () => {
         // Recheck after the lock: a queued edit cannot recreate a connection
@@ -96,6 +100,7 @@ export async function updateConnectionKeys(id: string, { set, remove }: UpdateCo
 // Exported because a delete releases everything pointing at the connection before it removes it,
 // and detaching a fleet of agents only to refuse the delete afterwards would be worse than either.
 export function assertConnectionDeletable(id: string): void {
+    if (id === DESKTOP_OPENCODE_CONNECTION_ID) throw badRequest('Use OpenCode Settings to change this connection.')
     if (parseDesktopSubscriptionConnectionId(id)) throw badRequest('Disconnect this subscription in desktop Settings.')
     if (id === RERUN_CONNECTION_ID) throw badRequest('The Rerun connection cannot be deleted')
 }

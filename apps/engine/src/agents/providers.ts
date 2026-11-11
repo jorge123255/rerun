@@ -1,3 +1,6 @@
+import { desktopOpencodeLanguageModel } from '../desktop/opencode/model.js'
+import { desktopOpencodeCredential } from '../desktop/opencode/registry.js'
+import { isCredentialRejected } from '../connections/credential-rejections.js'
 import { customInferenceModel } from '../desktop/custom-providers/model.js'
 import { createDesktopSubscriptionModel } from '../desktop/subscription-acp/model.js'
 import { findDesktopSubscriptionConnection } from '../desktop/subscription-acp/connections.js'
@@ -490,10 +493,24 @@ function subscriptionModel(agent: LoadedAgent, model: string, reasoning?: string
     })
 }
 
+function opencodeModel(agent: LoadedAgent, model: string, sessionId?: string) {
+    const connection = agent.resolved.connection
+    if (!connection?.opencode || isCredentialRejected(connection.id)) throw new Error('Connect OpenCode in Settings.')
+    return desktopOpencodeLanguageModel({
+        workspaceId: connection.opencode.workspaceId, connectionId: connection.id, modelId: model, sessionId,
+        enabledModelIds: connection.opencode.enabledModelIds, consoleEnabled: connection.opencode.consoleEnabled,
+        credential: signal => desktopOpencodeCredential(connection, signal),
+    })
+}
+
 // For one-shot calls with no tools. Codex resolves to the exec transport here, which spawns per call
 // and exits — nothing to dispose. A run that streams must use `resolveModel` instead.
 export function modelFor(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: McpServer[], options?: CliModelOptions): LanguageModel {
     const { provider, model } = pairFor(agent, override)
+    if (provider === 'opencode') {
+        const entry = opencodeModel(agent, model)
+        return wrapLanguageModel({ model: entry.model, middleware: entry.middleware })
+    }
     if (provider === 'custom') return customInferenceModel(agent.resolved.connection, model).model
     if (isDesktopSubscriptionProvider(provider)) return subscriptionModel(agent, model).model
     if (desktopApp() && provider === 'codex' && options?.desktopVision) {
@@ -571,6 +588,10 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
     const replies = createQuickRepliesCapture()
     const cardTags = createCardTagGuard(agent.id, provider)
     const guard = createFakeToolCallGuard(agent.id)
+    if (provider === 'opencode') {
+        const entry = opencodeModel(agent, model, sessionId)
+        return { model: wrapLanguageModel({ model: entry.model, middleware: [replies.middleware, cardTags, ...entry.middleware, guard] }), close: noClose, quickReplies: replies.read }
+    }
     if (isDesktopSubscriptionProvider(provider)) {
         const subscription = subscriptionModel(agent, model, reasoningEffort)
         return { model: wrapLanguageModel({ model: subscription.model, middleware: [replies.middleware, cardTags, guard] }), close: subscription.close, quickReplies: replies.read }
