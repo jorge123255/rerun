@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
-import type { DesktopMcpSignInView } from '../../../../../packages/contracts/src/desktop-mcp-sign-in'
+import type { DesktopMcpSignInOAuthView, DesktopMcpSignInView } from '../../../../../packages/contracts/src/desktop-mcp-sign-in'
 import { DesktopMcpSignInBlock } from './DesktopMcpSignInBlock'
 
 vi.mock('@rerun/ui', () => ({ BorderBeam: () => null }))
@@ -22,9 +22,9 @@ const request: DesktopMcpSignInView = {
 const response = (body: unknown) => Response.json(body)
 const acknowledged = () => new Response('data: [DONE]\n\n', { headers: { 'x-mcp-sign-in-request-id': 'request', 'x-run-id': 'continuation', 'x-session-id': 'chat' } })
 
-async function mount(view = request, onAccepted = vi.fn()) {
+async function mount(view = request, onAccepted = vi.fn(), initialOAuth?: DesktopMcpSignInOAuthView) {
     const root = createRoot(document.body.appendChild(document.createElement('div'))); roots.push(root)
-    await act(async () => root.render(<DesktopMcpSignInBlock sessionId="chat" request={view} onAccepted={onAccepted} />))
+    await act(async () => root.render(<DesktopMcpSignInBlock sessionId="chat" request={view} onAccepted={onAccepted} initialOAuth={initialOAuth} />))
     return { root, onAccepted }
 }
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent?.trim() === label)!
@@ -97,6 +97,23 @@ test('an invalid adapter link and provider failure remain honest and retryable',
     expect(document.body.textContent).toContain('Unreachable')
     expect(document.body.textContent).toContain('Authorization failed. Retry.')
     expect(button('Connect').disabled).toBe(false)
+})
+
+test('an interrupted browser attempt stays cancellable without showing a live wait', async () => {
+    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ action: 'cancel', request: { attemptId: 'interrupted-attempt' } })
+        return response({ request: { ...request, revision: 'after-cancel' }, oauth: { state: 'idle' } })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    await mount({ ...request, status: 'connecting', activeAttemptId: 'interrupted-attempt' }, vi.fn(), {
+        state: 'error', message: 'Browser sign-in was interrupted. Cancel this attempt to reconnect.',
+    })
+    expect(document.body.textContent).toContain('Browser sign-in was interrupted.')
+    expect(button('Waiting for authorization…')).toBeUndefined()
+    expect(button('Connect')).toBeUndefined()
+    await click('Cancel')
+    expect(button('Connect').disabled).toBe(false)
+    expect(fetcher).toHaveBeenCalledTimes(1)
 })
 
 

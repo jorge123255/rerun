@@ -97,7 +97,16 @@ export async function desktopMcpSignInPorts(runtime: DesktopRuntime, sessionId: 
                 })
             },
             async status(target, signal) {
-                try { await registration(target.source, signal); return await service.oauth.status(agent!.id, target.source.server.name, target.source.server.revision, signal) }
+                try {
+                    await registration(target.source, signal)
+                    const status = await service.oauth.status(agent!.id, target.source.server.name, target.source.server.revision, signal)
+                    if (status.state === 'connected') return status
+                    if (target.attemptId && (!exact(target) || status.state === 'idle')) {
+                        return { state: 'error', message: 'Browser sign-in was interrupted. Cancel this attempt to reconnect.' }
+                    }
+                    if (!target.attemptId && status.state === 'waiting') return { state: 'idle' }
+                    return status
+                }
                 catch { await owner(signal); return { state: 'unsupported', message: 'This server or its permission changed. Choose Not now, or restore its configuration before signing in.' } }
             },
             async cancel(target, signal) {

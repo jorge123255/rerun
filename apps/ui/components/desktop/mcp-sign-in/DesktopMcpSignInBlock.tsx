@@ -110,7 +110,8 @@ export function DesktopMcpSignInBlock({ sessionId, request, active = true, inlin
     const subtitle = view.reason ?? (server.host ? `Custom MCP server · ${server.host}` : 'Custom MCP server')
     const busy = !active || pendingAction !== null || answered
     const connected = oauth?.state === 'connected'
-    const waiting = oauth?.state === 'waiting' || !!view.activeAttemptId && !connected
+    const waiting = oauth?.state === 'waiting'
+    const canCancel = waiting || !!view.activeAttemptId
     const error = oauth?.message ?? view.error
 
     const deviceReview = deviceMethodReview?.review
@@ -129,7 +130,7 @@ export function DesktopMcpSignInBlock({ sessionId, request, active = true, inlin
             <div className="flex items-center gap-1">
                 <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => { void run('decline') }}>Not now</Button>
                 {connected ? <Button type="button" size="sm" disabled={busy} onClick={() => { void run('complete') }}>Continue</Button>
-                    : waiting ? <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => { void run('cancel') }} className="text-muted-foreground">Cancel</Button>
+                    : canCancel ? <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => { void run('cancel') }} className="text-muted-foreground">Cancel</Button>
                         : deviceMethodReview && deviceAligned ? null : <Button type="button" size="sm" disabled={busy} onClick={() => { void run('connect') }}>Connect</Button>}
             </div>
         </div>

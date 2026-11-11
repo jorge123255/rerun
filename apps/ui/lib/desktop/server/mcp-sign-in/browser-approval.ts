@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { desktopMcpSignInSourceSchema } from '../../../../../../packages/contracts/src/desktop-mcp-sign-in'
 import { DesktopHttpError } from '../auth'
 import { approvedSignInMethodSchema } from '../mcp-method-admission/contract'
+import { hasExactMcpSignInOwner, type McpSignInOwner } from '../mcp-method-admission/owner'
 import { credentialGenerationToken } from '../mcp/credential-generation'
 import type { RemoteMcpStore } from '../mcp/store'
 import { createDesktopSecretCrypto } from '../secret-requests/crypto'
@@ -20,12 +21,11 @@ const browserApprovalSchema = z.object({
     approval: approvedSignInMethodSchema,
 }).strict()
 
-type Scope = { workspaceId: string; owner: string; sessionId: string; engineAgentId: string; engineSessionId: string }
 type Query = Pick<Client, 'execute'>
 type BrowserCredential = NonNullable<Awaited<ReturnType<RemoteMcpStore['browserCredentialState']>>>
 const approvalLifetimeMs = 5 * 60_000
 
-export function createDesktopMcpBrowserApprovals(db: Client, store: Pick<RemoteMcpStore, 'credentialState'>, key: () => Buffer, scope: Scope, now = Date.now) {
+export function createDesktopMcpBrowserApprovals(db: Client, store: Pick<RemoteMcpStore, 'credentialState'>, key: () => Buffer, scope: McpSignInOwner, now = Date.now) {
     const crypto = createDesktopSecretCrypto(key)
     const unavailable = () => new DesktopHttpError(409, 'Browser sign-in approval changed. Start a new sign-in attempt.')
     const context = (requestId: string, attemptId: string) => ({
@@ -36,7 +36,7 @@ export function createDesktopMcpBrowserApprovals(db: Client, store: Pick<RemoteM
         credentialGenerationToken(key(), scope.owner, name, credential, credential.sealed)
 
     const capture: DesktopMcpSignInBrowserCapture = async (query, { requestId, attemptId, source }) => {
-        if (source.agentId !== scope.owner || source.sessionId !== scope.sessionId) throw unavailable()
+        if (source.agentId !== scope.owner || source.sessionId !== scope.sessionId || !await hasExactMcpSignInOwner(query, scope)) throw unavailable()
         const { name, url, revision } = source.server
         const current = await store.credentialState(scope.owner, name, query)
         if (!current || current.revision !== revision || current.resource !== url) throw unavailable()
@@ -53,7 +53,7 @@ export function createDesktopMcpBrowserApprovals(db: Client, store: Pick<RemoteM
     }
 
     async function read({ requestId, attemptId, source }: DesktopMcpSignInOAuthTarget, query: Query = db) {
-        if (!attemptId || source.agentId !== scope.owner || source.sessionId !== scope.sessionId) return null
+        if (!attemptId || source.agentId !== scope.owner || source.sessionId !== scope.sessionId || !await hasExactMcpSignInOwner(query, scope)) return null
         const row = (await query.execute({ sql: `SELECT b.sealed FROM desktop_mcp_sign_in_browser_approvals b
             JOIN desktop_mcp_sign_in_attempts a ON a.attempt_id=b.attempt_id
             JOIN desktop_mcp_sign_in_requests r ON r.request_id=a.request_id

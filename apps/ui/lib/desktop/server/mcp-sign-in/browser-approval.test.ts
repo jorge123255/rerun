@@ -35,9 +35,10 @@ async function fixture(now = Date.now) {
     const db = open()
     await db.executeMultiple(`PRAGMA foreign_keys=ON;
         CREATE TABLE desktop_schema_migrations(version INTEGER PRIMARY KEY,id TEXT NOT NULL);
-        CREATE TABLE desktop_agents(id TEXT PRIMARY KEY);
-        CREATE TABLE desktop_sessions(id TEXT PRIMARY KEY);
-        INSERT INTO desktop_agents VALUES('a'); INSERT INTO desktop_sessions VALUES('s');
+        CREATE TABLE desktop_agents(id TEXT PRIMARY KEY,workspace_id INTEGER,engine_agent_id TEXT);
+        CREATE TABLE desktop_sessions(id TEXT PRIMARY KEY,agent_id TEXT,engine_session_id TEXT);
+        CREATE TABLE desktop_deletions(agent_id TEXT,engine_agent_id TEXT);
+        INSERT INTO desktop_agents VALUES('a',1,'engine-a'); INSERT INTO desktop_sessions VALUES('s','a','engine-s');
         ${remoteMcpSchema} ${remoteMcpOAuthSchema}`)
     await migrateDesktopSse(db)
     await ensureDesktopMcpSignInSchema(db)
