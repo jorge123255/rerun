@@ -124,9 +124,47 @@ const mac = {
     },
 } satisfies Record<Locale, Record<string, string>>
 
+const desktopControlCenterCopy = {
+    en: {
+        desktopDescription: 'Jump to a coworker, model settings or a saved conversation.',
+        search: 'Search coworkers, settings, conversations…',
+        closeHint: 'to close',
+    },
+    fr: {
+        desktopDescription: 'Accédez à un coworker, aux paramètres des modèles ou à une conversation enregistrée.',
+        search: 'Rechercher des coworkers, des paramètres ou des conversations…',
+        closeHint: 'pour fermer',
+    },
+    es: {
+        desktopDescription: 'Abre un compañero, la configuración de modelos o una conversación guardada.',
+        search: 'Busca compañeros, ajustes o conversaciones…',
+        closeHint: 'para cerrar',
+    },
+    pt: {
+        desktopDescription: 'Abra um colega, as configurações de modelos ou uma conversa salva.',
+        search: 'Busque colegas, configurações ou conversas…',
+        closeHint: 'para fechar',
+    },
+    de: {
+        desktopDescription: 'Öffne einen Kollegen, die Modelleinstellungen oder eine gespeicherte Unterhaltung.',
+        search: 'Kollegen, Einstellungen oder Unterhaltungen suchen…',
+        closeHint: 'zum Schließen',
+    },
+} satisfies Record<Locale, { desktopDescription: string; search: string; closeHint: string }>
+
 export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
     return {
         ...mac[locale],
+        controlCenter: {
+            ...source.layout.controlCenter,
+            ...desktopControlCenterCopy[locale],
+            localCommands: {
+                team_board: mac[locale].board,
+                getting_started: source.layout.menu.gettingStarted,
+                help: source.layout.help.label,
+                servers: source.layout.workspaceMenu.servers,
+            },
+        },
         coworker: desktopCoworkerMessages(locale, source),
         creation: desktopCreationMessages(locale, source),
         foreman: desktopForemanMessages(locale, source),

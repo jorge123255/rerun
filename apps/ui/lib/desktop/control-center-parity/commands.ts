@@ -10,7 +10,7 @@ const icons:Record<ControlCommandId,Extract<ControlRow['leading'],{kind:'icon'}>
 export const HOSTED_CONTROL_COMMANDS=new Set(['contact_support','members','billing','account'])
 const workspace=(s:ParitySnapshot):Extract<ParityTarget,{kind:'workspace'}>=>({kind:'workspace',workspaceId:s.workspace.id,revision:s.workspace.revision})
 const coworker=(s:ParitySnapshot,id:string):Extract<ParityTarget,{kind:'coworker'}>|null=>{const a=s.coworkers.find(a=>a.id===id);return a?{kind:'coworker',workspaceId:s.workspace.id,agentId:a.id,revision:a.revision}:null}
-export function buildParityCommands(snapshot:ParitySnapshot,page:ParityPage,query:string,actions:ParityActions,options:{darkTheme?:boolean;hasChangelog?:boolean;includeOmitted?:boolean}={}):ParityCommand[]{
+export function buildParityCommands(snapshot:ParitySnapshot,page:ParityPage,query:string,actions:ParityActions,options:{darkTheme?:boolean;hasChangelog?:boolean;includeOmitted?:boolean;localizeCommand?:(id:string,label:string)=>string}={}):ParityCommand[]{
  const {text,scope}=parseQuery(query),commands:ParityCommand[]=[]
  if(snapshot.quitting||snapshot.blocked)return commands
  const add=(command:ParityCommand)=>{const state=actions.capability(command.intent,snapshot);if(state.state!=='omit'||options.includeOmitted)commands.push({...command,...(state.state==='omit'?{omitted:true}:{}),...(state.state==='unavailable'?{disabledReason:state.reason||'This action is unavailable on this Mac.'}:{})})}
@@ -37,11 +37,15 @@ export function buildParityCommands(snapshot:ParitySnapshot,page:ParityPage,quer
   for(const box of snapshot.boxes.filter(b=>b.id!==source))add({key:`move:${box.id}`,label:box.name,icon:{kind:'icon',icon:BoxIcon},group:'actions',intent:{kind:'move',target,sourceSpaceId:source,destination:{kind:'box',workspaceId:snapshot.workspace.id,spaceId:box.id,revision:box.revision}}})
  }
  const assistant=commands.filter(command=>command.key==='ask_assistant'&&text&&scope==='all')
- return [...searchItems(commands.filter(command=>!(command.key==='ask_assistant'&&text)),text),...assistant]
+ const searchable=commands.filter(command=>!(command.key==='ask_assistant'&&text)).map(command=>{
+  const label=options.localizeCommand?.(command.key,command.label)??command.label
+  return label===command.label?command:{...command,label,keywords:[...(command.keywords??[]),command.label]}
+ })
+ return [...searchItems(searchable,text),...assistant]
 }
 export function parityCommandSections(commands:ParityCommand[],execute:(command:ParityCommand)=>void,page?:ParityPage):ControlSection[]{
  commands=commands.filter(c=>!c.omitted)
- const rows=(items:ParityCommand[]):ControlRow[]=>items.map(command=>({id:`parity-${command.key}`,label:command.label,detail:command.description,leading:command.icon,disabledReason:command.disabledReason,onSelect:()=>execute(command)}))
+ const rows=(items:ParityCommand[]):ControlRow[]=>items.map(command=>({id:`parity-${command.key}`,label:command.label,detail:command.description,keywords:command.keywords,leading:command.icon,disabledReason:command.disabledReason,onSelect:()=>execute(command)}))
  if(page?.kind==='move')return [{id:'move',heading:'Move to',rows:rows(commands)}]
  const sections:ControlSection[]=[]
  for(const [group,heading] of [['open','Open'],['actions','Actions'],['settings','Settings']] as const){const items=commands.filter(c=>c.group===group&&!(c.key==='ask_assistant'&&c.icon.kind==='assistant'));if(items.length)sections.push({id:group,heading,rows:rows(items)})}
@@ -90,7 +94,7 @@ export function mergeParitySections(existing:ControlSection[],additions:ControlS
    const original=metadata.find(command=>command.id===paritySemanticKey(row.id))?.keywords??(paritySemanticKey(row.id)==='servers'?['machine','computer','remote','connection']:AGENT_TABS.filter(tab=>`panel:${tab.id}`===paritySemanticKey(row.id)).map(tab=>tab.description))
    // Preserve supported Mac aliases such as notification sound alongside the original catalog.
    const local=desktopMetadata.find(command=>`command-${command.id}`===row.id)?.keywords??[]
-   return {...row,keywords:[...new Set([...original,...local])]}
+   return {...row,keywords:[...new Set([...original,...local,...(row.keywords??[])])]}
   }),text)
  }
  return result.filter(section=>section.rows.length||section.loading)

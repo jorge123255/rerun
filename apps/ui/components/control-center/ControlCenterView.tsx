@@ -30,6 +30,7 @@ type ControlCenterPanelProps = {
     sections: ControlSection[]
     emptyLabel: string
     mod: string
+    labels?: { title: string; back: string; open: string; more: string; askRerun: string }
     closeHint?: string
     resultsHint?: string
 }
@@ -69,7 +70,7 @@ function measureOrbAnchor(): OrbAnchor | null {
     }
 }
 
-export function ControlCenterView({ open, onOpenChange, anchorToOrb = false, description = 'Jump to an agent, a setting or a conversation, or ask Rerun.', onCloseAutoFocus, ...panel }: ControlCenterPanelProps & { open: boolean; onOpenChange: (open: boolean) => void; anchorToOrb?: boolean; description?: string; onCloseAutoFocus?: (event: Event) => void }) {
+export function ControlCenterView({ open, onOpenChange, anchorToOrb = false, description = 'Jump to an agent, a setting or a conversation, or ask Rerun.', labels, onCloseAutoFocus, ...panel }: ControlCenterPanelProps & { open: boolean; onOpenChange: (open: boolean) => void; anchorToOrb?: boolean; description?: string; onCloseAutoFocus?: (event: Event) => void }) {
     const [anchor, setAnchor] = useState<OrbAnchor | null>(null)
     const [wasOpen, setWasOpen] = useState(false)
     if (wasOpen !== open) {
@@ -79,7 +80,7 @@ export function ControlCenterView({ open, onOpenChange, anchorToOrb = false, des
 
     const header = (
         <DialogHeader className="sr-only">
-            <DialogTitle>Control center</DialogTitle>
+            <DialogTitle>{labels?.title ?? 'Control center'}</DialogTitle>
             <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
     )
@@ -103,7 +104,7 @@ export function ControlCenterView({ open, onOpenChange, anchorToOrb = false, des
                 >
                     {header}
                     <div className="w-full overflow-hidden rounded-xl bg-popover shadow-2xl ring-1 ring-foreground/10">
-                        <ControlCenterPanel {...panel} />
+                        <ControlCenterPanel {...panel} labels={labels} />
                     </div>
                     {/* The overlay dims the parked orb: this one stands in for it, on the same spot. */}
                     <Orb size={anchor.orbSize} state="listening" facing={anchor.horizontal === 'left' ? 'right' : 'left'} />
@@ -111,14 +112,14 @@ export function ControlCenterView({ open, onOpenChange, anchorToOrb = false, des
             ) : (
                 <DialogContent showCloseButton={false} onCloseAutoFocus={keepPillFocus} className={CENTERED}>
                     {header}
-                    <ControlCenterPanel {...panel} />
+                    <ControlCenterPanel {...panel} labels={labels} />
                 </DialogContent>
             )}
         </Dialog>
     )
 }
 
-export function ControlCenterPanel({ query, onQueryChange, placeholder, pageKey, depth, crumbs, onBack, sections, emptyLabel, mod, closeHint = 'again to search in the page', resultsHint }: ControlCenterPanelProps) {
+export function ControlCenterPanel({ query, onQueryChange, placeholder, pageKey, depth, crumbs, onBack, sections, emptyLabel, mod, labels, closeHint = 'again to search in the page', resultsHint }: ControlCenterPanelProps) {
     const rows = sections.flatMap(section => section.rows)
     const firstRowId = rows.find(row => !row.disabledReason)?.id ?? ''
     const [selectedId, setSelectedId] = useState(firstRowId)
@@ -164,7 +165,7 @@ export function ControlCenterPanel({ query, onQueryChange, placeholder, pageKey,
         <Command shouldFilter={false} loop value={selectedId} onValueChange={setSelectedId} onKeyDown={handleKeyDown}>
             {crumbs.length > 0 && (
                 <div className="flex items-center gap-1 px-1 pt-1">
-                    <Button aria-label="Back" variant="ghost" size="icon-sm" onClick={onBack}>
+                    <Button aria-label={labels?.back ?? 'Back'} variant="ghost" size="icon-sm" onClick={onBack}>
                         <ArrowLeftIcon className="size-4" />
                     </Button>
                     <span className="truncate text-xs font-medium text-muted-foreground">{crumbs.join(' / ')}</span>
@@ -189,18 +190,18 @@ export function ControlCenterPanel({ query, onQueryChange, placeholder, pageKey,
             <div className="-mx-1 -mb-1 flex items-center gap-4 border-t border-border/50 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1.5">
                     <Kbd className={HINT_KEY}>↵</Kbd>
-                    Open
+                    {labels?.open ?? 'Open'}
                 </span>
                 {askRow ? (
                     <span className="flex items-center gap-1.5 max-sm:hidden">
                         <Kbd className={HINT_KEY}>{mod}</Kbd>
                         <Kbd className={HINT_KEY}>↵</Kbd>
-                        Ask Rerun
+                        {labels?.askRerun ?? 'Ask Rerun'}
                     </span>
                 ) : (
                     <span className="flex items-center gap-1.5 max-sm:hidden">
                         <Kbd className={HINT_KEY}>Tab</Kbd>
-                        More
+                        {labels?.more ?? 'More'}
                     </span>
                 )}
                 <span className="ml-auto flex items-center gap-1.5 max-sm:hidden">
