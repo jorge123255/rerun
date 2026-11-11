@@ -2,6 +2,7 @@
 
 import { ShortcutsDialogView, type ShortcutGroup } from '@/components/dialogs/ShortcutsDialog'
 import { useModKeyLabel } from '@/hooks/useModKeyLabel'
+import { useDesktopLocale } from './DesktopLocale'
 
 export function DesktopShortcutsDialog({ open, onOpenChange, onCloseAutoFocus }: {
     open: boolean
@@ -9,21 +10,23 @@ export function DesktopShortcutsDialog({ open, onOpenChange, onCloseAutoFocus }:
     onCloseAutoFocus?: (event: Event) => void
 }) {
     const mod = useModKeyLabel()
+    const { t } = useDesktopLocale()
     const groups: ShortcutGroup[] = [
-        { title: 'General', shortcuts: [
-            { keys: [mod, 'F'], action: 'Open the control center' },
-            { keys: [mod, 'K'], action: 'Open the control center, outside a chat or text field' },
+        { title: t('shortcutDialog.groups.general'), shortcuts: [
+            { keys: [mod, 'F'], action: t('shortcutDialog.actions.controlCenter') },
+            { keys: [mod, 'K'], action: t('controlCenterOutsideInput') },
         ] },
-        { title: 'Chat', shortcuts: [
-            { keys: [mod, 'K'], action: 'New conversation' },
-            { keys: [mod, '⌫'], action: 'Close active tab, outside a text field' },
-            { keys: ['Enter'], action: 'Send message' },
-            { keys: ['Shift', 'Enter'], action: 'New line' },
+        { title: t('shortcutDialog.groups.chat'), shortcuts: [
+            { keys: [mod, 'K'], action: t('shortcutDialog.actions.newConversation') },
+            { keys: [mod, '⌫'], action: t('closeTabOutsideInput') },
+            { keys: ['Enter'], action: t('shortcutDialog.actions.sendMessage') },
+            { keys: ['Shift', 'Enter'], action: t('shortcutDialog.actions.newLine') },
         ] },
-        { title: 'Files', shortcuts: [
-            { keys: ['←'], action: 'Previous file' },
-            { keys: ['→'], action: 'Next file' },
+        { title: t('shortcutDialog.groups.files'), shortcuts: [
+            { keys: ['←'], action: t('shortcutDialog.actions.previousFile') },
+            { keys: ['→'], action: t('shortcutDialog.actions.nextFile') },
         ] },
     ]
-    return <ShortcutsDialogView open={open} onOpenChange={onOpenChange} groups={groups} onCloseAutoFocus={onCloseAutoFocus} />
+    return <ShortcutsDialogView open={open} onOpenChange={onOpenChange} groups={groups} onCloseAutoFocus={onCloseAutoFocus}
+        title={t('shortcutDialog.title')} description={t('shortcutDialog.description')} closeLabel={t('closeDialog')} />
 }

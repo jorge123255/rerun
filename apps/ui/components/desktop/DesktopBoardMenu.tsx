@@ -1,3 +1,4 @@
+import { useDesktopLocale } from './DesktopLocale'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { CopyPlusIcon, Link2, MessageCircle, PencilIcon, PowerIcon, PowerOffIcon, Trash2Icon } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from '@/components/ui/context-menu'
@@ -25,6 +26,7 @@ export function DesktopBoardMenu({ agents, onOpen, onRename, onShare, onDuplicat
     onInteractionChange?: (active: boolean) => void
     children: (onTileContextMenu: (id: string) => void, onContainerContextMenu: (id: string) => void) => ReactNode
 }) {
+    const { t } = useDesktopLocale()
     const [targetId, setTargetId] = useState<string | null>(null)
     const [spaceId, setSpaceId] = useState<string | null>(null)
     const [menuOpen, setMenuOpen] = useState(false)
@@ -71,7 +73,7 @@ export function DesktopBoardMenu({ agents, onOpen, onRename, onShare, onDuplicat
             setActivation(null)
         } catch (error) {
             setActivation({ id: agent.id, name: agent.name, enabled,
-                error: error instanceof Error ? error.message : `Could not ${enabled ? 'enable' : 'disable'} this coworker. Try again.` })
+                error: error instanceof Error ? error.message : t(enabled ? 'coworker.enableFailed' : 'coworker.disableFailed') })
         } finally {
             saving.current = false
         }
@@ -100,19 +102,19 @@ export function DesktopBoardMenu({ agents, onOpen, onRename, onShare, onDuplicat
             }}>
                 <ContextMenuLabel className="max-w-56 truncate pl-7">{target.name}</ContextMenuLabel>
                 <ContextMenuSeparator />
-                <ContextMenuItem onSelect={() => onOpen(target.id)}><MessageCircle className="size-4" />Open chat</ContextMenuItem>
-                {onRename && <ContextMenuItem onSelect={() => setRenaming(target)}><PencilIcon className="size-4" />Rename</ContextMenuItem>}
+                <ContextMenuItem onSelect={() => onOpen(target.id)}><MessageCircle className="size-4" />{t('coworker.open')}</ContextMenuItem>
+                {onRename && <ContextMenuItem onSelect={() => setRenaming(target)}><PencilIcon className="size-4" />{t('coworker.rename')}</ContextMenuItem>}
                 {onShare && <ContextMenuItem onSelect={() => {
                     if (!currentMenu() || !latest.current.agents.some(agent => agent.id === target.id)) return
                     startingPlacement.current = true
                     onShare(target)
-                }}><Link2 className="size-4" />Share</ContextMenuItem>}
+                }}><Link2 className="size-4" />{t('coworker.share')}</ContextMenuItem>}
                 {onDuplicate && <ContextMenuItem onSelect={() => { startingPlacement.current = true; onDuplicate(target) }}>
-                    <CopyPlusIcon className="size-4" />Duplicate
+                    <CopyPlusIcon className="size-4" />{t('coworker.duplicate')}
                 </ContextMenuItem>}
                 {spaces && onMoveAgent && <ContextMenuSub>
-                    <ContextMenuSubTrigger className="pl-7">Move to Box</ContextMenuSubTrigger>
-                    <ContextMenuSubContent>{otherBoxes.length === 0 ? <ContextMenuItem disabled>No other Box yet</ContextMenuItem> : otherBoxes.map(space =>
+                    <ContextMenuSubTrigger className="pl-7">{t('coworker.moveBox')}</ContextMenuSubTrigger>
+                    <ContextMenuSubContent>{otherBoxes.length === 0 ? <ContextMenuItem disabled>{t('coworker.noOtherBox')}</ContextMenuItem> : otherBoxes.map(space =>
                         <ContextMenuItem key={space.id} className="max-w-56 truncate" disabled={!firstDesktopSpacePosition(spaces, space.id, target.id)} onSelect={() => {
                             const live = latest.current
                             if (!currentMenu() || !live.agents.some(agent => agent.id === target.id) || !live.spaces || !firstDesktopSpacePosition(live.spaces, space.id, target.id)) return
@@ -123,31 +125,39 @@ export function DesktopBoardMenu({ agents, onOpen, onRename, onShare, onDuplicat
                     <ContextMenuSeparator />
                     <ContextMenuItem disabled={!!activation && !activation.error} onSelect={() => void setEnabled(target, target.enabled === false)}>
                         {target.enabled === false ? <PowerIcon className="size-4" /> : <PowerOffIcon className="size-4" />}
-                        {target.enabled === false ? 'Enable' : 'Disable'}
+                        {t(target.enabled === false ? 'coworker.enable' : 'coworker.disable')}
                     </ContextMenuItem>
                 </>}
                 {onDelete && <>
                     <ContextMenuSeparator />
-                    <ContextMenuItem variant="destructive" onSelect={() => setDeleting(target)}><Trash2Icon className="size-4" />Delete</ContextMenuItem>
+                    <ContextMenuItem variant="destructive" onSelect={() => setDeleting(target)}><Trash2Icon className="size-4" />{t('coworker.delete')}</ContextMenuItem>
                 </>}
             </ContextMenuContent>}
             {targetSpace && <ContextMenuContent>
                 <ContextMenuLabel className="max-w-56 truncate pl-7">{targetSpace.name}</ContextMenuLabel><ContextMenuSeparator />
-                {onRenameSpace && <ContextMenuItem onSelect={() => boxAction(targetSpace.id, 'rename')}><PencilIcon className="size-4" />Rename</ContextMenuItem>}
-                {onDeleteSpace && <><ContextMenuSeparator /><ContextMenuItem variant="destructive" onSelect={() => boxAction(targetSpace.id, 'delete')}><Trash2Icon className="size-4" />Delete</ContextMenuItem></>}
+                {onRenameSpace && <ContextMenuItem onSelect={() => boxAction(targetSpace.id, 'rename')}><PencilIcon className="size-4" />{t('coworker.rename')}</ContextMenuItem>}
+                {onDeleteSpace && <><ContextMenuSeparator /><ContextMenuItem variant="destructive" onSelect={() => boxAction(targetSpace.id, 'delete')}><Trash2Icon className="size-4" />{t('coworker.delete')}</ContextMenuItem></>}
             </ContextMenuContent>}
         </ContextMenu>
         {activation && agents.some(agent => agent.id === activation.id) && <div role={activation.error ? 'alert' : 'status'} className="absolute bottom-20 left-4 z-40 flex max-w-[calc(100%-2rem)] items-center gap-2 rounded-xl border bg-background px-3 py-2 text-sm shadow-sm">
-            <p>{activation.error || `${activation.enabled ? 'Enabling' : 'Disabling'} ${activation.name}…`}</p>
+            <p>{activation.error || t(activation.enabled ? 'coworker.enabling' : 'coworker.disabling', { name: activation.name })}</p>
             {activation.error && <>
-                <Button type="button" variant="outline" size="sm" onClick={() => void setEnabled(activation, activation.enabled)}>Retry</Button>
-                <Button type="button" variant="ghost" size="sm" onClick={() => setActivation(null)}>Dismiss</Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => void setEnabled(activation, activation.enabled)}>{t('coworker.retry')}</Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setActivation(null)}>{t('coworker.dismiss')}</Button>
             </>}
         </div>}
-        {onRename && renaming && <RenameAgentDialog agent={renaming} open onRename={onRename}
+        {onRename && renaming && <RenameAgentDialog agent={renaming} open labels={{
+            title: t('coworker.renameTitle'), description: t('coworker.renameDescription'), name: t('coworker.name'),
+            required: t('coworker.nameRequired'), tooLong: t('coworker.nameTooLong', { max: 60 }),
+            failed: t('coworker.renameFailed'), cancel: t('cancel'), submit: t('coworker.rename'),
+        }} onRename={onRename}
             onOpenChange={open => { if (!open) setRenaming(undefined) }} onRestoreFocus={() => focusTile(renaming.id)} />}
         {onDelete && deleting && <DeleteCoworkerConfirmation key={deleting.id} agentName={deleting.name} open
-            description="This will permanently delete the coworker and its chats, files and memories from this Mac. This action cannot be undone."
+            description={t('coworker.deleteDescription')} labels={{
+                title: t('coworker.deleteTitle'), input: t('coworker.deleteInput'),
+                confirm: name => <>{t.rich('coworker.deleteConfirm', { name, b: chunks => <span className="font-medium text-foreground">{chunks}</span> })}</>,
+                failed: t('coworker.deleteFailed'), cancel: t('cancel'), deleting: t('coworker.deleting'), submit: t('coworker.delete'),
+            }}
             onDelete={confirmationName => onDelete(deleting.id, confirmationName)}
             onOpenChange={open => { if (!open) setDeleting(undefined) }} onRestoreFocus={() => focusTile(deleting.id)} />}
     </>

@@ -9,10 +9,16 @@ import { ChevronDownIcon } from '../icons'
 import { AgentBuddy } from '../iso-grid/components/buddy/AgentBuddy'
 import { ScrollFade, Switch } from '../primitives'
 import { TooltipDisabledReason } from '../Tooltip'
-import { groupByPeriod, isWithinTheHour, PERIOD_LABELS, shortCountdown, shortElapsed } from './periods'
+import { groupByPeriod, isWithinTheHour, PERIOD_LABELS, shortCountdown, shortElapsed, type PeriodKey } from './periods'
 
 const EASE = [0.22, 1, 0.36, 1] as const
-const SETUP_REASON = 'Finish the setup first'
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+
+type RoutineLabel = 'setupFirst' | 'pause' | 'resume' | 'nameLabel'
+    | 'runningJustNow' | 'runningMinutes' | 'runningHours' | 'startsNow' | 'startsInMinutes'
+type RoutineCopyKey = `periods.${PeriodKey}` | `labels.${RoutineLabel}`
+type RoutineCopy = (key: RoutineCopyKey, values?: Record<string, string | number>) => string
 
 export type RoutineEntry = {
     slug: string
@@ -31,6 +37,7 @@ export type RoutineEntry = {
 export type RoutineListProps<T extends RoutineEntry> = {
     routines: T[]
     now: number
+    copy?: RoutineCopy
     agentNameOf: (agentId: string) => string
     onOpen: (routine: T) => void
     /** Left out, the switch only shows the state: the landing demo has nothing to save it to. */
@@ -56,7 +63,7 @@ function byNextRun(a: RoutineEntry, b: RoutineEntry): number {
     return a.nextRunAt.localeCompare(b.nextRunAt)
 }
 
-export function RoutineList<T extends RoutineEntry>({ routines, now, docked = false, className, ...rowProps }: RoutineListProps<T>) {
+export function RoutineList<T extends RoutineEntry>({ routines, now, docked = false, className, copy, ...rowProps }: RoutineListProps<T>) {
     const [pausedOpen, setPausedOpen] = useState(false)
     const groups = useMemo(() => groupByPeriod([...routines].sort(byNextRun), now), [routines, now])
 
@@ -70,7 +77,7 @@ export function RoutineList<T extends RoutineEntry>({ routines, now, docked = fa
                     const open = !isPaused || pausedOpen
                     const heading = (
                         <>
-                            {PERIOD_LABELS[group.key]}
+                            {copy?.(`periods.${group.key}`) ?? PERIOD_LABELS[group.key]}
                             <span className="text-sm font-normal text-muted-foreground tabular-nums">{group.routines.length}</span>
                         </>
                     )
@@ -78,7 +85,7 @@ export function RoutineList<T extends RoutineEntry>({ routines, now, docked = fa
                         <section key={group.key}>
                             <div className={cn('sticky top-0 z-10 -mx-3 flex items-center bg-background px-4 pb-2.5', groupIndex === 0 ? 'pt-2' : 'pt-7', docked && 'dark:md:bg-frame')}>
                                 {isPaused ? (
-                                    <button type="button" onClick={() => setPausedOpen(value => !value)} className="flex items-baseline gap-2 text-base font-semibold tracking-tight text-foreground">
+                                    <button type="button" aria-expanded={pausedOpen} onClick={() => setPausedOpen(value => !value)} className="flex items-baseline gap-2 text-base font-semibold tracking-tight text-foreground">
                                         {heading}
                                         <ChevronDownIcon className={cn('size-3.5 self-center text-muted-foreground transition-transform duration-200', pausedOpen && 'rotate-180')} />
                                     </button>
@@ -104,7 +111,7 @@ export function RoutineList<T extends RoutineEntry>({ routines, now, docked = fa
                                                     animate={{ opacity: 1, y: 0 }}
                                                     transition={{ duration: 0.3, ease: EASE, delay: Math.min(lineIndex++, 12) * 0.02 }}
                                                 >
-                                                    <RoutineRow routine={routine} now={now} {...rowProps} />
+                                                    <RoutineRow routine={routine} now={now} copy={copy} {...rowProps} />
                                                 </motion.div>
                                             ))}
                                         </div>
@@ -121,7 +128,7 @@ export function RoutineList<T extends RoutineEntry>({ routines, now, docked = fa
 
 type RoutineRowProps<T extends RoutineEntry> = Omit<RoutineListProps<T>, 'routines' | 'docked' | 'className'> & { routine: T }
 
-function RoutineRow<T extends RoutineEntry>({ routine, now, agentNameOf, onOpen, onToggle, isSaving, renderMenu, renamingKey, onRename, onCancelRename }: RoutineRowProps<T>) {
+function RoutineRow<T extends RoutineEntry>({ routine, now, copy, agentNameOf, onOpen, onToggle, isSaving, renderMenu, renamingKey, onRename, onCancelRename }: RoutineRowProps<T>) {
     const renaming = renamingKey === routineKey(routine)
     const open = () => !renaming && onOpen(routine)
     const rule = [routine.frequency, agentNameOf(routine.agentId)].filter(Boolean).join(' · ')
@@ -140,20 +147,20 @@ function RoutineRow<T extends RoutineEntry>({ routine, now, agentNameOf, onOpen,
             </span>
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 {renaming ? (
-                    <RenameField name={routine.name} onSubmit={name => onRename?.(routine, name)} onCancel={() => onCancelRename?.()} />
+                    <RenameField name={routine.name} label={copy?.('labels.nameLabel') ?? 'Routine name'} onSubmit={name => onRename?.(routine, name)} onCancel={() => onCancelRename?.()} />
                 ) : (
                     <span className={cn('truncate text-sm font-medium', routine.enabled ? 'text-foreground' : 'text-muted-foreground')}>{routine.name}</span>
                 )}
-                <StatusSubline routine={routine} now={now} rule={rule} />
+                <StatusSubline routine={routine} now={now} rule={rule} copy={copy} />
             </div>
             <span className="flex shrink-0 items-center gap-1" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
                 {onToggle ? (
-                    <TooltipDisabledReason reason={blockedBySetup ? SETUP_REASON : undefined} side="left" className="rounded-full">
+                    <TooltipDisabledReason reason={blockedBySetup ? copy?.('labels.setupFirst') ?? 'Finish the setup first' : undefined} side="left" className="rounded-full">
                         <Switch
                             checked={routine.enabled}
                             disabled={blockedBySetup || isSaving?.(routine)}
                             onCheckedChange={enabled => onToggle(routine, enabled)}
-                            aria-label={`${routine.enabled ? 'Pause' : 'Resume'} ${routine.name}`}
+                            aria-label={copy?.(routine.enabled ? 'labels.pause' : 'labels.resume', { name: routine.name }) ?? `${routine.enabled ? 'Pause' : 'Resume'} ${routine.name}`}
                         />
                     </TooltipDisabledReason>
                 ) : (
@@ -167,16 +174,29 @@ function RoutineRow<T extends RoutineEntry>({ routine, now, agentNameOf, onOpen,
 
 type RoutineStatus = { tone: 'running' | 'soon'; label: string }
 
-function statusOf(routine: RoutineEntry, now: number): RoutineStatus | null {
-    if (routine.runningSince) return { tone: 'running', label: `Running · ${shortElapsed(routine.runningSince, now)}` }
-    if (routine.enabled && routine.nextRunAt && isWithinTheHour(routine.nextRunAt, now)) return { tone: 'soon', label: `Starts ${shortCountdown(routine.nextRunAt, now)}` }
+function statusOf(routine: RoutineEntry, now: number, copy?: RoutineCopy): RoutineStatus | null {
+    if (routine.runningSince) {
+        const elapsed = Math.max(0, now - new Date(routine.runningSince).getTime())
+        const label = !copy ? `Running · ${shortElapsed(routine.runningSince, now)}`
+            : elapsed < MINUTE ? copy('labels.runningJustNow')
+            : elapsed < HOUR ? copy('labels.runningMinutes', { minutes: Math.floor(elapsed / MINUTE) })
+            : copy('labels.runningHours', { hours: Math.floor(elapsed / HOUR) })
+        return { tone: 'running', label }
+    }
+    if (routine.enabled && routine.nextRunAt && isWithinTheHour(routine.nextRunAt, now)) {
+        const remaining = new Date(routine.nextRunAt).getTime() - now
+        const label = !copy ? `Starts ${shortCountdown(routine.nextRunAt, now)}`
+            : remaining < MINUTE ? copy('labels.startsNow')
+            : copy('labels.startsInMinutes', { minutes: Math.floor(remaining / MINUTE) })
+        return { tone: 'soon', label }
+    }
     return null
 }
 
 // A live status takes the line; hovering it (or focusing the row) brings the rule back in its place.
-function StatusSubline({ routine, now, rule }: { routine: RoutineEntry; now: number; rule: string }) {
+function StatusSubline({ routine, now, rule, copy }: { routine: RoutineEntry; now: number; rule: string; copy?: RoutineCopy }) {
     const ruleText = <span className="truncate text-muted-foreground">{rule}</span>
-    const status = statusOf(routine, now)
+    const status = statusOf(routine, now, copy)
     if (!status) return <span className="flex min-w-0 text-xs">{ruleText}</span>
 
     return (
@@ -206,7 +226,7 @@ function LiveDot({ tone }: { tone: RoutineStatus['tone'] }) {
 }
 
 // Mounted only while renaming, so the current name is the initial state.
-function RenameField({ name, onSubmit, onCancel }: { name: string; onSubmit: (name: string) => void; onCancel: () => void }) {
+function RenameField({ name, label, onSubmit, onCancel }: { name: string; label: string; onSubmit: (name: string) => void; onCancel: () => void }) {
     const [value, setValue] = useState(name)
     const inputRef = useRef<HTMLInputElement>(null)
 
@@ -240,7 +260,7 @@ function RenameField({ name, onSubmit, onCancel }: { name: string; onSubmit: (na
             ref={inputRef}
             value={value}
             maxLength={120}
-            aria-label="Routine name"
+            aria-label={label}
             onChange={event => setValue(event.target.value)}
             onBlur={submit}
             onClick={event => event.stopPropagation()}

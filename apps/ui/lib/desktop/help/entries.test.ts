@@ -10,7 +10,7 @@ describe('desktopHelpEntries', () => {
         expect(entries.map(entry => entry.id)).toEqual(['getting_started', 'docs', 'community', 'shortcuts', 'experts'])
         for (const gated of DESKTOP_HELP_GATED_IDS) expect(entries.map(entry => entry.id)).not.toContain(gated)
         const docs = entries.find(entry => entry.id === 'docs')
-        expect(docs).toEqual({ id: 'docs', kind: 'link', label: 'Docs', href: RERUN_PUBLIC_DOCS_CORPUS.documentation })
+        expect(docs).toEqual({ id: 'docs', kind: 'link', href: RERUN_PUBLIC_DOCS_CORPUS.documentation })
         expect(entries.find(entry => entry.id === 'community')).toMatchObject({ href: DESKTOP_HELP_COMMUNITY_URL })
         expect(entries.find(entry => entry.id === 'experts')).toMatchObject({ href: landingUrl(DESKTOP_HELP_EXPERTS_PATH) })
     })

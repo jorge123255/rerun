@@ -1,8 +1,9 @@
-import { and, desc, eq } from 'drizzle-orm'
-import type { SessionSource } from '@rerun/contracts'
+import { and, desc, eq, sql } from 'drizzle-orm'
+import { parseScheduledRun, type SessionSource } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
 import { sessions, type SessionRow } from '../schema.js'
 import { newId, nowIso } from '../../lib/ids.js'
+import { extractText, storedContent } from './messages.js'
 
 export type SessionOrigin = { originAgentId: string; originSessionId: string }
 
@@ -33,6 +34,30 @@ export async function getSession(agentId: string, id: string): Promise<SessionRo
 export async function listSessions(agentId: string): Promise<SessionRow[]> {
     const { db } = await getSystemDb(agentId)
     return db.select().from(sessions).where(eq(sessions.agentId, agentId)).orderBy(desc(sessions.updatedAt))
+}
+
+// Like the upstream General feed, fetch metadata for the newest 200 branches in one read.
+export async function listDesktopThreadMetadata(agentId: string) {
+    const { db } = await getSystemDb(agentId)
+    const rows = await db.select({
+        id: sessions.id,
+        source: sessions.source,
+        originAgentId: sessions.originAgentId,
+        title: sessions.title,
+        runStatus: sql<string | null>`(SELECT r.status FROM runs r WHERE r.session_id = sessions.id
+            AND r.agent_id = sessions.agent_id ORDER BY r.started_at DESC, r.rowid DESC LIMIT 1)`,
+        scheduledMessage: sql<string | null>`CASE WHEN sessions.source = 'schedule' THEN (
+            SELECT CASE WHEN length(m.content_json) <= 262144 THEN m.content_json END
+            FROM messages m WHERE m.session_id = sessions.id AND m.role = 'user'
+            ORDER BY m.rowid LIMIT 1) END`,
+    }).from(sessions).where(eq(sessions.agentId, agentId))
+        .orderBy(desc(sessions.createdAt), sql`sessions.rowid DESC`).limit(200)
+    return rows.map(({ title, scheduledMessage, ...thread }) => {
+        const schedule = scheduledMessage ? parseScheduledRun(extractText(storedContent(scheduledMessage))) : null
+        const automationName = thread.source === 'schedule' ? schedule?.name ?? (title.replace(/^schedule: /, '') || null)
+            : thread.source === 'trigger' ? title.replace(/^trigger: /, '') || null : null
+        return { ...thread, automationName }
+    })
 }
 
 export async function touchSession(agentId: string, id: string, title?: string): Promise<void> {

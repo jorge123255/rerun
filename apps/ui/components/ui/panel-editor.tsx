@@ -10,11 +10,11 @@ export function PanelEditorShell({ children }: { children: ReactNode }) {
     return <div className="flex flex-col h-full">{children}</div>
 }
 
-export function PanelEditorHeader({ title, onBack, mono, children }: { title: string; onBack?: () => void; mono?: boolean; children?: ReactNode }) {
+export function PanelEditorHeader({ title, onBack, backLabel = 'Back', mono, children }: { title: string; onBack?: () => void; backLabel?: string; mono?: boolean; children?: ReactNode }) {
     return (
         <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
             {onBack && (
-                <Button size="icon-sm" variant="ghost" onClick={onBack} aria-label="Back">
+                <Button size="icon-sm" variant="ghost" onClick={onBack} aria-label={backLabel}>
                     <ArrowLeftIcon className="size-4" />
                 </Button>
             )}

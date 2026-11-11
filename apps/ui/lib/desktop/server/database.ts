@@ -43,6 +43,10 @@ async function initialize(dataRoot: string): Promise<Client> {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS desktop_language (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            locale TEXT
+        );
         CREATE TABLE IF NOT EXISTS desktop_workspace (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             profile_id INTEGER NOT NULL REFERENCES desktop_profile(id),

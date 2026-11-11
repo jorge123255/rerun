@@ -1,7 +1,9 @@
+import { useDesktopLocale } from './DesktopLocale'
 import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata'
 import { useMemo, useState, type FormEvent } from 'react'
 import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, type ConnectionsList } from '@rerun/contracts'
 import { ThemeToggle } from '@rerun/ui/theme'
+import { DesktopLanguageSettings } from './DesktopLanguageSettings'
 import { DesktopCodexLogin } from './DesktopCodexLogin'
 import { DesktopPlanLimitsBlock } from './usage/DesktopPlanLimitsBlock'
 import { DesktopClaudeLogin } from './claude-plan/DesktopClaudeLogin'
@@ -38,7 +40,9 @@ function effortLabel(effort: string) {
 }
 
 export function DesktopSettings({ providers, workspaceName, onSave, onProviders, initialTab, workspaceId = null, onConnectionsChanged }: Props) {
+    const { t } = useDesktopLocale()
     const apiConnections = useMemo(() => Number.isSafeInteger(workspaceId) && (workspaceId ?? 0) > 0 ? createApiConnectionsClient(desktopApiConnectionUiRoutes) : null, [workspaceId])
+    const labels = { 'AI providers': t('providers'), 'Tool services': t('toolServices'), Workspace: t('workspace'), Notifications: t('notifications'), Shortcuts: t('shortcuts') }
     const [tab, setTab] = useState<typeof panels[number]>(initialTab ?? 'AI providers')
     const [source, setSource] = useState(providers.connections.find(c => c.id === providers.default?.connectionId)?.id ?? providers.connections[0]?.id ?? 'add:openai')
     const [key, setKey] = useState('')
@@ -86,20 +90,20 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
         <section className="min-h-0 flex-1 overflow-auto">
             <div className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8">
                 <header>
-                    <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+                    <h1 className="text-2xl font-semibold tracking-tight">{t('settings')}</h1>
                     <p className="mt-1 text-sm text-muted-foreground">{workspaceName}</p>
                 </header>
-                <nav aria-label="Settings sections" className="flex flex-wrap gap-2 border-b pb-3">
+                <nav aria-label={t('settingsSections')} className="flex flex-wrap gap-2 border-b pb-3">
                     {panels.map(panel => <Button key={panel} size="sm" variant={tab === panel ? 'secondary' : 'ghost'} disabled={busy} aria-current={tab === panel ? 'page' : undefined} onClick={() => {
                         setTab(panel); setNotice(''); setError(''); setKey('')
-                    }}>{panel}</Button>)}
+                    }}>{labels[panel]}</Button>)}
                 </nav>
                 {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
                 {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
                 <fieldset disabled={busy} className="min-w-0 space-y-5">
                     {tab === 'AI providers' && <>
                         <div className="space-y-2 rounded-xl border p-4">
-                            <label htmlFor="desktop-default" className="font-semibold">Default model</label>
+                            <label htmlFor="desktop-default" className="font-semibold">{t('defaultModel')}</label>
                             <p className="text-sm text-muted-foreground">Used for the next message to any coworker, including in existing conversations.</p>
                             <select id="desktop-default" className={selectClass} disabled={!picks.length} value={selected} onChange={e => {
                                 const pick = picks[Number(e.target.value)]
@@ -165,14 +169,15 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                         <p className="text-sm text-muted-foreground">Connect ChatGPT (Codex) or Claude with your subscription, or use an API key for the other providers.</p>
                     </>}
                     {tab === 'Workspace' && <>
+                        <DesktopLanguageSettings />
                         <form className="space-y-2 rounded-xl border p-4" onSubmit={e => {
                             e.preventDefault(); void save({ action: 'workspace', name: name.trim() }, 'Workspace name saved.')
                         }}>
-                            <label htmlFor="workspace-name" className="font-semibold">Workspace name</label>
+                            <label htmlFor="workspace-name" className="font-semibold">{t('workspaceName')}</label>
                             <Input id="workspace-name" maxLength={WORKSPACE_NAME_MAX} value={name} onChange={e => setName(e.target.value)} />
-                            <Button disabled={!name.trim() || name.trim() === workspaceName} type="submit">Save name</Button>
+                            <Button disabled={!name.trim() || name.trim() === workspaceName} type="submit">{t('saveName')}</Button>
                         </form>
-                        <div className="flex items-center justify-between rounded-xl border p-4"><strong>Appearance</strong><ThemeToggle onPreferenceChange={theme => void save({ action: 'appearance', theme }, 'Appearance saved.')} /></div>
+                        <div className="flex items-center justify-between rounded-xl border p-4"><strong>{t('appearance')}</strong><ThemeToggle onPreferenceChange={theme => void save({ action: 'appearance', theme }, 'Appearance saved.')} /></div>
                     </>}
                     {tab === 'Shortcuts' && <dl className="grid grid-cols-[1fr_auto] gap-3 rounded-xl border p-4 text-sm">
                         <dt>Open Settings</dt><dd>⌘ ,</dd><dt>Send a chat message</dt><dd>Return</dd><dt>New line in chat</dt><dd>Shift Return</dd>

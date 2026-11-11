@@ -1,6 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react'
+import { useDesktopLocale } from './DesktopLocale'
+import { localizedControlLabel } from './control-center-parity/labels'
 import { DesktopControlCenterParityView } from './control-center-parity/DesktopControlCenterParityView'
 import { useDesktopControlParity, type DesktopParityCallbacks } from './control-center-parity/useDesktopControlParity'
 import type { ControlRow, ControlSection } from '@/components/control-center/types'
@@ -84,6 +86,9 @@ export type DesktopControlCenterProps = DesktopParityCallbacks & {
 }
 
 export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, runtimeWorkspaceId, runtimeLaunchNonce, onOpenDesktop, onAskAssistant, open: controlledOpen, onOpenChange, disabled = false, initialRecent, activity, onRefreshActivity, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onGettingStarted, onHelp, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
+    const { language, t } = useDesktopLocale()
+    const copy = language.messages.controlCenter
+    const translated = language.locale === 'en' ? undefined : copy
     const [internalOpen, setInternalOpen] = useState(false)
     const requestedOpen = controlledOpen ?? internalOpen
     const open = requestedOpen && !disabled
@@ -145,7 +150,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
         setOpen(false)
     }
 
-    const parity = useDesktopControlParity({ open, scope: selectionScope, page: page.kind === 'coworker' || page.kind === 'move' ? { kind: page.kind, agentId: page.coworkerId } : page, query, agents: coworkers, board, disabled, darkTheme, close, onTemplates, onExternalMcp, onServers, runtimeWorkspaceId, runtimeLaunchNonce, onOpenDesktop, onAskAssistant })
+    const parity = useDesktopControlParity({ open, scope: selectionScope, page: page.kind === 'coworker' || page.kind === 'move' ? { kind: page.kind, agentId: page.coworkerId } : page, query, agents: coworkers, board, disabled, darkTheme, copy: translated, close, onTemplates, onExternalMcp, onServers, runtimeWorkspaceId, runtimeLaunchNonce, onOpenDesktop, onAskAssistant })
 
     const drill = (next: Page) => () => {
         const current = latest.current
@@ -165,10 +170,10 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
     }
 
     const coworkerBadge = (coworker: DesktopAgentView): ControlRow['badge'] => {
-        if (coworker.enabled === false) return { label: 'Off', tone: 'neutral' }
+        if (coworker.enabled === false) return { label: copy.status.off, tone: 'neutral' }
         switch (activity?.statuses[coworker.id]) {
-            case 'waiting_human': return { label: 'Needs you', tone: 'orange' }
-            case 'working': return { label: 'Working', tone: 'cyan' }
+            case 'waiting_human': return { label: copy.status.waiting_human, tone: 'orange' }
+            case 'working': return { label: copy.status.working, tone: 'cyan' }
             case 'unreachable': return { label: 'Activity unavailable', tone: 'neutral' }
         }
     }
@@ -327,6 +332,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
     const commandRow = (command: DesktopControlCommand): ControlRow => ({
         id: `command-${command.id}`,
         label: command.label,
+        keywords: command.keywords,
         leading: { kind: 'icon', icon: command.id === 'toggle_theme' && !darkTheme ? MoonIcon : COMMAND_ICONS[command.id] },
         onSelect: () => {
             if (!available()) return
@@ -445,7 +451,10 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
                 : conversationSection('coworker-conversations', 'Conversations', page.coworkerId))]
         }
 
-        const commands = buildDesktopControlCommands({ brain: !!onBrain, sharedFiles: !!onSharedFiles, addBox: !!board && !!onAddBox, shortcuts: !!onShortcuts, gettingStarted: !!onGettingStarted, help: !!onHelp, notifications: !!onNotifications, workspaceSettings: !!onWorkspaceSettings, recenterBoard: !!onRecenterBoard, toggleTheme: !!onToggleTheme, darkTheme })
+        const commands = buildDesktopControlCommands({ brain: !!onBrain, sharedFiles: !!onSharedFiles, addBox: !!board && !!onAddBox, shortcuts: !!onShortcuts, gettingStarted: !!onGettingStarted, help: !!onHelp, notifications: !!onNotifications, workspaceSettings: !!onWorkspaceSettings, recenterBoard: !!onRecenterBoard, toggleTheme: !!onToggleTheme, darkTheme }).map(command => {
+            const label = localizedControlLabel(`command-${command.id}`, command.label, darkTheme, translated)
+            return label === command.label ? command : { ...command, label, keywords: [...command.keywords, command.label] }
+        })
         const commandSections: ControlSection[] = [
             { id: 'actions', heading: 'Actions', rows: searchItems(commands.filter(command => command.group === 'actions'), text).map(commandRow) },
             { id: 'settings', heading: 'Settings', rows: searchItems(commands.filter(command => command.group === 'settings'), text).map(commandRow) },
@@ -500,10 +509,19 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
     }
 
     const crumbs = page.kind === 'box' ? [pageSpace?.name ?? 'Box'] : page.kind === 'move' ? [pageCoworker?.name ?? '', 'Move to another Box'] : page.kind === 'coworker' ? [pageCoworker?.name ?? ''] : []
-    const placeholder = page.kind === 'box' ? 'Search coworkers in this Box…' : page.kind === 'move' ? 'Pick a Box…' : page.kind === 'coworker' ? `Search in ${pageCoworker?.name ?? 'this coworker'}…` : 'Search coworkers, settings, conversations…'
+    const placeholder = page.kind === 'box' ? translated?.placeholder.box ?? 'Search coworkers in this Box…'
+        : page.kind === 'move' ? copy.placeholder.move
+        : page.kind === 'coworker' ? pageCoworker ? t('controlCenter.placeholder.agent', { name: pageCoworker.name }) : translated?.placeholder.agentUnknown ?? 'Search in this coworker…'
+        : copy.search
     const emptyLabel = page.kind === 'box' && !text ? 'No coworkers in this Box yet.' : showCoworkerChats ? 'No open chats or recent conversations yet.' : page.kind === 'coworker' && text.length < MIN_CONVERSATION_QUERY
         ? 'Type at least 2 characters to search this coworker’s saved chats.'
-        : 'Nothing matches.'
+        : copy.empty.noMatch
+    const headings: Record<string, string> = {
+        Actions: copy.headings.actions, Settings: copy.headings.settings, Coworkers: translated?.headings.agents ?? 'Coworkers',
+        'Needs you': copy.headings.needsYou, Recent: copy.headings.recent, Boxes: copy.headings.boxes,
+        Conversations: copy.headings.conversations, 'Recent conversations': copy.headings.recentConversations,
+        Assistant: copy.headings.assistant, Open: copy.headings.open, 'Move to': copy.headings.moveTo,
+    }
 
     return (
         <DesktopControlCenterParityView
@@ -511,8 +529,9 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
             open={open}
             onOpenChange={setOpen}
             anchorToOrb={false}
-            description="Jump to a coworker, model settings or a saved conversation."
-            closeHint="to close"
+            description={copy.desktopDescription}
+            labels={{ title: copy.title, back: copy.back, open: copy.hints.open, more: copy.hints.more, askRerun: copy.askRerun }}
+            closeHint={copy.closeHint}
             resultsHint={attentionNotice?.scope === selectionScope ? attentionNotice.text : showCoworkerChats
                 ? chatNotice?.scope === selectionScope ? chatNotice.text : chats.loading && chats.data ? 'Refreshing chats…' : chats.data?.hasMore ? 'Showing 8 recent conversations. Type to search older chats.' : undefined
                 : search.hasMore ? 'Showing the first 50 matches. Refine your search for more.' : undefined}
@@ -542,7 +561,8 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
             depth={pages.length - 1}
             crumbs={crumbs}
             onBack={back}
-            sections={parity.merge(sections().filter(section => section.rows.length > 0 || section.loading))}
+            sections={parity.merge(sections().filter(section => section.rows.length > 0 || section.loading))
+                .map(section => ({ ...section, heading: headings[section.heading] ?? section.heading }))}
             emptyLabel={emptyLabel}
             mod={mod}
         />

@@ -1,5 +1,7 @@
 'use client'
 
+import { useDesktopLocale } from '../DesktopLocale'
+
 import type { DesktopAnsweredQuestionRecap } from '@/lib/desktop/foreman/answered-question-recap'
 import { DesktopForemanAnsweredQuestion } from './transcript/DesktopForemanAnsweredQuestion'
 import type { ForemanHistoryPart } from './transcript/parts'
@@ -88,6 +90,7 @@ export function DesktopForemanChatLayer({
     children?: ReactNode
     className?: string
 }) {
+    const { t } = useDesktopLocale()
     const plan = projectPlanCard(planSnapshot)
     const empty = messages.length === 0 && !error && !plan.view && !build && !question
 
@@ -97,7 +100,7 @@ export function DesktopForemanChatLayer({
                 {emptyWelcome && empty && restored && <DesktopForemanWelcome key="welcome" thinking={streaming} />}
             </AnimatePresence>
             {/* Match ForemanChatLayer: resize follows the latest message until the reader scrolls up. */}
-            <Conversation className="min-h-0" aria-label="Foreman conversation">
+            <Conversation className="min-h-0" aria-label={t('foreman.conversation')}>
                 <ConversationContent scrollClassName="overflow-y-auto" className="mx-auto w-full max-w-xl justify-end gap-4 px-3 pb-5 pt-24 md:min-h-full">
                     {!restored && empty && (
                         <div aria-hidden className="flex flex-col gap-4">
@@ -156,7 +159,7 @@ export function DesktopForemanChatLayer({
                             />
                         </motion.div>
                     )}
-                    {streaming && <p className="text-xs text-muted-foreground">Working…</p>}
+                    {streaming && <p className="text-xs text-muted-foreground">{t('foreman.working')}</p>}
                     {error && (
                         <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
                             {error}

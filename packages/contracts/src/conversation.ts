@@ -1,9 +1,20 @@
 import { z } from 'zod'
 
+import { runStatusSchema } from './run.js'
 import { sessionSourceSchema } from './session.js'
 
 export const sessionStatusSchema = z.enum(['idle', 'working', 'error', 'waiting_human', 'awaiting_question', 'awaiting_approval', 'awaiting_connector', 'awaiting_ack'])
 export type SessionStatus = z.infer<typeof sessionStatusSchema>
+
+export const desktopThreadMetadataListSchema = z.object({
+    threads: z.array(z.object({
+        id: z.string(),
+        source: sessionSourceSchema,
+        originAgentId: z.string().nullable(),
+        automationName: z.string().nullable(),
+        runStatus: runStatusSchema.nullable(),
+    })),
+})
 
 // A conversation nobody can move forward without a human. Shared so the web's To handle list and
 // the app's cannot drift apart. Wider than the `pending` badge of an agent row, which leaves out

@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { BookOpenIcon, HandshakeIcon, KeyboardIcon, ListChecksIcon, UsersIcon } from '@/lib/icons'
 import { desktopGettingStartedAvailable, subscribeDesktopGettingStartedAvailability } from '@/lib/desktop/help/availability'
 import { desktopHelpEntries, desktopHelpKeepsFocus, type DesktopHelpEntry } from '@/lib/desktop/help/entries'
+import { useDesktopLocale } from '../DesktopLocale'
 
 const ICONS = {
     getting_started: ListChecksIcon,
@@ -26,6 +27,7 @@ type DesktopHelpDialogProps = {
 
 /** Local help. Docs use the approved docs origin. Shortcuts opens the Mac dialog. No hosted feed or support chat. */
 export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingStarted, onShortcuts, onCloseAutoFocus }: DesktopHelpDialogProps) {
+    const { t } = useDesktopLocale()
     const gettingStarted = useSyncExternalStore(
         subscribeDesktopGettingStartedAvailability,
         () => desktopGettingStartedAvailable(workspaceId),
@@ -39,6 +41,7 @@ export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingSt
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent
                 className="sm:max-w-md"
+                closeLabel={t('closeDialog')}
                 onCloseAutoFocus={event => {
                     const keep = desktopHelpKeepsFocus(intent.current)
                     intent.current = 'close'
@@ -50,8 +53,8 @@ export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingSt
                 }}
             >
                 <DialogHeader>
-                    <DialogTitle>Help</DialogTitle>
-                    <DialogDescription>Docs and shortcuts for this Mac. Getting started stays here after you hide the checklist.</DialogDescription>
+                    <DialogTitle>{t('help')}</DialogTitle>
+                    <DialogDescription>{t('helpDescription')}</DialogDescription>
                 </DialogHeader>
                 <ul className="flex flex-col py-1">
                     {entries.map(entry => {
@@ -61,7 +64,7 @@ export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingSt
                                 <li key={entry.id}>
                                     <a href={entry.href} target="_blank" rel="noopener noreferrer" className={rowClass}>
                                         <Icon className="size-4" />
-                                        {entry.label}
+                                        {t(`helpItems.${entry.id}`)}
                                     </a>
                                 </li>
                             )
@@ -79,7 +82,7 @@ export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingSt
                                     }}
                                 >
                                     <Icon className="size-4" />
-                                    {entry.label}
+                                    {t(`helpItems.${entry.id}`)}
                                 </button>
                             </li>
                         )

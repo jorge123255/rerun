@@ -18,8 +18,8 @@ export type OpenChatsTabsProps = {
 }
 
 // Both the hosted board and the Mac use this strip. Each supplies the status from its own runs.
-export function OpenChatsTabStrip({ tabs, activeIndex, onSelect, onClose, onCreate, stateOf, newLabel = 'New conversation' }:
-    OpenChatsTabsProps & { stateOf: (tab: SessionTab) => TabState; newLabel?: string }) {
+export function OpenChatsTabStrip({ tabs, activeIndex, onSelect, onClose, onCreate, stateOf, newLabel = 'New conversation', closeLabel = title => `Close ${title}` }:
+    OpenChatsTabsProps & { stateOf: (tab: SessionTab) => TabState; newLabel?: string; closeLabel?: (title: string) => string }) {
     const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
     const fadeMask = useScrollFade(scroller, { axis: 'x' })
 
@@ -44,7 +44,7 @@ export function OpenChatsTabStrip({ tabs, activeIndex, onSelect, onClose, onCrea
                         className={cn('flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold transition-colors', pinned === activeIndex ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground')}
                     >
                         <MessagesSquare className="size-3.5" />
-                        General
+                        {general.title}
                     </button>
                     <span aria-hidden className="mx-0.5 h-4 w-px shrink-0 bg-border" />
                 </>
@@ -68,7 +68,7 @@ export function OpenChatsTabStrip({ tabs, activeIndex, onSelect, onClose, onCrea
                                 </button>
                                 <button
                                     type="button"
-                                    aria-label={`Close ${tab.title}`}
+                                    aria-label={closeLabel(tab.title)}
                                     onClick={() => onClose(index)}
                                     className={cn('flex size-5 shrink-0 items-center justify-center rounded hover:bg-background/60', !active && 'opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100')}
                                 >
@@ -91,7 +91,7 @@ export function OpenChatsTabStrip({ tabs, activeIndex, onSelect, onClose, onCrea
     )
 }
 
-function StateDot({ state }: { state: TabState }) {
+export function StateDot({ state }: { state: TabState }) {
     if (state === 'quiet') return null
     return (
         <span className="relative flex size-1.5 shrink-0">

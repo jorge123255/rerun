@@ -3,6 +3,9 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { DesktopCoworkerPatch, DesktopCoworkerSettings as Settings } from '@/lib/desktop/coworker-settings'
+import { DesktopLocale } from './DesktopLocale'
+import { desktopMessages, desktopTranslator, englishDesktopLanguage, type DesktopLanguage } from '@/lib/desktop/locale'
+import { loadMessages } from '@rerun/i18n/messages'
 import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -14,7 +17,7 @@ const button = (text: string) => [...document.querySelectorAll('button')].find(n
 const toggle = (id: string) => document.querySelector<HTMLButtonElement>(`[role="switch"]#${id}`)!
 const click = (element: HTMLElement) => act(async () => { element.click() })
 
-async function mount(initial: Settings, failFirstSave = false) {
+async function mount(initial: Settings, failFirstSave = false, language: DesktopLanguage = englishDesktopLanguage) {
     let saved = initial
     const patches: DesktopCoworkerPatch[] = []
     vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
@@ -28,8 +31,8 @@ async function mount(initial: Settings, failFirstSave = false) {
         return Response.json(saved)
     })
     root = createRoot(document.body.appendChild(document.createElement('div')))
-    await act(async () => { root.render(<DesktopCoworkerSettings agent={coworker} disabled={false} />) })
-    await click(button('Edit coworker'))
+    await act(async () => { root.render(<DesktopLocale initial={language}><DesktopCoworkerSettings agent={coworker} disabled={false} /></DesktopLocale>) })
+    await click(button(desktopTranslator(language)('coworker.edit')))
     return patches
 }
 
@@ -100,4 +103,20 @@ test('suggested replies save independently and survive reopening the settings fo
     await click(button('Edit coworker'))
     expect(toggle('coworker-suggested-replies').getAttribute('aria-checked')).toBe('false')
     expect(toggle('coworker-memory-enabled').getAttribute('aria-checked')).toBe('true')
+})
+
+test('French reply-length labels save canonical values and a cancelled memory edit stays unsaved', async () => {
+    const language: DesktopLanguage = { locale: 'fr', preference: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) }
+    const t = desktopTranslator(language)
+    const patches = await mount(settings, false, language)
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Longueur des réponses')
+    await click(button(t('coworker.concise')))
+    await click(button(t('coworker.save')))
+    expect(patches).toEqual([{ verbosity: 'concise' }])
+    await click(button(t('coworker.edit')))
+    await click(toggle('coworker-memory-enabled'))
+    await click(button(t('cancel')))
+    await click(button(t('coworker.edit')))
+    expect(toggle('coworker-memory-enabled').getAttribute('aria-checked')).toBe('true')
+    expect(patches).toEqual([{ verbosity: 'concise' }])
 })

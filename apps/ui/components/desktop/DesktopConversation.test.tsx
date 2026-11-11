@@ -48,6 +48,23 @@ describe('DesktopConversation', () => {
         expect(html).toContain('Message Researcher...')
     })
 
+    it('retains a thread anchored to a routine divider in General', () => {
+        chat.messages = [{
+            id: 'routine-message', role: 'user',
+            metadata: { createdAt: '2026-11-08T10:00:00.000Z', scheduledRun: { slug: 'daily', name: 'Daily notes' } },
+            parts: [{ type: 'text', text: 'Read the notes.' }],
+        }]
+        try {
+            const html = renderToString(<DesktopConversation agent={agent} sessionId={null} tabUid={generalTabUid(agent.id)}
+                sessions={[{ id: 'following-thread', agentId: agent.id, title: 'Follow-up', createdAt: '2026-11-08T10:01:00.000Z',
+                    updatedAt: '2026-11-08T10:01:00.000Z', kind: 'thread', firstMessage: 'What did we find?' }]}
+                onSelectSession={vi.fn()} onChatSession={vi.fn()} />)
+            expect(html).toContain('Scheduled run')
+            expect(html).toContain('data-thread-row="following-thread"')
+            expect(html.indexOf('data-thread-row="following-thread"')).toBeGreaterThan(html.indexOf('Scheduled run'))
+        } finally { chat.messages = [] }
+    })
+
     it('renders only marked Codex summaries as upstream running and settled reasoning steps', () => {
         const render = () => renderToString(<DesktopConversation agent={agent} sessionId={null} sessions={[]} onChatSession={vi.fn()} onSelectSession={vi.fn()} />)
         chat.messages = [{ id: 'answer', role: 'assistant', parts: [

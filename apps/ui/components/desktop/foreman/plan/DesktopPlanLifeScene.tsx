@@ -1,5 +1,7 @@
 'use client'
 
+import { useDesktopLocale } from '../../DesktopLocale'
+
 import { TextShimmer } from '@rerun/ui'
 import { IsoGrid, agentTileStyle } from '@rerun/ui/iso-grid'
 import { AnimatePresence, motion } from 'motion/react'
@@ -30,6 +32,7 @@ function planLifeBeats({ trigger, working, delivered }: DesktopPlanBeats): PlanL
 }
 
 function ActivityLine({ beat, tick }: { beat: PlanLifeBeat; tick: number }) {
+    const { t } = useDesktopLocale()
     const look = beat.stage === 'rest' ? null : STAGE_LOOK[beat.stage]
     return (
         <div className="flex h-9 items-center justify-center border-t border-border/60 px-3 text-xs">
@@ -48,7 +51,7 @@ function ActivityLine({ beat, tick }: { beat: PlanLifeBeat; tick: number }) {
                     </motion.span>
                 ) : (
                     <motion.span key="rest" className="text-muted-foreground/50" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.28 }}>
-                        Standing by
+                        {t('foreman.plan.standingBy')}
                     </motion.span>
                 )}
             </AnimatePresence>

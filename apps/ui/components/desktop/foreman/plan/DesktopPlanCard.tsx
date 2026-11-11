@@ -1,5 +1,7 @@
 'use client'
 
+import { useDesktopLocale } from '../../DesktopLocale'
+
 import { IsoGrid } from '@rerun/ui/iso-grid'
 import { Badge } from '@rerun/ui/primitives'
 import { useEffect, useMemo, useState } from 'react'
@@ -25,10 +27,10 @@ const CARD_GAP = 12
 const EDGE_FADE = 40
 
 function verdictOf(answer: DesktopPlanDecisionView) {
-    if (!answer.answered) return { icon: MinusIcon, label: 'Skipped', className: 'text-muted-foreground' }
+    if (!answer.answered) return { icon: MinusIcon, label: 'foreman.plan.skipped' as const, className: 'text-muted-foreground' }
     return answer.confirmed
-        ? { icon: CircleCheckIcon, label: 'Confirmed', className: 'text-emerald-500' }
-        : { icon: PencilIcon, label: 'Asked for changes', className: 'text-muted-foreground' }
+        ? { icon: CircleCheckIcon, label: 'foreman.plan.confirmed' as const, className: 'text-emerald-500' }
+        : { icon: PencilIcon, label: 'foreman.plan.askedChanges' as const, className: 'text-muted-foreground' }
 }
 
 function useCarouselEdges(cards: number) {
@@ -73,6 +75,7 @@ function PlanBoxScene({ group, animated, framed }: { group: DesktopPlanGroupView
 }
 
 function PlanAgent({ item }: { item: DesktopPlanItemView }) {
+    const { t } = useDesktopLocale()
     return (
         <div className="flex min-w-0 flex-col gap-3">
             <div className="flex min-w-0 flex-col gap-1">
@@ -86,13 +89,15 @@ function PlanAgent({ item }: { item: DesktopPlanItemView }) {
             )}
             {item.need && (
                 <p className="rounded-md border-l-2 border-amber-500/70 bg-amber-500/5 px-3 py-2 text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">Goes after: </span>
-                    {item.need}
+                    {t.rich('foreman.plan.goesAfter', {
+                        label: chunks => <span className="font-medium text-foreground">{chunks}</span>,
+                        need: item.need,
+                    })}
                 </p>
             )}
             {item.gets && (
                 <div className="flex flex-col gap-1.5">
-                    <span className="text-xs font-medium text-muted-foreground">What you get this week</span>
+                    <span className="text-xs font-medium text-muted-foreground">{t('foreman.plan.thisWeek')}</span>
                     <ul className="flex flex-col gap-1.5">
                         {item.gets.map((line, index) => (
                             <li key={index} className="flex items-start gap-2 text-xs">
@@ -157,6 +162,7 @@ export function DesktopPlanCard({
     onAskChanges,
     onRetryDecision,
 }: DesktopPlanCardProps) {
+    const { t } = useDesktopLocale()
     const groups = plan.groups.filter(group => group.items.length > 0)
     const answered = decision
     const verdict = answered ? verdictOf(answered) : null
@@ -170,7 +176,7 @@ export function DesktopPlanCard({
     return (
         <div className={cn('relative mb-2 flex flex-col gap-3 py-4', verdict && 'mt-3 pt-6', PANEL_CARD)} data-plan-revision={planRevisionId}>
             {verdict && (
-                <TooltipLabeled label={verdict.label}>
+                <TooltipLabeled label={t(verdict.label)}>
                     <Icon icon={verdict.icon} size="sm" className={cn('absolute -top-3 right-2 z-10 bg-card shadow-lg shadow-black/40', verdict.className)} />
                 </TooltipLabeled>
             )}
@@ -178,10 +184,10 @@ export function DesktopPlanCard({
                 <p className="min-w-0 text-sm font-medium">{plan.title}</p>
                 {groups.length > 1 && (
                     <div className="flex shrink-0 gap-1">
-                        <Button size="icon-xs" variant="ghost" aria-label="Previous Box" disabled={edges.start} onClick={() => scrollByCard(-1)}>
+                        <Button size="icon-xs" variant="ghost" aria-label={t('foreman.plan.previousBox')} disabled={edges.start} onClick={() => scrollByCard(-1)}>
                             <ChevronLeftIcon />
                         </Button>
-                        <Button size="icon-xs" variant="ghost" aria-label="Next Box" disabled={edges.end} onClick={() => scrollByCard(1)}>
+                        <Button size="icon-xs" variant="ghost" aria-label={t('foreman.plan.nextBox')} disabled={edges.end} onClick={() => scrollByCard(1)}>
                             <ChevronRightIcon />
                         </Button>
                     </div>
@@ -199,22 +205,22 @@ export function DesktopPlanCard({
             {!answered && (
                 <div className="flex flex-col gap-2 px-4">
                     <Button size="lg" disabled={busy} onClick={onConfirm}>
-                        {decisionStatus.status === 'pending' ? 'Confirming…' : 'Build my coworker'}
+                        {decisionStatus.status === 'pending' ? t('foreman.confirming') : t('foreman.plan.build')}
                     </Button>
                     <Button size="lg" variant="outline" disabled={busy} onClick={onAskChanges}>
-                        Change something
+                        {t('foreman.plan.change')}
                     </Button>
                 </div>
             )}
             {failure && (
                 <div className="flex flex-col gap-2 px-4">
                     <p className="text-xs text-destructive" role="alert">
-                        {failure.status === 'uncertain' ? 'Decision acknowledgement is uncertain. ' : ''}
+                        {failure.status === 'uncertain' && <>{t('foreman.decisionUncertain')}{' '}</>}
                         {failure.error}
                     </p>
                     {onRetryDecision && (
                         <Button size="sm" variant="secondary" onClick={onRetryDecision}>
-                            Retry
+                            {t('foreman.retry')}
                         </Button>
                     )}
                 </div>

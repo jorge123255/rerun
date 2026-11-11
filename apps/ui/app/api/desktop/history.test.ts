@@ -17,6 +17,7 @@ test('authenticated local history preserves two chats across service restart and
     type Message = { id: string; sessionId: string; role: string; contentJson: string; toolCallsJson: null; createdAt: string }
     let server: Server | undefined
     let sessionToken = 'history-fixture-launch-one'.repeat(2)
+    let metadataAvailable = true
     const engineKey = 'synthetic-history-engine'
     const origin = 'http://127.0.0.1:3100'
     const request = (path: string, body?: unknown, token = sessionToken) => new Request(`${origin}${path}`, {
@@ -52,6 +53,14 @@ test('authenticated local history preserves two chats across service restart and
                 transcripts[key] = messages
                 await writeFile(transcriptPath, JSON.stringify(transcripts))
                 return res.writeHead(200, { 'content-type': 'text/event-stream', 'x-session-id': id }).end('data: {"type":"finish"}\n\ndata: [DONE]\n\n')
+            }
+            const metadata = req.url?.match(/^\/agents\/([^/]+)\/sessions\?view=threads$/)
+            if (req.method === 'GET' && metadata) {
+                if (!metadataAvailable) return json({ error: 'Unavailable' }, 503)
+                return json({ threads: Object.keys(transcripts).map(key => {
+                    const [owner, id] = key.split('/')
+                    return { id, source: 'agent', originAgentId: owner === metadata[1] ? 'engine-bob' : 'foreign-engine', automationName: null, runStatus: 'done' }
+                }) })
             }
             const history = req.url?.match(/^\/agents\/([^/]+)\/sessions\/([^/]+)\/messages$/)
             if (req.method === 'GET' && history) {
@@ -98,6 +107,14 @@ test('authenticated local history preserves two chats across service restart and
         expect(first).not.toBe(second)
         const before = await list(alice.id)
         expect(before.map(s => s.id)).toEqual([second, first])
+        expect(before[0]).toMatchObject({ source: 'agent', originAgentName: 'Bob', runStatus: 'done' })
+        const refresh = () => listSessions(request(`/api/desktop/agents/${alice.id}/sessions?view=threads`), { params: Promise.resolve({ agentId: alice.id }) })
+        const refreshed = await refresh()
+        expect(await refreshed.json()).toEqual({ sessions: before })
+        metadataAvailable = false
+        const unavailable = await refresh()
+        expect((await unavailable.json()).sessions[0]).not.toHaveProperty('runStatus')
+        metadataAvailable = true
         expect(before.map(s => s.title)).toEqual(['Banana question', 'Apple question'])
         expect(await read(first)).toContain('Synthetic answer: Apple question')
         expect(await read(first)).not.toContain('Banana question')

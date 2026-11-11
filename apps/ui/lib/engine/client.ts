@@ -6,6 +6,7 @@ import {
     type BoxDefaultUpdate,
     ENGINE_CAPABILITY_DESKTOP,
     desktopStatusSchema,
+    desktopThreadMetadataListSchema,
     takeoverResultSchema,
     type DesktopApp,
     type DesktopStatus,
@@ -442,6 +443,11 @@ export async function deleteAgent(conn: EngineConnection, id: string): Promise<v
 }
 
 // --- Sessions ---
+
+export async function listDesktopThreadMetadata(conn: EngineConnection, agentId: string, signal: AbortSignal) {
+    return request(conn, `/agents/${encodeURIComponent(agentId)}/sessions?view=threads`, { method: 'GET', signal },
+        data => desktopThreadMetadataListSchema.parse(data).threads)
+}
 
 export async function listSessions(conn: EngineConnection, agentId: string, options: { signal?: AbortSignal } = {}): Promise<EngineSession[]> {
     return request(conn, `/agents/${encodeURIComponent(agentId)}/sessions`, { method: 'GET', signal: options.signal }, d => engineSessionsListSchema.parse(d).sessions)

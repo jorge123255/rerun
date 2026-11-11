@@ -5,6 +5,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { DesktopControlCenter } from './DesktopControlCenter'
+import { DesktopLocale } from './DesktopLocale'
+import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
+import { loadMessages } from '@rerun/i18n/messages'
 import { flushDesktopRecentCoworkers, resetDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import type { DesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers.schema'
 import type { DesktopControlCenterChats, DesktopOpenChat } from '@/lib/desktop/control-center-chats'
@@ -256,6 +259,33 @@ test('supported workspace, recenter and appearance commands use original labels 
     await type('/delete')
     expect(rows()).toHaveLength(0)
     expect(actions.onWorkspaceSettings).toHaveBeenCalledTimes(1)
+})
+
+test('finds a French command and its English alias and invokes the same model settings action', async () => {
+    const { root } = mount()
+    const language: DesktopLanguage = { locale: 'fr', preference: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) }
+    const onModelSettings = vi.fn()
+    await act(async () => {
+        root.render(<DesktopLocale initial={language}>
+            <DesktopControlCenter coworkers={[]} selectedCoworkerId={null} onModelSettings={onModelSettings}
+                onAddCoworker={() => {}} onBackToBoard={() => {}} onOpenConversation={() => {}} />
+        </DesktopLocale>)
+    })
+
+    await press('f', { metaKey: true })
+    expect(dialog()?.textContent).toContain(language.messages.controlCenter.title)
+    expect(field().placeholder).toBe(language.messages.controlCenter.search)
+    await type('/fournisseurs')
+    expect(rows()).toHaveLength(1)
+    expect(dialog()?.textContent).toContain('Paramètres')
+    await clickRow("Fournisseurs d'IA")
+    expect(onModelSettings).toHaveBeenCalledTimes(1)
+    expect(dialog()).toBeNull()
+
+    await press('f', { metaKey: true })
+    await type('/model settings')
+    await clickRow("Fournisseurs d'IA")
+    expect(onModelSettings).toHaveBeenCalledTimes(2)
 })
 
 test('removed optional command callbacks disappear and retained rows cannot close the center', async () => {

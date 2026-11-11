@@ -1,5 +1,6 @@
 'use client'
 
+import { useDesktopLocale } from './DesktopLocale'
 import { DesktopConversationOverview, type DesktopConversationOverviewAuthority } from './coworker-overview/conversation-mount'
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -37,7 +38,7 @@ import { cn } from '@/lib/utils'
 import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
 import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
-import { desktopServiceRequestViewSchema, parseHitlReply, parseInstallMessage, parseVoiceMessage, type DesktopVoiceSendReceipt } from '@rerun/contracts'
+import { desktopServiceRequestViewSchema, parseHitlReply, parseInstallMessage, parseVoiceMessage, type DesktopVoiceSendReceipt, type ConnectionSummary } from '@rerun/contracts'
 import { DesktopServiceRequestBlock, type DesktopServiceRequestBlockProps } from './service-requests/DesktopServiceRequestBlock'
 import { DesktopServiceRequestReceipt } from './service-requests/DesktopServiceRequestReceipt'
 import { DesktopMcpSignInBlock } from './mcp-sign-in/DesktopMcpSignInBlock'
@@ -190,10 +191,11 @@ function scheduledRunOf(message: UIMessage) {
     return parseScheduledRun(prompt)
 }
 
-export function DesktopConversation({ agent, sessionId, sessions, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, onOpenModelSettings, overview }: {
+export function DesktopConversation({ agent, sessionId, sessions, needsYouSessions, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: {
     agent: DesktopAgentView
     sessionId: string | null
     sessions: DesktopSessionView[]
+    needsYouSessions?: ReadonlySet<string>
     onSelectSession: (id: string | null, title?: string) => void
     onStartFork?: (uid: string) => boolean
     onFinishFork?: (uid: string) => void
@@ -210,9 +212,11 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     onOpenCoworkerChat?: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel?: () => void
     modelLabel?: string
+    connections?: ConnectionSummary[]
     onOpenModelSettings?: () => void
     overview?: DesktopConversationOverviewAuthority
 }) {
+    const { t } = useDesktopLocale()
     const setup = useDesktopSetup(agent.id)
     const setupBlocked = !setup.view || !!setup.error || setup.view.pending && (!setup.view.sessionId || setup.view.sessionId !== sessionId)
     const [cardOpen, setCardOpen] = useState(false)
@@ -1230,7 +1234,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         return metadata && typeof metadata === 'object' && 'createdAt' in metadata && typeof metadata.createdAt === 'string' ? metadata.createdAt : ''
     })
     const threadRows = generalView ? threadsByMessage(messageTimes, threadCards) : { leading: [], after: new Map<number, typeof threadCards>() }
-    const placeholder = generalView ? `Message ${agent.name}...` : sessionId && currentTitle !== 'New conversation' ? `Reply in ${currentTitle}...` : 'Send a message…'
+    const placeholder = generalView ? t('message', { name: agent.name }) : sessionId && currentTitle !== 'New conversation' ? t('reply', { title: currentTitle }) : t('sendMessage')
     return (
         <div ref={conversationRoot} className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-background" onKeyDown={event => {
             if (cardOpen && event.key === 'Escape' && !event.defaultPrevented && !(event.target as HTMLElement).closest('[role="dialog"]')) {
@@ -1264,7 +1268,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
                     </FloatingPill>
                 </h1>
-                {onClosePanel && <Button type="button" aria-label="Close panel" variant="ghost" size="icon-sm" className="justify-self-end" onClick={onClosePanel}><XIcon className="size-4" /></Button>}
+                {onClosePanel && <Button type="button" aria-label={t('closePanel')} variant="ghost" size="icon-sm" className="justify-self-end" onClick={onClosePanel}><XIcon className="size-4" /></Button>}
             </header>
             {cardOpen && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={dismissCard} />}
             <section aria-label="Coworker details" hidden={!cardOpen} className={!cardOpen ? "hidden" : overview ? "absolute inset-x-3 top-14 bottom-3 z-40 flex min-h-0 flex-col overflow-auto rounded-2xl border border-border bg-background shadow-xl" : "absolute inset-x-3 top-14 z-40 rounded-2xl border border-border bg-background p-4 shadow-xl"}>
@@ -1302,16 +1306,16 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     <span title={currentTitle} className="max-w-40 truncate">{currentTitle}</span>
                     {sessionId && <Button type="button" variant="ghost" size="icon-xs" aria-label="Close current conversation" disabled={busy} onClick={() => onSelectSession(null)}><XIcon className="size-3" /></Button>}
                 </div>
-                <Button type="button" variant="ghost" size="icon-sm" title="New thread" aria-label="New thread" disabled={busy} onClick={() => onSelectSession(null, 'New conversation')}>
+                <Button type="button" variant="ghost" size="icon-sm" title={t('newThread')} aria-label={t('newThread')} disabled={busy} onClick={() => onSelectSession(null, 'New conversation')}>
                     <PlusIcon aria-hidden className="size-3.5" /><span className="sr-only">New thread</span>
                 </Button>
             </div>}
 
-            <Conversation key={sessionId ?? 'new'} className="min-h-0" aria-label="Chat messages">
+            <Conversation key={sessionId ?? 'new'} className="min-h-0" aria-label={t('chatMessages')}>
                 <ConversationContent className="gap-4 px-3.5 py-4">
                     <DesktopConversationFind open={findOpen && active} onOpenChange={setFindOpen} />
                     {!ready && !historyError && !busy && <p role="status" className="text-sm text-muted-foreground">Loading conversation…</p>}
-                    {threadRows.leading.map(thread => <DesktopThreadBranch key={thread.id} thread={thread} onOpen={() => onSelectSession(thread.id, thread.title)} />)}
+                    {threadRows.leading.map(thread => <DesktopThreadBranch key={thread.id} thread={thread} needsYou={needsYouSessions?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />)}
                     {ready && transcript.length === 0 && threadRows.leading.length === 0 && !busy && (
                         <div className="py-16 text-center">
                             <div className="text-sm font-medium">Start a conversation with {agent.name}</div>
@@ -1320,20 +1324,24 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     )}
                     {sessionId && active && <DesktopNativeWritebackReview agentId={agent.id} sessionId={sessionId} refreshKey={`${status}/${transcript.length}`}/>}
                     {transcript.map((message, messageIndex) => {
+                        const branches = threadRows.after.get(messageIndex) ?? []
+                        const withBranches = (content: ReactNode) => branches.length === 0 ? content
+                            : <div key={message.id}>{content}{branches.map(thread =>
+                                <DesktopThreadBranch key={thread.id} thread={thread} needsYou={needsYouSessions?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />
+                            )}</div>
                         const scheduledRun = scheduledRunOf(message)
                         const triggerPayload = message.role === 'user' ? parseTriggerPayload(message.parts.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n')) : null
                         // Reuse Rerun's routine divider and prompt dialog. No hosted file-link
                         // navigation: the desktop Files panel owns this coworker's documents.
                         const install = message.role==='user' ? parseInstallMessage(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
-                        if(install)return <AgentInstallBlock key={message.id} agentId={agent.id} agentName={agent.name} guide={install.guide} installing={setup.view?.completedAt == null} />
+                        if(install)return withBranches(<AgentInstallBlock key={message.id} agentId={agent.id} agentName={agent.name} guide={install.guide} installing={setup.view?.completedAt == null} />)
                         const hitl = message.role === 'user' ? parseHitlReply(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
                         const secretReceipt = message.role === 'user' ? parseDesktopSecretReceiptSummary(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
-                        if (secretReceipt) return <DesktopSecretSummaryReceipt key={message.id} entries={secretReceipt} />
-                        if (hitl?.kind === 'mcp' || hitl?.kind === 'cancelled' && hitl.of === 'mcp') return <DesktopMcpSignInSummary key={message.id} name={hitl.kind === 'mcp' ? hitl.name : undefined} />
-                        if(hitl?.kind==='service')return <DesktopServiceRequestReceipt key={message.id} entries={hitl.entries} />
-                        if (triggerPayload) return <DesktopWebhookRunBlock key={message.id} agentId={agent.id} payload={triggerPayload} />
-                        if (scheduledRun) return <DesktopScheduledRunBlock key={message.id} run={scheduledRun} />
-                        const branches = threadRows.after.get(messageIndex) ?? []
+                        if (secretReceipt) return withBranches(<DesktopSecretSummaryReceipt key={message.id} entries={secretReceipt} />)
+                        if (hitl?.kind === 'mcp' || hitl?.kind === 'cancelled' && hitl.of === 'mcp') return withBranches(<DesktopMcpSignInSummary key={message.id} name={hitl.kind === 'mcp' ? hitl.name : undefined} />)
+                        if(hitl?.kind==='service')return withBranches(<DesktopServiceRequestReceipt key={message.id} entries={hitl.entries} />)
+                        if (triggerPayload) return withBranches(<DesktopWebhookRunBlock key={message.id} agentId={agent.id} payload={triggerPayload} />)
+                        if (scheduledRun) return withBranches(<DesktopScheduledRunBlock key={message.id} run={scheduledRun} />)
                         const view = (
                         <div key={message.id} className={cn('flex min-w-0 items-end', message.role === 'user' && 'justify-end gap-2')}>
                             <Message from={message.role} className="min-w-0">
@@ -1366,8 +1374,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                             {message.role === 'user' && <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"><UserRoundIcon className="size-4" /></span>}
                         </div>
                         )
-                        if (!branches.length) return view
-                        return <div key={message.id}>{view}{branches.map(thread => <DesktopThreadBranch key={thread.id} thread={thread} onOpen={() => onSelectSession(thread.id, thread.title)} />)}</div>
+                        return withBranches(view)
                     })}
                     {sessionId && <DesktopToolInstallPending agentId={agent.id} sessionId={sessionId} messages={transcript} active={active && ready} disabled={draft.quitting || inactive || generating || stopping} />}
                     {active && takeover && !webhookOwns('takeover', takeover.id) && <DesktopBrowserCard key={takeover.id} agentId={agent.id} takeover={takeover} disabled={draft.quitting || inactive || generating || stopping || !ready} onAction={async payload => {
@@ -1521,7 +1528,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     <div ref={setVoiceReviewTarget} />
                     <div className="flex min-w-0 items-center justify-between gap-2 px-1.5 pb-1.5">
                         <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
-                            workspaceModel={modelLabel} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel} onReady={setModelReady} />
+                            workspaceModel={modelLabel} connections={connections} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel} onReady={setModelReady} />
                         <div className="flex shrink-0 items-center gap-1">
                             <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={uploadDisabled || uploadsActive}
                                 paths={textAttachments} onChange={paths => {
@@ -1538,9 +1545,9 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                 active={active && !draft.quitting && !cardOpen && !detailPanel && !chatsOpen} besideSend
                                 disabled={generating || stopping || inactive || !ready || !modelReady || requestBlocked || !!pendingRequest || !!queue.queued || queue.pending || uploadsActive || preparingSend || !draft.loaded}
                                 onActivity={setVoiceActivity} onSent={voiceSent} />}
-                            {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">Stop</span></Button>}
+                            {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">{t('stop')}</span></Button>}
                             <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={voiceActivity.busy || !draft.loaded || !uploadsLoaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || inactive || (!input.trim() && !attachmentPaths.length && !documents.attachments.length) || stopping || !ready || !queue.loaded || queue.pending || !!queue.error || uploadsActive || blockedUploads.length > 0 || preparingSend}>
-                                <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">Send</span>
+                                <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">{t('send')}</span>
                             </Button>
                         </div>
                     </div>

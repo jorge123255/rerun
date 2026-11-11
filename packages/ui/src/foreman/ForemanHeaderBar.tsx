@@ -22,6 +22,9 @@ export type ForemanHeaderBarProps = {
     /** Gèle l'orbe tant que la colonne est repliée : elle est montée bien avant qu'on l'ouvre. */
     orbPaused?: boolean
     onClose: () => void
+    closeLabel?: string
+    closeTooltip?: string
+    resizeLabel?: string
     /** Le tunnel d'onboarding vit dans la colonne : tant qu'il dure, elle ne se referme pas. */
     closeDisabledReason?: string
     /** Sous `md`, quand une grande orbe tient déjà la sheet juste en dessous. */
@@ -39,11 +42,11 @@ export type ForemanHeaderBarProps = {
  * Posé par-dessus la pile, sur un voile flouté qui s'évanouit vers le bas plutôt qu'une barre
  * opaque : les vieux messages continuent de se dissoudre dessous, mais les contrôles se détachent.
  */
-export function ForemanHeaderBar({ anchor, orbState, orbPaused = false, onClose, closeDisabledReason, orbHiddenOnSheet = false, onGutter = false, actions, tabs, onDragPointerDown, onToggleSheetDetent }: ForemanHeaderBarProps) {
+export function ForemanHeaderBar({ anchor, orbState, orbPaused = false, onClose, closeLabel = 'Close the chat', closeTooltip = 'Close', resizeLabel = 'Resize chat', closeDisabledReason, orbHiddenOnSheet = false, onGutter = false, actions, tabs, onDragPointerDown, onToggleSheetDetent }: ForemanHeaderBarProps) {
     const DesktopCloseIcon = CLOSE_ICONS[anchor]
     const draggable = Boolean(onDragPointerDown)
     const closeButton = (
-        <Button variant="ghost" size="icon-sm" aria-label="Close the chat" disabled={Boolean(closeDisabledReason)} onClick={onClose}>
+        <Button variant="ghost" size="icon-sm" aria-label={closeLabel} disabled={Boolean(closeDisabledReason)} onClick={onClose}>
             {/* Replier un panneau latéral ne veut rien dire quand la conversation est
                 une sheet, ni quand elle flotte : là c'est une croix. */}
             <DesktopCloseIcon className="size-3.5 max-md:hidden" />
@@ -67,7 +70,7 @@ export function ForemanHeaderBar({ anchor, orbState, orbPaused = false, onClose,
                 <button
                     type="button"
                     data-sheet-grabber
-                    aria-label="Resize chat"
+                    aria-label={resizeLabel}
                     onClick={onToggleSheetDetent}
                     className="absolute top-0 left-1/2 flex h-5 w-12 -translate-x-1/2 justify-center pt-1 outline-none focus-visible:[&>span]:bg-ring md:hidden"
                 >
@@ -85,7 +88,7 @@ export function ForemanHeaderBar({ anchor, orbState, orbPaused = false, onClose,
                             </TooltipDisabledReason>
                         </div>
                     ) : (
-                        <TooltipLabeled label="Close" side="bottom">
+                        <TooltipLabeled label={closeTooltip} side="bottom">
                             {closeButton}
                         </TooltipLabeled>
                     )}

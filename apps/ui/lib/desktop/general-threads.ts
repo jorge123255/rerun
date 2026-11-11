@@ -1,3 +1,5 @@
+import type { desktopTranslator } from './locale'
+
 export const GENERAL_SESSION_TITLE = 'General'
 export const NEW_THREAD_TITLE = 'New conversation'
 export const FIRST_MESSAGE_MAX_CHARS = 300
@@ -61,10 +63,11 @@ export function adoptGeneralId<T extends DesktopGeneralTab>(state: { tabs: T[]; 
     return { tabs, activeIndex }
 }
 
-export function threadOpener(thread: { firstMessage?: string | null; source?: string | null; title: string; automationName?: string | null }, originName: string | null): { text: string; generic: boolean } {
-    if (thread.firstMessage) return { text: thread.firstMessage, generic: false }
-    if (thread.source === 'schedule') return { text: `Scheduled run · ${thread.automationName ?? thread.title}`, generic: true }
-    if (thread.source === 'trigger') return { text: `Webhook · ${thread.automationName ?? thread.title}`, generic: true }
-    if (thread.source === 'agent' || thread.source === 'delegate') return { text: `Asked by ${originName ?? 'another coworker'}`, generic: true }
-    return { text: 'Started a thread', generic: true }
+export function threadOpener(thread: { firstMessage?: string | null; source?: string | null; title: string; automationName?: string | null }, originName: string | null, t: ReturnType<typeof desktopTranslator>): { text: string; generic: boolean } {
+    const firstMessage = thread.firstMessage?.trim()
+    if (firstMessage) return { text: firstMessage, generic: false }
+    if (thread.source === 'schedule') return { text: t('schedule', { name: thread.automationName ?? thread.title }), generic: true }
+    if (thread.source === 'trigger') return { text: t('trigger', { name: thread.automationName ?? thread.title }), generic: true }
+    if (thread.source === 'agent' || thread.source === 'delegate') return { text: originName ? t('askedBy', { name: originName }) : t('askedByUnknown'), generic: true }
+    return { text: t('started'), generic: true }
 }

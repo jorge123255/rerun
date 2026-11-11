@@ -1,10 +1,11 @@
 'use client'
 
+import { useDesktopLocale } from './DesktopLocale'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
 import type { ThemePreference } from '@rerun/ui/theme'
-import { connectionsListSchema, PROVIDER_LABELS, type ConnectionsList } from '@rerun/contracts'
+import { connectionsListSchema, PROVIDER_LABELS, type ConnectionsList, type Run, type SessionSource } from '@rerun/contracts'
 import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import type { SettingsChange } from '@/lib/desktop/settings'
 import { DesktopSettings } from './DesktopSettings'
@@ -41,6 +42,7 @@ import { DesktopNewAgentDialog } from './DesktopNewAgentDialog'
 import type { DesktopCreationIntent } from '@/lib/desktop/new-agent'
 import type { DesktopBoardState } from '@/lib/desktop/spaces'
 import { useBoardActivity } from './useBoardActivity'
+import type { DesktopAttention } from '@/lib/desktop/attention'
 import { DesktopTemplateNavigation } from './templates/DesktopTemplateNavigation'
 import { DesktopControlCenter } from './DesktopControlCenter'
 import { DesktopShortcutsDialog } from './DesktopShortcutsDialog'
@@ -65,7 +67,11 @@ import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
 import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-request'
 
 export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string; position?: GridPosition | null; spaceId?: string; enabled?: boolean }
-export type DesktopSessionView = { id: string; agentId: string; title: string; createdAt: string; updatedAt: string; kind?: 'general' | 'thread'; firstMessage?: string | null }
+export type DesktopSessionView = {
+    id: string; agentId: string; title: string; createdAt: string; updatedAt: string
+    kind?: 'general' | 'thread'; firstMessage?: string | null
+    source?: SessionSource; automationName?: string | null; originAgentName?: string | null; runStatus?: Run['status'] | null
+}
 export type DesktopBootstrap = ConnectionsList & {
     theme: ThemePreference
     profile: { id: number; displayName: string }
@@ -88,6 +94,7 @@ async function json<T>(response: Response): Promise<T> {
 const brainActions = createDesktopBrainPagesActions(countDesktopBrainProposals)
 
 export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
+    const { t } = useDesktopLocale()
     const boardState = useDesktopBoardState(initialData.board)
     const [boardInteraction, setBoardInteraction] = useState(false)
     const [controlCenterOpen, setControlCenterOpen] = useState(false)
@@ -262,6 +269,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }, [])
     const [panelInsetRight, setPanelInsetRight] = useState(0)
     const boardFrame = useRef<HTMLDivElement>(null)
+    const helpReturnFocus = useRef<HTMLButtonElement | null>(null)
     const panelContent = useRef<HTMLElement>(null)
     const [requestedSession, setRequestedSession] = useState<DesktopChatRequest | null>(null)
     const [requestedPanel, setRequestedPanel] = useState<DesktopCoworkerPanelRequest | null>(null)
@@ -661,7 +669,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         } catch (cause) { if (current()) toast.error('The fresh copy is saved, but could not be opened.', { description: cause instanceof Error ? cause.message : 'Try again.' }) }
     }
     const openShortcuts = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setShortcutsOpen(true) }
-    const openHelp = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setHelpOpen(true) }
+    const openHelp = (trigger?: HTMLButtonElement) => {
+        if (creationAdmission.current.blocked || controlCenterDisabled || isDesktopQuitting()) return
+        helpReturnFocus.current = trigger ?? null
+        setHelpOpen(true)
+    }
     const openNotifications = (agentId?: string) => {
         if (creationAdmission.current.blocked || controlCenterDisabled || isDesktopQuitting() || (agentId && !currentAgents.current.some(owner => owner.id === agentId))) return
         notificationReturnFocus.current = panelOpen
@@ -741,24 +753,24 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 </div>}
                 {selectedAgent && <div inert={!panelOpen || boardInteraction || workspaceDialogActive} aria-hidden={!panelOpen || boardInteraction || workspaceDialogActive || undefined}>
                     <SidePanel isOpen={panelOpen} onDismiss={closePanel}>
-                        <section ref={panelContent} tabIndex={-1} aria-label="Coworker chat" className="flex h-full min-h-0 flex-col outline-none"
+                        <section ref={panelContent} tabIndex={-1} data-testid="desktop-coworker-chat" aria-label={t('coworkerChat')} className="flex h-full min-h-0 flex-col outline-none"
                             onKeyDown={event => {
                                 if (event.key === 'Escape' && !event.defaultPrevented && event.currentTarget.contains(event.target as Node)) {
                                     event.preventDefault()
                                     closePanel()
                                 }
                             }}>
-                            <CoworkerChat onOpenCoworkerChat={openCoworkerChat} key={selectedAgent.id} agent={overview ? { ...selectedAgent, spaceId: overviewBox } : selectedAgent} overview={overview} requested={requestedSession} selected={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
+                            <CoworkerChat attention={boardActivity.attention} onOpenCoworkerChat={openCoworkerChat} key={selectedAgent.id} agent={overview ? { ...selectedAgent, spaceId: overviewBox } : selectedAgent} overview={overview} requested={requestedSession} selected={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
                                 requestedPanel={requestedPanel?.agentId === selectedAgent.id ? requestedPanel : null} onPanelRequestHandled={panelRequestHandled}
                                 onVisibleSession={reportVisibleSession}
-                                onClosePanel={closePanel} modelLabel={modelLabel} onOpenModelSettings={openSettings} />
+                                onClosePanel={closePanel} modelLabel={modelLabel} connections={providers.connections} onOpenModelSettings={openSettings} />
                         </section>
                     </SidePanel>
                 </div>}
             </div>
             {settings && <div className="absolute inset-0 z-50 flex flex-col bg-background md:m-2 md:overflow-hidden md:rounded-3xl md:border">
                 <div className="border-b px-4 py-2">
-                    <Button type="button" variant="ghost" size="sm" onClick={() => setSettings(false)}><ArrowLeft />{panelOpen ? 'Back to chat' : 'Team board'}</Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setSettings(false)}><ArrowLeft />{panelOpen ? t('backToChat') : t('board')}</Button>
                 </div>
                 <DesktopSettings key={settingsTab} initialTab={settingsTab} providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={applyProviders} workspaceId={runtimeWorkspaceId} onConnectionsChanged={() => { void refreshProviders() }} />
             </div>}
@@ -806,7 +818,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 onGettingStarted={() => { showBoard(); requestDesktopGettingStartedReopen() }}
                 onShortcuts={() => { if (!creationAdmission.current.blocked && !isDesktopQuitting()) setShortcutsOpen(true) }}
                 onCloseAutoFocus={event => {
-                    const target = boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
+                    const trigger = helpReturnFocus.current
+                    helpReturnFocus.current = null
+                    const target = trigger?.isConnected && !trigger.disabled && !trigger.closest('[inert]')
+                        ? trigger : boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                     if (target && !isDesktopQuitting()) { event.preventDefault(); target.focus({ preventScroll: true }) }
                 }} />
             <DesktopNotificationsDialog open={!!notificationsTarget} pinnedCoworkerId={notificationsTarget?.agentId}
@@ -852,8 +867,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     )
 }
 
-function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelRequestHandled, selected, modelLabel, onOpenModelSettings, onOpenCoworkerChat, onClosePanel, onVisibleSession }: {
+function CoworkerChat({ agent, attention, overview, requested, requestedPanel, onPanelRequestHandled, selected, modelLabel, connections, onOpenModelSettings, onOpenCoworkerChat, onClosePanel, onVisibleSession }: {
     agent: DesktopAgentView
+    attention: DesktopAttention
     overview?: DesktopConversationOverviewAuthority
     requested: DesktopChatRequest | null
     requestedPanel: DesktopCoworkerPanelRequest | null
@@ -861,39 +877,58 @@ function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelReque
     selected: boolean
     onVisibleSession?: (agentId: string, sessionId: string | null) => void
     modelLabel?: string
+    connections: ConnectionsList['connections']
     onOpenModelSettings: () => void
     onOpenCoworkerChat: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel: () => void
 }) {
     const [sessions, setSessions] = useState<DesktopSessionView[] | null>(null)
+    const needsYouSessions = useMemo(() => new Set(attention.items
+        .filter(item => item.agentId === agent.id && item.kind !== 'info').map(item => item.sessionId)), [agent.id, attention.items])
     const [bootstrap, setBootstrap] = useState<{ layout: DesktopTabLayout | null } | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [checkedRequest, setCheckedRequest] = useState<DesktopChatRequest | null>(null)
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/sessions`
     const sessionRead = useRef<AbortController | null>(null)
 
-    const readSessions = useCallback(async (restoreTabs = false, checking?: DesktopChatRequest) => {
+    const readSessions = useCallback(async ({ restoreTabs = false, checking, background = false }: {
+        restoreTabs?: boolean; checking?: DesktopChatRequest; background?: boolean
+    } = {}) => {
+        if (background && sessionRead.current) return
         sessionRead.current?.abort()
         const controller = new AbortController()
         sessionRead.current = controller
         try {
             if (restoreTabs) await pendingTabWrite(agent.id)
-            const body = await json<{ sessions: DesktopSessionView[]; tabs?: DesktopTabLayout | null }>(await fetch(url, { signal: controller.signal, cache: 'no-store' }))
+            const body = await json<{ sessions: DesktopSessionView[]; tabs?: DesktopTabLayout | null }>(await fetch(background ? url + '?view=threads' : url, { signal: controller.signal, cache: 'no-store' }))
             if (controller.signal.aborted) return
-            setSessions(body.sessions)
+            if (!Array.isArray(body.sessions)) throw new Error('Could not load conversations')
+            setSessions(previous => {
+                if (!background || !previous || previous.length !== body.sessions.length) return body.sessions
+                return previous.every((session, index) => {
+                    const next = body.sessions[index]
+                    return session.id === next.id && session.agentId === next.agentId && session.title === next.title
+                        && session.kind === next.kind && session.firstMessage === next.firstMessage
+                        && session.createdAt === next.createdAt && session.updatedAt === next.updatedAt
+                        && session.source === next.source && session.automationName === next.automationName
+                        && session.originAgentName === next.originAgentName && session.runStatus === next.runStatus
+                }) ? previous : body.sessions
+            })
             if (restoreTabs) setBootstrap({ layout: body.tabs ?? null })
-            setError(null)
+            if (!background) setError(null)
         } catch (cause) {
-            if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load conversations')
+            if (!background && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load conversations')
         } finally {
+            if (sessionRead.current === controller) sessionRead.current = null
             if (checking && !controller.signal.aborted) setCheckedRequest(checking)
         }
     }, [agent.id, url])
+    const refreshThreads = useCallback(() => readSessions({ background: true }), [readSessions])
 
     useEffect(() => {
         // State changes in readSessions happen only after the asynchronous request.
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        void readSessions(true)
+        void readSessions({ restoreTabs: true })
         return () => sessionRead.current?.abort()
     }, [readSessions])
 
@@ -903,10 +938,10 @@ function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelReque
         // Refresh its owner-scoped list while preserving the live tab/draft instances.
         // readSessions changes state only after its asynchronous read.
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        if (bootstrap && missing && requested && checkedRequest !== requested) void readSessions(false, requested)
+        if (bootstrap && missing && requested && checkedRequest !== requested) void readSessions({ checking: requested })
     }, [bootstrap, missing, requested, checkedRequest, readSessions])
     const dismiss = <Button type="button" variant="ghost" size="icon-sm" aria-label="Close panel" className="absolute right-3 top-3" onClick={onClosePanel}><X /></Button>
-    const reload = () => { setBootstrap(null); void readSessions(true) }
+    const reload = () => { setBootstrap(null); void readSessions({ restoreTabs: true }) }
     return <>
         {(error || (missing && checkedRequest === requested)) && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">
             {error ?? 'This conversation is no longer available for this coworker.'}
@@ -915,8 +950,8 @@ function CoworkerChat({ agent, overview, requested, requestedPanel, onPanelReque
         {missing && checkedRequest !== requested && !error && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">Opening conversation…</p>}
         {!error && !bootstrap && <p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p>}
         {!bootstrap || !sessions ? dismiss : <DesktopChatTabs onOpenCoworkerChat={onOpenCoworkerChat}
-            agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} sessions={sessions} initialLayout={bootstrap.layout}
+            agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} needsYouSessions={needsYouSessions} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
-            refreshSessions={readSessions} reload={reload} modelLabel={modelLabel} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}
+            refreshSessions={readSessions} refreshThreads={refreshThreads} reload={reload} modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}
     </>
 }

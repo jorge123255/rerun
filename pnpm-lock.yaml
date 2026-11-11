@@ -201,6 +201,9 @@ importers:
       '@rerun/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@rerun/i18n':
+        specifier: workspace:*
+        version: link:../../packages/i18n
       '@rerun/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -360,6 +363,9 @@ importers:
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
+      use-intl:
+        specifier: 4.14.9
+        version: 4.14.9(@types/react@19.2.16)(react@19.2.4)
       use-stick-to-bottom:
         specifier: ^1.1.4
         version: 1.1.4(react@19.2.4)
@@ -456,6 +462,12 @@ importers:
       '@types/node':
         specifier: ^20
         version: 20.19.41
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
+  packages/i18n:
+    devDependencies:
       typescript:
         specifier: ^5
         version: 5.9.3
@@ -1833,6 +1845,30 @@ packages:
   /@floating-ui/utils@0.2.11:
     resolution: {integrity: sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg==}
     requiresBuild: true
+    dev: false
+
+  /@formatjs/fast-memoize@3.1.7:
+    resolution: {integrity: sha512-zXfhLpvA6T7+efdt9JLbBwZ00tT7NsBMDVnDu8rpHeNNv8KfRZAMo2gkG0k9lK/Nzc//3kJ9pImsfuJxk3KhUA==}
+    dev: false
+
+  /@formatjs/icu-messageformat-parser@3.5.18:
+    resolution: {integrity: sha512-wX1efcL8d7K5QapOTRsP/OLTA/kpwe4LwqWyNxDNg5iRs8i9jJbCyxB5P8jc4KOW5oiLzz2DJr+BRY5xMV9+bA==}
+    dependencies:
+      '@formatjs/icu-skeleton-parser': 2.1.11
+    dev: false
+
+  /@formatjs/icu-messageformat-parser@3.5.23:
+    resolution: {integrity: sha512-iB1fYfhtSGd8uH9A8b1m01Ujcv6QtQnJasefP3jPApmz72L/zNipzf3BdoinTMd1xuviVChjUJWL60iTwjUQ+w==}
+    dependencies:
+      '@formatjs/icu-skeleton-parser': 2.1.13
+    dev: false
+
+  /@formatjs/icu-skeleton-parser@2.1.11:
+    resolution: {integrity: sha512-j8cUmOJzVgkHuS0QiQ6ga76UIoLOFSAMWhs7aZJztH3aAdCOAE6vpC8KVvFB4cU10ON0y2/5oOVmPJ43s2lTwA==}
+    dev: false
+
+  /@formatjs/icu-skeleton-parser@2.1.13:
+    resolution: {integrity: sha512-IdAJ9NrHn7AF0zqncD9UpxQozTYyJtbwwrZnJMEKVxTcOOXtVkUb2XYTpNOGTAv58NCsk0rjRB9G+i2SvBmGAQ==}
     dev: false
 
   /@google-cloud/precise-date@4.0.0:
@@ -4834,6 +4870,10 @@ packages:
       debug: 4.4.3
     transitivePeerDependencies:
       - supports-color
+
+  /@schummar/icu-type-parser@1.21.5:
+    resolution: {integrity: sha512-bXHSaW5jRTmke9Vd0h5P7BtWZG9Znqb8gSDxZnxaGSJnGwPLDPfS+3g0BKzeWqzgZPsIVZkM7m2tbo18cm5HBw==}
+    dev: false
 
   /@sec-ant/readable-stream@0.4.1:
     resolution: {integrity: sha512-831qok9r2t8AlxLko40y2ebgSDhenenCatLVeW/uBtnHPyhHOvG0C7TvfgecV+wHzIm5KUICgzmVpWS+IMEAeg==}
@@ -10259,6 +10299,12 @@ packages:
     dependencies:
       safer-buffer: 2.1.2
 
+  /icu-minify@4.14.10:
+    resolution: {integrity: sha512-ZdEuL+EB5dnv9GL9fQYSt8zLoVEzly8V1PPu5YIZfO0eQ2MW1PZwB2cFiYI06EeuYUa0USZ1+t+m3aVUF/SaMQ==}
+    dependencies:
+      '@formatjs/icu-messageformat-parser': 3.5.23
+    dev: false
+
   /ignore@5.3.2:
     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
     engines: {node: '>= 4'}
@@ -10343,6 +10389,13 @@ packages:
   /internmap@2.0.3:
     resolution: {integrity: sha512-5Hh7Y1wQbvY5ooGgPbDaL5iYLAPzMTUrjMulskHLH6wnv/A+1q5rgEaiuqEjB+oxGXIVZs1FF+R/KPN3ZSQYYg==}
     engines: {node: '>=12'}
+    dev: false
+
+  /intl-messageformat@11.2.15:
+    resolution: {integrity: sha512-W4VNytsXyWgW5lvVchmsb9xgA5rSKqoflu3/IQ9UCtB0z4R+Bx9MoEkwFT/+30RCl/KzUoH0QGGe9lppF5SuvQ==}
+    dependencies:
+      '@formatjs/fast-memoize': 3.1.7
+      '@formatjs/icu-messageformat-parser': 3.5.18
     dev: false
 
   /ip-address@10.2.0:
@@ -15126,6 +15179,23 @@ packages:
       '@types/react': 19.2.16
       react: 19.2.4
       tslib: 2.8.1
+    dev: false
+
+  /use-intl@4.14.9(@types/react@19.2.16)(react@19.2.4):
+    resolution: {integrity: sha512-37ktvdCCz+6JY2VFPl/GV69Ds4ahiUT2c2xEZZRZYxdgGLxFsUbdxzjQVRm3YMIOUU0VPs6zvlifb4Yjk4IxIg==}
+    peerDependencies:
+      '@types/react': ^17.0.0 || ^18.0.0 || ^19.0.0
+      react: ^17.0.0 || ^18.0.0 || >=19.0.0-rc <19.0.0 || ^19.0.0
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
+    dependencies:
+      '@formatjs/fast-memoize': 3.1.7
+      '@schummar/icu-type-parser': 1.21.5
+      '@types/react': 19.2.16
+      icu-minify: 4.14.10
+      intl-messageformat: 11.2.15
+      react: 19.2.4
     dev: false
 
   /use-sidecar@1.1.3(@types/react@19.2.16)(react@19.2.4):

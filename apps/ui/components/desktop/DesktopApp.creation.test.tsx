@@ -5,6 +5,9 @@ import {createRoot,type Root} from 'react-dom/client'
 import {afterEach,expect,it,vi} from 'vitest'
 import {MotionConfig} from 'motion/react'
 import {DesktopApp} from './DesktopApp'
+import {DesktopLocale} from './DesktopLocale'
+import {loadMessages} from '@rerun/i18n/messages'
+import {desktopMessages,englishDesktopLanguage,type DesktopLanguage} from '@/lib/desktop/locale'
 import {createDesktopDraftFixture} from '@/test/desktop-draft-fixture'
 import {createDesktopRecentFixture} from '@/test/desktop-recent-fixture'
 import type {DesktopBoardState} from '@/lib/desktop/spaces'
@@ -25,9 +28,9 @@ afterEach(async()=>{if(root)await act(async()=>root!.unmount());root=undefined;d
 const button=(label:string)=>{const value=[...document.querySelectorAll<HTMLButtonElement>('button')].find(item=>item.textContent?.trim()===label);if(!value)throw new Error(`Missing ${label}`);return value}
 const click=async(node:HTMLElement)=>{await act(async()=>node.click())}
 const activate=async(node:HTMLElement)=>{await act(async()=>{node.focus();node.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}))})}
-const edit=async(field:HTMLTextAreaElement,text:string)=>{await act(async()=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(field,text);field.dispatchEvent(new Event('input',{bubbles:true}))})}
+const edit=async(field:HTMLTextAreaElement|HTMLInputElement,text:string)=>{await act(async()=>{Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field),'value')!.set!.call(field,text);field.dispatchEvent(new Event('input',{bubbles:true}))})}
 
-async function mount(options:{pending?:Submitted&{phase?:'reserved'|'created'|'started'};loseFirstReply?:boolean;pendingOwnerInRoster?:boolean;pendingRead?:Promise<void>}={}){
+async function mount(options:{pending?:Submitted&{phase?:'reserved'|'created'|'started'};loseFirstReply?:boolean;pendingOwnerInRoster?:boolean;pendingRead?:Promise<void>;language?:DesktopLanguage}={}){
  let board=initialBoard(),pending=options.pending??null,posts=0
  if(options.pendingOwnerInRoster && pending)board={...board,placements:[...board.placements,{agentId:newOwner,spaceId:pending.spaceId,...pending.position}]}
  const requests:Submitted[]=[],acknowledged:string[]=[],unexpected:string[]=[],sessionReads:string[]=[]
@@ -53,7 +56,7 @@ async function mount(options:{pending?:Submitted&{phase?:'reserved'|'created'|'s
   unexpected.push(`${init?.method??'GET'} ${url}`);throw new Error('Unexpected request')
  }))
  root=createRoot(document.body.appendChild(document.createElement('div')))
- await act(async()=>root!.render(<MotionConfig reducedMotion="always"><DesktopApp initialData={{profile:{id:1,displayName:'Local'},workspace:{id:1,name:'Workspace'},theme:'system',connections:[],default:null,agents:options.pendingOwnerInRoster?[existing,created]:[existing],board}}/></MotionConfig>))
+ await act(async()=>root!.render(<MotionConfig reducedMotion="always"><DesktopLocale initial={options.language??englishDesktopLanguage}><DesktopApp initialData={{profile:{id:1,displayName:'Local'},workspace:{id:1,name:'Workspace'},theme:'system',connections:[],default:null,agents:options.pendingOwnerInRoster?[existing,created]:[existing],board}}/></DesktopLocale></MotionConfig>))
  return {requests,acknowledged,unexpected,sessionReads}
 }
 
@@ -144,5 +147,32 @@ it('keeps a reserved roster owner out of workspace navigation until the exact fi
  expect(fixture.sessionReads).toEqual([`/api/desktop/agents/${newOwner}/sessions`])
  expect(document.querySelector(`[data-created-chat="${newOwner}"]`)?.getAttribute('data-requested-session')).toBe('first-chat')
  expect(fixture.acknowledged).toEqual([pending.intent.requestId])
+ expect(fixture.unexpected).toEqual([])
+})
+
+
+it('uses the saved language from description to placement and sends the original name and first message',async()=>{
+ const messages=desktopMessages('fr',await loadMessages('fr'))
+ const fixture=await mount({language:{preference:'fr',locale:'fr',messages}})
+ await click(button('Ajouter un coworker'))
+ const dialog=document.querySelector('[role="dialog"]')!
+ expect(dialog.querySelector('h2')?.textContent).toBe('Ajouter un collègue')
+ const field=dialog.querySelector<HTMLTextAreaElement>('textarea')!
+ expect(field.getAttribute('aria-label')).toBe(messages.creation.jobLabel)
+ expect(dialog.textContent).toContain(messages.creation.jobPlaceholder)
+ await click(button(messages.creation.namePlaceholder))
+ const nameField=dialog.querySelector<HTMLInputElement>('input')!
+ expect(nameField.getAttribute('aria-label')).toBe(messages.creation.nameLabel)
+ const name='Équipe facturation',text='Relis les factures.\nPrépare un brouillon pour chaque question.'
+ await edit(nameField,name)
+ await activate(nameField)
+ await describe(text)
+ expect(fixture.requests).toEqual([])
+ expect(document.querySelector('[role="status"]')?.textContent).toContain(name)
+ await click(button('Placer le collègue'))
+ expect(fixture.requests).toHaveLength(1)
+ expect(fixture.requests[0].intent).toMatchObject({name,kickoff:text})
+ expect(fixture.acknowledged).toEqual([fixture.requests[0].intent.requestId])
+ expect(document.querySelector(`[data-created-chat="${newOwner}"]`)?.getAttribute('data-requested-session')).toBe('first-chat')
  expect(fixture.unexpected).toEqual([])
 })

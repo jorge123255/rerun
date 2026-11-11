@@ -1,5 +1,7 @@
 'use client'
 
+import { useDesktopLocale } from './DesktopLocale'
+import type { desktopTranslator } from '@/lib/desktop/locale'
 import { VERBOSITY_LEVELS } from '@rerun/contracts'
 import { useEffect, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
@@ -14,25 +16,26 @@ import { FxSettingsLoading } from './fx-repairs/PanelLoadingSkeletons'
 import type { DesktopAgentView } from './DesktopApp'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 
-const replyLengths = VERBOSITY_LEVELS.map(value => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }))
-const recallHelp = 'Include relevant saved notes when this coworker answers in chat.'
 
-function learningHelp(settings: Settings) {
-    if (!settings.selfImprovementEnabled) return 'Learning is paused because self-improvement is off for this coworker.'
-    if (!settings.memoryEnabled) return 'Turn on saved memories in chat to change this preference.'
-    return 'Save or update notes after a reply when this coworker learns something worth remembering.'
+function learningHelp(settings: Settings, t: ReturnType<typeof desktopTranslator>) {
+    if (!settings.selfImprovementEnabled) return t('coworker.learningPaused')
+    if (!settings.memoryEnabled) return t('coworker.learningUnavailable')
+    return t('coworker.learningHelp')
 }
 
-async function requestSettings(url: string, init: RequestInit): Promise<Settings> {
+async function requestSettings(url: string, init: RequestInit, fallback: string): Promise<Settings> {
     const response = await fetch(url, init)
     if (!response.ok) {
         const body = await response.json().catch(() => ({}))
-        throw new Error(typeof body.error === 'string' ? body.error : 'Could not reach this coworker’s settings.')
+        throw new Error(typeof body.error === 'string' ? body.error : fallback)
     }
     return response.json()
 }
 
 export function DesktopCoworkerSettings({ agent, disabled, dialogControl }: { agent: DesktopAgentView; disabled: boolean; dialogControl?: DesktopDialogControl }) {
+    const { t } = useDesktopLocale()
+    const replyLengths = VERBOSITY_LEVELS.map(value => ({ value, label: t(`coworker.${value}`) }))
+    const recallHelp = t('coworker.recallHelp')
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/settings`
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     const [settings, setSettings] = useState<Settings | null>(null)
@@ -47,16 +50,16 @@ export function DesktopCoworkerSettings({ agent, disabled, dialogControl }: { ag
         setDraft(null)
         setError('')
         const controller = new AbortController()
-        void requestSettings(url, { cache: 'no-store', signal: controller.signal }).then(result => {
+        void requestSettings(url, { cache: 'no-store', signal: controller.signal }, t('coworker.loadFailed')).then(result => {
             if (!controller.signal.aborted) {
                 setSettings(result)
                 setDraft(result)
             }
         }).catch(cause => {
-            if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load coworker settings.')
+            if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : t('coworker.loadFailed'))
         })
         return () => controller.abort()
-    }, [open, url, attempt])
+    }, [open, url, attempt, t])
 
     function changeOpen(next: boolean) {
         if (saving) return
@@ -92,52 +95,52 @@ export function DesktopCoworkerSettings({ agent, disabled, dialogControl }: { ag
                     ...(learningChanged && { autoMemory: draft.autoMemory }),
                     ...(suggestionsChanged && { suggestedReplies: draft.suggestedReplies }),
                 }),
-            })
+            }, t('coworker.saveFailed'))
             setOpen(false)
-            toast.success('Coworker settings saved.')
+            toast.success(t('coworker.saved'))
         } catch (cause) {
-            setError(cause instanceof Error ? cause.message : 'Could not save coworker settings.')
+            setError(cause instanceof Error ? cause.message : t('coworker.saveFailed'))
         } finally { setSaving(false) }
     }
 
     return <Dialog open={open} onOpenChange={changeOpen} asSheet={false}>
         <DialogTrigger asChild>
-            <Button type="button" variant="outline" size="sm" disabled={disabled}>Edit coworker</Button>
+            <Button type="button" variant="outline" size="sm" disabled={disabled}>{t('coworker.edit')}</Button>
         </DialogTrigger>
         <DialogContent className="sm:max-w-xl" showCloseButton={!saving}>
             <DialogHeader>
-                <DialogTitle>Edit coworker</DialogTitle>
-                <DialogDescription>Set how {agent.name} should respond in its conversations.</DialogDescription>
+                <DialogTitle>{t('coworker.edit')}</DialogTitle>
+                <DialogDescription>{t('coworker.editDescription', { name: agent.name })}</DialogDescription>
             </DialogHeader>
             <form className="space-y-4" onSubmit={save}>
                 {settings && draft ? <fieldset disabled={saving} className="min-w-0 space-y-4">
-                    {settings.soulEditable ? <MarkdownTextarea label="Instructions" dialogTitle="Edit coworker instructions" hideRequired
+                    {settings.soulEditable ? <MarkdownTextarea label={t('coworker.instructions')} dialogTitle={t('coworker.instructionsEditor')} hideRequired
                         className="min-h-36 font-mono text-xs" value={draft.soul} onChange={soul => setDraft({ ...draft, soul })} required />
-                        : <p className="text-sm text-muted-foreground">This coworker’s instructions are locked.</p>}
+                        : <p className="text-sm text-muted-foreground">{t('coworker.instructionsLocked')}</p>}
                     <fieldset className="min-w-0 space-y-2">
-                        <legend className="text-sm font-medium">Reply length</legend>
+                        <legend className="text-sm font-medium">{t('coworker.replyLength')}</legend>
                         <Segmented options={replyLengths} value={draft.verbosity} onChange={verbosity => setDraft({ ...draft, verbosity })} />
                     </fieldset>
-                    <Field orientation="row" label="Suggested replies" htmlFor="coworker-suggested-replies" helperText="Offer useful follow-up messages below replies.">
+                    <Field orientation="row" label={t('coworker.suggested')} htmlFor="coworker-suggested-replies" helperText={t('coworker.suggestedHelp')}>
                         <Switch id="coworker-suggested-replies" checked={draft.suggestedReplies} onCheckedChange={suggestedReplies => setDraft({ ...draft, suggestedReplies })} />
                     </Field>
                     <fieldset className="min-w-0 space-y-3">
-                        <legend className="text-sm font-medium">Memory</legend>
-                        <Field orientation="row" label="Use saved memories in chat" htmlFor="coworker-memory-enabled" helperText={recallHelp}>
+                        <legend className="text-sm font-medium">{t('coworker.memory')}</legend>
+                        <Field orientation="row" label={t('coworker.recall')} htmlFor="coworker-memory-enabled" helperText={recallHelp}>
                             <Switch id="coworker-memory-enabled" checked={draft.memoryEnabled} aria-description={recallHelp}
                                 onCheckedChange={memoryEnabled => setDraft({ ...draft, memoryEnabled })} />
                         </Field>
-                        <Field orientation="row" label="Learn from replies" htmlFor="coworker-auto-memory" helperText={learningHelp(draft)}>
+                        <Field orientation="row" label={t('coworker.learning')} htmlFor="coworker-auto-memory" helperText={learningHelp(draft, t)}>
                             <Switch id="coworker-auto-memory" checked={learningAvailable && draft.autoMemory} disabled={!learningAvailable}
-                                aria-description={learningHelp(draft)} onCheckedChange={autoMemory => setDraft({ ...draft, autoMemory })} />
+                                aria-description={learningHelp(draft, t)} onCheckedChange={autoMemory => setDraft({ ...draft, autoMemory })} />
                         </Field>
                     </fieldset>
                 </fieldset> : !error && <FxSettingsLoading />}
                 {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
                 <DialogFooter>
-                    <Button type="button" variant="outline" disabled={saving} onClick={() => changeOpen(false)}>Cancel</Button>
-                    {error && !draft ? <Button type="button" onClick={() => { setError(''); setAttempt(n => n + 1) }}>Retry</Button>
-                        : <Button type="submit" disabled={!canSave || saving}>{saving ? 'Saving…' : 'Save changes'}</Button>}
+                    <Button type="button" variant="outline" disabled={saving} onClick={() => changeOpen(false)}>{t('cancel')}</Button>
+                    {error && !draft ? <Button type="button" onClick={() => { setError(''); setAttempt(n => n + 1) }}>{t('coworker.retry')}</Button>
+                        : <Button type="submit" disabled={!canSave || saving}>{t(saving ? 'coworker.saving' : 'coworker.save')}</Button>}
                 </DialogFooter>
             </form>
         </DialogContent>

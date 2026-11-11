@@ -1,0 +1,28 @@
+import 'server-only'
+import { resolveLocale, isLocale, type Locale } from '@rerun/i18n'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages } from '../locale'
+import { openDesktopDatabase } from './database'
+import type { DesktopRuntime } from './runtime'
+
+async function languageOf(preference: Locale | null, acceptLanguage: string | null) {
+    const locale = resolveLocale({ userLocale: preference, acceptLanguage })
+    return { preference, locale, messages: desktopMessages(locale, await loadMessages(locale)) }
+}
+
+export async function readDesktopLanguage(runtime: DesktopRuntime, acceptLanguage: string | null) {
+    const db = await openDesktopDatabase(runtime.installRoot ?? runtime.dataRoot)
+    const result = await db.execute('SELECT locale FROM desktop_language WHERE id = 1')
+    const saved = result.rows[0]?.locale
+    return languageOf(isLocale(saved) ? saved : null, acceptLanguage)
+}
+
+export async function saveDesktopLanguage(runtime: DesktopRuntime, preference: Locale | null, acceptLanguage: string | null) {
+    const language = await languageOf(preference, acceptLanguage)
+    const db = await openDesktopDatabase(runtime.installRoot ?? runtime.dataRoot)
+    await db.execute({
+        sql: 'INSERT INTO desktop_language (id, locale) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET locale = excluded.locale',
+        args: [preference],
+    })
+    return language
+}

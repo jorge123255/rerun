@@ -1,5 +1,7 @@
 'use client'
 
+import { useDesktopLocale } from '../DesktopLocale'
+
 import { motion, useReducedMotion } from 'motion/react'
 import { Orb, WELCOME_ORB_SIZE } from '@rerun/ui/foreman'
 import { Shimmer } from '@/components/ai-elements/shimmer'
@@ -8,13 +10,14 @@ const EASE = [0.22, 1, 0.36, 1] as const
 
 export function DesktopForemanWelcome({
     thinking,
-    title = 'Hey, ready to hand off your first task?',
+    title,
     subtitle,
 }: {
     thinking?: boolean
     title?: string
     subtitle?: string
 }) {
+    const { t } = useDesktopLocale()
     const reducedMotion = useReducedMotion()
     const enter = (delay: number) => ({
         initial: reducedMotion ? { opacity: 0 } : { opacity: 0, y: 10, filter: 'blur(8px)' },
@@ -32,8 +35,8 @@ export function DesktopForemanWelcome({
                 <Orb size={WELCOME_ORB_SIZE} state={thinking ? 'thinking' : 'idle'} />
             </motion.div>
             <motion.div className="space-y-1" {...enter(0.12)}>
-                <h3 className="text-sm font-medium">{title}</h3>
-                {subtitle ? <p className="text-balance text-sm text-muted-foreground">{subtitle}</p> : <Shimmer className="text-sm">Getting your workspace ready...</Shimmer>}
+                <h3 className="text-sm font-medium">{title ?? t('foreman.welcome.title')}</h3>
+                {subtitle ? <p className="text-balance text-sm text-muted-foreground">{subtitle}</p> : <Shimmer className="text-sm">{t('foreman.welcome.preparing')}</Shimmer>}
             </motion.div>
         </motion.div>
     )

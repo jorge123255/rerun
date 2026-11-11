@@ -46,18 +46,22 @@ export function ShortcutsDialog() {
 }
 
 // The desktop reuses the original view with only the shortcuts its local runtime supports.
-export function ShortcutsDialogView({ open, onOpenChange, groups, onCloseAutoFocus }: {
+export function ShortcutsDialogView({ open, onOpenChange, groups, onCloseAutoFocus, title = 'Keyboard shortcuts',
+    description = 'Move faster around Rerun with these shortcuts.', closeLabel }: {
     open: boolean
     onOpenChange: (open: boolean) => void
     groups: ShortcutGroup[]
     onCloseAutoFocus?: (event: Event) => void
+    title?: string
+    description?: string
+    closeLabel?: string
 }) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-md" onCloseAutoFocus={onCloseAutoFocus}>
+            <DialogContent className="sm:max-w-md" onCloseAutoFocus={onCloseAutoFocus} closeLabel={closeLabel}>
                 <DialogHeader>
-                    <DialogTitle>Keyboard shortcuts</DialogTitle>
-                    <DialogDescription>Move faster around Rerun with these shortcuts.</DialogDescription>
+                    <DialogTitle>{title}</DialogTitle>
+                    <DialogDescription>{description}</DialogDescription>
                 </DialogHeader>
 
                 <div className="flex flex-col gap-5 py-2">

@@ -1,6 +1,9 @@
 'use client'
 
+import { useDesktopLocale } from './DesktopLocale'
+import type { ConnectionSummary } from '@rerun/contracts'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import { OpenChatsTabStrip } from '@/components/agent/sheet/OpenChatsTabStrip'
 import { CloseRunningTabDialog } from '@/components/dialogs/CloseRunningTabDialog'
 import { Button } from '@/components/ui/button'
@@ -20,6 +23,7 @@ import { DesktopRunHistory } from './DesktopRunHistory'
 type Props = {
     agent: DesktopAgentView
     sessions: DesktopSessionView[]
+    needsYouSessions?: ReadonlySet<string>
     initialLayout: DesktopTabLayout | null
     requested: DesktopChatRequest | null
     requestedPanel?: DesktopCoworkerPanelRequest | null
@@ -27,11 +31,13 @@ type Props = {
     selected: boolean
     onVisibleSession?: (agentId: string, sessionId: string | null) => void
     refreshSessions: () => Promise<void>
+    refreshThreads?: () => Promise<void>
     reload: () => void
     onOpenCoworkerChat?: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel: () => void
     onOpenModelSettings: () => void
     modelLabel?: string
+    connections?: ConnectionSummary[]
     overview?: DesktopConversationOverviewAuthority
 }
 
@@ -49,7 +55,8 @@ function initialTabs(agentId: string, layout: DesktopTabLayout | null, sessions:
     return id && session ? openSessionTab(pinned, id, session.title) : pinned
 }
 
-export function DesktopChatTabs({ agent, sessions, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, reload, onOpenCoworkerChat, onClosePanel, modelLabel, onOpenModelSettings, overview }: Props) {
+export function DesktopChatTabs({ agent, sessions, needsYouSessions, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, refreshThreads, reload, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: Props) {
+    const { t } = useDesktopLocale()
     const [layout, setLayout] = useState(() => initialTabs(agent.id, initialLayout, sessions, requested))
     const [rejectedRequest, setRejectedRequest] = useState<DesktopChatRequest | null>(() => {
         const pinned = initialTabs(agent.id, initialLayout, sessions, requested)
@@ -68,6 +75,13 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
     const pendingForks = useRef(new Set<string>())
     const generalFork = useRef<{ sourceUid: string; sessionId: string } | null>(null)
     const active = layout.tabs[layout.activeIndex]
+    const refreshVisibleThreads = useCallback(async () => {
+        if (!isDesktopQuitting()) await refreshThreads?.()
+    }, [refreshThreads])
+    useVisibleInterval(refreshVisibleThreads, 5000, {
+        enabled: !!refreshThreads && selected && canMountChats && !rejectedRequest && isGeneralTab(active),
+        immediate: false,
+    })
     const [visited, setVisited] = useState<string[]>([active.uid])
     const lastRequest = useRef(requested)
     const save = useCallback((next: SessionTabsState): Promise<boolean> => {
@@ -307,8 +321,8 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
         void change(adopted)
     }, [agent.id, change, sessions])
 
-    const displayTabs = layout.tabs.map(tab => ({ ...tab, title: isGeneralTab(tab) ? 'General' : sessions.find(s => s.id === tab.id)?.title ?? tab.title }))
-    const strip = <OpenChatsTabStrip tabs={displayTabs} activeIndex={layout.activeIndex} newLabel="New thread"
+    const displayTabs = layout.tabs.map(tab => ({ ...tab, title: isGeneralTab(tab) ? t('general') : sessions.find(s => s.id === tab.id)?.title ?? tab.title }))
+    const strip = <OpenChatsTabStrip tabs={displayTabs} activeIndex={layout.activeIndex} newLabel={t('newThread')} closeLabel={title => t('closeTab', { title })}
         stateOf={tab => activity[tab.uid]?.busy ? 'live' : 'quiet'}
         onSelect={index => { if (!isDesktopQuitting() && index !== current.current.activeIndex) change({ ...current.current, activeIndex: index }) }}
         onClose={requestClose} onCreate={() => open(null, 'New conversation')} />
@@ -316,7 +330,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
         {rejectedRequest && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">
             This open chat has changed or closed. Choose it again from Control center.
             <Button type="button" size="sm" variant="outline" onClick={reload}>Reload open chats</Button>
-            <Button type="button" size="sm" variant="ghost" onClick={onClosePanel}>Close panel</Button>
+            <Button type="button" size="sm" variant="ghost" onClick={onClosePanel}>{t('closePanel')}</Button>
         </div>}
         {(saveError || notice) && <div role="alert" className="flex items-center gap-2 px-3 py-1 text-xs text-destructive">
             {saveError?.message || notice}
@@ -328,7 +342,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
             const visible = !rejectedRequest && active.uid === tab.uid
             if (!visible && !visited.includes(tab.uid)) return null
             return <div key={tab.uid} data-desktop-tab-active={visible} hidden={!visible} className={visible ? 'flex h-full min-h-0 flex-col' : 'hidden'}>
-                <DesktopConversation overview={overview} agent={agent} sessionId={tab.id} sessions={sessions} tabUid={tab.uid} active={selected && visible}
+                <DesktopConversation overview={overview} agent={agent} sessionId={tab.id} sessions={sessions} needsYouSessions={needsYouSessions} tabUid={tab.uid} active={selected && visible}
                     requestedPanel={selected && visible ? requestedPanel : null} onPanelRequestHandled={onPanelRequestHandled}
                     tabStrip={visible ? strip : false} onTabActivity={report} initialDraft={drafts[tab.uid]} onStartFork={startFork} onFinishFork={finishFork}
                     onSelectSession={(id, title) => {
@@ -337,7 +351,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
                     }}
                     onChatSession={(id, sourceDraft) => bindSession(tab.uid, id, sourceDraft)}
                     onOpenCoworkerChat={onOpenCoworkerChat}
-                    modelLabel={modelLabel} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
+                    modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
                     renderHistory={(_busy, control) => <DesktopChatHistory control={control} agentId={agent.id} count={sessions.length} selectedId={tab.id} busy={false} onSelect={id => open(id, sessions.find(s => s.id === id)?.title ?? 'Conversation')} />}
                     renderRunHistory={control => <DesktopRunHistory agent={agent} dialogControl={control} />} />
             </div>

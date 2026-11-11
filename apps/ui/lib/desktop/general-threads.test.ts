@@ -1,3 +1,4 @@
+import { desktopTranslator, englishDesktopLanguage } from './locale'
 import { describe, expect, it } from 'vitest'
 import { adoptGeneralId, ensureDesktopGeneralTab, FIRST_MESSAGE_MAX_CHARS, generalTabUid, kindOfStoredSession, openingMessage, threadOpener } from './general-threads'
 
@@ -48,9 +49,10 @@ describe('thread openers', () => {
     })
 
     it('uses a generic line when the opening message was never stored', () => {
-        expect(threadOpener({ title: 'Daily notes', firstMessage: null, source: 'dashboard' }, null)).toEqual({ text: 'Started a thread', generic: true })
-        expect(threadOpener({ title: 'Digest', firstMessage: 'Check the funnel', source: 'schedule', automationName: 'Daily check' }, null)).toEqual({ text: 'Check the funnel', generic: false })
-        expect(threadOpener({ title: 'Digest', firstMessage: null, source: 'schedule', automationName: 'Daily check' }, null).text).toBe('Scheduled run · Daily check')
-        expect(threadOpener({ title: 'Hook', firstMessage: null, source: 'agent' }, 'Blair').text).toBe('Asked by Blair')
+        const t = desktopTranslator(englishDesktopLanguage)
+        expect(threadOpener({ title: 'Daily notes', firstMessage: null, source: 'dashboard' }, null, t)).toEqual({ text: 'Started a thread', generic: true })
+        expect(threadOpener({ title: 'Digest', firstMessage: 'Check the funnel', source: 'schedule', automationName: 'Daily check' }, null, t)).toEqual({ text: 'Check the funnel', generic: false })
+        expect(threadOpener({ title: 'Digest', firstMessage: null, source: 'schedule', automationName: 'Daily check' }, null, t).text).toBe('Scheduled run · Daily check')
+        expect(threadOpener({ title: 'Hook', firstMessage: null, source: 'agent' }, 'Blair', t).text).toBe('Asked by Blair')
     })
 })

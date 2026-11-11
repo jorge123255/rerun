@@ -8,6 +8,7 @@ import type { DesktopGettingStartedStep, DesktopGettingStartedStepId } from '@/l
 import { desktopGettingStartedSummary } from '@/lib/desktop/getting-started/progress'
 import { ArrowRightIcon, CheckIcon, EyeOffIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
+import { useDesktopLocale } from '../DesktopLocale'
 
 const PROGRESS_GRADIENT = ['var(--brand)', 'color-mix(in oklab, var(--brand), white 20%)'] as const
 
@@ -23,17 +24,18 @@ export function DesktopGettingStartedPanel({ steps, onStep, onHide, className }:
     className?: string
 }) {
     const summary = desktopGettingStartedSummary(steps)
+    const { t } = useDesktopLocale()
     return (
         <div className={cn('flex flex-col gap-3', className)}>
             <div className="flex items-center gap-2">
-                <span className="text-base font-medium">Getting started</span>
+                <span className="text-base font-medium">{t('gettingStarted.title')}</span>
                 <span className="flex items-center gap-1.5">
                     <DesktopGettingStartedProgressMark done={summary.done} total={summary.total} />
                     <span className="text-xs text-muted-foreground tabular-nums">{summary.done}/{summary.total}</span>
                 </span>
                 {onHide && (
-                    <TooltipLabeled label="Hide">
-                        <Button variant="ghost" size="icon-sm" onClick={onHide} aria-label="Hide" className="-my-1 ml-auto text-muted-foreground">
+                    <TooltipLabeled label={t('gettingStarted.hide')}>
+                        <Button variant="ghost" size="icon-sm" onClick={onHide} aria-label={t('gettingStarted.hide')} className="-my-1 ml-auto text-muted-foreground">
                             <EyeOffIcon />
                         </Button>
                     </TooltipLabeled>
@@ -50,8 +52,10 @@ export function DesktopGettingStartedPanel({ steps, onStep, onHide, className }:
                         >
                             <span className="pt-px">{step.done ? <IconBadge tone="green" icon={CheckIcon} /> : <IconBadge tone="neutral" glow={false} />}</span>
                             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                                <span className={cn('truncate text-sm', step.done ? 'text-muted-foreground line-through decoration-muted-foreground/60' : 'font-medium text-foreground')}>{step.title}</span>
-                                {!step.done && <span className="text-xs text-muted-foreground">{step.description}</span>}
+                                <span className={cn('truncate text-sm', step.done ? 'text-muted-foreground line-through decoration-muted-foreground/60' : 'font-medium text-foreground')}>{t(`gettingStarted.steps.${step.id}.title`)}</span>
+                                {!step.done && <span className="text-xs text-muted-foreground">{step.id === 'schedule' && step.unavailable
+                                    ? t('gettingStarted.routineUnavailable')
+                                    : t(`gettingStarted.steps.${step.id}.description`)}</span>}
                             </span>
                             {!step.done && <ArrowRightIcon className={cn('mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-opacity', summary.next?.id === step.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100')} />}
                         </button>
@@ -60,8 +64,8 @@ export function DesktopGettingStartedPanel({ steps, onStep, onHide, className }:
             </ul>
             {summary.complete && (
                 <div className="flex flex-col gap-0.5 rounded-lg border border-border px-3 py-2.5">
-                    <span className="text-sm font-medium">Your workspace is all set</span>
-                    <span className="text-xs text-muted-foreground">Your coworkers can run on their own now.</span>
+                    <span className="text-sm font-medium">{t('gettingStarted.doneTitle')}</span>
+                    <span className="text-xs text-muted-foreground">{t('gettingStarted.doneDescription')}</span>
                 </div>
             )}
         </div>

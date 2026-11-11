@@ -11,6 +11,7 @@ import {
     requestDesktopCreation, settleDesktopCreation, type DesktopCreateOutcome, type DesktopCreateState,
     type DesktopCreationInput, type DesktopCreationIntent, type DesktopNewAgentCapabilities,
 } from '@/lib/desktop/new-agent'
+import { useDesktopLocale } from './DesktopLocale'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 const ORB_SIZE = 56
@@ -43,7 +44,6 @@ function floorLight(focused: boolean): FloorLight {
         light: 'rgb(104 80 252 / 0.2)', dark: 'rgb(200 190 255 / 0.18)',
     }
 }
-const UNCERTAIN = 'We could not confirm whether your coworker was created. Trying again checks the same attempt; it does not create a second one.'
 type Submission = { generation: number; controller: AbortController; admitted: boolean }
 type Prepare = (signal: AbortSignal) => Promise<DesktopCreationInput>
 
@@ -60,6 +60,7 @@ export function DesktopNewAgentDialog({ open, onOpenChange, onCreate, read, capa
     /** Keep admission closed until root has loaded/reconciled that durable receipt. */
     resolvingReceipt?: boolean
 }) {
+    const { t } = useDesktopLocale()
     const [create, setCreate] = useState<DesktopCreateState>(IDLE_CREATION)
     const [preparing, setPreparing] = useState(false)
     const [failure, setFailure] = useState<string | null>(null)
@@ -115,7 +116,7 @@ export function DesktopNewAgentDialog({ open, onOpenChange, onCreate, read, capa
             if (!current(token) || token.controller.signal.aborted || admission.current.resolvingReceipt || admission.current.resumeId !== resumeId) return
             const requested = requestDesktopCreation(creation, input)
             if (!requested.intent) {
-                setFailure(requested.refusal === 'too-long' ? `A description can be at most ${DESKTOP_DESCRIPTION_MAX} characters.` : null)
+                setFailure(requested.refusal === 'too-long' ? t('creation.tooLong', { max: String(DESKTOP_DESCRIPTION_MAX) }) : null)
                 return
             }
             token.admitted = true
@@ -146,13 +147,13 @@ export function DesktopNewAgentDialog({ open, onOpenChange, onCreate, read, capa
 
     const busy = preparing || creation.status === 'pending'
     return <Dialog open={open} onOpenChange={changeOpen} asSheet={false}>
-        {open && <DialogContent className="flex max-h-[90dvh] flex-col overflow-y-auto sm:max-w-2xl">
+        {open && <DialogContent closeLabel={t('creation.close')} className="flex max-h-[90dvh] flex-col overflow-y-auto sm:max-w-2xl">
             <DialogHeader>
-                <DialogTitle>{first ? 'Create your first coworker' : 'Add a coworker'}</DialogTitle>
-                <DialogDescription>Describe the job the way you would brief a teammate. Your coworker receives that description as its first message after you place it on the board.</DialogDescription>
+                <DialogTitle>{t(first ? 'creation.first' : 'creation.add')}</DialogTitle>
+                <DialogDescription>{t('creation.description')}</DialogDescription>
             </DialogHeader>
-            {resolvingReceipt ? <p role="status">Checking your previous creation…</p>
-                : completedGeneration === generation ? <div><p role="status">Your coworker was created.</p><Button onClick={() => changeOpen(false)}>Close</Button></div>
+            {resolvingReceipt ? <p role="status">{t('creation.checking')}</p>
+                : completedGeneration === generation ? <div><p role="status">{t('creation.created')}</p><Button onClick={() => changeOpen(false)}>{t('creation.close')}</Button></div>
                 : <DesktopNewAgentForm key={generation} creation={creation} busy={busy} read={read} capabilities={capabilities} onSubmit={submit} />}
             {failure && creation.status !== 'uncertain' && <p role="alert" className="px-1 text-sm text-destructive">{failure}</p>}
         </DialogContent>}
@@ -162,6 +163,7 @@ export function DesktopNewAgentDialog({ open, onOpenChange, onCreate, read, capa
 function DesktopNewAgentForm({ creation, busy, read, capabilities, onSubmit }: {
     creation: DesktopCreateState; busy: boolean; read?: JobReader; capabilities: DesktopNewAgentCapabilities; onSubmit: (prepare: Prepare) => Promise<void>
 }) {
+    const { t } = useDesktopLocale()
     const rootRef = useRef<HTMLDivElement>(null)
     const anchorRef = useRef<HTMLSpanElement>(null)
     const gaze = useFollow({ rootRef, anchorRef })
@@ -183,14 +185,16 @@ function DesktopNewAgentForm({ creation, busy, read, capabilities, onSubmit }: {
         <div className="relative flex w-full flex-col items-center">
             <div className="hidden sm:contents"><Floor fade={FADE} lights={[floorLight(text.trim() !== '')]} style={{ top: ORB_SIZE / 2 }} /><OrbLight focused={text.trim() !== ''} top={ORB_SIZE / 2} className="z-10" /></div>
             <div className="relative z-20"><span ref={anchorRef} aria-hidden className="absolute top-1/2 left-1/2" /><div style={{ transform: 'translate(var(--orb-x, 0px), var(--orb-y, 0px))' }}><Orb state={busy || pending || uncertain ? 'thinking' : 'listening'} size={ORB_SIZE} gaze={gaze} /></div></div>
-            <h2 className="mt-5 text-center font-heading text-xl font-medium tracking-tight">{name ? `What should ${name} do?` : 'What should your new coworker do?'}</h2>
+            <h2 className="mt-5 text-center font-heading text-xl font-medium tracking-tight">{name ? t('creation.headingNamed', { name }) : t('creation.heading')}</h2>
             {uncertain ? <div className="mt-5 w-full rounded-2xl border border-border bg-muted/40 p-4">
-                <p role="alert" className="text-sm text-foreground">{UNCERTAIN}</p>
+                <p role="alert" className="text-sm text-foreground">{t('creation.uncertain')}</p>
                 {uncertain.error && <p className="mt-2 text-xs text-muted-foreground">{uncertain.error}</p>}
-                <div className="mt-3 flex justify-end"><Button type="button" size="sm" disabled={busy} onClick={() => { void submit() }}>Try again</Button></div>
+                <div className="mt-3 flex justify-end"><Button type="button" size="sm" disabled={busy} onClick={() => { void submit() }}>{t('creation.tryAgain')}</Button></div>
             </div> : <Composer text={text} onText={next => { if (!busy) { reader.cancel(); setText(next) } }} onSubmit={() => { void submit() }}
+                descriptionLabel={t('creation.jobLabel')} placeholder={t('creation.jobPlaceholder')}
+                createLabel={name ? t('creation.create', { name }) : t('creation.createCoworker')}
                 mark={null} preview={null} drawnCaret={false} maxLength={DESKTOP_DESCRIPTION_MAX} className="mt-5 w-full"
-                name={name} nameProps={{ editing, onEdit: () => { if (!busy) setEditing(true) }, onRename: next => { if (!busy) { setEditing(false); setPinned(next.slice(0, AGENT_NAME_MAX).trim() || null) } }, onCancel: () => setEditing(false) }}
+                name={name} nameProps={{ editing, label: t('creation.nameLabel'), placeholder: t('creation.namePlaceholder'), onEdit: () => { if (!busy) setEditing(true) }, onRename: next => { if (!busy) { setEditing(false); setPinned(next.slice(0, AGENT_NAME_MAX).trim() || null) } }, onCancel: () => setEditing(false) }}
                 catalog={null} apps={[]} onToggleApp={() => {}}
                 schedule={{ read: reading.schedule, choice: DESCRIBED, onChoice: () => {}, open: false, onOpenChange: () => {} }}
                 canCreate={text.trim().length > 0 && !busy} creating={busy}

@@ -10,6 +10,7 @@ import { Grid2x2Icon, HammerIcon, PlusIcon, UploadIcon } from '@/lib/icons'
 import { TEMPLATE_CATEGORY_ICONS } from '@/lib/templates/category-icons'
 import { cn } from '@/lib/utils'
 import { useMemo, useState } from 'react'
+import { useDesktopLocale } from '../DesktopLocale'
 import type { DesktopTemplateSummary } from './types'
 
 type LibraryView = { kind: 'all' } | { kind: 'category'; category: TemplateCategory }
@@ -27,6 +28,7 @@ export function DesktopTemplateLibraryBrowser({ templates, loading, error, selec
     importBusy?: boolean
     importError?: string | null
 }) {
+    const { t } = useDesktopLocale()
     const [view, setView] = useState<LibraryView>({ kind: 'all' })
     const [query, setQuery] = useState('')
     const categories = useMemo(() => {
@@ -62,7 +64,7 @@ export function DesktopTemplateLibraryBrowser({ templates, loading, error, selec
             <div className="flex flex-col gap-2 border-t p-3">
                 <Button type="button" variant="outline" onClick={onNewTemplate}><PlusIcon />New template</Button>
                 {onImportPackage && <Button type="button" variant="outline" onClick={onImportPackage} disabled={importBusy} loading={importBusy}><UploadIcon />Import package</Button>}
-                <Button type="button" onClick={onScratch}><PlusIcon />Create New Coworker</Button>
+                <Button type="button" onClick={onScratch}><PlusIcon />{t('creation.fromTemplateLibrary')}</Button>
             </div>
         </aside>
 
@@ -72,7 +74,7 @@ export function DesktopTemplateLibraryBrowser({ templates, loading, error, selec
                     <TemplateLibrarySearch value={query} onChange={setQuery} className="min-w-0 flex-1" />
                     <Button type="button" variant="outline" size="sm" onClick={onNewTemplate}><PlusIcon />New template</Button>
                     {onImportPackage && <Button type="button" variant="outline" size="sm" onClick={onImportPackage} disabled={importBusy} loading={importBusy}><UploadIcon />Import</Button>}
-                    <Button type="button" size="sm" onClick={onScratch}><PlusIcon />New coworker</Button>
+                    <Button type="button" size="sm" onClick={onScratch}><PlusIcon />{t('creation.title')}</Button>
                 </div>
                 <HScrollFade className="-mx-1 gap-1.5 px-1" fadeClassName="from-popover">
                     <NavChip active={view.kind === 'all' && !query} onClick={() => navigate({ kind: 'all' })}>My library</NavChip>

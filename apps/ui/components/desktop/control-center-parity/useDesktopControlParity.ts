@@ -16,7 +16,7 @@ import { buildParityCommands, mergeParitySections, parityCommandSections } from 
 import type { ParityPage } from '@/lib/desktop/control-center-parity/types'
 import { useControlCenterParity } from './useControlCenterParity'
 import { controlContextAvailable, controlContextKey } from './context'
-import { originalControlLabels } from './labels'
+import { localizedControlLabel, originalControlLabels, type ControlCenterCopy } from './labels'
 const agentsSchema = z.object({ agents: z.array(z.object({ id: z.string(), name: z.string(), description: z.string(), createdAt: z.string(), updatedAt: z.string(), enabled: z.boolean().optional() })).max(1000) })
 export type DesktopParityCallbacks = {
     onTemplates?: () => void
@@ -27,7 +27,7 @@ export type DesktopParityCallbacks = {
     onOpenDesktop?: (agentId: string) => void
     onAskAssistant?: (chat: DesktopForemanChatRef, text: string, signal: AbortSignal) => Promise<void>
 }
-export function useDesktopControlParity(input: DesktopParityCallbacks & { open: boolean; scope: string; page: ParityPage; query: string; board?: DesktopBoardState; agents: DesktopAgentView[]; disabled: boolean; darkTheme: boolean; close: () => void }) {
+export function useDesktopControlParity(input: DesktopParityCallbacks & { open: boolean; scope: string; page: ParityPage; query: string; board?: DesktopBoardState; agents: DesktopAgentView[]; disabled: boolean; darkTheme: boolean; copy?: ControlCenterCopy; close: () => void }) {
     const latest = useRef(input); latest.current = input
     const serverAttempt = useRef<AbortController | null>(null)
     const [serverBusy, setServerBusy] = useState(false)
@@ -76,14 +76,15 @@ export function useDesktopControlParity(input: DesktopParityCallbacks & { open: 
     const snapshot = input.board && Number.isSafeInteger(input.runtimeWorkspaceId) && (input.runtimeWorkspaceId ?? 0) > 0 ? project(input.agents, input.board, foreman?.workspaceId === String(input.runtimeWorkspaceId) ? foreman : null) : null
     return { state: { ...parity.state, busy: parity.state.busy || serverBusy, notice: serverNotice ?? parity.state.notice }, merge: (sections: ControlSection[]) => {
         let additions: ControlSection[] = []
+        const localizeCommand = (id: string, label: string) => localizedControlLabel(id, label, input.darkTheme, input.copy)
         if (snapshot) {
-            const commands = buildParityCommands(snapshot, input.page, input.query, actions, { darkTheme: input.darkTheme })
+            const commands = buildParityCommands(snapshot, input.page, input.query, actions, { darkTheme: input.darkTheme, localizeCommand })
             additions = parityCommandSections(commands, command => { void parity.controller.execute(command).then(accepted => { if (accepted) latest.current.close() }) }, input.page)
         }
         const { scope, text } = parseQuery(input.query)
         if (input.open && !input.disabled && !isDesktopQuitting() && input.page.kind === 'root' && scope !== 'agents' && input.onServers) {
             const captured = { ...input }
-            const servers = searchItems([{ id: 'command-servers', label: 'Servers', disabledReason: !Number.isSafeInteger(input.runtimeWorkspaceId) || (input.runtimeWorkspaceId ?? 0) <= 0 ? 'The current workspace identity is unavailable.' : undefined, keywords: ['machine', 'computer', 'remote', 'connection'], leading: { kind: 'icon' as const, icon: ServerIcon }, onSelect: () => {
+            const servers = searchItems([{ id: 'command-servers', label: localizeCommand('command-servers', 'Servers'), disabledReason: !Number.isSafeInteger(input.runtimeWorkspaceId) || (input.runtimeWorkspaceId ?? 0) <= 0 ? 'The current workspace identity is unavailable.' : undefined, keywords: ['servers', 'machine', 'computer', 'remote', 'connection'], leading: { kind: 'icon' as const, icon: ServerIcon }, onSelect: () => {
                 if (serverAttempt.current || !controlContextAvailable(captured, latest.current, isDesktopQuitting())) return
                 const operation = new AbortController(); serverAttempt.current = operation
                 setServerBusy(true); setServerNotice(null)
@@ -102,6 +103,6 @@ export function useDesktopControlParity(input: DesktopParityCallbacks & { open: 
             } }], text)
             if (servers.length) additions.push({ id: 'settings', heading: 'Settings', rows: servers })
         }
-        return originalControlLabels(mergeParitySections(sections, additions, input.query), input.darkTheme)
+        return originalControlLabels(mergeParitySections(sections, additions, input.query), input.darkTheme, input.copy)
     } }
 }
