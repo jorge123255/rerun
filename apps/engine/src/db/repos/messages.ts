@@ -4,7 +4,7 @@ import { FOREMAN_AGENT_ID, visibleText, type DesktopSourcePart, type MessageAuth
 import { getSystemDb } from '../systemDb.js'
 import { messages, type MessageRow } from '../schema.js'
 import { newId, nowIso } from '../../lib/ids.js'
-import type { InValue } from '@libsql/client'
+import type { InStatement, InValue } from '@libsql/client'
 import { foremanReplySourceUpdate, type ForemanReplyTurn } from './foreman-reply-sources.js'
 
 // What was said, which is not everything that carries a `text`: a reasoning part does too, and so
@@ -50,6 +50,17 @@ export async function appendMessage(agentId: string, sessionId: string, message:
         if (text) await client.execute(index)
     }
     return row
+}
+
+// A copied conversation owns new message IDs and corresponding full-text index rows.
+export function copiedMessageStatements(row: MessageRow): InStatement[] {
+    const statements: InStatement[] = [{
+        sql: 'INSERT INTO messages (id, session_id, role, content_json, tool_calls_json, sources_json, created_at, author_id, author_name) VALUES (?,?,?,?,?,?,?,?,?)',
+        args: [row.id, row.sessionId, row.role, row.contentJson, row.toolCallsJson, row.sourcesJson, row.createdAt, row.authorId, row.authorName],
+    }]
+    const text = extractText(storedContent(row.contentJson))
+    if (text) statements.push({ sql: 'INSERT INTO messages_fts(content, message_id) VALUES (?,?)', args: [text, row.id] })
+    return statements
 }
 
 // A queued turn already saved its text atomically with the run. Complete that same row with the

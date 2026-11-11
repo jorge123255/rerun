@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto'
-import type { InStatement } from '@libsql/client'
+import type { Client, InStatement } from '@libsql/client'
 import { FOREMAN_AGENT_ID, type DesktopForemanChatRef } from '@rerun/contracts'
 import type { MessageRow } from '../schema.js'
 import { getSystemDb } from '../systemDb.js'
 
 export type ForemanReplyTurn = { runId: string; userMessageId: string }
-type ForemanReplyTarget = DesktopForemanChatRef & { sessionId: string; assistantMessageId: string }
+export type ForemanReplyTarget = DesktopForemanChatRef & { sessionId: string; assistantMessageId: string }
 
 const digest = (contentJson: string) => createHash('sha256').update(contentJson).digest('hex')
 
@@ -31,9 +31,13 @@ export function foremanReplySourceUpdate(agentId: string, message: MessageRow, t
 
 export async function readForemanReplySource(target: ForemanReplyTarget) {
     const { client } = await getSystemDb(FOREMAN_AGENT_ID)
+    return (await readForemanReplySnapshot(client, target))?.proof ?? null
+}
+
+export async function readForemanReplySnapshot(reader: Pick<Client, 'execute'>, target: ForemanReplyTarget) {
     // Read the provenance and transcript in one SQLite snapshot. Match listMessages' order
     // so messages written in the same millisecond have a stable order after a restart.
-    const { rows } = await client.execute({
+    const { rows } = await reader.execute({
         sql: `SELECT source.run_id, source.user_message_id, source.reply_digest,
                      history.id, history.role, history.content_json, history.tool_calls_json,
                      history.sources_json, history.created_at, history.author_id, history.author_name
@@ -64,6 +68,7 @@ export async function readForemanReplySource(target: ForemanReplyTarget) {
         revision.update(JSON.stringify([row.id, row.role, row.content_json, row.tool_calls_json,
             row.sources_json, row.created_at, row.author_id, row.author_name]))
     }
-    return { ...target, sourceRunId: saved.run_id, precedingUserMessageId: saved.user_message_id,
+    const proof = { ...target, sourceRunId: saved.run_id, precedingUserMessageId: saved.user_message_id,
         replyDigest: saved.reply_digest, transcriptRevision: revision.digest('hex') }
+    return { proof, rows }
 }
