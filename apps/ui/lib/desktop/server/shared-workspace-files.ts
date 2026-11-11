@@ -3,8 +3,10 @@ import 'server-only'
 import { DesktopHttpError } from './auth'
 import type { DesktopRuntime } from './runtime'
 import { assertDesktopWorkspaceAdmission } from './workspace-admission'
+import { deleteFromPinnedFolder, recoverPinnedFileDeletes } from './coworker-files'
 export { SHARED_IMPORT_BYTES, sharedFileImportLimit } from '../../../../engine/src/desktop/shared-workspace-files'
 import {
+    assertSharedDeleteEntry,
     importSharedFile,
     importSharedText,
     listSharedDirectory,
@@ -12,6 +14,9 @@ import {
     renameSharedFile,
     replaceSharedText,
     resolveEngineSharedDirectory,
+    sharedDeleteRevision,
+    sharedDeleteParentPath,
+    withSharedDeleteFolder,
     SharedWorkspaceFileError,
     type SharedDirectoryListing,
     type SharedFileAccess,
@@ -42,8 +47,18 @@ export async function desktopSharedDirectory(runtime: DesktopRuntime, signal?: A
 }
 
 export async function listDesktopSharedFiles(runtime: DesktopRuntime, path: string, access?: SharedFileAccess): Promise<SharedDirectoryListing> {
-    try { return await listSharedDirectory(await desktopSharedDirectory(runtime, access?.signal), path, access) }
-    catch (error) { rethrowDesktopSharedFileError(error) }
+    try {
+        const root = await desktopSharedDirectory(runtime, access?.signal)
+        const options = { ...access, deleteMetadata: true }
+        let listing = await listSharedDirectory(root, path, options)
+        if (listing.hasPendingDelete && process.env.RERUN_DESKTOP_RENAME_HELPER) {
+            const beforeCommit = sharedWorkspaceAdmission(runtime, runtime.workspaceId, access?.signal)
+            await withSharedDeleteFolder(root, path, { ...access, beforeCommit }, (folder, rootPin, guard) =>
+                recoverPinnedFileDeletes(folder.path, folder.pinned, { ...rootPin, validateEntry: assertSharedDeleteEntry }, guard))
+            listing = await listSharedDirectory(root, path, options)
+        }
+        return { path: listing.path, entries: listing.entries, truncated: listing.truncated }
+    } catch (error) { rethrowDesktopSharedFileError(error) }
 }
 
 export async function readDesktopSharedFile(runtime: DesktopRuntime, path: string, offset = 0, access?: SharedFileAccess): Promise<SharedTextPage> {
@@ -69,20 +84,36 @@ export async function renameDesktopSharedFile(runtime: DesktopRuntime, path: str
     } catch (error) { rethrowDesktopSharedFileError(error) }
 }
 
-export async function replaceDesktopSharedText(runtime: DesktopRuntime, workspaceId: number, input: SharedTextReplacement, signal: AbortSignal): Promise<SharedTextReplacementResult> {
+function sharedWorkspaceAdmission(runtime: DesktopRuntime, workspaceId: number, signal?: AbortSignal) {
     if (workspaceId !== runtime.workspaceId) throw new DesktopHttpError(409, 'The shared-file workspace changed.')
     const identity = (value: DesktopRuntime) => JSON.stringify([
         value.workspaceId, value.launchNonce, value.dataRoot, value.engineRoot, value.installRoot,
         value.installId, value.buildId, value.app.origin, value.app.sessionToken, value.engine.origin,
     ])
     const expected = identity(runtime)
-    const beforeCommit = async () => {
-        signal.throwIfAborted()
+    return async () => {
+        signal?.throwIfAborted()
         const current = await readDesktopRuntime().catch(() => null)
         if (!current || identity(current) !== expected) throw new DesktopHttpError(409, 'The shared-file workspace changed.')
-        signal.throwIfAborted()
+        signal?.throwIfAborted()
         assertDesktopWorkspaceAdmission(runtime)
     }
+}
+
+export async function deleteDesktopSharedFile(runtime: DesktopRuntime, workspaceId: number, path: string, revision: string, signal: AbortSignal): Promise<{ path: string }> {
+    const beforeCommit = sharedWorkspaceAdmission(runtime, workspaceId, signal)
+    try {
+        const folderPath = sharedDeleteParentPath(path)
+        await beforeCommit()
+        const root = await desktopSharedDirectory(runtime, signal)
+        return await withSharedDeleteFolder(root, folderPath, { signal, beforeCommit }, (folder, rootPin, guard) =>
+            deleteFromPinnedFolder(folder.path, folder.pinned, folder, { ...rootPin, validateEntry: assertSharedDeleteEntry }, path,
+                guard, entry => sharedDeleteRevision(entry) === revision))
+    } catch (error) { rethrowDesktopSharedFileError(error) }
+}
+
+export async function replaceDesktopSharedText(runtime: DesktopRuntime, workspaceId: number, input: SharedTextReplacement, signal: AbortSignal): Promise<SharedTextReplacementResult> {
+    const beforeCommit = sharedWorkspaceAdmission(runtime, workspaceId, signal)
     try {
         await beforeCommit()
         return await replaceSharedText(await desktopSharedDirectory(runtime, signal), input, { signal, beforeCommit })

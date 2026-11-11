@@ -6,8 +6,11 @@ import { DesktopBrainFolder } from './DesktopBrainFiles'
 import { authorizedSharedFilePath } from '../pages/shared-file-link'
 import type { FileList } from '@/components/files/FileList'
 type ListProps = ComponentProps<typeof FileList>
-const harness = vi.hoisted(() => ({ rename: vi.fn(), list: null as ListProps | null }))
-vi.mock('@/lib/desktop/shared-workspace-files', () => ({ renameDesktopSharedFile: (...args: unknown[]) => harness.rename(...args) }))
+const harness = vi.hoisted(() => ({ rename: vi.fn(), remove: vi.fn(), list: null as ListProps | null }))
+vi.mock('@/lib/desktop/shared-workspace-files', () => ({
+    renameDesktopSharedFile: (...args: unknown[]) => harness.rename(...args),
+    deleteDesktopSharedEntry: (...args: unknown[]) => harness.remove(...args),
+}))
 vi.mock('@/components/files/FileList', () => ({ FileList: (props: ListProps) => { harness.list = props; return null } }))
 vi.mock('@/components/brain/BrainTopBar', () => ({ BrainTopBar: () => null }))
 vi.mock('@/components/desktop/shared-files/DesktopSharedImportResults', () => ({ DesktopSharedImportResults: () => null }))
@@ -35,5 +38,27 @@ it('reuses authorized file rename, refreshes exact folder and makes old page pat
         refresh.mockClear(); harness.rename.mockRejectedValue(new Error('collision'))
         await act(async () => onRename('old.md', 'taken.md'))
         expect(refresh).not.toHaveBeenCalled()
+    } finally { await act(async () => root.unmount()) }
+})
+
+it('forgets an expanded folder in Company Brain only after its exact deletion is confirmed', async () => {
+    const host = document.createElement('div'), root = createRoot(host)
+    const folder = { name: 'past', type: 'dir' as const, size: 0, modified: '', deleteRevision: '5'.repeat(64) }
+    const forget = vi.fn()
+    const refresh = vi.fn()
+    const files = { expand: vi.fn(), refresh, forget, entriesOf: () => [folder] } as unknown as ComponentProps<typeof DesktopBrainFolder>['files']
+    try {
+        await act(async () => root.render(createElement(DesktopBrainFolder, {
+            path: 'docs', workspaceId: 7, files, onSelect: vi.fn(), onUpload: vi.fn(), importResults: [], importing: false, onRetryImport: vi.fn(),
+        })))
+        expect(harness.list?.canDelete?.(folder)).toBe(true)
+        harness.remove.mockReset().mockRejectedValueOnce(new Error('unchanged')).mockResolvedValueOnce(undefined)
+        await act(async () => harness.list?.onDelete?.(folder.name, folder))
+        expect(forget).not.toHaveBeenCalled()
+        expect(refresh).not.toHaveBeenCalled()
+        await act(async () => harness.list?.onDelete?.(folder.name, folder))
+        expect(harness.remove).toHaveBeenLastCalledWith(7, 'docs/past', folder.deleteRevision, expect.any(AbortSignal))
+        expect(forget).toHaveBeenCalledExactlyOnceWith('docs/past')
+        expect(refresh).toHaveBeenCalledExactlyOnceWith('docs')
     } finally { await act(async () => root.unmount()) }
 })

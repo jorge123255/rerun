@@ -10,6 +10,7 @@ import type { UploadEntry } from '@/lib/files/upload'
 import { FolderIcon } from '@/lib/icons'
 import { DesktopSharedFilePreview } from './shared-files/DesktopSharedFilePreview'
 import { DesktopSharedImportResults } from './shared-files/DesktopSharedImportResults'
+import { useDesktopSharedDelete } from './shared-files/useDesktopSharedDelete'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
@@ -34,7 +35,8 @@ function messageOf(error: unknown, fallback: string): string {
     return error instanceof Error && error.message ? error.message : fallback
 }
 
-function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, directory: boolean) => void }) {
+function SharedFolder({ path, onOpen, workspaceId }: { path: string; onOpen: (path: string, directory: boolean) => void; workspaceId?: number | null }) {
+    const { deleting, remove } = useDesktopSharedDelete(workspaceId, path)
     const [entries, setEntries] = useState<DesktopSharedEntry[] | undefined>()
     const [truncated, setTruncated] = useState(false)
     const [failed, setFailed] = useState<string | null>(null)
@@ -72,7 +74,7 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
     }, [path, attempt])
 
     const upload = async (picked: UploadEntry[]) => {
-        if (importing.current || !current.current.mounted || isDesktopQuitting()) return
+        if (deleting || importing.current || !current.current.mounted || isDesktopQuitting()) return
         if (picked.length > 16) { toast.error('Import at most 16 files at a time.'); return }
         if (picked.reduce((total, entry) => total + entry.file.size, 0) > 32 * 1024 * 1024) { toast.error('Import at most 32 MB at a time.'); return }
         const controller = new AbortController()
@@ -119,7 +121,7 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
     }
 
     const retry = async (result: DesktopSharedImportResult) => {
-        if (importing.current || result.status !== 'refused' || !current.current.mounted || isDesktopQuitting()) return
+        if (deleting || importing.current || result.status !== 'refused' || !current.current.mounted || isDesktopQuitting()) return
         const folder = result.folder ?? path
         const file = originalFiles.current.get(result)
         if (!file) return
@@ -153,7 +155,7 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
     }
 
     const rename = async (name: string, next: string) => {
-        if (importing.current || !current.current.mounted || isDesktopQuitting()) return
+        if (deleting || importing.current || !current.current.mounted || isDesktopQuitting()) return
         const controller = new AbortController()
         importing.current = controller
         const release = holdDraftAdmission()
@@ -174,16 +176,21 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
     return (
         <div className="flex min-h-0 flex-1 flex-col">
             <BrainTopBar crumbs={folderCrumbs(path, next => onOpen(next, true))} status={truncated ? 'Showing the first 512 entries' : undefined} />
-            <DesktopSharedImportResults results={results} disabled={uploading} onRetry={result => void retry(result)} onOpen={path => onOpen(path, false)} />
+            <DesktopSharedImportResults results={results} disabled={uploading || deleting} onRetry={result => void retry(result)} onOpen={path => onOpen(path, false)} />
             {uploading && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">Importing files…</p>}
             {failed ? <div className="space-y-2 px-6 py-6"><p role="alert" className="text-sm text-destructive">{failed}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>Retry</Button></div> : <FileList
                 title={path.split('/').filter(Boolean).pop() ?? ROOT}
                 entries={entries}
                 onOpen={entry => onOpen(joinPath(path, entry.name), entry.type === 'dir')}
                 emptyDescription="Nothing here yet. Import text, images, audio, video, or PDFs for this workspace."
-                canRename={entry => entry.type === 'file' && !uploading}
+                canRename={entry => entry.type === 'file' && !uploading && !deleting}
                 onRename={(name, next) => void rename(name, next)}
-                uploadDisabled={uploading || !entries}
+                canDelete={entry => !!workspaceId && !!entry.deleteRevision && !uploading && !deleting}
+                onDelete={async (name, entry) => {
+                    if (!importing.current && await remove(joinPath(path, name), entry.deleteRevision)) setAttempt(value => value + 1)
+                }}
+                deleteScope="workspace"
+                uploadDisabled={uploading || deleting || !entries}
                 onUpload={picked => void upload(picked)}
             />}
         </div>
@@ -193,6 +200,7 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
 function SharedFilesPanel({ onClose, workspaceId }: { onClose: () => void; workspaceId?: number | null }) {
     const [selection, setSelection] = useState<{ kind: 'folder' | 'file'; path: string }>({ kind: 'folder', path: '' })
     const [folderEntries, setFolderEntries] = useState<DesktopSharedEntry[] | undefined>()
+    const [listingRevision, refreshListing] = useState(0)
     const folder = selection.kind === 'file' ? parentPath(selection.path) : selection.path
 
     useEffect(() => {
@@ -203,7 +211,7 @@ function SharedFilesPanel({ onClose, workspaceId }: { onClose: () => void; works
             .then(listing => { if (!controller.signal.aborted) setFolderEntries(listing.entries) })
             .catch(() => { if (!controller.signal.aborted) setFolderEntries([]) })
         return () => controller.abort()
-    }, [folder, selection.kind])
+    }, [folder, selection.kind, listingRevision])
 
     const open = (path: string, directory: boolean) => setSelection(directory ? { kind: 'folder', path } : { kind: 'file', path })
 
@@ -211,8 +219,9 @@ function SharedFilesPanel({ onClose, workspaceId }: { onClose: () => void; works
         <BrainChromeContext.Provider value={{ onClose, onToggleSidebar: null }}>
             <div className="flex min-h-0 flex-1 flex-col">
                 {selection.kind === 'folder'
-                    ? <SharedFolder path={selection.path} onOpen={open} />
-                    : <DesktopSharedFilePreview key={selection.path} path={selection.path} entries={folderEntries} onOpen={open} editWorkspaceId={workspaceId} />}
+                    ? <SharedFolder path={selection.path} onOpen={open} workspaceId={workspaceId} />
+                    : <DesktopSharedFilePreview key={selection.path} path={selection.path} entries={folderEntries} onOpen={open}
+                        editWorkspaceId={workspaceId} onTextSaved={() => refreshListing(value => value + 1)} />}
             </div>
         </BrainChromeContext.Provider>
     )

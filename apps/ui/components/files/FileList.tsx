@@ -19,7 +19,9 @@ type FileListProps = {
     onOpen: (entry: FileEntry) => void
     onRename?: (name: string, next: string) => void
     canRename?: (entry: FileEntry) => boolean
-    onDelete?: (name: string) => void
+    onDelete?: (name: string, entry: FileEntry) => void
+    canDelete?: (entry: FileEntry) => boolean
+    deleteScope?: 'box' | 'workspace'
     onDownload?: (name: string) => void
     onUpload: (entries: UploadEntry[]) => void
     emptyDescription?: string
@@ -87,7 +89,7 @@ function ListSkeleton() {
 
 // A folder of the shared folder as Notion lists a database: the folder name as the page title, one
 // line per entry, actions on hover, and the whole page as a drop zone.
-export function FileList({ title, entries, onOpen, onRename, canRename, onDelete, onDownload, onUpload, emptyDescription, uploadDisabled = false }: FileListProps) {
+export function FileList({ title, entries, onOpen, onRename, canRename, onDelete, canDelete, deleteScope = 'box', onDownload, onUpload, emptyDescription, uploadDisabled = false }: FileListProps) {
     const [renaming, setRenaming] = useState<string | null>(null)
     const renameAfterClose = useRef<string | null>(null)
     const [deleting, setDeleting] = useState<FileEntry | null>(null)
@@ -170,7 +172,7 @@ export function FileList({ title, entries, onOpen, onRename, canRename, onDelete
                                     </span>
                                     <span className="text-right text-xs tabular-nums text-muted-foreground max-sm:hidden">{entry.type === 'dir' ? '' : formatBytes(entry.size)}</span>
                                     <span className="truncate text-xs text-muted-foreground max-sm:hidden">{kindLabel(entry)}</span>
-                                    {(renameAllowed || onDelete || entry.type !== 'dir' && onDownload) && <DropdownMenu>
+                                    {(renameAllowed || onDelete && (!canDelete || canDelete(entry)) || entry.type !== 'dir' && onDownload) && <DropdownMenu>
                                         <DropdownMenuTrigger asChild>
                                             <Button
                                                 size="icon-xs"
@@ -197,7 +199,7 @@ export function FileList({ title, entries, onOpen, onRename, canRename, onDelete
                                             {renameAllowed && <DropdownMenuItem onSelect={() => { renameAfterClose.current = entry.name }}>
                                                 <PencilIcon /> Rename
                                             </DropdownMenuItem>}
-                                            {onDelete && <><DropdownMenuSeparator />
+                                            {onDelete && (!canDelete || canDelete(entry)) && <><DropdownMenuSeparator />
                                             <DropdownMenuItem variant="destructive" onSelect={() => setDeleting(entry)}>
                                                 <Trash2Icon /> Delete
                                             </DropdownMenuItem></>}
@@ -214,9 +216,9 @@ export function FileList({ title, entries, onOpen, onRename, canRename, onDelete
                 open={deleting !== null}
                 onOpenChange={open => !open && setDeleting(null)}
                 title={`Delete ${deleting?.name ?? ''}?`}
-                description={deleting?.type === 'dir' ? 'The folder and everything inside it are deleted from the box. This cannot be undone.' : 'The file is deleted from the box. This cannot be undone.'}
+                description={`${deleting?.type === 'dir' ? 'The folder and everything inside it are' : 'The file is'} deleted from the ${deleteScope}. This cannot be undone.`}
                 onConfirm={() => {
-                    if (deleting) onDelete?.(deleting.name)
+                    if (deleting && (!canDelete || canDelete(deleting))) onDelete?.(deleting.name, deleting)
                     setDeleting(null)
                 }}
             />

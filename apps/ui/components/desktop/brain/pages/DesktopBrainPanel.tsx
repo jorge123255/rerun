@@ -520,7 +520,7 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
             case 'proposals':
                 return renderProposals ? <>{renderProposals()}</> : <BrainTopBar crumbs={[{ label: t('crumbs.brain'), icon: BrainIcon }]} />
             case 'folder':
-                return <DesktopBrainFolder key={dropWorkspace} path={selection.path} files={files} onSelect={select} onUpload={uploadFiles} importResults={importResults} importing={importing} onRetryImport={result => void retryImport(result)} />
+                return <DesktopBrainFolder key={dropWorkspace} path={selection.path} files={files} onSelect={select} onUpload={uploadFiles} importResults={importResults} importing={importing} onRetryImport={result => void retryImport(result)} workspaceId={workspaceId} />
             case 'file':
                 return <DesktopBrainFile path={selection.path} files={files} onSelect={select} workspaceId={workspaceId} />
             case 'database':

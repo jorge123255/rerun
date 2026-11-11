@@ -8,9 +8,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 export type DesktopSharedFilesTree = SharedFilesTree & {
     truncatedOf: (dir: string) => boolean
+    forget: (dir: string) => void
 }
 
-const toEntry = (entry: DesktopSharedEntry): FileEntry => ({ name: entry.name, type: entry.type, size: entry.size, modified: entry.modified })
+const toEntry = (entry: DesktopSharedEntry): FileEntry => ({ ...entry })
 
 /**
  * The shared-folder tree the Brain sidebar and the folder page both read.
@@ -22,17 +23,33 @@ export function useDesktopSharedFilesTree(): DesktopSharedFilesTree {
     const [truncated, setTruncated] = useState<Record<string, boolean>>({})
     const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
     const requested = useRef(new Set<string>())
+    const loads = useRef(new Map<string, symbol>())
 
     const refresh = useCallback(async (dir: string) => {
         requested.current.add(dir)
+        const token = Symbol()
+        loads.current.set(dir, token)
         try {
             const listing = await listDesktopSharedFolder(dir)
+            if (loads.current.get(dir) !== token) return
             setListings(current => ({ ...current, [dir]: sortFileEntries(listing.entries.map(toEntry)) }))
             setTruncated(current => ({ ...current, [dir]: listing.truncated }))
         } catch {
+            if (loads.current.get(dir) !== token) return
             setListings(current => ({ ...current, [dir]: [] }))
             setTruncated(current => ({ ...current, [dir]: false }))
+        } finally {
+            if (loads.current.get(dir) === token) loads.current.delete(dir)
         }
+    }, [])
+
+    const forget = useCallback((dir: string) => {
+        const outside = (value: string) => value !== dir && !value.startsWith(dir + '/')
+        for (const key of requested.current) if (!outside(key)) requested.current.delete(key)
+        for (const key of loads.current.keys()) if (!outside(key)) loads.current.delete(key)
+        setListings(current => Object.fromEntries(Object.entries(current).filter(([key]) => outside(key))))
+        setTruncated(current => Object.fromEntries(Object.entries(current).filter(([key]) => outside(key))))
+        setExpanded(current => new Set([...current].filter(outside)))
     }, [])
 
     const load = useCallback((dir: string) => {
@@ -63,5 +80,5 @@ export function useDesktopSharedFilesTree(): DesktopSharedFilesTree {
     const truncatedOf = useCallback((dir: string) => truncated[dir] ?? false, [truncated])
     const knownFiles = useMemo(() => Object.entries(listings).flatMap(([dir, entries]) => entries.filter(entry => entry.type !== 'dir').map(entry => ({ path: joinPath(dir, entry.name), name: entry.name }))), [listings])
 
-    return { entriesOf, expanded, toggle, expand, refresh, knownFiles, truncatedOf }
+    return { entriesOf, expanded, toggle, expand, refresh, knownFiles, truncatedOf, forget }
 }

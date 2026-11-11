@@ -1,5 +1,5 @@
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
-import { SHARED_IMPORT_BYTES, importDesktopSharedFile, listDesktopSharedFiles, renameDesktopSharedFile, replaceDesktopSharedText, rethrowDesktopSharedFileError } from '@/lib/desktop/server/shared-workspace-files'
+import { SHARED_IMPORT_BYTES, deleteDesktopSharedFile, importDesktopSharedFile, listDesktopSharedFiles, renameDesktopSharedFile, replaceDesktopSharedText, rethrowDesktopSharedFileError } from '@/lib/desktop/server/shared-workspace-files'
 import { z } from 'zod'
 import { readDesktopJson } from '@/lib/desktop/server/request-json'
 import { desktopRoute } from '@/lib/desktop/server/http'
@@ -104,5 +104,22 @@ export function PUT(request: Request) {
         const signal = AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])
         const result = await replaceDesktopSharedText(runtime, workspaceId, { path, content, ...base }, signal)
         return Response.json({ ...result, workspaceId }, { headers: { 'cache-control': 'no-store' } })
+    })
+}
+
+const deleteInput = z.strictObject({
+    workspaceId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    path: z.string().min(1).max(4096),
+    revision: z.string().regex(/^[a-f0-9]{64}$/),
+})
+
+export function DELETE(request: Request) {
+    return desktopRoute(request, async runtime => {
+        const parsed = deleteInput.safeParse(await readDesktopJson(request, 16 * 1024))
+        if (!parsed.success) throw new DesktopHttpError(400, 'Choose a listed shared file or folder.')
+        const { workspaceId, path, revision } = parsed.data
+        const signal = AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])
+        const removed = await deleteDesktopSharedFile(runtime, workspaceId, path, revision, signal)
+        return Response.json({ ...removed, workspaceId }, { headers: { 'cache-control': 'no-store' } })
     })
 }

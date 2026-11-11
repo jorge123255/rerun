@@ -6,6 +6,7 @@ import { BrainTopBar, type BrainCrumb } from '@/components/brain/BrainTopBar'
 import { joinPath, parentPath, type SharedFilesTree } from '@/components/brain/useSharedFilesTree'
 import { DesktopSharedFilePreview } from '@/components/desktop/shared-files/DesktopSharedFilePreview'
 import { DesktopSharedImportResults } from '@/components/desktop/shared-files/DesktopSharedImportResults'
+import { useDesktopSharedDelete } from '@/components/desktop/shared-files/useDesktopSharedDelete'
 import { FileList } from '@/components/files/FileList'
 import { renameDesktopSharedFile, type DesktopSharedEntry, type DesktopSharedImportResult } from '@/lib/desktop/shared-workspace-files'
 import type { UploadEntry } from '@/lib/files/upload'
@@ -28,18 +29,20 @@ function truncatedOf(files: SharedFilesTree, dir: string): boolean {
 }
 
 /** The shared folder, through the same list the sidebar already loaded. Rename reuses the authorized file-only API and inline menu. */
-export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResults, importing, onRetryImport }: {
+export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResults, importing, onRetryImport, workspaceId }: {
     path: string
-    files: SharedFilesTree
+    files: SharedFilesTree & { forget?: (dir: string) => void }
     onSelect: (selection: BrainSelection) => void
     onUpload: (entries: UploadEntry[], dir: string) => void
     importResults: readonly DesktopSharedImportResult[]
     importing: boolean
     onRetryImport: (result: DesktopSharedImportResult) => void
+    workspaceId?: number | null
 }) {
     const t = useBrainTranslations()
     const rootLabel = t('files.root')
     const { expand } = files
+    const { deleting, remove } = useDesktopSharedDelete(workspaceId, path)
     const pending = useRef<AbortController | null>(null)
     const scope = useRef(path)
     scope.current = path
@@ -50,7 +53,7 @@ export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResu
     }, [])
     useEffect(() => { pending.current?.abort(); setRenaming(false) }, [path])
     const rename = async (name: string, next: string) => {
-        if (pending.current || importing || isDesktopQuitting() || !files.entriesOf(path)?.some(entry => entry.name === name && entry.type !== 'dir')) return
+        if (pending.current || importing || deleting || isDesktopQuitting() || !files.entriesOf(path)?.some(entry => entry.name === name && entry.type !== 'dir')) return
         const controller = new AbortController()
         pending.current = controller
         setRenaming(true)
@@ -76,16 +79,24 @@ export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResu
     return (
         <div className="flex min-h-0 flex-1 flex-col">
             <BrainTopBar crumbs={folderCrumbs(path, rootLabel, onSelect)} status={truncatedOf(files, path) ? 'Showing the first 512 entries' : undefined} />
-            <DesktopSharedImportResults results={results} disabled={importing} onRetry={onRetryImport} onOpen={next => onSelect({ kind: 'file', path: next })} />
+            <DesktopSharedImportResults results={results} disabled={importing || deleting} onRetry={onRetryImport} onOpen={next => onSelect({ kind: 'file', path: next })} />
             {importing && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">Importing files…</p>}
             <FileList
                 title={path.split('/').filter(Boolean).pop() ?? rootLabel}
                 entries={files.entriesOf(path)}
                 onOpen={entry => onSelect({ kind: entry.type === 'dir' ? 'folder' : 'file', path: joinPath(path, entry.name) })}
                 onRename={(name, next) => void rename(name, next)}
-                canRename={entry => entry.type !== 'dir' && !importing && !renaming}
+                canRename={entry => entry.type !== 'dir' && !importing && !renaming && !deleting}
+                canDelete={entry => !!workspaceId && !!entry.deleteRevision && !importing && !renaming && !deleting}
+                onDelete={async (name, entry) => {
+                    const target = joinPath(path, name)
+                    if (pending.current || importing || !await remove(target, entry.deleteRevision)) return
+                    if (entry.type === 'dir') files.forget?.(target)
+                    await files.refresh(path)
+                }}
+                deleteScope="workspace"
                 onUpload={entries => onUpload(entries, path)}
-                uploadDisabled={importing || renaming}
+                uploadDisabled={importing || renaming || deleting}
                 emptyDescription="Nothing here yet. Import text, images, audio, video, or PDFs for this workspace."
             />
         </div>
@@ -98,7 +109,7 @@ export function DesktopBrainFile({ path, files, onSelect, workspaceId }: { path:
     const { expand } = files
     useEffect(() => { expand(dir) }, [dir, expand])
     const listed = files.entriesOf(dir)
-    const entries: DesktopSharedEntry[] | undefined = listed?.map(entry => ({ name: entry.name, type: entry.type === 'dir' ? 'dir' : 'file', size: entry.size, modified: entry.modified }))
+    const entries: DesktopSharedEntry[] | undefined = listed?.map(entry => ({ ...entry, type: entry.type === 'dir' ? 'dir' : 'file' }))
 
     return <DesktopSharedFilePreview
         key={JSON.stringify([workspaceId, path])}
@@ -106,6 +117,7 @@ export function DesktopBrainFile({ path, files, onSelect, workspaceId }: { path:
         entries={entries}
         editWorkspaceId={workspaceId}
         onTextSaved={() => { void files.refresh(dir) }}
+        onDeleted={() => { void files.refresh(dir) }}
         onOpen={(next, directory) => onSelect(directory ? { kind: 'folder', path: next } : { kind: 'file', path: next })}
     />
 }

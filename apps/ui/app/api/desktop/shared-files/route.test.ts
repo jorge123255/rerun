@@ -1,4 +1,4 @@
-import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest'
@@ -9,7 +9,7 @@ import { setDesktopWorkspaceFrozen } from '@/lib/desktop/server/workspace-admiss
 vi.mock('server-only', () => ({}))
 
 import { GET as readShared } from './read/route'
-import { GET, POST, PUT } from './route'
+import { DELETE, GET, POST, PUT } from './route'
 
 const env = { ...process.env }
 const origin = 'http://127.0.0.1:3189'
@@ -139,6 +139,77 @@ test('rejects an oversized multipart stream before parsing, even without Content
     expect(response.status).toBe(413)
     expect(cancelled).toHaveBeenCalledOnce()
     expect(await (await GET(request('?path='))).json()).toMatchObject({ entries: [] })
+})
+
+const deleteRevision = async (folder: string, name: string): Promise<string> => {
+    const { entries } = await (await GET(request('?path=' + encodeURIComponent(folder)))).json() as { entries: { name: string; deleteRevision?: string }[] }
+    const revision = entries.find(entry => entry.name === name)?.deleteRevision
+    expect(revision).toMatch(/^[a-f0-9]{64}$/)
+    return revision!
+}
+const deleteShared = (path: string, revision: string, workspaceId = 1, headers = request('').headers) =>
+    DELETE(new Request(request('').url, { method: 'DELETE', headers, body: JSON.stringify({ workspaceId, path, revision }) }))
+
+test('deletes the exact preview and a listed folder under active workspace authority', async () => {
+    expect((await POST(request('', 'POST', form('note.txt', 'old', 'handoff')))).status).toBe(201)
+    expect((await POST(request('', 'POST', form('keep.txt', 'keep', '')))).status).toBe(201)
+    const revision = await deleteRevision('handoff', 'note.txt')
+    expect(await (await readShared(request('/read?path=handoff/note.txt'))).json()).toMatchObject({ deleteRevision: revision })
+    const unauthorized = request('').headers
+    unauthorized.delete('cookie')
+    expect((await deleteShared('handoff/note.txt', revision, 1, unauthorized)).status).toBe(401)
+    expect((await deleteShared('handoff/note.txt', revision, 2)).status).toBe(409)
+    const runtime = await readDesktopRuntime()
+    setDesktopWorkspaceFrozen(runtime, true)
+    try { expect((await deleteShared('handoff/note.txt', revision)).status).toBe(409) }
+    finally { setDesktopWorkspaceFrozen(runtime, false) }
+    const removed = await deleteShared('handoff/note.txt', revision)
+    expect(removed.status).toBe(200)
+    expect(await removed.json()).toEqual({ path: 'handoff/note.txt', workspaceId: 1 })
+    expect((await readShared(request('/read?path=handoff/note.txt'))).status).toBe(404)
+    await POST(request('', 'POST', form('more.txt', 'inside', 'handoff/nested')))
+    const folder = await deleteRevision('', 'handoff')
+    expect((await deleteShared('handoff', folder)).status).toBe(200)
+    const shared = join(root, 'workspaces', '1', 'engine', 'shared')
+    expect((await readdir(shared)).filter(name => !name.startsWith('.'))).toEqual(['keep.txt'])
+    expect(await readFile(join(shared, 'keep.txt'), 'utf8')).toBe('keep')
+})
+
+test('preserves replacements, edited content, linked entries, and other coworker files', async () => {
+    const shared = join(root, 'workspaces', '1', 'engine', 'shared')
+    const secret = join(root, 'workspaces', '1', 'engine', 'agents', 'alice', 'workspace', 'secret.txt')
+    expect((await POST(request('', 'POST', form('note.txt', 'old', 'handoff')))).status).toBe(201)
+    const revision = await deleteRevision('handoff', 'note.txt')
+    const note = join(shared, 'handoff', 'note.txt')
+    await writeFile(note, 'edited')
+    expect((await deleteShared('handoff/note.txt', revision)).status).toBe(409)
+    expect(await readFile(note, 'utf8')).toBe('edited')
+    const edited = await deleteRevision('handoff', 'note.txt')
+    await rename(note, join(shared, 'handoff', 'original.txt'))
+    await writeFile(note, 'replacement')
+    expect((await deleteShared('handoff/note.txt', edited)).status).toBe(409)
+    expect(await readFile(note, 'utf8')).toBe('replacement')
+    expect((await deleteShared('../agents/alice/workspace/secret.txt', revision)).status).toBe(400)
+    await symlink(join(shared, 'handoff'), join(shared, 'redirect'))
+    expect((await deleteShared('redirect/note.txt', edited)).status).toBe(400)
+    await link(secret, join(shared, 'handoff', 'alias.txt'))
+    const folder = await deleteRevision('', 'handoff')
+    expect((await deleteShared('handoff', folder)).status).toBe(409)
+    expect(await readFile(note, 'utf8')).toBe('replacement')
+    expect(await readFile(secret, 'utf8')).toBe('private-only')
+})
+
+test('a new authenticated listing recovers an interrupted shared removal', async () => {
+    await POST(request('', 'POST', form('note.txt', 'old', 'handoff')))
+    await POST(request('', 'POST', form('keep.txt', 'keep', 'handoff')))
+    const revision = await deleteRevision('handoff', 'note.txt')
+    vi.stubEnv('RERUN_FILE_DELETE_CRASH', 'staged')
+    try { expect((await deleteShared('handoff/note.txt', revision)).status).toBe(500) }
+    finally { vi.unstubAllEnvs() }
+    const { entries } = await (await GET(request('?path=handoff'))).json()
+    expect(entries.map((entry: { name: string }) => entry.name)).toEqual(['keep.txt'])
+    const folder = join(root, 'workspaces', '1', 'engine', 'shared', 'handoff')
+    expect(await readdir(folder)).toEqual(['keep.txt'])
 })
 
 test('an aborted multipart stream is cancelled without importing a file', async () => {

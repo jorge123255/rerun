@@ -1,4 +1,4 @@
-import { constants } from 'node:fs'
+import { constants, type BigIntStats } from 'node:fs'
 import { createHash, randomBytes } from 'node:crypto'
 import { lstat, mkdir, open, readdir, realpath, unlink, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'node:path'
@@ -28,9 +28,9 @@ export class SharedWorkspaceFileError extends Error {
     }
 }
 
-export type SharedDirectoryEntry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string }
-export type SharedDirectoryListing = { path: string; entries: SharedDirectoryEntry[]; truncated: boolean }
-export type SharedTextPage = { path: string; content: string; size: number; truncated: boolean; offset: number; nextOffset: number | null; editIdentity: { expectedBytes: number; expectedSha256: string } | null }
+export type SharedDirectoryEntry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; deleteRevision?: string }
+export type SharedDirectoryListing = { path: string; entries: SharedDirectoryEntry[]; truncated: boolean; hasPendingDelete?: true }
+export type SharedTextPage = { path: string; content: string; size: number; truncated: boolean; offset: number; nextOffset: number | null; editIdentity: { expectedBytes: number; expectedSha256: string } | null; deleteRevision?: string }
 export type SharedImportResult = { path: string; name: string }
 export type SharedFileAccess = { signal?: AbortSignal; beforeCommit?: () => Promise<void> | void }
 
@@ -81,6 +81,15 @@ function mapFs(error: unknown, folder = false): SharedWorkspaceFileError {
 
 function stamp(mtimeNs: bigint): string {
     return new Date(Number(mtimeNs / BigInt(1_000_000))).toISOString()
+}
+
+export function sharedDeleteRevision(info: BigIntStats): string {
+    return createHash('sha256').update([info.dev, info.ino, info.mode, info.uid, info.nlink, info.size, info.mtimeNs, info.ctimeNs].join(':')).digest('hex')
+}
+
+export function assertSharedDeleteEntry(info: BigIntStats): void {
+    if (info.uid !== currentUid()) throw otherUser()
+    if (info.isFile() && info.nlink !== BigInt(1)) throw new SharedWorkspaceFileError(409, 'This shared file is linked elsewhere. It was left unchanged.')
 }
 
 const MEDIA_IMPORT_NAME = /\.(png|jpe?g|gif|webp|wav|mp3|m4a|ogg|flac|mp4|webm|mov|m4v|pdf)$/i
@@ -286,7 +295,7 @@ export async function resolveEngineSharedDirectory(engineDataDir: string, signal
     } catch (error) { rethrow(error) }
 }
 
-export async function listSharedDirectory(root: string, path: string, access?: SharedFileAccess): Promise<SharedDirectoryListing> {
+export async function listSharedDirectory(root: string, path: string, access?: SharedFileAccess & { deleteMetadata?: boolean }): Promise<SharedDirectoryListing> {
     let rel = ''
     try { rel = partsOf(path, 'root').join('/'); assertTrustedRoot(root) }
     catch (error) { rethrow(error, true) }
@@ -302,18 +311,22 @@ export async function listSharedDirectory(root: string, path: string, access?: S
                 const entries: SharedDirectoryEntry[] = []
                 let visited = 0
                 let truncated = false
-                for (const name of await readdir(/* turbopackIgnore: true */ child.pin.pinned)) {
+                const names = await readdir(/* turbopackIgnore: true */ child.pin.pinned)
+                const hasPendingDelete = access?.deleteMetadata && names.some(name => /^\.rerun-delete-[a-f0-9]{24}\.json$/.test(name))
+                for (const name of names) {
                     throwIfAborted(access?.signal)
                     if (++visited > LIST_VISIT_LIMIT || entries.length >= SHARED_LIST_LIMIT) { truncated = true; break }
                     if (!PART.test(name)) continue
                     const info = await lstat(join(/* turbopackIgnore: true */ child.pin.pinned, name), { bigint: true }).catch(error => { if (missing(error)) return null; throw error })
                     if (!info || info.isSymbolicLink() || info.uid !== currentUid()) continue
-                    if (info.isDirectory()) entries.push({ name, type: 'dir', size: 0, modifiedAt: stamp(info.mtimeNs) })
-                    else if (info.isFile() && info.nlink === BigInt(1)) entries.push({ name, type: 'file', size: Number(info.size), modifiedAt: stamp(info.mtimeNs) })
+                    if (info.isDirectory() || info.isFile() && info.nlink === BigInt(1)) entries.push({
+                        name, type: info.isDirectory() ? 'dir' : 'file', size: info.isDirectory() ? 0 : Number(info.size), modifiedAt: stamp(info.mtimeNs),
+                        ...(access?.deleteMetadata && { deleteRevision: sharedDeleteRevision(info) }),
+                    })
                 }
                 entries.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1))
                 await assertPin(child.pin)
-                return { path: child.rel, entries, truncated }
+                return { path: child.rel, entries, truncated, ...(hasPendingDelete && { hasPendingDelete: true as const }) }
             } finally { if (child.close) await child.pin.handle.close() }
         }, true)
     } catch (error) { rethrow(error, true) }
@@ -398,7 +411,9 @@ async function readSharedTextPage(root: string, path: string, offset: number, au
             const editIdentity = size <= 256 * 1024 && read === size
                 ? { expectedBytes: size, expectedSha256: createHash('sha256').update(bytes).digest('hex') }
                 : null
-            return { path: rel, content, size, truncated, offset, nextOffset: truncated ? end : null, editIdentity }
+            return { path: rel, content, size, truncated, offset, nextOffset: truncated ? end : null, editIdentity,
+                ...(audience === 'editor' && { deleteRevision: sharedDeleteRevision(after) }),
+            }
         } finally {
             await handle?.close()
             if (child.close) await child.pin.handle.close()
@@ -539,9 +554,30 @@ export function withSharedPublicationLease<T>(root: string, signal: AbortSignal 
     }, false, true)
 }
 
+export function withSharedDeleteFolder<T>(root: string, path: string, access: SharedFileAccess,
+    action: (folder: Pin, rootPin: Pin, assertCurrent: () => Promise<void>) => Promise<T>): Promise<T> {
+    const parts = partsOf(path, 'root')
+    return withSharedPublicationLease(root, access.signal, async (guard, rootPin) => {
+        const { pin, close } = await descend(root, rootPin, parts, access.signal)
+        const assertCurrent = async () => {
+            await commit(access)
+            await guard()
+            await assertPin(pin, true)
+        }
+        try {
+            await assertCurrent()
+            return await action(pin, rootPin, assertCurrent)
+        } finally { if (close) await pin.handle.close() }
+    })
+}
+
+export function sharedDeleteParentPath(path: string): string {
+    return partsOf(path, 'reject').slice(0, -1).join('/')
+}
+
 export type SharedTextReplacement = { path: string; content: string; expectedBytes: number; expectedSha256: string }
 export type SharedTextReplacementResult = {
-    ok: true; path: string; size: number; editIdentity: NonNullable<SharedTextPage['editIdentity']>; recoveryPath?: string
+    ok: true; path: string; size: number; editIdentity: NonNullable<SharedTextPage['editIdentity']>; recoveryPath?: string; deleteRevision?: string
 }
 
 /** Stage complete UTF-8, then publish while retaining the displaced inode. */
@@ -587,7 +623,7 @@ export async function replaceSharedText(root: string, input: SharedTextReplaceme
                         && entry.size === original.size && entry.nlink === singleLink && entry.isFile() && entry.uid === currentUid()
                 }
                 if (!await sameOriginal()) throw conflict()
-                if (preview.content === input.content) return { ok: true, path, size: bytes.length, editIdentity }
+                if (preview.content === input.content) return { ok: true, path, size: bytes.length, editIdentity, deleteRevision: preview.deleteRevision }
                 if ((await readdir(/* turbopackIgnore: true */ parent.pinned)).filter(value => value.startsWith('.rerun-shared-replace-')).length >= 16) {
                     throw new SharedWorkspaceFileError(409, 'Unfinished text saves need review before another save.')
                 }
@@ -614,7 +650,7 @@ export async function replaceSharedText(root: string, input: SharedTextReplaceme
                     || confirmed.editIdentity.expectedBytes !== editIdentity.expectedBytes
                     || entry.dev !== staged.dev || entry.ino !== staged.ino || entry.nlink !== singleLink) throw new Error('Native replacement readback changed')
                 const recoveryPath = [...parts.slice(0, -1), recovery].join('/')
-                return { ok: true, path, size: bytes.length, editIdentity, recoveryPath }
+                return { ok: true, path, size: bytes.length, editIdentity, recoveryPath, deleteRevision: confirmed.deleteRevision }
             } finally {
                 await handle?.close()
                 if (!publicationUncertain && staged) {

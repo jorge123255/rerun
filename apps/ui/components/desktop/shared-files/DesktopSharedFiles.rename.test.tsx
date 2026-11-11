@@ -4,8 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { DesktopSharedFiles } from '../DesktopSharedFiles'
 
-const api = vi.hoisted(() => ({ list: vi.fn(), read: vi.fn(), upload: vi.fn(), rename: vi.fn(), error: vi.fn() }))
-vi.mock('@/lib/desktop/shared-workspace-files', () => ({ listDesktopSharedFolder: api.list, readDesktopSharedPreview: api.read, importDesktopSharedFiles: api.upload, renameDesktopSharedFile: api.rename }))
+const api = vi.hoisted(() => ({ list: vi.fn(), read: vi.fn(), upload: vi.fn(), rename: vi.fn(), remove: vi.fn(), error: vi.fn() }))
+vi.mock('@/lib/desktop/shared-workspace-files', () => ({ listDesktopSharedFolder: api.list, readDesktopSharedPreview: api.read, importDesktopSharedFiles: api.upload, renameDesktopSharedFile: api.rename, deleteDesktopSharedEntry: api.remove }))
 vi.mock('sonner', () => ({ toast: { error: api.error } }))
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -30,6 +30,7 @@ beforeEach(() => {
     api.read.mockReset()
     api.upload.mockReset()
     api.rename.mockReset()
+    api.remove.mockReset()
     api.error.mockReset()
 })
 afterEach(async () => {
@@ -95,4 +96,62 @@ test('keeps both names and reports a collision without refreshing away the sourc
     expect(api.error).toHaveBeenCalledWith('The existing file was kept.')
     expect(button('brief.md')).toBeDefined()
     expect(button('taken.md')).toBeDefined()
+})
+
+test('preview Delete cancels without changing the file, then deletes the exact revision and returns to the folder', async () => {
+    const revision = 'c'.repeat(64)
+    let present = true
+    const keep = { name: 'keep.txt', type: 'file', size: 4, modified: '', deleteRevision: 'a'.repeat(64) }
+    const note = { name: 'note.txt', type: 'file', size: 5, modified: '', deleteRevision: revision }
+    api.list.mockImplementation(async (path: string) => ({ path, entries: present ? [note, keep] : [keep], truncated: false }))
+    api.read.mockResolvedValue({ path: 'note.txt', content: 'hello', size: 5, truncated: false, deleteRevision: revision })
+    api.remove.mockImplementation(async () => { present = false })
+    await act(async () => {
+        root = createRoot(document.body.appendChild(document.createElement('div')))
+        root.render(<DesktopSharedFiles workspaceId={7} />)
+    })
+    await click('Shared files')
+    await click('note.txt')
+    await click('Delete file')
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('deleted from the workspace')
+    await click('Cancel')
+    expect(api.remove).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('hello')
+    await click('Delete file')
+    await click('Delete')
+    expect(api.remove).toHaveBeenCalledOnce()
+    expect(api.remove).toHaveBeenCalledWith(7, 'note.txt', revision, expect.any(AbortSignal))
+    expect(button('note.txt')).toBeUndefined()
+    expect(button('keep.txt')).toBeDefined()
+})
+
+test('folder Delete uses the revision shown before confirmation', async () => {
+    const original = '1'.repeat(64)
+    const revised = '2'.repeat(64)
+    let version = original
+    api.list.mockImplementation(async (path: string) => ({
+        path, entries: [{ name: 'docs', type: 'dir', size: 0, modified: '', deleteRevision: version }], truncated: false,
+    }))
+    api.remove.mockRejectedValue(new Error('“docs” changed since it was selected. It was left unchanged.'))
+    await act(async () => {
+        root = createRoot(document.body.appendChild(document.createElement('div')))
+        root.render(<DesktopSharedFiles workspaceId={7} />)
+    })
+    await click('Shared files')
+    await act(async () => {
+        const trigger = button('Actions for docs')!
+        trigger.focus()
+        trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    })
+    await flush()
+    const action = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent?.trim() === 'Delete')
+    expect(action).toBeDefined()
+    await act(async () => { action!.click() })
+    await flush()
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('folder and everything inside it')
+    version = revised
+    await click('Delete')
+    expect(api.remove).toHaveBeenCalledWith(7, 'docs', original, expect.any(AbortSignal))
+    expect(button('docs')).toBeDefined()
+    expect(api.error).toHaveBeenCalledWith(expect.stringContaining('left unchanged'))
 })
