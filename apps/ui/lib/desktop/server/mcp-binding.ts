@@ -32,6 +32,7 @@ import { abortable, boundedText, remoteMcpRuntime } from './mcp/remote'
 import { remoteMcpStore, bindRemoteTransportDrain } from './mcp/store'
 import { initializeDesktopMcp } from './mcp/schema'
 import { loopbackMcpOAuth } from './mcp/oauth-loopback'
+import { createMcpOAuthAttempts } from './mcp/oauth-attempt'
 import { createDesktopMcpBrowserApprovals } from './mcp-sign-in/browser-approval'
 import { loopbackOAuthApi } from './mcp/oauth-api'
 import { desktopMcpBridge, desktopMcpBridgeRequest, type McpRunIdentity } from './mcp/bridge'
@@ -92,7 +93,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         signal.throwIfAborted()
         return { enabled: detail.config.enabled, granted: detail.config.tools.desktopToolGrants?.[grant] === true && (grant !== 'privateFileWrite' || detail.config.tools.filesystem === true) && (grant !== 'sharedFilesWrite' || detail.config.tools.shared !== false) }
     }
-    const oauth = loopbackMcpOAuth(store, access, undefined, store)
+    const oauth = loopbackMcpOAuth(store, access, undefined, store, createMcpOAuthAttempts(db))
     const material: DesktopMcpMaterialSource = (...args) => references.material(...args)
     const remote = remoteMcpRuntime(store, access, fetch, oauth.credential, material)
     const authorizeRun = async (identity: McpRunIdentity, stop: AbortSignal, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' | 'services' | 'webSearch' | 'sharedFilesWrite' = 'mcp') => {

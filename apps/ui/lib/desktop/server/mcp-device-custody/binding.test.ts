@@ -9,6 +9,7 @@ import { createEncryptedDeviceCustodyStore, desktopMcpDeviceCustodySchema } from
 import { deviceApprovalSchema, type DeviceApproval } from './model'
 import { remoteMcpStore, remoteMcpOAuthSchema } from '../mcp/store'
 import { credentialGenerationToken } from '../mcp/credential-generation'
+import { createMcpOAuthAttempts, remoteMcpOAuthAttemptSchema } from '../mcp/oauth-attempt'
 import { desktopMcpSignInDecisionSchema } from '../../../../../../packages/contracts/src/desktop-mcp-sign-in'
 
 const databases: Client[] = []
@@ -26,7 +27,7 @@ async function fixture() {
     await db.executeMultiple(`CREATE TABLE desktop_agents(id TEXT PRIMARY KEY); INSERT INTO desktop_agents VALUES('agent');
         CREATE TABLE desktop_remote_mcp(id TEXT,transport TEXT,agent_id TEXT,name TEXT,url TEXT,revision TEXT,bearer TEXT, PRIMARY KEY(agent_id,name));
         INSERT INTO desktop_remote_mcp VALUES('registration','http','agent','docs','https://docs.example/mcp','r1',NULL);
-        ${remoteMcpOAuthSchema} ${desktopMcpDeviceCustodySchema}`)
+        ${remoteMcpOAuthSchema} ${remoteMcpOAuthAttemptSchema} ${desktopMcpDeviceCustodySchema}`)
     const key = () => Buffer.alloc(32, 29), store = remoteMcpStore(db, key)
     const initial = (await store.credentialState('agent', 'docs'))!
     const identity = { engineAgentId: 'engine', sessionId: 'chat', runId: 'run' }
@@ -84,6 +85,26 @@ it('a credential write with failed probe never announces a successful connection
     expect(JSON.stringify(response)).not.toContain('OFFLINE_')
     expect(await f.store.readOAuth('agent', 'docs')).not.toBeNull()
     f.binding.dispose()
+})
+
+it('keeps pending device ownership across database reopen and releases it only on exact cancellation', async () => {
+    const f = await fixture()
+    await expect(f.binding.dispatch(f.request, f.signal)).resolves.toMatchObject({ result: { view: { state: 'waiting' } } })
+    f.binding.dispose()
+    const reopened = f.open()
+    const attempts = createMcpOAuthAttempts(reopened, f.options.now)
+    const browser = { owner: 'agent', name: 'docs', registrationId: 'registration', revision: 'r1', method: 'browser' as const, attemptId: 'browser-id' }
+    const deadline = f.options.now() + 300_000
+    await expect(attempts.reserve(browser, deadline)).rejects.toThrow('already in progress')
+    const restored = bindApprovedMcpDeviceCustody({ ...f.options, db: reopened })
+    try {
+        await restored.stop({ ...f.approval, approvalId: 'older-review' })
+        await expect(attempts.reserve(browser, deadline)).rejects.toThrow('already in progress')
+        await restored.stop(f.approval)
+        await attempts.reserve(browser, deadline)
+        await restored.stop(f.approval)
+        await attempts.assertCurrent(browser)
+    } finally { restored.dispose() }
 })
 
 it('preserves a newer credential written by another connection during a device poll', async () => {

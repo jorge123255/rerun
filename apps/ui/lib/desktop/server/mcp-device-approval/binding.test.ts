@@ -8,6 +8,7 @@ import type { DeviceReviewAuthority } from './service'
 import { desktopMcpDeviceReviewSchema } from './store'
 import { remoteMcpOAuthSchema, remoteMcpStore } from '../mcp/store'
 import { credentialGenerationToken } from '../mcp/credential-generation'
+import { remoteMcpOAuthAttemptSchema } from '../mcp/oauth-attempt'
 import type { OAuthDeviceForm } from '../mcp/oauth-network'
 import { bindApprovedMcpDeviceCustody } from '../mcp-device-custody/binding'
 import { createMcpDeviceBroker } from '../mcp-device-custody/broker'
@@ -31,7 +32,7 @@ async function fixture(kind: ApprovedDeviceMethod['kind'] = 'device-code-link-v1
     await db.executeMultiple(`CREATE TABLE desktop_agents(id TEXT PRIMARY KEY); INSERT INTO desktop_agents VALUES('coworker');
         CREATE TABLE desktop_remote_mcp(id TEXT, transport TEXT, agent_id TEXT, name TEXT, url TEXT, revision TEXT, bearer TEXT, PRIMARY KEY(agent_id,name));
         INSERT INTO desktop_remote_mcp VALUES('registration','http','coworker','docs','https://docs.example/mcp','r1',NULL);
-        ${remoteMcpOAuthSchema} ${desktopMcpDeviceReviewSchema} ${desktopMcpDeviceCustodySchema}`)
+        ${remoteMcpOAuthSchema} ${remoteMcpOAuthAttemptSchema} ${desktopMcpDeviceReviewSchema} ${desktopMcpDeviceCustodySchema}`)
     const signal = new AbortController().signal, runtime = { workspaceId: 1 } as DesktopRuntime
     const source = { agentId: 'coworker', sessionId: 'local-chat', runId: 'source-run', sourceMessageId: 'message', toolCallId: 'tool', fingerprint: 'exact', server: { name: 'docs', revision: 'r1', url: 'https://docs.example/mcp', displayName: 'Docs' } }
     const owner: DeviceReviewAuthority = { workspaceId: '1', owner: source.agentId, engineAgentId: 'engine-coworker', sessionId: 'engine-chat', name: source.server.name, revision: 'r1', url: source.server.url, signal, check() {} }

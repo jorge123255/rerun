@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { DesktopMcpSignInSource } from '../../../../../../packages/contracts/src/desktop-mcp-sign-in'
 import { remoteMcpStore, remoteMcpOAuthSchema } from '../mcp/store'
 import { credentialGenerationToken } from '../mcp/credential-generation'
+import { remoteMcpOAuthAttemptSchema } from '../mcp/oauth-attempt'
 import { bindApprovedMcpDeviceCustody } from '../mcp-device-custody/binding'
 import { desktopMcpDeviceCustodySchema } from '../mcp-device-custody/store'
 import { digest, type ApprovedDeviceMethod, type DeviceApproval } from '../mcp-device-custody/model'
@@ -25,7 +26,7 @@ async function fixture() {
     await db.executeMultiple(`CREATE TABLE desktop_agents(id TEXT PRIMARY KEY); INSERT INTO desktop_agents VALUES('coworker');
         CREATE TABLE desktop_remote_mcp(id TEXT, transport TEXT, agent_id TEXT, name TEXT, url TEXT, revision TEXT, bearer TEXT, PRIMARY KEY(agent_id,name));
         INSERT INTO desktop_remote_mcp VALUES('registration','http','coworker','docs','https://docs.example/mcp','r1',NULL);
-        ${remoteMcpOAuthSchema} ${desktopMcpDeviceCustodySchema} ${desktopMcpDeviceReviewSchema}`)
+        ${remoteMcpOAuthSchema} ${remoteMcpOAuthAttemptSchema} ${desktopMcpDeviceCustodySchema} ${desktopMcpDeviceReviewSchema}`)
     const key = () => Buffer.alloc(32, 23), store = remoteMcpStore(db, key), reviewStore = createDeviceReviewStore(db, key)
     const source: DesktopMcpSignInSource = { agentId: 'coworker', sessionId: 'local-chat', runId: 'source-run', sourceMessageId: 'source-message', toolCallId: 'source-tool', fingerprint: 'exact-source-body',
         server: { name: 'docs', revision: 'r1', url: 'https://docs.example/mcp', displayName: 'Docs' } }

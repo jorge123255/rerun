@@ -1,15 +1,17 @@
 import 'server-only'
-import {createHash,randomBytes} from 'node:crypto'
+import {createHash,randomBytes,randomUUID} from 'node:crypto'
 import {createServer,type Server} from 'node:http'
-import type {RemoteMcpStore,OAuthTokenBundle,BrowserOAuthWriteAdmission} from './store'
+import type {RemoteMcpStore,OAuthTokenBundle,BrowserOAuthWriteAdmission,SettleOAuthWrite} from './store'
 import {abortable,type McpAccess} from './remote'
 import {discoverLoopbackOAuth,oauthJson,publicOAuthAddress,type OAuthJson,type OAuthMetadata} from './oauth-network'
+import type {McpOAuthAttempt,McpOAuthAttempts} from './oauth-attempt'
 export type OAuthStatus={state:'idle'|'waiting'|'connected'|'error'|'unsupported';message?:string}
 type AttemptStatus={revision:string;url:string;status:OAuthStatus;attemptId?:string}
-type Attempt=AttemptStatus & {slot:string;ended:boolean;controller:AbortController;server?:Server;timer:ReturnType<typeof setTimeout>;used:boolean;release:()=>void}
+type Attempt=AttemptStatus & {slot:string;ended:boolean;controller:AbortController;server?:Server;timer:ReturnType<typeof setTimeout>;used:boolean;release:()=>void;reservation?:McpOAuthAttempt}
 type BrowserCredentialStore=Pick<RemoteMcpStore,'browserCredentialState'|'replaceOAuth'>
 type BrowserApprovalCheck=(credential:NonNullable<Awaited<ReturnType<BrowserCredentialStore['browserCredentialState']>>>,signal:AbortSignal)=>Promise<BrowserOAuthWriteAdmission>
-export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'writeOAuth'|'lifecycle'>,access:McpAccess,json:OAuthJson=oauthJson,credentials?:BrowserCredentialStore) {
+const browserLifetime = 300_000
+export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'writeOAuth'|'lifecycle'>,access:McpAccess,json:OAuthJson=oauthJson,credentials?:BrowserCredentialStore,reservations?:McpOAuthAttempts) {
  const attempts=new Map<string,Attempt>(),refreshes=new Map<string,Promise<string>>()
  const terminal=new Map<string,AttemptStatus>()
  const key=(agent:string,name:string)=>JSON.stringify([agent,name])
@@ -34,6 +36,11 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
    if(status.state==='error' || status.state==='unsupported')terminal.set(attempt.slot,{revision:attempt.revision,url:attempt.url,attemptId:attempt.attemptId,status})
    while(terminal.size>128)terminal.delete(terminal.keys().next().value!)
   }
+  if(attempt.reservation) {
+   const released=reservations!.release(attempt.reservation)
+   void released.catch(()=>{})
+   return released
+  }
  }
  function tokens(data:Record<string,unknown>,meta:OAuthMetadata,clientId:string,previous?:OAuthTokenBundle):OAuthTokenBundle {
   if(data.resource!==undefined && data.resource!==meta.resource || data.iss!==undefined && data.iss!==meta.issuer)throw new Error('Token identity mismatch')
@@ -49,8 +56,10 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   const admitted=await authority(agent,name,revision,admissionSignal,admission)
   if(admitted.bearer)throw new Error('Clear the configured bearer before OAuth')
   const expected=await credentials?.browserCredentialState(agent,name)
-  if(credentials && (!expected || expected.registrationId!==admitted.id || expected.revision!==revision || expected.resource!==admitted.url))throw new Error('MCP OAuth credential unavailable')
+  if((credentials || reservations) && (!expected || expected.registrationId!==admitted.id || expected.revision!==revision || expected.resource!==admitted.url))throw new Error('MCP OAuth credential unavailable')
+  let reservation:McpOAuthAttempt|undefined
   async function assertCredentialCurrent(signal:AbortSignal) {
+   if(reservation)await abortable(reservations!.assertCurrent(reservation),signal)
    if(!credentials || !expected){
     if(approval)throw new Error('MCP OAuth credential unavailable')
     return
@@ -64,11 +73,27 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   const slot=key(agent,name)
   if(attempts.has(slot))throw new Error('Browser sign-in is already in progress for this server.')
   if(attempts.size>=128)throw new Error('OAuth unavailable')
-  terminal.delete(slot)
-  store.lifecycle.disconnect(agent,name)
-  const controller=new AbortController(),ticket=store.lifecycle.admit(agent,name,controller)
+  const expiresAt=Date.now()+browserLifetime
+  if(reservations) {
+   if(!admitted.id)throw new Error('MCP OAuth registration unavailable')
+   const target:McpOAuthAttempt={owner:agent,name,registrationId:admitted.id,revision,method:'browser',attemptId:attemptId??randomUUID()}
+   await reservations.reserve(target,expiresAt)
+   reservation=target
+  }
+  const controller=new AbortController()
+  let ticket:ReturnType<typeof store.lifecycle.admit>
+  try {
+   admission();admissionSignal.throwIfAborted()
+   if(attempts.size>=128)throw new Error('OAuth unavailable')
+   terminal.delete(slot)
+   store.lifecycle.disconnect(agent,name)
+   ticket=store.lifecycle.admit(agent,name,controller)
+  } catch(error) {
+   if(reservation)await reservations!.release(reservation).catch(()=>{})
+   throw error
+  }
   const signal=AbortSignal.any([controller.signal,stop,AbortSignal.timeout(30_000)])
-  const attempt:Attempt={slot,ended:false,controller,revision,attemptId,url:admitted.url,used:false,release:ticket.release,status:{state:'waiting'},timer:setTimeout(()=>end(attempt,{state:'error',message:'Authorization expired. Retry.'}),300_000)}
+  const attempt:Attempt={slot,ended:false,controller,revision,attemptId,reservation,url:admitted.url,used:false,release:ticket.release,status:{state:'waiting'},timer:setTimeout(()=>end(attempt,{state:'error',message:'Authorization expired. Retry.'}),Math.max(1,expiresAt-Date.now()))}
   attempt.timer.unref?.()
   attempts.set(slot,attempt)
   controller.signal.addEventListener('abort',()=>{if(attempt.status.state==='waiting')end(attempt,{state:'error',message:'Authorization cancelled. Retry.'})},{once:true})
@@ -101,7 +126,9 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
       ticket.assertCurrent();callbackSignal.throwIfAborted()
       const bundle=tokens(token,meta,clientId)
       // The browser may have been open while another writer changed the credential.
-      if(credentials && expected)await abortable(credentials.replaceOAuth(agent,name,expected,bundle,callbackSignal,approvedWrite),callbackSignal)
+      const reserved=attempt.reservation
+      const settle:SettleOAuthWrite|undefined=reserved ? query=>reservations!.assertCurrent(reserved,query) : undefined
+      if(credentials && expected)await abortable(credentials.replaceOAuth(agent,name,expected,bundle,callbackSignal,approvedWrite,settle),callbackSignal)
       else await abortable(store.writeOAuth(agent,name,revision,bundle,callbackSignal),callbackSignal)
       await authority(agent,name,revision,callbackSignal,ticket.assertCurrent)
       answer(200,'Connected. You can close this window.');end(attempt,{state:'connected'})
@@ -186,8 +213,12 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   check();signal.throwIfAborted()
   const slot=key(agent,name),attempt=attempts.get(slot)
   if(attempt?.revision===revision && attempt.url===server.url && attempt.attemptId===attemptId) {
-   end(attempt,{state:'idle'})
+   const released=end(attempt,{state:'idle'})
    store.lifecycle.disconnect(agent,name)
+   await released
+  } else if(attemptId && server.id) {
+   // A saved chat can retire its interrupted listener after a cold restart.
+   await reservations?.release({owner:agent,name,registrationId:server.id,revision,method:'browser',attemptId})
   }
   const previous=terminal.get(slot)
   if(previous?.revision===revision && previous.url===server.url && previous.attemptId===attemptId)terminal.delete(slot)

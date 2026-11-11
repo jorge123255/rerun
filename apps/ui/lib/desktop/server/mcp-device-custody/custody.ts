@@ -37,7 +37,7 @@ function settledRecord(saved: SavedDeviceRecord, key: string, phase: DeviceRecor
 /** A factory owned by the existing MCP runtime. Construction/reads never start a broker effect. */
 export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
     const now = ports.now ?? Date.now
-    const active = new Map<string, AbortController>()
+    const active = new Map<string, { controller: AbortController; approvalId: string }>()
     let disposed = false
     async function admit(target: DeviceAuthorityTarget, stop: AbortSignal): Promise<Admitted | null> {
         const signal = AbortSignal.any([stop, ports.shutdown, AbortSignal.timeout(DEVICE_CUSTODY_LIMITS.operationMs)])
@@ -113,7 +113,8 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
         if (active.size >= DEVICE_CUSTODY_LIMITS.registrations || active.has(slot)) return { state: 'unknown' }
         const controller = new AbortController(), ticket = ports.lifecycle(target, controller)
         const signal = AbortSignal.any([admitted.signal, controller.signal])
-        active.set(slot, controller)
+        const operation = { controller, approvalId: approval.approvalId }
+        active.set(slot, operation)
         let effectReserved = false
         const check = () => { signal.throwIfAborted(); admitted.check(); ticket.assertCurrent() }
         try {
@@ -132,6 +133,7 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
             effectReserved = true
             await admitted.recheck(); check()
             await ports.assertCredentialCurrent(approval, signal); check()
+            if (saved.value.expiresAt <= now()) throw new Error('MCP device attempt expired')
             if (action === 'start') {
                 const start = parsePrivate(deviceStartSchema, await abortable(ports.broker.start(approval.method, signal), signal))
                 await admitted.recheck(); check()
@@ -190,7 +192,7 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
                 return { state: 'unknown' }
             }
             throw new Error('MCP device custody unavailable; reconcile the existing attempt')
-        } finally { ticket.release(); if (active.get(slot) === controller) active.delete(slot) }
+        } finally { ticket.release(); if (active.get(slot) === operation) active.delete(slot) }
     }
     const fallback: ApprovedDeviceFallback = {
         async authorize(target, signal) {
@@ -214,11 +216,14 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
             if (saved.value.phase === 'connected') return { state: 'pending' }
             return view(saved.value)
         },
-        async stop(approval: DeviceApproval): Promise<void> {
-            active.get(slotOf(approval))?.abort()
+        async stop(input: DeviceApproval): Promise<void> {
+            const approval = parsePrivate(deviceApprovalSchema, input)
+            const operation = active.get(slotOf(approval))
+            if (operation?.approvalId === approval.approvalId) operation.controller.abort()
             for (let retry = 0; retry < 3; retry++) {
                 const saved = await ports.store.read(approval)
                 if (!saved || ['connected', 'cancelled', 'expired', 'failed', 'unknown'].includes(saved.value.phase)) return
+                if (digest(saved.value.approval) !== digest(approval)) return
                 try {
                     await ports.store.replace(approval, saved, { ...saved.value,
                         phase: inFlight(saved.value.phase) ? 'unknown' : 'cancelled', deviceCode: undefined, userCode: undefined,
@@ -228,6 +233,6 @@ export function createApprovedMcpDeviceCustody(ports: DeviceCustodyPorts) {
             }
             throw new Error('MCP device cancellation is not acknowledged; reconcile the existing attempt')
         },
-        dispose() { disposed = true; for (const controller of active.values()) controller.abort() },
+        dispose() { disposed = true; for (const { controller } of active.values()) controller.abort() },
     }
 }

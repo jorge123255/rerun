@@ -3,6 +3,7 @@ import type { Client } from '@libsql/client'
 import { createDesktopMcpLoginBackend, type RemoteLoginService } from '../../../../../engine/src/desktop/mcp-login-tools/backend'
 import type { RemoteMcpStore } from '../mcp/store'
 import { createMcpCredentialGeneration } from '../mcp/credential-generation'
+import { createMcpOAuthAttempts } from '../mcp/oauth-attempt'
 import { abortable } from '../mcp/remote'
 import { createApprovedMcpDeviceCustody, type DeviceApprovalLease, type DeviceCustodyPorts } from './custody'
 import { createEncryptedDeviceCustodyStore } from './store'
@@ -22,7 +23,7 @@ export type CanonicalDeviceCustodyBinding = {
 
 /** Concrete canonical SQLite/encryption/MCP credential/lifecycle binding; no ambient accounts or fetch. */
 export function bindApprovedMcpDeviceCustody(ports: CanonicalDeviceCustodyBinding) {
-    const store = createEncryptedDeviceCustodyStore(ports.db, ports.key)
+    const store = createEncryptedDeviceCustodyStore(ports.db, ports.key, createMcpOAuthAttempts(ports.db, ports.now))
     const credentials = createMcpCredentialGeneration({ store: ports.service.store, key: ports.key, now: ports.now })
     const approval: DeviceCustodyPorts['approval'] = async (target, stop) => {
         const signal = AbortSignal.any([stop, ports.service.shutdownSignal])

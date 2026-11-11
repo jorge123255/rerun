@@ -1,4 +1,7 @@
 import {createClient} from '@libsql/client'
+import {mkdtemp,rm} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import {afterEach,expect,it,vi} from 'vitest'
 vi.mock('server-only',()=>({}))
 type HttpHandler=(req:import('node:http').IncomingMessage,res:import('node:http').ServerResponse)=>void
@@ -9,9 +12,15 @@ import {migrateDesktopSse} from '../mcp-sse/schema'
 import {bindRemoteTransportDrain,remoteMcpStore,remoteMcpSchema,remoteMcpOAuthSchema} from './store'
 import {loopbackMcpOAuth} from './oauth-loopback'
 import {discoverLoopbackOAuth,type OAuthJson} from './oauth-network'
+import {createMcpOAuthAttempts,remoteMcpOAuthAttemptSchema} from './oauth-attempt'
+import {credentialGenerationToken} from './credential-generation'
+import {bindApprovedMcpDeviceCustody} from '../mcp-device-custody/binding'
+import {desktopMcpDeviceCustodySchema} from '../mcp-device-custody/store'
+import type {DeviceApproval} from '../mcp-device-custody/model'
 const clients:ReturnType<typeof createClient>[]=[]
+const roots:string[]=[]
 const services:ReturnType<typeof loopbackMcpOAuth>[]=[]
-afterEach(()=>{for(const service of services.splice(0))service.shutdown();vi.restoreAllMocks();for(const db of clients.splice(0))db.close();vi.useRealTimers();vi.clearAllMocks()})
+afterEach(async()=>{for(const service of services.splice(0))service.shutdown();vi.restoreAllMocks();for(const db of clients.splice(0))db.close();await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));vi.useRealTimers();vi.clearAllMocks()})
 const resource='https://mcp.example/mcp',issuer='https://auth.example/'
 function fixture(){
  let exchanges=0,refreshes=0
@@ -26,14 +35,15 @@ function fixture(){
  return {json,exchanges:()=>exchanges,refreshes:()=>refreshes}
 }
 async function setup(){
- const db=createClient({url:'file::memory:'});clients.push(db)
- await db.executeMultiple('CREATE TABLE desktop_agents(id TEXT PRIMARY KEY);INSERT INTO desktop_agents VALUES (\'a\');'+remoteMcpSchema+remoteMcpOAuthSchema)
+ const root=await mkdtemp(join(tmpdir(),'rerun-browser-oauth-'));roots.push(root)
+ const db=createClient({url:`file:${join(root,'app.db')}`});clients.push(db)
+ await db.executeMultiple('CREATE TABLE desktop_agents(id TEXT PRIMARY KEY);INSERT INTO desktop_agents VALUES (\'a\');'+remoteMcpSchema+remoteMcpOAuthSchema+remoteMcpOAuthAttemptSchema+desktopMcpDeviceCustodySchema)
  await migrateDesktopSse(db)
- const store=remoteMcpStore(db,()=>Buffer.alloc(32,7));await store.save('a',{name:'x',url:resource})
+ const key=()=>Buffer.alloc(32,7),store=remoteMcpStore(db,key);await store.save('a',{name:'x',url:resource})
  const revision=(await store.list('a'))[0].revision,fixture_=fixture()
  let granted=true
- const oauth=loopbackMcpOAuth(store,async()=>({enabled:true,granted}),fixture_.json,store);services.push(oauth)
- return {db,store,revision,oauth,...fixture_,revoke:()=>{granted=false}}
+ const oauth=loopbackMcpOAuth(store,async()=>({enabled:true,granted}),fixture_.json,store,createMcpOAuthAttempts(db));services.push(oauth)
+ return {db,key,store,revision,oauth,...fixture_,revoke:()=>{granted=false}}
 }
 function callback(state:string,iss=issuer){
  const res={writeHead:vi.fn(),end:vi.fn()}
@@ -177,6 +187,70 @@ it('does not let a stale chat cancel a later Settings callback at the same revis
  callback(new URL(started.authorizationUrl!).searchParams.get('state')!)
  await vi.waitFor(async()=>expect(await oauth.status('a','x',revision,signal)).toEqual({state:'connected'}))
  expect(exchanges()).toBe(1)
+})
+
+for (const first of ['browser', 'device'] as const) it(`keeps the ${first} reservation before the other method can reach its provider`, async () => {
+ const {db,key,store,revision,oauth,json}=await setup()
+ const signal=new AbortController().signal, credential=(await store.credentialState('a','x'))!
+ const identity={engineAgentId:'engine-a',sessionId:'chat-a',runId:'run-a'}
+ const approval:DeviceApproval={
+  workspaceId:'workspace',owner:'a',engineAgentId:identity.engineAgentId,sessionId:identity.sessionId,name:'x',revision,
+  approvalId:'approved-device',registrationId:credential.registrationId,approvedUntil:Date.now()+600_000,
+  credentialGeneration:credentialGenerationToken(key(),'a','x',credential,credential.sealed),
+  method:{kind:'device-code-link-v1',resource,issuer,clientId:'device-client',deviceEndpoint:issuer+'device',tokenEndpoint:issuer+'token',verificationUri:issuer+'activate'},
+ }
+ const broker={start:vi.fn(async()=>({deviceCode:'fixture-only',verificationUri:issuer+'activate',expiresIn:120,interval:5})),poll:vi.fn()}
+ const device=bindApprovedMcpDeviceCustody({db,key,workspaceId:'workspace',watchOwner:()=>()=>{},
+  service:{store,authorizeRun:async()=>'a',runtime:{probe:async()=>({tools:[]})},shutdownSignal:signal},
+  approvedMethod:async()=>({approval,signal,check:()=>{}}),broker})
+ const target={owner:'a',name:'x',revision,url:resource,identity,requestId:'start-device',approvalId:approval.approvalId}
+ try {
+  if(first==='browser'){
+   await expect(oauth.start('a','x',revision,signal)).resolves.toMatchObject({status:{state:'waiting'}})
+   await expect(device.fallback.start(target,signal)).rejects.toThrow('custody unavailable')
+   expect(broker.start).not.toHaveBeenCalled()
+   expect((await db.execute('SELECT slot FROM desktop_mcp_device_custody')).rows).toHaveLength(0)
+   await oauth.cancel('a','x',revision,signal)
+   await expect(device.fallback.start(target,signal)).resolves.toMatchObject({state:'waiting'})
+  } else {
+   await expect(device.fallback.start(target,signal)).resolves.toMatchObject({state:'waiting'})
+   await expect(oauth.start('a','x',revision,signal)).rejects.toThrow('already in progress')
+   expect(json).not.toHaveBeenCalled()
+   await device.stop(approval)
+   await expect(oauth.start('a','x',revision,signal)).resolves.toMatchObject({status:{state:'waiting'}})
+  }
+ } finally {device.dispose()}
+})
+
+it('cancels an interrupted browser reservation only from its saved chat attempt', async () => {
+ const {db,store,revision,oauth}=await setup()
+ const signal=new AbortController().signal, row=await store.read('a','x')
+ const reservation={owner:'a',name:'x',registrationId:row.id!,revision,method:'browser' as const,attemptId:'saved-chat'}
+ const attempts=createMcpOAuthAttempts(db)
+ await attempts.reserve(reservation,Date.now()+300_000)
+ await oauth.cancel('a','x',revision,signal,'old-chat')
+ await expect(attempts.assertCurrent(reservation)).resolves.toBeUndefined()
+ await oauth.cancel('a','x',revision,signal,'saved-chat')
+ await expect(oauth.start('a','x',revision,signal)).resolves.toMatchObject({status:{state:'waiting'}})
+})
+
+it('rolls back a browser token if its reservation expires before the credential transaction', async () => {
+ const {db,store,revision,oauth,exchanges}=await setup()
+ const signal=new AbortController().signal, row=await store.read('a','x')
+ const replacement={owner:'a',name:'x',registrationId:row.id!,revision,method:'device' as const,attemptId:'new-device'}
+ const afterDeadline=()=>Date.now()+301_000
+ const attempts=createMcpOAuthAttempts(db,afterDeadline)
+ const replace=store.replaceOAuth.bind(store)
+ vi.spyOn(store,'replaceOAuth').mockImplementationOnce(async (...args)=>{
+  await attempts.reserve(replacement,afterDeadline()+120_000)
+  return replace(...args)
+ })
+ const started=await oauth.start('a','x',revision,signal)
+ const response=callback(new URL(started.authorizationUrl!).searchParams.get('state')!)
+ await vi.waitFor(()=>expect(response.writeHead).toHaveBeenCalledWith(400,expect.anything()))
+ expect(exchanges()).toBe(1)
+ expect(await store.readOAuth('a','x')).toBeNull()
+ await expect(attempts.assertCurrent(replacement)).resolves.toBeUndefined()
 })
 
 it('finished attempts do not exhaust the active listener budget',async()=>{
