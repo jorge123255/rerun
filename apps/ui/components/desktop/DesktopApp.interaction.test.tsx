@@ -387,6 +387,47 @@ test('editing a coworker from the board preserves the chat and only saves change
     } finally { await act(async () => { root.unmount() }) }
 })
 
+test('the chat keeps the composer area in place while opening and retrying saved conversations', async () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const agent = { id: 'researcher', name: 'Researcher', description: '', createdAt: '', updatedAt: '' }
+    let resolveSessions!: (response: Response) => void
+    const fetcher = mockDesktopFetch(url => {
+        if (url === settingsUrl) return Response.json(disconnected)
+        if (url === '/api/desktop/agents/researcher/sessions') {
+            return new Promise<Response>(resolve => { resolveSessions = resolve })
+        }
+    })
+    const panel = () => container.querySelector('[aria-label="Coworker chat"]')!
+    const opening = () => {
+        const composer = panel().querySelector('[data-slot="desktop-composer"]')
+        expect(composer).not.toBeNull()
+        expect(composer?.querySelector('[role="status"]')?.textContent).toBe('Opening Researcher…')
+        expect(composer?.querySelector('button, textarea, input, form')).toBeNull()
+        expect(panel().querySelector('[aria-label="Close panel"]')).not.toBeNull()
+    }
+    try {
+        await act(async () => { root.render(<DesktopApp initialData={{ ...disconnected, profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [agent], theme: 'system' }} />) })
+        const tile = container.querySelector<HTMLElement>('[aria-label="Open chat with Researcher"]')!
+        await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+        opening()
+        await act(async () => { resolveSessions(Response.json({ error: 'Could not load conversations' }, { status: 500 })) })
+        expect(panel().querySelector('[data-slot="desktop-composer"]')).toBeNull()
+        const retry = panel().querySelector<HTMLButtonElement>('[role="alert"] button')!
+        expect(retry.textContent).toBe('Retry conversations')
+        await act(async () => { retry.click() })
+        expect(panel().querySelector('[role="alert"]')).toBeNull()
+        opening()
+        expect(fetcher.mock.calls.some(([url]) => url === '/api/desktop/chat')).toBe(false)
+        await act(async () => { resolveSessions(Response.json({ sessions: [] })) })
+        expect(panel().querySelector('form[data-slot="desktop-composer"] textarea')).not.toBeNull()
+        expect(panel().textContent).not.toContain('Opening Researcher…')
+        await act(async () => { panel().querySelector<HTMLButtonElement>('[aria-label="Close panel"]')!.click() })
+        expect(document.activeElement).toBe(tile)
+    } finally { await act(async () => { root.unmount() }) }
+})
+
 test('a board tile opens the saved conversation and New chat starts a separate session', async () => {
     const container = document.createElement('div')
     document.body.append(container)

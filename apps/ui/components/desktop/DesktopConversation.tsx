@@ -1465,7 +1465,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                         if (!active || inactive || generating || stopping || draft.quitting || !ready || uploadsActive || preparingSend || !!pendingRequest) return
                         composerForm.current?.requestSubmit()
                     }} />
-                <form ref={composerForm} onSubmit={submit} hidden={!!pendingRequest || setupBlocked} className={cn('relative min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', pendingRequest || setupBlocked ? 'hidden' : 'flex')}>
+                <form ref={composerForm} data-slot="desktop-composer" onSubmit={submit} hidden={!!pendingRequest || setupBlocked} className={cn('relative min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', pendingRequest || setupBlocked ? 'hidden' : 'flex')}>
                     {uploadDragOver && <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] border border-dashed border-brand bg-background/85">
                         <span className="flex items-center gap-2 text-sm font-medium text-brand"><UploadIcon className="size-4" />Drop files to attach</span>
                     </div>}

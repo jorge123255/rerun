@@ -933,23 +933,32 @@ function CoworkerChat({ agent, attention, overview, requested, requestedPanel, o
         return () => sessionRead.current?.abort()
     }, [readSessions])
 
-    const missing = !!requested && 'id' in requested && !!sessions && !sessions.some(s => s.id === requested.id)
+    const missing = !!bootstrap && !!requested && 'id' in requested && !!sessions && !sessions.some(s => s.id === requested.id)
     useEffect(() => {
         // Webhooks, routines and coworker calls can add a chat after this panel loaded.
         // Refresh its owner-scoped list while preserving the live tab/draft instances.
         // readSessions changes state only after its asynchronous read.
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        if (bootstrap && missing && requested && checkedRequest !== requested) void readSessions({ checking: requested })
-    }, [bootstrap, missing, requested, checkedRequest, readSessions])
+        if (missing && requested && checkedRequest !== requested) void readSessions({ checking: requested })
+    }, [missing, requested, checkedRequest, readSessions])
     const dismiss = <Button type="button" variant="ghost" size="icon-sm" aria-label="Close panel" className="absolute right-3 top-3" onClick={onClosePanel}><X /></Button>
-    const reload = () => { setBootstrap(null); void readSessions({ restoreTabs: true }) }
+    const reload = () => {
+        setBootstrap(null)
+        setError(null)
+        setCheckedRequest(null)
+        void readSessions({ restoreTabs: true })
+    }
     return <>
         {(error || (missing && checkedRequest === requested)) && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">
             {error ?? 'This conversation is no longer available for this coworker.'}
             <Button type="button" size="sm" variant="outline" onClick={reload}>Retry conversations</Button>
         </div>}
         {missing && checkedRequest !== requested && !error && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">Opening conversation…</p>}
-        {!error && !bootstrap && <p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p>}
+        {!error && !bootstrap && <div className="mt-auto shrink-0 border-t p-2.5">
+            <div data-slot="desktop-composer" className="min-h-[5.5rem] rounded-xl border border-input bg-muted/40 px-2.5 py-2">
+                <p role="status" className="text-sm text-muted-foreground">Opening {agent.name}…</p>
+            </div>
+        </div>}
         {!bootstrap || !sessions ? dismiss : <DesktopChatTabs onOpenCoworkerChat={onOpenCoworkerChat}
             agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} pendingChatSummaries={pendingChatSummaries} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
