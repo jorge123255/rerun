@@ -11,7 +11,7 @@ import {
 import { z } from 'zod'
 import { request } from '@/lib/engine/client'
 import { DesktopHttpError } from '../auth'
-import { ownedForemanChat } from '../foreman/chat-store'
+import { ownedForemanChat, withForemanChatWrite } from '../foreman/chat-store'
 import { readDesktopForemanIntakeReceipt } from '../foreman/intake-profile'
 import type { DesktopRuntime } from '../runtime'
 import { engineOf } from '../settings'
@@ -87,6 +87,14 @@ export function createDesktopLocalStarterOffers(runtime: DesktopRuntime, db: Cli
     return {
         read,
         readDecided: (chat: DesktopForemanChatRef, requestId: string) => readOffer(chat, requestId, true),
+        async stopped(chat: DesktopForemanChatRef, requestId: string) {
+            return !!(await db.execute({
+                sql: `SELECT 1 FROM desktop_foreman_local_starter_stops s
+                      JOIN desktop_foreman_intake_completions i ON i.request_id=s.intake_request_id
+                      WHERE i.workspace_id=? AND i.chat_id=? AND i.request_id=?`,
+                args: [chat.workspaceId, chat.chatId, requestId],
+            })).rows[0]
+        },
         /** Called only by the server that owns completion of this exact intake. */
         async prepare(chat: DesktopForemanChatRef, requestId: string, intakeFingerprint: string, signal: AbortSignal): Promise<DesktopLocalStarterOffer | null> {
             signal.throwIfAborted()
@@ -116,23 +124,25 @@ export function createDesktopLocalStarterOffers(runtime: DesktopRuntime, db: Cli
             }
             if (!cards.length) return null
             const base = { chat, sessionId: source.owner.sessionId, intakeRequestId: requestId, intakeFingerprint, cards }
-            signal.throwIfAborted()
-            assertDesktopWorkspaceAdmission(runtime)
-            // A single insert checks ownership and the original intake again after
-            // the catalog await. A competing retry can only recover the winner.
-            await db.execute({
-                sql: `INSERT INTO desktop_foreman_local_starter_offers(id, workspace_id, chat_id, session_id, intake_request_id, intake_fingerprint, digest, cards)
-                      SELECT ?, c.workspace_id, c.chat_id, c.engine_session_id, i.request_id, i.fingerprint, ?, ?
-                      FROM desktop_foreman_chats c JOIN desktop_foreman_intake_completions i ON i.chat_id=c.chat_id AND i.workspace_id=c.workspace_id
-                      WHERE c.workspace_id=? AND c.chat_id=? AND c.engine_session_id=? AND i.request_id=? AND i.fingerprint=? AND i.state=? AND i.updated_at=?
-                        AND NOT EXISTS (SELECT 1 FROM desktop_foreman_turns t WHERE t.chat_id=c.chat_id)
-                        AND NOT EXISTS (SELECT 1 FROM desktop_foreman_local_starter_stops s WHERE s.intake_request_id=i.request_id)
-                      ON CONFLICT(chat_id) DO NOTHING`,
-                args: [randomUUID(), fingerprint(base), JSON.stringify(cards), chat.workspaceId, chat.chatId,
-                    base.sessionId, requestId, intakeFingerprint, source.receipt.state, source.receipt.updatedAt],
+            return withForemanChatWrite(db, async () => {
+                signal.throwIfAborted()
+                assertDesktopWorkspaceAdmission(runtime)
+                // Recheck ownership and intake after the catalog request. Stop and
+                // ordinary turn admission serialize against the final publication.
+                await db.execute({
+                    sql: `INSERT INTO desktop_foreman_local_starter_offers(id, workspace_id, chat_id, session_id, intake_request_id, intake_fingerprint, digest, cards)
+                          SELECT ?, c.workspace_id, c.chat_id, c.engine_session_id, i.request_id, i.fingerprint, ?, ?
+                          FROM desktop_foreman_chats c JOIN desktop_foreman_intake_completions i ON i.chat_id=c.chat_id AND i.workspace_id=c.workspace_id
+                          WHERE c.workspace_id=? AND c.chat_id=? AND c.engine_session_id=? AND i.request_id=? AND i.fingerprint=? AND i.state=? AND i.updated_at=?
+                            AND NOT EXISTS (SELECT 1 FROM desktop_foreman_turns t WHERE t.chat_id=c.chat_id)
+                            AND NOT EXISTS (SELECT 1 FROM desktop_foreman_local_starter_stops s WHERE s.intake_request_id=i.request_id)
+                          ON CONFLICT(chat_id) DO NOTHING`,
+                    args: [randomUUID(), fingerprint(base), JSON.stringify(cards), chat.workspaceId, chat.chatId,
+                        base.sessionId, requestId, intakeFingerprint, source.receipt.state, source.receipt.updatedAt],
+                })
+                signal.throwIfAborted()
+                return read(chat, requestId)
             })
-            signal.throwIfAborted()
-            return read(chat, requestId)
         },
         async withdraw(chat: DesktopForemanChatRef, offerId: string) {
             if (chat.workspaceId !== String(runtime.workspaceId)) throw new DesktopHttpError(404, 'Foreman conversation not found.')

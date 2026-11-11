@@ -43,8 +43,6 @@ import { DESKTOP_FOREMAN_CHAT_SCHEMA } from './chat-store'
 import { DESKTOP_FOREMAN_SCHEMA_STATEMENTS } from './store'
 import { DESKTOP_FOREMAN_INTAKE_SCHEMA_SQL, fingerprintIntakeAnswers } from '../foreman-intake'
 import { createDesktopForemanIntakeBinding } from './intake'
-import { createDesktopLocalStarterOffers, type DesktopLocalStarterOffer } from '../foreman-starter/local-offer'
-import { createSqliteDesktopForemanIntakeStore } from '../foreman-intake/store'
 import { initializeDesktopRound41 } from '../round41-schema'
 import { POST as foremanAction } from '@/app/api/desktop/foreman/route'
 import { projectPlanCard, revisionToTrustedSnapshot } from '@/lib/desktop/foreman-client/plan-view'
@@ -74,6 +72,7 @@ describe('production Foreman intake phase and model brief', () => {
     }
     beforeEach(async () => {
         vi.clearAllMocks()
+        vi.mocked(request).mockImplementation(async (_engine, path, _init, parse) => parse(path === '/desktop/templates' ? { templates: [] } : { question: null }))
         vi.mocked(getSessionMessages).mockResolvedValue([])
         vi.mocked(getRun).mockImplementation(async (_engine, _agent, id) => ({ id, agentId: 'foreman', sessionId: 'original-session', status: 'done' }) as Awaited<ReturnType<typeof getRun>>)
         state.agentCount = 0
@@ -113,25 +112,20 @@ describe('production Foreman intake phase and model brief', () => {
     }
 
     async function prepareStarter() {
-        const store = createSqliteDesktopForemanIntakeStore(state.db, { schemaReady: true })
-        const saved = await store.save({ chat, requestId: randomUUID(), baseRevision: 0, stepIndex: 2,
+        const app = await desktopForeman(runtime)
+        const intake = createDesktopForemanIntakeBinding(runtime, app)
+        const saved = await intake.save({ chat, requestId: randomUUID(), baseRevision: 0, stepIndex: 2,
             draft: { ...EMPTY_DRAFT, companyUrl: answers.companyUrl, industry: answers.industry, position: answers.position, firstName: answers.firstName },
             decidedIndustry: null, knownFirstName: null })
         vi.mocked(request).mockImplementation(async (_engine, path, _init, parse) => parse(path === '/desktop/templates' ? {
             templates: [{ templateId: 'a'.repeat(32), revision: 'b'.repeat(64), title: 'Fixture support', status: 'captured', coworkerCount: 1, capturedAt: timestamp }],
         } : { question: null }))
-        const offers = createDesktopLocalStarterOffers(runtime, state.db)
-        let offer: DesktopLocalStarterOffer | null = null
-        const receipt = await store.complete({ chat, requestId: randomUUID(), expectedRevision: saved.session.revision, answers }, {
-            lookup: async () => null,
-            deliver: async input => {
-                offer = await offers.prepare(input.chat, input.requestId, input.fingerprint, AbortSignal.timeout(5000))
-                return { conversationId: 'original-session', runId: null, industry: 'saas' }
-            },
-        })
-        expect(receipt.state).toBe('acknowledged')
-        expect(offer).toBeTruthy()
-        return { prepared: (await offers.read(chat, receipt.requestId))!, receipt }
+        const receipt = await intake.complete({ chat, requestId: randomUUID(), expectedRevision: saved.session.revision, answers })
+        expect(receipt).toMatchObject({ state: 'acknowledged', followUp: { conversationId: 'original-session', runId: null } })
+        const prepared = (await app.starterOffers.read(chat, receipt.requestId))!
+        expect((await app.state()).starter).toMatchObject({ offerId: prepared.id, decision: null })
+        expect(sent).toEqual([])
+        return { prepared, receipt }
     }
 
     it('resumes the exact saved starter answer once after a lost response and refuses it after Stop', async () => {
@@ -153,6 +147,7 @@ describe('production Foreman intake phase and model brief', () => {
         expect(sent).toEqual([expect.objectContaining({ text: choice.choice.text, replayOnly: false,
             binding: expect.objectContaining({ ...chat, runId: prepared.id }), sessionId: 'original-session' })])
         expect(sent[0]).not.toHaveProperty('starterOfferId')
+        expect((await app.state()).starter?.decision).toMatchObject({ choice: choice.choice, settled: false })
 
         state.db.close()
         state.db = open()
@@ -164,6 +159,7 @@ describe('production Foreman intake phase and model brief', () => {
         const accepted = await answerFromApp(chat, choice)
         expect(accepted.status).toBe(200)
         expect(await accepted.json()).toEqual({ runId: prepared.id })
+        expect((await reopened.state()).starter?.decision).toMatchObject({ choice: choice.choice, settled: true })
         await expect(reopened.answerStarter(chat, choice, AbortSignal.timeout(5000))).resolves.toEqual({ runId: prepared.id })
         expect(sent).toHaveLength(2)
         expect(sent[1]).toMatchObject({ replayOnly: true, binding: { runId: prepared.id } })
@@ -265,6 +261,25 @@ describe('production Foreman intake phase and model brief', () => {
         expect(sent[0]!.brief.instructions).toContain(JSON.stringify(answers))
         expect((await app.core.readView(chat)).phase).toBe('plan')
         expect((await app.state()).view.phase).toBe('plan')
+    })
+
+    it('Stop during starter preparation finishes intake without showing an offer or sending the fallback turn', async () => {
+        const app = await desktopForeman(runtime)
+        const intake = createDesktopForemanIntakeBinding(runtime, app)
+        const saved = await intake.save({ chat, requestId: randomUUID(), baseRevision: 0, stepIndex: 2,
+            draft: { ...EMPTY_DRAFT, companyUrl: answers.companyUrl, industry: answers.industry, position: answers.position, firstName: answers.firstName },
+            decidedIndustry: null, knownFirstName: null })
+        vi.mocked(request).mockImplementation(async (_engine, path, _init, parse) => {
+            if (path !== '/desktop/templates') return parse({ question: null })
+            await app.stop(chat)
+            return parse({ templates: [{ templateId: 'a'.repeat(32), revision: 'b'.repeat(64), title: 'Fixture support', status: 'captured', coworkerCount: 1, capturedAt: timestamp }] })
+        })
+        const complete = { chat, requestId: randomUUID(), expectedRevision: saved.session.revision, answers }
+        const first = await intake.complete(complete)
+        expect(first).toMatchObject({ state: 'acknowledged', followUp: { conversationId: 'original-session', runId: null } })
+        expect(await intake.complete(complete)).toEqual(first)
+        expect((await app.state()).starter).toBeNull()
+        expect(sent).toEqual([])
     })
 
     it('a poll before completion ACK cannot cache the generated kickoff for the ordinary chat layer', async () => {

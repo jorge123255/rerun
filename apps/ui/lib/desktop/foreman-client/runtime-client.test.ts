@@ -69,6 +69,28 @@ it('recovers only an exact saved snapshot after a lost UI ACK and then advances 
     expect(server.ui.snapshot?.draft).toBe('second')
     expect(bodies.filter(body => body.action === 'ui').map(body => body.expectedRevision)).toEqual([0, 1])
 })
+it('recovers an exact starter answer after a lost response without sending ordinary chat', async () => {
+    const offerId = randomUUID(), intakeRequestId = randomUUID(), digest = 'a'.repeat(64)
+    const choice = { kind: 'text' as const, text: 'Design a support coworker' }
+    server.starter = { offerId, intakeRequestId, digest, decision: null, cards: [{ templateId: 'b'.repeat(32), revision: 'c'.repeat(64), title: 'Support' }] }
+    const transport = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : null
+        if (body?.action === 'starter') {
+            bodies.push(body)
+            server.starter!.decision = { choice, settled: true }
+            throw new Error('Lost starter response')
+        }
+        return transport(url, init)
+    })
+    const client = connect()
+    expect(await client.ports.conversation.sendMessage(choice.text)).toBe(false)
+    await expect(client.answerStarter({ offerId, intakeRequestId, digest: 'd'.repeat(64), choice })).rejects.toThrow('cannot be answered')
+    expect(bodies).toEqual([])
+    await expect(client.answerStarter({ offerId, intakeRequestId, digest, choice })).resolves.toBeUndefined()
+    expect(bodies).toEqual([{ action: 'starter', chat, input: { offerId, intakeRequestId, digest, choice } }])
+    expect((await client.refresh()).starter?.decision).toEqual({ choice, settled: true })
+})
 it('refuses foreign state and hides context parts from restored transcript', async () => {
     server.messages = [{ id: 'one', role: 'user', parts: [{ type: 'text', text: 'Visible message' }, { type: 'text', text: 'private context', providerOptions: { rerun: { context: true } } }] }]
     expect(desktopForemanMessages(await readDesktopForemanState())).toEqual([{ id: 'one', role: 'user', text: 'Visible message', docs: [], history: [{ key: '["one",0,null]', kind: 'text', text: 'Visible message' }] }])

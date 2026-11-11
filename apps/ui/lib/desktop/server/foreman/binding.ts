@@ -28,6 +28,7 @@ import { hideDesktopForemanIntakeKickoff } from './intake-history'
 import { foremanQuestionText, readPendingForemanQuestion } from './question'
 import type { DesktopQuestionAnswer } from '../../questions'
 import { createDesktopLocalStarterDecisions, type DesktopLocalStarterDecision } from '../foreman-starter/local-decision'
+import { createDesktopLocalStarterOffers } from '../foreman-starter/local-offer'
 
 const KEY = Symbol.for('rerun.desktop.foreman.binding.v1')
 const SHUTDOWN_KEY = Symbol.for('rerun.desktop.foreman.shutdown.v1')
@@ -49,6 +50,7 @@ async function createBinding(runtime: DesktopRuntime) {
     const db = await openDesktopDatabase(runtime.dataRoot)
     const workspaceId = String(runtime.workspaceId)
     const starterDecisions = createDesktopLocalStarterDecisions(runtime, db)
+    const starterOffers = createDesktopLocalStarterOffers(runtime, db)
     const subscribers = new Set<Subscriber>()
     type VoiceGuard = { signal: AbortSignal; assertCurrent(): Promise<void> }
     const voiceLifetime = new AbortController()
@@ -173,6 +175,11 @@ async function createBinding(runtime: DesktopRuntime) {
         await assertDesktopWorkspaceAdmission(runtime)
         return withForemanChatWrite(db, async () => {
             await checkVoice(guard)
+            if (!starter) {
+                if (await starterOffers.stopped(chat, requestId)) throw new DesktopHttpError(409, 'This Foreman intake was stopped.')
+                const offer = await starterDecisions.view(chat, true)
+                if (offer && !offer.decision?.settled) throw new DesktopHttpError(409, 'Answer or dismiss the starter offer first.')
+            }
             const saved = starter && await starterDecisions.reserve(chat, starter.input, starter.signal)
             if (saved) {
                 if (saved.choice.kind !== 'text' || requestId !== saved.offer.id) throw new DesktopHttpError(409, 'This starter offer is no longer waiting for a message.')
@@ -233,7 +240,7 @@ async function createBinding(runtime: DesktopRuntime) {
         })
     }
     return {
-        core, db, send, isLive, companyDiscovery,
+        core, db, send, isLive, companyDiscovery, starterOffers,
         answerQuestion: (chat: DesktopForemanChatRef, answer: DesktopQuestionAnswer) => send(chat, answer.requestId, '', undefined, undefined, answer),
         async answerStarter(chat: DesktopForemanChatRef, input: DesktopLocalStarterDecision, signal: AbortSignal) {
             if (input.choice.kind === 'text') {
@@ -275,7 +282,7 @@ async function createBinding(runtime: DesktopRuntime) {
             const attempt = saved?.questionId === pending?.view.id && saved
             const history = await hideDesktopForemanIntakeKickoff(runtime, db, owner, publicDesktopHistory(transformEngineMessages(messages)))
             const answeredQuestions = await readAnsweredQuestionRecaps(db, owner.chat.chatId, history)
-            return { ...owner, view, messages: history, answeredQuestions,
+            return { ...owner, view, messages: history, answeredQuestions, starter: await starterDecisions.view(owner.chat),
                 question: pending ? { ...pending.view, ...(attempt && { attempt: attempt.action === 'cancel'
                     ? { action: 'cancel' as const, requestId: attempt.requestId }
                     : { action: 'answer' as const, requestId: attempt.requestId, answers: attempt.answers } }) } : null }

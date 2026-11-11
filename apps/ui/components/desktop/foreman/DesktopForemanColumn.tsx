@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { ForemanAnchor, OrbActivity } from '@rerun/ui/foreman'
 import { DesktopForemanDockLayout, DesktopParkedForeman, useDesktopForemanDockBinding } from './dock'
 import { DEFAULT_DOCK_EXTRAS } from '@/lib/desktop/foreman-dock'
@@ -22,6 +22,8 @@ import { useDesktopForemanUi } from './useDesktopForemanUi'
 import type { DesktopForemanIntakeController } from '@/lib/desktop/foreman-intake'
 import { DesktopForemanIntakeCard, DesktopForemanIntakeHeader } from './intake'
 import { DesktopStarterPack } from './starter-pack'
+import { DesktopStarterOfferCard } from './starter-pack/DesktopStarterOfferCard'
+import type { DesktopLocalStarterDecision, DesktopStarterView } from '@/lib/desktop/foreman-client/starter'
 import { DesktopQuestionCard } from '@/components/desktop/DesktopQuestionCard'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import type { DesktopTemplateIdentity } from '@/components/desktop/templates/types'
@@ -56,6 +58,9 @@ export type DesktopForemanColumnProps = {
     dockFeed?: ExactDockFeed | null
     voiceSlot?: ReactNode
     intake?: DesktopForemanIntakeController
+    intakeFinished?: boolean
+    starter?: DesktopStarterView | null
+    onStarterAnswer?: (input: DesktopLocalStarterDecision) => Promise<void>
     /** Opens the template library on one template's review; absent until root wires the seam. */
     onReviewTemplate?: (template: DesktopTemplateIdentity) => void
     onOpenChange?: (open: boolean) => void
@@ -77,7 +82,7 @@ export function DesktopForemanColumn({
     orbState = 'idle',
     headerActions,
     renderBoardOverlay,
-    className, onClose, openOnMount, refreshKey, composerTrailing, focusRequest, controlledOpen, hidden, centerOpen, dockFeed, voiceSlot, intake, onReviewTemplate, onOpenChange, onLayout,
+    className, onClose, openOnMount, refreshKey, composerTrailing, focusRequest, controlledOpen, hidden, centerOpen, dockFeed, voiceSlot, intake, intakeFinished, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
     const savedAnswers = messages.some(message => message.role === 'assistant' && !!message.text.trim())
@@ -90,7 +95,27 @@ export function DesktopForemanColumn({
     const { ui } = foreman
     const composerScope = useRef({ chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft })
     composerScope.current = { chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft }
+    const pendingStarter = !!starter && !starter.decision?.settled
+    const starterInFlight = useRef(false)
+    const [starterBusy, setStarterBusy] = useState(false)
+    const [starterError, setStarterError] = useState<{ offerId: string; message: string } | null>(null)
+    const answerStarter = async (choice: DesktopLocalStarterDecision['choice'], fromComposer = false) => {
+        if (!starter || !onStarterAnswer || starterInFlight.current || hidden || streaming || foreman.blocked) return
+        const scope = composerScope.current
+        starterInFlight.current = true
+        setStarterBusy(true)
+        setStarterError(null)
+        try {
+            await onStarterAnswer({ offerId: starter.offerId, intakeRequestId: starter.intakeRequestId, digest: starter.digest, choice })
+            const current = composerScope.current
+            const confirmedDraft = fromComposer || choice.kind === 'text' && scope.draft.trim() === choice.text.trim()
+            if (confirmedDraft && current.chatId === scope.chatId && current.workspaceId === scope.workspaceId && current.draft === scope.draft) foreman.setDraft('')
+        } catch (error) {
+            setStarterError({ offerId: starter.offerId, message: error instanceof Error ? error.message : 'Could not save the starter choice.' })
+        } finally { starterInFlight.current = false; setStarterBusy(false) }
+    }
     const send = (text: string) => {
+        if (pendingStarter) { void answerStarter({ kind: 'text', text }, true); return }
         if (!intake) { void foreman.sendMessage(text); return }
         const scope = composerScope.current
         void intake.sendOwn(text).then(confirmed => {
@@ -132,7 +157,7 @@ export function DesktopForemanColumn({
     const plan = projectPlanCard(foreman.planSnapshot)
     const docked = ui.placement.mode === 'dock'
     // The rail takes the empty conversation's place instead of sitting under the welcome orb.
-    const starterPack = Boolean(onReviewTemplate && foreman.restored && messages.length === 0 && !plan.view && !foreman.build)
+    const starterPack = Boolean(!intakeFinished && !starter && onReviewTemplate && foreman.restored && messages.length === 0 && !plan.view && !foreman.build)
     return (
         <>
         <DesktopForemanDockLayout scope={dockBinding.scope} open={ui.open} hidden={hidden}
@@ -162,14 +187,14 @@ export function DesktopForemanColumn({
                         restored={foreman.restored}
                         question={foreman.restored && !streaming && question && onAnswerQuestion
                             ? <DesktopQuestionCard question={question} disabled={hidden || !!foreman.blocked} onAnswer={onAnswerQuestion} /> : null}
-                        emptyWelcome={!starterPack}
+                        emptyWelcome={!starterPack && !pendingStarter}
                         planSnapshot={foreman.planSnapshot}
                         decisionStatus={ui.decision}
                         build={foreman.build}
                         nextSteps={foreman.nextSteps}
                         leadState={foreman.leadState}
                         live={foreman.live}
-                        error={foreman.error || (foreman.blocked ? `Blocked: ${foreman.blocked.replaceAll('_', ' ')}` : null)}
+                        error={(starterError?.offerId === starter?.offerId ? starterError?.message : null) || foreman.error || (foreman.blocked ? `Blocked: ${foreman.blocked.replaceAll('_', ' ')}` : null)}
                         onConfirmPlan={foreman.confirmPlan}
                         onAskChanges={() => foreman.askChanges()}
                         onRetryDecision={foreman.retryDecision}
@@ -188,14 +213,19 @@ export function DesktopForemanColumn({
                             active={ui.open && !hidden}
                             onReviewTemplate={onReviewTemplate}
                         />}
+                        {starter && onStarterAnswer && foreman.restored && <DesktopStarterOfferCard key={starter.offerId} offer={starter}
+                            disabled={!!hidden || !!streaming || starterBusy || !!foreman.blocked}
+                            onAnswer={choice => { void answerStarter(choice) }} onStop={() => { void foreman.stop() }} />}
                     </DesktopForemanChatLayer>
                     </>}
                     <DesktopForemanComposer
-                        trailing={intake ? undefined : ui.open ? voiceSlot ?? composerTrailing : composerTrailing}
+                        trailing={intake || pendingStarter ? undefined : ui.open ? voiceSlot ?? composerTrailing : composerTrailing}
                         draft={ui.draft}
                         onDraftChange={foreman.setDraft}
                         busy={!!streaming}
-                        disabled={!!question || !foreman.restored || !!foreman.blocked || ui.decision.status === 'pending' || Boolean(intake && (!intake.restored || intake.submitting || intake.quitting || intake.conflicted || ui.draft.trim().length > 4000))}
+                        disabled={!!question || !foreman.restored || !!foreman.blocked || ui.decision.status === 'pending'
+                            || pendingStarter && (!onStarterAnswer || starterBusy || !!starter?.decision || ui.draft.trim().length > 4000)
+                            || Boolean(intake && (!intake.restored || intake.submitting || intake.quitting || intake.conflicted || ui.draft.trim().length > 4000))}
                         onSend={send}
                         onStop={() => void foreman.stop()}
                     />

@@ -19,11 +19,13 @@ import { flushDesktopForemanUiSaves, saveForemanUiIfMatching, type DesktopForema
 import { DEFAULT_DESKTOP_FOREMAN_PLACEMENT, type DesktopForemanPersistedUi } from './persistence'
 
 import { desktopForemanSavedUiSchema } from './ui-schema'
+import { desktopStarterViewSchema, localStarterDecisionSchema, type DesktopLocalStarterDecision } from './starter'
 export { desktopForemanSavedUiSchema } from './ui-schema'
 const stateSchema = z.strictObject({
     chat: foremanChatRefSchema, sessionId: z.string().min(1).max(128), model: foremanModelRefSchema.nullable(),
     view: foremanConversationViewSchema,
     question: desktopPendingQuestionSchema.nullable().optional(),
+    starter: desktopStarterViewSchema.nullable().optional(),
     answeredQuestions: z.array(desktopAnsweredQuestionRecapSchema).max(2048).optional(),
     messages: z.array(z.object({ id: z.string().max(256), role: z.enum(['user', 'assistant']), parts: z.array(z.unknown()).max(4096) })).max(5000),
     ui: z.strictObject({ snapshot: desktopForemanSavedUiSchema.nullable(), revision: z.number().int().nonnegative() }),
@@ -148,7 +150,7 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
         conversation: {
             sendMessage: async (text, signal) => {
                 owned(chat); signal?.throwIfAborted()
-                if (isDesktopQuitting() || sending || state.question) return false
+                if (isDesktopQuitting() || sending || state.question || state.starter && !state.starter.decision?.settled) return false
                 sending = true
                 let reserved = false, dispatched = false
                 try {
@@ -242,5 +244,25 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
             if (result.runId !== input.requestId) throw new Error('Foreman acknowledged a different answer.')
         } finally { sending = false; changed() }
     }
-    return { answerQuestion, ports, refresh, acceptEvent, close: () => { closed = true; for (const request of requests) request.abort(); requests.clear(); discoveryListeners.clear() } }
+    async function answerStarter(raw: DesktopLocalStarterDecision) {
+        const input = localStarterDecisionSchema.parse(raw)
+        if (input.choice.kind === 'cards') input.choice.chosen.sort()
+        const matches = (offer: DesktopForemanClientState['starter']) =>
+            offer?.offerId === input.offerId && offer.intakeRequestId === input.intakeRequestId && offer.digest === input.digest
+        if (closed || isDesktopQuitting() || sending || state.view.live || state.question || !matches(state.starter)) {
+            throw new Error('This starter offer cannot be answered right now.')
+        }
+        sending = true
+        try {
+            const result = z.object({ offerId: z.uuid().optional(), runId: z.uuid().nullable() }).parse(await act({ action: 'starter', chat, input }))
+            if (input.choice.kind === 'text' ? result.runId !== input.offerId : result.offerId !== input.offerId || result.runId !== null) {
+                throw new Error('Foreman acknowledged a different starter answer.')
+            }
+        } catch (error) {
+            if (closed || isDesktopQuitting()) throw error
+            const current = (await refresh().catch(() => null))?.starter
+            if (!matches(current) || !current?.decision?.settled || JSON.stringify(current.decision.choice) !== JSON.stringify(input.choice)) throw error
+        } finally { sending = false; changed() }
+    }
+    return { answerQuestion, answerStarter, ports, refresh, acceptEvent, close: () => { closed = true; for (const request of requests) request.abort(); requests.clear(); discoveryListeners.clear() } }
 }

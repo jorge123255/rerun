@@ -68,6 +68,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const intake = useDesktopForemanIntake({ chat: initial.chat, ports: intakePorts, active: !!props.controlledOpen && !props.hidden })
     const intakeEligible = initial.messages.length === 0 || intake.hasSavedProgress
     const intakeOpen = intakeEligible && !intake.finished
+    const pendingStarter = !!state.starter && !state.starter.decision?.settled
     const projectFeed = useMemo(() => createClientDockFeed(initial.chat), [initial.chat.workspaceId, initial.chat.chatId])
     const [dockFeed, setDockFeed] = useState(() => projectFeed(initial))
     const [voiceSlot, setVoiceSlot] = useState<ReactNode>(null)
@@ -139,13 +140,14 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     if (!client) return <div role="status" className={props.className}>{t('foreman.opening')}</div>
     return <>
     {(props.modelChoice ?? state.model ?? props.workspaceModelChoice) && <ForemanVoiceOwner target={{ chat: state.chat, model: (props.modelChoice ?? state.model ?? props.workspaceModelChoice)! }}
-        active={!props.hidden && !state.view.live && !state.question && !intakeOpen} engage={() => {}}
+        active={!props.hidden && !state.view.live && !state.question && !intakeOpen && !pendingStarter} engage={() => {}}
         accepted={() => { void client.refresh() }} onSlot={setVoiceSlot} onSettings={props.onOpenTranscriptionSettings} />}
     {!intakeOpen && <DesktopCompanyResearch chat={state.chat} active={!!props.controlledOpen && !props.hidden} refreshKey={JSON.stringify(state.view)} />}
     <DesktopForemanColumn
         controlledOpen={props.controlledOpen} hidden={props.hidden} centerOpen={props.centerOpen} onOpenChange={props.onOpenChange} onLayout={props.onLayout}
         dockFeed={dockFeed} voiceSlot={voiceSlot} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)}
         question={state.question} onAnswerQuestion={client.answerQuestion}
+        starter={state.starter} onStarterAnswer={client.answerStarter} intakeFinished={intake.finished}
         streaming={!!state.view.live} orbState={state.view.live ? 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
         headerActions={<><DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} />{error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}</>}
