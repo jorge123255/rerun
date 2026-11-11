@@ -59,6 +59,20 @@ describe('desktop model selection', () => {
         expect(disconnected.effective).toMatchObject({ ...conversation, source: 'conversation', available: false })
     })
 
+    it('displays the selected Grok API effort only for its exact connection revision and model', () => {
+        const model = 'grok-fixture'
+        const grok = connection({ id: 'grok-api', provider: 'custom', models: [model], customRevision: 2,
+            customReasoning: { [model]: { supported: ['low', 'xhigh'], default: 'low' } } })
+        const selected = { connectionId: grok.id, model, reasoningEffort: 'xhigh', customReasoningRevision: 2 }
+        const view = (current: ConnectionSummary) => buildDesktopModelView({
+            connections: [current], workspace: selected, coworker: null, conversation: null,
+        }).effective
+        expect(view(grok).reasoning).toEqual({ effort: 'xhigh', source: 'workspace' })
+        expect(view({ ...grok, customRevision: 3 })).toMatchObject({ reasoningUnavailable: true })
+        expect(view({ ...grok, customRevision: 3 }).reasoning).toBeUndefined()
+        expect(view({ ...grok, customReasoning: undefined })).toMatchObject({ reasoningUnavailable: true })
+    })
+
     it('resolves a conversation, then a coworker pin, then the workspace, and leaves an unavailable choice in place', () => {
         const input = {
             connections: [local, codex, connection({ id: 'off', provider: 'openai', models: ['hidden'], connected: false }), connection({ id: 'empty', provider: 'google', models: [] })],

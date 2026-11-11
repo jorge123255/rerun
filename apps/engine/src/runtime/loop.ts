@@ -3,7 +3,7 @@ import { desktopDocumentContextParts } from '@rerun/contracts'
 import { streamText, type LanguageModelUsage, type ModelMessage, type StepResult, type StreamTextResult, type ToolSet, type UIMessageStreamWriter } from 'ai'
 import { FOREMAN_AGENT_ID, RERUN_CONNECTION_ID, desktopCoworkerMentionContextParts, contextTextPart, workspaceAttachmentParts, desktopResolvedAttachmentParts, isDesktopSubscriptionProvider, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
 import { applyCaching, withTailBreakpoint } from '../agents/caching.js'
-import { desktopCodexEffort, desktopSubscriptionEffort, mergeProviderOptions, reasoningProviderOptions } from '../agents/reasoning.js'
+import { desktopCodexEffort, desktopCustomEffort, desktopSubscriptionEffort, mergeProviderOptions, reasoningProviderOptions } from '../agents/reasoning.js'
 import { prepareRunHistory } from './compaction/compact.js'
 import { repairToolPairs } from './compaction/repair.js'
 import { approvalSummary, canonicalHitlName, findPendingHitl, hitlStepLacksMessage, hitlTurnIsOver, isHitlToolName, secretSummary, takeoverSummary, type PendingHitl } from '../tools/builtin/hitl.js'
@@ -576,8 +576,8 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         const imageRun = provider === 'codex' && desktopApp() && ctx.runId
             ? { runId: ctx.runId, sessionId, abortSignal: controller.signal, runRoot: nativeWorker?.root }
             : undefined
-        const subscriptionEffort = subscription ? await desktopSubscriptionEffort(resolved) : undefined
-        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker, imageRun, subscriptionEffort)
+        const reasoningEffort = subscription ? await desktopSubscriptionEffort(resolved) : await desktopCustomEffort(resolved)
+        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker, imageRun, reasoningEffort)
         closeModel = resolvedModel.close
         contextUsage = resolvedModel.contextUsage
         // Cut out of the text whoever wrote it; only a coworker that offers replies gets the buttons.

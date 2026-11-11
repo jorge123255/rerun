@@ -56,6 +56,7 @@ export const desktopModelViewSchema = z.object({
         label: z.string(),
         available: z.boolean(),
         reasoning: reasoningSchema.optional(),
+        reasoningUnavailable: z.boolean().optional(),
     }),
 })
 export type DesktopModelView = z.infer<typeof desktopModelViewSchema>
@@ -66,7 +67,8 @@ export const MODEL_SOURCE_LABEL: Record<DesktopModelSource, string> = {
     workspace: 'Workspace default',
 }
 
-type CatalogConnection = Pick<ConnectionSummary, 'id' | 'name' | 'provider' | 'connected' | 'models' | 'extraModels' | 'codexReasoning' | 'subscriptionModels'> & Partial<Pick<ConnectionSummary, 'credentialRejected'>>
+type CatalogConnection = Pick<ConnectionSummary, 'id' | 'name' | 'provider' | 'connected' | 'models' | 'extraModels'
+    | 'codexReasoning' | 'customReasoning' | 'customRevision' | 'subscriptionModels'> & Partial<Pick<ConnectionSummary, 'credentialRejected'>>
 
 export function desktopConnectionModelLabel(connection: Pick<ConnectionSummary, 'subscriptionModels'> | null | undefined, id: string | null) {
     return connection?.subscriptionModels?.find(model => model.id === id)?.label ?? modelLabel(id)
@@ -88,10 +90,14 @@ export function usableConnection(connections: CatalogConnection[], pick: Desktop
     return connection
 }
 
-// The same choice desktopCodexEffort makes at run time: the saved workspace effort when this
-// Codex model is the workspace model, otherwise that model's own recommended effort.
+export function customReasoningUnavailable(connection: CatalogConnection | null, model: string | null, workspace: BoxDefaultModel | null): boolean {
+    if (connection?.provider !== 'custom' || workspace?.connectionId !== connection.id || workspace.model !== model || !workspace.reasoningEffort) return false
+    return !connection.customRevision || workspace.customReasoningRevision !== connection.customRevision
+        || !connectionReasoningOptions(connection, workspace.model)?.supported.includes(workspace.reasoningEffort)
+}
+
 export function desktopReasoningChoice(connection: CatalogConnection | null, model: string | null, workspace: BoxDefaultModel | null): DesktopReasoning | undefined {
-    if (!connection || !model) return
+    if (!connection || !model || customReasoningUnavailable(connection, model, workspace)) return
     const options = connectionReasoningOptions(connection, model)
     if (!options) return
     if (workspace?.connectionId === connection.id && workspace.model === model && workspace.reasoningEffort && options.supported.includes(workspace.reasoningEffort)) {
@@ -142,6 +148,7 @@ export function buildDesktopModelView(input: {
     const model = selected?.model ?? null
     const available = !!usableConnection(connections, selected)
     const reasoning = desktopReasoningChoice(available ? selectedConnection : null, model, input.workspace)
+    const reasoningUnavailable = available && customReasoningUnavailable(selectedConnection, model, input.workspace)
     return desktopModelViewSchema.parse({
         catalog: connections.filter(item => item.connected && offeredModelIds(item).length > 0).map(item => ({
             connectionId: item.id,
@@ -161,6 +168,7 @@ export function buildDesktopModelView(input: {
             label: desktopConnectionModelLabel(selectedConnection, model),
             available,
             ...(reasoning ? { reasoning } : {}),
+            ...(reasoningUnavailable && { reasoningUnavailable }),
         },
     })
 }

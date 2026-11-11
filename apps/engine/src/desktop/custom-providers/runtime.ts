@@ -3,7 +3,7 @@ import { generateText, streamText, wrapLanguageModel, type Prompt } from 'ai'
 import { CUSTOM_DEFAULT_CONTEXT_WINDOW, type CustomProviderAuthority, type CustomProviderIdentity, type CustomProviderModel, type CustomProviderProbe } from '@rerun/contracts'
 import { openrouterReasoningMiddleware } from '../../agents/openrouter-reasoning.js'
 import { createPinnedProviderFetch, endpointBase } from './network.js'
-import { customModelCatalog } from './catalog.js'
+import { customCatalogReasoning, customModelCatalog } from './catalog.js'
 
 type CustomGenerateInput = Omit<Parameters<typeof generateText>[0], 'model' | 'prompt' | 'messages'> & Prompt
 type CustomStreamInput = Omit<Parameters<typeof streamText>[0], 'model' | 'prompt' | 'messages'> & Prompt
@@ -28,18 +28,36 @@ export function createCustomProviderRuntime(authority: CustomProviderAuthority) 
             return { snapshot, key, network, check, close, signal }
         } catch { close(); throw new Error('Custom connection unavailable or stale.') }
     }
-    async function resolveModel(identity: CustomProviderIdentity, modelId: string, stop: AbortSignal) {
+    async function resolveModel(identity: CustomProviderIdentity, modelId: string, stop: AbortSignal, effort?: string) {
             const bound = await lease(identity, stop)
             const selected = bound.snapshot.config.models.find(row => row.id === modelId)
             if (!selected) { bound.close(); throw new Error('Choose a model offered by this exact connection.') }
+            const verifyEffort = (snapshot: typeof bound.snapshot) => {
+                if (effort && !customCatalogReasoning(snapshot, modelId)?.supported.some(level => level === effort))
+                    throw new Error('The saved reasoning effort is unavailable. Refresh the provider catalog or choose Model default in Settings.')
+            }
+            try { verifyEffort(bound.snapshot) }
+            catch (error) { bound.close(); throw error }
             const discovered = bound.snapshot.catalog.models.find(row => row.id === modelId)
             const window = discovered?.contextWindow ?? selected.contextWindow ?? bound.snapshot.config.contextWindow ?? CUSTOM_DEFAULT_CONTEXT_WINDOW
             const provider = createOpenAI({ baseURL: endpointBase(bound.snapshot.config), apiKey: bound.key ?? 'none', fetch: async (url, init) => {
                 const headers = new Headers(init?.headers)
                 if (!bound.key) headers.delete('authorization')
+                if (effort) {
+                    await bound.check()
+                    verifyEffort(await authority.read(identity, bound.signal))
+                }
                 return bound.network(url, { ...init, headers })
             } })
-            return { model: wrapLanguageModel({ model: provider.chat(modelId), middleware: [openrouterReasoningMiddleware, { specificationVersion: 'v3', transformParams: async ({ params }) => { if (params.maxOutputTokens && params.maxOutputTokens >= window) throw new Error('Requested output exceeds custom model context window.'); return params } }] }), contextWindow: window, vision: selected.vision || bound.snapshot.config.vision, close: bound.close, signal: bound.signal }
+            const model = wrapLanguageModel({ model: provider.chat(modelId), middleware: [openrouterReasoningMiddleware, {
+                specificationVersion: 'v3',
+                transformParams: async ({ params }) => {
+                    if (params.maxOutputTokens && params.maxOutputTokens >= window) throw new Error('Requested output exceeds custom model context window.')
+                    if (!effort) return params
+                    return { ...params, providerOptions: { ...params.providerOptions, openai: { ...params.providerOptions?.openai, reasoningEffort: effort } } }
+                },
+            }] })
+            return { model, contextWindow: window, vision: selected.vision || bound.snapshot.config.vision, close: bound.close, signal: bound.signal }
         }
     return {
         model: resolveModel,

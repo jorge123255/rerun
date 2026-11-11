@@ -37,7 +37,7 @@ connectionRoutes.get('/', async c => {
 // Registered before `/:id`: Hono matches same-method routes in registration order, so `/default`
 // would otherwise be read as a connection id.
 connectionRoutes.put('/default', async c => {
-    const { connectionId, model, reasoningEffort } = boxDefaultUpdateSchema.parse(await c.req.json())
+    const { connectionId, model, reasoningEffort, customReasoningRevision } = boxDefaultUpdateSchema.parse(await c.req.json())
     if (namedDesktopConnection(connectionId)) return c.json({ error: 'Named API model selection is unavailable. The workspace default was not changed.' }, 409)
     const subscription = parseDesktopSubscriptionConnectionId(connectionId)
     if (desktopApp() && (connectionId === DESKTOP_CODEX_ID || subscription)) {
@@ -59,13 +59,24 @@ connectionRoutes.put('/default', async c => {
             }))
         })
     }
-    if (reasoningEffort !== undefined) return c.json({ error: 'Reasoning effort is only available for desktop Codex models.' }, 400)
     return selectRegisteredCustomDefault(connectionId, async () => {
         const connection = await findConnection(connectionId)
         if (!connection) return c.json({ error: 'connection not found' }, 404)
         assertDesktopProvider(connection.config.provider, connection.id)
         if (desktopApp() && !isConnected(connection)) return c.json({ error: 'Connect this provider first.' }, 400)
         if (!servesModel(connection, model)) return c.json({ error: `This connection does not offer ${model}` }, 400)
+        if (reasoningEffort !== undefined) {
+            if (!desktopApp() || !connection.custom) return c.json({ error: 'This connection does not offer reasoning controls.' }, 400)
+            const revision = connection.custom.revision
+            if (customReasoningRevision !== revision) return c.json({ error: 'The provider connection changed. Refresh its models before choosing an effort.' }, 409)
+            if (reasoningEffort !== null && !connectionReasoningOptions(connection.config, model)?.supported.includes(reasoningEffort))
+                return c.json({ error: 'Choose a reasoning effort supported by this model.' }, 400)
+            return c.json(await updateBoxDefault(current => {
+                if (current?.connectionId !== connectionId || current.model !== model)
+                    throw new HttpError(409, 'The selected model has changed. Choose the effort for the current model.')
+                return { connectionId, model, ...(reasoningEffort && { reasoningEffort, customReasoningRevision: revision }) }
+            }))
+        }
         return c.json(await writeBoxDefault({ connectionId, model }))
     })
 })

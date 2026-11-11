@@ -20,7 +20,12 @@ const endpoint = z.url().max(2048).refine(value => { const url = new URL(value);
 const opaque = z.string().min(1).max(256)
 export const customProviderIdentitySchema = z.strictObject({ workspaceId: z.number().int().positive(), connectionId: opaque, revision: z.number().int().positive() })
 export type CustomProviderIdentity = z.infer<typeof customProviderIdentitySchema>
-export const customProviderModelSchema = z.strictObject({ id: opaque, contextWindow: z.number().int().min(256).max(10_000_000).nullable(), vision: z.boolean().default(false), source: z.enum(['discovered', 'manual']) })
+export const xaiReasoningLevel = z.enum(['low', 'medium', 'high', 'xhigh'])
+export const customProviderReasoningSchema = z.strictObject({
+    supported: z.array(xaiReasoningLevel).min(1).max(4),
+    default: xaiReasoningLevel.optional(),
+}).refine(value => value.default === undefined || value.supported.includes(value.default))
+export const customProviderModelSchema = z.strictObject({ id: opaque, contextWindow: z.number().int().min(256).max(10_000_000).nullable(), vision: z.boolean().default(false), source: z.enum(['discovered', 'manual']), reasoning: customProviderReasoningSchema.optional() })
 export type CustomProviderModel = z.infer<typeof customProviderModelSchema>
 export const customEndpointPolicySchema = z.strictObject({ reviewedOrigin: endpoint.refine(value => { const url = new URL(value); return url.pathname === '/' }, 'Review an exact origin.'), allowHttp: z.boolean().default(false), allowPrivate: z.boolean().default(false) })
 export const customProviderConfigSchema = z.strictObject({ name: z.string().trim().min(1).max(60), baseUrl: endpoint, preset: customProviderPresetSchema.nullable(), models: z.array(customProviderModelSchema).min(1).max(256), contextWindow: z.number().int().min(256).max(10_000_000).nullable(), vision: z.boolean(), policy: customEndpointPolicySchema })

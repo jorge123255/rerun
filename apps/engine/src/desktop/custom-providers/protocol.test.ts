@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest'
-import { streamText } from 'ai'
+import { generateText, streamText } from 'ai'
 import type { CustomProviderAuthority, CustomProviderConfig, CustomProviderIdentity, CustomProviderSnapshot } from '@rerun/contracts'
 import { createCustomProviderRuntime } from './runtime.js'
 import { probeCustomDraft } from './draft-probe.js'
@@ -16,7 +16,10 @@ function fixture(options: { config?: CustomProviderConfig; key?: string } = {}) 
         change: async () => { throw new Error('fixture does not implement effects') }, recordProbe: vi.fn(async () => {}),
         subscribe: callback => { listener = callback; return () => {} },
     }
-    return { runtime: createCustomProviderRuntime(authority), authority, replace() { current = false; listener({ ...identity, revision: 2 }) } }
+    return { runtime: createCustomProviderRuntime(authority), authority,
+        replace() { current = false; listener({ ...identity, revision: 2 }) },
+        setCatalog(catalog: CustomProviderSnapshot['catalog']) { snapshot.catalog = catalog },
+    }
 }
 it('performs an optional-key one-shot on the exact model and projects compaction context', async () => {
     fake.request.mockImplementation(async (_url, init) => {
@@ -29,6 +32,44 @@ it('performs an optional-key one-shot on the exact model and projects compaction
     expect(bound.contextWindow).toBe(8192); expect(bound.vision).toBe(false); bound.close()
     const result = await runtime.oneShot(identity, 'vendor/exact:tag', { prompt: 'Fixture prompt' }, new AbortController().signal)
     expect(result.text).toBe('Actual fixture answer'); runtime.close()
+})
+
+it('sends an advertised Grok effort and refuses stale or unadvertised choices before a request', async () => {
+    const baseUrl = 'https://api.x.ai/v1'
+    const model = 'synthetic-grok-reasoning'
+    const signal = new AbortController().signal
+    const policy = { reviewedOrigin: new URL(baseUrl).origin, allowHttp: false, allowPrivate: false }
+    fake.request.mockClear().mockResolvedValueOnce(Response.json({ models: [{
+        id: model, capabilities: { reasoning_effort: ['low', 'xhigh', 'unknown', 'low'], default_reasoning_effort: 'low' },
+    }] }))
+    const draft = await probeCustomDraft({ action: 'probe_draft', requestId: crypto.randomUUID(), workspaceId: 1,
+        baseUrl, policy, apiKey: 'synthetic' }, async () => {}, signal)
+    expect(draft.models[0]?.reasoning).toEqual({ supported: ['low', 'xhigh'], default: 'low' })
+    const { runtime, setCatalog } = fixture({ key: 'synthetic', config: { name: 'Grok', preset: 'xai', baseUrl, policy,
+        models: draft.models, contextWindow: null, vision: false } })
+    const fresh = { status: 'fresh' as const, models: draft.models, observedAt: 1, attemptedAt: 1 }
+    setCatalog(fresh)
+    try {
+        await expect(runtime.model(identity, model, signal, 'medium')).rejects.toThrow('reasoning effort is unavailable')
+        expect(fake.request).toHaveBeenCalledTimes(1)
+        fake.request.mockImplementation(async (_url, init) => Response.json({
+            id: 'fixture', object: 'chat.completion', created: 0, model,
+            choices: [{ index: 0, message: { role: 'assistant', content: 'Fixture reply' }, finish_reason: 'stop' }],
+        }))
+        const choice = await runtime.model(identity, model, signal, 'xhigh')
+        try {
+            expect((await generateText({ model: choice.model, prompt: 'Fixture', maxRetries: 0 })).text).toBe('Fixture reply')
+            expect(JSON.parse(fake.request.mock.calls[1]![1].body).reasoning_effort).toBe('xhigh')
+            setCatalog({ ...fresh, status: 'stale' })
+            await expect(generateText({ model: choice.model, prompt: 'Must not send', maxRetries: 0 })).rejects.toThrow('reasoning effort is unavailable')
+            expect(fake.request).toHaveBeenCalledTimes(2)
+        } finally { choice.close() }
+        const automatic = await runtime.model(identity, model, signal)
+        try {
+            await generateText({ model: automatic.model, prompt: 'Use the provider default', maxRetries: 0 })
+            expect(JSON.parse(fake.request.mock.calls[2]![1].body)).not.toHaveProperty('reasoning_effort')
+        } finally { automatic.close() }
+    } finally { runtime.close() }
 })
 
 it.each([

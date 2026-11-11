@@ -195,6 +195,7 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, workspaceM
                     ))}
                     {view && effective?.model && !effective.available && <p className="px-2.5 py-2 text-xs text-muted-foreground">This saved model is no longer offered by a connected provider. Choose another, or follow the coworker or workspace default.</p>}
                     {view?.effective.reasoning && <p className="px-2.5 py-2 text-xs text-muted-foreground">{view.effective.reasoning.source === 'workspace' ? `Reasoning effort ${view.effective.reasoning.effort} from the workspace default.` : `Reasoning effort ${view.effective.reasoning.effort}, this model’s default.`}</p>}
+                    {view?.effective.reasoningUnavailable && <p className="px-2.5 py-2 text-xs text-muted-foreground">The saved reasoning effort needs review in model settings.</p>}
                 </div>
                 {onOpenSettings && <Button type="button" size="sm" variant="ghost" className="justify-start" onClick={() => { setOpen(false); onOpenSettings() }}>Open model settings</Button>}
             </PopoverContent>

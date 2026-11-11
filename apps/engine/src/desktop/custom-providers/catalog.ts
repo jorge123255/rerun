@@ -1,6 +1,16 @@
-import { DESKTOP_XAI_BASE_URL, type CustomProviderModel } from '@rerun/contracts'
+import { DESKTOP_XAI_BASE_URL, xaiReasoningLevel, type CustomProviderModel, type CustomProviderSnapshot } from '@rerun/contracts'
 
-export function parseCustomModels(body: unknown): CustomProviderModel[] {
+function xaiReasoning(capabilities: unknown): CustomProviderModel['reasoning'] {
+    if (!capabilities || typeof capabilities !== 'object') return
+    const { reasoning_effort: levels, default_reasoning_effort: defaultLevel } = capabilities as Record<string, unknown>
+    if (!Array.isArray(levels) || levels.length > 32) return
+    const supported = [...new Set(levels.filter((level): level is NonNullable<CustomProviderModel['reasoning']>['supported'][number] => xaiReasoningLevel.safeParse(level).success))]
+    if (!supported.length) return
+    const preferred = xaiReasoningLevel.safeParse(defaultLevel)
+    return { supported, ...(preferred.success && supported.includes(preferred.data) && { default: preferred.data }) }
+}
+
+export function parseCustomModels(body: unknown, includeXaiReasoning = false): CustomProviderModel[] {
     const rows = Array.isArray(body) ? body : body && typeof body === 'object' && 'data' in body && Array.isArray(body.data) ? body.data : null
     if (!rows || rows.length > 256) throw new Error('Custom catalog unavailable.')
     const models = new Map<string, CustomProviderModel>()
@@ -9,7 +19,8 @@ export function parseCustomModels(body: unknown): CustomProviderModel[] {
         const row = value as Record<string,unknown>, id = typeof row.id === 'string' ? row.id.trim() : ''
         if (!id || id.length > 256 || models.has(id)) continue
         const context = [row.context_length,row.max_model_len,row.context_window,row.max_context_length].find(n => typeof n === 'number' && Number.isInteger(n) && n >= 256 && n <= 10_000_000)
-        models.set(id, { id, contextWindow: typeof context === 'number' ? context : null, vision: false, source: 'discovered' })
+        const reasoning = includeXaiReasoning ? xaiReasoning(row.capabilities) : undefined
+        models.set(id, { id, contextWindow: typeof context === 'number' ? context : null, vision: false, source: 'discovered', ...(reasoning && { reasoning }) })
     }
     return [...models.values()]
 }
@@ -20,7 +31,13 @@ export function customModelCatalog(base: string) {
         // xAI's general catalog also offers image and video generation models.
         url: `${base}/language-models`,
         parse(body: unknown) {
-            return parseCustomModels(body && typeof body === 'object' && 'models' in body ? body.models : body)
+            return parseCustomModels(body && typeof body === 'object' && 'models' in body ? body.models : body, true)
         },
     }
+}
+
+export function customCatalogReasoning(snapshot: CustomProviderSnapshot, model: string) {
+    if (snapshot.state !== 'configured' || !snapshot.configuredSecret || snapshot.catalog.status !== 'fresh'
+        || new URL(snapshot.config.baseUrl).href.replace(/\/+$/, '') !== DESKTOP_XAI_BASE_URL) return
+    return snapshot.catalog.models.find(entry => entry.id === model)?.reasoning
 }

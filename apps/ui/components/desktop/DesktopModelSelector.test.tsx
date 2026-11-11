@@ -131,6 +131,21 @@ test('shows an unavailable saved model instead of replacing it', async () => {
     expect(document.querySelector('[role="alert"]')).toBeNull()
 })
 
+test('shows a review message for a stale custom effort on the board picker', async () => {
+    const connection = { ...local, name: 'Grok API', provider: 'custom' as const, customRevision: 2,
+        models: ['grok-fixture'], customReasoning: { 'grok-fixture': { supported: ['low' as const], default: 'low' as const } } }
+    const workspace = { connectionId: connection.id, model: 'grok-fixture', reasoningEffort: 'low', customReasoningRevision: 1 }
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(buildDesktopModelView({
+        connections: [connection], workspace, coworker: null, conversation: null,
+    }))))
+    container = document.body.appendChild(document.createElement('div'))
+    root = createRoot(container)
+    await act(async () => { root.render(<DesktopModelSelector agentId="alice" sessionId="open" />) })
+    await click('Grok API · grok-fixture')
+    expect(document.body.textContent).toContain('The saved reasoning effort needs review in model settings.')
+    expect(document.body.textContent).not.toContain('this model’s default')
+})
+
 test('changing the model keeps the typed draft of an already open chat', async () => {
     coworker = null
     conversations = { open: null }

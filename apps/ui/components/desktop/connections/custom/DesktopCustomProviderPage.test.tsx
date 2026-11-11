@@ -162,6 +162,19 @@ test('editing a saved endpoint requires an explicit key decision for a different
     expect(client.change).not.toHaveBeenCalled()
 })
 
+test('a confirmed catalog refresh reloads the available reasoning choices in parent Settings', async () => {
+    const client = adapter()
+    const onCatalogChanged = vi.fn()
+    client.probe.mockResolvedValue({ ok: true, value: probe({
+        status: 'fresh', problem: null, manualModel: null, manualUsable: false,
+        models: [{ ...manual, source: 'discovered', reasoning: { supported: ['low', 'xhigh'], default: 'low' } }],
+    }) })
+    await mount({ identity, adapter: client, onCatalogChanged })
+    await act(async () => { button('Retry').click() })
+    await flush()
+    expect(onCatalogChanged).toHaveBeenCalledOnce()
+})
+
 test('an uncertain create is retried with the same request and an edited save waits', async () => {
     const client = adapter()
     client.change.mockImplementation(async (body: CustomProviderChange) => ({

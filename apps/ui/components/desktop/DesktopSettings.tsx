@@ -19,6 +19,7 @@ import { enabledModels, modelName } from '@/lib/engine/ai-sources'
 import { ProviderIcon } from '@/lib/engine/provider-icons'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 import { desktopProvider, type SettingsChange } from '@/lib/desktop/settings'
+import { customReasoningUnavailable } from '@/lib/desktop/chat-model'
 import { DesktopCustomProviderPage } from './connections/custom/DesktopCustomProviderPage'
 import { ApiConnectionsPanel } from './connections/api/ApiConnectionsPanel'
 import { createApiConnectionsClient } from '@/lib/desktop/api-connections/client'
@@ -60,6 +61,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
     const active = providers.default
     const activeConnection = providers.connections.find(c => c.id === active?.connectionId && c.connected)
     const reasoning = active && activeConnection ? connectionReasoningOptions(activeConnection, active.model) : undefined
+    const staleEffort = customReasoningUnavailable(activeConnection ?? null, active?.model ?? null, active)
 
     async function save(change: SettingsChange, message: string) {
         setBusy(true)
@@ -115,13 +117,15 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                 {providers.connections.filter(c => c.connected && !(c.provider === 'claude' && c.credentialRejected)).map(c => <optgroup key={c.id} label={c.name}>{picks.map((p, index) => p.connectionId === c.id &&
                                     <option key={p.model} value={index}>{c.subscriptionModels?.find(m => m.id === p.model)?.label ?? modelName(c.id, p.model)}</option>)}</optgroup>)}
                             </select>
-                            {activeConnection && active && (activeConnection.provider === 'codex' || reasoning) && <div className="space-y-2 pt-3">
+                            {activeConnection && active && (activeConnection.provider === 'codex' || reasoning || staleEffort) && <div className="space-y-2 pt-3">
                                 <label htmlFor="desktop-reasoning-effort" className="font-semibold">Reasoning effort</label>
                                 <p id="desktop-reasoning-hint" className="text-sm text-muted-foreground">How much reasoning {activeConnection.provider === 'codex' ? 'Codex' : activeConnection.name} uses for the next message.</p>
                                 <select id="desktop-reasoning-effort" aria-describedby="desktop-reasoning-hint" className={selectClass}
-                                    disabled={!reasoning?.supported.length}
-                                    value={active.reasoningEffort && reasoning?.supported.includes(active.reasoningEffort) ? active.reasoningEffort : ''}
-                                    onChange={e => void save({ action: 'default', connectionId: activeConnection.id, model: active.model, reasoningEffort: e.target.value || null }, 'Reasoning effort saved.')}>
+                                    disabled={!reasoning?.supported.length && !staleEffort}
+                                    value={staleEffort ? 'unavailable' : active.reasoningEffort && reasoning?.supported.includes(active.reasoningEffort) ? active.reasoningEffort : ''}
+                                    onChange={e => void save({ action: 'default', connectionId: activeConnection.id, model: active.model, reasoningEffort: e.target.value || null,
+                                        ...(activeConnection.provider === 'custom' && { customReasoningRevision: activeConnection.customRevision }) }, 'Reasoning effort saved.')}>
+                                    {staleEffort && <option value="unavailable" disabled>Saved effort unavailable</option>}
                                     <option value="">Model default{reasoning?.default ? ` (${effortLabel(reasoning.default)})` : ''}</option>
                                     {reasoning?.supported.map(level => <option key={level} value={level}>{effortLabel(level)}</option>)}
                                 </select>
@@ -150,6 +154,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                 defaultModel={providers.default}
                                 onBack={() => setSource(providers.connections.find(item => item.provider !== 'custom')?.id ?? 'add:openai')}
                                 onReceipt={receipt => { if (receipt.status === 'recorded') onConnectionsChanged?.() }}
+                                onCatalogChanged={onConnectionsChanged}
                             /> : <p role="status">Custom endpoint settings are unavailable.</p> : provider === 'codex' ? <>
                                 <DesktopCodexLogin connected={!!connection?.connected} modelCount={connection?.models.length ?? 0} onProviders={onProviders} />
                                 {connection?.provider === 'codex' && connection.connected && <DesktopPlanLimitsBlock connection={connection} />}

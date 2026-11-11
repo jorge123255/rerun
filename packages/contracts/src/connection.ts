@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { RERUN_MODELS, providerSchema } from './agent.js'
 import { desktopSubscriptionModels, desktopSubscriptionProvider, isDesktopSubscriptionProvider } from './desktop-subscription-login.js'
+import { customProviderReasoningSchema } from './desktop-custom-provider.js'
 
 // Populated by the desktop Codex runner. Its catalog, not a fixed enum, defines the available levels.
 const reasoningLevel = z.string().min(1)
@@ -20,6 +21,7 @@ export const connectionConfigSchema = z.object({
     // is shared by everyone on the box and survives a new device.
     models: z.array(z.string()).default([]),
     codexReasoning: codexReasoningSchema.optional(),
+    customReasoning: z.record(z.string(), customProviderReasoningSchema).optional(),
     subscriptionModels: desktopSubscriptionModels.optional(),
     // OpenRouter-compatible router of the user's own. Empty falls back to openrouter.ai, and it has
     // to be a valid member of the type since a PATCH cannot clear a field by sending `undefined`.
@@ -31,12 +33,13 @@ export const connectionConfigSchema = z.object({
 export type ConnectionConfig = z.infer<typeof connectionConfigSchema>
 
 export function connectionReasoningOptions(
-    connection: Pick<ConnectionConfig, 'provider' | 'codexReasoning' | 'subscriptionModels'>,
+    connection: Pick<ConnectionConfig, 'provider' | 'codexReasoning' | 'customReasoning' | 'subscriptionModels'>,
     model: string,
-) {
+): { supported: string[]; default?: string } | undefined {
     if (connection.provider === 'codex') return Object.hasOwn(connection.codexReasoning ?? {}, model)
         ? connection.codexReasoning?.[model] : undefined
     if (isDesktopSubscriptionProvider(connection.provider)) return connection.subscriptionModels?.find(item => item.id === model)?.reasoning
+    if (connection.provider === 'custom' && Object.hasOwn(connection.customReasoning ?? {}, model)) return connection.customReasoning?.[model]
 }
 
 // The id of the keyless connection every box carries: requests are proxied by the hub, which holds
@@ -78,7 +81,10 @@ export type ConnectionSummary = z.infer<typeof connectionSummarySchema>
 // The pair a box runs when an agent names no model of its own. One record for the whole box rather
 // than a flag on each connection.json: "exactly one of them is true" is an invariant nothing can
 // hold across N independent writes, and the default is a pair anyway.
-export const boxDefaultModelSchema = z.object({ connectionId: z.string(), model: z.string(), reasoningEffort: reasoningLevel.optional() })
+export const boxDefaultModelSchema = z.object({
+    connectionId: z.string(), model: z.string(), reasoningEffort: reasoningLevel.optional(),
+    customReasoningRevision: z.number().int().positive().optional(),
+})
 export type BoxDefaultModel = z.infer<typeof boxDefaultModelSchema>
 // Leave effort out to switch models. Send null to restore the selected model's native default.
 export const boxDefaultUpdateSchema = boxDefaultModelSchema.extend({ reasoningEffort: reasoningLevel.nullish() })

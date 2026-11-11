@@ -44,6 +44,16 @@ export async function desktopSubscriptionEffort({ provider, connection, model }:
     return options.default
 }
 
+export async function desktopCustomEffort({ provider, connection, model }: RunModel): Promise<string | undefined> {
+    if (provider !== 'custom' || !connection?.custom) return
+    const selected = await readBoxDefault()
+    if (selected?.connectionId !== connection.id || selected.model !== model || !selected.reasoningEffort) return
+    if (selected.customReasoningRevision !== connection.custom.revision)
+        throw new Error('The provider connection changed. Choose its reasoning effort again or use Model default in Settings.')
+    // The provider lease checks the latest catalog again before it sends anything.
+    return selected.reasoningEffort
+}
+
 // One level deep on purpose: `openai` already carries the `promptCacheKey` that applyCaching put
 // there, and a plain spread of the two objects would drop it.
 export function mergeProviderOptions(base: ProviderOptions | undefined, extra: ProviderOptions | undefined): ProviderOptions | undefined {

@@ -23,6 +23,7 @@ export type DesktopCustomProviderPageProps = {
     onBack: () => void
     returnFocusId?: string
     onReceipt?: (receipt: CustomProviderReceipt) => void
+    onCatalogChanged?: () => void
 }
 
 type Draft = {
@@ -131,7 +132,7 @@ function scrub(message: string, secret: string): string {
     return secret.length > 0 && message.includes(secret) ? UNAVAILABLE_MESSAGE : message
 }
 
-export function DesktopCustomProviderPage({ workspaceId, identity = null, takenNames, defaultModel = null, willBecomeBoxDefault = false, adapter, onBack, returnFocusId, onReceipt }: DesktopCustomProviderPageProps) {
+export function DesktopCustomProviderPage({ workspaceId, identity = null, takenNames, defaultModel = null, willBecomeBoxDefault = false, adapter, onBack, returnFocusId, onReceipt, onCatalogChanged }: DesktopCustomProviderPageProps) {
     const formId = useId()
     const fallback = useRef<Adapter | null>(null)
     if (!fallback.current) fallback.current = createDesktopCustomProviderClient()
@@ -295,6 +296,7 @@ export function DesktopCustomProviderPage({ workspaceId, identity = null, takenN
             asksModel: applied.asksModel || currentDraft.asksModel,
         }))
         if (applied.notice) setError(applied.notice)
+        onCatalogChanged?.()
         return true
     }
 

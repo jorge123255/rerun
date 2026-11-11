@@ -11,6 +11,7 @@ import { bindRegisteredCustomConnection } from './connection.js'
 import { createCustomProviderRuntime } from './runtime.js'
 import { handleCustomProviderRequest } from './router.js'
 import { createCustomConnectionStore, isCustomConnectionId, withCustomConnectionWrite } from './store.js'
+import { customCatalogReasoning } from './catalog.js'
 
 let installed: ReturnType<typeof createBinding> | undefined
 
@@ -42,14 +43,19 @@ function createBinding(workspaceId: number, launchNonce: string, stopping: () =>
             const saved = await store.row(id)
             if (!saved) return null
             const { snapshot } = saved
+            const reasoning = snapshot.config.models.flatMap(({ id }) => {
+                const options = customCatalogReasoning(snapshot, id)
+                return options ? [[id, options] as const] : []
+            })
             return { id, config: { name: snapshot.config.name, provider: 'custom', baseUrl: snapshot.config.baseUrl,
-                models: snapshot.config.models.map(model => model.id), extraModels: [], createdAt: saved.createdAt }, env: {}, custom: snapshot }
+                models: snapshot.config.models.map(model => model.id), extraModels: [], createdAt: saved.createdAt,
+                ...(reasoning.length && { customReasoning: Object.fromEntries(reasoning) }) }, env: {}, custom: snapshot }
         },
         ids: store.ids,
-        model(snapshot: CustomProviderSnapshot, modelId: string, signal: AbortSignal) {
+        model(snapshot: CustomProviderSnapshot, modelId: string, signal: AbortSignal, effort?: string) {
             assertActive()
             const { workspaceId, connectionId, revision } = snapshot
-            return runtime.model({ workspaceId, connectionId, revision }, modelId, AbortSignal.any([signal, lifetime.signal]))
+            return runtime.model({ workspaceId, connectionId, revision }, modelId, AbortSignal.any([signal, lifetime.signal]), effort)
         },
         abort() { lifetime.abort(); lifetime = new AbortController() },
         close() { closed = true; lifetime.abort(); runtime.close() },
