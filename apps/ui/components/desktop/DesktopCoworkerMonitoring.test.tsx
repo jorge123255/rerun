@@ -4,6 +4,9 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { DesktopCoworkerMonitoring } from './DesktopCoworkerMonitoring'
+import { DesktopLocale, useDesktopLocale } from './DesktopLocale'
+import { desktopMessages, englishDesktopLanguage } from '@/lib/desktop/locale'
+import { loadMessages } from '@rerun/i18n/messages'
 import type { DesktopMonitoring, MonitoringRange } from '@/lib/desktop/monitoring'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -155,5 +158,37 @@ test('shows the engine error, keeps last data on refresh failure, and retries', 
         await act(async () => { await vi.advanceTimersByTimeAsync(30000) })
         expect(document.querySelector('[role="alert"]')?.textContent).toContain('Showing the last loaded monitoring.')
         expect(dialogText()).toContain('Total cost')
+    } finally { await act(async () => { root.unmount() }) }
+})
+
+test('changes the open monitoring dashboard and measured values to the app language without fetching again', async () => {
+    const fetcher = vi.fn(async (url: string) => {
+        const range = url.endsWith('30d') ? '30d' : '7d'
+        return Response.json(body('alice', range, range === '30d' ? { totalTokens: null, cost: null } : {}))
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const source = await loadMessages('fr')
+    const french = { locale: 'fr' as const, preference: 'fr' as const, messages: desktopMessages('fr', source) }
+    function Harness() {
+        const { setLanguage } = useDesktopLocale()
+        return <><button onClick={() => setLanguage(french)}>French</button>
+            <DesktopCoworkerMonitoring agent={alice} dialogControl={{ open: true, onOpenChange: () => {} }} /></>
+    }
+    const { root } = mount()
+    try {
+        await act(async () => { root.render(<DesktopLocale initial={englishDesktopLanguage}><Harness /></DesktopLocale>) })
+        expect(dialogText()).toContain('$2.50')
+        expect(fetcher).toHaveBeenCalledTimes(1)
+        await click('French')
+        expect(dialogText()).toContain(source.agent.agentTabs.monitoring.label)
+        expect(dialogText()).toContain(source.agent.agentPanelMonitoring.charts.kpiCost)
+        expect(dialogText()).toContain(new Intl.NumberFormat('fr', { style: 'currency', currency: 'USD' }).format(2.5))
+        expect(dialogText()).toContain(new Intl.NumberFormat('fr', { style: 'percent', minimumFractionDigits: 1 }).format(0.125))
+        expect(document.querySelector('button[aria-pressed="true"]')?.getAttribute('title')).toBe(source.agent.agentPanelMonitoring.ranges['7d'].label)
+        expect(fetcher).toHaveBeenCalledTimes(1)
+        const title = source.agent.agentPanelMonitoring.charts.runsByModel
+        const expand = source.agent.agentPanelMonitoring.expand.replace('{title}', title)
+        await click(expand)
+        expect([...document.querySelectorAll('[role="dialog"] h2')].some(heading => heading.textContent === title)).toBe(true)
     } finally { await act(async () => { root.unmount() }) }
 })
