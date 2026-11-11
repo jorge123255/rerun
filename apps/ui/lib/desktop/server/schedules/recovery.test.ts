@@ -24,7 +24,7 @@ beforeEach(async () => {
     state.list.mockResolvedValue([session]); state.session.mockResolvedValue(session)
     db = createClient({ url: 'file::memory:' })
     await db.executeMultiple(`CREATE TABLE desktop_agents(id TEXT,engine_agent_id TEXT,workspace_id INTEGER);INSERT INTO desktop_agents VALUES('local-owner','engine-owner',1);
-      CREATE TABLE desktop_deletions(agent_id TEXT);CREATE TABLE desktop_sessions(id TEXT,agent_id TEXT,engine_session_id TEXT UNIQUE,title TEXT,created_at TEXT,updated_at TEXT);`)
+      CREATE TABLE desktop_deletions(agent_id TEXT);CREATE TABLE desktop_sessions(id TEXT,agent_id TEXT,engine_session_id TEXT UNIQUE,title TEXT,title_search TEXT,created_at TEXT,updated_at TEXT);`)
 })
 afterEach(() => { db.close(); vi.useRealTimers() })
 const saved = () => db.execute('SELECT * FROM desktop_sessions')

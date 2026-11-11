@@ -6,12 +6,16 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { findDesktopApproval, findDesktopQuestion, type Message, type Session, type SessionSource } from '@rerun/contracts'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent, createDesktopSession, type DesktopAgent, type DesktopSession } from '@/lib/desktop/server/store'
+import { readDesktopAttention } from '@/lib/desktop/server/attention'
 import { readDesktopApproval } from '@/lib/desktop/server/approvals'
 import { readDesktopQuestion } from '@/lib/desktop/server/questions'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { GET } from './route'
 
 vi.mock('@/lib/desktop/server/secret-requests/binding', () => ({ readDesktopSecretRequestView: async () => ({ request: null }) }))
+vi.mock('@/lib/desktop/server/service-requests/view', () => ({ readDesktopServiceRequestView: async () => ({ request: null }) }))
+vi.mock('@/lib/desktop/server/mcp-sign-in/binding', () => ({ readDesktopMcpSignInView: async () => ({ request: null }) }))
+vi.mock('@/lib/desktop/server/tool-install/runtime', () => ({ readDesktopToolInstallHistory: async () => [] }))
 
 const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime, alice: DesktopAgent, bob: DesktopAgent
@@ -20,16 +24,20 @@ let failSessions = false
 const time = '2026-11-03T12:00:00.000Z'
 const remoteSessions: Session[] = [], histories = new Map<string, Message[]>(), calls: string[] = [], failedHistories = new Set<string>()
 
-function rows(sessionId: string, kind: 'question' | 'approval'): Message[] {
-    const toolName = kind === 'question' ? 'ask_user' : 'request_approval'
-    const input = kind === 'question' ? { questions: [{ question: 'Which color should I use?' }] } : { approvals: [{ action: 'Use the orange heading', detail: 'Keep the blue heading.' }] }
+function rows(sessionId: string, kind: 'question' | 'approval' | 'takeover'): Message[] {
+    const forms = {
+        question: { toolName: 'ask_user', input: { questions: [{ question: 'Which color should I use?' }] } },
+        approval: { toolName: 'request_approval', input: { approvals: [{ action: 'Use the orange heading', detail: 'Keep the blue heading.' }] } },
+        takeover: { toolName: 'request_takeover', input: { url: 'http://127.0.0.1', reason: 'Finish the local browser step' } },
+    }
+    const { toolName, input } = forms[kind]
     return [
         { id: `${sessionId}-request`, sessionId, role: 'assistant', contentJson: JSON.stringify([{ type: 'tool-call', toolName, toolCallId: `${sessionId}-call`, input }]), toolCallsJson: null, createdAt: time },
         { id: `${sessionId}-result`, sessionId, role: 'tool', contentJson: JSON.stringify([{ type: 'tool-result', toolName, toolCallId: `${sessionId}-call`, output: { type: 'json', value: { status: 'delivered' } } }]), toolCallsJson: null, createdAt: time },
     ]
 }
-function request(agentId: string, cookie = runtime.app.sessionToken) {
-    return new Request(`${runtime.app.origin}/api/desktop/agents/${agentId}/chat-history`, { headers: {
+function request(agentId: string, cookie = runtime.app.sessionToken, search = '') {
+    return new Request(`${runtime.app.origin}/api/desktop/agents/${agentId}/chat-history${search}`, { headers: {
         host: new URL(runtime.app.origin).host, cookie: `rerun-desktop-session=${cookie}`,
     } })
 }
@@ -102,6 +110,12 @@ test('GET resolves questions and approvals while respecting accepted receipts, o
     expect(body.conversations.find((row: { id: string }) => row.id === approval.id)).toMatchObject({ source: 'schedule', pendingQuestion: 'Use the orange heading' })
     expect(calls.every(call => call.startsWith('GET '))).toBe(true)
     expect(calls.some(call => call.includes('engine-bob'))).toBe(false)
+    expect(calls.filter(call => call.endsWith('/messages')).sort()).toEqual([
+        'GET /agents/engine-alice/sessions/accepted-approval/messages',
+        'GET /agents/engine-alice/sessions/accepted-question/messages',
+        'GET /agents/engine-alice/sessions/approval/messages',
+        'GET /agents/engine-alice/sessions/question/messages',
+    ])
     expect((await (await get(bob.id)).json()).conversations.map((row: { id: string }) => row.id)).toEqual([bobChat.id])
 })
 
@@ -131,4 +145,44 @@ test('foreign history cannot label a selected coworker and unauthenticated calle
     expect(body.conversations.find((row: { id: string }) => row.id === question.id).needsYou).toBe(false)
     expect((await GET(request(alice.id, 'wrong'), { params: Promise.resolve({ agentId: alice.id }) })).status).toBe(401)
     expect((await get('missing')).status).toBe(404)
+})
+
+test('a fresh history read observes changed forms without reusing the previous transcript', async () => {
+    expect((await (await get()).json()).conversations.find((row: { id: string }) => row.id === question.id).needsYou).toBe(true)
+    histories.set(question.engineSessionId, [])
+    calls.length = 0
+    const body = await (await get()).json()
+    expect(body.conversations.find((row: { id: string }) => row.id === question.id)).toMatchObject({ needsYou: false, pendingQuestion: null })
+    expect(calls.filter(call => call.endsWith('/sessions/question/messages'))).toHaveLength(1)
+})
+
+test('board attention shares a transcript for the takeover fallback and still honors a Stop receipt', async () => {
+    histories.set(approval.engineSessionId, rows(approval.engineSessionId, 'takeover'))
+    const initial = await readDesktopAttention(runtime)
+    expect(initial.unavailableAgentIds).toEqual([])
+    expect(initial.items.find(item => item.sessionId === approval.id)).toMatchObject({ kind: 'takeover', summary: 'Finish the local browser step' })
+    expect(calls.filter(call => call.endsWith('/sessions/approval/messages'))).toHaveLength(1)
+
+    const db = await openDesktopDatabase(root)
+    await db.execute({
+        sql: `INSERT INTO desktop_trigger_request_links_v1
+            (link_key,workspace_id,agent_id,session_id,event_id,source_run_id,source_json,continuation_id,phase,created_at,updated_at)
+            VALUES ('fixture-link','1',?,?,'fixture-event','fixture-run',?,'fixture-continuation','stopped',?,?)`,
+        args: [alice.id, approval.id, JSON.stringify({ sourceMessageId: `${approval.engineSessionId}-request` }), time, time],
+    })
+    const afterStop = await readDesktopAttention(runtime)
+    expect(afterStop.unavailableAgentIds).toEqual([])
+    expect(afterStop.items.some(item => item.sessionId === approval.id)).toBe(false)
+    expect(afterStop.items.some(item => item.sessionId === question.id)).toBe(true)
+})
+
+test('saved thread listing remains available without reading pending forms or full transcripts', async () => {
+    failedHistories.add(question.engineSessionId)
+    const response = await GET(request(alice.id, runtime.app.sessionToken, '?view=saved'), { params: Promise.resolve({ agentId: alice.id }) })
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body).toMatchObject({ enrichment: 'ok', questions: 'not-requested' })
+    expect(body.conversations.map((row: { id: string }) => row.id).sort()).toEqual([question.id, approval.id, acceptedQuestion.id, acceptedApproval.id].sort())
+    expect(body.conversations.find((row: { id: string }) => row.id === approval.id).source).toBe('schedule')
+    expect(calls).toEqual(['GET /agents/engine-alice/sessions'])
 })

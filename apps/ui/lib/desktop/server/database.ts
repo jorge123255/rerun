@@ -16,6 +16,10 @@ import { ensureDesktopPrivateFileToolsSchema } from './private-file-tools/schema
 import { initializeDesktopRound35 } from './round35-schema'
 import { initializeDesktopRound36 } from './round36-schema'
 import { initializeDesktopRound38 } from './round38-schema'
+import { initializeDesktopRound39 } from './round39-schema'
+import { initializeDesktopRound40 } from './round40-schema'
+import { initializeDesktopRound41 } from './round41-schema'
+import { initializeDesktopRound42 } from './round42-schema'
 import { initializeDesktopRound37 } from './round37-schema'
 import { initializeDesktopRound34 } from './round34-schema'
 import { initializeDesktopRound33 } from './round33-schema'
@@ -271,6 +275,10 @@ async function initialize(dataRoot: string): Promise<Client> {
     await initializeDesktopRound36(client)
     await initializeDesktopRound37(client)
     await initializeDesktopRound38(client)
+    await initializeDesktopRound39(client)
+    await initializeDesktopRound40(client)
+    await initializeDesktopRound41(client)
+    await initializeDesktopRound42(client)
     if (nativeContext) {
         const assignedIcon = process.env.RERUN_DESKTOP_WORKSPACE_ICON
         if (seeded[1].rowsAffected && assignedIcon && desktopWorkspaceIconById(assignedIcon)) await writeDesktopWorkspaceIcon(client, { name: initialName, catalogId: assignedIcon })

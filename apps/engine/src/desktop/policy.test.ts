@@ -1,6 +1,13 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { assertDesktopProvider, desktopRouteAllowed } from './policy.js'
 
+test('permits only the read-only subscription runtime capability route', () => {
+    const path = '/desktop/subscription-providers'
+    expect(desktopRouteAllowed('GET', path)).toBe(true)
+    expect(desktopRouteAllowed('POST', path)).toBe(false)
+    expect(desktopRouteAllowed('GET', `${path}/login`)).toBe(false)
+})
+
 afterEach(() => vi.unstubAllEnvs())
 
 test('named API management and Foreman permission routes admit only exact intended methods', () => {
@@ -208,4 +215,17 @@ test('desktop Foreman questions and logical database capture expose only their e
         expect(desktopRouteAllowed(method, '/desktop/foreman/question/arbitrary')).toBe(false)
         expect(desktopRouteAllowed(method, '/desktop/coworker-share-database/capture/arbitrary')).toBe(false)
     }
+})
+
+
+test('allows only the exact saved workspace attachment read for a regular coworker', () => {
+    const attachment = '/agents/owner/sessions/chat/messages/turn/attachment'
+    expect(desktopRouteAllowed('GET', attachment)).toBe(true)
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) expect(desktopRouteAllowed(method, attachment)).toBe(false)
+    for (const path of [
+        '/agents/foreman/sessions/chat/messages/turn/attachment',
+        '/agents/owner/sessions/chat/attachment',
+        '/agents/owner/sessions/chat/messages/turn/attachment/other',
+        '/agents/owner/sessions/chat/messages/turn%2Fother/attachment',
+    ]) expect(desktopRouteAllowed('GET', path)).toBe(false)
 })

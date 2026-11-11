@@ -18,6 +18,11 @@ describe('timeBreaksOf', () => {
         expect([...timeBreaksOf([local(25, 23, 50), local(26, 0, 5)])]).toEqual([0, 1])
     })
 
+    it('skips missing or invalid legacy times and compares the surrounding known messages', () => {
+        expect([...timeBreaksOf(['', local(26, 9), 'unknown', local(26, 9, 30), '', local(26, 10, 30)])]).toEqual([1, 5])
+        expect(timeBreaksOf(['bad timestamp']).size).toBe(0)
+    })
+
     it('has nothing to say about an empty conversation', () => {
         expect(timeBreaksOf([]).size).toBe(0)
     })

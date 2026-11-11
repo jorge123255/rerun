@@ -1,9 +1,14 @@
 'use client'
 
 import { useDesktopLocale } from './DesktopLocale'
+import { desktopLocaleTag } from '@/lib/desktop/locale'
+import { ChatTimeSeparator } from '@/components/chat/ChatTimeSeparator'
+import { MessageTimeTooltip } from '@/components/chat/MessageTimeTooltip'
+import { ExpandableMessageBody } from '@/components/chat/ExpandableMessageBody'
+import { timeBreaksOf } from '@/lib/chat/message-times'
 import { DesktopConversationOverview, type DesktopConversationOverviewAuthority } from './coworker-overview/conversation-mount'
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { useChat } from '@ai-sdk/react'
 import { useRunReconnect } from '@/hooks/useRunReconnect'
@@ -78,6 +83,7 @@ import type { DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
 import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-request'
 import { AttachmentChips, DesktopAttachmentPicker } from './DesktopAttachmentPicker'
+import { DesktopWorkspaceAttachmentLightbox, type WorkspaceAttachmentSource } from './DesktopWorkspaceAttachmentLightbox'
 import { useDesktopDocumentAttachments } from '@/lib/desktop/document-attachments/useDesktopDocumentAttachments'
 import { DesktopDocumentAttachmentControls } from './document-attachments/DesktopDocumentAttachmentControls'
 import { DesktopDocumentLightbox } from './document-attachments/DesktopDocumentLightbox'
@@ -191,11 +197,11 @@ function scheduledRunOf(message: UIMessage) {
     return parseScheduledRun(prompt)
 }
 
-export function DesktopConversation({ agent, sessionId, sessions, needsYouSessions, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: {
+export function DesktopConversation({ agent, sessionId, sessions, pendingChatSummaries, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, onHistoryVisibility, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: {
     agent: DesktopAgentView
     sessionId: string | null
     sessions: DesktopSessionView[]
-    needsYouSessions?: ReadonlySet<string>
+    pendingChatSummaries?: ReadonlyMap<string, string>
     onSelectSession: (id: string | null, title?: string) => void
     onStartFork?: (uid: string) => boolean
     onFinishFork?: (uid: string) => void
@@ -208,6 +214,7 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
     onTabActivity?: (uid: string, state: TabActivity) => void
     onChatSession: (id: string, sourceDraft?: ComposerDraft) => void | boolean | Promise<boolean>
     renderHistory?: (busy: boolean, control: { needsRequest: number | null; active: boolean; onOpenChange: (open: boolean) => void }) => ReactNode
+    onHistoryVisibility?: (tabUid: string, visible: boolean) => void
     renderRunHistory?: (control: DesktopDialogControl) => ReactNode
     onOpenCoworkerChat?: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel?: () => void
@@ -216,7 +223,8 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
     onOpenModelSettings?: () => void
     overview?: DesktopConversationOverviewAuthority
 }) {
-    const { t } = useDesktopLocale()
+    const { language, t } = useDesktopLocale()
+    const locale = desktopLocaleTag(language.locale)
     const setup = useDesktopSetup(agent.id)
     const setupBlocked = !setup.view || !!setup.error || setup.view.pending && (!setup.view.sessionId || setup.view.sessionId !== sessionId)
     const [cardOpen, setCardOpen] = useState(false)
@@ -247,6 +255,10 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
     useEffect(()=>()=>{appsFlow.current?.settle(new Error('This conversation was closed.'));serviceStream.current?.cancelStream()},[agent.id,sessionId,active])
     const [needsRequest, setNeedsRequest] = useState<number | null>(null)
     const [chatsOpen, setChatsOpen] = useState(false)
+    const onChatsOpenChange = useCallback((visible: boolean) => {
+        setChatsOpen(visible)
+        if (tabUid) onHistoryVisibility?.(tabUid, visible)
+    }, [tabUid, onHistoryVisibility])
     const [detailPanel, setDetailPanel] = useState<Exclude<DesktopCoworkerPanel, 'chat'> | null>(null)
     const [focusedSkill, setFocusedSkill] = useState<string | null>(null)
     const [panelNotice, setPanelNotice] = useState('')
@@ -360,6 +372,10 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
     })
     const documents = useDesktopDocumentAttachments({ agentId: agent.id, tabUid: tabUid ?? sessionId ?? 'legacy-draft', sessionId: sessionId ?? undefined, enabled: active && !draft.quitting && !!tabUid })
     const [documentPreview, setDocumentPreview] = useState<{ attachments: DesktopDocumentReference[]; index: number } | null>(null)
+    const [workspacePreview, setWorkspacePreview] = useState<{
+        owner: string; source: WorkspaceAttachmentSource; paths: readonly string[]; index: number
+    } | null>(null)
+    if (workspacePreview && workspacePreview.owner !== uploadOwner) setWorkspacePreview(null)
     useEffect(() => { setDocumentPreview(null) }, [agent.id, tabUid, sessionId, active])
     const { items: uploadItems, remove: removeUpload, retry: retryUpload } = textUploads
     const uploadScope = useRef({ owner: uploadOwner, live: active && !draft.quitting })
@@ -1136,7 +1152,9 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
     uploadGate.current = uploadDisabled
     const composerForm = useRef<HTMLFormElement>(null)
     const uploadFileInput = useRef<HTMLInputElement>(null)
+    const findTranscript = useRef<HTMLDivElement>(null)
     const [findOpen, setFindOpen] = useState(false)
+    const finding = findOpen && active
     const [editorOpen, setEditorOpen] = useState(false)
     const [editorSession, setEditorSession] = useState(0)
     const expandable = isLongMessage(input)
@@ -1229,10 +1247,11 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
     const currentTitle = sessions.find(session => session.id === sessionId)?.title ?? 'New conversation'
     const generalView = tabUid === generalTabUid(agent.id)
     const threadCards = generalView ? sessions.filter(session => session.agentId === agent.id && session.kind !== 'general' && session.id !== sessionId) : []
-    const messageTimes = transcript.map(message => {
-        const metadata = message.metadata
-        return metadata && typeof metadata === 'object' && 'createdAt' in metadata && typeof metadata.createdAt === 'string' ? metadata.createdAt : ''
-    })
+    const { messageTimes, timeBreaks } = useMemo(() => {
+        const messageTimes = transcript.map(({ metadata }) =>
+            metadata && typeof metadata === 'object' && 'createdAt' in metadata && typeof metadata.createdAt === 'string' ? metadata.createdAt : '')
+        return { messageTimes, timeBreaks: timeBreaksOf(messageTimes) }
+    }, [transcript])
     const threadRows = generalView ? threadsByMessage(messageTimes, threadCards) : { leading: [], after: new Map<number, typeof threadCards>() }
     const placeholder = generalView ? t('message', { name: agent.name }) : sessionId && currentTitle !== 'New conversation' ? t('reply', { title: currentTitle }) : t('sendMessage')
     return (
@@ -1246,7 +1265,7 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
         }}>
             <header className="relative z-40 grid shrink-0 grid-cols-[minmax(2.5rem,1fr)_minmax(0,max-content)_minmax(2.5rem,1fr)] items-center gap-1 px-3 pt-3">
                 <div className="flex min-w-0 items-center justify-start">
-                    {renderHistory ? renderHistory(busy, { needsRequest, active: active && !cardOpen && !detailPanel, onOpenChange: setChatsOpen }) : sessions.length > 0 && (
+                    {renderHistory ? renderHistory(busy, { needsRequest, active: active && !cardOpen && !detailPanel, onOpenChange: onChatsOpenChange }) : sessions.length > 0 && (
                         <select
                             disabled={busy}
                             aria-label="Conversation history"
@@ -1313,9 +1332,9 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
 
             <Conversation key={sessionId ?? 'new'} className="min-h-0" aria-label={t('chatMessages')}>
                 <ConversationContent className="gap-4 px-3.5 py-4">
-                    <DesktopConversationFind open={findOpen && active} onOpenChange={setFindOpen} />
-                    {!ready && !historyError && !busy && <p role="status" className="text-sm text-muted-foreground">Loading conversation…</p>}
-                    {threadRows.leading.map(thread => <DesktopThreadBranch key={thread.id} thread={thread} needsYou={needsYouSessions?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />)}
+                    <DesktopConversationFind open={finding} onOpenChange={setFindOpen} transcript={findTranscript} />
+                    {!ready && !historyError && !busy && <p role="status" className="text-sm text-muted-foreground">{t('openingSavedChat')}</p>}
+                    {threadRows.leading.map(thread => <DesktopThreadBranch key={thread.id} thread={thread} needsYou={pendingChatSummaries?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />)}
                     {ready && transcript.length === 0 && threadRows.leading.length === 0 && !busy && (
                         <div className="py-16 text-center">
                             <div className="text-sm font-medium">Start a conversation with {agent.name}</div>
@@ -1323,28 +1342,32 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
                         </div>
                     )}
                     {sessionId && active && <DesktopNativeWritebackReview agentId={agent.id} sessionId={sessionId} refreshKey={`${status}/${transcript.length}`}/>}
-                    {transcript.map((message, messageIndex) => {
+                    <div ref={findTranscript} className="contents">{transcript.map((message, messageIndex) => {
                         const branches = threadRows.after.get(messageIndex) ?? []
-                        const withBranches = (content: ReactNode) => branches.length === 0 ? content
-                            : <div key={message.id}>{content}{branches.map(thread =>
-                                <DesktopThreadBranch key={thread.id} thread={thread} needsYou={needsYouSessions?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />
-                            )}</div>
+                        const createdAt = messageTimes[messageIndex]
+                        const withTimeline = (content: ReactNode) => <Fragment key={message.id}>
+                            {timeBreaks.has(messageIndex) && <ChatTimeSeparator createdAt={createdAt} locale={locale} />}
+                            <div className={branches.length === 0 ? 'contents' : undefined}>
+                                <div className="contents" data-chat-find-message>{content}</div>
+                                {branches.map(thread =>
+                                    <DesktopThreadBranch key={thread.id} thread={thread} needsYou={pendingChatSummaries?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />
+                                )}
+                            </div>
+                        </Fragment>
                         const scheduledRun = scheduledRunOf(message)
                         const triggerPayload = message.role === 'user' ? parseTriggerPayload(message.parts.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n')) : null
                         // Reuse Rerun's routine divider and prompt dialog. No hosted file-link
                         // navigation: the desktop Files panel owns this coworker's documents.
                         const install = message.role==='user' ? parseInstallMessage(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
-                        if(install)return withBranches(<AgentInstallBlock key={message.id} agentId={agent.id} agentName={agent.name} guide={install.guide} installing={setup.view?.completedAt == null} />)
+                        if(install)return withTimeline(<AgentInstallBlock agentId={agent.id} agentName={agent.name} guide={install.guide} installing={setup.view?.completedAt == null} />)
                         const hitl = message.role === 'user' ? parseHitlReply(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
                         const secretReceipt = message.role === 'user' ? parseDesktopSecretReceiptSummary(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
-                        if (secretReceipt) return withBranches(<DesktopSecretSummaryReceipt key={message.id} entries={secretReceipt} />)
-                        if (hitl?.kind === 'mcp' || hitl?.kind === 'cancelled' && hitl.of === 'mcp') return withBranches(<DesktopMcpSignInSummary key={message.id} name={hitl.kind === 'mcp' ? hitl.name : undefined} />)
-                        if(hitl?.kind==='service')return withBranches(<DesktopServiceRequestReceipt key={message.id} entries={hitl.entries} />)
-                        if (triggerPayload) return withBranches(<DesktopWebhookRunBlock key={message.id} agentId={agent.id} payload={triggerPayload} />)
-                        if (scheduledRun) return withBranches(<DesktopScheduledRunBlock key={message.id} run={scheduledRun} />)
-                        const view = (
-                        <div key={message.id} className={cn('flex min-w-0 items-end', message.role === 'user' && 'justify-end gap-2')}>
-                            <Message from={message.role} className="min-w-0">
+                        if (secretReceipt) return withTimeline(<DesktopSecretSummaryReceipt entries={secretReceipt} />)
+                        if (hitl?.kind === 'mcp' || hitl?.kind === 'cancelled' && hitl.of === 'mcp') return withTimeline(<DesktopMcpSignInSummary name={hitl.kind === 'mcp' ? hitl.name : undefined} />)
+                        if(hitl?.kind==='service')return withTimeline(<DesktopServiceRequestReceipt entries={hitl.entries} />)
+                        if (triggerPayload) return withTimeline(<DesktopWebhookRunBlock agentId={agent.id} payload={triggerPayload} />)
+                        if (scheduledRun) return withTimeline(<DesktopScheduledRunBlock run={scheduledRun} />)
+                        const bubble = (
                                 <MessageContent className={cn(message.role === 'user' ? [USER_BUBBLE_SHAPE, USER_BUBBLE_INK, 'whitespace-pre-wrap wrap-anywhere'] : 'overflow-visible')}>
                                     {message.role === 'user' && (() => {
                                         const selections = messageAttachmentPaths(message.metadata)
@@ -1353,11 +1376,14 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
                                         const images = files.length ? files.map((part, index) => ({ path: `${index}/${part.filename ?? 'image.png'}`, url: part.url }))
                                             : selections.filter((item): item is DesktopImageSnapshot => typeof item !== 'string').map((image, index) => ({ path: `${index}/${image.name}`, url: `/api/desktop/agents/${encodeURIComponent(agent.id)}/images?snapshot=${encodeURIComponent(JSON.stringify(image))}` }))
                                         const refs = message.metadata && typeof message.metadata === 'object' && 'documents' in message.metadata ? desktopDocumentReferenceSchema.array().safeParse(message.metadata.documents) : null
-                                        return <>{refs?.success && refs.data.length > 0 && <div className="mb-1 flex flex-wrap gap-1">{refs.data.map((ref, index) => <Button type="button" variant="secondary" size="sm" key={ref.attachmentId} onClick={() => setDocumentPreview({ attachments: refs.data, index })}>{ref.name}</Button>)}</div>}{paths.length > 0 && <div className="mb-1"><AttachmentChips paths={paths} /></div>}
+                                        const messageId = message.id.startsWith('engine-') ? message.id.slice('engine-'.length) : ''
+                                        return <>{refs?.success && refs.data.length > 0 && <div className="mb-1 flex flex-wrap gap-1">{refs.data.map((ref, index) => <Button type="button" variant="secondary" size="sm" key={ref.attachmentId} onClick={() => setDocumentPreview({ attachments: refs.data, index })}>{ref.name}</Button>)}</div>}{paths.length > 0 && <div className="mb-1"><AttachmentChips paths={paths} onPreview={sessionId && messageId
+                                            ? index => setWorkspacePreview({ owner: uploadOwner, source: { sessionId, messageId }, paths, index })
+                                            : undefined} /></div>}
                                             {images.length > 0 && <MessageAttachments paths={images.map(item => item.path)} rawUrlFor={path => images.find(item => item.path === path)?.url ?? ''} />}</>
                                     })()}
                                     {message.role === 'assistant'
-                                        ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} streaming={(status === 'streaming' || serviceStreaming) && messageIndex === transcript.length - 1}
+                                        ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} createdAt={createdAt} streaming={(status === 'streaming' || serviceStreaming) && messageIndex === transcript.length - 1}
                                             toolInstall={sessionId ? { sessionId, active: active && ready, disabled: draft.quitting || inactive || generating || stopping } : undefined}
                                             childRuns={sessionId ? { sessionId, active, onOpenTarget: onOpenCoworkerChat } : undefined}
                                             skillProposals={{ rows: skillProposals.proposals, pinnedIds: skillProposals.pinnedIds, pendingId: skillProposals.pendingId,
@@ -1368,14 +1394,27 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
                                             feedbackRating={feedback.votes.get(message.id)?.rating ?? null}
                                             onRate={message.id.startsWith('engine-') ? rating => feedback.rate(message.id, rating) : undefined}
                                             onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />
-                                        : message.parts.map((part, index) => part.type === 'text' ? <DesktopVoiceHistoryMessage key={index} agentId={agent.id} text={part.text}><DesktopSelectedMentionText text={part.text} metadata={message.metadata} /></DesktopVoiceHistoryMessage> : null)}
+                                        : message.parts.map((part, index) => {
+                                            if (part.type !== 'text') return null
+                                            const text = <DesktopSelectedMentionText text={part.text} metadata={message.metadata} />
+                                            return <DesktopVoiceHistoryMessage key={index} agentId={agent.id} text={part.text}>
+                                                {message.role === 'user' && part.text ? <ExpandableMessageBody forceExpanded={finding}
+                                                    showMore={t('showMore')} showLess={t('showLess')}>{text}</ExpandableMessageBody> : text}
+                                            </DesktopVoiceHistoryMessage>
+                                        })}
                                 </MessageContent>
-                            </Message>
-                            {message.role === 'user' && <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"><UserRoundIcon className="size-4" /></span>}
-                        </div>
                         )
-                        return withBranches(view)
-                    })}
+                        return withTimeline(
+                            <div className={cn('flex min-w-0 items-end', message.role === 'user' && 'justify-end gap-2')}>
+                                <Message from={message.role} className="min-w-0">
+                                    {message.role === 'user'
+                                        ? <MessageTimeTooltip createdAt={createdAt} locale={locale} side="left">{bubble}</MessageTimeTooltip>
+                                        : bubble}
+                                </Message>
+                                {message.role === 'user' && <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"><UserRoundIcon className="size-4" /></span>}
+                            </div>
+                        )
+                    })}</div>
                     {sessionId && <DesktopToolInstallPending agentId={agent.id} sessionId={sessionId} messages={transcript} active={active && ready} disabled={draft.quitting || inactive || generating || stopping} />}
                     {active && takeover && !webhookOwns('takeover', takeover.id) && <DesktopBrowserCard key={takeover.id} agentId={agent.id} takeover={takeover} disabled={draft.quitting || inactive || generating || stopping || !ready} onAction={async payload => {
                         if (payload.action === 'open') { setScreenOpen('request'); return }
@@ -1452,9 +1491,15 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
                 {setup.error && <div role="alert" className="p-2 text-sm text-destructive">{setup.error}<Button type="button" size="sm" variant="ghost" onClick={()=>void setup.refresh()}>Retry setup</Button></div>}
                 {setupBlocked && <DesktopSetupGate agentId={agent.id} agentName={agent.name} apps={[]} canStart={modelReady} onStartBlocked={onOpenModelSettings} modelSlot={<Button type="button" variant="ghost" size="sm" onClick={onOpenModelSettings}>{modelLabel ?? 'Choose a model'}</Button>} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
                 {setup.view?.skipped && <DesktopSetupSkippedBanner agentId={agent.id} canStart={modelReady} onStartBlocked={onOpenModelSettings} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
-                {question && !webhookOwns('question', question.id) && <DesktopQuestionCard key={question.id} question={question} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onAnswer={answerQuestion} />}
+                {question && !webhookOwns('question', question.id) && <DesktopQuestionCard key={question.id} question={question}
+                    voiceSessionId={!cardOpen && !detailPanel && !chatsOpen ? sessionId ?? undefined : undefined}
+                    documentOwner={sessionId ? { agentId: agent.id, sessionId } : undefined}
+                    disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onAnswer={answerQuestion} />}
                 {approval && !webhookOwns('approval', approval.id) && <DesktopApprovalCard key={approval.id} approval={approval} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onDecide={decideApproval} />}
                 {documentPreview && <DesktopDocumentLightbox {...documentPreview} onIndexChange={index => setDocumentPreview(value => value ? { ...value, index } : null)} onClose={() => setDocumentPreview(null)} />}
+                {active && workspacePreview?.owner === uploadOwner && <DesktopWorkspaceAttachmentLightbox {...workspacePreview}
+                    onIndexChange={index => setWorkspacePreview(value => value && { ...value, index })}
+                    onClose={() => setWorkspacePreview(null)} />}
                 <MarkdownEditorDialog key={editorSession} open={active && editorOpen} onOpenChange={setEditorOpen} initialValue={input} title="Write your message" description="Room to structure a long message. Enter starts a new line." hint="Send with Cmd + Enter" closeLabel="Cancel" submitLabel="Send" submitIcon={<SendIcon className="size-4" />} submitting={preparingSend || stopping}
                     onDraftChange={setInput}
                     onClose={markdown => { setInput(markdown); queueMicrotask(() => composerForm.current?.querySelector('textarea')?.focus()) }}
@@ -1465,7 +1510,7 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
                         if (!active || inactive || generating || stopping || draft.quitting || !ready || uploadsActive || preparingSend || !!pendingRequest) return
                         composerForm.current?.requestSubmit()
                     }} />
-                <form ref={composerForm} onSubmit={submit} hidden={!!pendingRequest || setupBlocked} className={cn('relative min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', pendingRequest || setupBlocked ? 'hidden' : 'flex')}>
+                <form ref={composerForm} data-slot="desktop-composer" onSubmit={submit} hidden={!!pendingRequest || setupBlocked} className={cn('relative min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', pendingRequest || setupBlocked ? 'hidden' : 'flex')}>
                     {uploadDragOver && <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] border border-dashed border-brand bg-background/85">
                         <span className="flex items-center gap-2 text-sm font-medium text-brand"><UploadIcon className="size-4" />Drop files to attach</span>
                     </div>}
@@ -1474,6 +1519,7 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
                             ? <AttachmentChips key={`${index}:${item}`} paths={[item]}
                                 disabled={draft.quitting || !!regenerationSource || stopping || queue.pending || uploadsActive}
                                 locked={pendingAttachment.current?.key === draftKey ? pendingAttachment.current.attachments.filter((path): path is string => typeof path === 'string') : undefined}
+                                onPreview={() => setWorkspacePreview({ owner: uploadOwner, source: { agentId: agent.id }, paths: textAttachments, index: textAttachments.indexOf(item) })}
                                 onRemove={path => setDraftAttachments(draftKey, attachmentPaths.filter(item => item !== path))} />
                             : <ChatAttachmentChip key={`${index}:${item.sha256}`}
                                 file={{ id: item.sha256, type: 'file', mediaType: item.mediaType, filename: item.name,

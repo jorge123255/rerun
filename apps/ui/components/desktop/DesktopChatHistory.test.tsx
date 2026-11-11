@@ -8,6 +8,9 @@ import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
 import { DesktopApp, type DesktopBootstrap, type DesktopSessionView } from './DesktopApp'
 import { DesktopChatHistory } from './DesktopChatHistory'
+import { DesktopLocale } from './DesktopLocale'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages } from '@/lib/desktop/locale'
 import { groupDesktopChats, type DesktopChatHistoryConversation } from '@/lib/desktop/chat-history'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -55,10 +58,30 @@ test('groups by engine-enriched activity date while leaving its input unchanged'
     const newer = { ...conversation(session('new', 'a', 'Newer')), updatedAt: '2026-01-02T12:00:00.000Z' }
     const invalid = { ...conversation(session('unknown', 'a', 'Unknown')), updatedAt: '' }
     const input = [older, invalid, newer]
-    const groups = groupDesktopChats(input, new Date('2026-01-02T23:00:00.000Z'))
+    const groups = groupDesktopChats(input, { now: new Date('2026-01-02T23:00:00.000Z') })
     expect(groups.map(group => group.day)).toEqual(['Today', 'Yesterday', 'Date unavailable'])
     expect(groups.flatMap(group => group.entries.map(entry => entry.id))).toEqual(['new', 'old', 'unknown'])
     expect(input).toEqual([older, invalid, newer])
+})
+
+test('uses the selected language for the Threads control, grouped date, and empty search', async () => {
+    const messages = desktopMessages('fr', await loadMessages('fr'))
+    const current = { ...session('saved', 'alice', 'Saved coworker result'), updatedAt: new Date().toISOString() }
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url === '/api/desktop/pending-inbox' ? inboxOf([]) : historyOf([current]))))
+    const root = createRoot(document.body.appendChild(document.createElement('div')))
+    try {
+        await act(async () => { root.render(<DesktopLocale initial={{ preference: 'fr', locale: 'fr', messages }}>
+            <DesktopChatHistory agentId="alice" count={1} selectedId="saved" busy={false} onSelect={() => {}} />
+        </DesktopLocale>) })
+        expect(document.querySelector('button[title]')?.getAttribute('aria-label')).toBe('Historique des conversations (1)')
+        await click('Historique des conversations (1)')
+        const dialog = document.querySelector('[role="dialog"]')!
+        expect(dialog.textContent).toContain('Aujourd’hui')
+        expect(dialog.textContent).toContain(current.title)
+        expect(dialog.querySelector('time')?.getAttribute('title')).toMatch(/^Mis à jour le /)
+        await enter(dialog.querySelector<HTMLInputElement>('input[type="search"]')!, 'Unmatched')
+        expect(dialog.textContent).toContain('Aucune conversation ne correspond à la recherche.')
+    } finally { await act(async () => { root.unmount() }) }
 })
 
 test('browses, searches, marks the active conversation, and disables switching while busy', async () => {
@@ -133,6 +156,48 @@ test('combines the original filters with search and opens the local question or 
     } finally { await act(async () => { root.unmount() }) }
 })
 
+test('puts current requests before saved rows in All and rechecks them before opening', async () => {
+    const saved = conversation(session('saved', 'alice', 'Saved draft'))
+    const waiting = { ...conversation(session('approval', 'alice', 'Meeting notes')), needsYou: true, pendingQuestion: 'Review the café notes' }
+    let pending = inboxOf([waiting]).items
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+        expect(init?.method ?? 'GET').toBe('GET')
+        if (url === '/api/desktop/pending-inbox') return Response.json({ ...inboxOf([]), items: pending })
+        return Response.json({ conversations: [saved, waiting], enrichment: 'ok', questions: 'not-requested' })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const root = createRoot(document.body.appendChild(document.createElement('div')))
+    const select = vi.fn()
+    const dialog = () => document.querySelector('[role="dialog"]')!
+    const requestRow = () => [...dialog().querySelectorAll<HTMLElement>('[role="button"]')].find(row => row.textContent?.includes('Meeting notes'))
+    try {
+        await act(async () => { root.render(<DesktopChatHistory agentId="alice" count={2} selectedId={null} busy={false} onSelect={select} />) })
+        await click('Conversation history (2)')
+        expect(requestRow()?.textContent).toContain('Review the café notes')
+        expect(dialog().querySelector('[data-thread-row="approval"]')).toBeNull()
+        const savedRow = dialog().querySelector('[data-thread-row="saved"]')!
+        expect(requestRow()!.compareDocumentPosition(savedRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+        expect(dialog().textContent).not.toContain('Mark all as read')
+
+        await enter(dialog().querySelector<HTMLInputElement>('input[type="search"]')!, 'CAFE\u0301')
+        expect(requestRow()).toBeTruthy()
+        expect(dialog().textContent).not.toContain('No matching conversations.')
+        expect(dialog().querySelector('[data-thread-row="saved"]')).toBeNull()
+
+        pending = pending.map(item => ({ ...item, id: 'new-review', summary: 'Review the revised café notes' }))
+        await act(async () => { requestRow()!.click() })
+        await settle(100)
+        expect(select).not.toHaveBeenCalled()
+        expect(dialog().textContent).toContain('This request changed')
+        expect(requestRow()?.textContent).toContain('Review the revised café notes')
+        await act(async () => { requestRow()!.click() })
+        await settle(100)
+        expect(select).toHaveBeenCalledExactlyOnceWith('approval')
+        expect(document.querySelector('[role="dialog"]')).toBeNull()
+        expect(fetcher.mock.calls.every(([, init]) => (init?.method ?? 'GET') === 'GET')).toBe(true)
+    } finally { await act(async () => { root.unmount() }) }
+})
+
 test('shows retry states instead of empty filters when classification or pending requests are unavailable', async () => {
     const known = { ...conversation(session('saved', 'alice', 'Saved routine')), source: 'schedule' as const, needsYou: true, pendingQuestion: 'Approve the title' }
     let reads = 0
@@ -189,6 +254,40 @@ test('a delayed old coworker response cannot replace the newly selected coworker
     } finally { await act(async () => { root.unmount() }) }
 })
 
+test('keeps verified threads and automations selectable when other conversation types are unknown', async () => {
+    const rows = [
+        conversation(session('manual', 'alice', 'Verified thread')),
+        { ...conversation(session('routine', 'alice', 'Verified routine')), source: 'schedule' },
+        { ...conversation(session('unclassified', 'alice', 'Unclassified conversation')), source: null },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url === '/api/desktop/pending-inbox') return Response.json(inboxOf([]))
+        return Response.json({ conversations: rows, enrichment: 'unavailable', questions: 'ok' })
+    }))
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container), select = vi.fn()
+    const dialog = () => document.querySelector('[role="dialog"]')!
+    try {
+        await act(async () => { root.render(<DesktopChatHistory agentId="alice" count={3} selectedId={null} busy={false} onSelect={select} />) })
+        await click('Conversation history (3)')
+        await click('Threads')
+        expect(dialog().textContent).toContain('Verified thread')
+        expect(dialog().textContent).not.toContain('Unclassified conversation')
+        await click('Automations')
+        expect(dialog().textContent).toContain('Verified routine')
+        expect(dialog().textContent).not.toContain('Unclassified conversation')
+        expect(dialog().textContent).not.toContain('Verified thread')
+        const warning = dialog().querySelector('[role="status"]')
+        expect(warning?.textContent).toContain('Some conversation types could not be loaded.')
+        expect(warning?.textContent).toContain('Retry')
+        const routine = dialog().querySelector<HTMLButtonElement>('[data-thread-row="routine"]')
+        expect(routine?.textContent).toContain('Verified routine')
+        await act(async () => { routine!.click() })
+        expect(select).toHaveBeenCalledExactlyOnceWith('routine')
+    } finally { await act(async () => { root.unmount() }) }
+})
+
 test('switches distinct transcripts, keeps New chat separate, reopens, and isolates coworkers', async () => {
     const agents = ['Alice', 'Bob'].map(name => ({ id: name.toLowerCase(), name, description: '', createdAt, updatedAt: createdAt }))
     const saved = [session('alpha', 'alice', 'Apples'), session('beta', 'alice', 'Bananas'), session('gamma', 'bob', 'Carrots')]
@@ -196,6 +295,15 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
     const initialData: DesktopBootstrap = { theme: 'system', profile: { id: 1, displayName: 'Test' }, workspace: { id: 1, name: 'Disposable' }, agents, connections: [], default: null }
     const layouts = new Map<string, {activeIndex: number; tabs: {uid: string; id: string | null}[]; revision: number}>()
     const sent: Record<string, string>[] = []
+    const historyReads: string[] = []
+    const pending = { id: 'pending-beta', kind: 'approval', agentId: 'alice', agentName: 'Alice', agentEnabled: true,
+        sessionId: 'beta', title: 'Bananas', summary: 'Review the board draft', updatedAt: createdAt }
+    const unrelated = { ...pending, id: 'foreign-alpha', agentId: 'bob', agentName: 'Bob', sessionId: 'alpha', summary: 'Foreign status' }
+    const info = { ...pending, id: 'info-alpha', kind: 'info', sessionId: 'alpha', summary: 'Informational notice' }
+    let boardItems: typeof pending[] = []
+    let routineStatus: DesktopSessionView['runStatus'] = 'running'
+    let threadMetadataAvailable = true
+    const threadMetadataReads: string[] = []
     let finish!: () => void
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
         const recentResponse = recent.handle(url, init)
@@ -213,8 +321,23 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
             return Response.json({ tabs: layout })
         }
         if (url === '/api/desktop/settings') return Response.json({ connections: [], default: null })
-        const history = url.match(/^\/api\/desktop\/agents\/([^/]+)\/chat-history$/)
-        if (history) return Response.json(historyOf(saved.filter(s => s.agentId === history[1])))
+        const history = url.match(/^\/api\/desktop\/agents\/([^/]+)\/chat-history\?view=saved$/)
+        if (history) {
+            historyReads.push(url)
+            const listing = historyOf(saved.filter(s => s.agentId === history[1]))
+            return Response.json({ ...listing, conversations: listing.conversations.map(row => ({
+                ...row, source: row.id === 'beta' ? 'schedule' : row.id === 'alpha' ? 'agent' : row.source,
+            })) })
+        }
+        const threadDetails = url.match(/^\/api\/desktop\/agents\/([^/]+)\/sessions\?view=threads$/)
+        if (threadDetails) {
+            threadMetadataReads.push(url)
+            if (!threadMetadataAvailable) return Response.json({ error: 'Unavailable' }, { status: 503 })
+            const local = saved.filter(s => s.agentId === threadDetails[1]).map(row => row.id === 'beta'
+                ? { ...row, source: 'schedule', automationName: 'Morning digest', runStatus: routineStatus }
+                : row.id === 'alpha' ? { ...row, source: 'agent', originAgentName: 'Local caller' } : row)
+            return Response.json({ sessions: local })
+        }
         const list = url.match(/^\/api\/desktop\/agents\/([^/]+)\/sessions$/)
         if (list) return Response.json({ sessions: saved.filter(s => s.agentId === list[1]), tabs: layouts.get(list[1]) ?? null })
         const messages = url.match(/^\/api\/desktop\/sessions\/([^/]+)\/messages$/)
@@ -235,7 +358,8 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
         if ((init?.method ?? 'GET') === 'GET') {
             if (/^\/api\/desktop\/sessions\/[^/]+\/stop$/.test(url)) return Response.json({ running: false })
             if (/^\/api\/desktop\/sessions\/[^/]+\/feedback(?:\?|$)/.test(url)) return Response.json({ votes: [] })
-            if (url === '/api/desktop/board-activity') return Response.json({ agents: {} })
+            if (url === '/api/desktop/board-activity') return Response.json({ agents: { alice: 'idle', bob: 'idle' },
+                attention: { items: boardItems, unavailableAgentIds: [], checkedAt: createdAt } })
             if (url === '/api/desktop/pending-inbox') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: '2026-11-05T00:00:00Z' })
             if (url === '/api/desktop/completions') return Response.json({ items: [], unavailableAgentIds: [], enabledAt: '2026-11-05T00:00:00Z', checkedAt: '2026-11-05T00:00:00Z', nextCursor: null })
         }
@@ -253,15 +377,52 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
         await act(async () => { root.render(<DesktopApp initialData={initialData} />) })
         await openAlice()
         expect(visible().textContent).toContain('Apples answer')
+        boardItems = [pending, unrelated, info]
+        await settle(3100)
         await history()
+        const thread = (id: string) => document.querySelector(`[role="dialog"] [data-thread-row="${id}"]`)
+        expect(historyReads).toEqual(['/api/desktop/agents/alice/chat-history?view=saved'])
+        expect(threadMetadataReads).toEqual(['/api/desktop/agents/alice/sessions?view=threads'])
+        expect(thread('beta')?.textContent).toContain('Review the board draft')
+        expect(thread('beta')?.textContent).toContain('Morning digest')
+        expect(thread('beta')?.textContent).toContain('Running')
+        expect(thread('alpha')?.textContent).toContain('Started by Local caller')
+        expect(thread('alpha')?.textContent).not.toContain('Running')
+        expect(thread('alpha')?.textContent).not.toMatch(/Foreign status|Informational notice|Needs you/)
+        boardItems = []
+        threadMetadataAvailable = false
+        await settle(5100)
+        expect(thread('beta')?.textContent).not.toContain('Review the board draft')
+        expect(thread('beta')?.textContent).not.toContain('Running')
+        expect(thread('beta')?.textContent).toContain('Morning digest')
+        threadMetadataAvailable = true
+        routineStatus = 'error'
+        await settle(5000)
+        expect(thread('beta')?.querySelector('.text-destructive')?.textContent).toBe('Bananas')
+        expect(historyReads).toHaveLength(1)
         await choose('Bananas')
         expect(visible().textContent).toContain('Bananas answer')
         expect(visible().textContent).not.toContain('Apples answer')
+        const readsAfterClose = threadMetadataReads.length
+        await settle(5100)
+        expect(threadMetadataReads).toHaveLength(readsAfterClose)
         await history()
         await choose('Apples')
         expect(visible().textContent).toContain('Apples answer')
-        await click('New thread')
+        await enter(visible().querySelector<HTMLTextAreaElement>('#desktop-message')!, 'Keep the Apples draft')
+        await settle(500)
+        await history()
+        await click('Close')
+        expect(document.querySelector('[role="dialog"]')).toBeNull()
+        expect(visible().querySelector<HTMLTextAreaElement>('#desktop-message')?.value).toBe('Keep the Apples draft')
+        await history()
+        const historyCreate = document.querySelector<HTMLButtonElement>('[role="dialog"] [aria-label="New thread"]')
+        expect(historyCreate).toBeTruthy()
+        await act(async () => { historyCreate!.click() })
+        await settle(100)
+        expect(document.querySelector('[role="dialog"]')).toBeNull()
         expect(visible().textContent).not.toContain('Apples answer')
+        expect(visible().querySelector<HTMLTextAreaElement>('#desktop-message')?.value).toBe('')
         await enter(container.querySelector<HTMLTextAreaElement>('#desktop-message')!, 'Dates')
         await act(async () => { visible().querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
         expect(sent).toEqual([{ agentId: 'alice', tabUid: expect.any(String), text: 'Dates' }])
@@ -295,6 +456,7 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
         await history()
         await choose('Apples')
         expect(visible().textContent).toContain('Apples answer')
+        expect(visible().querySelector<HTMLTextAreaElement>('#desktop-message')?.value).toBe('Keep the Apples draft')
     } finally { await act(async () => { root.unmount() }) }
 })
 
@@ -313,7 +475,7 @@ test('history read failure can be retried without turning it into an empty saved
         if (url.endsWith('/saved/messages')) return Response.json({ messages: [] })
         if (url.endsWith('/saved/stop')) return Response.json({ running: false })
         if (url.endsWith('/sessions')) return ++reads === 1 ? Response.json({ error: 'History unavailable' }, { status: 503 }) : Response.json({ sessions: [session('saved', 'alice', 'Recovered')] })
-        if (url.endsWith('/chat-history')) return Response.json(historyOf([session('saved', 'alice', 'Recovered')]))
+        if (url.endsWith('/chat-history?view=saved')) return Response.json(historyOf([session('saved', 'alice', 'Recovered')]))
         if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
         if ((init?.method ?? 'GET') === 'GET') {
             if (/^\/api\/desktop\/sessions\/[^/]+\/feedback(?:\?|$)/.test(url)) return Response.json({ votes: [] })

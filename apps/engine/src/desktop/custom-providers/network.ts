@@ -4,6 +4,7 @@ import { request as httpRequest, type RequestOptions } from 'node:http'
 import { BlockList, isIP } from 'node:net'
 import { Readable } from 'node:stream'
 import type { CustomProviderConfig } from '@rerun/contracts'
+import { customModelCatalog } from './catalog.js'
 
 const privateIps = new BlockList()
 for (const [ip, prefix] of [['0.0.0.0',8],['10.0.0.0',8],['100.64.0.0',10],['127.0.0.0',8],['169.254.0.0',16],['172.16.0.0',12],['192.0.0.0',24],['192.168.0.0',16],['192.0.2.0',24],['198.51.100.0',24],['203.0.113.0',24],['198.18.0.0',15],['224.0.0.0',3]] as const) privateIps.addSubnet(ip,prefix,'ipv4')
@@ -34,10 +35,11 @@ async function cancellable<T>(promise: Promise<T>, signal: AbortSignal): Promise
 }
 export function createPinnedProviderFetch(config: CustomProviderConfig, current: (signal: AbortSignal) => Promise<void>, lifetime: AbortSignal): typeof fetch {
     const base = endpointBase(config)
+    const catalogUrl = customModelCatalog(base).url
     return async (input, init) => {
         const value = input instanceof Request ? input.url : String(input)
         if (input instanceof Request) throw new Error('Custom endpoint requires explicit request options.')
-        if (![`${base}/models`, `${base}/chat/completions`].includes(value)) throw new Error('Custom endpoint request refused.')
+        if (value !== catalogUrl && value !== `${base}/chat/completions`) throw new Error('Custom endpoint request refused.')
         const url = new URL(value), signal = AbortSignal.any([lifetime, init?.signal ?? new AbortController().signal, AbortSignal.timeout(120_000)])
         await current(signal); signal.throwIfAborted()
         const host = url.hostname.replace(/^\[|\]$/g, '')
@@ -72,7 +74,7 @@ export function createPinnedProviderFetch(config: CustomProviderConfig, current:
                         signal.throwIfAborted(); await current(signal)
                         if (next.done) { reader.releaseLock(); controller.close(); return }
                         count += next.value.byteLength
-                        if (count > (value.endsWith('/models') ? 512_000 : 16_000_000)) throw new Error('Custom response exceeds limit.')
+                        if (count > (value === catalogUrl ? 512_000 : 16_000_000)) throw new Error('Custom response exceeds limit.')
                         controller.enqueue(next.value)
                     } catch { await reader.cancel().catch(() => {}); controller.error(new Error('Custom response unavailable or cancelled.')) }
                 }, cancel: () => reader.cancel() })

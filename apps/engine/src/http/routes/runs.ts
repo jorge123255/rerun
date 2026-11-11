@@ -2,14 +2,13 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { FOREMAN_AGENT_ID } from '@rerun/contracts'
 import { listRunCompletions } from '../../db/completed-runs.js'
-import { aggregateUsageByDay, cancelRun, getRun, listRunsByAgent } from '../../db/repos/runs.js'
+import { aggregateUsageByDay, getRun, listRunsByAgent } from '../../db/repos/runs.js'
 import { listRunSteps, listToolCalls } from '../../db/repos/telemetry.js'
 import { collectAssistantText } from '../../db/repos/messages.js'
 import { resumeStreamResponse } from '../../runtime/stream.js'
-import { abortRun, waitForRunCancellation } from '../../runtime/run-control.js'
+import { cancelOwnedRun } from '../../runtime/cancel-run.js'
 import { desktopApp } from '../../desktop/policy.js'
 import { abortSubRun } from '../../tools/builtin/sub-run-watch.js'
-import { emitRunTerminal, triggerFromRun } from '../../runtime/run-events.js'
 import { getDesktopForemanQueuedUserMessageId } from '../../db/repos/desktop-queued-turns.js'
 
 const USAGE_RANGE_MS: Record<string, number> = {
@@ -35,29 +34,14 @@ runRoutes.post('/:rid/cancel', async c => {
     const rid = c.req.param('rid')!
     const run = await getRun(agentId, rid)
     if (!run || run.agentId !== agentId) return c.json({ error: 'run not found' }, 404)
-    const aborted = abortRun(rid)
-    if (desktopApp() && !await waitForRunCancellation(rid)) {
+    const result = await cancelOwnedRun(run)
+    if (result.state === 'waiting') {
         return c.json({ error: 'This reply has not finished stopping. Wait a moment and try Stop again.' }, 503)
     }
-    const cancelled = run.status === 'running' && await cancelRun(agentId, rid)
-    if (desktopApp() && !cancelled && (!aborted || (await getRun(agentId, rid))?.status !== 'cancelled')) {
+    if (result.state === 'finished') {
         return c.json({ error: 'This reply already finished.' }, 409)
     }
-    // A live loop announces its own end. For an orphan, only the Stop that actually
-    // changed the running row may announce cancellation.
-    if (cancelled && !aborted) {
-        await emitRunTerminal({
-            agentId,
-            sessionId: run.sessionId,
-            runId: rid,
-            trigger: triggerFromRun(run),
-            kind: 'done',
-            cancelled: true,
-            provider: run.provider ?? undefined,
-            model: run.model ?? undefined,
-        })
-    }
-    return c.json({ ok: true, aborted })
+    return c.json({ ok: true, aborted: result.aborted })
 })
 
 runRoutes.post('/:rid/tasks/:taskId/cancel', async c => {

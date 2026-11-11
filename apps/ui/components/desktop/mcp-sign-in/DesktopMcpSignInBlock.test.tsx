@@ -2,8 +2,9 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
-import type { DesktopMcpSignInView } from '../../../../../packages/contracts/src/desktop-mcp-sign-in'
+import type { DesktopMcpSignInOAuthView, DesktopMcpSignInView } from '../../../../../packages/contracts/src/desktop-mcp-sign-in'
 import { DesktopMcpSignInBlock } from './DesktopMcpSignInBlock'
+import type { McpDeviceMethodReview } from '@/lib/desktop/mcp-device-review'
 
 vi.mock('@rerun/ui', () => ({ BorderBeam: () => null }))
 const roots: Root[] = []
@@ -22,9 +23,9 @@ const request: DesktopMcpSignInView = {
 const response = (body: unknown) => Response.json(body)
 const acknowledged = () => new Response('data: [DONE]\n\n', { headers: { 'x-mcp-sign-in-request-id': 'request', 'x-run-id': 'continuation', 'x-session-id': 'chat' } })
 
-async function mount(view = request, onAccepted = vi.fn()) {
+async function mount(view = request, onAccepted = vi.fn(), initialOAuth?: DesktopMcpSignInOAuthView) {
     const root = createRoot(document.body.appendChild(document.createElement('div'))); roots.push(root)
-    await act(async () => root.render(<DesktopMcpSignInBlock sessionId="chat" request={view} onAccepted={onAccepted} />))
+    await act(async () => root.render(<DesktopMcpSignInBlock sessionId="chat" request={view} onAccepted={onAccepted} initialOAuth={initialOAuth} />))
     return { root, onAccepted }
 }
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent?.trim() === label)!
@@ -69,6 +70,50 @@ test('fresh connected readiness enables Continue and one acknowledged follow-up'
     expect(onAccepted).toHaveBeenCalledTimes(1)
 })
 
+test('approves a reviewed device method, displays the human code, and continues the original chat after connection', async () => {
+    const review: McpDeviceMethodReview = { reviewId: 'review', revision: 'revision', workspaceId: 'workspace', owner: request.source.agentId,
+        localSessionId: 'chat', serverName: request.source.server.name, registrationRevision: request.source.server.revision,
+        expiresAt: Date.now() + 300_000, state: 'pending', method: { kind: 'device-code-rfc8628-v1', resource: request.source.server.url,
+            issuer: 'https://auth.example/', deviceEndpoint: 'https://auth.example/device', tokenEndpoint: 'https://auth.example/token',
+            verificationUri: 'https://auth.example/activate', clientId: 'public-client' } }
+    let approved = false
+    const authorization = { reviewId: review.reviewId, revision: review.revision, verificationUri: review.method.verificationUri,
+        userCode: 'FIXTURE-HUMAN', expiresAt: Date.now() + 120_000 }
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body))
+        if (body.action === 'complete') return acknowledged()
+        expect(url).toBe('/api/desktop/sessions/chat/mcp-device-sign-in')
+        expect(body.source).toEqual(request.source)
+        if (body.action === 'review-device-method') return response({ review: { ...review, state: approved ? 'approved' : 'pending' } })
+        if (body.action === 'decide-device-method') { approved = true; return response({ review: { ...review, state: 'approved' } }) }
+        if (body.action === 'start-device-authorization') return response({ attempt: { state: 'waiting', authorization } })
+        if (body.action === 'read-device-authorization') return response({ authorization })
+        if (body.action === 'check-device-authorization') return response({ attempt: { state: 'connected', authorization: null } })
+        throw new Error('Unexpected action')
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const { root, onAccepted } = await mount(request, vi.fn(), { state: 'idle', deviceAvailable: true })
+    await click('Use a device code')
+    await click('Review device sign-in')
+    expect(button('Start device sign-in')).toBeUndefined()
+    await click('Approve device method')
+    await click('Start device sign-in')
+    expect(document.querySelector('code')?.textContent).toBe('FIXTURE-HUMAN')
+    expect(document.querySelector('a')?.href).toBe(review.method.verificationUri)
+    await act(async () => root.render(null))
+    expect(document.querySelector('code')).toBeNull()
+    await act(async () => root.render(<DesktopMcpSignInBlock sessionId="chat" request={request} initialOAuth={{ state: 'idle', deviceAvailable: true }} onAccepted={onAccepted} />))
+    await click('Use a device code')
+    await click('Review device sign-in')
+    expect(document.querySelector('code')?.textContent).toBe('FIXTURE-HUMAN')
+    expect(fetcher.mock.calls.filter(([, init]) => JSON.parse(String(init?.body)).action === 'start-device-authorization')).toHaveLength(1)
+    await click('Check authorization')
+    expect(document.querySelector('code')).toBeNull()
+    expect(onAccepted).not.toHaveBeenCalled()
+    await click('Continue')
+    expect(onAccepted).toHaveBeenCalledTimes(1)
+})
+
 test('Not now preserves original declined presentation and does not fabricate connection', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => acknowledged()))
     const { onAccepted } = await mount()
@@ -97,6 +142,23 @@ test('an invalid adapter link and provider failure remain honest and retryable',
     expect(document.body.textContent).toContain('Unreachable')
     expect(document.body.textContent).toContain('Authorization failed. Retry.')
     expect(button('Connect').disabled).toBe(false)
+})
+
+test('an interrupted browser attempt stays cancellable without showing a live wait', async () => {
+    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ action: 'cancel', request: { attemptId: 'interrupted-attempt' } })
+        return response({ request: { ...request, revision: 'after-cancel' }, oauth: { state: 'idle' } })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    await mount({ ...request, status: 'connecting', activeAttemptId: 'interrupted-attempt' }, vi.fn(), {
+        state: 'error', message: 'Browser sign-in was interrupted. Cancel this attempt to reconnect.',
+    })
+    expect(document.body.textContent).toContain('Browser sign-in was interrupted.')
+    expect(button('Waiting for authorization…')).toBeUndefined()
+    expect(button('Connect')).toBeUndefined()
+    await click('Cancel')
+    expect(button('Connect').disabled).toBe(false)
+    expect(fetcher).toHaveBeenCalledTimes(1)
 })
 
 

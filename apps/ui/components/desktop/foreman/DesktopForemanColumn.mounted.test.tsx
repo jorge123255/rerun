@@ -17,7 +17,7 @@ vi.mock('./dock', () => ({
 }))
 vi.mock('@rerun/ui/primitives/use-is-mobile', () => ({ useIsMobile: () => false }))
 vi.mock('./DesktopForemanHeader', () => ({ DesktopForemanHeader: (props: HeaderProps) => <button onClick={() => props.onTabChange('routines')}>Routines tab</button> }))
-vi.mock('./DesktopForemanComposer', () => ({ DesktopForemanComposer: (props: ComposerProps) => <div><textarea data-desktop-foreman-composer aria-label="Message the Foreman" />{props.trailing}</div> }))
+vi.mock('./DesktopForemanComposer', () => ({ DesktopForemanComposer: (props: ComposerProps) => <div><textarea data-desktop-foreman-composer aria-label="Message the Foreman" />{props.trailing}{props.controls}</div> }))
 vi.mock('./DesktopForemanChatLayer', () => ({ DesktopForemanChatLayer: () => <div>Chat</div> }))
 vi.mock('./routines/DesktopWorkspaceRoutines', () => ({ DesktopWorkspaceRoutines: () => <div>Routines content</div> }))
 vi.mock('./plan/DesktopPlanBoardPreview', () => ({ DesktopPlanBoardPreview: () => null }))
@@ -27,7 +27,7 @@ let root: Root | undefined
 let ports: DesktopForemanActionPorts
 function Host() {
     const [open, setOpen] = useState(true)
-    return <DesktopForemanColumn chat={chat} ports={ports} live={null} messages={[]} agentNameOf={id => id} controlledOpen={open} onClose={() => setOpen(false)} onOpenChange={value => { history.changes.push(value); setOpen(value) }} focusRequest="command-once" voiceSlot={<span data-voice-view>Voice controls</span>} />
+    return <DesktopForemanColumn chat={chat} ports={ports} live={null} messages={[]} agentNameOf={id => id} controlledOpen={open} onClose={() => setOpen(false)} onOpenChange={value => { history.changes.push(value); setOpen(value) }} focusRequest="command-once" composerTrailing={<span data-model-view>Current model</span>} voiceSlot={<span data-voice-view>Voice controls</span>} />
 }
 async function click(label: string) { await act(async () => { [...document.querySelectorAll('button')].find(button => button.textContent === label)!.click() }) }
 beforeEach(() => {
@@ -47,6 +47,7 @@ it('restores a closed saved view under controlled open without echoing the old v
     expect(document.activeElement).toBe(document.querySelector('[data-desktop-foreman-composer]'))
     expect(vi.mocked(ports.persistence.save).mock.calls.length).toBeLessThan(10)
     expect(document.querySelectorAll('[data-voice-view]')).toHaveLength(1)
+    expect(document.querySelectorAll('[data-model-view]')).toHaveLength(1)
 })
 it('consumes command focus once so closing or choosing Routines does not reopen an old command', async () => {
     root = createRoot(document.body.appendChild(document.createElement('div')))

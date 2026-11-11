@@ -73,6 +73,25 @@ test('renders Markdown during a stream and in the settled reply; copy uses text 
     expect(button.textContent).toBe('Copied')
 })
 
+test('shows the saved time on the first bubble of a reply with multiple text blocks', async () => {
+    const createdAt = '2026-01-02T09:05:00.000Z'
+    await act(async () => root.render(<DesktopAssistantReply streaming={false} createdAt={createdAt}
+        message={{ id: 'engine-reply', role: 'assistant', parts: [
+            { type: 'text', text: 'First paragraph.' },
+            { type: 'step-start' },
+            { type: 'text', text: 'A separate block.' },
+        ] }} />))
+    const bubbles = [...container.querySelectorAll<HTMLElement>('[data-bubble-frame]')]
+    expect(bubbles).toHaveLength(2)
+    expect(bubbles[0].dataset.slot).toBe('tooltip-trigger')
+    expect(bubbles[1].dataset.slot).toBeUndefined()
+    await act(async () => {
+        bubbles[0].dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerType: 'mouse' }))
+        await new Promise(resolve => setTimeout(resolve, 420))
+    })
+    expect(document.querySelector('[data-slot="tooltip-content"] time')?.getAttribute('datetime')).toBe(createdAt)
+})
+
 test('copies each draft verbatim and keeps the whole reply and ordinary code separate', async () => {
     const body = '  To Mira,\n\n**Hello!** <img src="https://outside.invalid/pixel">\nGràcies.  '
     const first = 'Before.\n\n```draft Email to Mira\n' + body + '\n\n```\n\n'

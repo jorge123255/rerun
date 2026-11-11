@@ -8,6 +8,9 @@ import { MotionConfig } from 'motion/react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { DesktopApp } from './DesktopApp'
+import { DesktopLocale } from './DesktopLocale'
+import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
+import { loadMessages } from '@rerun/i18n/messages'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
 import { generalTabUid } from '@/lib/desktop/general-threads'
@@ -103,6 +106,43 @@ test('the open board follows sign-in, default provider changes, and sign-out', a
         visibility.mockRestore()
         vi.useRealTimers()
     }
+})
+
+test('the native Settings menu and the keyboard shortcut share the desktop admission guard', async () => {
+    const { cancelDraftShutdown, freezeDesktopAdmissions } = await import('@/lib/desktop/draft-writes')
+    const desktopWindow = window as Window & { desktopApp?: { onOpenSettings(listener: () => void): () => void } }
+    const previous = desktopWindow.desktopApp
+    const listeners = new Set<() => void>()
+    desktopWindow.desktopApp = { onOpenSettings(listener) {
+        listeners.add(listener)
+        return () => { listeners.delete(listener) }
+    } }
+    const container = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(container)
+    mockDesktopFetch(url => url === settingsUrl ? Response.json(disconnected) : undefined)
+    const settingsNav = () => container.querySelector('nav[aria-label="Settings sections"]')
+    const menu = () => { for (const listener of listeners) listener() }
+    const shortcut = () => window.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true }))
+    try {
+        await act(async () => { root.render(<DesktopApp initialData={{ ...disconnected, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
+        expect(listeners.size).toBe(1)
+        freezeDesktopAdmissions()
+        await act(async () => { menu(); expect(shortcut()).toBe(true) })
+        expect(settingsNav()).toBeNull()
+        cancelDraftShutdown()
+        await act(async () => { menu() })
+        expect(settingsNav()).not.toBeNull()
+        const back = [...container.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Team board')!
+        await act(async () => { back.click() })
+        expect(settingsNav()).toBeNull()
+        await act(async () => { expect(shortcut()).toBe(false) })
+        expect(settingsNav()).not.toBeNull()
+    } finally {
+        cancelDraftShutdown()
+        await act(async () => { root.unmount() })
+        desktopWindow.desktopApp = previous
+    }
+    expect(listeners.size).toBe(0)
 })
 
 test('a reopened workspace can replace a saved key and recover after a failed save', async () => {
@@ -265,6 +305,50 @@ test('reasoning effort uses the active model’s supported levels and the saved 
     } finally { await act(async () => { root.unmount() }) }
 })
 
+test('Kimi Platform Settings shows Max and saves or resets an effort on the exact revision', async () => {
+    const model = 'kimi-k3.1-pro'
+    const selection = { connectionId: 'fixture-kimi', model }
+    const connection: ConnectionsList['connections'][number] = {
+        id: selection.connectionId, name: 'Kimi Platform API', provider: 'custom', models: [model],
+        extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '',
+        customRevision: 7, customReasoning: { [model]: { supported: ['low', 'high', 'max'], default: 'max' } },
+    }
+    let providers: ConnectionsList = { connections: [connection], default: selection }
+    const writes: unknown[] = []
+    mockDesktopFetch((url, init) => {
+        if (url !== settingsUrl) return
+        if (init?.method === 'PATCH') {
+            const body = JSON.parse(String(init.body))
+            writes.push(body)
+            providers = { ...providers, default: body.reasoningEffort ? {
+                ...selection, reasoningEffort: body.reasoningEffort, customReasoningRevision: 7,
+            } : selection }
+        }
+        return Response.json(providers)
+    })
+    const container = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(container)
+    const effort = () => container.querySelector<HTMLSelectElement>('#desktop-reasoning-effort')!
+    const change = (value: string) => act(async () => {
+        effort().value = value
+        effort().dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    try {
+        await act(async () => { root.render(<DesktopApp initialData={{ ...providers, theme: 'system',
+            profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
+        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
+        expect([...effort().options].map(option => option.textContent)).toEqual(['Model default (Max)', 'Low', 'High', 'Max'])
+        await change('max')
+        expect(effort().value).toBe('max')
+        await change('')
+        expect(effort().value).toBe('')
+        expect(writes).toEqual([
+            { action: 'default', ...selection, reasoningEffort: 'max', customReasoningRevision: 7 },
+            { action: 'default', ...selection, reasoningEffort: null, customReasoningRevision: 7 },
+        ])
+    } finally { await act(async () => { root.unmount() }) }
+})
+
 test('editing a coworker from the board preserves the chat and only saves changed fields', async () => {
     const container = document.createElement('div')
     document.body.append(container)
@@ -275,7 +359,7 @@ test('editing a coworker from the board preserves the chat and only saves change
     const writes: Record<string, string>[] = []
     mockDesktopFetch((url, init) => {
         if (url === settingsUrl) return Response.json(disconnected)
-        if (url === '/api/desktop/agents/reviewer/chat-history') return Response.json({ conversations: [{ id: 'review', agentId: agent.id, engineSessionId: 'engine-review', title: 'Earlier review', createdAt: '', updatedAt: '', source: 'dashboard', needsYou: false, pendingQuestion: null }], enrichment: 'ok', questions: 'ok' })
+        if (url === '/api/desktop/agents/reviewer/chat-history?view=saved') return Response.json({ conversations: [{ id: 'review', agentId: agent.id, engineSessionId: 'engine-review', title: 'Earlier review', createdAt: '', updatedAt: '', source: 'dashboard', needsYou: false, pendingQuestion: null }], enrichment: 'ok', questions: 'ok' })
         if (url === '/api/desktop/agents/reviewer/sessions') return Response.json({ sessions: [{ id: 'review', agentId: agent.id, title: 'Earlier review', createdAt: '', updatedAt: '' }] })
         if (url === '/api/desktop/sessions/review/messages') return Response.json({ messages: [{ id: 'a', role: 'assistant', parts: [{ type: 'text', text: 'Existing answer.' }] }] })
         if (url === '/api/desktop/agents/reviewer/settings') {
@@ -340,6 +424,54 @@ test('editing a coworker from the board preserves the chat and only saves change
         await click('Detailed')
         await click('Save changes')
         expect(writes[2]).toEqual({ verbosity: 'detailed' })
+    } finally { await act(async () => { root.unmount() }) }
+})
+
+test.each([
+    { locale: 'en', open: 'Open chat with Researcher', openingLabel: 'Opening Researcher…', retryLabel: 'Retry conversations', close: 'Close panel' },
+    { locale: 'fr', open: 'Ouvrir la conversation avec Researcher', openingLabel: 'Ouverture de la conversation avec Researcher…', retryLabel: 'Recharger les conversations', close: 'Fermer le panneau' },
+    { locale: 'es', open: 'Abrir el chat con Researcher', openingLabel: 'Abriendo el chat con Researcher…', retryLabel: 'Volver a cargar las conversaciones', close: 'Cerrar panel' },
+    { locale: 'pt', open: 'Abrir conversa com Researcher', openingLabel: 'Abrindo a conversa com Researcher…', retryLabel: 'Recarregar conversas', close: 'Fechar painel' },
+    { locale: 'de', open: 'Chat mit Researcher öffnen', openingLabel: 'Chat mit Researcher wird geöffnet…', retryLabel: 'Unterhaltungen erneut laden', close: 'Panel schließen' },
+] as const)('the chat keeps a localized composer area in place during load and retry ($locale)', async ({ locale, open, openingLabel, retryLabel, close }) => {
+    const language: DesktopLanguage = { locale, preference: locale, messages: desktopMessages(locale, await loadMessages(locale)) }
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const agent = { id: 'researcher', name: 'Researcher', description: '', createdAt: '', updatedAt: '' }
+    let resolveSessions!: (response: Response) => void
+    const fetcher = mockDesktopFetch(url => {
+        if (url === settingsUrl) return Response.json(disconnected)
+        if (url === '/api/desktop/agents/researcher/sessions') {
+            return new Promise<Response>(resolve => { resolveSessions = resolve })
+        }
+    })
+    const panel = () => container.querySelector('[data-testid="desktop-coworker-chat"]')!
+    const opening = () => {
+        const composer = panel().querySelector('[data-slot="desktop-composer"]')
+        expect(composer).not.toBeNull()
+        expect(composer?.querySelector('[role="status"]')?.textContent).toBe(openingLabel)
+        expect(composer?.querySelector('button, textarea, input, form')).toBeNull()
+        expect(panel().querySelector('[aria-label="' + close + '"]')).not.toBeNull()
+    }
+    try {
+        await act(async () => { root.render(<DesktopLocale initial={language}><DesktopApp initialData={{ ...disconnected, profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [agent], theme: 'system' }} /></DesktopLocale>) })
+        const tile = container.querySelector<HTMLElement>('[aria-label="' + open + '"]')!
+        await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+        opening()
+        await act(async () => { resolveSessions(Response.json({ error: 'Could not load conversations' }, { status: 500 })) })
+        expect(panel().querySelector('[data-slot="desktop-composer"]')).toBeNull()
+        const retry = panel().querySelector<HTMLButtonElement>('[role="alert"] button')!
+        expect(retry.textContent).toBe(retryLabel)
+        await act(async () => { retry.click() })
+        expect(panel().querySelector('[role="alert"]')).toBeNull()
+        opening()
+        expect(fetcher.mock.calls.some(([url]) => url === '/api/desktop/chat')).toBe(false)
+        await act(async () => { resolveSessions(Response.json({ sessions: [] })) })
+        expect(panel().querySelector('form[data-slot="desktop-composer"] textarea')).not.toBeNull()
+        expect(panel().textContent).not.toContain(openingLabel)
+        await act(async () => { panel().querySelector<HTMLButtonElement>('[aria-label="' + close + '"]')!.click() })
+        expect(document.activeElement).toBe(tile)
     } finally { await act(async () => { root.unmount() }) }
 })
 
@@ -472,6 +604,7 @@ test('open General picks up a saved sibling without rewriting the active layout'
     const newSibling = { ...base, id: 'new-sibling', title: 'New thread', kind: 'thread', firstMessage: 'Saved on another surface' }
     const routine = { ...sibling, source: 'schedule', automationName: 'Weekly digest', firstMessage: null }
     let runStatus = 'running'
+    let outcome: 'done' | 'nothing' | undefined
     let waiting = false
     const path = '/api/desktop/agents/researcher/sessions'
     const initial = { sessions: [general, sibling], tabs: { revision: 2, activeIndex: 0, tabs: [{ uid: generalTabUid(coworker.id), id: general.id, title: 'General' }] } }
@@ -479,7 +612,9 @@ test('open General picks up a saved sibling without rewriting the active layout'
     const fetcher = mockDesktopFetch((url, init) => {
         if (url === settingsUrl) return Response.json(disconnected)
         if (url === path) return Response.json(initial)
-        if (url === path + '?view=threads') return background?.clone() ?? Response.json({ sessions: [general, { ...routine, runStatus }, newSibling] })
+        if (url === path + '?view=threads') return background?.clone() ?? Response.json({
+            sessions: [general, { ...routine, runStatus, ...(outcome && { automationOutcome: outcome, title: 'No new leads' }) }, newSibling],
+        })
         if (url === '/api/desktop/board-activity') return Response.json({
             agents: { [coworker.id]: 'idle' },
             attention: { items: waiting ? [{ id: 'ask', agentId: coworker.id, agentName: coworker.name, agentEnabled: true,
@@ -520,6 +655,14 @@ test('open General picks up a saved sibling without rewriting the active layout'
         waiting = false
         await tick()
         expect(branch().textContent).not.toContain('Needs you')
+        outcome = 'done'
+        await tick()
+        expect(branch().textContent).toContain('No new leads')
+        const title = () => [...branch().querySelectorAll('button span')].find(span => span.textContent === 'No new leads')!
+        expect(title().classList.contains('text-muted-foreground')).toBe(false)
+        outcome = 'nothing'
+        await tick()
+        expect(title().classList.contains('text-muted-foreground')).toBe(true)
         expect(fetcher.mock.calls.filter(([url, options]) => url.endsWith('/tabs') && options?.method === 'PUT')).toHaveLength(0)
         await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Close panel"]')!.click())
         const requests = fetcher.mock.calls.filter(([url]) => url === path + '?view=threads').length

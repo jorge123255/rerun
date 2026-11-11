@@ -2,6 +2,8 @@ import { renderToString } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { UIMessage } from 'ai'
 import { generalTabUid } from '@/lib/desktop/general-threads'
+import { englishDesktopLanguage } from '@/lib/desktop/locale'
+import { DesktopLocale } from './DesktopLocale'
 import { DesktopConversation } from './DesktopConversation'
 
 const agent = { id: 'local-agent-1', name: 'Researcher', description: 'Finds answers', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }
@@ -62,6 +64,27 @@ describe('DesktopConversation', () => {
             expect(html).toContain('Scheduled run')
             expect(html).toContain('data-thread-row="following-thread"')
             expect(html.indexOf('data-thread-row="following-thread"')).toBeGreaterThan(html.indexOf('Scheduled run'))
+        } finally { chat.messages = [] }
+    })
+
+    it('marks saved chat breaks with localized timestamps and leaves legacy times blank', () => {
+        const first = new Date(2024, 0, 2, 9, 0).toISOString()
+        const near = new Date(2024, 0, 2, 9, 5).toISOString()
+        const resumed = new Date(2024, 0, 2, 10, 5).toISOString()
+        chat.messages = [
+            { id: 'engine-legacy', role: 'user', metadata: { createdAt: 'unknown' }, parts: [{ type: 'text', text: 'Legacy note.' }] },
+            { id: 'engine-first', role: 'user', metadata: { createdAt: first }, parts: [{ type: 'text', text: 'First dated note.' }] },
+            { id: 'engine-near', role: 'assistant', metadata: { createdAt: near }, parts: [{ type: 'text', text: 'A quick answer.' }] },
+            { id: 'engine-resumed', role: 'user', metadata: { createdAt: resumed }, parts: [{ type: 'text', text: 'Back again.' }] },
+        ]
+        try {
+            const html = renderToString(<DesktopLocale initial={{ ...englishDesktopLanguage, locale: 'fr' }}>
+                <DesktopConversation agent={agent} sessionId={null} sessions={[]} onSelectSession={vi.fn()} onChatSession={vi.fn()} />
+            </DesktopLocale>)
+            expect([...html.matchAll(/<time dateTime="([^"]+)"/g)].map(match => match[1])).toEqual([first, resumed])
+            expect(html).toContain('2 janv. 2024')
+            expect(html.indexOf('Legacy note.')).toBeLessThan(html.indexOf(first))
+            expect(html.indexOf('A quick answer.')).toBeLessThan(html.indexOf(resumed))
         } finally { chat.messages = [] }
     })
 

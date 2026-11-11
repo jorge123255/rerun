@@ -5,16 +5,18 @@ import { randomUUID } from 'node:crypto'
 import { createClient, type Client } from '@libsql/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { DesktopMcpSignInSource } from '../../../../../../packages/contracts/src/desktop-mcp-sign-in'
+import { createDesktopMcpBrowserApprovals, desktopMcpBrowserApprovalSchema } from '../mcp-sign-in/browser-approval'
 import { createDesktopMcpSignInStore } from '../mcp-sign-in/store'
 import { desktopMcpSignInSchema } from '../mcp-sign-in/schema'
-import { createDeviceReviewStore, desktopMcpDeviceReviewSchema } from '../mcp-device-approval/store'
+import { createDeviceReviewStore } from '../mcp-device-approval/store'
 import { createTrustedMcpDeviceMethodReview } from '../mcp-device-approval/service'
 import { sourceScope } from '../mcp-device-approval/model'
-import { createDesktopSecretCrypto } from '../secret-requests/crypto'
+import { readApprovedMcpSignInMethod } from './approved'
 import { createMcpCredentialGeneration } from '../mcp/credential-generation'
 import { remoteMcpStore, remoteMcpOAuthSchema, type OAuthTokenBundle } from '../mcp/store'
 import { digest } from '../mcp-device-custody/model'
-import { createMcpMethodAdmission, desktopMcpMethodAdmissionSchema, type ApprovedSignInMethod, type SignInMethodAdmissionPorts, type SignInMethodRequest } from './contract'
+import { initializeDesktopRound40 } from '../round40-schema'
+import { createMcpMethodAdmission, desktopMcpMethodAdmissionSchema, type SignInMethodAdmissionPorts, type SignInMethodRequest } from './contract'
 
 const databases: Client[] = [], roots: string[] = [], cleanup: (() => void)[] = []
 afterEach(async () => {
@@ -27,17 +29,22 @@ async function fixture() {
     const url = `file:${join(root, 'fixture.db')}`
     const open = () => { const db = createClient({ url }); databases.push(db); return db }
     const db = open(), key = () => Buffer.alloc(32, 31), signal = new AbortController().signal, shutdown = new AbortController()
-    await db.executeMultiple(`CREATE TABLE desktop_agents(id TEXT PRIMARY KEY,workspace_id TEXT,engine_agent_id TEXT);
-        INSERT INTO desktop_agents VALUES('coworker','workspace','engine-coworker');
+    await db.executeMultiple(`CREATE TABLE desktop_schema_migrations(version INTEGER PRIMARY KEY,id TEXT NOT NULL);
+        INSERT INTO desktop_schema_migrations VALUES(38,'mcp-browser-attempt-approval');
+        CREATE TABLE desktop_agents(id TEXT PRIMARY KEY,workspace_id INTEGER,engine_agent_id TEXT);
+        INSERT INTO desktop_agents VALUES('coworker',1,'engine-coworker');
+        CREATE TABLE desktop_deletions(agent_id TEXT,engine_agent_id TEXT);
         CREATE TABLE desktop_sessions(id TEXT PRIMARY KEY,agent_id TEXT,engine_session_id TEXT);
         INSERT INTO desktop_sessions VALUES('local-chat','coworker','engine-chat');
         CREATE TABLE desktop_remote_mcp(id TEXT, transport TEXT, agent_id TEXT, name TEXT, url TEXT, revision TEXT, bearer TEXT, PRIMARY KEY(agent_id,name));
         INSERT INTO desktop_remote_mcp VALUES('registration','http','coworker','docs','https://docs.example/mcp','r1',NULL);
-        ${remoteMcpOAuthSchema} ${desktopMcpSignInSchema} ${desktopMcpDeviceReviewSchema} ${desktopMcpMethodAdmissionSchema}
-        CREATE TABLE fixture_browser_generation(attempt_id TEXT PRIMARY KEY,sealed TEXT);`)
+        ${remoteMcpOAuthSchema} ${desktopMcpSignInSchema}
+        ${desktopMcpBrowserApprovalSchema};`)
+    await initializeDesktopRound40(db)
     const source: DesktopMcpSignInSource = { agentId: 'coworker', sessionId: 'local-chat', runId: 'source-run', sourceMessageId: 'source-message', toolCallId: 'source-tool', fingerprint: 'exact-source-body',
         server: { name: 'docs', revision: 'r1', url: 'https://docs.example/mcp', displayName: 'Docs' } }
-    const store = remoteMcpStore(db, key), browser = createDesktopMcpSignInStore(db), privateCrypto = createDesktopSecretCrypto(key)
+    const store = remoteMcpStore(db, key), browser = createDesktopMcpSignInStore(db)
+    const scope = { workspaceId: 'workspace', owner: source.agentId, sessionId: source.sessionId, engineAgentId: 'engine-coworker', engineSessionId: 'engine-chat' }
     let time = 1_000_000, allowed = true
     const generations = createMcpCredentialGeneration({ store, key, now: () => time })
     const check = () => { if (!allowed) throw new Error('FIXTURE_PRIVATE_AUTHORITY_ERROR') }
@@ -45,14 +52,9 @@ async function fixture() {
     cleanup.push(generation.dispose)
     const request = await browser.publish({ name: 'docs', source }, { check })
     const browserApprovalId = randomUUID()
-    await browser.beginAttempt({ requestId: request.requestId, expectedRevision: request.revision, attemptId: browserApprovalId, operation: 'connect', source }, { check })
-    const browserProof: ApprovedSignInMethod = { workspaceId: 'workspace', owner: source.agentId, engineAgentId: 'engine-coworker', engineSessionId: 'engine-chat',
-        registrationId: 'registration', revision: 'r1', name: 'docs', resource: source.server.url, requestId: request.requestId, approvalId: browserApprovalId,
-        method: 'browser', credentialGeneration: generation.generation, expiresAt: time + 120_000 }
-    const proofContext = { domain: 'staging' as const, agentId: source.agentId, key: `fixture-browser-approval:${browserApprovalId}`, version: 1 }
-    const bytes = Buffer.from(JSON.stringify(browserProof))
-    const sealed = await privateCrypto.seal(proofContext, bytes); bytes.fill(0)
-    await db.execute({ sql: 'INSERT INTO fixture_browser_generation VALUES(?,?)', args: [browserApprovalId, sealed] })
+    const originalBrowser = createDesktopMcpBrowserApprovals(db, store, key, scope, () => time)
+    const browserDecision = { requestId: request.requestId, expectedRevision: request.revision, attemptId: browserApprovalId, operation: 'connect' as const, source }
+    const browserAttempt = await browser.beginAttempt(browserDecision, { check }, originalBrowser.capture)
     const reviews = createTrustedMcpDeviceMethodReview({
         workspaceId: 'workspace', store: createDeviceReviewStore(db, key), shutdown: shutdown.signal, now: () => time,
         authority: async (input, stop) => {
@@ -66,44 +68,30 @@ async function fixture() {
         }, stopCustody: async () => {},
     })
     cleanup.push(reviews.dispose)
-    const review = await reviews.review(source, signal), deviceApprovalId = randomUUID()
-    await reviews.decide(source, { reviewId: review.reviewId, revision: review.revision, decisionId: deviceApprovalId, operation: 'approve-device-method' }, signal)
+    const review = await reviews.review(source, signal), deviceDecisionId = randomUUID()
+    await reviews.decide(source, { reviewId: review.reviewId, revision: review.revision, decisionId: deviceDecisionId, operation: 'approve-device-method' }, signal)
+    const device = (await createDeviceReviewStore(db, key).bySource(scope.workspaceId, scope.owner, sourceScope(scope.workspaceId, source)))!
     const browserInput: SignInMethodRequest = { source, method: 'browser', approvalId: browserApprovalId }
-    const deviceInput: SignInMethodRequest = { source, method: 'device', approvalId: deviceApprovalId }
-    const approved: SignInMethodAdmissionPorts['approved'] = async (input, tx, stop) => {
-        check(); stop.throwIfAborted()
-        if (digest(input.source) !== digest(source)) return null
-        const owner = (await tx.execute({ sql: 'SELECT a.workspace_id,a.engine_agent_id,s.engine_session_id FROM desktop_agents a JOIN desktop_sessions s ON s.agent_id=a.id WHERE a.id=? AND s.id=?', args: [source.agentId, source.sessionId] })).rows[0]
-        if (!owner || owner.workspace_id !== 'workspace' || owner.engine_agent_id !== 'engine-coworker' || owner.engine_session_id !== 'engine-chat') return null
-        const human = await createDesktopMcpSignInStore(db).readBySource(source, tx)
-        if (!human) return null
-        let value: ApprovedSignInMethod
-        if (input.method === 'browser') {
-            const attempt = (await tx.execute({ sql: 'SELECT state FROM desktop_mcp_sign_in_attempts WHERE request_id=? AND attempt_id=?', args: [human.requestId, input.approvalId] })).rows[0]
-            if (human.receipt || human.activeAttemptId !== input.approvalId || attempt?.state !== 'pending') return null
-            const row = (await tx.execute({ sql: 'SELECT sealed FROM fixture_browser_generation WHERE attempt_id=?', args: [input.approvalId] })).rows[0]
-            if (!row) return null
-            const opened = await privateCrypto.open(proofContext, String(row.sealed))
-            try { value = JSON.parse(new TextDecoder().decode(opened)) } finally { opened.fill(0) }
-        } else {
-            const saved = await createDeviceReviewStore(db, key).bySource('workspace', source.agentId, sourceScope('workspace', source), tx)
-            if (!saved || saved.value.state !== 'approved' || saved.value.decision?.id !== input.approvalId || saved.value.decision.operation !== 'approve-device-method') return null
-            const a = saved.value.approval
-            value = { workspaceId: a.workspaceId, owner: a.owner, engineAgentId: a.engineAgentId, engineSessionId: a.sessionId, registrationId: a.registrationId,
-                revision: a.revision, name: a.name, resource: a.method.resource, requestId: human.requestId, approvalId: input.approvalId,
-                method: 'device', credentialGeneration: a.credentialGeneration, expiresAt: a.approvedUntil }
-        }
-        return { value, signal: stop, check }
-    }
-    const make = (connection = db, callback = approved) => {
+    const deviceInput: SignInMethodRequest = { source, method: 'device', approvalId: device.value.approval.approvalId }
+    const make = (connection = db, callback?: SignInMethodAdmissionPorts['approved']) => {
         const localStore = remoteMcpStore(connection, key)
-        const ports: SignInMethodAdmissionPorts = { db: connection, store: localStore, key, workspaceId: 'workspace', shutdown: shutdown.signal, approved: callback, now: () => time }
+        const approved = callback ?? readApprovedMcpSignInMethod({
+            workspaceId: scope.workspaceId, requests: createDesktopMcpSignInStore(connection), devices: createDeviceReviewStore(connection, key),
+            browser: owner => createDesktopMcpBrowserApprovals(connection, localStore, key, owner, () => time),
+            owner: async (requested, stop) => {
+                check()
+                if (digest(requested) !== digest(source)) throw Error('Foreign source')
+                return { ...scope, signal: stop, check }
+            },
+            now: () => time,
+        })
+        const ports: SignInMethodAdmissionPorts = { db: connection, store: localStore, key, workspaceId: scope.workspaceId, shutdown: shutdown.signal, approved, now: () => time }
         const admission = createMcpMethodAdmission(ports); cleanup.push(admission.dispose)
         return { admission, ports, store: localStore }
     }
     const left = make(), right = make(open())
     const token = (accessToken: string): OAuthTokenBundle => ({ accessToken, expiresAt: time + 600_000, resource: source.server.url, issuer: 'https://issuer.example/', tokenEndpoint: 'https://issuer.example/token', clientId: 'synthetic-client' })
-    return { db, open, key, source, signal, shutdown, browserInput, deviceInput, left, right, make, browser, approved, generation, store, token,
+    return { db, open, key, source, signal, shutdown, browserInput, deviceInput, left, right, make, browser, browserAttempt, browserDecision, deviceDecisionId, generation, store, token,
         advance: (ms: number) => { time += ms }, deny: () => { allowed = false } }
 }
 
@@ -193,7 +181,7 @@ it('expiry, permission revoke and workspace shutdown cannot admit a new external
 
 it('refuses changed owner/session/registration, missing approval and model-supplied sensitive fields', async () => {
     const f = await fixture()
-    for (const input of [{ ...f.deviceInput, credentialGeneration: f.generation.generation }, { ...f.deviceInput, approvalId: randomUUID() }, { ...f.browserInput, source: { ...f.source, sessionId: 'foreign-chat' } }]) {
+    for (const input of [{ ...f.deviceInput, credentialGeneration: f.generation.generation }, { ...f.deviceInput, approvalId: f.deviceDecisionId }, { ...f.deviceInput, approvalId: randomUUID() }, { ...f.browserInput, source: { ...f.source, sessionId: 'foreign-chat' } }]) {
         await expect(f.left.admission.select(input, f.signal)).rejects.toThrow('MCP sign-in method admission unavailable')
     }
     await f.db.execute("UPDATE desktop_sessions SET engine_session_id='foreign-engine-chat'")
@@ -202,6 +190,27 @@ it('refuses changed owner/session/registration, missing approval and model-suppl
     await f.store.save('coworker', { name: 'docs', url: f.source.server.url, revision: 'r1' })
     await expect(f.left.admission.select(f.deviceInput, f.signal)).rejects.toThrow()
     expect((await f.db.execute('SELECT selection_id FROM desktop_mcp_method_admission')).rows).toEqual([])
+})
+
+it('refuses to reserve a real browser approval cancelled by another database connection', async () => {
+    const f = await fixture(), selected = await f.left.admission.select(f.browserInput, f.signal)
+    await createDesktopMcpSignInStore(f.open()).cancel({
+        ...f.browserDecision, expectedRevision: f.browserAttempt.request.revision, operation: 'cancel',
+    })
+    await expect(f.left.admission.reserve(f.source.agentId, selected.selectionId, f.signal)).rejects.toThrow()
+    expect((await f.db.execute('SELECT state FROM desktop_mcp_method_admission')).rows[0]?.state).toBe('selected')
+})
+
+it('retains one migration marker and refuses existing approvals after the conversation owner is removed', async () => {
+    const f = await fixture()
+    await initializeDesktopRound40(f.open())
+    expect((await f.db.execute('SELECT version,id FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([
+        { version: 38, id: 'mcp-browser-attempt-approval' }, { version: 39, id: 'mcp-method-admission' },
+    ])
+    await f.db.execute("INSERT INTO desktop_deletions VALUES('coworker','engine-coworker')")
+    for (const input of [f.browserInput, f.deviceInput]) {
+        await expect(f.left.admission.select(input, f.signal)).rejects.toThrow()
+    }
 })
 
 it('encrypts the selection/proof and emits no generation, token or provider text in receipts or errors', async () => {

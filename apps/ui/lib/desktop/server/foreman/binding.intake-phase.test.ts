@@ -1,28 +1,31 @@
 import { createClient, type Client } from '@libsql/client'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
     EMPTY_DRAFT,
+    foremanRevisionSchema,
     type DesktopForemanBuild,
     type DesktopForemanChatRef,
     type DesktopForemanIntakeCompletionReceipt,
     type DesktopForemanRevision,
+    type Run,
 } from '@rerun/contracts'
 import type { DesktopRuntime } from '../runtime'
+import type { ForemanCreationAuthority } from './authority'
 
-const state = vi.hoisted(() => ({ db: null as unknown as Client, agentCount: 0 }))
+const state = vi.hoisted(() => ({ db: null as unknown as Client, agentCount: 0, creation: {} as Partial<ForemanCreationAuthority> }))
 vi.mock('../database', () => ({ openDesktopDatabase: async () => state.db }))
 vi.mock('../settings', () => ({
     engineOf: (runtime: DesktopRuntime) => ({ baseUrl: runtime.engine.origin, apiKey: runtime.engine.apiKey }),
-    readDesktopProviders: async () => ({ connections: [{ id: 'chosen-local-model', name: 'Chosen model', provider: 'codex', connected: true, models: ['model-for-source-test'], extraModels: [] }] }),
+    readDesktopProviders: async () => ({ connections: [{ id: 'chosen-local-model', name: 'Chosen model', provider: 'codex', connected: true, models: ['model-for-source-test', 'workspace-fixture'], extraModels: [] }] }),
     desktopModel: vi.fn(),
 }))
 vi.mock('../spaces', () => ({ readDesktopBoardState: async () => ({ spaces: [] }) }))
 vi.mock('../store', () => ({ listDesktopAgents: async () => Array.from({ length: state.agentCount }, () => ({ id: 'existing-coworker' })) }))
-vi.mock('./creation', () => ({ createDesktopForemanCreationAuthority: async () => ({ creation: {}, setup: {} }) }))
+vi.mock('./creation', () => ({ createDesktopForemanCreationAuthority: async () => ({ creation: state.creation, setup: {} }) }))
 vi.mock('../company-discovery', () => ({
     createCompanyDiscoverySqliteStore: vi.fn(),
     createCompanyDiscoveryRuntime: () => ({ reconcile: async () => {}, close: async () => {} }),
@@ -33,14 +36,19 @@ vi.mock('@/lib/engine/client', () => ({
     request: vi.fn(async (_engine, _path, _init, parse) => parse({ question: null })),
     EngineRequestError: class extends Error { constructor(message: string, readonly status: number) { super(message) } },
     getRun: vi.fn(async (_engine: unknown, _agent: string, id: string) => ({ id, agentId: 'foreman', sessionId: 'original-session', status: 'finished' })),
-    getSessionMessages: vi.fn(async () => []), cancelRun: vi.fn(),
+    getSessionMessages: vi.fn(async () => []), cancelRun: vi.fn(async () => {}),
 }))
-import { getRun, getSessionMessages, request } from '@/lib/engine/client'
+import { cancelRun, getRun, getSessionMessages, request } from '@/lib/engine/client'
 import { desktopForeman } from './binding'
-import { DESKTOP_FOREMAN_CHAT_SCHEMA } from './chat-store'
+import { DESKTOP_FOREMAN_CHAT_SCHEMA, type ForemanTurn } from './chat-store'
+import { FOREMAN_VOICE_SCHEMA_SQL } from '../foreman-voice/store'
+import { desktopModel, readDesktopProviders } from '../settings'
 import { DESKTOP_FOREMAN_SCHEMA_STATEMENTS } from './store'
 import { DESKTOP_FOREMAN_INTAKE_SCHEMA_SQL, fingerprintIntakeAnswers } from '../foreman-intake'
 import { createDesktopForemanIntakeBinding } from './intake'
+import { initializeDesktopRound41 } from '../round41-schema'
+import { POST as foremanAction } from '@/app/api/desktop/foreman/route'
+import { projectPlanCard, revisionToTrustedSnapshot } from '@/lib/desktop/foreman-client/plan-view'
 
 const chat = { workspaceId: '1', chatId: 'fmc_phaseprimary01' }
 const answers = { companyUrl: 'acme.com', industry: 'saas' as const, decidedIndustry: null, industryLabel: null, position: 'Founder', firstName: 'Ada' }
@@ -52,7 +60,7 @@ const timestamp = '2026-11-06T12:00:00.000Z'
 describe('production Foreman intake phase and model brief', () => {
     let directory: string
     let runtime: DesktopRuntime
-    let sent: Array<{ text: string; brief: { instructions: string } }>
+    let sent: ForemanTurn[]
     const open = () => createClient({ url: `file:${join(directory, 'app.sqlite')}` })
     const seedReceipt = async (completionState: DesktopForemanIntakeCompletionReceipt['state'], scope: DesktopForemanChatRef = chat) => {
         const requestId = randomUUID()
@@ -67,13 +75,17 @@ describe('production Foreman intake phase and model brief', () => {
     }
     beforeEach(async () => {
         vi.clearAllMocks()
+        vi.mocked(request).mockImplementation(async (_engine, path, _init, parse) => parse(path === '/desktop/templates' ? { templates: [] } : { question: null }))
         vi.mocked(getSessionMessages).mockResolvedValue([])
         vi.mocked(getRun).mockImplementation(async (_engine, _agent, id) => ({ id, agentId: 'foreman', sessionId: 'original-session', status: 'done' }) as Awaited<ReturnType<typeof getRun>>)
         state.agentCount = 0
+        state.creation = {}
         directory = await mkdtemp(join(tmpdir(), 'rerun-intake-phase-'))
         state.db = open()
-        await state.db.executeMultiple([DESKTOP_FOREMAN_CHAT_SCHEMA, ...DESKTOP_FOREMAN_SCHEMA_STATEMENTS, DESKTOP_FOREMAN_INTAKE_SCHEMA_SQL,
+        await state.db.executeMultiple([DESKTOP_FOREMAN_CHAT_SCHEMA, ...DESKTOP_FOREMAN_SCHEMA_STATEMENTS, DESKTOP_FOREMAN_INTAKE_SCHEMA_SQL, FOREMAN_VOICE_SCHEMA_SQL,
+            'CREATE TABLE desktop_schema_migrations(version INTEGER PRIMARY KEY,id TEXT NOT NULL UNIQUE)',
             'CREATE TABLE desktop_workspace(id INTEGER PRIMARY KEY,name TEXT); INSERT INTO desktop_workspace VALUES(1,\'Source test workspace\');'].join(';'))
+        await initializeDesktopRound41(state.db)
         await state.db.execute({ sql: 'INSERT INTO desktop_foreman_chats(chat_id,workspace_id,engine_session_id,model) VALUES(?,?,?,?)', args: [chat.chatId, chat.workspaceId, 'original-session', JSON.stringify(model)] })
         runtime = { protocolVersion: 1, workspaceId: 1, launchNonce: randomUUID(), buildId: 'phase-source-test', dataRoot: directory,
             app: { origin: 'http://127.0.0.1:3210', sessionToken: 'a'.repeat(64) }, engine: { origin: 'http://127.0.0.1:3222', apiKey: 'b'.repeat(64) } }
@@ -86,13 +98,204 @@ describe('production Foreman intake phase and model brief', () => {
             return new Response(null, { headers: { 'x-run-id': turn.binding.runId, 'x-session-id': turn.sessionId } })
         }))
     })
-    afterEach(async () => { state.db.close(); vi.unstubAllGlobals(); await rm(directory, { recursive: true, force: true }) })
+    afterEach(async () => { state.db.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); await rm(directory, { recursive: true, force: true }) })
+
+    it('reads the context of an exact completed Foreman run and refuses foreign or unrecorded usage', async () => {
+        const app = await desktopForeman(runtime)
+        const id = randomUUID()
+        await app.send(chat, id, 'Review this fixture')
+        vi.mocked(getSessionMessages).mockResolvedValue([{ id: 'assistant-fixture', sessionId: 'original-session', role: 'assistant',
+            contentJson: JSON.stringify([{ type: 'text', text: 'Synthetic reply' }]), toolCallsJson: null, createdAt: timestamp }])
+        const usage = { inputTokens: 12, outputTokens: 8, totalTokens: 20, context: { usedTokens: 50, maxTokens: 200 } }
+        const run: Run = { id, agentId: 'foreman', sessionId: 'original-session', status: 'done', stepCount: 1, model: model.model,
+            usageJson: JSON.stringify(usage), provider: 'codex', startedAt: timestamp, finishedAt: timestamp, error: null,
+            triggerSource: 'chat', triggerSlug: null, costMicros: null, inputTokens: 12, outputTokens: 8, cachedInputTokens: null, reasoningTokens: null, totalTokens: 20 }
+        vi.mocked(getRun).mockResolvedValue(run)
+        expect((await app.state()).context).toEqual({ model, usage, usedTokens: 50, maxTokens: 200, estimated: false })
+        expect(getRun).toHaveBeenCalledWith(expect.anything(), 'foreman', id, { signal: expect.any(AbortSignal) })
+        for (const mismatched of [{ sessionId: 'foreign-session' }, { id: randomUUID() }, { model: 'another-model' }, { status: 'cancelled' as const }, { usageJson: '{' }]) {
+            vi.mocked(getRun).mockResolvedValue({ ...run, ...mismatched })
+            expect((await app.state()).context).toBeNull()
+        }
+        const billed = { totalTokens: 1200 }
+        vi.mocked(getRun).mockResolvedValue({ ...run, usageJson: JSON.stringify(billed) })
+        expect((await app.state()).context).toEqual({ model, usage: billed, usedTokens: 1200, maxTokens: 272_000, estimated: true })
+        for (const provider of ['claude', 'custom']) {
+            vi.mocked(getRun).mockResolvedValue({ ...run, provider, usageJson: JSON.stringify(billed) })
+            expect((await app.state()).context).toBeNull()
+        }
+        vi.mocked(getRun).mockRejectedValue(new Error('Run history temporarily unavailable'))
+        expect(await app.state()).toMatchObject({ context: null, messages: [{ id: 'engine-assistant-fixture' }] })
+    })
+
+    it('keeps a selected model on the chat and follows the workspace on every turn after clearing it', async () => {
+        const app = await desktopForeman(runtime)
+        const { connections } = await readDesktopProviders(runtime)
+        const workspace = { connectionId: model.connectionId, model: 'workspace-fixture' }
+        vi.mocked(desktopModel).mockResolvedValue({ connections, connection: connections[0]!, model: workspace.model, default: workspace })
+        expect(await app.setModel(chat, model, workspace)).toEqual({ model: workspace })
+        await app.send(chat, randomUUID(), 'Use the selected model')
+        expect(sent.at(-1)?.binding.model).toEqual(workspace)
+        expect(await app.setModel(chat, workspace, null)).toEqual({ model: null })
+        const first = randomUUID()
+        await app.send(chat, first, 'Follow the workspace')
+        expect(sent.at(-1)?.binding.model).toEqual(workspace)
+        expect((await app.state()).model).toBeNull()
+        vi.mocked(desktopModel).mockResolvedValue({ connections, connection: connections[0]!, model: model.model, default: model })
+        await app.send(chat, first, 'Follow the workspace')
+        expect(sent.at(-1)?.binding.model).toEqual(workspace)
+        await app.send(chat, randomUUID(), 'Follow the changed workspace default')
+        expect(sent.at(-1)?.binding.model).toEqual(model)
+        expect((await app.state()).model).toBeNull()
+    })
+
+    it('refuses foreign, stale, unavailable and in-flight model changes without overwriting the selection', async () => {
+        const app = await desktopForeman(runtime)
+        const workspace = { connectionId: model.connectionId, model: 'workspace-fixture' }
+        await expect(app.setModel({ ...chat, workspaceId: '2' }, model, workspace)).rejects.toMatchObject({ status: 404 })
+        await expect(app.setModel(chat, null, workspace)).rejects.toMatchObject({ status: 409 })
+        await expect(app.setModel(chat, model, { ...model, model: 'unavailable' })).rejects.toMatchObject({ status: 400 })
+        await app.send(chat, randomUUID(), 'Already running')
+        vi.mocked(getRun).mockImplementation(async (_engine, _agent, id) => ({ id, agentId: 'foreman', sessionId: 'original-session', status: 'running' }) as Awaited<ReturnType<typeof getRun>>)
+        await expect(app.setModel(chat, model, workspace)).rejects.toMatchObject({ status: 409 })
+        expect((await app.state()).model).toEqual(model)
+    })
+
+    async function authenticatedStarterAction() {
+        const runtimeFile = join(directory, 'runtime.json')
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        vi.stubEnv('RERUN_DESKTOP_DATA_DIR', directory)
+        vi.stubEnv('RERUN_DESKTOP_RUNTIME_FILE', runtimeFile)
+        await writeFile(runtimeFile, JSON.stringify(runtime), { mode: 0o600 })
+        return (scope: DesktopForemanChatRef, input: unknown, authenticated = true) => foremanAction(new Request(runtime.app.origin + '/api/desktop/foreman', {
+            method: 'POST',
+            headers: { host: new URL(runtime.app.origin).host, origin: runtime.app.origin,
+                ...(authenticated && { cookie: 'rerun-desktop-session=' + runtime.app.sessionToken }) },
+            body: JSON.stringify({ action: 'starter', chat: scope, input }),
+        }))
+    }
+
+    async function prepareStarter() {
+        const app = await desktopForeman(runtime)
+        const intake = createDesktopForemanIntakeBinding(runtime, app)
+        const saved = await intake.save({ chat, requestId: randomUUID(), baseRevision: 0, stepIndex: 2,
+            draft: { ...EMPTY_DRAFT, companyUrl: answers.companyUrl, industry: answers.industry, position: answers.position, firstName: answers.firstName },
+            decidedIndustry: null, knownFirstName: null })
+        vi.mocked(request).mockImplementation(async (_engine, path, _init, parse) => parse(path === '/desktop/templates' ? {
+            templates: [{ templateId: 'a'.repeat(32), revision: 'b'.repeat(64), title: 'Fixture support', status: 'captured', coworkerCount: 1, capturedAt: timestamp }],
+        } : { question: null }))
+        const receipt = await intake.complete({ chat, requestId: randomUUID(), expectedRevision: saved.session.revision, answers })
+        expect(receipt).toMatchObject({ state: 'acknowledged', followUp: { conversationId: 'original-session', runId: null } })
+        const prepared = (await app.starterOffers.read(chat, receipt.requestId))!
+        expect((await app.state()).starter).toMatchObject({ offerId: prepared.id, decision: null })
+        expect(sent).toEqual([])
+        return { prepared, receipt }
+    }
+
+    it('resumes the exact saved starter answer once after a lost response and refuses it after Stop', async () => {
+        const app = await desktopForeman(runtime)
+        const { prepared, receipt } = await prepareStarter()
+        const choice = { offerId: prepared.id, digest: prepared.digest, intakeRequestId: receipt.requestId,
+            choice: { kind: 'text' as const, text: 'Design a support coworker' } }
+        let answerFromApp = await authenticatedStarterAction()
+        expect((await answerFromApp(chat, choice, false)).status).toBe(401)
+        expect((await answerFromApp({ ...chat, workspaceId: '2' }, choice)).status).toBe(404)
+        expect((await answerFromApp(chat, { ...choice, choice: { kind: 'cards', chosen: ['f'.repeat(32)] } })).status).toBe(409)
+        expect((await state.db.execute('SELECT offer_id FROM desktop_foreman_local_starter_decisions')).rows).toEqual([])
+        const transport = vi.mocked(fetch).getMockImplementation()!
+        vi.mocked(fetch).mockImplementationOnce(async (url, init) => {
+            await transport(url, init)
+            throw new Error('Lost starter response')
+        })
+        await expect(app.answerStarter(chat, choice, AbortSignal.timeout(5000))).rejects.toThrow('Lost starter response')
+        expect(sent).toEqual([expect.objectContaining({ text: choice.choice.text, replayOnly: false,
+            binding: expect.objectContaining({ ...chat, runId: prepared.id }), sessionId: 'original-session' })])
+        expect(sent[0]).not.toHaveProperty('starterOfferId')
+        expect((await app.state()).starter?.decision).toMatchObject({ choice: choice.choice, settled: false })
+
+        state.db.close()
+        state.db = open()
+        runtime = { ...runtime, launchNonce: randomUUID() }
+        answerFromApp = await authenticatedStarterAction()
+        const reopened = await desktopForeman(runtime)
+        await expect(reopened.send(chat, prepared.id, choice.choice.text, model)).rejects.toMatchObject({ status: 409 })
+        await expect(reopened.answerStarter(chat, { ...choice, choice: { kind: 'text', text: 'Another job' } }, AbortSignal.timeout(5000))).rejects.toMatchObject({ status: 409 })
+        const accepted = await answerFromApp(chat, choice)
+        expect(accepted.status).toBe(200)
+        expect(await accepted.json()).toEqual({ runId: prepared.id })
+        expect((await reopened.state()).starter?.decision).toMatchObject({ choice: choice.choice, settled: true })
+        await expect(reopened.answerStarter(chat, choice, AbortSignal.timeout(5000))).resolves.toEqual({ runId: prepared.id })
+        expect(sent).toHaveLength(2)
+        expect(sent[1]).toMatchObject({ replayOnly: true, binding: { runId: prepared.id } })
+        expect((await state.db.execute('SELECT request_id FROM desktop_foreman_turns')).rows).toEqual([{ request_id: prepared.id }])
+        vi.mocked(getRun).mockResolvedValueOnce({ id: prepared.id, agentId: 'foreman', sessionId: 'original-session', status: 'running' } as Awaited<ReturnType<typeof getRun>>)
+        await reopened.stop(chat)
+        expect(cancelRun).toHaveBeenCalledWith(expect.anything(), 'foreman', prepared.id)
+        await expect(reopened.answerStarter(chat, choice, AbortSignal.timeout(5000))).rejects.toMatchObject({ status: 409 })
+        expect(sent).toHaveLength(2)
+    })
+
+    it.each(['confirm', 'stop', 'replaced template'] as const)('preserves an exact starter plan across reopen and handles %s', async outcome => {
+        const validate = vi.fn(async () => {})
+        const ensureBox = vi.fn(async () => ({ spaceId: randomUUID() }))
+        const install = vi.fn(async () => ({ agentIds: [randomUUID()] }))
+        state.creation = { assertTemplateRevision: validate, ensureBox, installTemplate: install }
+        const { prepared, receipt } = await prepareStarter()
+        const card = prepared.cards[0]!
+        const input = { offerId: prepared.id, intakeRequestId: receipt.requestId, digest: prepared.digest,
+            choice: { kind: 'cards' as const, chosen: [card.templateId] } }
+        const answerFromApp = await authenticatedStarterAction()
+        const response = await answerFromApp(chat, input)
+        expect(response.status).toBe(200)
+        const shown = await response.json() as { revision: unknown }
+        const revision = foremanRevisionSchema.parse(shown.revision)
+        expect(shown.revision).toMatchObject({ starter: { offerId: prepared.id, digest: prepared.digest }, runId: null, toolCallId: null, model: null,
+            state: 'shown', plan: { items: [{ kind: 'template', templateId: card.templateId, templateRevision: card.revision }] } })
+        const projected = projectPlanCard(revisionToTrustedSnapshot(revision))
+        expect(projected).toMatchObject({ revisionId: revision.revisionId, decision: null, streaming: false })
+        expect(projected.view?.groups[0]?.items[0]?.name).toBe(card.title)
+        expect(ensureBox).not.toHaveBeenCalled()
+        expect(install).not.toHaveBeenCalled()
+        expect(sent).toEqual([])
+
+        state.db.close()
+        state.db = open()
+        const reopened = await desktopForeman({ ...runtime, launchNonce: randomUUID() })
+        expect((await reopened.core.readView(chat)).revisions).toEqual([shown.revision])
+        await expect(reopened.answerStarter(chat, input, AbortSignal.timeout(5000))).resolves.toEqual(shown)
+        const confirmation = { decision: 'confirm', requestId: randomUUID(), chat, planId: revision.planId, revisionId: revision.revisionId, digest: revision.digest }
+        if (outcome === 'stop') {
+            await reopened.stop(chat)
+            expect((await reopened.core.readView(chat)).revisions[0]?.state).toBe('superseded')
+            await expect(reopened.core.decide(confirmation)).rejects.toMatchObject({ code: 'stale_revision' })
+            expect(ensureBox).not.toHaveBeenCalled()
+            expect(install).not.toHaveBeenCalled()
+        } else {
+            if (outcome === 'replaced template') validate.mockRejectedValueOnce(new Error('Selected template revision changed.'))
+            const confirmed = await reopened.core.decide(confirmation)
+            await reopened.core.runBuild(confirmed.buildId!)
+            expect(validate).toHaveBeenCalledWith(card.templateId, card.revision)
+            if (outcome === 'replaced template') {
+                expect((await reopened.core.readView(chat)).build).toMatchObject({ state: 'failed', items: [{ failure: 'template_failed' }] })
+                expect(ensureBox).not.toHaveBeenCalled()
+                expect(install).not.toHaveBeenCalled()
+            } else {
+                expect((await reopened.core.readView(chat)).build?.state).toBe('completed')
+                expect(install).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ templateId: card.templateId, templateRevision: card.revision }))
+            }
+        }
+        expect(sent).toEqual([])
+    })
 
     it('reserves an answer for the exact completed question and reconciles a lost acknowledgement without another send', async () => {
         const guard = { runId: randomUUID(), sourceMessageId: 'question-message', toolCallId: 'ask-choice', digest: 'a'.repeat(64) }
+        const app = await desktopForeman(runtime)
+        const sourceModel = { ...model, model: 'workspace-fixture' }
+        await app.send(chat, guard.runId, 'Ask a color', sourceModel)
+        expect(sent[0]?.binding.model).toEqual(sourceModel)
+        sent = []
         vi.mocked(request).mockImplementation(async (_engine, _path, _init, parse) =>
             parse({ question: { guard, questions: [{ question: 'Choose a color', options: ['Red', 'Blue'] }] } }))
-        const app = await desktopForeman(runtime)
         const question = (await app.state()).question!
         const answer = { action: 'answer' as const, requestId: randomUUID(), questionId: question.id, answers: [['Blue']] }
         await expect(app.send(chat, randomUUID(), 'Bypass question', model)).rejects.toMatchObject({ status: 409 })
@@ -108,6 +311,7 @@ describe('production Foreman intake phase and model brief', () => {
         vi.mocked(fetch).mockImplementation(transport)
         await expect(app.answerQuestion(chat, answer)).resolves.toEqual({ runId: answer.requestId })
         expect(sent).toEqual([expect.objectContaining({ question: guard, replayOnly: true, text: expect.stringContaining('Blue') })])
+        expect(sent[0]?.binding.model).toEqual(sourceModel)
         expect(sent[0]).not.toHaveProperty('answerIntent')
         vi.mocked(request).mockImplementation(async (_engine, _path, _init, parse) => parse({ question: null }))
         expect((await app.state()).question).toBeNull()
@@ -126,6 +330,25 @@ describe('production Foreman intake phase and model brief', () => {
         expect(sent[0]!.brief.instructions).toContain(JSON.stringify(answers))
         expect((await app.core.readView(chat)).phase).toBe('plan')
         expect((await app.state()).view.phase).toBe('plan')
+    })
+
+    it('Stop during starter preparation finishes intake without showing an offer or sending the fallback turn', async () => {
+        const app = await desktopForeman(runtime)
+        const intake = createDesktopForemanIntakeBinding(runtime, app)
+        const saved = await intake.save({ chat, requestId: randomUUID(), baseRevision: 0, stepIndex: 2,
+            draft: { ...EMPTY_DRAFT, companyUrl: answers.companyUrl, industry: answers.industry, position: answers.position, firstName: answers.firstName },
+            decidedIndustry: null, knownFirstName: null })
+        vi.mocked(request).mockImplementation(async (_engine, path, _init, parse) => {
+            if (path !== '/desktop/templates') return parse({ question: null })
+            await app.stop(chat)
+            return parse({ templates: [{ templateId: 'a'.repeat(32), revision: 'b'.repeat(64), title: 'Fixture support', status: 'captured', coworkerCount: 1, capturedAt: timestamp }] })
+        })
+        const complete = { chat, requestId: randomUUID(), expectedRevision: saved.session.revision, answers }
+        const first = await intake.complete(complete)
+        expect(first).toMatchObject({ state: 'acknowledged', followUp: { conversationId: 'original-session', runId: null } })
+        expect(await intake.complete(complete)).toEqual(first)
+        expect((await app.state()).starter).toBeNull()
+        expect(sent).toEqual([])
     })
 
     it('a poll before completion ACK cannot cache the generated kickoff for the ordinary chat layer', async () => {

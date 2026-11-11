@@ -11,6 +11,7 @@ import { useCallback, useState } from 'react'
 
 import { FileTextEditor } from './FileTextEditor'
 import { useFileDraft } from './useFileDraft'
+import type { FileDraftHost } from './useFileUnloadGuard'
 
 type FileEditorDialogProps = {
     fileName: string
@@ -18,13 +19,14 @@ type FileEditorDialogProps = {
     onSave: (content: string, baseHash: string | null) => Promise<SaveFileResult>
     onSaved: (content: string) => void
     onClose: () => void
+    host?: FileDraftHost
 }
 
 // Mounted only while editing, so it opens on content that has finished loading and unmounting it is
 // what throws a draft away. Being modal is also what protects the draft: the panel behind cannot be
 // navigated away, which unmounting it would do silently.
-export function FileEditorDialog({ fileName, initialContent, onSave, onSaved, onClose }: FileEditorDialogProps) {
-    const { draft, dirty, saving, error, conflict, setDraft, save, overwrite, dismissConflict } = useFileDraft({ initialContent, onSave, onSaved })
+export function FileEditorDialog({ fileName, initialContent, onSave, onSaved, onClose, host }: FileEditorDialogProps) {
+    const { draft, dirty, saving, error, conflict, setDraft, save, overwrite, dismissConflict } = useFileDraft({ initialContent, onSave, onSaved, host })
     const [confirmingDiscard, setConfirmingDiscard] = useState(false)
 
     const requestClose = useCallback(() => {

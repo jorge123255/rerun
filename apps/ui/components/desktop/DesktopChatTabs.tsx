@@ -23,15 +23,15 @@ import { DesktopRunHistory } from './DesktopRunHistory'
 type Props = {
     agent: DesktopAgentView
     sessions: DesktopSessionView[]
-    needsYouSessions?: ReadonlySet<string>
+    pendingChatSummaries?: ReadonlyMap<string, string>
     initialLayout: DesktopTabLayout | null
     requested: DesktopChatRequest | null
     requestedPanel?: DesktopCoworkerPanelRequest | null
     onPanelRequestHandled?: (request: DesktopCoworkerPanelRequest) => void
     selected: boolean
     onVisibleSession?: (agentId: string, sessionId: string | null) => void
-    refreshSessions: () => Promise<void>
-    refreshThreads?: () => Promise<void>
+    refreshSessions: () => Promise<unknown>
+    refreshThreads?: () => Promise<boolean | undefined>
     reload: () => void
     onOpenCoworkerChat?: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel: () => void
@@ -55,7 +55,7 @@ function initialTabs(agentId: string, layout: DesktopTabLayout | null, sessions:
     return id && session ? openSessionTab(pinned, id, session.title) : pinned
 }
 
-export function DesktopChatTabs({ agent, sessions, needsYouSessions, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, refreshThreads, reload, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: Props) {
+export function DesktopChatTabs({ agent, sessions, pendingChatSummaries, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, refreshThreads, reload, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: Props) {
     const { t } = useDesktopLocale()
     const [layout, setLayout] = useState(() => initialTabs(agent.id, initialLayout, sessions, requested))
     const [rejectedRequest, setRejectedRequest] = useState<DesktopChatRequest | null>(() => {
@@ -75,12 +75,23 @@ export function DesktopChatTabs({ agent, sessions, needsYouSessions, initialLayo
     const pendingForks = useRef(new Set<string>())
     const generalFork = useRef<{ sourceUid: string; sessionId: string } | null>(null)
     const active = layout.tabs[layout.activeIndex]
+    const [history, setHistory] = useState<{ uid: string; verified: boolean } | null>(null)
+    const trackHistory = useCallback((uid: string, visible: boolean) => {
+        setHistory(current => {
+            if (!visible) return current?.uid === uid ? null : current
+            return current?.uid === uid ? current : { uid, verified: false }
+        })
+    }, [])
+    const historyUid = history?.uid === active.uid ? active.uid : null
     const refreshVisibleThreads = useCallback(async () => {
-        if (!isDesktopQuitting()) await refreshThreads?.()
-    }, [refreshThreads])
+        if (isDesktopQuitting()) return
+        const verified = await refreshThreads?.()
+        if (historyUid && verified !== undefined) setHistory(current =>
+            current?.uid === historyUid && current.verified !== verified ? { uid: historyUid, verified } : current)
+    }, [refreshThreads, historyUid])
     useVisibleInterval(refreshVisibleThreads, 5000, {
-        enabled: !!refreshThreads && selected && canMountChats && !rejectedRequest && isGeneralTab(active),
-        immediate: false,
+        enabled: !!refreshThreads && selected && canMountChats && !rejectedRequest && (isGeneralTab(active) || historyUid !== null),
+        immediate: historyUid !== null,
     })
     const [visited, setVisited] = useState<string[]>([active.uid])
     const lastRequest = useRef(requested)
@@ -132,21 +143,27 @@ export function DesktopChatTabs({ agent, sessions, needsYouSessions, initialLayo
 
     const protectedUids = useCallback(() => new Set(current.current.tabs.filter(t => !t.id || !activityRef.current[t.uid] || activityRef.current[t.uid]?.busy || activityRef.current[t.uid]?.dirty).map(t => t.uid)), [])
     const open = useCallback((id: string | null, title: string) => {
-        if (isDesktopQuitting()) return
+        if (isDesktopQuitting()) return false
         const previous = current.current
         const general = id ? sessions.find(session => session.id === id && session.agentId === agent.id && session.kind === 'general') : undefined
         if (id && (general || previous.tabs.some(tab => isGeneralTab(tab) && tab.id === id))) {
             const adopted = adoptGeneralId(ensureDesktopGeneralTab(agent.id, previous, id), id)
             void change({ tabs: adopted.tabs, activeIndex: 0 })
-            return
+            return true
         }
-        if (pendingForks.current.size && previous.tabs.filter(tab => !isGeneralTab(tab)).length + pendingForks.current.size >= MAX_REMEMBERED_TABS && !previous.tabs.some(t => t.id === id)) {
+        const alreadyOpen = previous.tabs.some(tab => tab.id === id && (id !== null || !isGeneralTab(tab)))
+        if (pendingForks.current.size && previous.tabs.filter(tab => !isGeneralTab(tab)).length + pendingForks.current.size >= MAX_REMEMBERED_TABS && !alreadyOpen) {
             setNotice('Close an idle tab to open another conversation.')
-            return
+            return false
         }
         const next = openSessionTab(previous, id, title, protectedUids())
-        setNotice(next === previous && !previous.tabs.some(tab => tab.id === id) ? 'Close an idle tab to open another conversation.' : '')
-        change(next)
+        if (next === previous && !alreadyOpen) {
+            setNotice('Close an idle tab to open another conversation.')
+            return false
+        }
+        setNotice('')
+        void change(next)
+        return true
     }, [agent.id, change, protectedUids, sessions])
 
     useLayoutEffect(() => {
@@ -342,7 +359,7 @@ export function DesktopChatTabs({ agent, sessions, needsYouSessions, initialLayo
             const visible = !rejectedRequest && active.uid === tab.uid
             if (!visible && !visited.includes(tab.uid)) return null
             return <div key={tab.uid} data-desktop-tab-active={visible} hidden={!visible} className={visible ? 'flex h-full min-h-0 flex-col' : 'hidden'}>
-                <DesktopConversation overview={overview} agent={agent} sessionId={tab.id} sessions={sessions} needsYouSessions={needsYouSessions} tabUid={tab.uid} active={selected && visible}
+                <DesktopConversation overview={overview} agent={agent} sessionId={tab.id} sessions={sessions} pendingChatSummaries={pendingChatSummaries} tabUid={tab.uid} active={selected && visible}
                     requestedPanel={selected && visible ? requestedPanel : null} onPanelRequestHandled={onPanelRequestHandled}
                     tabStrip={visible ? strip : false} onTabActivity={report} initialDraft={drafts[tab.uid]} onStartFork={startFork} onFinishFork={finishFork}
                     onSelectSession={(id, title) => {
@@ -352,7 +369,11 @@ export function DesktopChatTabs({ agent, sessions, needsYouSessions, initialLayo
                     onChatSession={(id, sourceDraft) => bindSession(tab.uid, id, sourceDraft)}
                     onOpenCoworkerChat={onOpenCoworkerChat}
                     modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
-                    renderHistory={(_busy, control) => <DesktopChatHistory control={control} agentId={agent.id} count={sessions.length} selectedId={tab.id} busy={false} onSelect={id => open(id, sessions.find(s => s.id === id)?.title ?? 'Conversation')} />}
+                    onHistoryVisibility={trackHistory}
+                    renderHistory={(_busy, control) => <DesktopChatHistory control={control} agentId={agent.id} pendingChatSummaries={pendingChatSummaries}
+                        sessions={sessions} verifiedRunStatus={history?.uid === tab.uid && history.verified}
+                        count={sessions.length} selectedId={tab.id} busy={false} onCreate={() => open(null, 'New conversation')}
+                        onSelect={id => open(id, sessions.find(s => s.id === id)?.title ?? 'Conversation')} />}
                     renderRunHistory={control => <DesktopRunHistory agent={agent} dialogControl={control} />} />
             </div>
         })}

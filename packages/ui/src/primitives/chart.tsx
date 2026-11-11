@@ -127,6 +127,7 @@ function ChartTooltipContent({
   labelFormatter,
   labelClassName,
   formatter,
+  formatValue,
   color,
   nameKey,
   labelKey,
@@ -137,6 +138,7 @@ function ChartTooltipContent({
     indicator?: "line" | "dot" | "dashed"
     nameKey?: string
     labelKey?: string
+    formatValue?: (value: number) => string
   } & Omit<
     RechartsPrimitive.DefaultTooltipContentProps<
       TooltipValueType,
@@ -255,7 +257,7 @@ function ChartTooltipContent({
                       {item.value != null && (
                         <span className="font-mono font-medium text-foreground tabular-nums">
                           {typeof item.value === "number"
-                            ? item.value.toLocaleString()
+                            ? formatValue?.(item.value) ?? item.value.toLocaleString()
                             : String(item.value)}
                         </span>
                       )}

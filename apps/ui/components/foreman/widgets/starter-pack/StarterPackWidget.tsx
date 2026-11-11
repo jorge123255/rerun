@@ -23,17 +23,18 @@ type StarterPackWidgetProps = {
     input: unknown
     output?: unknown
     onAnswer: (answer: StarterPackAnswer) => void
+    desktopReview?: boolean
 }
 
-export function StarterPackWidget({ input, output, onAnswer }: StarterPackWidgetProps) {
+export function StarterPackWidget({ input, output, onAnswer, desktopReview = false }: StarterPackWidgetProps) {
     const { cards } = readStarterPack(input)
     const answered = readStarterPackAnswer(output)
 
     if (answered) return <StarterPackVerdict cards={cards} answer={answered} />
-    return <StarterPackPicker cards={cards} onAnswer={onAnswer} />
+    return <StarterPackPicker cards={cards} onAnswer={onAnswer} desktopReview={desktopReview} />
 }
 
-function StarterPackPicker({ cards, onAnswer }: { cards: StarterPackCard[]; onAnswer: (answer: StarterPackAnswer) => void }) {
+function StarterPackPicker({ cards, onAnswer, desktopReview }: { cards: StarterPackCard[]; onAnswer: (answer: StarterPackAnswer) => void; desktopReview: boolean }) {
     const picks = useStarterPicks()
     const [writing, setWriting] = useState(false)
     const count = picks.picked.length
@@ -43,7 +44,7 @@ function StarterPackPicker({ cards, onAnswer }: { cards: StarterPackCard[]; onAn
             <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 flex-col gap-0.5">
                     <p className="text-sm font-medium text-foreground">Your starter team</p>
-                    <p className="text-xs text-muted-foreground">Pick up to {MAX_STARTER_PICKS}. Each one sets itself up with you once it is on your board.</p>
+                    <p className="text-xs text-muted-foreground">{desktopReview ? `Pick up to ${MAX_STARTER_PICKS} to review on your team plan.` : `Pick up to ${MAX_STARTER_PICKS}. Each one sets itself up with you once it is on your board.`}</p>
                 </div>
                 <PickProgress count={count} />
             </div>
@@ -53,20 +54,20 @@ function StarterPackPicker({ cards, onAnswer }: { cards: StarterPackCard[]; onAn
             {picks.blocked && (
                 <Alert variant="warning" stripes className="grid-cols-[auto_1fr] gap-x-3 gap-y-0">
                     <Icon icon={LockIcon} size="sm" className="row-span-2 self-center" />
-                    <AlertTitle className="col-start-2 leading-tight">Your trial runs {MAX_STARTER_PICKS} coworkers</AlertTitle>
-                    <AlertDescription className="col-start-2 leading-snug">Drop one to take this one instead. The others can join once you are on a plan.</AlertDescription>
+                    <AlertTitle className="col-start-2 leading-tight">{desktopReview ? `Choose up to ${MAX_STARTER_PICKS} coworkers` : `Your trial runs ${MAX_STARTER_PICKS} coworkers`}</AlertTitle>
+                    <AlertDescription className="col-start-2 leading-snug">{desktopReview ? 'Drop one to take this one instead.' : 'Drop one to take this one instead. The others can join once you are on a plan.'}</AlertDescription>
                 </Alert>
             )}
 
             {writing ? (
-                <CustomAsk onBack={() => setWriting(false)} onSend={asked => onAnswer({ answered: true, custom: asked })} />
+                <CustomAsk onBack={() => setWriting(false)} onSend={asked => onAnswer({ answered: true, custom: asked })} desktopReview={desktopReview} />
             ) : (
                 <div className="flex flex-wrap-reverse items-center justify-between gap-2">
                     <Button size="sm" variant="ghost" className="-ml-2 text-muted-foreground max-sm:w-full" onClick={() => setWriting(true)}>
                         None of these, tell me what you need
                     </Button>
                     <Button size="sm" disabled={!count} onClick={() => onAnswer({ answered: true, chosen: picks.picked })} className="max-sm:w-full">
-                        {count === 0 ? 'Pick at least one' : count === 1 ? 'Hire this one' : `Hire these ${count}`}
+                        {count === 0 ? 'Pick at least one' : desktopReview ? 'Review team' : count === 1 ? 'Hire this one' : `Hire these ${count}`}
                         {count > 0 && <ArrowRight data-icon="inline-end" className="size-3.5" />}
                     </Button>
                 </div>
@@ -75,7 +76,7 @@ function StarterPackPicker({ cards, onAnswer }: { cards: StarterPackCard[]; onAn
     )
 }
 
-function CustomAsk({ onBack, onSend }: { onBack: () => void; onSend: (asked: string) => void }) {
+function CustomAsk({ onBack, onSend, desktopReview }: { onBack: () => void; onSend: (asked: string) => void; desktopReview: boolean }) {
     const id = useId()
     const [asked, setAsked] = useState('')
     const ready = asked.trim().length > 0
@@ -89,14 +90,14 @@ function CustomAsk({ onBack, onSend }: { onBack: () => void; onSend: (asked: str
             }}
         >
             <Field label="What should your coworker do?" htmlFor={id}>
-                <Textarea id={id} autoFocus rows={3} value={asked} onChange={event => setAsked(event.target.value)} placeholder="Answer every enquiry from the website within the hour and book the viewing" />
+                <Textarea id={id} autoFocus rows={3} value={asked} maxLength={desktopReview ? 4000 : undefined} onChange={event => setAsked(event.target.value)} placeholder="Answer every enquiry from the website within the hour and book the viewing" />
             </Field>
             <div className="flex flex-wrap items-center justify-end gap-2">
                 <Button type="button" size="sm" variant="ghost" className="text-muted-foreground" onClick={onBack}>
                     Back to the cards
                 </Button>
                 <Button type="submit" size="sm" disabled={!ready}>
-                    Build it
+                    {desktopReview ? 'Ask Foreman' : 'Build it'}
                 </Button>
             </div>
         </form>

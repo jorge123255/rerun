@@ -2,6 +2,7 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
+import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
 import { hashText } from '@/lib/files/editable'
 import type { FileCodeMirrorProps } from '@/components/files/FileCodeMirror'
 import { DesktopConversation } from './DesktopConversation'
@@ -28,7 +29,7 @@ const type = async (text: string) => {
 const shown = () => document.querySelector('[data-testid="file-preview"]')?.textContent
 
 /** A tiny disk per coworker; `onPut` can intercept saves to simulate a stale or failing write. */
-function disk(files: Record<string, string>, onPut?: (agent: string, body: { content: string; baseHash: string | null }) => Response | undefined) {
+function disk(files: Record<string, string>, onPut?: (agent: string, body: { content: string; baseHash: string | null }) => Response | undefined, name = 'brief.md') {
     const puts: { agent: string; path: string; content: string; baseHash: string | null }[] = []
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), 'http://127.0.0.1')
@@ -42,17 +43,17 @@ function disk(files: Record<string, string>, onPut?: (agent: string, body: { con
             files[agent] = body.content
             return Response.json({ path: body.path, hash: hashText(body.content), size: 1 })
         }
-        if (url.pathname.endsWith('/files/read')) return Response.json({ path: 'brief.md', content: files[agent], size: 1, truncated: false, hash: hashText(files[agent]) })
-        return Response.json({ path: '', entries: [entry('brief.md')] })
+        if (url.pathname.endsWith('/files/read')) return Response.json({ path: name, content: files[agent], size: 1, truncated: false, hash: hashText(files[agent]) })
+        return Response.json({ path: '', entries: [entry(name)] })
     })
     return { fetcher, puts }
 }
 
-async function openFile(root: ReturnType<typeof createRoot>, id: string) {
+async function openFile(root: ReturnType<typeof createRoot>, id: string, name = 'brief.md') {
     await act(async () => { root.render(<DesktopConversation key={id} agent={coworker(id)} sessionId={null} sessions={[]} onSelectSession={() => {}} onChatSession={() => {}} />) })
     await click('Files')
     await flush()
-    await click('brief.md')
+    await click(name)
     await flush()
 }
 const mount = () => { const c = document.createElement('div'); document.body.append(c); return createRoot(c) }
@@ -77,6 +78,24 @@ test('edits and saves each coworker’s own same-named file', async () => {
     expect(puts.map(p => [p.agent, p.baseHash])).toEqual([['alice', hashText('Alice v1')], ['bob', hashText('Bob v1')]])
     expect(fetcher).toHaveBeenCalledWith('/api/desktop/agents/alice/files/content', expect.objectContaining({ method: 'PUT' }))
     act(() => root.unmount())
+})
+
+test('opens a CSV from Files and saves it with the original CRLF line endings', async () => {
+    const original = 'city,count\r\nQuébec,1\r\n'
+    const files = { alice: original }
+    const { fetcher, puts } = disk(files, undefined, 'report.csv')
+    vi.stubGlobal('fetch', fetcher)
+    const root = mount()
+    try {
+        await openFile(root, 'alice', 'report.csv')
+        await click('Edit')
+        await type('city,count\nQuébec,2\n')
+        await click('Save changes')
+        expect(shown()).toBe('city,count\r\nQuébec,2\r\n')
+        expect(puts).toEqual([{
+            agent: 'alice', path: 'report.csv', content: 'city,count\r\nQuébec,2\r\n', baseHash: hashText(original),
+        }])
+    } finally { act(() => root.unmount()) }
 })
 
 test('cancel with edits asks first and never writes', async () => {
@@ -260,4 +279,26 @@ test('reopening an interrupted save shows the recovered conflict in the original
     expect(recovery).toContain('docs/brief.draft-crash.md')
     expect(recovery).toContain('docs/brief.external-crash.md')
     act(() => root.unmount())
+})
+
+
+test('native quit stays blocked until a coworker file edit is explicitly saved', async () => {
+    const files = { alice: 'original' }
+    const { fetcher, puts } = disk(files)
+    vi.stubGlobal('fetch', fetcher)
+    vi.stubGlobal('desktopApp', { onBeforeQuit: vi.fn() })
+    const root = mount()
+    try {
+        await openFile(root, 'alice')
+        await click('Edit')
+        await type('keep me')
+        await act(async () => { expect(await flushDesktopDrafts()).toBe(false) })
+        expect(puts).toHaveLength(0)
+        act(cancelDraftShutdown)
+        expect(document.querySelector<HTMLTextAreaElement>('[data-testid="file-editor"] textarea')!.value).toBe('keep me')
+        await click('Save changes')
+        await flush()
+        expect(files.alice).toBe('keep me')
+        await act(async () => { expect(await flushDesktopDrafts()).toBe(true) })
+    } finally { act(cancelDraftShutdown); act(() => root.unmount()) }
 })

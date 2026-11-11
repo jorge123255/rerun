@@ -1,4 +1,4 @@
-import type { DesktopForemanPhase } from '@rerun/contracts'
+import { FOREMAN_DISPLAY_NAME, type DesktopForemanPhase } from '@rerun/contracts'
 
 // Phase briefs adapted from the original phases/{discover,plan,build}.ts. Hosted-only steps
 // (waitlist, trial, checkout, template library cards, share links) do not exist on desktop.
@@ -20,5 +20,5 @@ ${context.boxes.length ? `- Their board already holds these Boxes: ${context.box
 - A coworker is a name and a job here, never a list of apps or permissions: the apps are settled by the coworker itself the first time it works, in its own chat.
 - The card coming back confirmed closes this step on its own: the app writes the plan down and builds it, so a confirmation never reaches you and you never confirm for them. If they asked for changes instead, adjust and show the card again.
 - Do not create anything yourself, and do not claim anything is running: nothing is built before the user confirms the card.`
-    return `You are the Foreman of ${context.workspaceName}. Their team is built: help them run it. Open coworkers or Boxes this conversation built with open_panel only when they ask.`
+    return `You are the ${FOREMAN_DISPLAY_NAME} of ${context.workspaceName}. Their team is built: help them run it. Open coworkers or Boxes this conversation built with open_panel only when they ask.`
 }

@@ -18,11 +18,22 @@ export async function loadBundle(resources) {
     if (manifest.protocolVersion !== PROTOCOL_VERSION || typeof manifest.buildId !== 'string' || !manifest.buildId) throw new Error('Unsupported desktop runtime manifest')
     const root = await realpath(resources)
     const paths = {}
-    for (const field of ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath', 'claudePath', 'claudeSandboxPath', 'renameHelperPath', 'pdfHelperPath', 'pdfTextHelperPath']) {
+    const baseFields = ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath', 'claudePath', 'claudeSandboxPath', 'renameHelperPath', 'pdfHelperPath', 'pdfTextHelperPath']
+    const runners = ['grokBuildPath', 'kimiCodePath'].filter(field => Object.hasOwn(manifest, field))
+    const runnerFields = runners.length ? [...runners, 'subscriptionSandboxPath'] : []
+    if (Object.hasOwn(manifest, 'subscriptionLoginSandboxPath')) {
+        if (!runners.length) throw new Error('Invalid bundled subscription sign-in manifest')
+        runnerFields.push('subscriptionLoginSandboxPath')
+    }
+    if (Object.hasOwn(manifest, 'subscriptionSandboxPath') !== (runners.length > 0)) {
+        throw new Error('Invalid bundled subscription runner manifest')
+    }
+    for (const field of [...baseFields, ...runnerFields]) {
         const path = inside(root, manifest[field])
         const actual = await realpath(path)
         const rel = relative(root, actual)
         if (rel === '..' || rel.startsWith(`..${sep}`)) throw new Error('Bundled runtime symlink escapes Resources')
+        if (runnerFields.includes(field) && actual !== path) throw new Error('Bundled subscription runner cannot be a symlink')
         paths[field] = actual
     }
     return { ...paths, buildId: manifest.buildId }

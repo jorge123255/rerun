@@ -8,6 +8,7 @@ import { readDesktopWorkspaceIconSelection } from './workspace-icon'
 import { insertDesktopAgentWithPlacement, readDesktopBoardState } from './spaces'
 import { withRosterWrite } from './roster-writes'
 import { FIRST_MESSAGE_MAX_CHARS, GENERAL_SESSION_TITLE, kindOfStoredSession, openingMessage, type DesktopSessionKind } from '../general-threads'
+import { conversationSearchKey } from '../chat-search'
 
 export type DesktopAgent = {
     id: string
@@ -188,12 +189,12 @@ export async function createDesktopSession(db: Client, input: { agentId: string;
     const title = (kind === 'general' ? GENERAL_SESSION_TITLE : input.title).slice(0, 80) || 'New conversation'
     const firstMessage = kind === 'general' ? null : openingMessage(input.firstMessage)?.slice(0, FIRST_MESSAGE_MAX_CHARS) ?? null
     const statements: InStatement[] = [{
-        sql: `INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, created_at, updated_at, model_connection_id, model, kind, first_message)
-              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM desktop_agents WHERE id = ? AND workspace_id = 1)
+        sql: `INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, title_search, created_at, updated_at, model_connection_id, model, kind, first_message)
+              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM desktop_agents WHERE id = ? AND workspace_id = 1)
                 AND NOT EXISTS (SELECT 1 FROM desktop_deletions WHERE agent_id = ?)
                 AND (? = 'thread' OR NOT EXISTS (SELECT 1 FROM desktop_sessions WHERE agent_id = ? AND kind = 'general' AND engine_session_id <> ?))
               ON CONFLICT(engine_session_id) DO NOTHING`,
-        args: [id, input.agentId, input.engineSessionId, title, now, now, input.model?.connectionId ?? null, input.model?.model ?? null, kind, firstMessage, input.agentId, input.agentId, kind, input.agentId, input.engineSessionId],
+        args: [id, input.agentId, input.engineSessionId, title, conversationSearchKey(title), now, now, input.model?.connectionId ?? null, input.model?.model ?? null, kind, firstMessage, input.agentId, input.agentId, kind, input.agentId, input.engineSessionId],
     }]
     if (input.regenerationRequestId) statements.push({
         sql: `UPDATE desktop_regeneration_requests SET alternate_session_id =

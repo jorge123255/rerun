@@ -1,10 +1,13 @@
 import { normalizeNotificationPrefs } from '@rerun/contracts'
 
-/** Neutral reads for newly mounted chat surfaces. Call after feature-specific handlers so
+/** Neutral reads for mounted desktop surfaces. Call after feature-specific handlers so
  * notification/skill tests keep their own state and every unexpected write still fails. */
 export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestInit): Response | undefined {
     if ((init?.method ?? 'GET') !== 'GET') return
     const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, 'http://local')
+    if (url.pathname === '/api/desktop/subscription-login') return Response.json({
+        'grok-build': { phase: 'unavailable' }, 'kimi-code': { phase: 'unavailable' },
+    })
     if (/^\/api\/desktop\/coworkers\/[^/]+\/document-attachments$/.test(url.pathname)) return Response.json({ attachments: [] })
     if (/^\/api\/desktop\/sessions\/[^/]+\/trigger-requests$/.test(url.pathname)) return Response.json({ request: null })
     if (url.pathname === '/api/desktop/foreman') {

@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('desktopApp', {
         pickImport: () => ipcRenderer.invoke('desktop:coworker-share-pick'),
     },
     saveResultFile: (name, bytes) => ipcRenderer.invoke('desktop:result-save', { name, bytes }),
+    saveCoworkerFile: value => ipcRenderer.invoke('desktop:coworker-file-save', { agentId: value?.agentId, path: value?.path, version: value?.version }),
     templates: {
         pickImport: () => ipcRenderer.invoke('desktop:template-pick'),
         saveArtifact: value => ipcRenderer.invoke('desktop:template-save', { artifactId: value?.artifactId }),
@@ -58,7 +59,6 @@ contextBridge.exposeInMainWorld('desktopApp', {
             }
         },
     },
-    findInPage: input => ipcRenderer.invoke('desktop:find-in-page', { action: input?.action, query: typeof input?.query === 'string' ? input.query : '' }),
     getStatus: () => ipcRenderer.invoke('desktop:status'),
     retry: () => ipcRenderer.invoke('desktop:retry'),
     quit: () => ipcRenderer.invoke('desktop:quit'),
@@ -72,6 +72,12 @@ contextBridge.exposeInMainWorld('desktopApp', {
             beforeQuit = null
             ipcRenderer.send('desktop:drafts-unready', { registrationId: current.registrationId })
         }
+    },
+    onOpenSettings: listener => {
+        if (typeof listener !== 'function') throw new TypeError('Expected a Settings listener')
+        const handler = () => listener()
+        ipcRenderer.on('desktop:open-settings', handler)
+        return () => ipcRenderer.removeListener('desktop:open-settings', handler)
     },
     onQuitCancelled: listener => {
         if (typeof listener !== 'function') throw new TypeError('Expected a quit-cancelled listener')

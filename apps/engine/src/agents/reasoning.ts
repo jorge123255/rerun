@@ -1,5 +1,5 @@
 import type { streamText } from 'ai'
-import type { Provider } from '@rerun/contracts'
+import { connectionReasoningOptions, isDesktopSubscriptionProvider, type Provider } from '@rerun/contracts'
 import { readBoxDefault } from '../connections/default.js'
 import { DESKTOP_CODEX_ID } from '../desktop/codex-runtime.js'
 import { desktopApp } from '../desktop/policy.js'
@@ -32,6 +32,26 @@ export async function desktopCodexEffort({ provider, connection, model }: RunMod
     // Native Codex carries effort across turns. Send the model's recommended value
     // explicitly so switching back to Auto also resets an already-open conversation.
     return options.default
+}
+
+export async function desktopSubscriptionEffort({ provider, connection, model }: RunModel): Promise<string | undefined> {
+    if (!isDesktopSubscriptionProvider(provider) || !connection) return
+    const options = connectionReasoningOptions(connection.config, model)
+    if (!options) return
+    const selected = await readBoxDefault()
+    if (selected?.connectionId === connection.id && selected.model === model && selected.reasoningEffort &&
+        options.supported.includes(selected.reasoningEffort)) return selected.reasoningEffort
+    return options.default
+}
+
+export async function desktopCustomEffort({ provider, connection, model }: RunModel): Promise<string | undefined> {
+    if (provider !== 'custom' || !connection?.custom) return
+    const selected = await readBoxDefault()
+    if (selected?.connectionId !== connection.id || selected.model !== model || !selected.reasoningEffort) return
+    if (selected.customReasoningRevision !== connection.custom.revision)
+        throw new Error('The provider connection changed. Choose its reasoning effort again or use Model default in Settings.')
+    // The provider lease checks the latest catalog again before it sends anything.
+    return selected.reasoningEffort
 }
 
 // One level deep on purpose: `openai` already carries the `promptCacheKey` that applyCaching put

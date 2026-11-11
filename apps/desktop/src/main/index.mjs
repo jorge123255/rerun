@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, session } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, safeStorage, shell, session } from 'electron'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { mkdir } from 'node:fs/promises'
@@ -14,8 +14,8 @@ import { createDesktopCoworkerShareFiles } from './coworker-share-files.mjs'
 import { createNativeRemoteMachines } from './remote-machines/binding.mjs'
 import { createRemoteMachineIpc } from './remote-machines/ipc.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
-import { createDesktopResultFileSave } from './result-files.mjs'
-import { handleFindInPage } from './find-in-page.mjs'
+import { createDesktopFileSaves } from './result-files.mjs'
+import { installMacApplicationMenu } from './application-menu.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
@@ -35,7 +35,7 @@ let quittingNow = false
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const draftQuit = new BeforeQuitDrafts()
-const saveResultFile = createDesktopResultFileSave({ dialog, context: () => {
+const { saveResultFile, saveCoworkerFile } = createDesktopFileSaves({ dialog, context: () => {
     if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
     return { runtime, window }
 } })
@@ -103,9 +103,9 @@ else {
             },
             confirmDiscard: async () => {
                 const options = {
-                    type: 'warning', title: 'Unsent drafts could not be saved',
-                    message: 'Some unsent drafts could not be saved.',
-                    detail: 'Stay in Rerun to try again, or quit without saving the latest draft changes.',
+                    type: 'warning', title: 'Unsaved changes',
+                    message: 'Some changes haven’t been saved.',
+                    detail: 'Stay in Rerun to review or save your changes, or quit without saving them.',
                     buttons: ['Stay', 'Quit without saving'], defaultId: 0, cancelId: 0, noLink: true,
                 }
                 const parent = window && !window.isDestroyed() ? window : null
@@ -151,6 +151,12 @@ function resumeAfterCancelledQuit() {
 }
 
 async function launch() {
+    if (process.platform === 'darwin') {
+        installMacApplicationMenu({
+            Menu, appName: app.name, isDesktopPage,
+            settingsWindow: () => !quitting && !transitioning && runtimeScope() && draftQuit.ready ? window : null,
+        })
+    }
     const dataRoot = resolve(app.getPath('appData'), 'Rerun Desktop Preview')
     await mkdir(dataRoot, { recursive: true, mode: 0o700 })
     app.setPath('userData', dataRoot)
@@ -191,13 +197,13 @@ async function launch() {
         return runWorkspaceTransition(() => workspaces.recoverSwitch(input))
     })
     ipcMain.handle('desktop:quit', event => { trusted(event); app.quit() })
-    ipcMain.handle('desktop:find-in-page', (event, input) => { trusted(event); return handleFindInPage(event.sender, input) })
     ipcMain.handle('desktop:remote-machines-actor', event => remoteMachineIpc.actor(event))
     ipcMain.handle('desktop:remote-machines-execute', (event, command) => remoteMachineIpc.execute(event, command))
     ipcMain.handle('desktop:coworker-share-pick', event => { trusted(event); return coworkerShareFiles.pickImport() })
     ipcMain.handle('desktop:template-pick', event => { trusted(event); return templateFiles.pickImport() })
     ipcMain.handle('desktop:template-save', (event, value) => { trusted(event); return templateFiles.saveArtifact(value) })
     ipcMain.handle('desktop:result-save', (event, value) => { trusted(event); return saveResultFile(value) })
+    ipcMain.handle('desktop:coworker-file-save', (event, value) => { trusted(event); return saveCoworkerFile(value) })
     ipcMain.handle('desktop:notify', (event, value) => {
         trusted(event)
         const scope = clickScope()
@@ -245,6 +251,7 @@ async function launch() {
     const identity = await loadIdentity(dataRoot, { encrypt: value => safeStorage.encryptString(value), decrypt: value => safeStorage.decryptString(value) })
     const resources = app.isPackaged ? process.resourcesPath : resolve(directory, '../../resources')
     const bundle = await loadBundle(resources)
+    if (process.platform === 'darwin') app.setAboutPanelOptions({ version: bundle.buildId })
     supervisor = new RuntimeSupervisor({ bundle, root: dataRoot, identity })
     remoteInstallId = identity.installId
     remoteMachines = createNativeRemoteMachines({ dataRoot, installId: identity.installId, safeStorage,

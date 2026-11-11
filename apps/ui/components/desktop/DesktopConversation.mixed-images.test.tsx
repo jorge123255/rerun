@@ -273,7 +273,8 @@ test('a mixed selection beyond fourteen names every refused document and restore
 
     await act(async () => { root.unmount() }); forgetCoworkerDrafts(agent.id); root = createRoot(container)
     await render('saved', 'overflow-tab'); await drain()
-    expect([...container.querySelectorAll<HTMLSpanElement>('span[title$=".pdf"]')].map(node => node.title)).toEqual(accepted)
+    const previewButtons = [...container.querySelectorAll<HTMLButtonElement>('button[aria-label^="Preview "][title$=".pdf"]')]
+    expect(previewButtons.map(button => button.title)).toEqual(accepted)
     expect(container.querySelector('img[alt="keep.png"]')).not.toBeNull()
     expect(savedDocuments.map(document => document.name)).toEqual(accepted)
     expect(imports).toEqual(['one.txt', 'keep.png', 'two.md'])

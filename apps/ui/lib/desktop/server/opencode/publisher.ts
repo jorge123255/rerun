@@ -167,6 +167,14 @@ export async function publishDesktopOpencode(ports: DesktopOpencodePorts, body: 
         await ports.store.finish(key, digest, outcome, new Date().toISOString())
         return outcome
     }
+    const consoleLocked = dispatch.modelId.startsWith('console/') && !again.consoleEnabled
+    if (consoleLocked || !again.enabledModelIds.includes(dispatch.modelId)) {
+        const outcome = desktopOpencodeResultSchema.parse({ status: 'refused', sent: false,
+            code: consoleLocked ? 'console' : 'grant',
+            message: consoleLocked ? 'Console stays off until you switch it on.' : 'Choose a model this connection has switched on.' })
+        await ports.store.finish(key, digest, outcome, new Date().toISOString())
+        return outcome
+    }
     let outcome: DesktopOpencodeResult
     try {
         outcome = await ports.execute({ dispatch, apiKey: again.apiKey, prompt: request.prompt, signal, enabledModelIds: again.enabledModelIds })

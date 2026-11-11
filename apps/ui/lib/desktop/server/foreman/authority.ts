@@ -52,7 +52,8 @@ export type ForemanCreationAuthority = {
     lookupBox(requestId: string): Promise<ForemanReceipt<{ spaceId: string }>>
     createCoworker(spec: ForemanCoworkerSpec): Promise<{ agentId: string }>
     lookupCoworker(requestId: string): Promise<ForemanReceipt<{ agentId: string; spaceId: string }>>
-    installTemplate(input: { requestId: string; templateId: string; spaceId: string; focus?: string }): Promise<{ agentIds: string[] }>
+    assertTemplateRevision?(templateId: string, revision: string): Promise<void>
+    installTemplate(input: { requestId: string; templateId: string; templateRevision?: string; spaceId: string; focus?: string }): Promise<{ agentIds: string[] }>
     lookupTemplateInstall(requestId: string): Promise<ForemanReceipt<{ agentIds: string[]; spaceId: string }>>
 }
 

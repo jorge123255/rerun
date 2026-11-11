@@ -8,6 +8,9 @@ import { toast } from 'sonner'
 import { MessageAction, MessageResponse } from '@/components/ai-elements/message'
 import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ai-elements/sources'
 import { DRAFT_LANGUAGE, DraftBlock } from '@/components/chat/DraftBlock'
+import { MessageTimeTooltip } from '@/components/chat/MessageTimeTooltip'
+import { desktopLocaleTag } from '@/lib/desktop/locale'
+import { useDesktopLocale } from './DesktopLocale'
 import { AGENT_BUBBLE_SURFACE } from '@/components/chat/bubble-styles'
 import { CompactionStep } from '@/components/chat/CompactionBlock'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
@@ -88,13 +91,17 @@ function replyMarkdown(text: string, streaming = false, plugins: PluginConfig = 
     </MessageResponse>
 }
 
-function DesktopAnswerBubbles({ text, streaming }: { text: string; streaming: boolean }) {
+function DesktopAnswerBubbles({ text, streaming, createdAt }: { text: string; streaming: boolean; createdAt?: string }) {
+    const { language } = useDesktopLocale()
+    const locale = desktopLocaleTag(language.locale)
     const bubbles = useMemo(() => splitIntoBubbles(text), [text])
     return <div className="flex w-full flex-col items-start gap-1.5">
         {bubbles.map(({ frame, markdown }, index) => (
-            <div key={index} data-bubble-frame={frame} className={cn('min-w-0', frame === 'bare' ? 'w-full' : 'max-w-[88%]', frame === 'bubble' && [AGENT_BUBBLE_SURFACE, 'px-3.5 py-2'])}>
-                {replyMarkdown(markdown, streaming && index === bubbles.length - 1, answerPlugins)}
-            </div>
+            <MessageTimeTooltip key={index} createdAt={index === 0 ? createdAt : undefined} locale={locale} side="right">
+                <div data-bubble-frame={frame} className={cn('min-w-0', frame === 'bare' ? 'w-full' : 'max-w-[88%]', frame === 'bubble' && [AGENT_BUBBLE_SURFACE, 'px-3.5 py-2'])}>
+                    {replyMarkdown(markdown, streaming && index === bubbles.length - 1, answerPlugins)}
+                </div>
+            </MessageTimeTooltip>
         ))}
     </div>
 }
@@ -129,9 +136,10 @@ function FeedbackThumb({ rating, current, onRate }: { rating: MessageFeedbackRat
     )
 }
 
-export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies, agentId, agent, skillProposals, childRuns, toolInstall }: {
+export function DesktopAssistantReply({ message, streaming, createdAt, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies, agentId, agent, skillProposals, childRuns, toolInstall }: {
     message: UIMessage
     streaming: boolean
+    createdAt?: string
     onRegenerate?: (id: string) => void
     feedbackRating?: MessageFeedbackRating | null
     onRate?: (rating: MessageFeedbackRating) => void
@@ -148,6 +156,7 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
     const compactions = desktopCompactionSteps(message.parts, streaming)
     const blocks: ReactNode[] = []
     let text = '', paragraph = ''
+    let replyTime = createdAt
     for (const [index, part] of message.parts.entries()) {
         const live = streaming && index === message.parts.length - 1
         if (part.type === 'text') {
@@ -155,7 +164,8 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
             paragraph += part.text
             // A table or fenced block can span consecutive text parts from the model.
             if (message.parts[index + 1]?.type !== 'text') {
-                blocks.push(<DesktopAnswerBubbles key={index} text={paragraph} streaming={live} />)
+                blocks.push(<DesktopAnswerBubbles key={index} text={paragraph} streaming={live} createdAt={replyTime} />)
+                if (paragraph.trim()) replyTime = undefined
                 paragraph = ''
             }
         } else if (isToolUIPart(part)) {
@@ -238,7 +248,7 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
         {blocks}
         <DesktopReplySources parts={message.parts} />
         {quickReplies && <DesktopQuickReplies message={message} {...quickReplies} />}
-        {text && !streaming && <div className="mt-2 flex flex-wrap items-center gap-1">
+        {text && !streaming && <div data-chat-find-ignore className="mt-2 flex flex-wrap items-center gap-1">
             <Button type="button" variant="ghost" size="sm" aria-label="Copy reply" onClick={() => copy(text)}>
                 {copied ? <CheckIcon aria-hidden className="size-3.5" /> : <CopyIcon aria-hidden className="size-3.5" />}
                 {copied ? 'Copied' : 'Copy'}

@@ -1,5 +1,5 @@
 import 'server-only'
-import { sessionSourceSchema, type SessionSource } from '@rerun/contracts'
+import { sessionSourceSchema, type DesktopAutomationResult, type SessionSource } from '@rerun/contracts'
 import type { DesktopSessionKind } from '../general-threads'
 import type { DesktopSession } from './store'
 
@@ -10,13 +10,14 @@ export type DesktopHistoryEngineSession = {
     agentId: string
     source: SessionSource
     updatedAt: string
+    automationResult?: DesktopAutomationResult
 }
 
 export type DesktopChatHistoryDependencies = {
     listLocalSessions: (agentId: string) => Promise<DesktopSession[]>
     listEngineSessions: (engineAgentId: string) => Promise<DesktopHistoryEngineSession[]>
     /** Receives the local desktop session id of a conversation already scoped to the selected coworker. */
-    pendingQuestionFor: (sessionId: string) => Promise<string | null>
+    pendingQuestionFor?: (sessionId: string) => Promise<string | null>
 }
 
 export type DesktopChatHistoryConversation = {
@@ -31,12 +32,13 @@ export type DesktopChatHistoryConversation = {
     pendingQuestion: string | null
     kind: DesktopSessionKind
     firstMessage: string | null
+    automationOutcome?: DesktopAutomationResult['outcome']
 }
 
 export type DesktopChatHistory = {
     conversations: DesktopChatHistoryConversation[]
     enrichment: 'ok' | 'unavailable'
-    questions: 'ok' | 'unavailable'
+    questions: 'ok' | 'unavailable' | 'not-requested'
 }
 
 type HistoryAgent = { id: string; engineAgentId: string }
@@ -58,7 +60,7 @@ async function forEachLimited<T>(items: readonly T[], limit: number, run: (item:
     await Promise.all(workers)
 }
 
-async function readPendingQuestions(sessions: readonly DesktopSession[], pendingQuestionFor: DesktopChatHistoryDependencies['pendingQuestionFor']) {
+async function readPendingQuestions(sessions: readonly DesktopSession[], pendingQuestionFor: NonNullable<DesktopChatHistoryDependencies['pendingQuestionFor']>) {
     const labels = new Map<string, string>()
     let failed = false
     await forEachLimited(sessions, PENDING_QUESTION_READ_CONCURRENCY, async session => {
@@ -92,16 +94,20 @@ export async function readDesktopChatHistory(dependencies: DesktopChatHistoryDep
     const engineById = new Map((engineSessions ?? []).filter(session =>
         sessionSourceSchema.safeParse(session.source).success && Number.isFinite(Date.parse(session.updatedAt))
     ).map(session => [session.id, session]))
-    const { labels, status: questions } = await readPendingQuestions(ownedSessions, dependencies.pendingQuestionFor)
+    const { labels, status: questions } = dependencies.pendingQuestionFor
+        ? await readPendingQuestions(ownedSessions, dependencies.pendingQuestionFor)
+        : { labels: new Map<string, string>(), status: 'not-requested' as const }
 
     const conversations = ownedSessions.map(session => {
         const engine = engineById.get(session.engineSessionId)
+        const result = engine?.source === 'schedule' || engine?.source === 'trigger' ? engine.automationResult : undefined
         const pendingQuestion = labels.get(session.id) ?? null
         return {
             id: session.id,
             agentId: session.agentId,
             engineSessionId: session.engineSessionId,
-            title: session.title,
+            title: result?.title ?? session.title,
+            ...(result && { automationOutcome: result.outcome }),
             createdAt: session.createdAt,
             updatedAt: engine?.updatedAt ?? session.updatedAt,
             source: engine?.source ?? null,
@@ -112,5 +118,7 @@ export async function readDesktopChatHistory(dependencies: DesktopChatHistoryDep
         } satisfies DesktopChatHistoryConversation
     }).sort((a, b) => updatedTime(b.updatedAt) - updatedTime(a.updatedAt) || updatedTime(b.createdAt) - updatedTime(a.createdAt) || a.id.localeCompare(b.id))
 
-    return { conversations, enrichment: engineSessions === null || ownedSessions.some(session => !engineById.has(session.engineSessionId)) ? 'unavailable' : 'ok', questions }
+    // General has its own tab and never needs classification in the Threads filters.
+    const missingThreadMetadata = ownedSessions.some(session => session.kind !== 'general' && !engineById.has(session.engineSessionId))
+    return { conversations, enrichment: engineSessions === null || missingThreadMetadata ? 'unavailable' : 'ok', questions }
 }

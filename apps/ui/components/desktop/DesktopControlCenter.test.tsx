@@ -212,7 +212,7 @@ test('the root page remembers a selection as Recent and exposes only the three s
         expect(rows()[0]!.textContent).toContain('Ada')
         expect(dialog()!.textContent).toContain('Actions')
         expect(dialog()!.textContent).toContain('Settings')
-        for (const absent of ['Billing', 'Browse templates', 'Ask Rerun', 'Shared files', 'Contact Support', 'What’s new', 'Company Brain', 'Workspace settings', 'Recenter the board', 'Switch to light theme', 'Switch to dark theme']) {
+        for (const absent of ['Billing', 'Browse templates', 'Ask Rerun', 'Ask your Chief of Staff', 'Shared files', 'Contact Support', 'What’s new', 'Company Brain', 'Workspace settings', 'Recenter the board', 'Switch to light theme', 'Switch to dark theme']) {
             expect(dialog()!.textContent).not.toContain(absent)
         }
         await clickRow('New agent')
@@ -286,6 +286,58 @@ test('finds a French command and its English alias and invokes the same model se
     await type('/model settings')
     await clickRow("Fournisseurs d'IA")
     expect(onModelSettings).toHaveBeenCalledTimes(2)
+})
+
+test.each([
+    ['fr', 'Fichiers', 'Général', 'Nouveau fil', 'Impossible de rechercher dans les conversations enregistrées'],
+    ['es', 'Archivos', 'General', 'Nuevo hilo', 'No se pudo buscar en las conversaciones guardadas'],
+    ['pt', 'Arquivos', 'Geral', 'Novo tópico', 'Não foi possível buscar nas conversas salvas'],
+    ['de', 'Dateien', 'Allgemein', 'Neuer Thread', 'Gespeicherte Unterhaltungen konnten nicht durchsucht werden'],
+] as const)('uses %s coworker panels and chat labels while preserving the selected targets', async (locale, files, general, newThread, searchError) => {
+    const { root } = mount()
+    const messages = await loadMessages(locale)
+    const language: DesktopLanguage = { locale, preference: locale, messages: desktopMessages(locale, messages) }
+    const onOpenCoworkerPanel = vi.fn(), onOpenChat = vi.fn()
+    const draft = { ...openChat('draft-tab', null), kind: 'thread' as const }
+    const pinned = { ...openChat('general:ada', null, 'General'), kind: 'general' as const }
+    const fetcher = vi.fn(async (url: string) => url.includes('/control-center-chats')
+        ? Response.json(chatList('ada', { openChats: [pinned, draft], recentChats: [hit('saved', 'ada', 'Ada', 'Quarterly review')], hasMore: true }))
+        : new Response(null, { status: 503 }))
+    vi.stubGlobal('fetch', fetcher)
+    await act(async () => {
+        root.render(<DesktopLocale initial={language}>
+            <DesktopControlCenter coworkers={[coworker('ada', 'Ada')]} selectedCoworkerId={null} onOpenCoworkerPanel={onOpenCoworkerPanel}
+                onOpenChat={onOpenChat} onModelSettings={() => {}} onAddCoworker={() => {}} onBackToBoard={() => {}} onOpenConversation={() => {}} />
+        </DesktopLocale>)
+    })
+
+    await press('f', { metaKey: true })
+    await clickRow('Ada')
+    expect(dialog()?.textContent).toContain(general)
+    expect(dialog()?.textContent).toContain('Quarterly review')
+    expect(dialog()?.textContent).not.toContain('Showing 8 recent conversations')
+    await clickRow(newThread)
+    expect(onOpenChat).toHaveBeenCalledExactlyOnceWith(draft)
+
+    for (const query of [files, 'Files']) {
+        await press('f', { metaKey: true })
+        await clickRow('Ada')
+        await type(query)
+        expect(rows().find(row => row.textContent?.includes(files))?.textContent).toContain(messages.agent.agentTabs.files.description)
+        await clickRow(files)
+    }
+    expect(onOpenCoworkerPanel.mock.calls).toEqual([['ada', 'files'], ['ada', 'files']])
+
+    await press('f', { metaKey: true })
+    await clickRow('Ada')
+    await type('quarterly')
+    await settle()
+    await clickRow(searchError)
+    await settle()
+    expect(fetcher.mock.calls.map(([url]) => url).filter(url => url.includes('q=quarterly'))).toEqual([
+        '/api/desktop/conversations/search?q=quarterly&agentId=ada',
+        '/api/desktop/conversations/search?q=quarterly&agentId=ada',
+    ])
 })
 
 test('removed optional command callbacks disappear and retained rows cannot close the center', async () => {

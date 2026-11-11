@@ -2,7 +2,8 @@ export type DesktopSharedEntry = { name: string; type: 'file' | 'dir'; size: num
 
 export type DesktopSharedListing = { path: string; entries: DesktopSharedEntry[]; truncated: boolean }
 
-export type DesktopSharedPreview = { path: string; content: string; size: number; truncated: boolean; offset: number; nextOffset: number | null; editIdentity?: { expectedBytes: number; expectedSha256: string } | null }
+export type DesktopSharedTextIdentity = { expectedBytes: number; expectedSha256: string }
+export type DesktopSharedPreview = { path: string; content: string; size: number; truncated: boolean; offset: number; nextOffset: number | null; editIdentity?: DesktopSharedTextIdentity | null }
 
 const BASE = '/api/desktop/shared-files'
 const deadline = (signal?: AbortSignal) => AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30_000)])
@@ -55,4 +56,15 @@ export async function renameDesktopSharedFile(path: string, name: string, signal
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ path, name }), signal: deadline(signal),
     }))
+}
+
+export async function replaceDesktopSharedText(workspaceId: number, path: string, content: string, base: DesktopSharedTextIdentity, signal: AbortSignal) {
+    const saved = await parse<{ ok: true; workspaceId: number; path: string; editIdentity: DesktopSharedTextIdentity; recoveryPath?: string }>(await fetch(BASE, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workspaceId, path, content, base }), signal: deadline(signal),
+    }))
+    if (!saved?.ok || saved.workspaceId !== workspaceId || saved.path !== path || !saved.editIdentity) {
+        throw new Error('The shared file save could not be confirmed.')
+    }
+    return saved
 }

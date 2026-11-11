@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest'
+import { companyBriefModelSchema } from '@rerun/contracts'
 import { explicitCompanyBriefModel, type CompanyBriefModelChoice } from './model'
 
 const choice = (patch: Partial<CompanyBriefModelChoice['effective']> = {}): CompanyBriefModelChoice => ({
@@ -30,4 +31,13 @@ it('keeps the exact connected Codex model for synthesis', () => {
     const current = choice({ provider: 'codex', model: 'gpt-6.1-terra' })
     current.workspace = { connectionId: 'conn', model: 'gpt-6.1-terra' }
     expect(explicitCompanyBriefModel(current, null)).toEqual({ ok: true, model: { connectionId: 'conn', provider: 'codex', model: 'gpt-6.1-terra', source: 'workspace', agentId: null } })
+})
+
+it('serializes the exact saved OpenCode model for company research', () => {
+    const pair = { connectionId: 'opencode-desktop', model: 'go/deepseek-v4-pro' }
+    const current = choice({ ...pair, provider: 'opencode' })
+    current.workspace = pair
+    const selected = explicitCompanyBriefModel(current, null)
+    expect(selected).toEqual({ ok: true, model: { ...pair, provider: 'opencode', source: 'workspace', agentId: null } })
+    if (selected.ok) expect(companyBriefModelSchema.parse(selected.model)).toEqual(selected.model)
 })

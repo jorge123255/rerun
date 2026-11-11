@@ -165,3 +165,29 @@ it('only exact manifest-derived requirement guidance initializes the canonical i
     expect((await readDesktopSetup(input.engineAgentId)).pending).toBe(true)
     expect(await initializeImportedSetup({...input,...guided})).toEqual(first)
 })
+
+it('initializes a confirmed Foreman template as pending setup without enabling the coworker', async () => {
+    const { lstat } = await import('node:fs/promises')
+    const input = await seedImport('e')
+    const root = agentDir(input.engineAgentId)
+    await writeAgentConfig(input.engineAgentId, agentConfigSchema.parse({ name: 'Foreman import', enabled: false }))
+    const marker = resolve(root, '.desktop-template-import.json')
+    const binding = JSON.parse(await readFile(marker, 'utf8'))
+    const identity = await lstat(root, { bigint: true })
+    const foreman = { focus: 'Organize the launch notes.' }
+
+    await expect(initializeImportedSetup({ ...input, foreman })).rejects.toThrow('Foreman')
+    const foremanBinding = { ...binding, foremanDisabled: true, folder: { dev: String(identity.dev), ino: String(identity.ino) } }
+    await writeFile(marker, JSON.stringify({ ...foremanBinding, folder: { ...foremanBinding.folder, ino: '0' } }))
+    await expect(initializeImportedSetup({ ...input, foreman })).rejects.toThrow('Foreman import')
+    await writeFile(marker, JSON.stringify(foremanBinding))
+    await expect(initializeImportedSetup(input)).rejects.toThrow('Foreman import')
+    const saved = await initializeImportedSetup({ ...input, foreman })
+    expect(await readDesktopSetup(input.engineAgentId)).toMatchObject({
+        required: true, completedAt: null, sessionId: null, pending: true, revision: saved.revision,
+        prompt: expect.stringMatching(/^## Start with: Organize the launch notes\.[\s\S]*Set up email\.$/),
+    })
+    expect((await getAgent(input.engineAgentId)).config.enabled).toBe(false)
+    expect(await initializeImportedSetup({ ...input, foreman })).toEqual(saved)
+    await expect(initializeImportedSetup({ ...input, foreman: { focus: 'Different scope' } })).rejects.toThrow('different request')
+})

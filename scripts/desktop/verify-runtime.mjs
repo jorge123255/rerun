@@ -1,5 +1,6 @@
 import { mkdir, mkdtemp, rm, readdir, readFile, realpath } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { tmpdir, userInfo } from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -87,6 +88,46 @@ try {
     const version = await output('/usr/bin/sandbox-exec', ['-D', `PROFILE=${claudeProbe}`, '-D', `BINARY=${resolved.claudePath}`, '-f', resolved.claudeSandboxPath, resolved.claudePath, '--version'], { cwd: claudeProbe, env: { PATH: '/usr/bin:/bin', HOME: claudeProbe, CLAUDE_CONFIG_DIR: claudeProbe, TMPDIR: join(claudeProbe, 'tmp') }, timeout: 15000 }).catch(() => '')
     check(version === `${sdk.claudeCodeVersion} (Claude Code)`, 'isolated bundled Claude CLI matches the locked SDK')
 } finally { await rm(claudeProbe, { recursive: true, force: true }) }
+
+if (resolved.subscriptionSandboxPath) {
+    const workspace = await realpath(await mkdtemp(join(tmpdir(), 'rerun-verify-subscriptions-')))
+    const module = pathToFileURL(join(engineDir, 'dist/desktop/subscription-acp/runtime.js')).href
+    const script = `
+        import { openOfflineDesktopSubscriptionRunner, stopDesktopSubscriptionRunners } from ${JSON.stringify(module)}
+        const provider = process.argv[1]
+        let signedOut = false
+        try {
+            const session = await openOfflineDesktopSubscriptionRunner(provider)
+            await session.close()
+        } catch (error) {
+            signedOut = error.code === 'auth-required'
+        }
+        await stopDesktopSubscriptionRunners()
+        console.log(signedOut ? 'signed-out' : 'unverified')
+    `
+    let confirmed = true
+    try {
+        for (const [provider, binary, variable] of [
+            ['grok-build', resolved.grokBuildPath, 'RERUN_DESKTOP_GROK_BUILD_RUNNER'],
+            ['kimi-code', resolved.kimiCodePath, 'RERUN_DESKTOP_KIMI_CODE_RUNNER'],
+        ]) {
+            if (!binary) continue
+            const result = await output(resolved.nodePath, ['--input-type=module', '-e', script, provider], {
+                cwd: workspace, timeout: 25000,
+                env: {
+                    PATH: '/usr/bin:/bin', HOME: workspace,
+                    RERUN_DESKTOP_APP: '1', RERUN_DATA_DIR: workspace, RERUN_DESKTOP_ENGINE_ROOT: workspace,
+                    RERUN_DESKTOP_SUBSCRIPTION_SANDBOX: resolved.subscriptionSandboxPath,
+                    [variable]: binary,
+                },
+            }).catch(() => { confirmed = false; return '' })
+            check(result === 'signed-out', `bundled ${provider} refuses an offline signed-out profile`)
+        }
+    } finally {
+        if (confirmed) await rm(workspace, { recursive: true, force: true })
+    }
+}
+
 async function probe(moduleName, cwd, expression) {
     const script = `const m = await import('${moduleName}'); ${expression}`
     try {

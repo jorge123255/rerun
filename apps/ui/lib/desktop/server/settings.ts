@@ -1,6 +1,6 @@
 import 'server-only'
 import { writeDesktopWorkspaceIcon } from './workspace-icon'
-import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS } from '@rerun/contracts'
+import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, connectionReasoningOptions, isDesktopSubscriptionProvider } from '@rerun/contracts'
 import { createConnection, listConnections, patchConnection, setBoxDefault, updateConnectionKeys } from '@/lib/engine/client'
 import type { SettingsChange } from '../settings'
 import { desktopConnections } from '../chat-model'
@@ -45,7 +45,7 @@ export async function desktopModel(runtime: DesktopRuntime) {
     if (!pick || !connection?.connected || ![...connection.models, ...connection.extraModels].includes(pick.model)) {
         throw new DesktopHttpError(400, 'Connect a provider and choose a default model in Settings.')
     }
-    return { connection, model: pick.model, connections: list.connections }
+    return { connection, model: pick.model, connections: list.connections, default: pick }
 }
 
 // Serialize settings writes inside the desktop UI server. Two rapid submissions should update
@@ -87,14 +87,22 @@ async function applyChange(runtime: DesktopRuntime, change: SettingsChange) {
         if (!connection.connected || ![...connection.models, ...connection.extraModels].includes(change.model))
             throw new DesktopHttpError(400, 'Choose a model offered by a connected provider.')
         if (change.reasoningEffort !== undefined) {
-            if (connection.provider !== 'codex' || list.default?.connectionId !== connection.id || list.default.model !== change.model)
-                throw new DesktopHttpError(400, 'Choose the current Codex model before changing reasoning effort.')
-            if (change.reasoningEffort !== null && !connection.codexReasoning?.[change.model]?.supported.includes(change.reasoningEffort))
-                throw new DesktopHttpError(400, 'Choose a reasoning effort offered by this Codex model.')
+            if (list.default?.connectionId !== connection.id || list.default.model !== change.model)
+                throw new DesktopHttpError(400, 'Choose the current model before changing reasoning effort.')
+            if (connection.provider === 'custom') {
+                if (!connection.customRevision || connection.customRevision !== change.customReasoningRevision)
+                    throw new DesktopHttpError(409, 'The provider connection changed. Refresh its models before choosing an effort.')
+            } else if (connection.provider !== 'codex' && !isDesktopSubscriptionProvider(connection.provider)) {
+                throw new DesktopHttpError(400, 'This connection does not offer reasoning controls.')
+            }
+            if (change.reasoningEffort !== null && !connectionReasoningOptions(connection, change.model)?.supported.includes(change.reasoningEffort))
+                throw new DesktopHttpError(400, 'Choose a reasoning effort offered by this model.')
         }
-        await setBoxDefault(engine, { connectionId: connection.id, model: change.model, reasoningEffort: change.reasoningEffort })
+        await setBoxDefault(engine, { connectionId: connection.id, model: change.model, reasoningEffort: change.reasoningEffort,
+            customReasoningRevision: change.customReasoningRevision })
         return
     }
+    if (isDesktopSubscriptionProvider(connection.provider)) throw new DesktopHttpError(400, 'Refresh subscription models in Settings.')
     if (change.action === 'endpoint') {
         if (connection.provider !== 'openrouter') throw new DesktopHttpError(400, 'Only OpenRouter supports a custom endpoint.')
         await patchConnection(engine, connection.id, { baseUrl: change.baseUrl })

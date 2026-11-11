@@ -48,6 +48,7 @@ const TOOL_LABELS: Record<string, string> = {
 
     delegate_tasks: 'Delegate Tasks',
     call_agent: 'Call Coworker',
+    ai_status: 'Check AI Providers',
 
     schedule_list: 'List Schedules',
     schedule_create: 'Create Schedule',
@@ -167,6 +168,7 @@ const TOOL_LABELS: Record<string, string> = {
 // What a step reads as while it runs, beside the coworker at work. A tool missing here falls back
 // on its label on each client.
 const TOOL_ACTIVITIES: Record<string, string> = {
+    ai_status: 'Checking AI providers',
     shell_exec: 'Running a command',
 
     fs_read: 'Reading a file',

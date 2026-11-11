@@ -33,6 +33,9 @@
             "somethingElse": "Autre chose",
             "attachFiles": "Joindre des fichiers",
             "dropFiles": "Déposez des fichiers pour les joindre",
+            "record": "Répondre à la voix",
+            "useRecording": "Utiliser cet enregistrement",
+            "discardRecording": "Supprimer l'enregistrement",
             "selectAll": "Sélectionnez toutes les réponses valables",
             "dismiss": "Ignorer les questions",
             "skip": "Passer",
@@ -212,10 +215,11 @@
         }
     },
     "foreman": {
-        "orbLabel": "Demander à Rerun",
+        "orbLabel": "Demander à votre Chief of Staff",
+        "tabsLabel": "Chief of Staff",
         "empty": {
             "title": "Posez n'importe quelle question sur votre workspace",
-            "description": "Rerun construit et fait tourner vos coworkers avec vous"
+            "description": "Votre Chief of Staff construit et pilote vos coworkers avec vous"
         },
         "header": {
             "closeChat": "Fermer le chat",

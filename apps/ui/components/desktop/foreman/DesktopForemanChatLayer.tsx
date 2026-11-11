@@ -60,6 +60,7 @@ export function DesktopForemanChatLayer({
     onOpenCoworker,
     onOpenBox,
     answerFeedback,
+    replyRetry,
     children,
     className,
 }: {
@@ -87,6 +88,7 @@ export function DesktopForemanChatLayer({
     onOpenBox?: (spaceId: string) => void
     /** Local thumbs for a restored saved answer; absent on read-only or still-live transcripts. */
     answerFeedback?: { ratingOf: (messageId: string) => MessageFeedbackRating | null; onRate: (messageId: string, rating: MessageFeedbackRating) => void; disabled?: boolean } | null
+    replyRetry?: { review: (messageId: string) => void; disabled: boolean }
     children?: ReactNode
     className?: string
 }) {
@@ -125,6 +127,8 @@ export function DesktopForemanChatLayer({
                                         rating={answerFeedback.ratingOf(message.id)}
                                         disabled={!!streaming || answerFeedback.disabled}
                                         onRate={rating => answerFeedback.onRate(message.id, rating)}
+                                        onReviewRetry={replyRetry && /^engine-[A-Za-z0-9_-]{1,128}$/.test(message.id) ? () => replyRetry.review(message.id) : undefined}
+                                        retryDisabled={replyRetry?.disabled}
                                     />
                                 )}
                             </> : <>

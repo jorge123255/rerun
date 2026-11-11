@@ -28,7 +28,7 @@ function validTimezone(value: string): boolean {
     try { new Intl.DateTimeFormat('en', { timeZone: value }); return true } catch { return false }
 }
 
-export function validateDesktopSchedulePreview(value: unknown, currentTimezone: string): DesktopSchedulePreview | null {
+export function validateDesktopSchedulePreview(value: unknown, currentTimezone: string, now = Date.now()): DesktopSchedulePreview | null {
     const candidate = candidateSchema.safeParse(value)
     if (!candidate.success) return null
     const data = candidate.data
@@ -39,7 +39,7 @@ export function validateDesktopSchedulePreview(value: unknown, currentTimezone: 
         try { new Cron(data.cron, { timezone }).nextRun() } catch { return null }
         return { selection: { mode: 'cron', cron: data.cron, runAt: null, timezone }, label: data.label || data.cron }
     }
-    if (!data.runAt || data.cron || !z.string().datetime({ offset: true }).safeParse(data.runAt).success) return null
+    if (!data.runAt || data.cron || !z.string().datetime({ offset: true }).safeParse(data.runAt).success || Date.parse(data.runAt) <= now) return null
     return { selection: { mode: 'runAt', cron: null, runAt: data.runAt, timezone }, label: data.label || data.runAt }
 }
 

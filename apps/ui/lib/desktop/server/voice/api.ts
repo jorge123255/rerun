@@ -5,6 +5,7 @@ import { DESKTOP_VOICE_MAX_BYTES, desktopVoiceUploadSchema, desktopVoiceRevision
 import { DesktopHttpError } from '../auth'
 import { desktopRoute } from '../http'
 import type { DesktopVoiceService } from './service'
+import { decodeDesktopVoiceAudio } from './bytes'
 
 const MAX_BODY_BYTES = Math.ceil(DESKTOP_VOICE_MAX_BYTES / 3) * 4 + 100_000
 const scopeInput = z.object({ tabUid: z.string().min(1).max(128), sessionId: z.string().min(1).max(200).optional() }).strict()
@@ -55,13 +56,6 @@ function scopeOf(agentId: string, body: unknown): DesktopVoiceScope {
     return { agentId, ...input }
 }
 
-function decodeAudio(value: unknown): Uint8Array {
-    if (typeof value !== 'string' || !value || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) throw new DesktopHttpError(400, 'Voice audio encoding is invalid.')
-    const bytes = Buffer.from(value, 'base64')
-    if (bytes.byteLength < 1 || bytes.byteLength > DESKTOP_VOICE_MAX_BYTES || bytes.toString('base64') !== value) throw new DesktopHttpError(400, 'Voice audio encoding is invalid.')
-    return new Uint8Array(bytes)
-}
-
 export function desktopVoiceApi(service: DesktopVoiceService) {
     return async (request: Request, agentId: string): Promise<Response> => {
         const signal = AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])
@@ -87,7 +81,7 @@ export function desktopVoiceApi(service: DesktopVoiceService) {
             switch (parsed.operation) {
                 case 'upload': {
                     const { operation: _operation, audioBase64, ...input } = parsed
-                    const bytes = decodeAudio(audioBase64)
+                    const bytes = decodeDesktopVoiceAudio(audioBase64)
                     const draft = await withDeadline(service.upload(scope, input, bytes, signal), signal)
                     return Response.json({ draft }, { headers })
                 }

@@ -1,7 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
-import { STATS_TIME_RANGE_META } from '@rerun/contracts'
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { MonitorCard, StatsChart, TokenUsageChart } from '@rerun/ui/monitoring'
 import type { StatsChartType, StatsGroupBy, StatsMetric, StatsPoint } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
@@ -11,6 +10,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import { dailyTokenUsage, desktopMonitoringSchema, MONITORING_RANGES, type DesktopMonitoring, type MonitoringRange } from '@/lib/desktop/monitoring'
 import { ActivityIcon, AlertTriangleIcon, BarChart3Icon, CircleDollarSignIcon, CoinsIcon, CpuIcon, GaugeIcon, HashIcon, Maximize2Icon, TimerIcon, WrenchIcon } from '@/lib/icons'
+import { desktopLocaleTag } from '@/lib/desktop/locale'
+import { useDesktopLocale } from './DesktopLocale'
 import type { DesktopAgentView } from './DesktopApp'
 
 const POLL_MS = 30000
@@ -27,6 +28,16 @@ type ChartSpec = {
 type Loaded = { key: string; data: DesktopMonitoring }
 
 export function DesktopCoworkerMonitoringBody({ agent }: { agent: DesktopAgentView }) {
+    const { language, t } = useDesktopLocale()
+    const locale = desktopLocaleTag(language.locale)
+    const kit = language.messages.monitoring.kit
+    const statsLabels = useMemo(() => ({
+        ...kit.chart, metrics: kit.metrics, status: kit.runStatus, unknown: language.messages.monitoring.unknown,
+        rowCount: (dataset: keyof typeof kit.chart.rowCount, count: string) => t(`monitoring.kit.chart.rowCount.${dataset}`, { count }),
+    }), [kit, language.messages.monitoring.unknown, t])
+    const usageLabels = useMemo(() => ({
+        ...kit.usage, loading: kit.chart.loading, runs: (count: number) => t('monitoring.kit.usage.runs', { count }),
+    }), [kit, t])
     const [range, setRange] = useState<MonitoringRange>('7d')
     const key = `${agent.id}:${range}`
     const keyRef = useRef(key)
@@ -64,31 +75,33 @@ export function DesktopCoworkerMonitoringBody({ agent }: { agent: DesktopAgentVi
     const data = loaded?.key === key ? loaded.data : null
     const failed = failedKey === key
     const isEmpty = !!data && data.runs.length === 0 && data.toolCalls.length === 0
+    const rangeLabel = t(`monitoring.ranges.${range}.label`)
+    const emptyRange = language.locale === 'en' ? rangeLabel.toLowerCase() : rangeLabel
 
     const kpiSpecs: (ChartSpec & { points: StatsPoint[] | null })[] = [
-        { key: 'kpiRuns', title: 'Runs', icon: HashIcon, metric: 'count', groupBy: 'none', chartType: 'stat', points: data?.runs ?? null },
-        ...(data?.cost ? [{ key: 'kpiCost', title: 'Total cost', icon: CircleDollarSignIcon, metric: 'cost' as StatsMetric, groupBy: 'none' as StatsGroupBy, chartType: 'stat' as StatsChartType, points: data.cost }] : []),
-        ...(data?.totalTokens ? [{ key: 'kpiTokens', title: 'Total tokens', icon: CoinsIcon, metric: 'totalTokens' as StatsMetric, groupBy: 'none' as StatsGroupBy, chartType: 'stat' as StatsChartType, points: data.totalTokens }] : []),
-        { key: 'kpiErrorRate', title: 'Error rate', icon: GaugeIcon, metric: 'errorRate', groupBy: 'none', chartType: 'stat', points: data?.errorRate ?? null },
+        { key: 'kpiRuns', title: t('monitoring.charts.kpiRuns'), icon: HashIcon, metric: 'count', groupBy: 'none', chartType: 'stat', points: data?.runs ?? null },
+        ...(data?.cost ? [{ key: 'kpiCost', title: t('monitoring.charts.kpiCost'), icon: CircleDollarSignIcon, metric: 'cost' as StatsMetric, groupBy: 'none' as StatsGroupBy, chartType: 'stat' as StatsChartType, points: data.cost }] : []),
+        ...(data?.totalTokens ? [{ key: 'kpiTokens', title: t('monitoring.charts.kpiTokens'), icon: CoinsIcon, metric: 'totalTokens' as StatsMetric, groupBy: 'none' as StatsGroupBy, chartType: 'stat' as StatsChartType, points: data.totalTokens }] : []),
+        { key: 'kpiErrorRate', title: t('monitoring.charts.kpiErrorRate'), icon: GaugeIcon, metric: 'errorRate', groupBy: 'none', chartType: 'stat', points: data?.errorRate ?? null },
     ]
     const chartMessage = (text: string) => <div className="flex h-full items-center justify-center text-center text-[12px] text-muted-foreground">{text}</div>
     const toolChart = (metric: StatsMetric, points: StatsPoint[] | null) =>
         points !== null && points.length === 0
-            ? chartMessage('No recorded tool calls in this period.')
-            : <StatsChart dataset="toolCalls" metric={metric} groupBy="toolName" chartType="bar" points={points} />
+            ? chartMessage(t('monitoring.noToolCalls'))
+            : <StatsChart locale={locale} labels={statsLabels} dataset="toolCalls" metric={metric} groupBy="toolName" chartType="bar" points={points} />
     const tokenUsageNode = data === null
-        ? <TokenUsageChart metric="tokens" breakdown="total" chartType="area" days={null} />
+        ? <TokenUsageChart locale={locale} labels={usageLabels} metric="tokens" breakdown="total" chartType="area" days={null} />
         : data.totalTokens === null
-            ? chartMessage('Tokens were not recorded for every run in this period.')
-            : <TokenUsageChart metric="tokens" breakdown="total" chartType="area" days={dailyTokenUsage(data.totalTokens)} />
+            ? chartMessage(t('monitoring.partialTokens'))
+            : <TokenUsageChart locale={locale} labels={usageLabels} metric="tokens" breakdown="total" chartType="area" days={dailyTokenUsage(data.totalTokens)} />
     const chartPanels: { key: string; title: string; subtitle?: string; icon: ComponentType<{ className?: string }>; node: ReactNode }[] = [
-        { key: 'tokenUsage', title: 'Token usage', subtitle: 'Tokens per day', icon: CoinsIcon, node: tokenUsageNode },
-        { key: 'runsOverTime', title: 'Runs over time', icon: ActivityIcon, node: <StatsChart dataset="runs" metric="count" groupBy="status" chartType="bar" points={data?.runsByStatus ?? null} /> },
-        { key: 'costOverTime', title: 'Cost over time', icon: CircleDollarSignIcon, node: data?.cost === null ? chartMessage('Cost was not recorded for every run in this period.') : <StatsChart dataset="runs" metric="cost" groupBy="none" chartType="area" points={data?.cost ?? null} /> },
-        { key: 'avgDuration', title: 'Avg run duration', icon: TimerIcon, node: <StatsChart dataset="runs" metric="avgDurationMs" groupBy="none" chartType="line" points={data?.avgDuration ?? null} /> },
-        { key: 'runsByModel', title: 'Runs by model', icon: CpuIcon, node: <StatsChart dataset="runs" metric="count" groupBy="model" chartType="donut" points={data?.runsByModel ?? null} /> },
-        { key: 'topTools', title: 'Top tool calls', icon: WrenchIcon, node: toolChart('count', data?.toolCalls ?? null) },
-        { key: 'toolErrors', title: 'Tool errors', icon: AlertTriangleIcon, node: toolChart('errorCount', data?.toolErrors ?? null) },
+        { key: 'tokenUsage', title: t('monitoring.tokenUsage.title'), subtitle: t('monitoring.tokenUsage.subtitle'), icon: CoinsIcon, node: tokenUsageNode },
+        { key: 'runsOverTime', title: t('monitoring.charts.runsOverTime'), icon: ActivityIcon, node: <StatsChart locale={locale} labels={statsLabels} dataset="runs" metric="count" groupBy="status" chartType="bar" points={data?.runsByStatus ?? null} /> },
+        { key: 'costOverTime', title: t('monitoring.charts.costOverTime'), icon: CircleDollarSignIcon, node: data?.cost === null ? chartMessage(t('monitoring.partialCost')) : <StatsChart locale={locale} labels={statsLabels} dataset="runs" metric="cost" groupBy="none" chartType="area" points={data?.cost ?? null} /> },
+        { key: 'avgDuration', title: t('monitoring.charts.avgDuration'), icon: TimerIcon, node: <StatsChart locale={locale} labels={statsLabels} dataset="runs" metric="avgDurationMs" groupBy="none" chartType="line" points={data?.avgDuration ?? null} /> },
+        { key: 'runsByModel', title: t('monitoring.charts.runsByModel'), icon: CpuIcon, node: <StatsChart locale={locale} labels={statsLabels} dataset="runs" metric="count" groupBy="model" chartType="donut" points={data?.runsByModel ?? null} /> },
+        { key: 'topTools', title: t('monitoring.charts.topTools'), icon: WrenchIcon, node: toolChart('count', data?.toolCalls ?? null) },
+        { key: 'toolErrors', title: t('monitoring.charts.toolErrors'), icon: AlertTriangleIcon, node: toolChart('errorCount', data?.toolErrors ?? null) },
     ]
     const expanded = chartPanels.find(panel => panel.key === expandedKey) ?? null
 
@@ -101,37 +114,37 @@ export function DesktopCoworkerMonitoringBody({ agent }: { agent: DesktopAgentVi
                         type="button"
                         aria-pressed={range === r}
                         onClick={() => setRange(r)}
-                        title={STATS_TIME_RANGE_META[r].label}
+                        title={t(`monitoring.ranges.${r}.label`)}
                         className={`rounded-md px-2 py-1 text-xs font-medium transition-colors ${range === r ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}`}
                     >
-                        {r}
+                        {t(`monitoring.ranges.${r}.short`)}
                     </button>
                 ))}
             </div>
 
             {failed && (
                 <div role="alert" className="shrink-0 px-3 pt-3 text-sm text-destructive">
-                    Could not load monitoring. The local engine may be unreachable.
-                    {data && <p className="mt-1">Showing the last loaded monitoring.</p>}
-                    <Button type="button" variant="outline" size="sm" className="ml-2" onClick={() => void load()}>Retry</Button>
+                    {t('monitoring.unavailable')}
+                    {data && <p className="mt-1">{t('monitoring.stale')}</p>}
+                    <Button type="button" variant="outline" size="sm" className="ml-2" onClick={() => void load()}>{t('monitoring.retry')}</Button>
                 </div>
             )}
 
             {!data && !failed ? (
-                <MonitoringSkeleton />
+                <MonitoringSkeleton label={t('monitoring.kit.chart.loading')} />
             ) : !data ? null : isEmpty ? (
                 <EmptyState
                     className="h-full"
                     icon={BarChart3Icon}
-                    title={`No runs in the ${STATS_TIME_RANGE_META[range].label.toLowerCase()}`}
-                    description="Choose a different time range to look for earlier runs."
+                    title={t('monitoring.emptyRange', { range: emptyRange })}
+                    description={t('monitoring.emptyDescription')}
                 />
             ) : (
                 <div className="min-h-0 flex-1 overflow-y-auto p-3">
                     <div className="grid grid-cols-2 gap-3">
                         {kpiSpecs.map(spec => (
                             <MonitorCard key={spec.key} className="h-32" title={spec.title} icon={spec.icon}>
-                                <StatsChart dataset="runs" metric={spec.metric} groupBy={spec.groupBy} chartType={spec.chartType} points={spec.points} />
+                                <StatsChart locale={locale} labels={statsLabels} dataset="runs" metric={spec.metric} groupBy={spec.groupBy} chartType={spec.chartType} points={spec.points} />
                             </MonitorCard>
                         ))}
                     </div>
@@ -148,7 +161,7 @@ export function DesktopCoworkerMonitoringBody({ agent }: { agent: DesktopAgentVi
                                     <button
                                         type="button"
                                         onClick={() => setExpandedKey(panel.key)}
-                                        aria-label={`Expand ${panel.title}`}
+                                        aria-label={t('monitoring.expand', { title: panel.title })}
                                         className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
                                     >
                                         <Maximize2Icon className="size-3.5" />
@@ -163,7 +176,7 @@ export function DesktopCoworkerMonitoringBody({ agent }: { agent: DesktopAgentVi
             )}
 
             <Dialog open={!!expanded} onOpenChange={open => !open && setExpandedKey(null)}>
-                <DialogContent className="sm:max-w-3xl">
+                <DialogContent closeLabel={t('monitoring.close')} aria-describedby={undefined} className="sm:max-w-3xl">
                     <DialogHeader>
                         <DialogTitle>{expanded?.title}</DialogTitle>
                     </DialogHeader>
@@ -174,9 +187,10 @@ export function DesktopCoworkerMonitoringBody({ agent }: { agent: DesktopAgentVi
     )
 }
 
-function MonitoringSkeleton() {
+function MonitoringSkeleton({ label }: { label: string }) {
     return (
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <div role="status" aria-busy="true" className="min-h-0 flex-1 overflow-y-auto p-3">
+            <span className="sr-only">{label}</span>
             <div className="grid grid-cols-2 gap-3">
                 {Array.from({ length: 4 }).map((_, i) => (
                     <Skeleton key={i} className="h-32" />

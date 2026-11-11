@@ -2,6 +2,7 @@ import { lstat, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { desktopTemplateIdSchema, desktopTemplateRevisionSchema, desktopTemplateRelativePathSchema, desktopTemplateRequirementsSchema } from '@rerun/contracts'
+import { UNUSED_SCREEN_MARKER, unusedScreenMarkerText } from '../isolated-screen/ownership-file.ts'
 import { renameSkillEntry } from '../skill-publication-native.js'
 import { readConfinedBytes, walkConfined } from './files.js'
 import { readManifest } from './install.js'
@@ -13,7 +14,8 @@ const recoverySchema = z.strictObject({
     version: z.literal(1), requestId: z.uuid(), importReceiptId: z.uuid(), templateId: desktopTemplateIdSchema, revision: desktopTemplateRevisionSchema,
     engineAgentId: z.string().regex(/^i[a-f0-9]{31}$/), agentKey: z.string().regex(/^c[0-9]{2}$/), fingerprint: desktopTemplateRevisionSchema,
     dev: z.string().regex(/^\d+$/), ino: z.string().regex(/^\d+$/),
-    files:z.array(z.strictObject({path:desktopTemplateRelativePathSchema,bytes:z.number().int().nonnegative().max(25*1024*1024),sourceRevision:desktopTemplateRevisionSchema})).max(2000), phase: z.enum(['reserved','quarantined','index-removed','removed']),
+    // The template's 2,000 entries plus its optional exact screen ownership marker.
+    files:z.array(z.strictObject({path:desktopTemplateRelativePathSchema,bytes:z.number().int().nonnegative().max(25*1024*1024),sourceRevision:desktopTemplateRevisionSchema})).max(2001), phase: z.enum(['reserved','quarantined','index-removed','removed']),
 })
 export type FidelityRecoveryRequest = Pick<z.infer<typeof recoverySchema>, 'requestId'|'importReceiptId'|'templateId'|'revision'|'engineAgentId'|'agentKey'>
 export type FidelityRecoveryDeps = {
@@ -45,7 +47,13 @@ export async function rollbackFreshTemplateCoworker(input: FidelityRecoveryReque
             if (!marker || marker.importReceiptId !== input.importReceiptId || marker.templateId !== input.templateId || marker.revision !== input.revision || marker.agentKey !== input.agentKey || marker.engineAgentId !== input.engineAgentId) throw new TemplateRequestError(409, 'Rollback target belongs to a different import')
             const inventory = await walkConfined(folder, '', 4000)
             if (inventory.truncated) throw new TemplateRequestError(409, 'Rollback inventory is too large')
-            const expected = new Map(member.files.map(f => [f.path, f]))
+            const expected = new Map<string, { path: string; bytes: number; sourceRevision: string }>(
+                member.files.map(({ path, bytes, sourceRevision }) => [path, { path, bytes, sourceRevision }]),
+            )
+            if (inventory.entries.some(entry => entry.path === UNUSED_SCREEN_MARKER)) {
+                const screenMarker = Buffer.from(unusedScreenMarkerText(input.engineAgentId, String(before.dev), String(before.ino)), 'utf8')
+                expected.set(UNUSED_SCREEN_MARKER, { path: UNUSED_SCREEN_MARKER, bytes: screenMarker.length, sourceRevision: sha256(screenMarker) })
+            }
             for (const entry of inventory.entries) {
                 if (entry.kind !== 'file') throw new TemplateRequestError(409, 'Rollback target contains a link or unsupported entry')
                 if (entry.path === '.desktop-template-import.json' || entry.path === '.desktop-template-requirements.json') continue
@@ -54,7 +62,7 @@ export async function rollbackFreshTemplateCoworker(input: FidelityRecoveryReque
                 const read = await readConfinedBytes(folder, entry.path, meta.bytes)
                 if (!read.ok || read.bytes.length !== meta.bytes || read.contentRevision !== meta.sourceRevision) throw new TemplateRequestError(409, 'Rollback refused because imported bytes were edited')
             }
-            receipt = { version:1, ...input, fingerprint, dev:String(before.dev), ino:String(before.ino), files:member.files.map(({path,bytes,sourceRevision})=>({path,bytes,sourceRevision})), phase:'reserved' }
+            receipt = { version:1, ...input, fingerprint, dev:String(before.dev), ino:String(before.ino), files:[...expected.values()], phase:'reserved' }
             await writeOwnJson(home, record, receipt)
         }
         const identity = { dev:receipt.dev, ino:receipt.ino }

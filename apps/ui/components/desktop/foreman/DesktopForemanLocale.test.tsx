@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
-import { act, type ReactNode } from 'react'
+import { act, useState, type ReactNode } from 'react'
+import type { ConnectionSummary, DesktopForemanModelRef } from '@rerun/contracts'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { loadMessages } from '@rerun/i18n/messages'
@@ -9,6 +10,9 @@ import { DesktopLocale } from '../DesktopLocale'
 import { DesktopForemanComposer } from './DesktopForemanComposer'
 import { DesktopForemanTabs } from './DesktopForemanTabs'
 import { DesktopPlanCard } from './plan/DesktopPlanCard'
+import { DesktopForemanModelPill } from './DesktopForemanModelPill'
+import { DesktopForemanContext } from './DesktopForemanContext'
+import { buildDesktopModelView } from '@/lib/desktop/chat-model'
 
 vi.mock(import('@rerun/ui/iso-grid'), async original => {
     const { memo } = await import('react')
@@ -40,6 +44,17 @@ const button = (label: string) => {
     return target
 }
 
+it.each(['en', 'fr', 'es', 'pt', 'de'] as const)('uses the upstream Chief of Staff name in the %s Mac language pack', async locale => {
+    const upstream = await loadMessages(locale)
+    const copy = desktopMessages(locale, upstream)
+    expect(copy.foreman.name).toBe('Chief of Staff')
+    expect(copy.foreman.ask).toBe(upstream.kit.foreman.orbLabel)
+    expect(copy.foreman.tabs.assistant).toBe(upstream.kit.foreman.tabsLabel)
+    expect(copy.controlCenter.askRerun).toBe(upstream.layout.controlCenter.askRerun)
+    expect(copy.shortcutDialog.actions.holdToTalk).toBe(upstream.dialogs.shortcuts.actions.holdToTalk)
+    expect([copy.foreman.ask, copy.foreman.message, copy.controlCenter.askRerun].join(' ')).not.toMatch(/\bForeman\b|Ask Rerun/)
+})
+
 it('translates the composer and tabs while keeping the draft and tab identity', async () => {
     const send = vi.fn()
     const stop = vi.fn()
@@ -47,16 +62,100 @@ it('translates the composer and tabs while keeping the draft and tab identity', 
     const draft = 'Prépare une synthèse.\nGarde les deux étapes.'
     const composer = { draft, onDraftChange: vi.fn(), onSend: send, onStop: stop }
     await show(<><DesktopForemanTabs tab="assistant" onTabChange={change} /><DesktopForemanComposer {...composer} /></>)
-    expect(button('Demander').getAttribute('aria-selected')).toBe('true')
+    expect(button('Chief of Staff').getAttribute('aria-selected')).toBe('true')
     await act(async () => button('Routines').dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true })))
     expect(change).toHaveBeenCalledExactlyOnceWith('routines')
-    expect(document.querySelector('[data-desktop-foreman-composer]')?.getAttribute('aria-label')).toBe('Écrire au Foreman')
+    expect(document.querySelector('[data-desktop-foreman-composer]')?.getAttribute('aria-label')).toBe('Écrire au Chief of Staff')
     await act(async () => button('Envoyer').click())
     expect(send).toHaveBeenCalledExactlyOnceWith(draft)
     await show(<DesktopForemanComposer {...composer} busy />)
     await act(async () => button('Arrêter').click())
     expect(stop).toHaveBeenCalledOnce()
     expect(send).toHaveBeenCalledOnce()
+})
+
+it('sends on Return while preserving multiline, IME, and Stop behavior', async () => {
+    const send = vi.fn()
+    const stop = vi.fn()
+    const composer = { draft: 'Prépare une synthèse.', onDraftChange: vi.fn(), onSend: send, onStop: stop }
+    const press = async (options: KeyboardEventInit = {}) => {
+        const field = document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')!
+        const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...options })
+        await act(async () => { field.dispatchEvent(event) })
+        return event
+    }
+    await show(<DesktopForemanComposer {...composer} />)
+    expect((await press({ shiftKey: true })).defaultPrevented).toBe(false)
+    expect((await press({ isComposing: true })).defaultPrevented).toBe(false)
+    expect(send).not.toHaveBeenCalled()
+    expect((await press()).defaultPrevented).toBe(true)
+    expect(send).toHaveBeenCalledExactlyOnceWith(composer.draft)
+    expect(document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')?.value).toBe(composer.draft)
+    await show(<DesktopForemanComposer {...composer} busy />)
+    await press()
+    expect(send).toHaveBeenCalledOnce()
+    await act(async () => button('Arrêter').click())
+    expect(stop).toHaveBeenCalledOnce()
+})
+
+it('keeps an over-limit saved entry editable and refuses to submit it', async () => {
+    const send = vi.fn()
+    const composer = { draft: 'Résumé trop long', onDraftChange: vi.fn(), onSend: send, maxLength: 8 }
+    await show(<DesktopForemanComposer {...composer} />)
+    const field = document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')!
+    expect(field.disabled).toBe(false)
+    expect(field.maxLength).toBe(8)
+    expect(field.value).toBe(composer.draft)
+    expect(button('Envoyer').disabled).toBe(true)
+    await act(async () => field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })))
+    expect(send).not.toHaveBeenCalled()
+    await show(<DesktopForemanComposer {...composer} draft="Résumé" />)
+    await act(async () => button('Envoyer').click())
+    expect(send).toHaveBeenCalledExactlyOnceWith('Résumé')
+})
+
+it('selects a connected model and returns to the translated workspace default without submitting the draft', async () => {
+    const connection: ConnectionSummary = { id: 'fixture', name: 'Fixture', provider: 'openrouter', createdAt: '', connected: true,
+        credentialRejected: false, planLimits: null, models: ['workspace-fixture', 'chosen-fixture'], extraModels: [] }
+    const workspace = { connectionId: connection.id, model: 'workspace-fixture' }
+    const chosen = { connectionId: connection.id, model: 'chosen-fixture' }
+    const submit = vi.fn()
+    const changes = vi.fn()
+    function Harness() {
+        const [conversation, setConversation] = useState<DesktopForemanModelRef | null>(null)
+        const view = buildDesktopModelView({ connections: [connection], workspace, conversation, coworker: null })
+        return <form onSubmit={submit}><DesktopForemanModelPill view={view} disabled={false} saving={false} onPick={async model => {
+            changes(model)
+            setConversation(model)
+        }} /></form>
+    }
+    await show(<Harness />)
+    const trigger = () => Array.from(document.querySelectorAll('button')).find(node => node.getAttribute('aria-haspopup') === 'dialog')!
+    expect(trigger().textContent).toContain(workspace.model)
+    await act(async () => trigger().click())
+    await act(async () => button(chosen.model).click())
+    expect(changes).toHaveBeenLastCalledWith(chosen)
+    expect(trigger().textContent).toContain(chosen.model)
+    await act(async () => trigger().click())
+    const follow = Array.from(document.querySelectorAll('button')).find(node => node.textContent?.startsWith(french.messages.foreman.modelPicker.workspaceDefault))!
+    await act(async () => follow.click())
+    expect(changes).toHaveBeenLastCalledWith(null)
+    expect(trigger().textContent).toContain(workspace.model)
+    expect(submit).not.toHaveBeenCalled()
+})
+
+it('labels estimated context in French and hides it when the selected model or connection changes', async () => {
+    const model = { connectionId: 'fixture', model: 'test-model' }
+    const effective = { ...model, source: 'workspace' as const, provider: 'codex', name: 'Fixture', label: 'Fixture model', available: true }
+    const context = { model, usage: { inputTokens: 4000 }, usedTokens: 5000, maxTokens: 10_000, estimated: true }
+    await show(<DesktopForemanContext context={context} effective={effective} />)
+    expect(document.querySelector('button')?.getAttribute('aria-label')).toBe('Contexte estimé · 50%')
+    await show(<DesktopForemanContext context={{ ...context, estimated: false }} effective={effective} />)
+    expect(document.querySelector('button')?.getAttribute('aria-label')).toBe(french.messages.foreman.context.usedLabel.replace('{percent}', '50'))
+    await show(<DesktopForemanContext context={context} effective={{ ...effective, connectionId: 'another-account' }} />)
+    expect(document.querySelector('button')).toBeNull()
+    await show(<DesktopForemanContext context={context} effective={{ ...effective, model: 'another-model' }} />)
+    expect(document.querySelector('button')).toBeNull()
 })
 
 it('translates plan review without changing the revision, target text or confirmation gate', async () => {

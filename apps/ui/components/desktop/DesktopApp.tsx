@@ -71,6 +71,7 @@ export type DesktopSessionView = {
     id: string; agentId: string; title: string; createdAt: string; updatedAt: string
     kind?: 'general' | 'thread'; firstMessage?: string | null
     source?: SessionSource; automationName?: string | null; originAgentName?: string | null; runStatus?: Run['status'] | null
+    automationOutcome?: 'done' | 'nothing'
 }
 export type DesktopBootstrap = ConnectionsList & {
     theme: ThemePreference
@@ -238,11 +239,20 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [templateToReview, setTemplateToReview] = useState<DesktopTemplateIdentity | null>(null)
     const templatesActive = templatesOpen || templateFlowActive
     useEffect(() => {
-        const openSettings = (event: KeyboardEvent) => {
-            if (event.metaKey && event.key === ',' && creationAdmission.current.settingsAllowed && !workspaceDialogActive && !templatesActive && !shortcutsOpen && !helpOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !workspaceSettings && !boardInteraction && !boardState.saving && !themeSavingRef.current && !isDesktopQuitting()) { event.preventDefault(); setSettings(true) }
+        const openFromShortcut = () => {
+            if (!creationAdmission.current.settingsAllowed || workspaceDialogActive || templatesActive || shortcutsOpen || helpOpen
+                || notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || workspaceSettings || boardInteraction
+                || boardState.saving || themeSavingRef.current || isDesktopQuitting()) return false
+            setSettings(true)
+            return true
         }
-        window.addEventListener('keydown', openSettings)
-        return () => window.removeEventListener('keydown', openSettings)
+        const keydown = (event: KeyboardEvent) => {
+            if (event.metaKey && event.key === ',' && openFromShortcut()) event.preventDefault()
+        }
+        const bridge = (window as Window & { desktopApp?: { onOpenSettings?: (listener: () => void) => () => void } }).desktopApp
+        const unsubscribe = bridge?.onOpenSettings?.(openFromShortcut)
+        window.addEventListener('keydown', keydown)
+        return () => { unsubscribe?.(); window.removeEventListener('keydown', keydown) }
     }, [workspaceDialogActive, templatesActive, workspaceSettings, shortcutsOpen, helpOpen, notificationsTarget, sharedDataOpen, sharedFilesOpen, brainOpen, boardInteraction, boardState.saving])
     const [agents, setAgents] = useState(initialData.agents)
     const boardActivity = useBoardActivity(agents.map(agent => agent.id))
@@ -564,7 +574,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 setForemanCommand(current => current?.id === id ? null : current)
                 if (error) reject(error); else resolve()
             }
-            const abort = () => settle(new Error('Ask Rerun was cancelled.'))
+            const abort = () => settle(new Error('The Chief of Staff request was cancelled.'))
             signal.addEventListener('abort', abort, { once: true })
             setForemanCommand({ id, chat, text, signal, settle }); engageForeman()
         })
@@ -747,8 +757,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
 
                     <DesktopForemanPanel controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout}
                         hidden={controlCenterDisabled || controlCenterOpen || panelOpen || settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
-                        centerOpen={controlCenterOpen} onOpenTranscriptionSettings={() => { setSettingsTab('Tool services'); setSettings(true) }} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('Foreman was closed.')); setForemanOpen(false) }}
-                        onOpenCoworker={openForemanCoworker} onOpenBox={openForemanBox} onReviewTemplate={reviewTemplate} workspaceModel={modelLabel} workspaceModelChoice={defaultProvider && providers.default ? { connectionId: defaultProvider.id, model: providers.default.model } : undefined}
+                        centerOpen={controlCenterOpen} onOpenTranscriptionSettings={() => { setSettingsTab('Tool services'); setSettings(true) }} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('The Chief of Staff chat was closed.')); setForemanOpen(false) }}
+                        onOpenCoworker={openForemanCoworker} onOpenBox={openForemanBox} onReviewTemplate={reviewTemplate} providers={providers} onOpenModelSettings={openSettings}
                         agentNameOf={id => currentAgents.current.find(agent => agent.id === id)?.name ?? 'Coworker'} />
                 </div>}
                 {selectedAgent && <div inert={!panelOpen || boardInteraction || workspaceDialogActive} aria-hidden={!panelOpen || boardInteraction || workspaceDialogActive || undefined}>
@@ -806,7 +816,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 const target = boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                 if (target && !isDesktopQuitting()) { event.preventDefault(); target.focus({ preventScroll: true }) }
             }} />
-            <DesktopSharedFiles hideTrigger dialogControl={{ open: sharedFilesOpen, onOpenChange: setSharedFilesOpen }} onCloseAutoFocus={event => {
+            <DesktopSharedFiles hideTrigger workspaceId={runtimeWorkspaceId} dialogControl={{ open: sharedFilesOpen, onOpenChange: setSharedFilesOpen }} onCloseAutoFocus={event => {
                 const target = boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                 if (target && !isDesktopQuitting()) { event.preventDefault(); target.focus({ preventScroll: true }) }
             }} />
@@ -882,9 +892,11 @@ function CoworkerChat({ agent, attention, overview, requested, requestedPanel, o
     onOpenCoworkerChat: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel: () => void
 }) {
+    const { t } = useDesktopLocale()
     const [sessions, setSessions] = useState<DesktopSessionView[] | null>(null)
-    const needsYouSessions = useMemo(() => new Set(attention.items
-        .filter(item => item.agentId === agent.id && item.kind !== 'info').map(item => item.sessionId)), [agent.id, attention.items])
+    const pendingChatSummaries = useMemo(() => new Map(attention.items
+        .filter(item => item.agentId === agent.id && item.kind !== 'info')
+        .map(item => [item.sessionId, item.summary])), [agent.id, attention.items])
     const [bootstrap, setBootstrap] = useState<{ layout: DesktopTabLayout | null } | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [checkedRequest, setCheckedRequest] = useState<DesktopChatRequest | null>(null)
@@ -912,12 +924,15 @@ function CoworkerChat({ agent, attention, overview, requested, requestedPanel, o
                         && session.createdAt === next.createdAt && session.updatedAt === next.updatedAt
                         && session.source === next.source && session.automationName === next.automationName
                         && session.originAgentName === next.originAgentName && session.runStatus === next.runStatus
+                        && session.automationOutcome === next.automationOutcome
                 }) ? previous : body.sessions
             })
             if (restoreTabs) setBootstrap({ layout: body.tabs ?? null })
             if (!background) setError(null)
+            return true
         } catch (cause) {
             if (!background && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load conversations')
+            if (!controller.signal.aborted) return false
         } finally {
             if (sessionRead.current === controller) sessionRead.current = null
             if (checking && !controller.signal.aborted) setCheckedRequest(checking)
@@ -932,25 +947,34 @@ function CoworkerChat({ agent, attention, overview, requested, requestedPanel, o
         return () => sessionRead.current?.abort()
     }, [readSessions])
 
-    const missing = !!requested && 'id' in requested && !!sessions && !sessions.some(s => s.id === requested.id)
+    const missing = !!bootstrap && !!requested && 'id' in requested && !!sessions && !sessions.some(s => s.id === requested.id)
     useEffect(() => {
         // Webhooks, routines and coworker calls can add a chat after this panel loaded.
         // Refresh its owner-scoped list while preserving the live tab/draft instances.
         // readSessions changes state only after its asynchronous read.
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        if (bootstrap && missing && requested && checkedRequest !== requested) void readSessions({ checking: requested })
-    }, [bootstrap, missing, requested, checkedRequest, readSessions])
-    const dismiss = <Button type="button" variant="ghost" size="icon-sm" aria-label="Close panel" className="absolute right-3 top-3" onClick={onClosePanel}><X /></Button>
-    const reload = () => { setBootstrap(null); void readSessions({ restoreTabs: true }) }
+        if (missing && requested && checkedRequest !== requested) void readSessions({ checking: requested })
+    }, [missing, requested, checkedRequest, readSessions])
+    const dismiss = <Button type="button" variant="ghost" size="icon-sm" aria-label={t('closePanel')} className="absolute right-3 top-3" onClick={onClosePanel}><X /></Button>
+    const reload = () => {
+        setBootstrap(null)
+        setError(null)
+        setCheckedRequest(null)
+        void readSessions({ restoreTabs: true })
+    }
     return <>
         {(error || (missing && checkedRequest === requested)) && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">
-            {error ?? 'This conversation is no longer available for this coworker.'}
-            <Button type="button" size="sm" variant="outline" onClick={reload}>Retry conversations</Button>
+            {error ?? t('savedChatUnavailable')}
+            <Button type="button" size="sm" variant="outline" onClick={reload}>{t('retryConversations')}</Button>
         </div>}
-        {missing && checkedRequest !== requested && !error && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">Opening conversation…</p>}
-        {!error && !bootstrap && <p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p>}
+        {missing && checkedRequest !== requested && !error && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">{t('openingSavedChat')}</p>}
+        {!error && !bootstrap && <div className="mt-auto shrink-0 border-t p-2.5">
+            <div data-slot="desktop-composer" className="min-h-[5.5rem] rounded-xl border border-input bg-muted/40 px-2.5 py-2">
+                <p role="status" className="text-sm text-muted-foreground">{t('openingCoworkerChat', { name: agent.name })}</p>
+            </div>
+        </div>}
         {!bootstrap || !sessions ? dismiss : <DesktopChatTabs onOpenCoworkerChat={onOpenCoworkerChat}
-            agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} needsYouSessions={needsYouSessions} sessions={sessions} initialLayout={bootstrap.layout}
+            agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} pendingChatSummaries={pendingChatSummaries} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
             refreshSessions={readSessions} refreshThreads={refreshThreads} reload={reload} modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}
     </>

@@ -29,11 +29,11 @@ export function DesktopForemanFilePermissions({ chat, disabled = false }: { chat
         const current = () => own === live.current && own.current && !controller.signal.aborted && !isDesktopQuitting()
         void fetch(`${URL_PATH}?${new URLSearchParams(chat)}`, { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]) })
             .then(async response => {
-                if (!response.ok) throw new Error('Could not read Foreman file permissions.')
+                if (!response.ok) throw new Error('Could not read Chief of Staff file permissions.')
                 const value = foremanFilePermissionSnapshotSchema.parse(await response.json())
-                if (value.workspaceId !== chat.workspaceId) throw new Error('The workspace changed. Reopen Foreman.')
+                if (value.workspaceId !== chat.workspaceId) throw new Error('The workspace changed. Reopen the Chief of Staff.')
                 if (current()) setSnapshot(value)
-            }).catch(() => { if (current()) setError('Could not read Foreman file permissions. Refresh to try again.') })
+            }).catch(() => { if (current()) setError('Could not read Chief of Staff file permissions. Refresh to try again.') })
         return () => controller.abort()
     }, [open, disabled, owner, refresh, chat.workspaceId, chat.chatId])
     const change = async (id: keyof ForemanFilePermissionSnapshot['grants'], enabled: boolean) => {
@@ -54,7 +54,7 @@ export function DesktopForemanFilePermissions({ chat, disabled = false }: { chat
     return <Dialog open={open} onOpenChange={next => { if (!busy) setOpen(next) }}>
         <DialogTrigger asChild><Button size="sm" variant="ghost" disabled={disabled}>Permissions</Button></DialogTrigger>
         <DialogContent>
-            <DialogHeader><DialogTitle>Foreman permissions</DialogTitle><DialogDescription>Choose whether Foreman can delegate tasks, call approved coworkers, or work with visible Files. Chats, memories, credentials and hidden stores stay excluded.</DialogDescription></DialogHeader>
+            <DialogHeader><DialogTitle>Chief of Staff permissions</DialogTitle><DialogDescription>Choose whether your Chief of Staff can delegate tasks, call approved coworkers, or work with visible Files. Chats, memories, credentials and hidden stores stay excluded.</DialogDescription></DialogHeader>
             {error ? <div className="space-y-2"><p role="alert" className="text-sm text-destructive">{error}</p><Button size="sm" variant="outline" onClick={() => setRefresh(value => value + 1)} disabled={busy}>Refresh permissions</Button></div>
                 : !snapshot ? <p role="status" className="text-sm text-muted-foreground">Loading permissions…</p>
                 : <><SettingsSection title="Other coworkers’ files"><div className={SETTINGS_CARD}>
@@ -68,7 +68,7 @@ export function DesktopForemanFilePermissions({ chat, disabled = false }: { chat
                     <SwitchRow icon={MessageSquareIcon} label="Call coworkers" description="Open a separate chat with a coworker you allow below." checked={snapshot.grants.callAgent} disabled={busy || disabled} onChange={enabled => { void change('callAgent', enabled) }} />
                     {snapshot.grants.callAgent && <DesktopCoworkerCallTargets foreman={{ ...chat, launchNonce: snapshot.launchNonce }} />}
                 </div></SettingsSection>}</>}
-            <p className="text-xs text-muted-foreground">New permissions apply from Foreman’s next reply. Turning a permission off blocks later calls.</p>
+            <p className="text-xs text-muted-foreground">New permissions apply from the Chief of Staff’s next reply. Turning a permission off blocks later calls.</p>
         </DialogContent>
     </Dialog>
 }

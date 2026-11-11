@@ -6,14 +6,21 @@ import { desktopForemanMessages } from './i18n/foreman-messages'
 import { desktopGettingStartedMessages } from './i18n/getting-started-messages'
 import { desktopRoutineMessages } from './i18n/routine-messages'
 import { desktopQuestionMessages } from './i18n/question-messages'
+import { desktopThreadHistoryCopy } from './i18n/thread-history-messages'
+import { desktopMonitoringCopy } from './i18n/monitoring-messages'
+import { desktopRunHistoryCopy } from './i18n/run-history-messages'
+import { desktopControlCenterDetails } from './i18n/control-center-messages'
+import { desktopBrainCopy } from './i18n/brain-messages'
 import dialogs from '@rerun/i18n/messages/en/dialogs.json'
 import type { Locale } from '@rerun/i18n'
 import { createTranslator } from 'use-intl/core'
 import account from '@rerun/i18n/messages/en/account.json'
 import agent from '@rerun/i18n/messages/en/agent.json'
+import brain from '@rerun/i18n/messages/en/brain.json'
 import chat from '@rerun/i18n/messages/en/chat.json'
 import common from '@rerun/i18n/messages/en/common.json'
 import connections from '@rerun/i18n/messages/en/connections.json'
+import data from '@rerun/i18n/messages/en/data.json'
 import foreman from '@rerun/i18n/messages/en/foreman.json'
 import kit from '@rerun/i18n/messages/en/kit.json'
 import layout from '@rerun/i18n/messages/en/layout.json'
@@ -21,8 +28,16 @@ import notifications from '@rerun/i18n/messages/en/notifications.json'
 import mobileSettings from '@rerun/i18n/messages/en/mobileSettings.json'
 import workspace from '@rerun/i18n/messages/en/workspace.json'
 
-const englishSource = { account, agent, chat, common, connections, dialogs, foreman, kit, layout, mobileSettings, notifications, workspace }
+const englishSource = { account, agent, brain, chat, common, connections, data, dialogs, foreman, kit, layout, mobileSettings, notifications, workspace }
 type DesktopMessageSource = typeof englishSource
+
+const aiProviderTool = {
+    en: { label: 'See its AI providers', description: 'Read the model in use, workspace provider availability, and reported subscription limits.' },
+    fr: { label: "Voir ses fournisseurs d'IA", description: 'Consulter le modèle utilisé, les fournisseurs de l’espace de travail et les limites d’abonnement connues.' },
+    es: { label: 'Ver sus proveedores de IA', description: 'Consulta el modelo en uso, los proveedores del espacio de trabajo y los límites conocidos de la suscripción.' },
+    pt: { label: 'Ver seus provedores de IA', description: 'Consulta o modelo em uso, os provedores do espaço de trabalho e os limites conhecidos da assinatura.' },
+    de: { label: 'Eigene KI-Anbieter sehen', description: 'Liest das verwendete Modell, die Anbieter des Arbeitsbereichs und gemeldete Abolimits.' },
+} satisfies Record<Locale, { label: string; description: string }>
 
 // The shared packs already contain the standard controls. These labels are specific to the Mac shell.
 const mac = {
@@ -35,6 +50,10 @@ const mac = {
         addBox: 'Add Box',
         openCoworker: 'Open chat with {name}',
         coworkerChat: 'Coworker chat',
+        openingCoworkerChat: 'Opening {name}…',
+        openingSavedChat: 'Opening conversation…',
+        savedChatUnavailable: 'This conversation is no longer available for this coworker.',
+        retryConversations: 'Retry conversations',
         backToChat: 'Back to chat',
         toolServices: 'Tool services',
         settingsSections: 'Settings sections',
@@ -55,6 +74,10 @@ const mac = {
         addBox: 'Ajouter une Box',
         openCoworker: 'Ouvrir la conversation avec {name}',
         coworkerChat: 'Conversation avec le collègue',
+        openingCoworkerChat: 'Ouverture de la conversation avec {name}…',
+        openingSavedChat: 'Ouverture de la conversation…',
+        savedChatUnavailable: 'Cette conversation n’est plus disponible pour ce collègue.',
+        retryConversations: 'Recharger les conversations',
         backToChat: 'Retour à la conversation',
         toolServices: 'Services d’outils',
         settingsSections: 'Sections des paramètres',
@@ -75,6 +98,10 @@ const mac = {
         addBox: 'Añadir una Box',
         openCoworker: 'Abrir el chat con {name}',
         coworkerChat: 'Chat con el compañero',
+        openingCoworkerChat: 'Abriendo el chat con {name}…',
+        openingSavedChat: 'Abriendo la conversación…',
+        savedChatUnavailable: 'Esta conversación ya no está disponible para este compañero.',
+        retryConversations: 'Volver a cargar las conversaciones',
         backToChat: 'Volver al chat',
         toolServices: 'Servicios de herramientas',
         settingsSections: 'Secciones de configuración',
@@ -95,6 +122,10 @@ const mac = {
         addBox: 'Adicionar uma Box',
         openCoworker: 'Abrir conversa com {name}',
         coworkerChat: 'Conversa com o colega',
+        openingCoworkerChat: 'Abrindo a conversa com {name}…',
+        openingSavedChat: 'Abrindo a conversa…',
+        savedChatUnavailable: 'Esta conversa não está mais disponível para este colega.',
+        retryConversations: 'Recarregar conversas',
         backToChat: 'Voltar para a conversa',
         toolServices: 'Serviços de ferramentas',
         settingsSections: 'Seções das configurações',
@@ -115,6 +146,10 @@ const mac = {
         addBox: 'Box hinzufügen',
         openCoworker: 'Chat mit {name} öffnen',
         coworkerChat: 'Chat mit dem Kollegen',
+        openingCoworkerChat: 'Chat mit {name} wird geöffnet…',
+        openingSavedChat: 'Unterhaltung wird geöffnet…',
+        savedChatUnavailable: 'Diese Unterhaltung ist für diesen Kollegen nicht mehr verfügbar.',
+        retryConversations: 'Unterhaltungen erneut laden',
         backToChat: 'Zurück zum Chat',
         toolServices: 'Werkzeugdienste',
         settingsSections: 'Einstellungsbereiche',
@@ -159,14 +194,48 @@ const desktopControlCenterCopy = {
 export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
     return {
         ...mac[locale],
+        brain: source.brain,
+        brainDesktop: desktopBrainCopy[locale],
+        sharedData: {
+            emptyTitle: source.data.shared.emptyTitle,
+            emptyDescription: source.data.shared.emptyDescription,
+        },
+        aiProviderTool: aiProviderTool[locale],
         actions: desktopActionMessages(locale, source.kit),
         notificationSettings: source.notifications.settings,
         notificationUI: desktopNotificationMessages(locale),
         questionForm: source.kit.chat.question,
         question: desktopQuestionMessages(locale),
+        monitoring: {
+            ...source.agent.agentPanelMonitoring,
+            ...desktopMonitoringCopy[locale],
+            title: source.agent.agentTabs.monitoring.label,
+            kit: source.kit.monitoring,
+        },
+        runHistory: {
+            ...desktopRunHistoryCopy[locale],
+            button: locale === 'en' ? 'Runs' : source.agent.agentTabs.logs.label,
+            empty: source.agent.agentPanelLogs.empty,
+            tokens: source.agent.agentPanelLogs.tokens,
+            stepCount: source.agent.agentPanelLogs.stepCount,
+            step: source.agent.agentPanelLogs.step,
+            noSteps: source.agent.agentPanelLogs.noSteps,
+            status: source.kit.monitoring.runStatus,
+        },
+        threadHistory: {
+            ...desktopThreadHistoryCopy[locale],
+            close: source.agent.agentChatsList.close,
+            startedBy: source.agent.agentChatsList.startedBy,
+            markAllRead: source.agent.agentChatsList.markAllRead,
+            markRead: source.kit.inbox.markRead,
+            status: source.kit.inbox.sentences,
+            retry: source.kit.chat.skillProposal.retry,
+        },
         controlCenter: {
             ...source.layout.controlCenter,
             ...desktopControlCenterCopy[locale],
+            details: desktopControlCenterDetails[locale],
+            coworkerTabs: source.agent.agentTabs,
             localCommands: {
                 team_board: mac[locale].board,
                 getting_started: source.layout.menu.gettingStarted,
@@ -221,6 +290,8 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         askedByUnknown: source.agent.threadBranch.opener.askedByUnknown,
         started: source.agent.threadBranch.opener.started,
         message: source.agent.agentSheetChat.messagePlaceholder,
+        showMore: source.chat.message.showMore,
+        showLess: source.chat.message.showLess,
         reply: source.agent.agentSheetChat.replyPlaceholder,
         sendMessage: locale === 'en' ? 'Send a message…' : source.chat.composer.placeholder,
         send: source.chat.composer.editor.send,

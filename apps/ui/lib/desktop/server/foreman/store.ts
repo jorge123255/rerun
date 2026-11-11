@@ -35,6 +35,7 @@ export type ForemanAction = { requestId: string; fingerprint: string; buildId: s
 export type ForemanTx = {
     revisionsOf(chat: DesktopForemanChatRef): Promise<DesktopForemanRevision[]>
     revisionByCall(chatId: string, runId: string, toolCallId: string): Promise<DesktopForemanRevision | null>
+    starterPlanCurrent?(chat: DesktopForemanChatRef, starter: NonNullable<DesktopForemanRevision['starter']>): Promise<boolean>
     putRevision(revision: DesktopForemanRevision): Promise<void>
     decisionsOf(chatId: string): Promise<DesktopForemanDecision[]>
     decisionByRequest(requestId: string): Promise<{ decision: DesktopForemanDecision; fingerprint: string; chatId: string } | null>
@@ -72,10 +73,24 @@ function bind(db: Exec): ForemanTx {
             const row = await one(db, { sql: 'SELECT body FROM desktop_foreman_revisions WHERE chat_id=? AND run_id=? AND tool_call_id=?', args: [chatId, runId, toolCallId] })
             return row ? revision(row) : null
         },
+        starterPlanCurrent: async (chat, starter) => !!await one(db, {
+            sql: `SELECT 1 FROM desktop_foreman_local_starter_offers o
+                  JOIN desktop_foreman_local_starter_decisions d ON d.offer_id=o.id
+                  JOIN desktop_foreman_chats c ON c.chat_id=o.chat_id AND c.workspace_id=o.workspace_id AND c.engine_session_id=o.session_id
+                  JOIN desktop_foreman_intake_completions i ON i.request_id=o.intake_request_id AND i.fingerprint=o.intake_fingerprint
+                  WHERE o.workspace_id=? AND o.chat_id=? AND o.id=? AND o.digest=? AND o.withdrawn=0
+                    AND i.state='acknowledged' AND json_extract(i.body,'$.followUp.conversationId')=o.session_id
+                    AND json_type(i.body,'$.followUp.runId')='null' AND json_extract(d.choice,'$.kind')='cards'
+                    AND NOT EXISTS (SELECT 1 FROM desktop_foreman_local_starter_stops s WHERE s.intake_request_id=i.request_id)
+                    AND NOT EXISTS (SELECT 1 FROM desktop_foreman_turns t WHERE t.chat_id=o.chat_id)`,
+            args: [chat.workspaceId, chat.chatId, starter.offerId, starter.digest],
+        }),
         putRevision: async value => {
             await db.execute({
                 sql: 'INSERT INTO desktop_foreman_revisions(revision_id,workspace_id,chat_id,plan_id,revision,run_id,tool_call_id,digest,state,body) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(revision_id) DO UPDATE SET state=excluded.state, body=excluded.body WHERE desktop_foreman_revisions.digest=excluded.digest',
-                args: [value.revisionId, value.chat.workspaceId, value.chat.chatId, value.planId, value.revision, value.runId, value.toolCallId, value.digest, value.state, JSON.stringify(value)],
+                // Empty run ID is a storage-only namespace. Engine-call lookup never uses it.
+                args: [value.revisionId, value.chat.workspaceId, value.chat.chatId, value.planId, value.revision,
+                    value.runId ?? '', value.toolCallId ?? value.starter!.offerId, value.digest, value.state, JSON.stringify(value)],
             })
         },
         decisionsOf: async chatId => (await all(db, { sql: 'SELECT body FROM desktop_foreman_decisions WHERE chat_id=? ORDER BY rowid', args: [chatId] })).map(decision),

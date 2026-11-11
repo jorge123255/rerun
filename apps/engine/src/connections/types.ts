@@ -1,4 +1,5 @@
-import type { ConnectionConfig, CustomProviderSnapshot } from '@rerun/contracts'
+import type { z } from 'zod'
+import type { ConnectionConfig, CustomProviderSnapshot, desktopOpencodeConnectionView } from '@rerun/contracts'
 
 export { connectionConfigSchema, RERUN_CONNECTION_ID } from '@rerun/contracts'
 export type { ConnectionConfig, ConnectionSummary } from '@rerun/contracts'
@@ -9,4 +10,5 @@ export type LoadedConnection = {
     config: ConnectionConfig
     env: Record<string, string>
     custom?: CustomProviderSnapshot
+    opencode?: z.infer<typeof desktopOpencodeConnectionView>
 }

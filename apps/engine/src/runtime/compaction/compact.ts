@@ -2,6 +2,8 @@ import { generateText, type ModelMessage } from 'ai'
 import { isContextPart, modelContextWindow, type Provider } from '@rerun/contracts'
 import { modelFor, type ModelOverride } from '../../agents/providers.js'
 import { withoutQuickRepliesCalls } from '../../agents/quick-replies-stream.js'
+import { isScopedKimiReasoning, kimiReasoningScope } from '../../desktop/custom-providers/kimi-reasoning.js'
+import { desktopOpencodeModelContext } from '../../desktop/opencode/registry.js'
 import { customConnectionContextWindow } from '../../desktop/custom-providers/binding.js'
 import { CLI_PROVIDERS } from '../../agents/types.js'
 import { ensureCliAuth } from '../../connections/cli-auth.js'
@@ -44,14 +46,12 @@ function partToText(part: unknown): string {
 
 /**
  * A turn the model reasoned through carries that reasoning in the row, but replaying it buys
- * nothing: a thought is only ever signed for the turn that produced it, and a turn cut short
- * persists one with no signature at all, which the provider then drops with a warning. The model
- * keeps its own thoughts in memory for the length of a multi-step turn, which is the only place
- * they are required.
+ * nothing for most providers. Kimi Platform expects its own reasoning alongside the historical
+ * assistant reply, so only reasoning from the exact selected connection and chat is retained.
  */
-export function withoutReasoning(message: ModelMessage): ModelMessage {
+export function withoutReasoning(message: ModelMessage, kimiScope?: string): ModelMessage {
     if (!Array.isArray(message.content)) return message
-    const content = message.content.filter(part => part.type !== 'reasoning')
+    const content = message.content.filter(part => part.type !== 'reasoning' || Boolean(kimiScope && isScopedKimiReasoning(part, kimiScope)))
     return content.length === message.content.length ? message : ({ ...message, content } as ModelMessage)
 }
 
@@ -116,14 +116,17 @@ export async function prepareRunHistory(ctx: RunContext, system: string, overrid
     // A source-only reply is visible in chat but neither the provider transcript nor a compaction checkpoint.
     const rows = saved.filter(row => row.id !== savedUserId && !(row.role === 'assistant' && row.sourcesJson && row.contentJson === '[]'))
     const priorSummary: ModelMessage | null = cp ? (JSON.parse(cp.summaryJson) as ModelMessage) : null
+    const kimiScope = ctx.provider === 'custom'
+        ? kimiReasoningScope(ctx.agent.resolved.connection?.custom, ctx.model, { agentId, sessionId: ctx.sessionId }) : undefined
     const live: ModelMessage[] = rows.flatMap(r => {
-        const message = withoutQuickRepliesCalls(withoutReasoning({ role: r.role, content: portableForkContent(r) } as ModelMessage))
+        const stored = { role: r.role, content: portableForkContent(r) } as ModelMessage
+        const message = withoutQuickRepliesCalls(withoutReasoning(stored, r.copiedForRegeneration ? undefined : kimiScope))
         if (!message) return []
         return [signSenders ? signHistoryMessage(message, r) : message]
     })
     const working = priorSummary ? [priorSummary, ...live] : live
 
-    const contextWindow = customConnectionContextWindow(ctx.agent.resolved.connection, ctx.model) ?? modelContextWindow(ctx.model, ctx.provider)
+    const contextWindow = desktopOpencodeModelContext(ctx.agent.resolved.connection, ctx.model) ?? customConnectionContextWindow(ctx.agent.resolved.connection, ctx.model) ?? modelContextWindow(ctx.model, ctx.provider)
     if (!contextWindow) return working
     if (estimateTokens(working, system, toolChars) < compactionThreshold(contextWindow, ctx.provider)) return working
 

@@ -2,10 +2,13 @@
 
 import { BrainTopBar, type BrainCrumb } from '@/components/brain/BrainTopBar'
 import { FilePreview } from '@/components/files/FilePreview'
+import { FileEditorDialog } from '@/components/files/FileEditorDialog'
+import type { SaveFileResult } from '@/app/api/_services/file.service'
 import { filePreviewKind } from '@/lib/files/preview'
 import { useSiblingFiles } from '@/components/files/useSiblingFiles'
 import { Button } from '@/components/ui/button'
-import { readDesktopSharedPreview, type DesktopSharedEntry } from '@/lib/desktop/shared-workspace-files'
+import { desktopFileDraftHost, holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { readDesktopSharedPreview, replaceDesktopSharedText, type DesktopSharedEntry, type DesktopSharedTextIdentity } from '@/lib/desktop/shared-workspace-files'
 import { saveDesktopSharedFile, sharedMediaUrl } from '@/lib/desktop/shared-file-previews'
 import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, FileIcon, FolderIcon } from '@/lib/icons'
 import { Badge } from '@rerun/ui/primitives'
@@ -16,7 +19,6 @@ import { DesktopFileAudioPreview } from '../DesktopFileAudioPreview'
 import { DesktopFileVideoPreview } from '../DesktopFileVideoPreview'
 import { DesktopFilePdfPreview } from '../DesktopFilePdfPreview'
 
-const TEXT = /\.(txt|md)$/i
 const joinPath = (dir: string, name: string) => (dir ? `${dir}/${name}` : name)
 const parentPath = (path: string) => path.split('/').filter(Boolean).slice(0, -1).join('/')
 
@@ -32,17 +34,26 @@ function messageOf(error: unknown, fallback: string): string {
     return error instanceof Error && error.message ? error.message : fallback
 }
 
-export function DesktopSharedFilePreview({ path, entries, onOpen }: { path: string; entries: DesktopSharedEntry[] | undefined; onOpen: (path: string, directory: boolean) => void }) {
+export function DesktopSharedFilePreview({ path, entries, onOpen, editWorkspaceId, onTextSaved }: {
+    path: string
+    entries: DesktopSharedEntry[] | undefined
+    onOpen: (path: string, directory: boolean) => void
+    editWorkspaceId?: number | null
+    onTextSaved?: () => void
+}) {
     const dir = parentPath(path)
     const name = path.split('/').pop() ?? path
-    const text = TEXT.test(name)
     const kind = filePreviewKind(name)
-    const [preview, setPreview] = useState<{ path: string; content: string | null; truncated: boolean; error: string | null } | null>(null)
+    const text = kind === 'text'
+    const [preview, setPreview] = useState<{ path: string; content: string | null; truncated: boolean; error: string | null; editIdentity?: DesktopSharedTextIdentity | null } | null>(null)
     const [attempt, setAttempt] = useState(0)
     const [previewHash, setPreviewHash] = useState<string | null>(null)
     const [saving, setSaving] = useState(false)
     const [saved, setSaved] = useState(false)
     const saveController = useRef<AbortController | null>(null)
+    const [editing, setEditing] = useState(false)
+    const editBase = useRef<DesktopSharedTextIdentity | null>(null)
+    const editController = useRef<AbortController | null>(null)
 
     useEffect(() => {
         if (!text) return
@@ -50,8 +61,7 @@ export function DesktopSharedFilePreview({ path, entries, onOpen }: { path: stri
         setPreview(null)
         void readDesktopSharedPreview(path, controller.signal)
             .then(page => { if (!controller.signal.aborted) {
-                setPreviewHash(page.editIdentity?.expectedSha256 ?? null)
-                setPreview({ path, content: page.content, truncated: page.truncated, error: null })
+                setPreview({ path, content: page.content, truncated: page.truncated, error: null, editIdentity: page.editIdentity })
             } })
             .catch(error => { if (!controller.signal.aborted) setPreview({ path, content: null, truncated: false, error: messageOf(error, 'This file could not be read') }) })
         return () => controller.abort()
@@ -61,7 +71,7 @@ export function DesktopSharedFilePreview({ path, entries, onOpen }: { path: stri
         setSaved(false)
         setSaving(false)
         saveController.current?.abort()
-        return () => { saveController.current?.abort() }
+        return () => { saveController.current?.abort(); editController.current?.abort() }
     }, [path])
 
     const siblings = useSiblingFiles({
@@ -70,8 +80,35 @@ export function DesktopSharedFilePreview({ path, entries, onOpen }: { path: stri
         onOpen: next => onOpen(joinPath(dir, next), false),
     })
     const ready = preview?.path === path ? preview : null
-    const canSave = kind ? !!previewHash : !text || ready?.content != null
+    const canSave = text ? ready !== null : kind === 'binary' || !!previewHash
+    // The shared editor preserves LF or CRLF. Keep mixed and bare-CR files read-only.
+    const lineBreaks = ready?.content?.replace(/\r\n/g, '')
+    const canEdit = !!editWorkspaceId && !!ready?.editIdentity && !ready.truncated && ready.content != null
+        && !lineBreaks?.includes('\r') && !(ready.content.includes('\r\n') && lineBreaks?.includes('\n'))
     const back = () => onOpen(dir, true)
+
+    async function saveText(content: string, baseHash: string | null): Promise<SaveFileResult> {
+        if (!editWorkspaceId || !editBase.current || baseHash === null) {
+            return { success: false, error: 'Reopen the file before saving again.' }
+        }
+        if (editController.current || isDesktopQuitting()) return { success: false, error: 'The workspace is busy.' }
+        const controller = new AbortController()
+        editController.current = controller
+        const release = holdDraftAdmission()
+        try {
+            const saved = await replaceDesktopSharedText(editWorkspaceId, path, content, editBase.current, controller.signal)
+            controller.signal.throwIfAborted()
+            editBase.current = saved.editIdentity
+            if (saved.recoveryPath) toast.success('Changes saved. The previous version is in this folder.')
+            return { success: true }
+        } catch (error) {
+            editBase.current = null
+            return { success: false, error: messageOf(error, 'The save could not be confirmed. Reopen this file before trying again.') }
+        } finally {
+            editController.current = null
+            release()
+        }
+    }
 
     async function save() {
         if (saving || !canSave) return
@@ -80,7 +117,7 @@ export function DesktopSharedFilePreview({ path, entries, onOpen }: { path: stri
         setSaving(true)
         setSaved(false)
         try {
-            const wrote = await saveDesktopSharedFile(path, name, previewHash ?? undefined, controller.signal)
+            const wrote = await saveDesktopSharedFile(path, name, (text ? ready?.editIdentity?.expectedSha256 : previewHash) ?? undefined, controller.signal)
             if (controller.signal.aborted) return
             if (wrote) setSaved(true)
             else toast.error('The shared file was not saved.')
@@ -101,6 +138,10 @@ export function DesktopSharedFilePreview({ path, entries, onOpen }: { path: stri
                     <Button size="icon-sm" variant="ghost" onClick={siblings.next} title="Next file" aria-label="Next file"><ChevronRightIcon className="size-4" /></Button>
                 </>}
                 <Button type="button" size="xs" variant="outline" disabled={saving || !canSave} onClick={() => void save()}><DownloadIcon className="size-3.5" />{saving ? 'Saving…' : 'Save As'}</Button>
+                {canEdit && <Button type="button" size="xs" variant="outline" onClick={() => {
+                    editBase.current = ready.editIdentity ?? null
+                    setEditing(true)
+                }}>Edit</Button>}
                 {saved && <Badge size="xs" tone="green" glow={false}>Saved {name}</Badge>}
                 {ready?.truncated && <Badge size="xs" tone="orange" glow={false}>Truncated</Badge>}
             </BrainTopBar>
@@ -113,6 +154,25 @@ export function DesktopSharedFilePreview({ path, entries, onOpen }: { path: stri
                     : kind === 'pdf' ? <DesktopFilePdfPreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'pdf')} onBack={back} siblings={siblings} onPreviewIdentity={setPreviewHash} />
                     : <FilePreview fileName={name} content={null} rawUrl={sharedMediaUrl(path, 'download')} loading={false} />}
             </div>
+            {editing && ready?.content != null && (
+                <FileEditorDialog
+                    fileName={name}
+                    initialContent={ready.content}
+                    host={desktopFileDraftHost()}
+                    onSave={saveText}
+                    onSaved={content => {
+                        setPreview({ ...ready, content, editIdentity: editBase.current })
+                        onTextSaved?.()
+                    }}
+                    onClose={() => {
+                        if (!editBase.current) {
+                            setPreview(null)
+                            setAttempt(value => value + 1)
+                        }
+                        setEditing(false)
+                    }}
+                />
+            )}
         </div>
     )
 }

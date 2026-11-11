@@ -7,6 +7,7 @@ import { hydrateBrainUiState } from '@/lib/desktop/brain-ui-state'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import { useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
+import { useDesktopLocale } from '../../DesktopLocale'
 import { DesktopBrainPanel } from './DesktopBrainPanel'
 import type { DesktopBrainActions, DesktopBrainRoute } from './types'
 
@@ -15,7 +16,7 @@ import type { DesktopBrainActions, DesktopBrainRoute } from './types'
  * that is being edited first, and refuses to close when a write could not land, so no keystroke is
  * dropped by a dismissal. Quit is covered by the same drafts through `subscribeDraftShutdown`.
  */
-export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false, renderProposals, triggerLabel = 'Company Brain', refreshKey, openProposalsKey, openSlug, onOpenConsumed, route, onRouteConsumed, workspaceId }: {
+export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false, renderProposals, triggerLabel, refreshKey, openProposalsKey, openSlug, onOpenConsumed, route, onRouteConsumed, workspaceId }: {
     actions: DesktopBrainActions
     dialogControl?: DesktopDialogControl
     hideTrigger?: boolean
@@ -31,6 +32,7 @@ export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false
     /** Active workspace. Root passes `runtimeWorkspaceId`. Absent until that one line lands. */
     workspaceId?: number | null
 }) {
+    const { t } = useDesktopLocale()
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     const [closing, setClosing] = useState(false)
     const [ready, setReady] = useState(false)
@@ -40,7 +42,7 @@ export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false
         if (!open) return
         let cancelled = false
         void hydrateBrainUiState().then(() => { if (!cancelled) { setReady(true); setRestoreError(null) } })
-            .catch(error => { if (!cancelled) setRestoreError(error instanceof Error ? error.message : 'Could not restore Brain drafts.') })
+            .catch(error => { if (!cancelled) setRestoreError(error instanceof Error ? error.message : '') })
         return () => { cancelled = true }
     }, [open, restoreAttempt])
 
@@ -52,7 +54,7 @@ export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false
         try {
             const flushed = await flushDesktopBrainDrafts()
             if (!flushed) {
-                toast.error('Some edits could not be saved. The Brain stays open so nothing is lost.')
+                toast.error(t('brainDesktop.closeFailed'))
                 return
             }
             setOpen(false)
@@ -62,15 +64,15 @@ export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false
     }
 
     return <Dialog open={open} onOpenChange={requestOpen} asSheet={false}>
-        {!hideTrigger && <DialogTrigger asChild><Button type="button" variant="outline" size="sm">{triggerLabel}</Button></DialogTrigger>}
+        {!hideTrigger && <DialogTrigger asChild><Button type="button" variant="outline" size="sm">{triggerLabel ?? t('brainDesktop.title')}</Button></DialogTrigger>}
         {open && <DialogContent className="flex h-[85dvh] flex-col gap-0 p-0 sm:max-w-6xl">
             <DialogHeader className="border-b border-border px-4 py-3">
-                <DialogTitle>Company Brain</DialogTitle>
-                <DialogDescription>What every coworker of this workspace reads about the company. Pages save as you type; version history keeps every change.</DialogDescription>
+                <DialogTitle>{t('brainDesktop.title')}</DialogTitle>
+                <DialogDescription>{t('brainDesktop.description')}</DialogDescription>
             </DialogHeader>
             {ready ? <DesktopBrainPanel actions={actions} onClose={() => { void requestOpen(false) }} renderProposals={renderProposals} refreshKey={refreshKey} openProposalsKey={openProposalsKey} openSlug={openSlug} onOpenConsumed={onOpenConsumed} route={route} onRouteConsumed={onRouteConsumed} workspaceId={workspaceId} />
-                : <div className="p-6" role={restoreError ? 'alert' : 'status'}>{restoreError ?? 'Restoring saved Brain drafts…'}
-                    {restoreError && <Button size="sm" onClick={() => setRestoreAttempt(value => value + 1)}>Retry</Button>}</div>}
+                : <div className="p-6" role={restoreError === null ? 'status' : 'alert'}>{restoreError === null ? t('brainDesktop.restoring') : restoreError || t('brainDesktop.restoreFailed')}
+                    {restoreError !== null && <Button size="sm" onClick={() => setRestoreAttempt(value => value + 1)}>{t('brain.workspace.retry')}</Button>}</div>}
         </DialogContent>}
     </Dialog>
 }

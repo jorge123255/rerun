@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { foremanAgentFileCatalogEntries } from './desktop-foreman-agent-files.js'
 
-export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'sharedFilesWrite', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'tableViewWrite', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'download', 'db', 'sharedDb', 'schedule', 'scheduleManage', 'toolInstall', 'guestShell', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate', 'teamRead', 'vision', 'notify', 'foremanAgentFilesRead', 'foremanAgentFilesWrite'] as const
+export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'sharedFilesWrite', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'tableViewWrite', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'download', 'db', 'sharedDb', 'schedule', 'scheduleManage', 'toolInstall', 'guestShell', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate', 'teamRead', 'aiProviders', 'vision', 'notify', 'foremanAgentFilesRead', 'foremanAgentFilesWrite'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -62,6 +62,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('filesLaunch', 'Files', 'Open and drive the file manager inside this coworker’s isolated Linux screen. Requires Computer control. This does not open Finder or publish files to the Mac.'),
     supported('notify', 'Send notifications', 'Ask for attention in this workspace inbox while the coworker keeps working. A native banner is reported separately from the inbox.', 'notify_user'),
     supported('teamRead', 'See other coworkers', 'Read their routines and runs', 'team_status', 'team_list_schedules', 'team_list_triggers', 'team_list_runs', 'team_get_run'),
+    supported('aiProviders', 'See its AI providers', 'Read the model in use, workspace provider availability, and reported subscription limits.', 'ai_status'),
     supported('services', 'Apps', 'Use tools from apps you connect in this coworker’s Apps panel. Installing an app does not enable this permission.'),
     pending('hub', 'Service catalog', 'Discover and configure Rerun services.', 'Requires an authenticated Rerun hub.'),
     pending('paidData', 'Paid data', 'Search external datasets.', 'Requires a configured provider and billing controls.'),

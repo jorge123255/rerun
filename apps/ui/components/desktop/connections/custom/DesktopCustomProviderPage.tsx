@@ -23,6 +23,7 @@ export type DesktopCustomProviderPageProps = {
     onBack: () => void
     returnFocusId?: string
     onReceipt?: (receipt: CustomProviderReceipt) => void
+    onCatalogChanged?: () => void
 }
 
 type Draft = {
@@ -61,6 +62,24 @@ function fromSnapshot(snapshot: CustomProviderSnapshot): Draft {
         catalogStatus: snapshot.catalog.status,
         vision: snapshot.config.vision,
         contextText: snapshot.config.contextWindow ? String(snapshot.config.contextWindow) : '',
+    }
+}
+
+function sameCredentialOrigin(left: string, right: string): boolean {
+    return endpointReady(left) && endpointReady(right) && new URL(left).origin === new URL(right).origin
+}
+
+function withEndpoint(current: Draft, baseUrl: string): Draft {
+    if (normalizeBase(baseUrl) === normalizeBase(current.baseUrl)) return { ...current, baseUrl }
+    return {
+        ...current,
+        baseUrl,
+        presetId: presetForUrl(baseUrl)?.id ?? null,
+        apiKey: sameCredentialOrigin(current.baseUrl, baseUrl) ? current.apiKey : '',
+        modelId: '',
+        asksModel: false,
+        catalogModels: [],
+        catalogStatus: 'never',
     }
 }
 
@@ -113,7 +132,7 @@ function scrub(message: string, secret: string): string {
     return secret.length > 0 && message.includes(secret) ? UNAVAILABLE_MESSAGE : message
 }
 
-export function DesktopCustomProviderPage({ workspaceId, identity = null, takenNames, defaultModel = null, willBecomeBoxDefault = false, adapter, onBack, returnFocusId, onReceipt }: DesktopCustomProviderPageProps) {
+export function DesktopCustomProviderPage({ workspaceId, identity = null, takenNames, defaultModel = null, willBecomeBoxDefault = false, adapter, onBack, returnFocusId, onReceipt, onCatalogChanged }: DesktopCustomProviderPageProps) {
     const formId = useId()
     const fallback = useRef<Adapter | null>(null)
     if (!fallback.current) fallback.current = createDesktopCustomProviderClient()
@@ -204,7 +223,9 @@ export function DesktopCustomProviderPage({ workspaceId, identity = null, takenN
 
     const preset = presetForUrl(draft.baseUrl)
     const keyRequired = keyRequiredFor(preset)
-    const secretSaved = Boolean(saved?.configuredSecret) && !draft.clearSecret
+    const sameSavedOrigin = saved !== null && sameCredentialOrigin(saved.config.baseUrl, draft.baseUrl)
+    const secretSaved = Boolean(saved?.configuredSecret) && sameSavedOrigin && !draft.clearSecret
+    const needsCredentialDecision = Boolean(saved?.configuredSecret) && !sameSavedOrigin && !draft.clearSecret && !draft.apiKey.trim()
     const ready = connectReady({ name: draft.name, baseUrl: draft.baseUrl, keyRequired, secretSaved, apiKey: draft.apiKey, asksModel: saved ? false : draft.asksModel, modelId: draft.modelId })
     const foreign = identity != null && identity.workspaceId !== workspaceId
     const showAdd = !saved && !identity && !foreign
@@ -221,7 +242,13 @@ export function DesktopCustomProviderPage({ workspaceId, identity = null, takenN
 
     function pick(next: DesktopCustomPreset | null) {
         bumpProbe()
-        setDraft(current => ({ ...current, presetId: next?.id ?? null, name: next ? uniqueName(next.label, takenRef.current) : uniqueName('Custom', takenRef.current), baseUrl: next?.baseUrl ?? '', asksModel: false }))
+        setDraft(current => ({ ...withEndpoint(current, next?.baseUrl ?? ''), name: uniqueName(next?.label ?? 'Custom', takenRef.current) }))
+        setError(null)
+    }
+
+    function changeBaseUrl(value: string) {
+        bumpProbe()
+        setDraft(current => withEndpoint(current, value))
         setError(null)
     }
 
@@ -229,7 +256,7 @@ export function DesktopCustomProviderPage({ workspaceId, identity = null, takenN
         const next = normalizeBase(value)
         if (!endpointReady(next) || next === normalizeBase(draftRef.current.baseUrl)) return
         bumpProbe()
-        const nextDraft = { ...draftRef.current, baseUrl: next, presetId: presetForUrl(next)?.id ?? null }
+        const nextDraft = withEndpoint(draftRef.current, next)
         draftRef.current = nextDraft
         setDraft(nextDraft)
     }
@@ -269,6 +296,7 @@ export function DesktopCustomProviderPage({ workspaceId, identity = null, takenN
             asksModel: applied.asksModel || currentDraft.asksModel,
         }))
         if (applied.notice) setError(applied.notice)
+        onCatalogChanged?.()
         return true
     }
 
@@ -355,6 +383,13 @@ export function DesktopCustomProviderPage({ workspaceId, identity = null, takenN
         try {
             const pending = held.current
             if (pending) {
+                if (pending.action === 'create') {
+                    const current = rebuild(pending)
+                    if (!current || !acceptsReplay(current, pending)) {
+                        setStatus('Saved, waiting to confirm the receipt.')
+                        return
+                    }
+                }
                 const snapshot = await finishChange(pending, controller, workspace)
                 if (snapshot && pending.action !== 'disconnect') await runProbe(snapshot, generation, controller.signal)
                 return
@@ -443,7 +478,7 @@ export function DesktopCustomProviderPage({ workspaceId, identity = null, takenN
     async function save() {
         const snapshot = savedRef.current
         const currentDraft = draftRef.current
-        if (!snapshot || busy) return
+        if (!snapshot || busy || needsCredentialDecision) return
         if (held.current && held.current.action !== 'update') {
             setStatus('Saved, waiting to confirm the receipt.')
             return
@@ -539,7 +574,7 @@ export function DesktopCustomProviderPage({ workspaceId, identity = null, takenN
                     <fieldset disabled={busy} className="min-w-0 space-y-4">
                         <DesktopCustomPresetPicker id={`${formId}-server`} selected={draft.presetId} onPick={pick} />
                         <Input id={`${formId}-name`} label="Name" value={draft.name} maxLength={60} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} helperText="Shown in every coworker's model picker" className="h-8" />
-                        <Input hideRequired id={`${formId}-base-url`} label="Base URL" value={draft.baseUrl} onChange={event => setDraft(current => ({ ...current, baseUrl: event.target.value }))} placeholder="https://your-server.com/v1" inputMode="url" autoComplete="off" spellCheck={false} className="h-8 font-mono text-xs" />
+                        <Input hideRequired id={`${formId}-base-url`} label="Base URL" value={draft.baseUrl} onChange={event => changeBaseUrl(event.target.value)} placeholder="https://your-server.com/v1" inputMode="url" autoComplete="off" spellCheck={false} className="h-8 font-mono text-xs" />
                         <Input hideRequired={keyRequired} optional={!keyRequired} id={`${formId}-api-key`} label="API key" type="password" value={draft.apiKey} onChange={event => setDraft(current => ({ ...current, apiKey: event.target.value }))} placeholder={keyRequired ? 'Paste your key' : 'None for a local server'} autoComplete="off" className="h-8 font-mono text-xs" />
                         {draft.asksModel && <Input id={`${formId}-model`} hideRequired autoFocus label="Model id" value={draft.modelId} maxLength={256} onChange={event => setDraft(current => ({ ...current, modelId: event.target.value }))} placeholder="llama3.3:70b" spellCheck={false} className="h-8 font-mono text-xs" />}
                         {willBecomeBoxDefault && <p className="text-[11px] text-muted-foreground">This becomes the workspace default: every coworker with no model of its own will run on it.</p>}
@@ -550,6 +585,7 @@ export function DesktopCustomProviderPage({ workspaceId, identity = null, takenN
                         <Input id={`${formId}-name`} label="Name" value={draft.name} maxLength={60} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} helperText="Shown in every coworker's model picker" className="h-8" />
                         <Input hideRequired={keyRequired} optional={!keyRequired} id={`${formId}-api-key`} label="API key" type="password" autoComplete="off" value={draft.apiKey} onChange={event => setDraft(current => ({ ...current, apiKey: event.target.value }))} placeholder={saved.configuredSecret ? 'Paste your key' : keyRequired ? 'Paste your key' : 'None for a local server'} helperText={saved.configuredSecret ? 'Saved keys stay hidden.' : undefined} className="h-8 font-mono text-xs" />
                         {saved.configuredSecret && !draft.clearSecret && <Button type="button" size="sm" variant="outline" onClick={() => setDraft(current => ({ ...current, clearSecret: true, apiKey: '' }))}>Remove saved key</Button>}
+                        {needsCredentialDecision && <p className="text-[11px] text-muted-foreground">Enter a key for the new server or remove the saved key before saving.</p>}
                         {draft.clearSecret && <p className="text-[11px] text-muted-foreground">The saved key will be removed when you save.</p>}
                         {draft.asksModel && <Input id={`${formId}-model`} hideRequired label="Model id" value={draft.modelId} maxLength={256} onChange={event => setDraft(current => ({ ...current, modelId: event.target.value }))} placeholder="llama3.3:70b" spellCheck={false} className="h-8 font-mono text-xs" />}
                         <DesktopCustomModelList selected={draft.selected} catalog={draft.catalogModels} catalogStatus={draft.catalogStatus} connectionVision={draft.vision} defaultModelId={defaultRef.current} missingDefault={missingDefault} onTurnOff={id => { if (id === defaultRef.current || draftRef.current.selected.length === 1) return; seedRef.current = null; setDraft(current => ({ ...current, selected: current.selected.filter(model => model.id !== id) })) }} onTurnOn={id => { const row = draft.catalogModels.find(model => model.id === id); if (!row || draft.selected.some(model => model.id === id)) return; seedRef.current = null; setDraft(current => ({ ...current, selected: [...current.selected, row] })) }} onAdd={id => { const value = id.trim(); if (!value || value.length > 256 || draft.selected.some(model => model.id === value) || draft.catalogModels.some(model => model.id === value)) return; seedRef.current = null; setDraft(current => ({ ...current, selected: [...current.selected, { id: value, contextWindow: null, vision: false, source: 'manual' }] })) }} onWindow={(id, value) => setDraft(current => ({ ...current, selected: current.selected.map(model => model.id === id && model.source === 'manual' ? { ...model, contextWindow: value } : model) }))} onVision={(id, value) => setDraft(current => ({ ...current, selected: current.selected.map(model => model.id === id ? { ...model, vision: value } : model) }))} />
@@ -559,7 +595,7 @@ export function DesktopCustomProviderPage({ workspaceId, identity = null, takenN
                 <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
                     {showAdd && <Button type="button" size="sm" disabled={busy || !ready} onClick={() => void connect()}>{busy ? 'Connecting…' : 'Connect'}</Button>}
                     {saved && dirty && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { if (savedRef.current) { setDraft(fromSnapshot(savedRef.current)); setEpoch(value => value + 1); setError(null) } }}>Discard</Button>}
-                    {saved && dirty && <Button type="button" size="sm" disabled={busy || !ready || draft.selected.length === 0} onClick={() => void save()}>Save</Button>}
+                    {saved && dirty && <Button type="button" size="sm" disabled={busy || !ready || needsCredentialDecision || draft.selected.length === 0} onClick={() => void save()}>Save</Button>}
                     {saved && !busy && <Button type="button" size="sm" variant="outline" onClick={() => void connect()}>Retry</Button>}
                     {busy && <Button type="button" size="sm" variant="outline" onClick={() => { bumpProbe(); setBusy(false); setStatus(null) }}>Cancel</Button>}
                 </div>

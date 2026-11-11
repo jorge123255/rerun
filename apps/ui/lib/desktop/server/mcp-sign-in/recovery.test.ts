@@ -73,6 +73,20 @@ test('pending inbox metadata reads preserve the exact request without touching O
     expect(authorize).toHaveBeenCalledWith(source, expect.any(AbortSignal), 'read')
 })
 
+test('a failed tool probe leaves a device-connected request ready to retry Continue', async () => {
+    const { store, input } = await fixture()
+    const ready = vi.fn(async () => { throw new Error('probe unavailable') })
+    const send = vi.fn(async () => { throw new Error('not sent') })
+    const runtime = createDesktopMcpSignInRuntimePorts({
+        store, source: async () => null, authority: async () => authority, send,
+        oauth: { start: async () => ({ state: 'idle' }), status: async () => ({ state: 'connected' }), cancel: async () => {}, ready },
+    })
+    await expect(runtime.complete(input, new AbortController().signal)).rejects.toThrow('probe unavailable')
+    expect(await store.read(input.requestId)).toMatchObject({ revision: input.expectedRevision, status: 'pending' })
+    expect((await store.read(input.requestId))?.activeAttemptId).toBeUndefined()
+    expect(send).not.toHaveBeenCalled()
+})
+
 test('a refused exact OAuth cancellation leaves decline retryable without sealing an undispatched receipt', async () => {
     const { store, input } = await fixture(), begun = await store.begin(input, authority)
     const cancel = vi.fn(async () => { throw Error('close unavailable') }), send = vi.fn(async () => { throw Error('not sent') })

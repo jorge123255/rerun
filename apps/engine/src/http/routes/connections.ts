@@ -1,5 +1,6 @@
+import { withDesktopOpencodeSelection } from '../../desktop/opencode/registry.js'
 import { Hono } from 'hono'
-import { RERUN_CONNECTION_ID, boxDefaultUpdateSchema, createConnectionSchema, updateConnectionKeysSchema, updateConnectionSchema } from '@rerun/contracts'
+import { DESKTOP_OPENCODE_CONNECTION_ID, RERUN_CONNECTION_ID, boxDefaultUpdateSchema, connectionReasoningOptions, createConnectionSchema, parseDesktopSubscriptionConnectionId, updateConnectionKeysSchema, updateConnectionSchema } from '@rerun/contracts'
 import { connectionExists, isConnected, toSummary } from '../../connections/loader.js'
 import { findConnection, getConnection, listConnections } from '../../connections/registry.js'
 import { assertConnectionDeletable, createConnection, deleteConnection, patchConnection, updateConnectionKeys } from '../../connections/store.js'
@@ -37,34 +38,50 @@ connectionRoutes.get('/', async c => {
 // Registered before `/:id`: Hono matches same-method routes in registration order, so `/default`
 // would otherwise be read as a connection id.
 connectionRoutes.put('/default', async c => {
-    const { connectionId, model, reasoningEffort } = boxDefaultUpdateSchema.parse(await c.req.json())
+    const { connectionId, model, reasoningEffort, customReasoningRevision } = boxDefaultUpdateSchema.parse(await c.req.json())
     if (namedDesktopConnection(connectionId)) return c.json({ error: 'Named API model selection is unavailable. The workspace default was not changed.' }, 409)
-    if (desktopApp() && connectionId === DESKTOP_CODEX_ID) {
+    const subscription = parseDesktopSubscriptionConnectionId(connectionId)
+    if (desktopApp() && (connectionId === DESKTOP_CODEX_ID || subscription)) {
         return withConnectionLock(connectionId, async () => {
             const connection = await findConnection(connectionId)
             if (!connection) return c.json({ error: 'connection not found' }, 404)
             assertDesktopProvider(connection.config.provider, connectionId)
-            if (connection.config.provider !== 'codex' || !isConnected(connection) || !servesModel(connection, model)) return c.json({ error: 'Choose a model from the connected Codex account.' }, 400)
-            const supported = connection.config.codexReasoning?.[model]?.supported ?? []
+            if (connection.config.provider !== (subscription?.provider ?? 'codex') || !isConnected(connection) || !servesModel(connection, model)) {
+                return c.json({ error: subscription ? 'Choose a model from the connected subscription.' : 'Choose a model from the connected Codex account.' }, 400)
+            }
+            const supported = connectionReasoningOptions(connection.config, model)?.supported ?? []
             return c.json(await updateBoxDefault(current => {
                 if (reasoningEffort !== undefined) {
                     if (current?.connectionId !== connectionId || current.model !== model) throw new HttpError(409, 'The selected model has changed. Choose the effort for the current model.')
-                    if (reasoningEffort && !supported.includes(reasoningEffort)) throw badRequest('Choose a reasoning effort supported by this Codex model.')
+                    if (reasoningEffort && !supported.includes(reasoningEffort)) throw badRequest('Choose a reasoning effort supported by this model.')
                 }
                 const effort = reasoningEffort === undefined && current?.connectionId === connectionId ? current.reasoningEffort : reasoningEffort
                 return { connectionId, model, ...(effort && supported.includes(effort) && { reasoningEffort: effort }) }
             }))
         })
     }
-    if (reasoningEffort !== undefined) return c.json({ error: 'Reasoning effort is only available for desktop Codex models.' }, 400)
-    return selectRegisteredCustomDefault(connectionId, async () => {
+    const select = async () => {
         const connection = await findConnection(connectionId)
         if (!connection) return c.json({ error: 'connection not found' }, 404)
         assertDesktopProvider(connection.config.provider, connection.id)
         if (desktopApp() && !isConnected(connection)) return c.json({ error: 'Connect this provider first.' }, 400)
         if (!servesModel(connection, model)) return c.json({ error: `This connection does not offer ${model}` }, 400)
+        if (reasoningEffort !== undefined) {
+            if (!desktopApp() || !connection.custom) return c.json({ error: 'This connection does not offer reasoning controls.' }, 400)
+            const revision = connection.custom.revision
+            if (customReasoningRevision !== revision) return c.json({ error: 'The provider connection changed. Refresh its models before choosing an effort.' }, 409)
+            if (reasoningEffort !== null && !connectionReasoningOptions(connection.config, model)?.supported.includes(reasoningEffort))
+                return c.json({ error: 'Choose a reasoning effort supported by this model.' }, 400)
+            return c.json(await updateBoxDefault(current => {
+                if (current?.connectionId !== connectionId || current.model !== model)
+                    throw new HttpError(409, 'The selected model has changed. Choose the effort for the current model.')
+                return { connectionId, model, ...(reasoningEffort && { reasoningEffort, customReasoningRevision: revision }) }
+            }))
+        }
         return c.json(await writeBoxDefault({ connectionId, model }))
-    })
+    }
+    return connectionId === DESKTOP_OPENCODE_CONNECTION_ID && desktopApp()
+        ? withDesktopOpencodeSelection(select) : selectRegisteredCustomDefault(connectionId, select)
 })
 
 connectionRoutes.delete('/default', async c => {

@@ -1,5 +1,6 @@
 import { desktopCodexGrantsSchema, desktopRerunGrantsSchema } from './desktop-tool-grants.js'
 import { z } from 'zod'
+import { desktopSubscriptionProvider } from './desktop-subscription-login.js'
 
 // Tools surface as "<server>_<tool>" and CLI providers key their config records by server name, so
 // anything outside this set (a dot, a space) makes every run of the agent fail at settings
@@ -74,7 +75,7 @@ export type SelfImprovement = z.infer<typeof selfImprovementSchema>
 export type SelfImprovementKey = keyof SelfImprovement
 export const SELF_IMPROVEMENT_KEYS = Object.keys(selfImprovementSchema.shape) as SelfImprovementKey[]
 
-export const providerSchema = z.enum(['rerun', 'anthropic', 'claude', 'codex', 'openai', 'google', 'openrouter', 'custom'])
+export const providerSchema = z.enum(['rerun', 'anthropic', 'claude', 'codex', 'openai', 'google', 'openrouter', 'custom', 'opencode', ...desktopSubscriptionProvider.options])
 export type Provider = z.infer<typeof providerSchema>
 
 // The names the boxes know the Rerun models by. Aliases, not OpenRouter ids: the hub proxy resolves
@@ -113,7 +114,10 @@ export const DEFAULT_PROVIDER_MODEL: Record<Provider, string> = {
     openai: 'gpt-5.4',
     google: 'gemini-3.6-flash',
     openrouter: 'anthropic/claude-sonnet-5.5',
+    opencode: 'go/deepseek-v4-pro',
     custom: '', // A custom connection must offer the exact selected model.
+    'grok-build': '',
+    'kimi-code': '',
 }
 
 // How much prose the agent addresses to the user, independent of how much work it does. `normal`

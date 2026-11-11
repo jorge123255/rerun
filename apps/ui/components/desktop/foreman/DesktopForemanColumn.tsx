@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { ForemanAnchor, OrbActivity } from '@rerun/ui/foreman'
 import { DesktopForemanDockLayout, DesktopParkedForeman, useDesktopForemanDockBinding } from './dock'
 import { DEFAULT_DOCK_EXTRAS } from '@/lib/desktop/foreman-dock'
@@ -22,9 +22,16 @@ import { useDesktopForemanUi } from './useDesktopForemanUi'
 import type { DesktopForemanIntakeController } from '@/lib/desktop/foreman-intake'
 import { DesktopForemanIntakeCard, DesktopForemanIntakeHeader } from './intake'
 import { DesktopStarterPack } from './starter-pack'
+import { DesktopStarterOfferCard } from './starter-pack/DesktopStarterOfferCard'
+import type { DesktopLocalStarterDecision, DesktopStarterView } from '@/lib/desktop/foreman-client/starter'
 import { DesktopQuestionCard } from '@/components/desktop/DesktopQuestionCard'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import type { DesktopTemplateIdentity } from '@/components/desktop/templates/types'
+import { Button } from '@/components/ui/button'
+import { RotateCwIcon } from '@/lib/icons'
+import { useDesktopLocale } from '../DesktopLocale'
+import { DesktopForemanAlternateReview, DesktopForemanAlternates } from './DesktopForemanAlternates'
+import { useDesktopForemanAlternates } from './useDesktopForemanAlternates'
 
 function anchorOf(placement: DesktopForemanPlacement): ForemanAnchor {
     if (placement.mode === 'float') return 'float'
@@ -36,6 +43,7 @@ export type DesktopForemanColumnProps = {
     ports: DesktopForemanActionPorts
     live: { runId: string } | null
     messages: DesktopForemanMessage[]
+    retrySnapshot?: string
     streaming?: boolean
     question?: DesktopPendingQuestion | null
     onAnswerQuestion?: (answer: DesktopQuestionAnswer) => Promise<void>
@@ -49,6 +57,7 @@ export type DesktopForemanColumnProps = {
     openOnMount?: boolean
     refreshKey?: string | number
     composerTrailing?: ReactNode
+    sendDisabled?: boolean
     focusRequest?: string
     controlledOpen?: boolean
     hidden?: boolean
@@ -56,6 +65,9 @@ export type DesktopForemanColumnProps = {
     dockFeed?: ExactDockFeed | null
     voiceSlot?: ReactNode
     intake?: DesktopForemanIntakeController
+    intakeFinished?: boolean
+    starter?: DesktopStarterView | null
+    onStarterAnswer?: (input: DesktopLocalStarterDecision) => Promise<void>
     /** Opens the template library on one template's review; absent until root wires the seam. */
     onReviewTemplate?: (template: DesktopTemplateIdentity) => void
     onOpenChange?: (open: boolean) => void
@@ -71,14 +83,16 @@ export function DesktopForemanColumn({
     ports,
     live,
     messages,
+    retrySnapshot,
     streaming,
     question, onAnswerQuestion,
     agentNameOf,
     orbState = 'idle',
     headerActions,
     renderBoardOverlay,
-    className, onClose, openOnMount, refreshKey, composerTrailing, focusRequest, controlledOpen, hidden, centerOpen, dockFeed, voiceSlot, intake, onReviewTemplate, onOpenChange, onLayout,
+    className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, controlledOpen, hidden, centerOpen, dockFeed, voiceSlot, intake, intakeFinished, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
+    const { t } = useDesktopLocale()
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
     const savedAnswers = messages.some(message => message.role === 'assistant' && !!message.text.trim())
     const answerFeedback = useDesktopForemanFeedback(chat, !hidden && foreman.restored && savedAnswers)
@@ -90,7 +104,33 @@ export function DesktopForemanColumn({
     const { ui } = foreman
     const composerScope = useRef({ chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft })
     composerScope.current = { chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft }
+    const pendingStarter = !!starter && !starter.decision?.settled
+    const onRoutines = ui.tab === 'routines'
+    const alternates = useDesktopForemanAlternates({
+        chat, snapshot: retrySnapshot, active: !!retrySnapshot && ui.open && !hidden && !onRoutines && !intake && foreman.restored,
+        eligible: !!retrySnapshot && !streaming && !question && !pendingStarter && !foreman.blocked && ui.decision.status !== 'pending',
+    })
+    const { close: closeAlternates, open: alternatesOpen } = alternates
+    const starterInFlight = useRef(false)
+    const [starterBusy, setStarterBusy] = useState(false)
+    const [starterError, setStarterError] = useState<{ offerId: string; message: string } | null>(null)
+    const answerStarter = async (choice: DesktopLocalStarterDecision['choice'], fromComposer = false) => {
+        if (!starter || !onStarterAnswer || starterInFlight.current || hidden || streaming || foreman.blocked) return
+        const scope = composerScope.current
+        starterInFlight.current = true
+        setStarterBusy(true)
+        setStarterError(null)
+        try {
+            await onStarterAnswer({ offerId: starter.offerId, intakeRequestId: starter.intakeRequestId, digest: starter.digest, choice })
+            const current = composerScope.current
+            const confirmedDraft = fromComposer || choice.kind === 'text' && scope.draft.trim() === choice.text.trim()
+            if (confirmedDraft && current.chatId === scope.chatId && current.workspaceId === scope.workspaceId && current.draft === scope.draft) foreman.setDraft('')
+        } catch (error) {
+            setStarterError({ offerId: starter.offerId, message: error instanceof Error ? error.message : 'Could not save the starter choice.' })
+        } finally { starterInFlight.current = false; setStarterBusy(false) }
+    }
     const send = (text: string) => {
+        if (pendingStarter) { void answerStarter({ kind: 'text', text }, true); return }
         if (!intake) { void foreman.sendMessage(text); return }
         const scope = composerScope.current
         void intake.sendOwn(text).then(confirmed => {
@@ -117,6 +157,7 @@ export function DesktopForemanColumn({
         if (!focusRequest || !foreman.restored || consumedFocus.current === focusRequest) return
         if (!ui.open) { changeOpen(true); return }
         if (ui.tab !== 'assistant') { foreman.setTab('assistant'); return }
+        if (alternatesOpen) { closeAlternates(); return }
         let focused = false
         const focus = () => {
             const target = column.current?.querySelector<HTMLInputElement | HTMLTextAreaElement>(intake ? '[data-foreman-intake] input:not([disabled])' : 'textarea[data-desktop-foreman-composer]')
@@ -126,13 +167,12 @@ export function DesktopForemanColumn({
         observer.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['inert'] })
         queueMicrotask(focus)
         return () => { focused = true; observer.disconnect() }
-    }, [focusRequest, foreman.restored, ui.open, ui.tab, foreman.setOpen, foreman.setTab, changeOpen, intake?.restored])
+    }, [focusRequest, foreman.restored, ui.open, ui.tab, foreman.setOpen, foreman.setTab, changeOpen, intake?.restored, alternatesOpen, closeAlternates])
     const routinesClient = useMemo(() => createDesktopWorkspaceRoutinesClient(), [])
-    const onRoutines = ui.tab === 'routines'
     const plan = projectPlanCard(foreman.planSnapshot)
     const docked = ui.placement.mode === 'dock'
     // The rail takes the empty conversation's place instead of sitting under the welcome orb.
-    const starterPack = Boolean(onReviewTemplate && foreman.restored && messages.length === 0 && !plan.view && !foreman.build)
+    const starterPack = Boolean(!intakeFinished && !starter && onReviewTemplate && foreman.restored && messages.length === 0 && !plan.view && !foreman.build)
     return (
         <>
         <DesktopForemanDockLayout scope={dockBinding.scope} open={ui.open} hidden={hidden}
@@ -147,9 +187,14 @@ export function DesktopForemanColumn({
                     tab={ui.tab}
                     onTabChange={foreman.setTab}
                     onClose={() => changeOpen(false)}
-                    actions={headerActions}
+                    actions={<>
+                        {headerActions}
+                        {retrySnapshot && !onRoutines && !intake && alternates.items.length > 0 && !alternates.open &&
+                            <Button type="button" size="icon-xs" variant="ghost" aria-label={t('foreman.alternates.title')}
+                                title={t('foreman.alternates.title')} onClick={alternates.openList}><RotateCwIcon /></Button>}
+                    </>}
                 />
-                <div className={onRoutines ? 'hidden' : 'contents'}>
+                <div className={onRoutines || alternates.open ? 'hidden' : 'contents'}>
                     {intake ? <>
                         <div className="relative flex min-h-0 flex-1 flex-col justify-center overflow-y-auto px-3 py-6">
                             <DesktopForemanIntakeHeader intake={intake} />
@@ -162,14 +207,14 @@ export function DesktopForemanColumn({
                         restored={foreman.restored}
                         question={foreman.restored && !streaming && question && onAnswerQuestion
                             ? <DesktopQuestionCard question={question} disabled={hidden || !!foreman.blocked} onAnswer={onAnswerQuestion} /> : null}
-                        emptyWelcome={!starterPack}
+                        emptyWelcome={!starterPack && !pendingStarter}
                         planSnapshot={foreman.planSnapshot}
                         decisionStatus={ui.decision}
                         build={foreman.build}
                         nextSteps={foreman.nextSteps}
                         leadState={foreman.leadState}
                         live={foreman.live}
-                        error={foreman.error || (foreman.blocked ? `Blocked: ${foreman.blocked.replaceAll('_', ' ')}` : null)}
+                        error={(starterError?.offerId === starter?.offerId ? starterError?.message : null) || alternates.error || foreman.error || (foreman.blocked ? `Blocked: ${foreman.blocked.replaceAll('_', ' ')}` : null)}
                         onConfirmPlan={foreman.confirmPlan}
                         onAskChanges={() => foreman.askChanges()}
                         onRetryDecision={foreman.retryDecision}
@@ -181,6 +226,8 @@ export function DesktopForemanColumn({
                         onOpenCoworker={input => foreman.navigate({ kind: 'open_coworker', agentId: input.agentId, sessionId: input.sessionId })}
                         onOpenBox={spaceId => foreman.navigate({ kind: 'open_box', spaceId })}
                         answerFeedback={{ ratingOf: answerFeedback.ratingOf, onRate: answerFeedback.rate, disabled: hidden }}
+                        replyRetry={retrySnapshot ? { review: id => void alternates.reviewReply(id),
+                            disabled: !!streaming || !!question || pendingStarter || !!foreman.blocked || alternates.busy || ui.decision.status === 'pending' } : undefined}
                         className="min-h-0 flex-1"
                     >
                         {starterPack && onReviewTemplate && <DesktopStarterPack
@@ -188,18 +235,30 @@ export function DesktopForemanColumn({
                             active={ui.open && !hidden}
                             onReviewTemplate={onReviewTemplate}
                         />}
+                        {starter && onStarterAnswer && foreman.restored && <DesktopStarterOfferCard key={starter.offerId} offer={starter}
+                            disabled={!!hidden || !!streaming || starterBusy || !!foreman.blocked}
+                            onAnswer={choice => { void answerStarter(choice) }} onStop={() => { void foreman.stop() }} />}
                     </DesktopForemanChatLayer>
                     </>}
                     <DesktopForemanComposer
-                        trailing={intake ? undefined : ui.open ? voiceSlot ?? composerTrailing : composerTrailing}
+                        trailing={intake || pendingStarter ? undefined : composerTrailing}
+                        controls={intake || pendingStarter || !ui.open ? undefined : voiceSlot}
+                        placeholder={intake || pendingStarter ? t('foreman.ownEntryPlaceholder') : undefined}
+                        maxLength={intake || pendingStarter ? 4000 : undefined}
                         draft={ui.draft}
                         onDraftChange={foreman.setDraft}
                         busy={!!streaming}
-                        disabled={!!question || !foreman.restored || !!foreman.blocked || ui.decision.status === 'pending' || Boolean(intake && (!intake.restored || intake.submitting || intake.quitting || intake.conflicted || ui.draft.trim().length > 4000))}
+                        sendDisabled={sendDisabled}
+                        disabled={!!question || !foreman.restored || !!foreman.blocked || ui.decision.status === 'pending'
+                            || pendingStarter && (!onStarterAnswer || starterBusy || !!starter?.decision)
+                            || Boolean(intake && (!intake.restored || intake.submitting || intake.quitting || intake.conflicted))}
                         onSend={send}
                         onStop={() => void foreman.stop()}
                     />
                 </div>
+                {!onRoutines && alternates.open && <DesktopForemanAlternates ui={alternates}
+                    sourceText={id => messages.find(message => message.id === id)?.text} />}
+                <DesktopForemanAlternateReview ui={alternates} />
                 {onRoutines && (
                     <DesktopWorkspaceRoutines
                         key={`${chat.workspaceId}:${chat.chatId}`}

@@ -3,6 +3,12 @@ import { z } from 'zod'
 export const sessionSourceSchema = z.enum(['dashboard', 'builder', 'schedule', 'agent', 'delegate', 'api', 'trigger'])
 export type SessionSource = z.infer<typeof sessionSourceSchema>
 
+export const desktopAutomationResultSchema = z.strictObject({
+    title: z.string().trim().min(1).max(80),
+    outcome: z.enum(['done', 'nothing']),
+})
+export type DesktopAutomationResult = z.infer<typeof desktopAutomationResultSchema>
+
 export const sessionSchema = z.object({
     id: z.string(),
     agentId: z.string(),
@@ -13,6 +19,7 @@ export const sessionSchema = z.object({
     originSessionId: z.string().nullable().default(null),
     createdAt: z.string(),
     updatedAt: z.string(),
+    automationResult: desktopAutomationResultSchema.optional(),
 })
 export type Session = z.infer<typeof sessionSchema>
 
@@ -30,6 +37,7 @@ export const messageSchema = z.object({
     sourcesJson: z.string().nullish(),
     // Absent on an engine older than message attribution, null when nobody typed the message.
     authorId: z.string().nullish(),
+    authorName: z.string().nullish(),
     createdAt: z.string(),
 })
 export type Message = z.infer<typeof messageSchema>

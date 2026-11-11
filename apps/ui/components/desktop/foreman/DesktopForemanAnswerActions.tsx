@@ -1,9 +1,10 @@
 'use client'
 
 import { MessageAction, MessageActions } from '@/components/ai-elements/message'
-import { ThumbsDownIcon, ThumbsUpIcon } from '@/lib/icons'
+import { RotateCwIcon, ThumbsDownIcon, ThumbsUpIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { MessageFeedbackRating } from '@rerun/contracts'
+import { useDesktopLocale } from '../DesktopLocale'
 
 function FeedbackThumb({ rating, current, disabled, onRate }: {
     rating: MessageFeedbackRating
@@ -27,14 +28,19 @@ function FeedbackThumb({ rating, current, disabled, onRate }: {
     )
 }
 
-/** The original thumbs row, limited to a saved Foreman answer. No copy, regenerate or dialog;
- * the local feedback authority only records the rating. */
-export function DesktopForemanAnswerActions({ rating, disabled, onRate }: {
+export function DesktopForemanAnswerActions({ rating, disabled, onRate, onReviewRetry, retryDisabled }: {
     rating: MessageFeedbackRating | null
     disabled?: boolean
     onRate: (rating: MessageFeedbackRating) => void
+    onReviewRetry?: () => void
+    retryDisabled?: boolean
 }) {
+    const { t } = useDesktopLocale()
     return <MessageActions className="mt-1" aria-label="Rate this answer">
+        {onReviewRetry && <MessageAction tooltip={t('foreman.alternates.regenerate')} label={t('foreman.alternates.regenerate')}
+            disabled={disabled || retryDisabled} onClick={onReviewRetry}>
+            <RotateCwIcon className="size-3.5" />
+        </MessageAction>}
         <FeedbackThumb rating="up" current={rating} disabled={disabled} onRate={onRate} />
         <FeedbackThumb rating="down" current={rating} disabled={disabled} onRate={onRate} />
     </MessageActions>

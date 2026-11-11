@@ -1,5 +1,6 @@
 // Icons of the open source build, drawn from lucide-react under the names the app uses.
 import type { FC, SVGProps } from 'react'
+export { MicIcon } from 'lucide-react'
 import {
     ActivityIcon as LucideActivityIcon,
     AlertCircle as LucideAlertCircle,

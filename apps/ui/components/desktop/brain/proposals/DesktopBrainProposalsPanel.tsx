@@ -2,6 +2,7 @@
 
 import { PageColumn } from '@/components/brain/BrainPageParts'
 import { BrainTopBar } from '@/components/brain/BrainTopBar'
+import { useBrainTranslations } from '@/components/brain/brain-translations'
 import { ProposalList } from '@/components/brain/proposals/ProposalList'
 import { Button } from '@/components/ui/button'
 import { DesktopBrainRequestError } from '@/lib/desktop/brain-pages'
@@ -19,6 +20,7 @@ type Pending = z.infer<typeof pendingSchema>
 function messageOf(error: unknown): string { return error instanceof Error && error.message ? error.message : 'Company brain proposals could not be opened.' }
 
 export function DesktopBrainProposalsPanel({ onOpenPage, onDecided }: { onOpenPage: (slug: string) => void; onDecided?: (change: { slug: string; requestId: string }) => void }) {
+    const t = useBrainTranslations()
     const [proposals, setProposals] = useState<DesktopBrainProposalView[] | null>(null)
     const [ready, setReady] = useState(false)
     const [storageFailure, setStorageFailure] = useState<string | null>(null)
@@ -89,11 +91,11 @@ export function DesktopBrainProposalsPanel({ onOpenPage, onDecided }: { onOpenPa
     }
     return (
         <>
-            <BrainTopBar crumbs={[{ label: 'Proposals', icon: InboxIcon }]} />
+            <BrainTopBar crumbs={[{ label: t('crumbs.proposals'), icon: InboxIcon }]} />
             <div className="min-h-0 flex-1 overflow-y-auto">
                 <PageColumn className="max-w-[820px]">
-                    <h1 className="text-[2rem] font-semibold leading-tight tracking-tight">Proposals</h1>
-                    <p className="mt-1 text-sm text-muted-foreground">What your coworkers learned about the company and want written down. Accept a change to save it, or dismiss it to keep the page as it is.</p>
+                    <h1 className="text-[2rem] font-semibold leading-tight tracking-tight">{t('proposals.title')}</h1>
+                    <p className="mt-1 text-sm text-muted-foreground">{t('proposals.description')}</p>
                     <div className="mt-8">
                         {storageFailure && <p role="alert" className="mb-3 text-sm text-destructive">{storageFailure}</p>}
                         {failed && <p role="alert" className="mb-3 text-sm text-destructive">{failed}</p>}

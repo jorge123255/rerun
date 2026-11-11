@@ -85,6 +85,18 @@ function CursorIcon({ className = 'size-3.5' }: IconProps) {
     )
 }
 
+export const OPENCODE_FRAME_PATH = 'M384 416H128V96H384V416ZM320 160H192V352H320V160Z'
+export const OPENCODE_CORE_PATH = 'M320 224V352H192V224H320Z'
+
+function OpenCodeIcon({ className = 'size-3.5' }: IconProps) {
+    return (
+        <svg className={className} viewBox="80 80 352 352" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d={OPENCODE_CORE_PATH} opacity={0.4} />
+            <path fillRule="evenodd" clipRule="evenodd" d={OPENCODE_FRAME_PATH} />
+        </svg>
+    )
+}
+
 const PROVIDER_ICONS: Record<string, (p: IconProps) => JSX.Element> = {
     rerun: RerunIcon,
     anthropic: AnthropicIcon,
@@ -95,6 +107,7 @@ const PROVIDER_ICONS: Record<string, (p: IconProps) => JSX.Element> = {
     google: GoogleIcon,
     apple: AppleIcon,
     openrouter: OpenRouterIcon,
+    opencode: OpenCodeIcon,
 }
 
 // Brand logo for a catalog provider id. A provider with no logo of its own — a user's own

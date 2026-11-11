@@ -16,6 +16,7 @@ import { ChevronDownIcon, FolderIcon, PencilIcon, TerminalIcon, GlobeIcon, WandS
 import { cn } from '@/lib/utils'
 import type { DesktopAgentView } from './DesktopApp'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
+import { useDesktopLocale } from './DesktopLocale'
 
 async function requestTools(url: string, init: RequestInit): Promise<CoworkerTools> {
     const response = await fetch(url, init)
@@ -30,6 +31,8 @@ const nativeIcons = { workspaceRead: FolderIcon, workspaceWrite: PencilIcon, she
 
 function CapabilityCard({ agentId, group, row, saving, toggle }: { agentId: string; group: DesktopToolGroup; row: CoworkerToolRow; saving: boolean; toggle: (patch: CoworkerToolPatch) => void }) {
     const id = useId()
+    const { language } = useDesktopLocale()
+    const copy = group === 'rerun' && row.id === 'aiProviders' ? language.messages.aiProviderTool : row
     const icon = group === 'codex' ? nativeIcons[row.id as keyof typeof nativeIcons] ?? WrenchIcon : row.tools[0] ? getToolMeta(row.tools[0]).icon : WrenchIcon
     return <div className={cn('flex flex-col gap-2 p-3', PANEL_CARD)}>
         <div className="flex items-start justify-between gap-2">
@@ -38,9 +41,9 @@ function CapabilityCard({ agentId, group, row, saving, toggle }: { agentId: stri
                 onCheckedChange={enabled => toggle({ group, id: row.id, enabled })} />
         </div>
         <div>
-            <label htmlFor={id} className="text-sm font-medium">{row.label}</label>
+            <label htmlFor={id} className="text-sm font-medium">{copy.label}</label>
             <div id={`${id}-info`} className="text-xs text-muted-foreground">
-                <p>{row.description}</p>
+                <p>{copy.description}</p>
                 {row.unavailableReason && <p className="mt-1">{row.unavailableReason}</p>}
             </div>
         </div>

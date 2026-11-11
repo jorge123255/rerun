@@ -5,6 +5,7 @@ import { getSession, getRun } from '@/lib/engine/client'
 import { findDesktopAgent, sessionOf } from '../store'
 import { withRosterWrite } from '../roster-writes'
 import { DesktopHttpError } from '../auth'
+import { conversationSearchKey } from '../../chat-search'
 
 /** Bound slow dependency implementations as well as native fetch; late reads never adopt. */
 export function scheduleRead<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -33,12 +34,13 @@ export async function adoptDesktopScheduledSession(db:Client,engine:EngineConnec
         options.signal?.throwIfAborted()
         if(!owner || owner.engineAgentId!==input.engineAgentId)throw new DesktopHttpError(409,'Coworker identity changed')
         const now=new Date().toISOString()
+        const title = session.title.slice(0, 80)
         const results=await db.batch([{
-            sql:`INSERT INTO desktop_sessions(id,agent_id,engine_session_id,title,created_at,updated_at)
-                SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM desktop_agents WHERE id=? AND engine_agent_id=? AND workspace_id=1)
+            sql:`INSERT INTO desktop_sessions(id,agent_id,engine_session_id,title,title_search,created_at,updated_at)
+                SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM desktop_agents WHERE id=? AND engine_agent_id=? AND workspace_id=1)
                 AND NOT EXISTS(SELECT 1 FROM desktop_deletions WHERE agent_id=?)
                 ON CONFLICT(engine_session_id) DO NOTHING`,
-            args:[crypto.randomUUID(),owner.id,session.id,session.title.slice(0,80),session.createdAt,now,owner.id,input.engineAgentId,owner.id],
+            args:[crypto.randomUUID(),owner.id,session.id,title,conversationSearchKey(title),session.createdAt,now,owner.id,input.engineAgentId,owner.id],
         },{sql:'SELECT * FROM desktop_sessions WHERE agent_id=? AND engine_session_id=?',args:[owner.id,session.id]}],'write')
         const row=results[1].rows[0]
         if(!row)throw new DesktopHttpError(409,'Conversation ownership conflict')

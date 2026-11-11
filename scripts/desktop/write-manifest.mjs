@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import { dirname, relative, join } from 'node:path'
 import { desktopDir, resourcesDir } from './lib.mjs'
 import { sourceStamp, requireStamp } from './provenance.mjs'
+import { stagedSubscriptionManifest } from './subscription-runners.mjs'
 
 await mkdir(resourcesDir, { recursive: true })
 const stamp = await sourceStamp()
@@ -28,6 +29,7 @@ const manifest = {
     renameHelperPath: 'runtime/helpers/rerun-rename-entry',
     pdfHelperPath: 'runtime/pdf-helper/rerun-render-pdf',
     pdfTextHelperPath: 'runtime/pdf-helper/rerun-pdf-text',
+    ...await stagedSubscriptionManifest(join(resourcesDir, 'runtime/engine'), resourcesDir),
 }
 const file = join(resourcesDir, 'runtime-manifest.json')
 await writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`)

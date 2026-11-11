@@ -11,7 +11,7 @@ const desktopMain = fileURLToPath(new URL('../../apps/desktop/src/main/', import
 const { loadBundle } = await import(join(desktopMain, 'runtime.mjs'))
 const { RuntimeSupervisor } = await import(join(desktopMain, 'supervisor.mjs'))
 
-async function fakeResources() {
+async function fakeResources(includeSubscriptionRunner = false) {
     const root = await mkdtemp(join(tmpdir(), 'rerun-packaged-layout-'))
     await mkdir(join(root, 'runtime', 'node', 'bin'), { recursive: true })
     await mkdir(join(root, 'runtime', 'ui'), { recursive: true })
@@ -26,6 +26,10 @@ async function fakeResources() {
     await writeFile(join(root, 'runtime', 'rerun-rename-entry'), 'fake')
     await writeFile(join(root, 'runtime', 'rerun-render-pdf'), 'fake')
     await writeFile(join(root, 'runtime', 'rerun-pdf-text'), 'fake')
+    if (includeSubscriptionRunner) {
+        await writeFile(join(root, 'runtime', 'grok-build'), 'fake')
+        await writeFile(join(root, 'runtime', 'rerun-subscriptions.sb'), 'fake')
+    }
     await writeFile(join(root, 'runtime-manifest.json'), JSON.stringify({
         protocolVersion: 1,
         buildId: 'layout-test-desktop-0.1.0',
@@ -40,6 +44,9 @@ async function fakeResources() {
         renameHelperPath: 'runtime/rerun-rename-entry',
         pdfHelperPath: 'runtime/rerun-render-pdf',
         pdfTextHelperPath: 'runtime/rerun-pdf-text',
+        ...(includeSubscriptionRunner ? {
+            grokBuildPath: 'runtime/grok-build', subscriptionSandboxPath: 'runtime/rerun-subscriptions.sb',
+        } : {}),
     }))
     return root
 }
@@ -78,6 +85,7 @@ test('loadBundle resolves the packaged UI host from the manifest inside resource
         assert.equal(bundle.claudePath, await realpath(resolve(root, 'runtime', 'rerun-claude')))
         assert.equal(bundle.claudeSandboxPath, await realpath(resolve(root, 'runtime', 'rerun-claude.sb')))
         assert.equal(bundle.pdfHelperPath, await realpath(resolve(root, 'runtime', 'rerun-render-pdf')))
+        assert.equal(bundle.subscriptionSandboxPath, undefined)
         assert.equal(bundle.pdfTextHelperPath, await realpath(resolve(root, 'runtime', 'rerun-pdf-text')))
     } finally { await rm(root, { recursive: true, force: true }) }
 })
@@ -93,7 +101,7 @@ test('loadBundle rejects a UI host path that escapes resources', async () => {
 })
 
 test('the supervisor launches the UI child through the real resource path, never an app.asar path', async () => {
-    const resources = await fakeResources()
+    const resources = await fakeResources(true)
     const dataRoot = await mkdtemp(join(tmpdir(), 'rerun-packaged-data-'))
     try {
         const bundle = await loadBundle(resources)
@@ -137,6 +145,10 @@ test('the supervisor launches the UI child through the real resource path, never
         assert.equal(spawned[1].env.RERUN_DESKTOP_PDF_HELPER, undefined)
         assert.equal(spawned[1].env.RERUN_DESKTOP_PDF_TEXT_HELPER, undefined)
         assert.equal(spawned[1].args[0], bundle.engineEntry)
+        assert.equal(uiSpawn.env.RERUN_DESKTOP_GROK_BUILD_RUNNER, undefined)
+        assert.equal(spawned[1].env.RERUN_DESKTOP_GROK_BUILD_RUNNER, await realpath(join(resources, 'runtime/grok-build')))
+        assert.equal(spawned[1].env.RERUN_DESKTOP_KIMI_CODE_RUNNER, undefined)
+        assert.equal(spawned[1].env.RERUN_DESKTOP_SUBSCRIPTION_SANDBOX, await realpath(join(resources, 'runtime/rerun-subscriptions.sb')))
 
         await supervisor.stop()
         assert.equal(supervisor.children.size, 0)
@@ -145,6 +157,21 @@ test('the supervisor launches the UI child through the real resource path, never
         await rm(resources, { recursive: true, force: true })
         await rm(dataRoot, { recursive: true, force: true })
     }
+})
+
+test('loadBundle requires the offline policy with optional runners and rejects runner symlinks', async () => {
+    const root = await fakeResources(true)
+    try {
+        const file = join(root, 'runtime-manifest.json')
+        const manifest = JSON.parse(await readFile(file, 'utf8'))
+        const { subscriptionSandboxPath, ...withoutPolicy } = manifest
+        await writeFile(file, JSON.stringify(withoutPolicy))
+        await assert.rejects(loadBundle(root), /Invalid bundled subscription runner manifest/)
+        await writeFile(file, JSON.stringify({ ...withoutPolicy, subscriptionSandboxPath }))
+        await rm(join(root, 'runtime/grok-build'))
+        await symlink(join(root, 'runtime/rerun-claude'), join(root, 'runtime/grok-build'))
+        await assert.rejects(loadBundle(root), /cannot be a symlink/)
+    } finally { await rm(root, { recursive: true, force: true }) }
 })
 
 test('loadBundle refuses a missing, traversing, or externally linked PDF helper', async () => {

@@ -1,4 +1,4 @@
-import type { DesktopDocumentAdmission, DesktopDocumentAttachment, DesktopDocumentScope, DesktopDocumentSelection } from '@rerun/contracts'
+import type { DesktopDocumentAdmission, DesktopDocumentAttachment, DesktopDocumentRenderedImage, DesktopDocumentScope, DesktopDocumentSelection } from '@rerun/contracts'
 
 export type DesktopDocumentAttachmentRecord = { attachment: DesktopDocumentAttachment; fingerprint: string; deletion?: boolean }
 export type DesktopDocumentAdmissionRecord = { scope: DesktopDocumentScope; selection: DesktopDocumentSelection; fingerprint: string; admission: DesktopDocumentAdmission }
@@ -16,8 +16,9 @@ export interface DesktopDocumentStore {
     cancelUpload(scope: DesktopDocumentScope, attachmentId: string): Promise<void>
 }
 export interface DesktopDocumentBlobStore {
-    put(scope: DesktopDocumentScope, attachment: DesktopDocumentAttachment, bytes: Uint8Array, signal: AbortSignal): Promise<void>
+    put(scope: DesktopDocumentScope, attachment: DesktopDocumentAttachment, bytes: Uint8Array, signal: AbortSignal, rendered?: Uint8Array): Promise<void>
     read(scope: DesktopDocumentScope, attachment: DesktopDocumentAttachment, signal: AbortSignal): Promise<Uint8Array>
+    readRenderedImage(scope: DesktopDocumentScope, attachment: DesktopDocumentAttachment, image: DesktopDocumentRenderedImage, signal: AbortSignal): Promise<Uint8Array>
     delete(scope: DesktopDocumentScope, attachment: DesktopDocumentAttachment, signal: AbortSignal): Promise<void>
 }
 export type DesktopDocumentAuthorities = {

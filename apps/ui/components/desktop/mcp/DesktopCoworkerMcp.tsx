@@ -8,7 +8,7 @@ import { PlugIcon, PlusIcon } from '@/lib/icons'
 import { PanelListHeader, PanelScroller } from '@/components/ui/panel-list'
 import { PanelSteps } from '@/components/ui/panel-steps'
 import { PanelDeleteButton, PanelEditorBody, PanelEditorFooter, PanelEditorHeader, PanelEditorShell } from '@/components/ui/panel-editor'
-import type { RemoteServer } from '@/lib/desktop/server/mcp/model'
+import type { RemoteMcpConfiguration, RemoteServer } from '@/lib/desktop/server/mcp/model'
 import { DesktopMcpStdioConnection } from './DesktopMcpStdioConnection'
 import type { StdioConnection } from '@/lib/desktop/server/mcp-stdio/store'
 import { DesktopMcpSseConnection } from '../mcp-sse/DesktopMcpSseConnection'
@@ -105,9 +105,14 @@ function CoworkerMcpPanel({agentId}:{agentId:string}) {
         <p className="p-3 text-xs text-muted-foreground">Remote servers and local programs have separate permissions in Tools. Local programs run as your Mac user and can access Mac files and the network. Probe results describe one completed connection.</p></div>}
     </PanelSteps>
 }
-export function DesktopMcpServerEditor({server,onSave,onDelete,onBack,credentialsOnly=false,onChooseTransport}:{server?:RemoteServer;credentialsOnly?:boolean;onChooseTransport?:(transport:'http'|'sse'|'stdio')=>void;onSave:(input:{name:string;url:string;revision?:string;bearer?:string})=>Promise<void>;onDelete?:()=>Promise<void>;onBack:()=>void}) {
+export function DesktopMcpServerEditor({server,onSave,onDelete,onBack,credentialsOnly=false,onChooseTransport}:{server?:RemoteServer;credentialsOnly?:boolean;onChooseTransport?:(transport:'http'|'sse'|'stdio')=>void;onSave:(input:RemoteMcpConfiguration)=>Promise<void>;onDelete?:()=>Promise<void>;onBack:()=>void}) {
     const [name,setName]=useState(server?.name ?? ''),[url,setUrl]=useState(server?.url ?? ''),[bearer,setBearer]=useState('')
     const [replace,setReplace]=useState(!server?.hasBearer),[busy,setBusy]=useState(false),[error,setError]=useState('')
+    const [deviceEnabled,setDeviceEnabled]=useState(!!server?.deviceClient)
+    const [clientId,setClientId]=useState(server?.deviceClient?.clientId ?? '')
+    const [verificationUri,setVerificationUri]=useState(server?.deviceClient?.verificationUri ?? '')
+    const showDevice = !credentialsOnly && !(replace ? bearer : server?.hasBearer)
+    const saveDevice = showDevice && deviceEnabled
     const pending=useRef(false), mounted=useRef(true)
     // Unmount drops the editor's local credential state; it is never lifted into panel/config state.
     useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false}},[])
@@ -125,6 +130,14 @@ export function DesktopMcpServerEditor({server,onSave,onDelete,onBack,credential
         {credentialsOnly ? <p className="text-xs">SSE · Authentication</p> : <DesktopMcpTransportButtons value="http" disabled={!!server || busy} onChange={onChooseTransport}/>}<Field label="URL" htmlFor="desktop-mcp-url"><Input id="desktop-mcp-url" value={url} onChange={e=>setUrl(e.target.value)} disabled={busy || credentialsOnly}/></Field>
         <label className="text-xs"><input type="checkbox" disabled={busy} checked={replace} onChange={e=>setReplace(e.target.checked)}/> Replace bearer (empty means anonymous)</label>
         {replace && <Field label="Bearer credential" htmlFor="desktop-mcp-bearer"><Input id="desktop-mcp-bearer" type="password" autoComplete="off" value={bearer} onChange={e=>setBearer(e.target.value)} disabled={busy}/></Field>}
-        </PanelEditorBody><PanelEditorFooter><Button disabled={busy || !name || !url || credentialsOnly && !replace} onClick={()=>perform(()=>onSave({name,url,revision:server?.revision,...(replace ? {bearer} : {})}))}>Save</Button>
+        {showDevice && <label className="flex items-center gap-2 text-xs"><input type="checkbox" disabled={busy} checked={deviceEnabled} onChange={e=>setDeviceEnabled(e.target.checked)}/> Configure device sign-in</label>}
+        {saveDevice && <>
+            <Field label="Public OAuth client ID" htmlFor="desktop-mcp-device-client" helperText="Use the client ID issued for this device integration."><Input id="desktop-mcp-device-client" value={clientId} onChange={e=>setClientId(e.target.value)} disabled={busy} maxLength={256}/></Field>
+            <Field label="Verification page" htmlFor="desktop-mcp-device-verification" helperText="Use the provider’s HTTPS sign-in page without a verification code."><Input id="desktop-mcp-device-verification" type="url" value={verificationUri} onChange={e=>setVerificationUri(e.target.value)} disabled={busy} maxLength={4096}/></Field>
+        </>}
+        </PanelEditorBody><PanelEditorFooter><Button disabled={busy || !name || !url || credentialsOnly && !replace || saveDevice && (!clientId.trim() || !verificationUri.trim())} onClick={()=>perform(()=>onSave({
+            name,url,revision:server?.revision,...(replace ? {bearer} : {}),
+            ...(saveDevice ? {deviceClient:{clientId:clientId.trim(),verificationUri:verificationUri.trim()}} : server?.deviceClient ? {deviceClient:null} : {}),
+        }))}>Save</Button>
         {onDelete && <PanelDeleteButton label="Delete MCP server" disabled={busy} busy={busy} onClick={()=>perform(onDelete)}/>}</PanelEditorFooter></PanelEditorShell>
 }

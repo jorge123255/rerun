@@ -1,13 +1,19 @@
 import 'server-only'
 import { EngineRequestError, getAgent, patchAgent } from '@/lib/engine/client'
 import type { ConnectionSummary } from '@rerun/contracts'
-import { buildDesktopModelView, offeredModelIds, usableConnection, type DesktopModelPick, type DesktopModelSource, type DesktopModelView } from '../chat-model'
+import { buildDesktopModelView, customReasoningUnavailable, offeredModelIds, usableConnection, type DesktopModelPick, type DesktopModelSource, type DesktopModelView } from '../chat-model'
 import { DesktopHttpError } from './auth'
 import { disabledCoworkerMessage } from './coworker-enabled'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { desktopModel, engineOf, readDesktopProviders } from './settings'
 import { findDesktopAgent, findDesktopSession, setDesktopSessionModel, type DesktopAgent, type DesktopSession } from './store'
+
+export async function assertDesktopImageModel(runtime: DesktopRuntime, connectionId: string | undefined) {
+    const { connections } = await readDesktopProviders(runtime)
+    if (connections.find(connection => connection.id === connectionId)?.provider !== 'codex')
+        throw new DesktopHttpError(400, 'Image attachments need a ChatGPT / Codex model. Choose one before sending.')
+}
 
 const WORKSPACE_REQUIRED = 'Connect a provider and choose a default model in Settings.'
 
@@ -86,6 +92,11 @@ export async function resolveDesktopChatModel(runtime: DesktopRuntime, agent: De
     // override then replaces it for this send without writing the workspace choice back.
     const workspace = await desktopModel(runtime)
     const { connections } = workspace
+    const select = (pick: DesktopModelPick, source: DesktopModelSource) => {
+        if (customReasoningUnavailable(usableConnection(connections, pick), pick.model, workspace.default))
+            throw new DesktopHttpError(409, 'The saved reasoning effort needs review. Choose an available effort or Model default in Settings.')
+        return { ...pick, source }
+    }
     // Check the canonical config even for a conversation override. A lost disable reply must
     // not create a first-turn reservation or an alternate-chat intent in the UI database.
     const coworker = await engineCoworker(runtime, agent)
@@ -94,13 +105,13 @@ export async function resolveDesktopChatModel(runtime: DesktopRuntime, agent: De
     if (conversation) {
         if (requested) offered(connections, requested)
         else if (!usableConnection(connections, conversation)) throw new DesktopHttpError(409, 'This conversation’s model is no longer available. Choose another model or follow the coworker default.')
-        return { ...conversation, source: 'conversation' }
+        return select(conversation, 'conversation')
     }
     if (coworker.model) {
         const pick = coworker.connectionId ? { connectionId: coworker.connectionId, model: coworker.model } : null
         if (!usableConnection(connections, pick)) throw new DesktopHttpError(409, 'This coworker’s default model is no longer available. Choose another model or follow the workspace default.')
-        return { connectionId: pick!.connectionId, model: coworker.model, source: 'coworker' }
+        return select(pick!, 'coworker')
     }
     if (!offeredModelIds(workspace.connection).includes(workspace.model)) throw new DesktopHttpError(400, WORKSPACE_REQUIRED)
-    return { connectionId: workspace.connection.id, model: workspace.model, source: 'workspace' }
+    return select({ connectionId: workspace.connection.id, model: workspace.model }, 'workspace')
 }

@@ -274,9 +274,8 @@ async function open(id: string): Promise<SystemDb> {
     mkdirSync(agentDataDir(id), { recursive: true })
     const client = createClient({ url: `file:${systemDbPath(id)}` })
     await migrateSystemDb(client, systemDbPath(id))
-    // Only the managed Mac Foreman records reply provenance. Reconcile this independent
-    // table on open so either desktop or hosted migration ladders can open the profile.
-    if (desktopApp() && id === FOREMAN_AGENT_ID) await client.execute(`
+    // Reconcile the managed Mac Foreman's tables independently of the shared migration ladder.
+    if (desktopApp() && id === FOREMAN_AGENT_ID) await client.executeMultiple(`
         CREATE TABLE IF NOT EXISTS desktop_foreman_reply_sources (
             run_id TEXT PRIMARY KEY NOT NULL,
             workspace_id TEXT NOT NULL,
@@ -284,7 +283,21 @@ async function open(id: string): Promise<SystemDb> {
             user_message_id TEXT NOT NULL,
             assistant_message_id TEXT UNIQUE,
             reply_digest TEXT
-        )
+        );
+        CREATE TABLE IF NOT EXISTS desktop_foreman_alternate_sessions (
+            request_id TEXT PRIMARY KEY NOT NULL,
+            workspace_id TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            source_session_id TEXT NOT NULL,
+            source_message_id TEXT NOT NULL,
+            source_run_id TEXT NOT NULL,
+            source_user_message_id TEXT NOT NULL,
+            reply_digest TEXT NOT NULL,
+            transcript_revision TEXT NOT NULL,
+            session_id TEXT UNIQUE NOT NULL,
+            run_id TEXT UNIQUE NOT NULL,
+            user_message_id TEXT UNIQUE NOT NULL
+        );
     `)
     const entry: SystemDb = { client, db: drizzle(client, { schema }) }
     pool.set(id, entry)

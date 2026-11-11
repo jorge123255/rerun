@@ -33,6 +33,9 @@
             "somethingElse": "Etwas anderes",
             "attachFiles": "Dateien anhängen",
             "dropFiles": "Dateien zum Anhängen hier ablegen",
+            "record": "Mit deiner Stimme antworten",
+            "useRecording": "Diese Aufnahme verwenden",
+            "discardRecording": "Aufnahme verwerfen",
             "selectAll": "Wähle alles Zutreffende",
             "dismiss": "Fragen schließen",
             "skip": "Überspringen",
@@ -212,10 +215,11 @@
         }
     },
     "foreman": {
-        "orbLabel": "Rerun fragen",
+        "orbLabel": "Deinen Chief of Staff fragen",
+        "tabsLabel": "Chief of Staff",
         "empty": {
             "title": "Frag alles zu deinem Workspace",
-            "description": "Rerun baut und betreibt deine Coworker mit dir"
+            "description": "Dein Chief of Staff baut und betreibt deine Coworker mit dir"
         },
         "header": {
             "closeChat": "Chat schließen",

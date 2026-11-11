@@ -27,9 +27,10 @@ export type ForemanTurn = {
     brief: ForemanBrief
     question?: DesktopForemanQuestionGuard
     answerIntent?: DesktopQuestionAnswer
+    starterOfferId?: string
 }
-export function foremanTurnWire({ answerIntent: _answerIntent, ...body }: ForemanTurn) {
-    return body
+export function foremanTurnWire({ binding, sessionId, text, brief, question }: ForemanTurn) {
+    return { binding, sessionId, text, brief, ...(question && { question }) }
 }
 const LOCKS = Symbol.for('rerun.desktop.foreman.chat-locks.v1')
 const locks = () => ((globalThis as unknown as Record<symbol, WeakMap<Client, Promise<unknown>>>)[LOCKS] ??= new WeakMap())
@@ -44,7 +45,7 @@ export async function ensureForemanChat(db: Client, workspaceId: string): Promis
     const row = (await db.execute({ sql: 'SELECT * FROM desktop_foreman_chats WHERE workspace_id=?', args: [workspaceId] })).rows[0]!
     return { chat: { workspaceId, chatId: String(row.chat_id) }, sessionId: String(row.engine_session_id), model: row.model ? JSON.parse(String(row.model)) : null }
 }
-export async function ownedForemanChat(db: Client, chat: DesktopForemanChatRef): Promise<ForemanChat> {
+export async function ownedForemanChat(db: Pick<Client, 'execute'>, chat: DesktopForemanChatRef): Promise<ForemanChat> {
     const row = (await db.execute({ sql: 'SELECT * FROM desktop_foreman_chats WHERE workspace_id=? AND chat_id=?', args: [chat.workspaceId, chat.chatId] })).rows[0]
     if (!row) throw new DesktopHttpError(404, 'Foreman conversation not found.')
     return { chat, sessionId: String(row.engine_session_id), model: row.model ? JSON.parse(String(row.model)) : null }

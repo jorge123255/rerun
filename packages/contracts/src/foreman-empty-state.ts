@@ -1,3 +1,5 @@
+import { FOREMAN_DISPLAY_NAME } from './foreman.js'
+
 // The four questions a new conversation with a coworker offers, on every client.
 export const COWORKER_STARTER_SUGGESTIONS = ['What can you help me with?', 'Summarize your recent work', 'Review my project files', 'What tools do you have access to?']
 
@@ -25,7 +27,7 @@ function mentionOf(agent: TeamAgent): string {
 // three things to ask that send or prefill the composer. `nextRoutine` comes computed: reading cron
 // expressions is the caller's business.
 export function teamEmptyStateOf({ agents, nextRoutine, firstName }: { agents: TeamAgent[]; nextRoutine: TeamPulse['nextRoutine']; firstName: string }): TeamEmptyStateModel {
-    const greeting = firstName ? `Hi ${firstName}, I'm Rerun` : "Hi, I'm Rerun"
+    const greeting = firstName ? `Hi ${firstName}, I'm your ${FOREMAN_DISPLAY_NAME}` : `Hi, I'm your ${FOREMAN_DISPLAY_NAME}`
     const team = agents.filter(agent => !agent.disabledAt)
 
     if (team.length === 0) {

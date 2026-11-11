@@ -55,6 +55,35 @@ it('persists immutable send identity before execution and recovers the same requ
     expect(sends.every(body => JSON.stringify(body.modelChoice) === JSON.stringify(model))).toBe(true)
     expect(server.ui.snapshot?.pendingSend).toBeUndefined()
 })
+it('uses an acknowledged model immediately and ignores a state read that predates the change', async () => {
+    const transport = vi.mocked(fetch).getMockImplementation()!
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let read = false
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+        if (!init?.body && !read) {
+            read = true
+            const prior = structuredClone(server)
+            await gate
+            return Response.json(prior)
+        }
+        const body = init?.body && JSON.parse(String(init.body))
+        if (body?.action === 'model') {
+            bodies.push(body)
+            server.model = body.model
+            return Response.json({ model: server.model })
+        }
+        return transport(url, init)
+    })
+    const client = connect()
+    const earlierRead = client.refresh()
+    await client.setModel(null, model)
+    release()
+    expect((await earlierRead).model).toEqual(model)
+    expect(await client.ports.conversation.sendMessage('Use the selected model')).toBe(true)
+    expect(bodies.find(body => body.action === 'model')).toEqual({ action: 'model', chat, expected: null, model })
+    expect(bodies.find(body => body.action === 'send')?.modelChoice).toEqual(model)
+})
 it('recovers only an exact saved snapshot after a lost UI ACK and then advances the CAS revision', async () => {
     const transport = vi.mocked(fetch).getMockImplementation()!
     let lost = false
@@ -68,6 +97,28 @@ it('recovers only an exact saved snapshot after a lost UI ACK and then advances 
     await client.ports.persistence.save({ ...server.ui.snapshot!, draft: 'second' })
     expect(server.ui.snapshot?.draft).toBe('second')
     expect(bodies.filter(body => body.action === 'ui').map(body => body.expectedRevision)).toEqual([0, 1])
+})
+it('recovers an exact starter answer after a lost response without sending ordinary chat', async () => {
+    const offerId = randomUUID(), intakeRequestId = randomUUID(), digest = 'a'.repeat(64)
+    const choice = { kind: 'text' as const, text: 'Design a support coworker' }
+    server.starter = { offerId, intakeRequestId, digest, decision: null, cards: [{ templateId: 'b'.repeat(32), revision: 'c'.repeat(64), title: 'Support' }] }
+    const transport = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : null
+        if (body?.action === 'starter') {
+            bodies.push(body)
+            server.starter!.decision = { choice, settled: true }
+            throw new Error('Lost starter response')
+        }
+        return transport(url, init)
+    })
+    const client = connect()
+    expect(await client.ports.conversation.sendMessage(choice.text)).toBe(false)
+    await expect(client.answerStarter({ offerId, intakeRequestId, digest: 'd'.repeat(64), choice })).rejects.toThrow('cannot be answered')
+    expect(bodies).toEqual([])
+    await expect(client.answerStarter({ offerId, intakeRequestId, digest, choice })).resolves.toBeUndefined()
+    expect(bodies).toEqual([{ action: 'starter', chat, input: { offerId, intakeRequestId, digest, choice } }])
+    expect((await client.refresh()).starter?.decision).toEqual({ choice, settled: true })
 })
 it('refuses foreign state and hides context parts from restored transcript', async () => {
     server.messages = [{ id: 'one', role: 'user', parts: [{ type: 'text', text: 'Visible message' }, { type: 'text', text: 'private context', providerOptions: { rerun: { context: true } } }] }]
