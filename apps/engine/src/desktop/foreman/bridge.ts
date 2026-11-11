@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { foremanBindingSchema, type DesktopForemanChatRef, type CompanyBriefModelRef, type DesktopForemanBinding, type DesktopForemanQuestionGuard, type ForemanAlternateRequest, type ForemanBrief } from '@rerun/contracts'
+import { foremanBindingSchema, foremanModelRefSchema, type DesktopForemanChatRef, type CompanyBriefModelRef, type DesktopForemanBinding, type DesktopForemanQuestionGuard, type ForemanAlternateRequest, type ForemanBrief } from '@rerun/contracts'
 export type ForemanRuntime = { workspaceId?: number | string; launchNonce: string; app: { origin: string }; engine: { apiKey: string } }
 export type ForemanIdentity = { engineAgentId: 'foreman'; sessionId: string; runId: string }
 export type ForemanTurn = { binding: DesktopForemanBinding; sessionId: string; text: string; brief: ForemanBrief; question?: DesktopForemanQuestionGuard }
@@ -7,7 +7,7 @@ export type ForemanBridgeBody =
     | { action: 'brief_model'; chat: DesktopForemanChatRef; model: CompanyBriefModelRef }
     | { action: 'binding'; identity: ForemanIdentity }
     | { action: 'admit'; turn: ForemanTurn }
-    | { action: 'alternate'; operation: 'prepare' | 'lookup'; target: ForemanAlternateRequest }
+    | { action: 'alternate'; operation: 'prepare' | 'lookup' | 'start' | 'stop'; target: ForemanAlternateRequest }
     | { action: 'show_plan'; binding: DesktopForemanBinding; toolCallId: string; input: unknown }
     | { action: 'navigate'; binding: DesktopForemanBinding; eventId: string; intent: unknown }
     | { action: 'discover'; binding: DesktopForemanBinding; url: string }
@@ -46,6 +46,10 @@ export function createDesktopForemanBridge(runtime: ForemanRuntime, network: typ
         async admit(turn: ForemanTurn, signal: AbortSignal) { z.object({ ok: z.literal(true) }).parse(await request({ action: 'admit', turn }, signal)) },
         async authorizeAlternate(operation: 'prepare' | 'lookup', target: ForemanAlternateRequest, signal: AbortSignal) {
             z.strictObject({ ok: z.literal(true) }).parse(await request({ action: 'alternate', operation, target }, signal))
+        },
+        async alternateRunAuthority(operation: 'start' | 'stop', target: ForemanAlternateRequest, signal: AbortSignal) {
+            return z.strictObject({ sessionId: z.uuid(), runId: z.uuid(), model: foremanModelRefSchema.optional() })
+                .parse(await request({ action: 'alternate', operation, target }, signal))
         },
         close() { closed.abort() },
     }

@@ -247,6 +247,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     const author = trigger.source === 'chat' ? trigger.author : undefined
     const savedUser = trigger.source === 'chat' ? trigger.savedUser : undefined
     const queuedUser = trigger.source === 'chat' ? trigger.queuedUser : undefined
+    const foremanAlternate = trigger.source === 'chat' && trigger.foremanAlternate === true
 
     let agent = baseAgent
     let { connection, provider, model } = baseAgent.resolved
@@ -377,7 +378,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             outcome = { kind: 'error', error: String(settlement.error), errorCode }
         }
 
-        await setAgentStatus(agent.id, 'idle').catch(() => {})
+        if (!foremanAlternate) await setAgentStatus(agent.id, 'idle').catch(() => {})
         // Codex only writes its rotated token to auth.json once the CLI has exited, so the next run
         // must not be able to start before this returns. Capped rather than awaited outright: a
         // teardown that hangs used to be enough to keep the whole conversation busy forever.
@@ -426,7 +427,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             }
         }
 
-        if (outcome.kind === 'done' && !pending && agent.config.selfImprovement.enabled && userText) {
+        if (!foremanAlternate && outcome.kind === 'done' && !pending && agent.config.selfImprovement.enabled && userText) {
             void runCurator(agent, sessionId, userText, text ?? '', override).catch(e => logger.warn({ err: String(e) }, 'curator failed'))
         }
 
@@ -462,6 +463,10 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         // itself stays the shared instance, so a token refreshed here is refreshed for everyone.
         assertDesktopRunAdmission(admission)
         const resolved = await resolveRunModel(baseAgent, override)
+        if (foremanAlternate && (!desktopApp() || baseAgent.id !== FOREMAN_AGENT_ID || !savedUser || savedUser.sessionId !== sessionId
+            || override?.connectionId !== resolved.connection?.id || override?.model !== resolved.model)) {
+            throw new Error('This Chief of Staff retry lost its conversation or model.')
+        }
         if (desktopApp()) {
             if (trigger.source === 'schedule' && trigger.requireExactModel) assertExactDesktopScheduleModel(override, resolved)
             const { admitDesktopApiConnectionRun } = await import('../desktop/api-connections/run-authority.js')
@@ -470,7 +475,10 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         agent = resolved === baseAgent.resolved ? baseAgent : { ...baseAgent, resolved }
         ;({ connection, provider, model } = resolved)
         assertDesktopProvider(provider, resolved.connection?.id)
-        if (desktopApp() && provider === 'codex') {
+        if (foremanAlternate) {
+            // An alternate has no authority over the original chat's tools, decisions or files.
+            agent = { ...agent, config: { ...agent.config, tools: { ...agent.config.tools, desktopCodexGrants: {} } } }
+        } else if (desktopApp() && provider === 'codex') {
             assertDesktopRunAdmission(admission)
             const config = await beginDesktopCodexRun(agent.id, run.id, controller.signal)
             if (!agent.config.selfImprovement.enabled) config.selfImprovement = { ...config.selfImprovement, enabled: false }
@@ -486,8 +494,8 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         void setRunContext(agent.id, run.id, { provider, model, triggerSource: trigger.source, triggerSlug }).catch(() => {})
 
         const subscription = isDesktopSubscriptionProvider(provider)
-        const callTargetsP = !subscription && agent.config.tools.callAgent ? listAgentIndex().then(idx => idx.filter(a => a.id !== agent.id && !a.name.endsWith(' delegate'))) : Promise.resolve([])
-        const toolsP = subscription ? Promise.resolve({ tools: {}, close: async () => {} }) :
+        const callTargetsP = !foremanAlternate && !subscription && agent.config.tools.callAgent ? listAgentIndex().then(idx => idx.filter(a => a.id !== agent.id && !a.name.endsWith(' delegate'))) : Promise.resolve([])
+        const toolsP = foremanAlternate || subscription ? Promise.resolve({ tools: {}, close: async () => {} }) :
             callTargetsP.then(callTargets => {
                 ctx.callTargets = callTargets
                 return buildTools(ctx)
@@ -498,7 +506,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         const mcpServersP = provider === 'claude' ? preparedP.then(servers => withPooledRelays(agent, servers)) : preparedP
         cliAuthP = ensureCliAuth(provider, connection)
 
-        void setAgentStatus(agent.id, 'busy').catch(err => logger.warn({ err: String(err), agent: agent.id }, 'setAgentStatus busy failed'))
+        if (!foremanAlternate) void setAgentStatus(agent.id, 'busy').catch(err => logger.warn({ err: String(err), agent: agent.id }, 'setAgentStatus busy failed'))
 
         const system = await buildSystemPrompt(agent, trigger, provider, order)
         const systemText = systemPromptText(system)
@@ -581,7 +589,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         closeModel = resolvedModel.close
         contextUsage = resolvedModel.contextUsage
         // Cut out of the text whoever wrote it; only a coworker that offers replies gets the buttons.
-        if (offersQuickReplies(agent.config)) quickReplies = resolvedModel.quickReplies
+        if (!foremanAlternate && offersQuickReplies(agent.config)) quickReplies = resolvedModel.quickReplies
         const languageModel = resolvedModel.model
 
         let lastStepAt = Date.now()

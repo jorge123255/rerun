@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
-import { FOREMAN_AGENT_ID, foremanAlternateRequestSchema, foremanBindingSchema, foremanBriefSchema, foremanDigestSchema, foremanQuestionGuardSchema, foremanReplyTargetSchema } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, foremanAlternateRequestSchema, foremanAlternateRunActionSchema, foremanBindingSchema, foremanBriefSchema, foremanDigestSchema, foremanQuestionGuardSchema, foremanReplyTargetSchema } from '@rerun/contracts'
 import { withAgentLock } from '../../agents/lock.js'
 import { getAgent } from '../../agents/registry.js'
 import { resolveRunModel } from '../../agents/availability.js'
@@ -21,6 +21,7 @@ import { readDesktopForemanBinding } from './binding.js'
 import { readForemanQuestion } from './question.js'
 import type { createDesktopForemanBridge } from './bridge.js'
 import { createForemanFilePermissionRoutes } from '../foreman-agent-files/permissions.js'
+import { runForemanAlternate } from './alternate-run.js'
 export const desktopForemanChatSchema = z.strictObject({
     binding: foremanBindingSchema.extend({ runId: z.uuid() }), sessionId: z.uuid(),
     text: z.string().min(1).max(20_000).refine(value => !!value.trim()),
@@ -93,6 +94,21 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
             return c.json({ alternate }, 200, { 'cache-control': 'no-store' })
         } catch {
             return c.json({ error: 'The Chief of Staff alternate was not confirmed.' }, 409, { 'cache-control': 'no-store' })
+        }
+    })
+    routes.post('/alternate/run', bodyLimit({ maxSize: 4096 }), async c => {
+        const bridge = readBinding()
+        if (!desktopApp() || !bridge) return c.json({ error: 'Desktop Foreman is unavailable.' }, 404)
+        const input = z.strictObject({ action: foremanAlternateRunActionSchema, target: foremanAlternateRequestSchema })
+            .safeParse(await c.req.json().catch(() => null))
+        if (!input.success) return c.json({ error: 'Invalid alternate run request.' }, 400)
+        try {
+            const result = await runForemanAlternate(input.data.action, input.data.target, bridge, readBinding, c.req.raw.signal)
+            return c.json(result, 200, { 'cache-control': 'no-store' })
+        } catch (error) {
+            const status = error instanceof HttpError ? error.status : null
+            return c.json({ error: 'The Chief of Staff retry could not be confirmed.' }, status === 404 || status === 503 ? status : 409,
+                { 'cache-control': 'no-store' })
         }
     })
     routes.post('/chat', async c => {

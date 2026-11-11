@@ -13,7 +13,7 @@ const schema = z.discriminatedUnion('action', [
     z.strictObject({ action: z.literal('brief_model'), launchNonce: z.string(), chat: foremanChatRefSchema, model: companyBriefModelSchema }),
     z.strictObject({ action: z.literal('binding'), launchNonce: z.string(), identity: z.strictObject({ engineAgentId: z.literal('foreman'), sessionId: z.string(), runId: z.uuid() }) }),
     z.strictObject({ action: z.literal('admit'), launchNonce: z.string(), turn: z.strictObject({ binding: foremanBindingSchema, sessionId: z.uuid(), text: z.string().max(20_000), brief: foremanBriefSchema, question: foremanQuestionGuardSchema.optional() }) }),
-    z.strictObject({ action: z.literal('alternate'), launchNonce: z.string(), operation: z.enum(['prepare', 'lookup']), target: foremanAlternateRequestSchema }),
+    z.strictObject({ action: z.literal('alternate'), launchNonce: z.string(), operation: z.enum(['prepare', 'lookup', 'start', 'stop']), target: foremanAlternateRequestSchema }),
     base.extend({ action: z.literal('show_plan'), toolCallId: z.string().min(1).max(256), input: z.unknown() }).strict(),
     base.extend({ action: z.literal('navigate'), eventId: z.string().min(1).max(128), intent: foremanNavigationIntentSchema }).strict(),
     base.extend({ action: z.literal('discover'), url: z.url().max(2048) }).strict(),
@@ -23,8 +23,7 @@ export async function POST(request: Request) {
         const runtime = await authenticateDesktopEngineRequest(request), input = schema.parse(await readDesktopJson(request, 48 * 1024))
         if (input.launchNonce !== runtime.launchNonce) throw new DesktopHttpError(409, 'Foreman launch changed.')
         if (input.action === 'alternate') {
-            await authorizeForemanAlternate(runtime, input.operation, input.target)
-            return Response.json({ ok: true })
+            return Response.json(await authorizeForemanAlternate(runtime, input.operation, input.target))
         }
         const app = await desktopForeman(runtime)
         if (input.action === 'brief_model') return Response.json({ ok: isDeepStrictEqual(await app.modelChoice(input.chat), input.model) })

@@ -1,11 +1,11 @@
 import 'server-only'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
-import { foremanAlternateRequestSchema, foremanAlternateReservationSchema, foremanReplySourceSchema, type ForemanAlternateRequest } from '@rerun/contracts'
-import { request } from '@/lib/engine/client'
+import { foremanAlternateRequestSchema, foremanAlternateReservationSchema, foremanAlternateRunSchema, foremanModelRefSchema, foremanReplySourceSchema, type ForemanAlternateRequest, type ForemanAlternateRunRequest } from '@rerun/contracts'
+import { EngineRequestError, request } from '@/lib/engine/client'
 import { DesktopHttpError } from '../auth'
 import { desktopForeman } from '../foreman/binding'
-import { ownedForemanChat, withForemanChatWrite } from '../foreman/chat-store'
+import { foremanTurn, ownedForemanChat, withForemanChatWrite } from '../foreman/chat-store'
 import type { DesktopRuntime } from '../runtime'
 import { engineOf } from '../settings'
 import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
@@ -80,23 +80,74 @@ export async function bindForemanAlternates(runtime: DesktopRuntime, signal: Abo
     }
 }
 
-// The engine callback must not reacquire the chat lock held by the app's request.
-export async function authorizeForemanAlternate(runtime: DesktopRuntime, operation: 'prepare' | 'lookup', target: ForemanAlternateRequest) {
+async function ownedAlternateReceipt(runtime: DesktopRuntime, chat: ForemanAlternateRunRequest['chat'], requestId: string) {
     assertDesktopWorkspaceAdmission(runtime)
-    if (target.workspaceId !== String(runtime.workspaceId)) throw refused()
+    if (chat.workspaceId !== String(runtime.workspaceId)) throw refused()
     const app = await desktopForeman(runtime)
-    const owner = await ownedForemanChat(app.db, { workspaceId: target.workspaceId, chatId: target.chatId })
-    if (owner.sessionId !== target.sessionId) throw refused()
+    const owner = await ownedForemanChat(app.db, chat)
     const row = (await app.db.execute({
         sql: 'SELECT body FROM desktop_foreman_alternates WHERE request_id=? AND workspace_id=? AND chat_id=?',
-        args: [target.requestId, target.workspaceId, target.chatId],
+        args: [requestId, chat.workspaceId, chat.chatId],
     })).rows[0]
     if (!row) throw refused()
-    const receipt = JSON.parse(String(row.body)) as AlternateReceipt
-    if (!isDeepStrictEqual(engineTarget(receipt.input, receipt.proof), target)) throw refused()
+    const body = String(row.body)
+    const receipt = JSON.parse(body) as AlternateReceipt
+    const target = engineTarget(receipt.input, receipt.proof)
+    if (target.sessionId !== owner.sessionId || target.requestId !== requestId
+        || target.workspaceId !== chat.workspaceId || target.chatId !== chat.chatId) throw refused()
+    return { app, owner, receipt, target, body }
+}
+
+export async function changeForemanAlternateRun(runtime: DesktopRuntime, command: ForemanAlternateRunRequest, signal: AbortSignal) {
+    const app = await desktopForeman(runtime)
+    return withForemanChatWrite(app.db, async () => {
+        signal.throwIfAborted()
+        const { receipt, target, body } = await ownedAlternateReceipt(runtime, command.chat, command.requestId)
+        if (receipt.state !== 'ready' || !receipt.alternate) throw refused()
+        if (command.action === 'start' && receipt.runIntent === 'stop') throw refused()
+        if (command.action !== 'status' && command.action !== receipt.runIntent) {
+            const saved = await app.db.execute({
+                sql: 'UPDATE desktop_foreman_alternates SET body=? WHERE request_id=? AND body=?',
+                args: [JSON.stringify({ ...receipt, runIntent: command.action }), command.requestId, body],
+            })
+            if (saved.rowsAffected !== 1) throw refused()
+        }
+        try {
+            const result = await request(engineOf(runtime), '/desktop/foreman/alternate/run', {
+                method: 'POST', body: JSON.stringify({ action: command.action, target }), redirect: 'error',
+                signal: AbortSignal.any([signal, AbortSignal.timeout(25_000)]),
+            }, value => foremanAlternateRunSchema.parse(value))
+            if (result.sessionId !== receipt.alternate.sessionId || result.runId !== receipt.alternate.runId) throw refused()
+            return { requestId: command.requestId, status: result.status }
+        } catch (error) {
+            if (error instanceof EngineRequestError && error.status === 409) throw refused()
+            if (error instanceof DesktopHttpError) throw error
+            throw new DesktopHttpError(503, 'The retry status could not be confirmed. Check this same retry before starting another.')
+        }
+    })
+}
+
+// The engine callback must not reacquire the chat lock held by the app's request.
+export async function authorizeForemanAlternate(runtime: DesktopRuntime, operation: 'prepare' | 'lookup' | 'start' | 'stop', target: ForemanAlternateRequest) {
+    const { app, owner, receipt, target: owned } = await ownedAlternateReceipt(runtime,
+        { workspaceId: target.workspaceId, chatId: target.chatId }, target.requestId)
+    if (!isDeepStrictEqual(owned, target)) throw refused()
     if (operation === 'prepare') {
         if (receipt.state !== 'reserved') throw refused()
         await app.assertAlternateIdle(owner.chat)
     }
+    if (operation === 'start' || operation === 'stop') {
+        if (receipt.state !== 'ready' || !receipt.alternate || receipt.runIntent !== operation) throw refused()
+        const { sessionId, runId } = receipt.alternate
+        if (operation === 'stop') return { sessionId, runId }
+        await app.assertAlternateIdle(owner.chat)
+        const run = await foremanTurn(app.db, receipt.proof.sourceRunId)
+        if (!run || !['admitted', 'finished'].includes(run.status) || run.body.binding.runId !== receipt.proof.sourceRunId
+            || run.body.sessionId !== owner.sessionId || run.body.binding.workspaceId !== owner.chat.workspaceId
+            || run.body.binding.chatId !== owner.chat.chatId) throw refused()
+        assertDesktopWorkspaceAdmission(runtime)
+        return { sessionId, runId, model: foremanModelRefSchema.parse(run.body.binding.model) }
+    }
     assertDesktopWorkspaceAdmission(runtime)
+    return { ok: true as const }
 }

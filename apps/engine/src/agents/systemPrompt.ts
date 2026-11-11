@@ -305,6 +305,12 @@ async function buildForemanPrompt(agent: LoadedAgent, provider: Provider, order:
 }
 
 export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger = { source: 'chat' }, provider: Provider = agent.resolved.provider, order: TurnOrder = turnOrder(provider, agent.resolved.model)): Promise<SystemPrompt> {
+    if (desktopApp() && agent.config.kind === 'foreman' && trigger.source === 'chat' && trigger.foremanAlternate) {
+        return { stable: joinSections([
+            section('identity', 'You are the Chief of Staff. Write a fresh answer to the final user message using the saved conversation. This retry only drafts an answer. Say which parts would need fresh information or action. Use the language of the saved conversation.'),
+            section('shared_conversation', SHARED_CONVERSATION_NOTE),
+        ]), volatile: section('current_time', currentTimeNote()) }
+    }
     if (agent.config.kind === 'foreman') return await buildForemanPrompt(agent, provider, order)
     const cfg = agent.config.tools
     const desktop = desktopApp()

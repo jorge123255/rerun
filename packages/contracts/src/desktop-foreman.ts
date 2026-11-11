@@ -80,6 +80,18 @@ export const foremanAlternateReservationSchema = z.strictObject({
     userMessageId: foremanReplyTargetSchema.shape.assistantMessageId,
     source: foremanReplySourceSchema,
 })
+export const foremanAlternateRunActionSchema = z.enum(['start', 'stop', 'status'])
+export const foremanAlternateRunRequestSchema = z.strictObject({
+    action: foremanAlternateRunActionSchema,
+    chat: foremanChatRefSchema,
+    requestId: z.uuid(),
+})
+export type ForemanAlternateRunRequest = z.infer<typeof foremanAlternateRunRequestSchema>
+export const foremanAlternateRunSchema = z.strictObject({
+    sessionId: z.uuid(),
+    runId: z.uuid(),
+    status: z.enum(['prepared', 'running', 'done', 'error', 'cancelled']),
+})
 
 const line = (max: number) => z.string().trim().min(1).max(max)
 

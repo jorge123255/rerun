@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import type { Client, InStatement } from '@libsql/client'
+import type { Client, InStatement, Row } from '@libsql/client'
 import { FOREMAN_AGENT_ID, type ForemanAlternateRequest } from '@rerun/contracts'
 import { withAgentLock } from '../../agents/lock.js'
 import { desktopApp } from '../../desktop/policy.js'
 import { HttpError } from '../../lib/errors.js'
 import { newId, nowIso } from '../../lib/ids.js'
-import { sessionClaim } from '../../runtime/run-control.js'
+import { claimSession, releaseSession, sessionClaim } from '../../runtime/run-control.js'
+import type { MessageRow } from '../schema.js'
 import { getSystemDb } from '../systemDb.js'
 import { readForemanReplySnapshot } from './foreman-reply-sources.js'
 import { copiedMessageStatements } from './messages.js'
@@ -45,6 +46,37 @@ async function readReservation(reader: Pick<Client, 'execute'>, input: ForemanAl
     }
 }
 
+function asMessage(row: Row, id: string, sessionId: string): MessageRow {
+    return {
+        id, sessionId, role: String(row.role), contentJson: String(row.content_json),
+        toolCallsJson: typeof row.tool_calls_json === 'string' ? row.tool_calls_json : null,
+        sourcesJson: typeof row.sources_json === 'string' ? row.sources_json : null,
+        createdAt: String(row.created_at),
+        authorId: typeof row.author_id === 'string' ? row.author_id : null,
+        authorName: typeof row.author_name === 'string' ? row.author_name : null,
+    }
+}
+
+async function assertForemanAlternateIdle(reader: Pick<Client, 'execute'>, input: ForemanAlternateRequest) {
+    const { rows: running } = await reader.execute({
+        sql: `SELECT id FROM runs WHERE agent_id = ? AND status = 'running' AND (
+                  session_id = ? OR session_id IN (
+                      SELECT session_id FROM desktop_foreman_alternate_sessions
+                      WHERE workspace_id = ? AND chat_id = ? AND source_session_id = ?
+                  )
+              ) LIMIT 1`,
+        args: [FOREMAN_AGENT_ID, input.sessionId, input.workspaceId, input.chatId, input.sessionId],
+    })
+    const { rows: alternates } = await reader.execute({
+        sql: `SELECT session_id FROM desktop_foreman_alternate_sessions
+              WHERE workspace_id = ? AND chat_id = ? AND source_session_id = ?`,
+        args: [input.workspaceId, input.chatId, input.sessionId],
+    })
+    if (running.length || sessionClaim(input.sessionId) || alternates.some(row => sessionClaim(String(row.session_id)))) {
+        throw conflict()
+    }
+}
+
 // A lookup acknowledges the same preparation after an uncertain response, without preparing or
 // starting any work. The app boundary must authenticate and recheck the current owner first.
 export async function lookupForemanAlternate(input: ForemanAlternateRequest) {
@@ -77,32 +109,9 @@ export async function prepareForemanAlternate(input: ForemanAlternateRequest, gu
             const reply = rows.findIndex(row => row.id === proof.assistantMessageId)
             if (anchor < 0 || anchor >= reply) throw conflict()
 
-            const { rows: running } = await tx.execute({
-                sql: `SELECT id FROM runs WHERE agent_id = ? AND status = 'running' AND (
-                          session_id = ? OR session_id IN (
-                              SELECT session_id FROM desktop_foreman_alternate_sessions
-                              WHERE workspace_id = ? AND chat_id = ? AND source_session_id = ?
-                          )
-                      ) LIMIT 1`,
-                args: [FOREMAN_AGENT_ID, input.sessionId, input.workspaceId, input.chatId, input.sessionId],
-            })
-            const { rows: alternates } = await tx.execute({
-                sql: `SELECT session_id FROM desktop_foreman_alternate_sessions
-                      WHERE workspace_id = ? AND chat_id = ? AND source_session_id = ?`,
-                args: [input.workspaceId, input.chatId, input.sessionId],
-            })
-            if (running.length || sessionClaim(input.sessionId) || alternates.some(row => sessionClaim(String(row.session_id)))) {
-                throw conflict()
-            }
+            await assertForemanAlternateIdle(tx, input)
             const sessionId = randomUUID(), runId = randomUUID(), now = nowIso()
-            const prefix = rows.slice(0, anchor + 1).map(row => ({
-                id: newId(), sessionId, role: String(row.role), contentJson: String(row.content_json),
-                toolCallsJson: typeof row.tool_calls_json === 'string' ? row.tool_calls_json : null,
-                sourcesJson: typeof row.sources_json === 'string' ? row.sources_json : null,
-                createdAt: String(row.created_at),
-                authorId: typeof row.author_id === 'string' ? row.author_id : null,
-                authorName: typeof row.author_name === 'string' ? row.author_name : null,
-            }))
+            const prefix = rows.slice(0, anchor + 1).map(row => asMessage(row, newId(), sessionId))
             const userMessageId = prefix[anchor]!.id
             const statements: InStatement[] = [
                 {
@@ -127,4 +136,39 @@ export async function prepareForemanAlternate(input: ForemanAlternateRequest, gu
             return { requestId: input.requestId, sessionId, runId, userMessageId, source: proof }
         } finally { tx.close() }
     })
+}
+
+// The route holds the same agent lock as ordinary Chief of Staff admission. Revalidate the
+// original transcript inside the write transaction that turns the reserved ID into a run.
+export async function reserveForemanAlternateRun(input: ForemanAlternateRequest, assertCurrent: () => void) {
+    const { client } = await getSystemDb(FOREMAN_AGENT_ID)
+    const tx = await client.transaction('write')
+    let claimedRun: string | undefined
+    try {
+        const alternate = await readReservation(tx, input)
+        if (!alternate) throw conflict()
+        const current = await readForemanReplySnapshot(tx, {
+            workspaceId: input.workspaceId, chatId: input.chatId, sessionId: input.sessionId, assistantMessageId: input.assistantMessageId,
+        })
+        if (!current || current.proof.transcriptRevision !== input.transcriptRevision
+            || current.proof.sourceRunId !== alternate.source.sourceRunId || current.proof.replyDigest !== alternate.source.replyDigest
+            || current.proof.precedingUserMessageId !== alternate.source.precedingUserMessageId) throw conflict()
+        await assertForemanAlternateIdle(tx, input)
+        const { rows: [savedUser] } = await tx.execute({
+            sql: "SELECT * FROM messages WHERE id = ? AND session_id = ? AND role = 'user'",
+            args: [alternate.userMessageId, alternate.sessionId],
+        })
+        if (!savedUser) throw conflict()
+        assertCurrent()
+        if (claimSession(alternate.sessionId, alternate.runId)) throw conflict()
+        claimedRun = alternate.runId
+        await tx.execute({ sql: 'INSERT INTO runs (id, agent_id, session_id, started_at) VALUES (?,?,?,?)',
+            args: [alternate.runId, FOREMAN_AGENT_ID, alternate.sessionId, nowIso()] })
+        assertCurrent()
+        await tx.commit()
+        return { alternate, user: asMessage(savedUser, alternate.userMessageId, alternate.sessionId) }
+    } catch (error) {
+        if (claimedRun) releaseSession(claimedRun)
+        throw error
+    } finally { tx.close() }
 }

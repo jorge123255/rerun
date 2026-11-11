@@ -183,3 +183,42 @@ test('alternate route requires exact app authorization and checks the launch aga
         expect((await call('lookup')).status).toBe(409)
     } finally { bridge.close() }
 })
+
+test('an alternate Stop before Start consumes only the exact authorized reservation', async () => {
+    const { request, first } = await source()
+    const prepared = await prepareForemanAlternate(request)
+    const sibling = await prepareForemanAlternate({ ...request, requestId: randomUUID() })
+    let allowed = false
+    let wrongRun = false
+    let startAuthorizations = 0
+    const bridge = createDesktopForemanBridge({ workspaceId: 1, launchNonce: randomUUID(),
+        app: { origin: 'http://127.0.0.1:3101' }, engine: { apiKey: 'a'.repeat(64) } },
+    async (_url, init) => {
+        const { operation, target } = JSON.parse(String(init?.body))
+        expect(target).toEqual(request)
+        if (operation === 'start') startAuthorizations++
+        if (operation === 'lookup') return Response.json({ ok: true })
+        return allowed ? Response.json({ sessionId: prepared.sessionId, runId: wrongRun ? sibling.runId : prepared.runId })
+            : Response.json({}, { status: 409 })
+    })
+    const app = createDesktopForemanRoutes(() => bridge)
+    const call = (action: 'start' | 'stop' | 'status') => app.request('/alternate/run', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, target: request }),
+    })
+    try {
+        expect((await call('stop')).status).toBe(409)
+        allowed = true
+        wrongRun = true
+        expect((await call('stop')).status).toBe(409)
+        expect(await getRun(id, prepared.runId)).toBeUndefined()
+        wrongRun = false
+        const stopped = { sessionId: prepared.sessionId, runId: prepared.runId, status: 'cancelled' }
+        expect(await (await call('stop')).json()).toEqual(stopped)
+        closeSystemDb(id)
+        expect(await (await call('start')).json()).toEqual(stopped)
+        expect(await (await call('status')).json()).toEqual(stopped)
+        expect(startAuthorizations).toBe(0)
+        expect((await getRun(id, first.runId))?.status).toBe('done')
+        expect(await getRun(id, sibling.runId)).toBeUndefined()
+    } finally { bridge.close() }
+})
