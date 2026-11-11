@@ -18,7 +18,8 @@ import {
     type DesktopChatHistory,
     type DesktopChatHistoryConversation,
 } from '@/lib/desktop/chat-history'
-import { fullDateTime, messageTime } from '@/lib/time'
+import { fullDateTime, messageTime } from '@rerun/i18n/format'
+import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { cn } from '@/lib/utils'
 import { DesktopNeedsChats } from './DesktopNeedsChats'
 import { useDesktopPendingInbox } from './useDesktopPendingInbox'
@@ -30,6 +31,8 @@ function ChatHistoryRow({ conversation, pendingSummary, active, busy, onOpen }: 
     busy: boolean
     onOpen: () => void
 }) {
+    const { language, t } = useDesktopLocale()
+    const locale = desktopLocaleTag(language.locale)
     const automated = isAutomatedChat(conversation)
     const SourceIcon = conversation.source === 'trigger' ? WebhookIcon : CalendarClock
     const updatedAt = Number.isFinite(Date.parse(conversation.updatedAt)) ? conversation.updatedAt : null
@@ -40,7 +43,7 @@ function ChatHistoryRow({ conversation, pendingSummary, active, busy, onOpen }: 
                 <span className="flex min-w-0 items-center gap-1.5">
                     {automated && <SourceIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
                     <span title={conversation.title} className="min-w-0 flex-1 truncate text-sm font-medium">{conversation.title}</span>
-                    {pendingSummary !== undefined && <Badge size="xs" tone="orange" glow={false} className="shrink-0">Needs you</Badge>}
+                    {pendingSummary !== undefined && <Badge size="xs" tone="orange" glow={false} className="shrink-0">{t('needs')}</Badge>}
                 </span>
                 {conversation.firstMessage && <span className="truncate text-xs text-muted-foreground">{conversation.firstMessage}</span>}
                 {pendingSummary && (
@@ -50,17 +53,18 @@ function ChatHistoryRow({ conversation, pendingSummary, active, busy, onOpen }: 
                     </span>
                 )}
             </span>
-            {updatedAt && <time dateTime={updatedAt} title={`Updated ${fullDateTime(updatedAt)}`}
-                className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{messageTime(updatedAt)}</time>}
+            {updatedAt && <time dateTime={updatedAt} title={t('threadHistory.updated', { date: fullDateTime(updatedAt, locale) })}
+                className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{messageTime(updatedAt, locale)}</time>}
         </button>
     )
 }
 
 function ClassificationFilterNote({ onRetry, partial }: { onRetry: () => void; partial: boolean }) {
+    const { t } = useDesktopLocale()
     return (
         <div role="status" className="flex flex-col items-center gap-2 px-3 py-5 text-center text-xs text-muted-foreground">
-            <span>{partial ? 'Some conversation types could not be loaded.' : 'Conversation types could not be loaded.'}</span>
-            <Button type="button" size="sm" variant="outline" onClick={onRetry}>Retry</Button>
+            <span>{t(partial ? 'threadHistory.partialTypes' : 'threadHistory.unavailableTypes')}</span>
+            <Button type="button" size="sm" variant="outline" onClick={onRetry}>{t('threadHistory.retry')}</Button>
         </div>
     )
 }
@@ -75,19 +79,17 @@ function ChatHistoryList({ history, filter, query, selectedId, busy, pendingChat
     onSelect: (id: string) => void
     onRetry: () => void
 }) {
-    const { t } = useDesktopLocale()
+    const { language, t } = useDesktopLocale()
     const shown = filterDesktopChats(history.conversations, filter, query)
-    const groups = groupDesktopChats(shown)
+    const groups = groupDesktopChats(shown, { locale: desktopLocaleTag(language.locale), unknownDate: t('threadHistory.dateUnavailable') })
     const classificationUnavailable = (filter === 'chats' || filter === 'automations') && history.enrichment === 'unavailable'
     const empty = query.trim()
-        ? 'No matching conversations.'
-        : filter === 'automations' ? t('emptyAutomations')
-            : filter === 'chats' ? t('emptyThreads')
-                : 'No thread yet.'
+        ? t('threadHistory.noMatches')
+        : t(filter === 'automations' ? 'emptyAutomations' : 'emptyThreads')
     return (
         <div className="max-h-[min(420px,50dvh)] min-h-0 overflow-y-auto">
             {history.enrichment === 'unavailable' && !classificationUnavailable && (
-                <p className="px-2.5 py-1 text-[11px] text-muted-foreground">Recent activity could not be read. Showing saved dates.</p>
+                <p className="px-2.5 py-1 text-[11px] text-muted-foreground">{t('threadHistory.unavailableActivity')}</p>
             )}
             {classificationUnavailable && <ClassificationFilterNote onRetry={onRetry}
                 partial={history.conversations.some(row => row.kind !== 'general' && row.source !== null)} />}
@@ -119,7 +121,7 @@ function ChatHistoryPanel({ agentId, selectedId, busy, pendingChatSummaries, onS
 }) {
     const { t } = useDesktopLocale()
     const [history, setHistory] = useState<DesktopChatHistory | null>(null)
-    const [error, setError] = useState<string | null>(null)
+    const [error, setError] = useState(false)
     const [attempt, setAttempt] = useState(0)
     const [query, setQuery] = useState('')
     const [filter, setFilter] = useState<DesktopChatFilter>(initialFilter)
@@ -130,22 +132,21 @@ function ChatHistoryPanel({ agentId, selectedId, busy, pendingChatSummaries, onS
         void (async () => {
             try {
                 const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/chat-history?view=saved`, { signal: controller.signal, cache: 'no-store' })
-                const body = await response.json().catch(() => ({}))
-                if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not load conversations')
-                const parsed = desktopChatHistorySchema.parse(body)
+                if (!response.ok) throw new Error('Conversation history unavailable')
+                const parsed = desktopChatHistorySchema.parse(await response.json())
                 if (!controller.signal.aborted) {
                     setHistory(parsed)
-                    setError(null)
+                    setError(false)
                 }
-            } catch (cause) {
-                if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load conversations')
+            } catch {
+                if (!controller.signal.aborted) setError(true)
             }
         })()
         return () => controller.abort()
     }, [agentId, attempt])
 
     const retry = () => {
-        setError(null)
+        setError(false)
         setHistory(null)
         setAttempt(value => value + 1)
     }
@@ -157,7 +158,7 @@ function ChatHistoryPanel({ agentId, selectedId, busy, pendingChatSummaries, onS
                     <MessageCircle aria-hidden className="size-4 text-muted-foreground" />
                     {t('threads')}
                 </h2>
-                <p id={descriptionId} className="mt-1 text-xs text-muted-foreground">Dates show when chats were last updated.</p>
+                <p id={descriptionId} className="mt-1 text-xs text-muted-foreground">{t('threadHistory.dates')}</p>
             </div>
             <Input className="shrink-0" type="search" aria-label={t('searchChats')} placeholder={t('searchChats') + '…'} value={query}
                 onChange={event => setQuery(event.target.value)} />
@@ -175,13 +176,13 @@ function ChatHistoryPanel({ agentId, selectedId, busy, pendingChatSummaries, onS
             </div>
             {filter === 'needs' ? <DesktopNeedsChats agentId={agentId} query={query} onSelect={onSelect} busy={busy} inbox={inbox} /> : error ? (
                 <div role="alert" className="flex flex-col items-center gap-2 px-3 py-6 text-center text-xs">
-                    <p className="text-destructive">{error}</p>
-                    <Button type="button" size="sm" variant="outline" onClick={retry}>Retry conversations</Button>
+                    <p className="text-destructive">{t('threadHistory.loadFailed')}</p>
+                    <Button type="button" size="sm" variant="outline" onClick={retry}>{t('retryConversations')}</Button>
                 </div>
             ) : history === null ? (
                 <p role="status" className="flex items-center justify-center gap-2 px-3 py-6 text-xs text-muted-foreground">
                     <LoaderIcon aria-hidden className="size-3.5 animate-spin" />
-                    Loading conversations…
+                    {t('threadHistory.loading')}
                 </p>
             ) : (
                 <ChatHistoryList history={history} filter={filter} query={query} selectedId={selectedId} busy={busy} pendingChatSummaries={pendingChatSummaries} onSelect={onSelect} onRetry={retry} />
@@ -216,8 +217,8 @@ export function DesktopChatHistory({ agentId, count, selectedId, busy, pendingCh
         <Popover open={visible} onOpenChange={changeOpen}>
             <PopoverTrigger asChild>
                 <Button type="button" size="icon" variant="outline" className="size-10 rounded-full border-border/50 bg-background/85 shadow-sm" title={t('threads')} disabled={busy}
-                    aria-label={count === undefined ? 'Conversation history' : `Conversation history (${count})`}>
-                    <MessageCircle aria-hidden className="size-4 text-muted-foreground" /><span className="sr-only">Chats</span>
+                    aria-label={count === undefined ? t('threadHistory.label') : t('threadHistory.labelWithCount', { count })}>
+                    <MessageCircle aria-hidden className="size-4 text-muted-foreground" />
                 </Button>
             </PopoverTrigger>
             <PopoverContent align="end" collisionPadding={12}

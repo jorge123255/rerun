@@ -1,6 +1,6 @@
 import { sessionSourceSchema } from '@rerun/contracts'
 import { z } from 'zod'
-import { messageDayLabel } from '@/lib/time'
+import { messageDayLabel } from '@rerun/i18n/format'
 
 export const desktopChatFilterSchema = z.enum(['all', 'chats', 'automations', 'needs'])
 export type DesktopChatFilter = z.infer<typeof desktopChatFilterSchema>
@@ -65,10 +65,11 @@ export function filterDesktopChats(conversations: readonly DesktopChatHistoryCon
     }))
 }
 
-export function groupDesktopChats(conversations: readonly DesktopChatHistoryConversation[], now = new Date()) {
+export function groupDesktopChats(conversations: readonly DesktopChatHistoryConversation[],
+    { now = new Date(), locale = 'en', unknownDate = 'Date unavailable' } = {}) {
     const groups: { day: string; entries: DesktopChatHistoryConversation[] }[] = []
     for (const conversation of sortDesktopChats(conversations)) {
-        const day = Number.isFinite(Date.parse(conversation.updatedAt)) ? messageDayLabel(conversation.updatedAt, now) : 'Date unavailable'
+        const day = Number.isFinite(Date.parse(conversation.updatedAt)) ? messageDayLabel(conversation.updatedAt, locale, now) : unknownDate
         const last = groups.at(-1)
         if (last?.day === day) last.entries.push(conversation)
         else groups.push({ day, entries: [conversation] })

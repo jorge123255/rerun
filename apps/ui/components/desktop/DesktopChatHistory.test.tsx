@@ -8,6 +8,9 @@ import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
 import { DesktopApp, type DesktopBootstrap, type DesktopSessionView } from './DesktopApp'
 import { DesktopChatHistory } from './DesktopChatHistory'
+import { DesktopLocale } from './DesktopLocale'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages } from '@/lib/desktop/locale'
 import { groupDesktopChats, type DesktopChatHistoryConversation } from '@/lib/desktop/chat-history'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -55,10 +58,30 @@ test('groups by engine-enriched activity date while leaving its input unchanged'
     const newer = { ...conversation(session('new', 'a', 'Newer')), updatedAt: '2026-01-02T12:00:00.000Z' }
     const invalid = { ...conversation(session('unknown', 'a', 'Unknown')), updatedAt: '' }
     const input = [older, invalid, newer]
-    const groups = groupDesktopChats(input, new Date('2026-01-02T23:00:00.000Z'))
+    const groups = groupDesktopChats(input, { now: new Date('2026-01-02T23:00:00.000Z') })
     expect(groups.map(group => group.day)).toEqual(['Today', 'Yesterday', 'Date unavailable'])
     expect(groups.flatMap(group => group.entries.map(entry => entry.id))).toEqual(['new', 'old', 'unknown'])
     expect(input).toEqual([older, invalid, newer])
+})
+
+test('uses the selected language for the Threads control, grouped date, and empty search', async () => {
+    const messages = desktopMessages('fr', await loadMessages('fr'))
+    const current = { ...session('saved', 'alice', 'Saved coworker result'), updatedAt: new Date().toISOString() }
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url === '/api/desktop/pending-inbox' ? inboxOf([]) : historyOf([current]))))
+    const root = createRoot(document.body.appendChild(document.createElement('div')))
+    try {
+        await act(async () => { root.render(<DesktopLocale initial={{ preference: 'fr', locale: 'fr', messages }}>
+            <DesktopChatHistory agentId="alice" count={1} selectedId="saved" busy={false} onSelect={() => {}} />
+        </DesktopLocale>) })
+        expect(document.querySelector('button[title]')?.getAttribute('aria-label')).toBe('Historique des conversations (1)')
+        await click('Historique des conversations (1)')
+        const dialog = document.querySelector('[role="dialog"]')!
+        expect(dialog.textContent).toContain('Aujourd’hui')
+        expect(dialog.textContent).toContain(current.title)
+        expect(dialog.querySelector('time')?.getAttribute('title')).toMatch(/^Mis à jour le /)
+        await enter(dialog.querySelector<HTMLInputElement>('input[type="search"]')!, 'Unmatched')
+        expect(dialog.textContent).toContain('Aucune conversation ne correspond à la recherche.')
+    } finally { await act(async () => { root.unmount() }) }
 })
 
 test('browses, searches, marks the active conversation, and disables switching while busy', async () => {
