@@ -19,7 +19,9 @@ export function DesktopCoworkerCalls({ agentId, sessionId, toolCallId, fallback,
     const controller = useDesktopCoworkerCalls(agentId, sessionId, active, currentRunActive)
     const calls = toolCallId ? controller.calls.filter(call => call.toolCallId === toolCallId) : controller.calls
     if (!active && controller.calls.length === 0 && !controller.error) return null
-    if (controller.status === 'loading' && calls.length === 0) return fallback ?? <p role="status" className="text-xs text-muted-foreground">Loading coworker calls…</p>
+    if (controller.status === 'loading' && calls.length === 0) return fallback === undefined
+        ? <p role="status" className="text-xs text-muted-foreground">Loading coworker calls…</p>
+        : fallback
     if (!calls.length && !controller.error) return fallback ?? null
     return <section aria-label="Coworker calls" className="flex min-w-0 flex-col gap-3">
         {controller.error && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-destructive">

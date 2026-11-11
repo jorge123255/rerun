@@ -74,6 +74,7 @@ it('shows current and saved Chief of Staff tasks and stops only the selected tas
         tasks: [{ ...tasks[0], taskId: crypto.randomUUID(), title: 'Archived task', status: 'done', cleanup: 'complete' }] }
     const stopBody = vi.fn()
     const fetchDelegations = vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === `/api/desktop/foreman/${chat.chatId}/coworker-calls`) return Response.json({ calls: [] })
         expect(url).toBe(`/api/desktop/foreman/${chat.chatId}/delegation`)
         if (init?.method === 'POST') {
             stopBody(JSON.parse(String(init.body)))
@@ -101,4 +102,40 @@ it('shows current and saved Chief of Staff tasks and stops only the selected tas
     const archived = document.querySelector<HTMLButtonElement>(`[data-delegation-id="${saved.delegationId}"] button[aria-expanded]`)!
     await act(async () => archived.click())
     expect(document.body.textContent).toContain('Archived task')
+})
+
+it('reads a call that settles between polls, stops detached work, and opens its exact saved chat', async () => {
+    const date = '2026-11-11T20:00:00.000Z'
+    const dispatched = { callId: crypto.randomUUID(), revision: '4', parentAgentId: 'foreman', parentSessionId: chat.chatId,
+        parentRunId: 'caller-run', toolCallId: 'call-tool', targetAgentId: 'coworker-42', targetSessionId: 'target-chat-42',
+        targetName: 'Ada', wait: false, status: 'dispatched', createdAt: date, updatedAt: date,
+        progress: { steps: 0, toolCalls: 0, failures: 0, preview: '', calls: [] } }
+    let saved: typeof dispatched | null = null
+    const open = vi.fn(async () => {})
+    const stop = vi.fn()
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === `/api/desktop/foreman/${chat.chatId}/delegation`) return Response.json({ delegations: [] })
+        expect(url).toBe(`/api/desktop/foreman/${chat.chatId}/coworker-calls`)
+        if (init?.method === 'POST') {
+            stop(JSON.parse(String(init.body)))
+            saved = { ...dispatched, status: 'cancelled', revision: '5' }
+            return Response.json({ call: saved })
+        }
+        return Response.json({ calls: saved ? [saved] : [] })
+    }))
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    const render = (live: { runId: string } | null) => act(async () => root!.render(
+        <DesktopForemanColumn chat={chat} ports={ports} live={live} messages={[]} sessionId="engine-session"
+            agentNameOf={id => id} controlledOpen onOpenCalledChat={open} />))
+    await render({ runId: dispatched.parentRunId })
+    expect(document.querySelector('[aria-label="Coworker calls"]')).toBeNull()
+    saved = dispatched
+    await render(null)
+    expect(document.querySelector('[aria-label="Coworker calls"]')?.textContent).toContain('Ada')
+    await click('Stop call')
+    expect(stop).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ callId: dispatched.callId, expectedRevision: '4' }))
+    expect(document.body.textContent).toContain('Ada stopped')
+    expect(ports.conversation.stop).not.toHaveBeenCalled()
+    await click('Open chat')
+    expect(open).toHaveBeenCalledExactlyOnceWith({ agentId: dispatched.targetAgentId, sessionId: dispatched.targetSessionId })
 })

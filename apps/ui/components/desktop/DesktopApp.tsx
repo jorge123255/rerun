@@ -590,9 +590,13 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }, [])
 
     async function openCoworkerChat(target: { agentId: string; sessionId: string }) {
-        if (creationAdmission.current.blocked || isDesktopQuitting() || !currentAgents.current.some(agent => agent.id === target.agentId)) throw new Error('This coworker is no longer available.')
+        const workspaceId = workspaceDialogLease.current.workspaceId
+        const available = () => !creationAdmission.current.blocked && !workspaceDialogLease.current.active
+            && workspaceDialogLease.current.workspaceId === workspaceId && !isDesktopQuitting()
+            && !deletedAgents.current.has(target.agentId) && currentAgents.current.some(agent => agent.id === target.agentId)
+        if (!available()) throw new Error('This coworker is no longer available.')
         const body = await json<{ sessions: DesktopSessionView[] }>(await fetch(`/api/desktop/agents/${encodeURIComponent(target.agentId)}/sessions`, { cache: 'no-store', signal: AbortSignal.timeout(10_000) }))
-        if (!body.sessions.some(session => session.id === target.sessionId) || isDesktopQuitting() || !currentAgents.current.some(agent => agent.id === target.agentId)) throw new Error('This coworker chat is no longer available.')
+        if (!body.sessions.some(session => session.id === target.sessionId) || !available()) throw new Error('This coworker chat is no longer available.')
         selectCoworker(target.agentId, target.sessionId)
     }
 
@@ -767,7 +771,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     <DesktopForemanPanel controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout} mentionTargets={foremanMentionTargets}
                         hidden={controlCenterDisabled || controlCenterOpen || panelOpen || settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
                         centerOpen={controlCenterOpen} onOpenTranscriptionSettings={() => { setSettingsTab('Tool services'); setSettings(true) }} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('The Chief of Staff chat was closed.')); setForemanOpen(false) }}
-                        onOpenCoworker={openForemanCoworker} onOpenBox={openForemanBox} onReviewTemplate={reviewTemplate} providers={providers} onOpenModelSettings={openSettings}
+                        onOpenCoworker={openForemanCoworker} onOpenCalledChat={openCoworkerChat} onOpenBox={openForemanBox}
+                        onReviewTemplate={reviewTemplate} providers={providers} onOpenModelSettings={openSettings}
                         agentNameOf={id => currentAgents.current.find(agent => agent.id === id)?.name ?? 'Coworker'} />
                 </div>}
                 {selectedAgent && <div inert={!panelOpen || boardInteraction || workspaceDialogActive} aria-hidden={!panelOpen || boardInteraction || workspaceDialogActive || undefined}>

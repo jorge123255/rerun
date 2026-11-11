@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { ForemanAnchor, OrbActivity } from '@rerun/ui/foreman'
 import { DesktopForemanDockLayout, DesktopParkedForeman, useDesktopForemanDockBinding } from './dock'
 import { DEFAULT_DOCK_EXTRAS } from '@/lib/desktop/foreman-dock'
@@ -39,6 +39,8 @@ import { useDesktopDocumentAttachments } from '@/lib/desktop/document-attachment
 import { DesktopDocumentAttachmentControls } from '../document-attachments/DesktopDocumentAttachmentControls'
 import { DesktopDocumentPicker } from '../document-attachments/DesktopDocumentPicker'
 import { DesktopDelegationMount } from '../delegation/DesktopDelegationMount'
+import { DesktopCoworkerCalls } from '../coworker-calls/DesktopCoworkerCalls'
+import type { DesktopCoworkerCallOpenTarget } from '@/lib/desktop/coworker-calls-client'
 
 function anchorOf(placement: DesktopForemanPlacement): ForemanAnchor {
     if (placement.mode === 'float') return 'float'
@@ -54,6 +56,7 @@ export type DesktopForemanColumnProps = {
     live: { runId: string } | null
     messages: DesktopForemanMessage[]
     mentionTargets?: DesktopCoworkerCallTarget[]
+    onOpenCalledChat?: (target: DesktopCoworkerCallOpenTarget) => Promise<void>
     sessionId?: string
     pendingSend?: boolean
     retryAttachedMessage?: boolean
@@ -99,6 +102,7 @@ export function DesktopForemanColumn({
     live,
     messages,
     mentionTargets,
+    onOpenCalledChat,
     sessionId,
     pendingSend,
     retryAttachedMessage,
@@ -273,8 +277,12 @@ export function DesktopForemanColumn({
                         className="min-h-0 flex-1"
                     >
                         {sessionId && ui.open && !hidden && !onRoutines && !alternates.open && foreman.restored &&
-                            <DesktopDelegationMount key={`${chat.workspaceId}:${chat.chatId}`} scope="foreman" sessionId={chat.chatId}
-                                agentId={FOREMAN_AGENT_ID} followLive={!!live} stopRunId={live?.runId ?? null} />}
+                            <Fragment key={`${chat.workspaceId}:${chat.chatId}`}>
+                                <DesktopDelegationMount scope="foreman" sessionId={chat.chatId}
+                                    agentId={FOREMAN_AGENT_ID} followLive={!!live} stopRunId={live?.runId ?? null} />
+                                <DesktopCoworkerCalls agentId={FOREMAN_AGENT_ID} sessionId={chat.chatId} fallback={null}
+                                    currentRunId={live?.runId} currentRunActive={!!live} onOpenTarget={onOpenCalledChat} />
+                            </Fragment>}
                         {starterPack && onReviewTemplate && <DesktopStarterPack
                             workspaceId={chat.workspaceId}
                             active={ui.open && !hidden}

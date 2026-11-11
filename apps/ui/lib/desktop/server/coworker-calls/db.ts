@@ -299,11 +299,11 @@ export async function patchDesktopCoworkerCall(db: Client, callId: string, expec
     } finally { tx.close() }
 }
 
-export async function reserveDesktopCoworkerCallStop(db: Client, input: { requestId: string; callId: string; parentSessionId: string; expectedRevision: string }): Promise<void> {
+export async function reserveDesktopCoworkerCallStop(db: Client, input: { requestId: string; callId: string; parentAgentId: string; parentSessionId: string; expectedRevision: string }): Promise<void> {
     const tx = await db.transaction('write')
     try {
         const call = await getDesktopCoworkerCall(tx, input.callId)
-        if (!call || call.parentSessionId !== input.parentSessionId) throw new DesktopHttpError(404, 'Coworker call not found.')
+        if (!call || call.parentSessionId !== input.parentSessionId || call.parentAgentId !== input.parentAgentId) throw new DesktopHttpError(404, 'Coworker call not found.')
         const previous = (await tx.execute({ sql: 'SELECT * FROM desktop_coworker_call_stop_intents WHERE request_id = ?', args: [input.requestId] })).rows[0]
         if (previous && (previous.call_id !== input.callId || previous.parent_session_id !== input.parentSessionId || previous.expected_revision !== input.expectedRevision)) {
             throw new DesktopHttpError(409, 'That stop belongs to a different coworker call.')

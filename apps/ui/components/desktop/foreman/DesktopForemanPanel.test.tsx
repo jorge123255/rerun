@@ -32,7 +32,7 @@ it('keeps a usable exact-chat adapter through StrictMode and closes every live s
     }))
     const onClose = vi.fn(), onOpenCoworker = vi.fn(), onOpenBox = vi.fn()
     root = createRoot(document.body.appendChild(document.createElement('div')))
-    await act(async () => root!.render(<StrictMode><DesktopForemanPanel onClose={onClose} onOpenCoworker={onOpenCoworker} onOpenBox={onOpenBox} agentNameOf={id => id} /></StrictMode>))
+    await act(async () => root!.render(<StrictMode><DesktopForemanPanel onClose={onClose} onOpenCoworker={onOpenCoworker} onOpenCalledChat={onOpenCoworker} onOpenBox={onOpenBox} agentNameOf={id => id} /></StrictMode>))
     expect(column.messages).toEqual([{ id: 'message', role: 'user', text: 'A saved message', docs: [], history: [{ key: '["message",0,null]', kind: 'text', text: 'A saved message' }] }])
     await act(async () => { expect(await column.ports.conversation.sendMessage('hello')).toBe(true) })
     expect(sends).toHaveLength(1); expect(onOpenCoworker).not.toHaveBeenCalled(); expect(onOpenBox).not.toHaveBeenCalled()
@@ -57,7 +57,7 @@ it('pauses parked Foreman SSE and polling before Quit, drains its admitted draft
     }))
     const onClose = vi.fn(), onOpenBox = vi.fn(), onOpenCoworker = vi.fn()
     root = createRoot(document.body.appendChild(document.createElement('div')))
-    await act(async () => root!.render(<DesktopForemanPanel hidden controlledOpen={false} onClose={onClose} onOpenBox={onOpenBox} onOpenCoworker={onOpenCoworker} agentNameOf={id => id} />))
+    await act(async () => root!.render(<DesktopForemanPanel hidden controlledOpen={false} onClose={onClose} onOpenBox={onOpenBox} onOpenCoworker={onOpenCoworker} onOpenCalledChat={onOpenCoworker} agentNameOf={id => id} />))
     expect(sources.filter(source => !source.closed)).toHaveLength(1)
     const original = sources.find(source => !source.closed)!, oldCallback = original.onmessage!
     const navigation = (eventId: string) => ({ data: JSON.stringify({ type: 'navigation', binding: { ...chat, runId, model }, eventId, intent: { kind: 'open_box', spaceId: 'saved-box' } }) })

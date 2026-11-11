@@ -2,11 +2,13 @@ import 'server-only'
 import { z, ZodError } from 'zod'
 import {
     DESKTOP_COWORKER_CALL_INTERRUPTED_REASON,
+    FOREMAN_AGENT_ID,
     desktopCoworkerCallListSchema,
     desktopCoworkerCallProgressSchema,
     desktopCoworkerCallSnapshotOf,
     desktopCoworkerCallStatuses,
     desktopCoworkerCallStopSchema,
+    foremanChatIdSchema,
 } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { openDesktopDatabase } from '../database'
@@ -23,6 +25,8 @@ import { readPendingDesktopServiceToolCallView } from '../service-requests/view'
 import { getSession } from '@/lib/engine/client'
 import { engineOf } from '../settings'
 import { withRosterWrite } from '../roster-writes'
+import { ownedForemanChat } from '../foreman/chat-store'
+import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 import { authorizeDesktopCoworkerCall } from './authority'
 import {
     adoptDesktopCoworkerCallEpoch,
@@ -128,13 +132,28 @@ async function currentSnapshot(runtime: DesktopRuntime, row: CoworkerCallRecord)
     return { ...result, status: 'completed' as const }
 }
 
-export async function readDesktopCoworkerCalls(runtime: DesktopRuntime, sessionId: string) {
+type CallScope = 'coworker' | 'foreman'
+
+async function callOwner(db: Awaited<ReturnType<typeof openDesktopDatabase>>, runtime: DesktopRuntime, sessionId: string, scope: CallScope) {
+    if (scope === 'foreman') {
+        const chatId = foremanChatIdSchema.safeParse(sessionId)
+        if (!chatId.success) throw new DesktopHttpError(404, 'Chief of Staff conversation not found.')
+        const { chat } = await ownedForemanChat(db, { workspaceId: String(runtime.workspaceId), chatId: chatId.data })
+        return { parentAgentId: FOREMAN_AGENT_ID, parentSessionId: chat.chatId }
+    }
+    const session = await findDesktopSession(db, sessionId)
+    if (!session?.agentId) throw new DesktopHttpError(404, 'Conversation not found.')
+    return { parentAgentId: session.agentId, parentSessionId: session.id }
+}
+
+export async function readDesktopCoworkerCalls(runtime: DesktopRuntime, sessionId: string, scope: CallScope = 'coworker') {
     const db = await openDesktopDatabase(runtime.dataRoot)
     await initializeDesktopCoworkerCalls(db)
-    const session = await findDesktopSession(db, sessionId)
-    if (!session || session.agentId == null) throw new DesktopHttpError(404, 'Conversation not found.')
+    const owner = await callOwner(db, runtime, sessionId, scope)
     const calls = []
-    for (const row of await listDesktopCoworkerCallRows(db, session.id)) calls.push(await currentSnapshot(runtime, await recoverCalledChat(runtime, row)))
+    for (const row of await listDesktopCoworkerCallRows(db, owner.parentSessionId)) {
+        if (row.parentAgentId === owner.parentAgentId) calls.push(await currentSnapshot(runtime, await recoverCalledChat(runtime, row)))
+    }
     return desktopCoworkerCallListSchema.parse({ calls })
 }
 
@@ -156,16 +175,15 @@ async function cancelChild(runtime: DesktopRuntime, engineAgentId: string, engin
 
 const stopRequests = new Map<string, Promise<Response>>()
 
-export async function stopDesktopCoworkerCall(runtime: DesktopRuntime, sessionId: string, body: unknown, fetchImpl: typeof fetch = fetch): Promise<Response> {
+export async function stopDesktopCoworkerCall(runtime: DesktopRuntime, sessionId: string, body: unknown, fetchImpl: typeof fetch = fetch, scope: CallScope = 'coworker'): Promise<Response> {
     const parsed = desktopCoworkerCallStopSchema.safeParse(body)
     if (!parsed.success) throw new DesktopHttpError(400, 'Stop one coworker call by its current revision.')
     const input = parsed.data
     const db = await openDesktopDatabase(runtime.dataRoot)
     await initializeDesktopCoworkerCalls(db)
-    const session = await findDesktopSession(db, sessionId)
-    if (!session) throw new DesktopHttpError(404, 'Conversation not found.')
-    const ownerSessionId = session.id
-    await reserveDesktopCoworkerCallStop(db, { ...input, parentSessionId: ownerSessionId })
+    const owner = await callOwner(db, runtime, sessionId, scope)
+    assertDesktopWorkspaceAdmission(runtime)
+    await reserveDesktopCoworkerCallStop(db, { ...input, ...owner })
     const key = JSON.stringify([runtime.dataRoot, input.requestId])
     const pending = stopRequests.get(key)
     if (pending) return (await pending).clone()
@@ -186,7 +204,7 @@ export async function stopDesktopCoworkerCall(runtime: DesktopRuntime, sessionId
         }
         const owned = async (callId: string) => {
             const row = await getDesktopCoworkerCall(db, callId)
-            if (!row || row.parentSessionId !== ownerSessionId) throw new DesktopHttpError(404, 'Coworker call not found.')
+            if (!row || row.parentSessionId !== owner.parentSessionId || row.parentAgentId !== owner.parentAgentId) throw new DesktopHttpError(404, 'Coworker call not found.')
             return row
         }
         const current = await owned(input.callId)
