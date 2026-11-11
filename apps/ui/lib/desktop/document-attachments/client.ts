@@ -65,7 +65,7 @@ export function desktopDocumentReadUrl(attachment: DesktopDocumentReference | De
     const query = new URLSearchParams({ tabUid: attachment.scope.tabUid, ...(attachment.scope.sessionId ? { sessionId: attachment.scope.sessionId } : {}), attachmentId: attachment.attachmentId, sha256: attachment.sha256, view, ...(page ? { page: String(page) } : {}), ...(scale ? { scale: String(scale) } : {}) })
     return `${endpoint(attachment.scope.agentId)}?${query}`
 }
-export async function fetchDesktopDocument(attachment: DesktopDocumentReference | DesktopDocumentAttachment, signal: AbortSignal, view: 'preview' | 'download' = 'preview', page?: number, scale?: number) {
+export async function fetchDesktopDocument(attachment: DesktopDocumentReference | DesktopDocumentAttachment, signal: AbortSignal, view: 'read' | 'preview' | 'download' = 'preview', page?: number, scale?: number) {
     const response = await fetch(desktopDocumentReadUrl(attachment, view, page, scale), { cache: 'no-store', redirect: 'error', credentials: 'same-origin', signal })
     if (!response.ok || response.headers.get('x-rerun-document-sha256') !== attachment.sha256) { await response.body?.cancel().catch(() => {}); throw new Error('This attachment is unavailable or changed.') }
     return response

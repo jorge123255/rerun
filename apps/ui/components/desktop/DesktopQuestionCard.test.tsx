@@ -67,9 +67,12 @@ test('uses the original option form and submits an authoritative answer only onc
 test.each(['text', 'image'] as const)('restores a %s attachment and submits a file-only answer in the exact conversation', async kind => {
     const documentOwner = { agentId: 'coworker', sessionId: 'saved-chat' }
     const scope = { ...documentOwner, tabUid: questionDocumentTabUid(question.id) }
+    const content = 'Résumé <script>do not execute</script>'
+    const bytes = new TextEncoder().encode(content)
+    const sha256 = Buffer.from(await crypto.subtle.digest('SHA-256', bytes)).toString('hex')
     const saved: DesktopDocumentAttachment = {
-        attachmentId: crypto.randomUUID(), scope, name: kind === 'image' ? 'notes.png' : 'notes.txt', mimeType: kind === 'image' ? 'image/png' : 'text/plain', kind, byteLength: 5,
-        sha256: 'f'.repeat(64), conversion: { mode: kind === 'image' ? 'image' : 'plain-text', state: 'ready' }, uploaded: true, selected: true,
+        attachmentId: crypto.randomUUID(), scope, name: kind === 'image' ? 'notes.png' : 'notes.txt', mimeType: kind === 'image' ? 'image/png' : 'text/plain', kind, byteLength: bytes.length,
+        sha256, conversion: { mode: kind === 'image' ? 'image' : 'plain-text', state: 'ready' }, uploaded: true, selected: true,
         admitted: false, position: 0, revision: crypto.randomUUID(), createdAt: '', updatedAt: '',
     }
     const admit = vi.fn()
@@ -81,7 +84,11 @@ test.each(['text', 'image'] as const)('restores a %s attachment and submits a fi
             admit(payload)
             return Response.json({ allowed: true, admissionId: payload.admissionId, references: [], inputs: [] })
         }
-        expect(url).toBe(`${endpoint}?${new URLSearchParams({ tabUid: scope.tabUid, sessionId: scope.sessionId })}`)
+        const list = `${endpoint}?${new URLSearchParams({ tabUid: scope.tabUid, sessionId: scope.sessionId })}`
+        if (url !== list) {
+            expect(url).toBe(`${list}&${new URLSearchParams({ attachmentId: saved.attachmentId, sha256, view: 'read' })}`)
+            return new Response(bytes, { headers: { 'content-type': 'text/plain', 'x-rerun-document-sha256': sha256 } })
+        }
         return Response.json({ attachments: [saved] })
     })
     const onAnswer = vi.fn(async (_payload: DesktopQuestionAnswer) => {})
@@ -95,6 +102,12 @@ test.each(['text', 'image'] as const)('restores a %s attachment and submits a fi
     if (kind === 'image') {
         expect(document.querySelector<HTMLInputElement>('input[type=file]')?.accept).toContain('.png')
         expect(document.querySelector('img')?.getAttribute('src')).toContain('view=preview')
+    } else {
+        await click('[aria-label="Preview notes.txt"]')
+        await vi.waitFor(() => expect(document.querySelector('[role="dialog"] pre')?.textContent).toBe(content))
+        expect(document.querySelector('[role="dialog"] script')).toBeNull()
+        expect(onAnswer).not.toHaveBeenCalled()
+        await click('[data-slot="dialog-close"]')
     }
     await click('[data-hitl="next"]')
     const documents = { scope, attachmentIds: [saved.attachmentId], admissionId: expect.any(String) }
