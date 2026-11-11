@@ -107,7 +107,7 @@ it('shows current and saved Chief of Staff tasks and stops only the selected tas
 it('reads a call that settles between polls, stops detached work, and opens its exact saved chat', async () => {
     const date = '2026-11-11T20:00:00.000Z'
     const dispatched = { callId: crypto.randomUUID(), revision: '4', parentAgentId: 'foreman', parentSessionId: chat.chatId,
-        parentRunId: 'caller-run', toolCallId: 'call-tool', targetAgentId: 'coworker-42', targetSessionId: 'target-chat-42',
+        parentRunId: 'public-call-run', toolCallId: 'call-tool', targetAgentId: 'coworker-42', targetSessionId: 'target-chat-42',
         targetName: 'Ada', wait: false, status: 'dispatched', createdAt: date, updatedAt: date,
         progress: { steps: 0, toolCalls: 0, failures: 0, preview: '', calls: [] } }
     let saved: typeof dispatched | null = null
@@ -127,7 +127,7 @@ it('reads a call that settles between polls, stops detached work, and opens its 
     const render = (live: { runId: string } | null) => act(async () => root!.render(
         <DesktopForemanColumn chat={chat} ports={ports} live={live} messages={[]} sessionId="engine-session"
             agentNameOf={id => id} controlledOpen onOpenCalledChat={open} />))
-    await render({ runId: dispatched.parentRunId })
+    await render({ runId: 'caller-turn-request' })
     expect(document.querySelector('[aria-label="Coworker calls"]')).toBeNull()
     saved = dispatched
     await render(null)

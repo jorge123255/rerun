@@ -281,7 +281,7 @@ export function DesktopForemanColumn({
                                 <DesktopDelegationMount scope="foreman" sessionId={chat.chatId}
                                     agentId={FOREMAN_AGENT_ID} followLive={!!live} stopRunId={live?.runId ?? null} />
                                 <DesktopCoworkerCalls agentId={FOREMAN_AGENT_ID} sessionId={chat.chatId} fallback={null}
-                                    currentRunId={live?.runId} currentRunActive={!!live} onOpenTarget={onOpenCalledChat} />
+                                    currentRunActive={!!live} onOpenTarget={onOpenCalledChat} />
                             </Fragment>}
                         {starterPack && onReviewTemplate && <DesktopStarterPack
                             workspaceId={chat.workspaceId}
