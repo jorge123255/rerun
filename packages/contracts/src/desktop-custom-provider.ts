@@ -3,6 +3,7 @@ export const DESKTOP_CUSTOM_PROVIDER_VERSION = 1 as const
 export const registeredCustomConnectionIdSchema = z.uuidv4()
 export const CUSTOM_DEFAULT_CONTEXT_WINDOW = 128_000
 export const DESKTOP_XAI_BASE_URL = 'https://api.x.ai/v1'
+export const DESKTOP_KIMI_PLATFORM_BASE_URL = 'https://api.moonshot.ai/v1'
 export const DESKTOP_CUSTOM_PRESETS = [
     { id: 'ollama', label: 'Ollama', baseUrl: 'http://localhost:11434/v1', keyRequired: false, local: true },
     { id: 'lmstudio', label: 'LM Studio', baseUrl: 'http://localhost:1234/v1', keyRequired: false, local: true },
@@ -13,7 +14,7 @@ export const DESKTOP_CUSTOM_PRESETS = [
     { id: 'mistral', label: 'Mistral', baseUrl: 'https://api.mistral.ai/v1', keyRequired: true, local: false },
     { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', keyRequired: true, local: false },
     { id: 'xai', label: 'Grok (xAI API)', baseUrl: DESKTOP_XAI_BASE_URL, keyRequired: true, local: false },
-    { id: 'kimi-platform', label: 'Kimi Platform API', baseUrl: 'https://api.moonshot.ai/v1', keyRequired: true, local: false },
+    { id: 'kimi-platform', label: 'Kimi Platform API', baseUrl: DESKTOP_KIMI_PLATFORM_BASE_URL, keyRequired: true, local: false },
 ] as const
 const customProviderPresetSchema = z.enum(DESKTOP_CUSTOM_PRESETS.map(preset => preset.id))
 const endpoint = z.url().max(2048).refine(value => { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash }, 'Use a plain HTTP(S) endpoint without credentials, query or fragment.')
@@ -21,9 +22,10 @@ const opaque = z.string().min(1).max(256)
 export const customProviderIdentitySchema = z.strictObject({ workspaceId: z.number().int().positive(), connectionId: opaque, revision: z.number().int().positive() })
 export type CustomProviderIdentity = z.infer<typeof customProviderIdentitySchema>
 export const xaiReasoningLevel = z.enum(['low', 'medium', 'high', 'xhigh'])
+const customReasoningLevel = z.enum([...xaiReasoningLevel.options, 'max'] as const)
 export const customProviderReasoningSchema = z.strictObject({
-    supported: z.array(xaiReasoningLevel).min(1).max(4),
-    default: xaiReasoningLevel.optional(),
+    supported: z.array(customReasoningLevel).min(1).max(4),
+    default: customReasoningLevel.optional(),
 }).refine(value => value.default === undefined || value.supported.includes(value.default))
 export const customProviderModelSchema = z.strictObject({ id: opaque, contextWindow: z.number().int().min(256).max(10_000_000).nullable(), vision: z.boolean().default(false), source: z.enum(['discovered', 'manual']), reasoning: customProviderReasoningSchema.optional() })
 export type CustomProviderModel = z.infer<typeof customProviderModelSchema>

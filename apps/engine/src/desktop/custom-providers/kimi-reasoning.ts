@@ -1,12 +1,11 @@
 import { createHash } from 'node:crypto'
-import { DESKTOP_CUSTOM_PRESETS, type CustomProviderConfig, type CustomProviderSnapshot } from '@rerun/contracts'
+import { DESKTOP_KIMI_PLATFORM_BASE_URL, type CustomProviderConfig, type CustomProviderSnapshot } from '@rerun/contracts'
 import type { LanguageModelMiddleware } from 'ai'
 
-const platformBase = DESKTOP_CUSTOM_PRESETS.find(preset => preset.id === 'kimi-platform')?.baseUrl
 export type KimiConversation = { agentId: string; sessionId: string }
 
 export function isKimiPlatform(config: CustomProviderConfig): boolean {
-    return config.preset === 'kimi-platform' && config.baseUrl.trim().replace(/\/+$/, '') === platformBase
+    return config.preset === 'kimi-platform' && config.baseUrl.trim().replace(/\/+$/, '') === DESKTOP_KIMI_PLATFORM_BASE_URL
 }
 
 export function kimiReasoningScope(snapshot: CustomProviderSnapshot | undefined, model: string, conversation: KimiConversation): string | undefined {

@@ -3,6 +3,7 @@ import { generateText, stepCountIs, streamText, tool, type ModelMessage } from '
 import { z } from 'zod'
 import type { CustomProviderAuthority, CustomProviderConfig, CustomProviderIdentity, CustomProviderSnapshot } from '@rerun/contracts'
 import { createCustomProviderRuntime } from './runtime.js'
+import { customCatalogReasoning } from './catalog.js'
 import { probeCustomDraft } from './draft-probe.js'
 const fake = vi.hoisted(() => ({ request: vi.fn() }))
 vi.mock('./network.js', () => ({ endpointBase: (config: CustomProviderConfig) => config.baseUrl, createPinnedProviderFetch: () => fake.request }))
@@ -218,4 +219,50 @@ it('streams a Kimi tool continuation and only replays saved reasoning for the ex
     await replay(undefined, chat, 2)
     await replay(undefined, chat, 1, otherModel)
     await replay(undefined, chat, 1, model, { ...config, baseUrl: 'https://reviewed.example/v1', policy: { ...config.policy, reviewedOrigin: 'https://reviewed.example' } })
+})
+
+it('uses documented Kimi K3 effort only for an exact model in the current authenticated catalog', async () => {
+    const model = 'kimi-k3.1-pro', baseUrl = 'https://api.moonshot.ai/v1'
+    const modelIds = [model, 'kimi-k3.1-pro-highspeed', 'kimi-k3', 'kimi-k2.7-code', 'kimi-k3-like']
+    const config: CustomProviderConfig = { name: 'Kimi', preset: 'kimi-platform', baseUrl, vision: false,
+        policy: { reviewedOrigin: 'https://api.moonshot.ai', allowHttp: false, allowPrivate: false },
+        models: modelIds.map(id => ({ id, source: 'manual', contextWindow: 16384, vision: false })), contextWindow: null }
+    const { runtime, setCatalog, authority } = fixture({ config, key: 'fixture-key' })
+    const signal = new AbortController().signal
+    fake.request.mockReset()
+    try {
+        await expect(runtime.model(identity, model, signal, 'max')).rejects.toThrow('reasoning effort is unavailable')
+        expect(fake.request).not.toHaveBeenCalled()
+        fake.request.mockResolvedValueOnce(Response.json({ data: modelIds.map(id => ({ id })) }))
+        const catalog = await runtime.probe(identity, undefined, signal)
+        expect(catalog.status).toBe('fresh')
+        expect(fake.request.mock.calls[0]?.[0]).toBe(baseUrl + '/models')
+        const fresh = { status: 'fresh' as const, models: catalog.models, observedAt: 1, attemptedAt: 1 }
+        setCatalog(fresh)
+        const snapshot = await authority.read(identity, signal)
+        for (const id of modelIds.slice(0, 3)) expect(customCatalogReasoning(snapshot, id)).toEqual({ supported: ['low', 'high', 'max'], default: 'max' })
+        for (const id of modelIds.slice(3)) expect(customCatalogReasoning(snapshot, id)).toBeUndefined()
+        expect(customCatalogReasoning({ ...snapshot, configuredSecret: false }, model)).toBeUndefined()
+        expect(customCatalogReasoning({ ...snapshot, config: { ...config, preset: null } }, model)).toBeUndefined()
+        expect(customCatalogReasoning({ ...snapshot, config: { ...config, baseUrl: baseUrl + '/proxy' } }, model)).toBeUndefined()
+        await expect(runtime.model(identity, model, signal, 'xhigh')).rejects.toThrow('reasoning effort is unavailable')
+        await expect(runtime.model(identity, 'kimi-k2.7-code', signal, 'high')).rejects.toThrow('reasoning effort is unavailable')
+        expect(fake.request).toHaveBeenCalledTimes(1)
+        fake.request.mockImplementation(async () => Response.json({ id: 'fixture', object: 'chat.completion', model, created: 0,
+            choices: [{ index: 0, message: { role: 'assistant', content: 'Fixture reply' }, finish_reason: 'stop' }] }))
+        const choice = await runtime.model(identity, model, signal, 'max')
+        try {
+            expect((await generateText({ model: choice.model, prompt: 'Fixture', maxRetries: 0 })).text).toBe('Fixture reply')
+            expect(JSON.parse(fake.request.mock.calls[1]![1].body)).toMatchObject({ model, reasoning_effort: 'max' })
+            setCatalog({ ...fresh, models: fresh.models.filter(item => item.id !== model) })
+            await expect(generateText({ model: choice.model, prompt: 'Must not send', maxRetries: 0 })).rejects.toThrow('reasoning effort is unavailable')
+            expect(fake.request).toHaveBeenCalledTimes(2)
+        } finally { choice.close() }
+        const automatic = await runtime.model(identity, model, signal)
+        try {
+            await generateText({ model: automatic.model, prompt: 'Use the provider default', maxRetries: 0,
+                providerOptions: { kimiPlatform: { reasoning_effort: 'xhigh' } } })
+            expect(JSON.parse(fake.request.mock.calls[2]![1].body)).not.toHaveProperty('reasoning_effort')
+        } finally { automatic.close() }
+    } finally { runtime.close() }
 })

@@ -1,4 +1,7 @@
 import { DESKTOP_XAI_BASE_URL, xaiReasoningLevel, type CustomProviderModel, type CustomProviderSnapshot } from '@rerun/contracts'
+import { isKimiPlatform } from './kimi-reasoning.js'
+
+const KIMI_K3_MODELS = new Set(['kimi-k3.1-pro', 'kimi-k3.1-pro-highspeed', 'kimi-k3'])
 
 function xaiReasoning(capabilities: unknown): CustomProviderModel['reasoning'] {
     if (!capabilities || typeof capabilities !== 'object') return
@@ -36,8 +39,14 @@ export function customModelCatalog(base: string) {
     }
 }
 
-export function customCatalogReasoning(snapshot: CustomProviderSnapshot, model: string) {
-    if (snapshot.state !== 'configured' || !snapshot.configuredSecret || snapshot.catalog.status !== 'fresh'
-        || new URL(snapshot.config.baseUrl).href.replace(/\/+$/, '') !== DESKTOP_XAI_BASE_URL) return
-    return snapshot.catalog.models.find(entry => entry.id === model)?.reasoning
+export function customCatalogReasoning(snapshot: CustomProviderSnapshot, model: string): CustomProviderModel['reasoning'] {
+    if (snapshot.state !== 'configured' || !snapshot.configuredSecret || snapshot.catalog.status !== 'fresh') return
+    const discovered = snapshot.catalog.models.find(entry => entry.id === model)
+    if (!discovered) return
+    if (isKimiPlatform(snapshot.config) && KIMI_K3_MODELS.has(model)) {
+        // Kimi's model listing confirms account availability. Its API documentation defines these
+        // levels for the exact K3 IDs, including the Highspeed variant.
+        return { supported: ['low', 'high', 'max'], default: 'max' }
+    }
+    if (new URL(snapshot.config.baseUrl).href.replace(/\/+$/, '') === DESKTOP_XAI_BASE_URL) return discovered.reasoning
 }

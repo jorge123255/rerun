@@ -265,6 +265,50 @@ test('reasoning effort uses the active model’s supported levels and the saved 
     } finally { await act(async () => { root.unmount() }) }
 })
 
+test('Kimi Platform Settings shows Max and saves or resets an effort on the exact revision', async () => {
+    const model = 'kimi-k3.1-pro'
+    const selection = { connectionId: 'fixture-kimi', model }
+    const connection: ConnectionsList['connections'][number] = {
+        id: selection.connectionId, name: 'Kimi Platform API', provider: 'custom', models: [model],
+        extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '',
+        customRevision: 7, customReasoning: { [model]: { supported: ['low', 'high', 'max'], default: 'max' } },
+    }
+    let providers: ConnectionsList = { connections: [connection], default: selection }
+    const writes: unknown[] = []
+    mockDesktopFetch((url, init) => {
+        if (url !== settingsUrl) return
+        if (init?.method === 'PATCH') {
+            const body = JSON.parse(String(init.body))
+            writes.push(body)
+            providers = { ...providers, default: body.reasoningEffort ? {
+                ...selection, reasoningEffort: body.reasoningEffort, customReasoningRevision: 7,
+            } : selection }
+        }
+        return Response.json(providers)
+    })
+    const container = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(container)
+    const effort = () => container.querySelector<HTMLSelectElement>('#desktop-reasoning-effort')!
+    const change = (value: string) => act(async () => {
+        effort().value = value
+        effort().dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    try {
+        await act(async () => { root.render(<DesktopApp initialData={{ ...providers, theme: 'system',
+            profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
+        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
+        expect([...effort().options].map(option => option.textContent)).toEqual(['Model default (Max)', 'Low', 'High', 'Max'])
+        await change('max')
+        expect(effort().value).toBe('max')
+        await change('')
+        expect(effort().value).toBe('')
+        expect(writes).toEqual([
+            { action: 'default', ...selection, reasoningEffort: 'max', customReasoningRevision: 7 },
+            { action: 'default', ...selection, reasoningEffort: null, customReasoningRevision: 7 },
+        ])
+    } finally { await act(async () => { root.unmount() }) }
+})
+
 test('editing a coworker from the board preserves the chat and only saves changed fields', async () => {
     const container = document.createElement('div')
     document.body.append(container)

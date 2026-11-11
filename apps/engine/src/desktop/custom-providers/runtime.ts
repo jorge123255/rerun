@@ -57,13 +57,14 @@ export function createCustomProviderRuntime(authority: CustomProviderAuthority) 
             const scope = kimi ? (conversation && kimiReasoningScope(bound.snapshot, modelId, conversation)) ?? randomUUID() : undefined
             const providerModel = kimi
                 ? createOpenAICompatible({ ...options, baseURL, name: 'kimi-platform', includeUsage: true,
+                    transformRequestBody: body => ({ ...body, reasoning_effort: effort }),
                     supportsStructuredOutputs: true, supportedUrls: () => ({ 'image/*': [/^https?:\/\//] }) }).chatModel(modelId)
                 : createOpenAI(options).chat(modelId)
             const model = wrapLanguageModel({ model: providerModel, middleware: [scope ? kimiReasoningMiddleware(scope) : openrouterReasoningMiddleware, {
                 specificationVersion: 'v3',
                 transformParams: async ({ params }) => {
                     if (params.maxOutputTokens && params.maxOutputTokens >= window) throw new Error('Requested output exceeds custom model context window.')
-                    if (!effort) return params
+                    if (!effort || kimi) return params
                     return { ...params, providerOptions: { ...params.providerOptions, openai: { ...params.providerOptions?.openai, reasoningEffort: effort } } }
                 },
             }] })
