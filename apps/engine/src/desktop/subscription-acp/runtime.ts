@@ -1,9 +1,14 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { linkSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { closeSync, constants, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { dataDir } from '../../config/paths.js'
-import type { DesktopSubscriptionProvider } from '@rerun/contracts'
+import { desktopSubscriptionModels, type DesktopSubscriptionProvider } from '@rerun/contracts'
+import { z } from 'zod'
+import { assertDesktopRunAdmission } from '../workspace-admission.js'
+import { openDesktopSubscriptionTurnRelay } from './device-relay.js'
+import { SubscriptionAcpError } from './peer.js'
 import { openDesktopSubscriptionAcpSession } from './session.js'
 
 const runners = {
@@ -24,7 +29,7 @@ const runners = {
 const unavailable = () => new Error('The subscription provider runner is unavailable.')
 const shutdownUnconfirmed = () => new Error('The subscription provider runner did not stop cleanly.')
 type Worker = () => Promise<void>
-const workers = new Map<DesktopSubscriptionProvider, Worker>()
+const workers = new Map<DesktopSubscriptionProvider, { dispose: Worker; turn: boolean }>()
 let stopping = false
 
 function ownedFile(path: string | undefined, executable = false) {
@@ -131,7 +136,7 @@ function readApproval(provider: DesktopSubscriptionProvider) {
         if (info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0 || info.size > 100) return null
         const { id } = JSON.parse(readFileSync(receipt, 'utf8'))
         if (typeof id !== 'string') return null
-        return { receipt, profile: ownedDirectory(attemptPath(providerRoot, id)) }
+        return { id, receipt, providerRoot, profile: ownedDirectory(attemptPath(providerRoot, id)) }
     } catch {
         return null
     }
@@ -146,6 +151,7 @@ export function forgetDesktopSubscriptionDeviceApproval(provider: DesktopSubscri
     const saved = readApproval(provider)
     if (!saved) return
     unlinkSync(saved.receipt)
+    rmSync(join(saved.providerRoot, 'model-catalog.json'), { force: true })
     rmSync(saved.profile, { recursive: true, force: true })
 }
 
@@ -196,12 +202,144 @@ export async function openOfflineDesktopSubscriptionRunner(provider: DesktopSubs
     })
 }
 
+// Kimi's login rewrites config.toml. Apply the documented global tool policy after
+// login and before the first ACP session. Existing approved profiles use the same path.
+const kimiTextToolPolicy = '[tools]\nenabled = ["*"]\n'
+function restrictKimiTools(vendorHome: string) {
+    const path = join(vendorHome, 'config.toml')
+    const file = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+    let config: string
+    try {
+        const info = fstatSync(file)
+        if (!info.isFile() || info.nlink !== 1 || info.uid !== process.getuid?.() ||
+            (info.mode & 0o022) !== 0 || info.size > 128 * 1024) throw unavailable()
+        config = readFileSync(file, 'utf8')
+    } finally {
+        closeSync(file)
+    }
+    const tools = [...config.matchAll(/^[ \t]*\[\s*(?:tools|"tools"|'tools')\s*\][^\n]*$/gm)]
+    if (tools.length) {
+        const start = tools[0]!.index + tools[0]![0].length
+        const section = config.slice(start).split(/^[ \t]*\[/m)[0]
+        if (tools.length !== 1 || section?.trim() !== 'enabled = ["*"]') throw unavailable()
+        return
+    }
+    replacePrivateFile(path, config.trimEnd() + '\n\n' + kimiTextToolPolicy)
+}
+
+function replacePrivateFile(path: string, content: string) {
+    const temp = join(dirname(path), randomUUID() + '.tmp')
+    writeFileSync(temp, content, { flag: 'wx', mode: 0o600 })
+    try {
+        renameSync(temp, path)
+    } finally {
+        rmSync(temp, { force: true })
+    }
+}
+
+export function desktopSubscriptionChatAvailable(provider: DesktopSubscriptionProvider) {
+    return provider === 'kimi-code' && desktopSubscriptionDeviceLoginAvailable(provider)
+}
+
+const catalogSchema = z.object({
+    generation: z.string().regex(attemptIdPattern),
+    refreshedAt: z.iso.datetime(),
+    models: desktopSubscriptionModels,
+})
+
+export function readDesktopSubscriptionCatalog(provider: DesktopSubscriptionProvider) {
+    if (!desktopSubscriptionChatAvailable(provider)) return null
+    const saved = readApproval(provider)
+    if (!saved) return null
+    try {
+        const path = ownedFile(join(saved.providerRoot, 'model-catalog.json'))
+        const info = lstatSync(path)
+        if (info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0 || info.size > 512 * 1024) return null
+        const result = catalogSchema.parse(JSON.parse(readFileSync(path, 'utf8')))
+        return result.generation === saved.id ? result : null
+    } catch {
+        return null
+    }
+}
+
+export async function refreshDesktopSubscriptionCatalog(provider: DesktopSubscriptionProvider, signal: AbortSignal) {
+    const admission = assertDesktopRunAdmission()
+    const saved = readApproval(provider)
+    if (!saved) throw new SubscriptionAcpError('auth-required')
+    const session = await openDesktopSubscriptionTurn(provider, saved.id, signal)
+    const initial = session.getSelectors().find(option => option.category === 'model')
+    const models = []
+    try {
+        if (!initial) throw new SubscriptionAcpError('selection-unavailable')
+        for (const option of initial.options) {
+            const selected = await session.selectModel(option.value, signal)
+            const reasoning = selected.find(selector => selector.category === 'thought_level')
+            models.push({
+                id: option.value,
+                label: option.name,
+                ...(reasoning && { reasoning: {
+                    supported: reasoning.options.map(option => option.value),
+                    default: reasoning.currentValue,
+                } }),
+            })
+        }
+    } finally {
+        await session.close()
+    }
+    signal.throwIfAborted()
+    assertDesktopRunAdmission(admission)
+    if (stopping || readApproval(provider)?.id !== saved.id) throw new SubscriptionAcpError('auth-required')
+    const result = catalogSchema.parse({ generation: saved.id, refreshedAt: new Date().toISOString(), models })
+    replacePrivateFile(join(saved.providerRoot, 'model-catalog.json'), JSON.stringify(result))
+    return result
+}
+
+/** Opens one confined turn for the exact approved account. No credential is exported. */
+export async function openDesktopSubscriptionTurn(
+    provider: DesktopSubscriptionProvider,
+    generation: string,
+    signal?: AbortSignal,
+) {
+    const admission = assertDesktopRunAdmission()
+    const assertCurrent = () => {
+        signal?.throwIfAborted()
+        assertDesktopRunAdmission(admission)
+        const saved = readApproval(provider)
+        if (!saved || saved.id !== generation) throw new SubscriptionAcpError('auth-required')
+        return saved
+    }
+    assertCurrent()
+    // Enable a runner only after its provider request has been observed with its tools disabled.
+    if (!desktopSubscriptionChatAvailable(provider) || workers.has(provider)) throw unavailable()
+    const { binary } = bundlePaths(provider)
+    const sandbox = ownedFile(process.env.RERUN_DESKTOP_SUBSCRIPTION_LOGIN_SANDBOX)
+    const relay = await openDesktopSubscriptionTurnRelay(provider)
+    try {
+        const account = accountDirectories(assertCurrent().profile)
+        if (workers.has(provider)) throw unavailable()
+        restrictKimiTools(account.vendorHome)
+        const { child, dispose } = spawnRunner(provider, { binary, sandbox }, account, runners[provider].args, relay, true)
+        child.stderr.resume()
+        return await openDesktopSubscriptionAcpSession({
+            provider, cwd: account.cwd, signal, beforePrompt: assertCurrent,
+            channel: { input: child.stdout, output: child.stdin, dispose },
+        })
+    } catch (error) {
+        await relay.close()
+        if (error instanceof SubscriptionAcpError) throw error
+        signal?.throwIfAborted()
+        assertDesktopRunAdmission(admission)
+        throw unavailable()
+    }
+}
+
 function spawnRunner(
     provider: DesktopSubscriptionProvider,
     { binary, sandbox }: ReturnType<typeof bundlePaths>,
     { profile, cwd, home, vendorHome, temp }: ReturnType<typeof accountDirectories>,
     args: readonly string[],
-    relay?: { proxy: string; port: number },
+    relay?: { proxy: string; port: number; close?: () => Promise<void> },
+    turn = false,
 ) {
     if (stopping || workers.has(provider)) throw unavailable()
     const definition = runners[provider]
@@ -218,8 +356,9 @@ function spawnRunner(
             TERM: 'dumb',
             LANG: 'en_US.UTF-8',
             TZ: 'UTC',
+            NODE_ENV: 'production',
             [definition.home]: vendorHome,
-            ...(provider === 'kimi-code' ? { KIMI_DISABLE_TELEMETRY: '1' } : {}),
+            ...(provider === 'kimi-code' ? { KIMI_DISABLE_TELEMETRY: '1', KIMI_CODE_WATCH: '0' } : {}),
             ...(relay ? {
                 HTTPS_PROXY: relay.proxy, HTTP_PROXY: relay.proxy,
                 https_proxy: relay.proxy, http_proxy: relay.proxy,
@@ -231,18 +370,31 @@ function spawnRunner(
     child.on('error', () => child.stdout.destroy())
     const exited = new Promise<true>(resolve => child.once('exit', () => resolve(true)))
     let draining: Promise<void> | undefined
-    const dispose: Worker = () => draining ??= stopChild(child, exited).then(() => {
-        workers.delete(provider)
-    }).finally(() => {
+    const dispose: Worker = () => draining ??= Promise.all([
+        relay?.close?.(),
+        stopChild(child, exited),
+    ]).then(() => {
+        if (workers.get(provider)?.dispose === dispose) workers.delete(provider)
+    }).catch(error => {
         // Retain failed drains for the next service shutdown attempt.
         draining = undefined
+        throw error
     })
-    workers.set(provider, dispose)
+    workers.set(provider, { dispose, turn })
     return { child, dispose }
+}
+
+export async function drainDesktopSubscriptionTurns() {
+    const turns = [...workers.values()].filter(worker => worker.turn)
+    await drainWorkers(turns)
 }
 
 export async function stopDesktopSubscriptionRunners() {
     stopping = true
-    const results = await Promise.allSettled([...workers.values()].map(close => close()))
+    await drainWorkers([...workers.values()])
+}
+
+async function drainWorkers(active: readonly { dispose: Worker }[]) {
+    const results = await Promise.allSettled(active.map(worker => worker.dispose()))
     if (results.some(result => result.status === 'rejected')) throw shutdownUnconfirmed()
 }

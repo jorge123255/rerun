@@ -1,7 +1,7 @@
 import { useDesktopLocale } from './DesktopLocale'
 import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata'
 import { useMemo, useState, type FormEvent } from 'react'
-import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, type ConnectionsList } from '@rerun/contracts'
+import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, connectionReasoningOptions, isDesktopSubscriptionProvider, type ConnectionsList } from '@rerun/contracts'
 import { ThemeToggle } from '@rerun/ui/theme'
 import { DesktopLanguageSettings } from './DesktopLanguageSettings'
 import { DesktopCodexLogin } from './DesktopCodexLogin'
@@ -51,14 +51,15 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
     const [busy, setBusy] = useState(false)
     const [notice, setNotice] = useState('')
     const [error, setError] = useState('')
-    const current = providers.connections.find(c => c.id === source)
+    const editable = providers.connections.filter(c => !isDesktopSubscriptionProvider(c.provider))
+    const current = editable.find(c => c.id === source)
     const provider = current ? desktopProvider.parse(current.provider) : desktopProvider.safeParse(source.replace(/^add:/, '')).data ?? 'openai'
-    const missing = desktopProvider.options.filter(p => p !== 'custom' && !providers.connections.some(c => c.provider === p))
+    const missing = desktopProvider.options.filter(p => p !== 'custom' && !isDesktopSubscriptionProvider(p) && !editable.some(c => c.provider === p))
     const picks = providers.connections.filter(c => c.connected && !(c.provider === 'claude' && c.credentialRejected)).flatMap(c => enabledModels(c).map(m => ({ connectionId: c.id, model: m.id })))
     const selected = picks.findIndex(p => p.connectionId === providers.default?.connectionId && p.model === providers.default.model)
     const active = providers.default
-    const codex = providers.connections.find(c => c.id === active?.connectionId && c.connected && c.provider === 'codex')
-    const reasoning = active && codex?.codexReasoning?.[active.model]
+    const activeConnection = providers.connections.find(c => c.id === active?.connectionId && c.connected)
+    const reasoning = active && activeConnection ? connectionReasoningOptions(activeConnection, active.model) : undefined
 
     async function save(change: SettingsChange, message: string) {
         setBusy(true)
@@ -78,7 +79,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
 
     function saveKey(event: FormEvent) {
         event.preventDefault()
-        if (key.trim() && provider !== 'codex' && provider !== 'claude' && provider !== 'custom') void save({ action: 'key', provider, connectionId: current?.id, apiKey: key.trim() }, 'API key saved.')
+        if (key.trim() && provider !== 'codex' && provider !== 'claude' && provider !== 'custom' && !isDesktopSubscriptionProvider(provider)) void save({ action: 'key', provider, connectionId: current?.id, apiKey: key.trim() }, 'API key saved.')
     }
 
     // A provider that was just added replaces its "add" option with the engine connection.
@@ -112,15 +113,15 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                             }}>
                                 {selected < 0 && <option value={-1} disabled>{picks.length ? 'Choose a model' : 'Connect a provider to choose a model'}</option>}
                                 {providers.connections.filter(c => c.connected && !(c.provider === 'claude' && c.credentialRejected)).map(c => <optgroup key={c.id} label={c.name}>{picks.map((p, index) => p.connectionId === c.id &&
-                                    <option key={p.model} value={index}>{modelName(c.id, p.model)}</option>)}</optgroup>)}
+                                    <option key={p.model} value={index}>{c.subscriptionModels?.find(m => m.id === p.model)?.label ?? modelName(c.id, p.model)}</option>)}</optgroup>)}
                             </select>
-                            {codex && active && <div className="space-y-2 pt-3">
+                            {activeConnection && active && (activeConnection.provider === 'codex' || reasoning) && <div className="space-y-2 pt-3">
                                 <label htmlFor="desktop-reasoning-effort" className="font-semibold">Reasoning effort</label>
-                                <p id="desktop-reasoning-hint" className="text-sm text-muted-foreground">How much reasoning Codex uses for the next message.</p>
+                                <p id="desktop-reasoning-hint" className="text-sm text-muted-foreground">How much reasoning {activeConnection.provider === 'codex' ? 'Codex' : activeConnection.name} uses for the next message.</p>
                                 <select id="desktop-reasoning-effort" aria-describedby="desktop-reasoning-hint" className={selectClass}
                                     disabled={!reasoning?.supported.length}
                                     value={active.reasoningEffort && reasoning?.supported.includes(active.reasoningEffort) ? active.reasoningEffort : ''}
-                                    onChange={e => void save({ action: 'default', connectionId: codex.id, model: active.model, reasoningEffort: e.target.value || null }, 'Reasoning effort saved.')}>
+                                    onChange={e => void save({ action: 'default', connectionId: activeConnection.id, model: active.model, reasoningEffort: e.target.value || null }, 'Reasoning effort saved.')}>
                                     <option value="">Model default{reasoning?.default ? ` (${effortLabel(reasoning.default)})` : ''}</option>
                                     {reasoning?.supported.map(level => <option key={level} value={level}>{effortLabel(level)}</option>)}
                                 </select>
@@ -134,7 +135,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                             <select id="desktop-provider" className={selectClass} value={connection?.id ?? 'add:' + provider} onChange={e => {
                                 setSource(e.target.value); setKey(''); setNotice(''); setError('')
                             }}>
-                                {providers.connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                {editable.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                 {workspaceId && <option value="add:custom">Add custom endpoint</option>}
                                 {missing.map(p => <option key={p} value={'add:' + p}>Connect {p === 'codex' ? 'ChatGPT (Codex)' : PROVIDER_LABELS[p]}</option>)}
                             </select>
@@ -167,7 +168,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                 {provider === 'openrouter' && <CustomModelList models={connection.extraModels} reserved={DEFAULT_CONNECTION_MODELS.openrouter} onChange={extras => changeModels(connection.models, extras)} />}
                             </div>}
                         </div>
-                        <DesktopSubscriptionLogin key={workspaceId ?? 'workspace'} />
+                        <DesktopSubscriptionLogin key={workspaceId ?? 'workspace'} onConnectionsChanged={onConnectionsChanged} />
                         <p className="text-sm text-muted-foreground">Connect ChatGPT (Codex) or Claude with your subscription, or use an API key for the other providers.</p>
                     </>}
                     {tab === 'Workspace' && <>

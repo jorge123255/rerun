@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { RERUN_MODELS, providerSchema } from './agent.js'
+import { desktopSubscriptionModels, desktopSubscriptionProvider, isDesktopSubscriptionProvider } from './desktop-subscription-login.js'
 
 // Populated by the desktop Codex runner. Its catalog, not a fixed enum, defines the available levels.
 const reasoningLevel = z.string().min(1)
@@ -19,6 +20,7 @@ export const connectionConfigSchema = z.object({
     // is shared by everyone on the box and survives a new device.
     models: z.array(z.string()).default([]),
     codexReasoning: codexReasoningSchema.optional(),
+    subscriptionModels: desktopSubscriptionModels.optional(),
     // OpenRouter-compatible router of the user's own. Empty falls back to openrouter.ai, and it has
     // to be a valid member of the type since a PATCH cannot clear a field by sending `undefined`.
     baseUrl: z.url().or(z.literal('')).optional(),
@@ -27,6 +29,15 @@ export const connectionConfigSchema = z.object({
     createdAt: z.string(),
 })
 export type ConnectionConfig = z.infer<typeof connectionConfigSchema>
+
+export function connectionReasoningOptions(
+    connection: Pick<ConnectionConfig, 'provider' | 'codexReasoning' | 'subscriptionModels'>,
+    model: string,
+) {
+    if (connection.provider === 'codex') return Object.hasOwn(connection.codexReasoning ?? {}, model)
+        ? connection.codexReasoning?.[model] : undefined
+    if (isDesktopSubscriptionProvider(connection.provider)) return connection.subscriptionModels?.find(item => item.id === model)?.reasoning
+}
 
 // The id of the keyless connection every box carries: requests are proxied by the hub, which holds
 // the shared key. It has a config.json like any other but no `.env`, and cannot be deleted.
@@ -82,7 +93,7 @@ export type ConnectionsList = z.infer<typeof connectionsListSchema>
 
 export const createConnectionSchema = z.object({
     name: z.string().min(1),
-    provider: providerSchema,
+    provider: providerSchema.refine(provider => !isDesktopSubscriptionProvider(provider)),
     models: z.array(z.string()).default([]),
     baseUrl: z.url().or(z.literal('')).optional(),
     extraModels: z.array(z.string()).default([]),
@@ -132,6 +143,8 @@ export const CONNECTION_TOKEN_KEY: Record<z.infer<typeof providerSchema>, string
     google: 'GOOGLE_GENERATIVE_AI_API_KEY',
     openrouter: 'OPENROUTER_API_KEY',
     custom: '',
+    'grok-build': '',
+    'kimi-code': '',
 }
 
 // What is wrong with a value about to be stored as a Claude subscription token, or null when it
@@ -155,6 +168,8 @@ export const CONNECTION_SATELLITE_KEYS: Record<z.infer<typeof providerSchema>, s
     google: ['GOOGLE_API_KEY'],
     openrouter: [],
     custom: [],
+    'grok-build': [],
+    'kimi-code': [],
 }
 
 // Every env var name that used to live on an agent and now belongs to a connection. What the boot
@@ -224,6 +239,8 @@ export const DEFAULT_CONNECTION_MODELS: Record<z.infer<typeof providerSchema>, s
         'minimax/minimax-m3.1-flash',
     ],
     custom: [],
+    'grok-build': [],
+    'kimi-code': [],
 }
 
 // How a connection names itself when nobody has yet: the boot migration builds "Claude (Theo)"
@@ -237,6 +254,8 @@ export const PROVIDER_LABELS: Record<z.infer<typeof providerSchema>, string> = {
     google: 'Google',
     openrouter: 'OpenRouter',
     custom: 'Custom endpoint',
+    'grok-build': 'Grok Build',
+    'kimi-code': 'Kimi Code',
 }
 
 // The model the app's picker offers for one coworker, grouped and labelled by the hub with the web
@@ -268,7 +287,7 @@ export type SetAgentModelInput = z.infer<typeof setAgentModelSchema>
 
 // The AI providers screen of the app, shaped by the hub with the web dialog's own rules (catalog,
 // hidden and locked models, plan windows, credit), since those live in apps/ui.
-export const addableProviderSchema = providerSchema.exclude(['rerun'])
+export const addableProviderSchema = providerSchema.exclude(['rerun', ...desktopSubscriptionProvider.options])
 export type AddableProvider = z.infer<typeof addableProviderSchema>
 
 export const aiConnectionKindSchema = z.enum(['included', 'plan', 'key'])

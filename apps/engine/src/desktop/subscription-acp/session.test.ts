@@ -87,6 +87,52 @@ function open(runner: ReturnType<typeof wire>, provider: 'grok-build' | 'kimi-co
 afterEach(() => vi.useRealTimers());
 
 describe('desktop subscription ACP sessions', () => {
+    it('stops during authentication without creating a session', async () => {
+        const controller = new AbortController();
+        const runner = fakeRunner(['login'], request => {
+            if (request.method !== 'authenticate') return false;
+            controller.abort();
+            return true;
+        });
+        await expect(openDesktopSubscriptionAcpSession({
+            provider: 'kimi-code', channel: runner.channel, cwd: '/disposable-qa', signal: controller.signal,
+        })).rejects.toMatchObject({ code: 'cancelled' });
+        expect(runner.requests.map(({ method }) => method)).toEqual(['initialize', 'authenticate']);
+        expect(runner.channel.dispose).toHaveBeenCalledOnce();
+    });
+
+    it('reads the selected model catalog without submitting a prompt', async () => {
+        const runner = fakeRunner(['login'], (request, { reply }) => {
+            if (request.method !== 'session/set_config_option') return false;
+            reply(request, { configOptions: config('precise', 'high') });
+            return true;
+        });
+        const session = await open(runner);
+        await expect(session.selectModel('precise')).resolves.toMatchObject([
+            { category: 'model', currentValue: 'precise' },
+            { category: 'thought_level', currentValue: 'high' },
+        ]);
+        await session.close();
+        expect(runner.requests.some(({ method }) => method === 'session/prompt')).toBe(false);
+    });
+
+    it('rechecks admission after selection and never sends a revoked turn', async () => {
+        const runner = fakeRunner(['login'], (request, { reply }) => {
+            if (request.method !== 'session/set_config_option') return false;
+            reply(request, { configOptions: config('precise') });
+            return true;
+        });
+        const session = await openDesktopSubscriptionAcpSession({
+            provider: 'kimi-code', channel: runner.channel, cwd: '/disposable-qa',
+            beforePrompt() { throw new Error('Approval expired'); },
+        });
+        await expect(session.prompt({ text: 'Private transcript', model: 'precise' })).rejects.toThrow('Approval expired');
+        expect(runner.requests.map(({ method }) => method)).toEqual([
+            'initialize', 'authenticate', 'session/new', 'session/set_config_option',
+        ]);
+        expect(runner.channel.dispose).toHaveBeenCalledOnce();
+    });
+
     it.each([
         ['grok-build', { methodId: 'cached_token', _meta: { headless: true } }],
         ['kimi-code', { methodId: 'login' }],

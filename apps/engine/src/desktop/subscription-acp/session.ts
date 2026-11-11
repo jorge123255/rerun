@@ -56,6 +56,8 @@ interface OpenOptions {
     channel: AcpChannel;
     // The runtime must supply a private working directory and confine the provider process.
     cwd: string;
+    signal?: AbortSignal;
+    beforePrompt?: () => void;
 }
 
 function parse<T>(schema: z.ZodType<T>, raw: unknown): T {
@@ -66,7 +68,7 @@ function parse<T>(schema: z.ZodType<T>, raw: unknown): T {
 
 function readSelectors(raw: unknown): Selector[] {
     const options = parse(z.array(z.unknown()).max(64).nullish(), raw) ?? [];
-    return options.flatMap((option) => {
+    const selectors = options.flatMap((option) => {
         if (!isObject(option) || option.type !== 'select' ||
             (option.category !== 'model' && option.category !== 'thought_level')) return [];
         const selector = parse(selectorSchema, option);
@@ -77,6 +79,10 @@ function readSelectors(raw: unknown): Selector[] {
         }
         return [selector];
     });
+    if (new Set(selectors.map(selector => selector.category)).size !== selectors.length) {
+        throw new SubscriptionAcpError('protocol');
+    }
+    return selectors;
 }
 
 function throwIfCancelled(signal?: AbortSignal): void {
@@ -100,7 +106,7 @@ function verifySelection(selectors: readonly Selector[], selection: Selection): 
  * Authentication checks the runner's existing login. Device login and credential custody
  * belong to the app-owned runtime. The channel is consumed and closed by prompt or close.
  */
-export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd }: OpenOptions) {
+export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd, signal: openSignal, beforePrompt }: OpenOptions) {
     let sessionId: string | undefined;
     let selectors: Selector[] = [];
     let used = false;
@@ -122,7 +128,8 @@ export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd
         }
     });
 
-    async function select(category: Category, value: string | undefined) {
+    async function select(category: Category, value: string | undefined, signal?: AbortSignal) {
+        throwIfCancelled(signal);
         if (value === undefined) return;
         const selector = findSelector(selectors, category);
         if (!selector?.options.some((option) => option.value === value)) {
@@ -132,7 +139,7 @@ export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd
 
         await peer.request(
             'session/set_config_option', { sessionId, configId: selector.id, value },
-            { onResult: (raw) => {
+            { cancellation: signal ? { signal } : undefined, onResult: (raw) => {
                 const result = parse(z.object({ configOptions: z.unknown() }), raw);
                 const confirmed = readSelectors(result.configOptions);
                 if (findSelector(confirmed, category)?.currentValue !== value) {
@@ -146,15 +153,17 @@ export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd
     try {
         if (!isAbsolute(cwd) || cwd.includes('\0')) throw new SubscriptionAcpError('protocol');
         const auth = authParams[provider];
+        const cancellation = openSignal ? { signal: openSignal } : undefined;
         const initialization = parse(initializationSchema, await peer.request('initialize', {
             protocolVersion: 1,
             clientCapabilities: {},
-        }));
+        }, { cancellation }));
         if (!initialization.authMethods?.some(({ id }) => id === auth.methodId)) {
             throw new SubscriptionAcpError('auth-required');
         }
-        await peer.request('authenticate', auth);
+        await peer.request('authenticate', auth, { cancellation });
         await peer.request('session/new', { cwd, mcpServers: [] }, {
+            cancellation,
             onResult: (raw) => {
                 const session = parse(newSessionSchema, raw);
                 sessionId = session.sessionId;
@@ -173,6 +182,12 @@ export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd
 
     return {
         getSelectors: (): Selector[] => structuredClone(selectors),
+        async selectModel(model: string, signal?: AbortSignal): Promise<Selector[]> {
+            if (used) throw new SubscriptionAcpError('busy');
+            await select('model', model, signal);
+            verifySelection(selectors, { model });
+            return structuredClone(selectors);
+        },
         close: () => peer.shutdown(),
         async prompt(options: PromptOptions): Promise<{ text: string; stopReason: StopReason }> {
             if (used) throw new SubscriptionAcpError('busy');
@@ -186,11 +201,11 @@ export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd
                 if (!text.trim() || Buffer.byteLength(text) > MAX_PROMPT_BYTES) {
                     throw new SubscriptionAcpError('protocol');
                 }
-                await select('model', model);
-                throwIfCancelled(signal);
-                await select('thought_level', reasoning);
+                await select('model', model, signal);
+                await select('thought_level', reasoning, signal);
                 throwIfCancelled(signal);
                 verifySelection(selectors, selection);
+                beforePrompt?.();
                 activeSelection = selection;
                 onChunk = (chunk) => {
                     if (signal?.aborted || !chunk) return;

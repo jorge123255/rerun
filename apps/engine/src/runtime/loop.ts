@@ -1,9 +1,9 @@
 import { assertDesktopRunAdmission } from '../desktop/workspace-admission.js'
 import { desktopDocumentContextParts } from '@rerun/contracts'
 import { streamText, type LanguageModelUsage, type ModelMessage, type StepResult, type StreamTextResult, type ToolSet, type UIMessageStreamWriter } from 'ai'
-import { FOREMAN_AGENT_ID, RERUN_CONNECTION_ID, desktopCoworkerMentionContextParts, contextTextPart, workspaceAttachmentParts, desktopResolvedAttachmentParts, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, RERUN_CONNECTION_ID, desktopCoworkerMentionContextParts, contextTextPart, workspaceAttachmentParts, desktopResolvedAttachmentParts, isDesktopSubscriptionProvider, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
 import { applyCaching, withTailBreakpoint } from '../agents/caching.js'
-import { desktopCodexEffort, mergeProviderOptions, reasoningProviderOptions } from '../agents/reasoning.js'
+import { desktopCodexEffort, desktopSubscriptionEffort, mergeProviderOptions, reasoningProviderOptions } from '../agents/reasoning.js'
 import { prepareRunHistory } from './compaction/compact.js'
 import { repairToolPairs } from './compaction/repair.js'
 import { approvalSummary, canonicalHitlName, findPendingHitl, hitlStepLacksMessage, hitlTurnIsOver, isHitlToolName, secretSummary, takeoverSummary, type PendingHitl } from '../tools/builtin/hitl.js'
@@ -485,11 +485,13 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         const triggerSlug = 'slug' in trigger ? trigger.slug : null
         void setRunContext(agent.id, run.id, { provider, model, triggerSource: trigger.source, triggerSlug }).catch(() => {})
 
-        const callTargetsP = agent.config.tools.callAgent ? listAgentIndex().then(idx => idx.filter(a => a.id !== agent.id && !a.name.endsWith(' delegate'))) : Promise.resolve([])
-        const toolsP = callTargetsP.then(callTargets => {
-            ctx.callTargets = callTargets
-            return buildTools(ctx)
-        })
+        const subscription = isDesktopSubscriptionProvider(provider)
+        const callTargetsP = !subscription && agent.config.tools.callAgent ? listAgentIndex().then(idx => idx.filter(a => a.id !== agent.id && !a.name.endsWith(' delegate'))) : Promise.resolve([])
+        const toolsP = subscription ? Promise.resolve({ tools: {}, close: async () => {} }) :
+            callTargetsP.then(callTargets => {
+                ctx.callTargets = callTargets
+                return buildTools(ctx)
+            })
         const preparedP = !desktopApp() && CLI_PROVIDERS.has(provider) ? Promise.all(agent.config.mcpServers.map(s => prepareMcpServer(agent.id, s, agent.env))) : Promise.resolve([])
         // Claude reaches its servers through the engine's connections; Codex starts its own without
         // holding up the model, so it keeps dialing them as declared.
@@ -574,7 +576,8 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         const imageRun = provider === 'codex' && desktopApp() && ctx.runId
             ? { runId: ctx.runId, sessionId, abortSignal: controller.signal, runRoot: nativeWorker?.root }
             : undefined
-        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker, imageRun)
+        const subscriptionEffort = subscription ? await desktopSubscriptionEffort(resolved) : undefined
+        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker, imageRun, subscriptionEffort)
         closeModel = resolvedModel.close
         contextUsage = resolvedModel.contextUsage
         // Cut out of the text whoever wrote it; only a coworker that offers replies gets the buttons.

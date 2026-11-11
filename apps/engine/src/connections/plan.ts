@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { rename, writeFile } from 'node:fs/promises'
-import { boxPlanSchema, trialModelFor, type BoxPlan, type Provider } from '@rerun/contracts'
+import { boxPlanSchema, isDesktopSubscriptionProvider, trialModelFor, type BoxPlan, type Provider } from '@rerun/contracts'
 import { boxPlanPath } from '../config/paths.js'
 import { clearAgentCache } from '../agents/registry.js'
 
@@ -35,5 +35,5 @@ export async function writeBoxPlan(next: BoxPlan): Promise<BoxPlan> {
 // The model a run really gets. The pin itself is never rewritten, so paying gives Opus back to every
 // agent that asked for it.
 export function allowedModel(provider: Provider, model: string): string {
-    return provider === 'custom' || readBoxPlan().premiumModels ? model : trialModelFor(provider, model)
+    return provider === 'custom' || isDesktopSubscriptionProvider(provider) || readBoxPlan().premiumModels ? model : trialModelFor(provider, model)
 }

@@ -14,6 +14,10 @@ vi.mock('../../desktop/claude-plan/runtime.js', () => ({ stopDesktopClaudeWorker
 vi.mock('../../desktop/subscription-acp/runtime.js', () => ({
     desktopSubscriptionRunnerAvailable: (provider: string) => provider === 'grok-build',
     stopDesktopSubscriptionRunners: vi.fn(async () => {}),
+    drainDesktopSubscriptionTurns: vi.fn(async () => {}),
+    desktopSubscriptionChatAvailable: vi.fn(() => false),
+    readDesktopSubscriptionCatalog: vi.fn(() => null),
+    refreshDesktopSubscriptionCatalog: vi.fn(async () => null),
     desktopSubscriptionDeviceLoginAvailable: (provider: string) => provider === 'grok-build',
     desktopSubscriptionDeviceApproved: () => false,
     createDesktopSubscriptionDeviceAttempt: () => { throw new Error('No provider runner in the engine route test') },

@@ -1,4 +1,4 @@
-import { DEFAULT_PROVIDER_MODEL, RERUN_CONNECTION_ID, RERUN_MODEL, type AgentConfig, type Provider } from '@rerun/contracts'
+import { DEFAULT_PROVIDER_MODEL, isDesktopSubscriptionProvider, parseDesktopSubscriptionConnectionId, RERUN_CONNECTION_ID, RERUN_MODEL, type AgentConfig, type Provider } from '@rerun/contracts'
 import { readBoxDefault } from '../connections/default.js'
 import { allowedModel } from '../connections/plan.js'
 import { findConnection, listConnections } from '../connections/registry.js'
@@ -41,6 +41,8 @@ function pick(connection: LoadedConnection, model: string): RunModel {
 export async function boxDefaultModel(): Promise<RunModel> {
     const configured = await readBoxDefault()
     const direct = await findConnection(configured?.connectionId)
+    const subscription = parseDesktopSubscriptionConnectionId(configured?.connectionId)
+    if (configured && subscription) return { connection: direct, provider: subscription.provider, model: configured.model }
     if (configured && direct?.config.provider === 'custom') return pick(direct, configured.model)
     if (configured && isUsable(direct, configured.model)) return pick(direct!, configured.model)
 
@@ -48,7 +50,7 @@ export async function boxDefaultModel(): Promise<RunModel> {
     const rerun = all.find(c => c.id === RERUN_CONNECTION_ID)
     const candidates = [...(rerun ? [rerun] : []), ...all]
     for (const connection of candidates) {
-        if (connection.config.provider === 'custom') continue
+        if (connection.config.provider === 'custom' || isDesktopSubscriptionProvider(connection.config.provider)) continue
         const model = defaultModelOf(connection)
         if (isUsable(connection, model)) return pick(connection, model)
     }
@@ -61,16 +63,20 @@ export async function boxDefaultModel(): Promise<RunModel> {
 export async function resolveConfiguredModel(config: Pick<AgentConfig, 'connectionId' | 'provider' | 'model'>): Promise<RunModel> {
     if (!config.model) return boxDefaultModel()
     const connection = await resolveConnection(config.connectionId, config.provider)
-    const provider = connection?.config.provider ?? config.provider ?? 'rerun'
+    const provider = connection?.config.provider ?? parseDesktopSubscriptionConnectionId(config.connectionId)?.provider ?? config.provider ?? 'rerun'
     return { connection, provider, model: allowedModel(provider, config.model) }
 }
 
 // The same answer with a run's override laid on top. The override names a connection and a model;
 // the provider is always the resolved connection's.
 export async function resolveRunModel(agent: LoadedAgent, override?: ModelOverride): Promise<RunModel> {
-    if (!override?.connectionId && !override?.provider && !override?.model) return agent.resolved
+    if (!override?.connectionId && !override?.provider && !override?.model) {
+        if (!isDesktopSubscriptionProvider(agent.resolved.provider)) return agent.resolved
+        return resolveConfiguredModel(agent.config)
+    }
     const connection = await resolveConnection(override.connectionId ?? agent.config.connectionId, override.provider ?? agent.config.provider)
-    const provider = connection?.config.provider ?? override.provider ?? agent.resolved.provider
+    const provider = connection?.config.provider ?? parseDesktopSubscriptionConnectionId(override.connectionId ?? agent.config.connectionId)?.provider
+        ?? override.provider ?? agent.resolved.provider
     return { connection, provider, model: allowedModel(provider, override.model ?? agent.resolved.model) }
 }
 

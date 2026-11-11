@@ -1,4 +1,4 @@
-import { PROVIDER_LABELS, modelLabel, type BoxDefaultModel, type ConnectionSummary, type Provider } from '@rerun/contracts'
+import { PROVIDER_LABELS, connectionReasoningOptions, modelLabel, type BoxDefaultModel, type ConnectionSummary, type Provider } from '@rerun/contracts'
 import { z } from 'zod'
 import { desktopProvider } from './settings'
 
@@ -66,7 +66,11 @@ export const MODEL_SOURCE_LABEL: Record<DesktopModelSource, string> = {
     workspace: 'Workspace default',
 }
 
-type CatalogConnection = Pick<ConnectionSummary, 'id' | 'name' | 'provider' | 'connected' | 'models' | 'extraModels' | 'codexReasoning'> & Partial<Pick<ConnectionSummary, 'credentialRejected'>>
+type CatalogConnection = Pick<ConnectionSummary, 'id' | 'name' | 'provider' | 'connected' | 'models' | 'extraModels' | 'codexReasoning' | 'subscriptionModels'> & Partial<Pick<ConnectionSummary, 'credentialRejected'>>
+
+export function desktopConnectionModelLabel(connection: Pick<ConnectionSummary, 'subscriptionModels'> | null | undefined, id: string | null) {
+    return connection?.subscriptionModels?.find(model => model.id === id)?.label ?? modelLabel(id)
+}
 
 export function offeredModelIds(connection: { models: string[]; extraModels?: string[] }): string[] {
     return [...connection.models, ...(connection.extraModels ?? [])]
@@ -87,8 +91,8 @@ export function usableConnection(connections: CatalogConnection[], pick: Desktop
 // The same choice desktopCodexEffort makes at run time: the saved workspace effort when this
 // Codex model is the workspace model, otherwise that model's own recommended effort.
 export function desktopReasoningChoice(connection: CatalogConnection | null, model: string | null, workspace: BoxDefaultModel | null): DesktopReasoning | undefined {
-    if (connection?.provider !== 'codex' || !model) return
-    const options = connection.codexReasoning?.[model]
+    if (!connection || !model) return
+    const options = connectionReasoningOptions(connection, model)
     if (!options) return
     if (workspace?.connectionId === connection.id && workspace.model === model && workspace.reasoningEffort && options.supported.includes(workspace.reasoningEffort)) {
         return { effort: workspace.reasoningEffort, source: 'workspace' }
@@ -114,7 +118,7 @@ export function buildDesktopModelView(input: {
         provider: desktopProvider.parse(workspaceConnection.provider),
         name: workspaceConnection.name,
         model: input.workspace.model,
-        label: modelLabel(input.workspace.model),
+        label: desktopConnectionModelLabel(workspaceConnection, input.workspace.model),
         ...(input.workspace.reasoningEffort ? { reasoningEffort: input.workspace.reasoningEffort } : {}),
     } : null
     const pinned = input.coworker?.model ? { connectionId: input.coworker.connectionId ?? '', model: input.coworker.model } : null
@@ -123,13 +127,13 @@ export function buildDesktopModelView(input: {
         connectionId: input.coworker?.connectionId ?? null,
         provider: pinnedConnection?.provider ?? input.coworker?.provider ?? null,
         model: pinned.model,
-        label: modelLabel(pinned.model),
+        label: desktopConnectionModelLabel(pinnedConnection, pinned.model),
         available: !!usableConnection(connections, input.coworker?.connectionId ? { connectionId: input.coworker.connectionId, model: pinned.model } : null),
     } : null
     const conversation = input.conversation ? {
         connectionId: input.conversation.connectionId,
         model: input.conversation.model,
-        label: modelLabel(input.conversation.model),
+        label: desktopConnectionModelLabel(usableConnection(connections, input.conversation), input.conversation.model),
         available: !!usableConnection(connections, input.conversation),
     } : null
     const source: DesktopModelSource = conversation ? 'conversation' : coworker ? 'coworker' : 'workspace'
@@ -143,7 +147,7 @@ export function buildDesktopModelView(input: {
             connectionId: item.id,
             name: item.name,
             provider: desktopProvider.parse(item.provider),
-            models: offeredModelIds(item).map(id => ({ id, label: modelLabel(id) })),
+            models: offeredModelIds(item).map(id => ({ id, label: desktopConnectionModelLabel(item, id) })),
         })),
         workspace,
         coworker,
@@ -154,7 +158,7 @@ export function buildDesktopModelView(input: {
             provider: selectedConnection?.provider ?? coworker?.provider ?? null,
             name: selectedConnection?.name ?? providerName(selectedConnection?.provider ?? coworker?.provider ?? null),
             model,
-            label: modelLabel(model),
+            label: desktopConnectionModelLabel(selectedConnection, model),
             available,
             ...(reasoning ? { reasoning } : {}),
         },

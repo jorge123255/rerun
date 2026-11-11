@@ -17,6 +17,27 @@ const codex = connection({
 const workspace: BoxDefaultModel = { connectionId: 'codex', model: 'terra', reasoningEffort: 'high' }
 
 describe('desktop model selection', () => {
+    it('uses the discovered subscription label and reasoning, and does not substitute another account', () => {
+        const kimi = connection({
+            id: 'mac-kimi-code-00000000-0000-4000-8000-000000000001',
+            provider: 'kimi-code', name: 'Kimi Code', models: ['fixture-model'],
+            subscriptionModels: [{
+                id: 'fixture-model', label: 'Kimi fixture model', reasoning: { supported: ['low', 'high'], default: 'low' },
+            }],
+        })
+        const conversation = { connectionId: kimi.id, model: 'fixture-model' }
+        const selected = { ...conversation, reasoningEffort: 'high' }
+        const view = buildDesktopModelView({ connections: [kimi, codex], workspace: selected, coworker: null, conversation })
+        expect(view.catalog[0]?.models).toEqual([{ id: 'fixture-model', label: 'Kimi fixture model' }])
+        expect(view.effective).toMatchObject({
+            ...conversation, provider: 'kimi-code', label: 'Kimi fixture model', available: true,
+            reasoning: { effort: 'high', source: 'workspace' },
+        })
+        const next = { ...kimi, id: kimi.id.replace(/1$/, '2') }
+        const revoked = buildDesktopModelView({ connections: [next, codex], workspace, coworker: null, conversation })
+        expect(revoked.effective).toMatchObject({ ...conversation, source: 'conversation', available: false })
+    })
+
     it('mirrors the Codex effort choice without writing a new one', () => {
         expect(desktopReasoningChoice(codex, 'terra', workspace)).toEqual({ effort: 'high', source: 'workspace' })
         expect(desktopReasoningChoice(codex, 'luna', workspace)).toEqual({ effort: 'low', source: 'model-default' })

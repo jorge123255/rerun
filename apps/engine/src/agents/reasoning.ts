@@ -1,5 +1,5 @@
 import type { streamText } from 'ai'
-import type { Provider } from '@rerun/contracts'
+import { connectionReasoningOptions, isDesktopSubscriptionProvider, type Provider } from '@rerun/contracts'
 import { readBoxDefault } from '../connections/default.js'
 import { DESKTOP_CODEX_ID } from '../desktop/codex-runtime.js'
 import { desktopApp } from '../desktop/policy.js'
@@ -31,6 +31,16 @@ export async function desktopCodexEffort({ provider, connection, model }: RunMod
         selected.reasoningEffort && options.supported.includes(selected.reasoningEffort)) return selected.reasoningEffort
     // Native Codex carries effort across turns. Send the model's recommended value
     // explicitly so switching back to Auto also resets an already-open conversation.
+    return options.default
+}
+
+export async function desktopSubscriptionEffort({ provider, connection, model }: RunModel): Promise<string | undefined> {
+    if (!isDesktopSubscriptionProvider(provider) || !connection) return
+    const options = connectionReasoningOptions(connection.config, model)
+    if (!options) return
+    const selected = await readBoxDefault()
+    if (selected?.connectionId === connection.id && selected.model === model && selected.reasoningEffort &&
+        options.supported.includes(selected.reasoningEffort)) return selected.reasoningEffort
     return options.default
 }
 

@@ -3,6 +3,27 @@ import { z } from 'zod'
 export const desktopSubscriptionProvider = z.enum(['grok-build', 'kimi-code'])
 export type DesktopSubscriptionProvider = z.infer<typeof desktopSubscriptionProvider>
 
+export function isDesktopSubscriptionProvider(provider: unknown): provider is DesktopSubscriptionProvider {
+    return provider === 'grok-build' || provider === 'kimi-code'
+}
+
+const subscriptionConnectionId = /^mac-(grok-build|kimi-code)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/
+export function parseDesktopSubscriptionConnectionId(id: string | null | undefined) {
+    const match = id?.match(subscriptionConnectionId)
+    if (!match || !isDesktopSubscriptionProvider(match[1])) return null
+    return { provider: match[1], generation: match[2]! }
+}
+
+const catalogId = z.string().min(1).max(256).refine(value => value.trim() === value && !/[\x00-\x1f\x7f]/.test(value))
+export const desktopSubscriptionModels = z.array(z.object({
+    id: catalogId,
+    label: z.string().trim().min(1).max(256),
+    reasoning: z.object({
+        supported: z.array(catalogId).min(1).max(128),
+        default: catalogId,
+    }).refine(({ supported, default: effort }) => supported.includes(effort)).optional(),
+})).min(1).max(128).refine(models => new Set(models.map(model => model.id)).size === models.length)
+
 export const desktopSubscriptionDeviceCode = z.string().regex(/^[A-Z0-9]{3,12}(?:-[A-Z0-9]{3,12}){0,2}$/)
 const verificationHosts = {
     'grok-build': new Set(['auth.x.ai', 'x.ai', 'grok.com', 'www.grok.com', 'accounts.x.ai']),
@@ -32,7 +53,7 @@ const status = z.discriminatedUnion('phase', [
         verificationUrl: z.string().max(600),
         userCode: desktopSubscriptionDeviceCode,
     }),
-    z.object({ phase: z.literal('approved') }),
+    z.object({ phase: z.literal('approved'), canRefreshModels: z.boolean().optional(), models: desktopSubscriptionModels.optional() }),
     z.object({ phase: z.literal('error'), reason: z.enum(['failed', 'expired', 'unconfirmed']) }),
 ])
 
@@ -47,7 +68,7 @@ export const desktopSubscriptionLoginSnapshot = z.object({
 })
 export const desktopSubscriptionLoginAction = z.object({
     provider: desktopSubscriptionProvider,
-    action: z.enum(['start', 'cancel', 'disconnect']),
+    action: z.enum(['start', 'cancel', 'disconnect', 'refresh-models']),
 }).strict()
 export type DesktopSubscriptionLoginSnapshot = z.infer<typeof desktopSubscriptionLoginSnapshot>
 export type DesktopSubscriptionLoginStatus = z.infer<typeof status>

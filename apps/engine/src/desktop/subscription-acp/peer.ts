@@ -42,7 +42,7 @@ export function isObject(value: unknown): value is RpcObject {
 
 interface RequestOptions {
     timeoutMs?: number;
-    cancellation?: { signal: AbortSignal; sessionId: string };
+    cancellation?: { signal: AbortSignal; sessionId?: string };
     onResult?: (result: unknown) => void;
 }
 
@@ -91,10 +91,14 @@ export class AcpPeer {
             let cancelled = false;
             let timer = setTimeout(() => this.close('timeout'), options.timeoutMs ?? REQUEST_TIMEOUT_MS);
             const abort = () => {
+                if (cancellation?.sessionId === undefined) {
+                    this.close('cancelled');
+                    return;
+                }
                 cancelled = true;
                 clearTimeout(timer);
                 timer = setTimeout(() => this.close('cancelled'), CANCEL_TIMEOUT_MS);
-                this.send({ method: 'session/cancel', params: { sessionId: cancellation?.sessionId } });
+                this.send({ method: 'session/cancel', params: { sessionId: cancellation.sessionId } });
             };
             this.pending = {
                 id,

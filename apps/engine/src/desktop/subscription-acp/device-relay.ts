@@ -3,15 +3,22 @@ import { createServer } from 'node:http'
 import { connect, type Socket } from 'node:net'
 import type { DesktopSubscriptionProvider } from '@rerun/contracts'
 
-const destinations = {
+const deviceDestinations = {
     'grok-build': new Set(['auth.x.ai:443']),
     'kimi-code': new Set(['auth.kimi.ai:443', 'api.kimi.ai:443']),
 }
+const dialVendor = (host: string) => connect({ host, port: 443 })
 
-export async function openDesktopSubscriptionDeviceRelay(
-    provider: DesktopSubscriptionProvider,
-    dial = (host: string) => connect({ host, port: 443 }),
-) {
+export function openDesktopSubscriptionDeviceRelay(provider: DesktopSubscriptionProvider, dial = dialVendor) {
+    return openRelay(deviceDestinations[provider], dial)
+}
+
+export function openDesktopSubscriptionTurnRelay(provider: DesktopSubscriptionProvider, dial = dialVendor) {
+    if (provider !== 'kimi-code') throw new Error('The subscription turn relay is unavailable.')
+    return openRelay(deviceDestinations[provider], dial)
+}
+
+async function openRelay(destinations: ReadonlySet<string>, dial: typeof dialVendor) {
     const password = randomBytes(24).toString('hex')
     const expected = Buffer.from('Basic ' + Buffer.from('rerun:' + password).toString('base64'))
     const sockets = new Set<Socket>()
@@ -31,7 +38,7 @@ export async function openDesktopSubscriptionDeviceRelay(
         const socket = stream as Socket
         const target = request.url ?? ''
         const actual = Buffer.from(request.headers['proxy-authorization'] ?? '')
-        if (closing || !destinations[provider].has(target) ||
+        if (closing || !destinations.has(target) ||
             actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
             socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
             return

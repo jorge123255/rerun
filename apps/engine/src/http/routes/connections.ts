@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { RERUN_CONNECTION_ID, boxDefaultUpdateSchema, createConnectionSchema, updateConnectionKeysSchema, updateConnectionSchema } from '@rerun/contracts'
+import { RERUN_CONNECTION_ID, boxDefaultUpdateSchema, connectionReasoningOptions, createConnectionSchema, parseDesktopSubscriptionConnectionId, updateConnectionKeysSchema, updateConnectionSchema } from '@rerun/contracts'
 import { connectionExists, isConnected, toSummary } from '../../connections/loader.js'
 import { findConnection, getConnection, listConnections } from '../../connections/registry.js'
 import { assertConnectionDeletable, createConnection, deleteConnection, patchConnection, updateConnectionKeys } from '../../connections/store.js'
@@ -39,17 +39,20 @@ connectionRoutes.get('/', async c => {
 connectionRoutes.put('/default', async c => {
     const { connectionId, model, reasoningEffort } = boxDefaultUpdateSchema.parse(await c.req.json())
     if (namedDesktopConnection(connectionId)) return c.json({ error: 'Named API model selection is unavailable. The workspace default was not changed.' }, 409)
-    if (desktopApp() && connectionId === DESKTOP_CODEX_ID) {
+    const subscription = parseDesktopSubscriptionConnectionId(connectionId)
+    if (desktopApp() && (connectionId === DESKTOP_CODEX_ID || subscription)) {
         return withConnectionLock(connectionId, async () => {
             const connection = await findConnection(connectionId)
             if (!connection) return c.json({ error: 'connection not found' }, 404)
             assertDesktopProvider(connection.config.provider, connectionId)
-            if (connection.config.provider !== 'codex' || !isConnected(connection) || !servesModel(connection, model)) return c.json({ error: 'Choose a model from the connected Codex account.' }, 400)
-            const supported = connection.config.codexReasoning?.[model]?.supported ?? []
+            if (connection.config.provider !== (subscription?.provider ?? 'codex') || !isConnected(connection) || !servesModel(connection, model)) {
+                return c.json({ error: subscription ? 'Choose a model from the connected subscription.' : 'Choose a model from the connected Codex account.' }, 400)
+            }
+            const supported = connectionReasoningOptions(connection.config, model)?.supported ?? []
             return c.json(await updateBoxDefault(current => {
                 if (reasoningEffort !== undefined) {
                     if (current?.connectionId !== connectionId || current.model !== model) throw new HttpError(409, 'The selected model has changed. Choose the effort for the current model.')
-                    if (reasoningEffort && !supported.includes(reasoningEffort)) throw badRequest('Choose a reasoning effort supported by this Codex model.')
+                    if (reasoningEffort && !supported.includes(reasoningEffort)) throw badRequest('Choose a reasoning effort supported by this model.')
                 }
                 const effort = reasoningEffort === undefined && current?.connectionId === connectionId ? current.reasoningEffort : reasoningEffort
                 return { connectionId, model, ...(effort && supported.includes(effort) && { reasoningEffort: effort }) }

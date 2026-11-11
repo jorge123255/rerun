@@ -65,3 +65,33 @@ test('shows a saved approval without claiming coworker chat is connected', async
     expect(container.querySelector('output')).toBeNull()
     await act(async () => { root.unmount() })
 })
+
+test('refreshes the approved model catalog and removes it on disconnect', async () => {
+    const changed = vi.fn()
+    let state: DesktopSubscriptionLoginSnapshot = {
+        'grok-build': { phase: 'unavailable' },
+        'kimi-code': { phase: 'approved', canRefreshModels: true },
+    }
+    vi.stubGlobal('fetch', vi.fn(async (_path: string, init?: RequestInit) => {
+        if (init?.method === 'POST') {
+            const { provider, action } = JSON.parse(String(init.body))
+            expect(provider).toBe('kimi-code')
+            state = { ...state, 'kimi-code': action === 'refresh-models'
+                ? { phase: 'approved', canRefreshModels: true, models: [{ id: 'kimi-fixture', label: 'Kimi Fixture' }] }
+                : { phase: 'idle' } }
+        }
+        return Response.json(state)
+    }))
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    await act(async () => { root.render(<DesktopSubscriptionLogin onConnectionsChanged={changed} />) })
+    const button = (text: string) => [...container.querySelectorAll('button')].find(node => node.textContent === text)!
+    await act(async () => { button('Load models').click() })
+    expect(container.textContent).toContain('Ready for text chat')
+    expect(changed).toHaveBeenCalledTimes(1)
+    await act(async () => { button('Disconnect Kimi Code from Rerun').click() })
+    expect(container.textContent).toContain('Sign in with Kimi Code')
+    expect(changed).toHaveBeenCalledTimes(2)
+    await act(async () => { root.unmount() })
+})

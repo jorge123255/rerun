@@ -4,6 +4,8 @@ import { isPathSegment } from '../config/paths.js'
 import { connectionExists, listConnectionIds, loadConnectionFromDisk } from './loader.js'
 import { desktopCustomProviderBinding, readRegisteredCustomConnection } from '../desktop/custom-providers/binding.js'
 import type { LoadedConnection } from './types.js'
+import { parseDesktopSubscriptionConnectionId } from '@rerun/contracts'
+import { findDesktopSubscriptionConnection, listDesktopSubscriptionConnections } from '../desktop/subscription-acp/connections.js'
 
 // One instance per connection, shared by every agent pointing at it. Deliberate: a token refresh
 // mutates this single object, so the whole box sees the fresh credential at once instead of each
@@ -11,6 +13,11 @@ import type { LoadedConnection } from './types.js'
 const cache = new Map<string, LoadedConnection>()
 
 export async function getConnection(id: string): Promise<LoadedConnection> {
+    if (parseDesktopSubscriptionConnectionId(id)) {
+        const connection = findDesktopSubscriptionConnection(id)
+        if (!connection) throw notFound('connection')
+        return connection
+    }
     const custom = await readRegisteredCustomConnection(id)
     if (custom) return custom
     const cached = cache.get(id)
@@ -23,6 +30,7 @@ export async function getConnection(id: string): Promise<LoadedConnection> {
 
 export async function findConnection(id: string | null | undefined): Promise<LoadedConnection | null> {
     if (!id || !isPathSegment(id)) return null
+    if (parseDesktopSubscriptionConnectionId(id)) return findDesktopSubscriptionConnection(id)
     const custom = await readRegisteredCustomConnection(id)
     return custom ?? (connectionExists(id) ? getConnection(id) : null)
 }
@@ -30,7 +38,8 @@ export async function findConnection(id: string | null | undefined): Promise<Loa
 export async function listConnections(): Promise<LoadedConnection[]> {
     const ids = await listConnectionIds()
     const custom = await desktopCustomProviderBinding()?.ids() ?? []
-    return Promise.all([...new Set([...ids, ...custom])].map(id => getConnection(id)))
+    const stored = await Promise.all([...new Set([...ids.filter(id => !parseDesktopSubscriptionConnectionId(id)), ...custom])].map(id => getConnection(id)))
+    return [...stored, ...listDesktopSubscriptionConnections()]
 }
 
 // Agents hold a reference to the shared instance, so dropping a connection from the cache has to

@@ -1,4 +1,6 @@
 import { customInferenceModel } from '../desktop/custom-providers/model.js'
+import { createDesktopSubscriptionModel } from '../desktop/subscription-acp/model.js'
+import { findDesktopSubscriptionConnection } from '../desktop/subscription-acp/connections.js'
 import { desktopDelegationCodexCwd } from '../desktop/delegation/child-scope.js'
 import { createProviderRegistry, wrapLanguageModel, type LanguageModel, type ToolSet } from 'ai'
 import { createAnthropic } from '@ai-sdk/anthropic'
@@ -15,7 +17,7 @@ import {
     type LocalTool,
 } from 'ai-sdk-provider-codex-cli'
 import type { ZodObject, ZodRawShape, ZodType } from 'zod'
-import { desktopCodexGrantsOf, desktopRerunGrantsOf, desktopRerunToolCatalog, type ContextOccupancy, type McpServer, type Provider } from '@rerun/contracts'
+import { desktopCodexGrantsOf, desktopRerunGrantsOf, desktopRerunToolCatalog, isDesktopSubscriptionProvider, parseDesktopSubscriptionConnectionId, type ContextOccupancy, type McpServer, type Provider } from '@rerun/contracts'
 import { env } from '../config/env.js'
 import { codexHomeDir } from '../config/paths.js'
 import { allowedModel } from '../connections/plan.js'
@@ -477,11 +479,23 @@ function pairFor(agent: LoadedAgent, override?: ModelOverride): { provider: Prov
     return { provider, model: allowedModel(provider, override?.model ?? agent.resolved.model) }
 }
 
+function subscriptionModel(agent: LoadedAgent, model: string, reasoning?: string) {
+    const id = agent.resolved.connection?.id
+    const pin = parseDesktopSubscriptionConnectionId(id)
+    const connection = id && findDesktopSubscriptionConnection(id)
+    const selected = connection && connection.config.subscriptionModels?.find(item => item.id === model)
+    if (!pin || !selected || pin.provider !== agent.resolved.provider) throw new Error('The selected subscription model is unavailable.')
+    return createDesktopSubscriptionModel({
+        ...pin, model, reasoning: reasoning ?? selected.reasoning?.default,
+    })
+}
+
 // For one-shot calls with no tools. Codex resolves to the exec transport here, which spawns per call
 // and exits — nothing to dispose. A run that streams must use `resolveModel` instead.
 export function modelFor(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: McpServer[], options?: CliModelOptions): LanguageModel {
     const { provider, model } = pairFor(agent, override)
     if (provider === 'custom') return customInferenceModel(agent.resolved.connection, model).model
+    if (isDesktopSubscriptionProvider(provider)) return subscriptionModel(agent, model).model
     if (desktopApp() && provider === 'codex' && options?.desktopVision) {
         return wrapLanguageModel({
             model: codexExecProvider(agent).languageModel(model),
@@ -549,7 +563,7 @@ export type ResolvedModel = { model: LanguageModel; close: () => Promise<void>; 
 
 const noClose = async (): Promise<void> => {}
 
-export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: RunMcpServer[], system?: string, screenshots?: ScreenshotLookup, nativeWorker?: DesktopNativeWorker, imageRun?: DesktopCodexImageRun): ResolvedModel {
+export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: RunMcpServer[], system?: string, screenshots?: ScreenshotLookup, nativeWorker?: DesktopNativeWorker, imageRun?: DesktopCodexImageRun, subscriptionEffort?: string): ResolvedModel {
     const { provider, model } = pairFor(agent, override)
     // `wrapLanguageModel` runs the list from the end: the guard sits nearest the model, so no other
     // middleware ever reads a fake tool call, the card tags go next, and the quick replies read the
@@ -557,6 +571,10 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
     const replies = createQuickRepliesCapture()
     const cardTags = createCardTagGuard(agent.id, provider)
     const guard = createFakeToolCallGuard(agent.id)
+    if (isDesktopSubscriptionProvider(provider)) {
+        const subscription = subscriptionModel(agent, model, subscriptionEffort)
+        return { model: wrapLanguageModel({ model: subscription.model, middleware: [replies.middleware, cardTags, guard] }), close: subscription.close, quickReplies: replies.read }
+    }
     if (provider === 'custom') {
         const custom = customInferenceModel(agent.resolved.connection, model)
         return { model: wrapLanguageModel({ model: custom.model, middleware: [replies.middleware, cardTags, guard] }), close: custom.close, quickReplies: replies.read }
