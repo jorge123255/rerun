@@ -3,6 +3,9 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
+import { DesktopLocale } from './DesktopLocale'
+import { desktopMessages, englishDesktopLanguage, type DesktopLanguage } from '@/lib/desktop/locale'
+import { loadMessages } from '@rerun/i18n/messages'
 import { DesktopApp, type DesktopAgentView } from './DesktopApp'
 import type { GridPosition } from '@rerun/ui/iso-grid'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
@@ -28,6 +31,7 @@ async function mount(options: {
     duplicate?: (input: DuplicateInput) => Response | Promise<Response>
     refreshedAgents?: () => DesktopAgentView[]
     agents?: DesktopAgentView[]
+    language?: DesktopLanguage
     enabled?: (id: string, enabled: boolean) => Response | Promise<Response>
     remove?: (id: string, confirmationName: string) => Response | Promise<Response>
 } = {}) {
@@ -73,7 +77,7 @@ async function mount(options: {
     vi.stubGlobal('fetch', requests)
     root = createRoot(document.body.appendChild(document.createElement('div')))
     await act(async () => {
-        root.render(<DesktopApp initialData={{ profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: options.agents ?? [researcher, editor], theme: 'system', connections: [], default: null }} />)
+        root.render(<DesktopLocale initial={options.language ?? englishDesktopLanguage}><DesktopApp initialData={{ profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: options.agents ?? [researcher, editor], theme: 'system', connections: [], default: null }} /></DesktopLocale>)
     })
     return {
         duplicateRequests: () => requests.mock.calls.filter(([url]) => url.endsWith('/duplicate')).map(([, init]) => JSON.parse(String(init?.body)) as DuplicateInput),
@@ -374,4 +378,25 @@ it('ignores a late enabled response after that coworker has been deleted', async
     expect(tile(researcher.name)).toBeNull()
     expect(tile(editor.name)).not.toBeNull()
     expect(document.querySelector('[aria-label="Coworker chat"]')).toBeNull()
+})
+
+it('French deletion still requires the exact coworker name and Cancel keeps the saved chat', async () => {
+    const agent = { ...researcher, name: 'Élodie · QA' }
+    const api = await mount({ agents: [agent, editor], remove: id => Response.json({ deletedAgentId: id }),
+        language: { locale: 'fr', preference: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) } })
+    const item = document.querySelector<HTMLElement>('[aria-label="Ouvrir la conversation avec Élodie · QA"]')!
+    await key(item, 'ContextMenu')
+    const remove = [...document.querySelectorAll('[role="menuitem"]')].find(node => node.textContent?.trim() === 'Supprimer')!
+    await click(remove as HTMLElement)
+    expect(deleteDialog()?.textContent).toContain('Supprimer ce coworker')
+    expect(deleteButton('Supprimer').disabled).toBe(true)
+    await edit(confirmation(), 'Elodie · QA')
+    await key(confirmation(), 'Enter')
+    expect(api.deleteRequests()).toEqual([])
+    await edit(confirmation(), agent.name)
+    expect(deleteButton('Supprimer').disabled).toBe(false)
+    await click(deleteButton('Annuler'))
+    expect(deleteDialog()).toBeNull()
+    expect(api.deleteRequests()).toEqual([])
+    expect(item.isConnected).toBe(true)
 })

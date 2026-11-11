@@ -1,12 +1,13 @@
 'use client'
 
+import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopCoworkerNotificationControl } from '@/components/desktop/DesktopCoworkerNotificationBell'
 import { DeleteCoworkerConfirmation } from '@/components/dialogs/DeleteCoworkerConfirmation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { TooltipDisabledReason } from '@/components/ui/tooltip'
 import { acceptDesktopOverviewRename, desktopOverviewRenameBody, DESKTOP_OVERVIEW_RENAME_UNCONFIRMED } from '@/lib/desktop/coworker-overview/rename'
-import { DESKTOP_OVERVIEW_MANAGE_REASON, desktopOverviewDestinationLabel, desktopOverviewFocusGroups, moveDesktopOverviewFocus, type DesktopOverviewControl, type DesktopOverviewDestination } from '@/lib/desktop/coworker-overview'
+import { DESKTOP_OVERVIEW_MANAGE_REASON, desktopOverviewFocusGroups, moveDesktopOverviewFocus, type DesktopOverviewControl, type DesktopOverviewDestination } from '@/lib/desktop/coworker-overview'
 import type { DesktopOverviewIdentity } from '@/lib/desktop/coworker-overview/identity'
 import { sameDesktopOverviewIdentity } from '@/lib/desktop/coworker-overview/identity'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
@@ -53,6 +54,7 @@ export function DesktopCoworkerOverviewCard({ identity, name, boxName, enabled, 
     onOpenComputer?: () => void
     onRenamed: (identity: DesktopOverviewIdentity, name: string) => void
 }) {
+    const { t } = useDesktopLocale()
     const root = useRef<HTMLDivElement>(null)
     const [deleteOpen, setDeleteOpen] = useState(false)
     useEffect(() => {
@@ -96,12 +98,16 @@ export function DesktopCoworkerOverviewCard({ identity, name, boxName, enabled, 
                 <TooltipDisabledReason reason={deleteReason ?? undefined} className="flex w-full">
                     <button type="button" tabIndex={-1} disabled={!!deleteReason} onClick={() => setDeleteOpen(true)} className="flex w-full items-center justify-center gap-2 rounded-lg bg-destructive/10 py-2.5 text-sm font-medium text-destructive transition-colors hover:bg-destructive/15 disabled:opacity-50 disabled:hover:bg-destructive/10">
                         <Trash2Icon className="size-4" />
-                        Delete this coworker
+                        {t('coworker.deleteCard')}
                     </button>
                 </TooltipDisabledReason>
                 </div>
             </div>
-            {onDelete && <DeleteCoworkerConfirmation agentName={name} open={deleteOpen} onOpenChange={setDeleteOpen} description="This will permanently delete the coworker and its chats, files and memories from this Mac. This action cannot be undone." onDelete={confirmationName => onDelete(identity, confirmationName)} />}
+            {onDelete && <DeleteCoworkerConfirmation agentName={name} open={deleteOpen} onOpenChange={setDeleteOpen} description={t('coworker.deleteDescription')} labels={{
+                title: t('coworker.deleteTitle'), input: t('coworker.deleteInput'),
+                confirm: name => <>{t.rich('coworker.deleteConfirm', { name, b: chunks => <span className="font-medium text-foreground">{chunks}</span> })}</>,
+                failed: t('coworker.deleteFailed'), cancel: t('cancel'), deleting: t('coworker.deleting'), submit: t('coworker.delete'),
+            }} onDelete={confirmationName => onDelete(identity, confirmationName)} />}
         </div>
     )
 }
@@ -117,6 +123,7 @@ function CardIdentity({ identity, name: confirmed, boxName, mood, canManage, sha
     onShare?: () => void
     onRenamed: (identity: DesktopOverviewIdentity, name: string) => void
 }) {
+    const { t } = useDesktopLocale()
     const [editing, setEditing] = useState(false)
     const [name, setName] = useState(confirmed)
     const [error, setError] = useState('')
@@ -162,22 +169,22 @@ function CardIdentity({ identity, name: confirmed, boxName, mood, canManage, sha
                 <TooltipDisabledReason reason={shareReason ?? undefined}>
                     <Button variant="ghost" size="sm" disabled={!!shareReason} onClick={onShare} className="text-muted-foreground">
                         <Link2 className="size-4" />
-                        Share
+                        {t('coworker.share')}
                     </Button>
                 </TooltipDisabledReason>
             </div>
             <div className="absolute right-3 top-3">
-                <Button aria-label="Close the card" variant="ghost" size="icon-sm" onClick={onClose}><XIcon className="size-4" /></Button>
+                <Button aria-label={t('coworker.closeCard')} variant="ghost" size="icon-sm" onClick={onClose}><XIcon className="size-4" /></Button>
             </div>
             <AgentBuddy agentId={identity.agentId} mood={mood} size={116} facing="left" />
             {editing ? (
-                <Input ref={inputRef} aria-label="Coworker name" hideRequired value={name} onChange={event => setName(event.target.value)} onBlur={commit} onKeyDown={event => {
+                <Input ref={inputRef} aria-label={t('coworker.nameField')} hideRequired value={name} onChange={event => setName(event.target.value)} onBlur={commit} onKeyDown={event => {
                     if (event.key === 'Enter') event.currentTarget.blur()
                     if (event.key === 'Escape') { event.preventDefault(); setName(confirmed); setEditing(false) }
                 }} className="-mt-1 h-8 w-48 text-center text-base font-semibold" />
             ) : (
                 <TooltipDisabledReason reason={canManage ? undefined : DESKTOP_OVERVIEW_MANAGE_REASON} className="-mt-1 max-w-full">
-                    <button type="button" aria-label={`Rename ${confirmed}`} disabled={pending || !canManage} onClick={() => { setName(confirmed); setError(''); setEditing(true) }} className="max-w-full truncate rounded-md px-2 py-0.5 text-base font-semibold leading-tight transition-colors hover:bg-accent disabled:opacity-50">{confirmed}</button>
+                    <button type="button" aria-label={t('coworker.renameName', { name: confirmed })} disabled={pending || !canManage} onClick={() => { setName(confirmed); setError(''); setEditing(true) }} className="max-w-full truncate rounded-md px-2 py-0.5 text-base font-semibold leading-tight transition-colors hover:bg-accent disabled:opacity-50">{confirmed}</button>
                 </TooltipDisabledReason>
             )}
             <span className="text-xs text-muted-foreground">{boxName}</span>
@@ -195,7 +202,8 @@ function DestinationButton({ tab, shape, reason, selected, servicesNeedConfig, o
     onFocus: () => void
     onOpen: (tab: DesktopOverviewDestination, from: HTMLElement) => void
 }) {
-    const label = desktopOverviewDestinationLabel(tab)
+    const { t } = useDesktopLocale()
+    const label = t(`coworker.destinations.${tab}`)
     const Glyph = ICONS[tab]
     const open = (event: MouseEvent<HTMLButtonElement>) => onOpen(tab, event.currentTarget)
     const body = shape === 'row' ? (

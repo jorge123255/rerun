@@ -11,19 +11,29 @@ import { z } from 'zod'
 
 const AGENT_NAME_MAX = 60
 
-const schema = z.object({
-    name: z.string().trim().min(1, 'Name is required').max(AGENT_NAME_MAX, `Keep it under ${AGENT_NAME_MAX} characters`),
-})
+const defaultLabels = {
+    title: 'Rename coworker',
+    description: 'The name shown on the board and in chats. Its @handle follows.',
+    name: 'Name',
+    required: 'Name is required',
+    tooLong: `Keep it under ${AGENT_NAME_MAX} characters`,
+    failed: 'Could not rename this coworker.',
+    cancel: 'Cancel',
+    submit: 'Rename',
+}
 
-type FormValues = z.infer<typeof schema>
+type FormValues = { name: string }
 
-export function RenameAgentDialog({ agent, open, onOpenChange, onRename, onRestoreFocus }: {
+export function RenameAgentDialog({ agent, open, onOpenChange, onRename, onRestoreFocus, labels }: {
     agent: { id: string; name: string } | undefined
     open: boolean
     onOpenChange: (open: boolean) => void
     onRename: (id: string, name: string) => void | Promise<void>
     onRestoreFocus?: () => void
+    labels?: Partial<typeof defaultLabels>
 }) {
+    const copy = { ...defaultLabels, ...labels }
+    const schema = z.object({ name: z.string().trim().min(1, copy.required).max(AGENT_NAME_MAX, copy.tooLong) })
     const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { name: agent?.name ?? '' } })
 
     useEffect(() => {
@@ -36,7 +46,7 @@ export function RenameAgentDialog({ agent, open, onOpenChange, onRename, onResto
             if (agent && name !== agent.name) await onRename(agent.id, name)
             onOpenChange(false)
         } catch (error) {
-            form.setError('name', { message: error instanceof Error ? error.message : 'Could not rename this coworker.' }, { shouldFocus: true })
+            form.setError('name', { message: error instanceof Error ? error.message : copy.failed }, { shouldFocus: true })
         }
     })
 
@@ -49,8 +59,8 @@ export function RenameAgentDialog({ agent, open, onOpenChange, onRename, onResto
                 <Form {...form}>
                     <form onSubmit={onSubmit} className="flex flex-col gap-4">
                         <DialogHeader>
-                            <DialogTitle>Rename coworker</DialogTitle>
-                            <DialogDescription>The name shown on the board and in chats. Its @handle follows.</DialogDescription>
+                            <DialogTitle>{copy.title}</DialogTitle>
+                            <DialogDescription>{copy.description}</DialogDescription>
                         </DialogHeader>
 
                         <FormField
@@ -59,7 +69,7 @@ export function RenameAgentDialog({ agent, open, onOpenChange, onRename, onResto
                             render={({ field }) => (
                                 <FormItem>
                                     <FormControl>
-                                        <Input label="Name" required autoFocus readOnly={form.formState.isSubmitting} {...field} />
+                                        <Input label={copy.name} required autoFocus readOnly={form.formState.isSubmitting} {...field} />
                                     </FormControl>
                                     <FormMessage />
                                 </FormItem>
@@ -68,10 +78,10 @@ export function RenameAgentDialog({ agent, open, onOpenChange, onRename, onResto
 
                         <DialogFooter>
                             <Button type="button" variant="outline" disabled={form.formState.isSubmitting} onClick={() => onOpenChange(false)}>
-                                Cancel
+                                {copy.cancel}
                             </Button>
                             <Button type="submit" disabled={form.formState.isSubmitting || !form.watch('name').trim()}>
-                                Rename
+                                {copy.submit}
                             </Button>
                         </DialogFooter>
                     </form>

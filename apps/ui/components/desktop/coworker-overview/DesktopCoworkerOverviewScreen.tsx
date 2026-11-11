@@ -1,9 +1,10 @@
 'use client'
 
+import { useDesktopLocale } from '../DesktopLocale'
 import { AGENT_TABS } from '@/components/agent/agent-tabs'
 import { SidePanelTabSwitcher } from '@/components/layout/SidePanelTabSwitcher'
 import { Button } from '@/components/ui/button'
-import { desktopOverviewAcceptedPanelMessage, desktopOverviewSiblingTabs, desktopOverviewTabLabel, desktopOverviewViewLabel, desktopOverviewViewOf, DESKTOP_OVERVIEW_PUBLISHED_UNAVAILABLE, isDesktopOverviewAcceptedPanel, moveDesktopOverviewSectionTab, type DesktopOverviewTab, type DesktopOverviewVisibility } from '@/lib/desktop/coworker-overview'
+import { desktopOverviewSiblingTabs, desktopOverviewViewOf, DESKTOP_OVERVIEW_PUBLISHED_UNAVAILABLE, isDesktopOverviewAcceptedPanel, moveDesktopOverviewSectionTab, type DesktopOverviewTab, type DesktopOverviewVisibility } from '@/lib/desktop/coworker-overview'
 import { ChevronLeftIcon, GlobeIcon, XIcon } from '@/lib/icons'
 import { AgentBuddy } from '@rerun/ui/iso-grid'
 import type { ReactNode } from 'react'
@@ -23,6 +24,7 @@ export function DesktopCoworkerOverviewScreen({ agentId, name, mood, tab, visibi
     onOpenAcceptedPanel?: (tab: 'files' | 'memories' | 'data' | 'settings' | 'tools' | 'logs') => void
     children?: ReactNode
 }) {
+    const { t } = useDesktopLocale()
     const view = desktopOverviewViewOf(tab)
     const tabs = desktopOverviewSiblingTabs(tab, visibility)
     return (
@@ -36,8 +38,8 @@ export function DesktopCoworkerOverviewScreen({ agentId, name, mood, tab, visibi
                     <span className="truncate text-muted-foreground">{name}</span>
                 </Button>
                 <span className="text-muted-foreground/50">/</span>
-                <span className="shrink-0 px-1.5 text-sm font-semibold">{desktopOverviewViewLabel(view)}</span>
-                <Button aria-label="Close panel" variant="ghost" size="icon-sm" onClick={onClose} className="ml-auto"><XIcon className="size-4" /></Button>
+                <span className="shrink-0 px-1.5 text-sm font-semibold">{t(`coworker.views.${view}`)}</span>
+                <Button aria-label={t('closePanel')} variant="ghost" size="icon-sm" onClick={onClose} className="ml-auto"><XIcon className="size-4" /></Button>
             </div>
             <div onKeyDown={event => {
                 if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home' && event.key !== 'End') return
@@ -46,12 +48,12 @@ export function DesktopCoworkerOverviewScreen({ agentId, name, mood, tab, visibi
                 onTab(moveDesktopOverviewSectionTab(tabs, tab, event.key))
             }}>
                 <div data-overview-tabs>
-                    <SidePanelTabSwitcher tabs={tabs.map(id => ({ id, icon: TAB_ICONS[id] ?? GlobeIcon, label: desktopOverviewTabLabel(id), dot: id === 'services' && servicesNeedConfig }))} value={tab} onChange={onTab} />
+                    <SidePanelTabSwitcher tabs={tabs.map(id => ({ id, icon: TAB_ICONS[id] ?? GlobeIcon, label: t(`coworker.tabs.${id}`), dot: id === 'services' && servicesNeedConfig }))} value={tab} onChange={onTab} />
                 </div>
             </div>
             <div className="relative min-h-0 flex-1 overflow-hidden">
                 <div className="absolute inset-0 flex flex-col overflow-y-auto">
-                    {children ?? (tab === 'published' ? <p className="p-6 text-center text-sm text-muted-foreground">{DESKTOP_OVERVIEW_PUBLISHED_UNAVAILABLE}</p> : isDesktopOverviewAcceptedPanel(tab) ? <AcceptedPanel tab={tab} label={desktopOverviewTabLabel(tab)} onOpen={onOpenAcceptedPanel} /> : <p className="p-6 text-center text-sm text-muted-foreground">This section is not mounted in this window.</p>)}
+                    {children ?? (tab === 'published' ? <p className="p-6 text-center text-sm text-muted-foreground">{DESKTOP_OVERVIEW_PUBLISHED_UNAVAILABLE}</p> : isDesktopOverviewAcceptedPanel(tab) ? <AcceptedPanel tab={tab} label={t(`coworker.tabs.${tab}`)} onOpen={onOpenAcceptedPanel} /> : <p className="p-6 text-center text-sm text-muted-foreground">This section is not mounted in this window.</p>)}
                 </div>
             </div>
         </div>
@@ -59,10 +61,10 @@ export function DesktopCoworkerOverviewScreen({ agentId, name, mood, tab, visibi
 }
 
 function AcceptedPanel({ tab, label, onOpen }: { tab: 'files' | 'memories' | 'data' | 'settings' | 'tools' | 'logs'; label: string; onOpen?: (tab: 'files' | 'memories' | 'data' | 'settings' | 'tools' | 'logs') => void }) {
+    const { t } = useDesktopLocale()
     return (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-            <p className="max-w-sm text-sm text-muted-foreground">{desktopOverviewAcceptedPanelMessage(tab)}</p>
-            <Button type="button" variant="outline" size="sm" disabled={!onOpen} onClick={() => onOpen?.(tab)}>{onOpen ? `Open ${label}` : 'This section is not mounted in this window.'}</Button>
+            <Button type="button" variant="outline" size="sm" disabled={!onOpen} onClick={() => onOpen?.(tab)}>{onOpen ? t('coworker.openSection', { label }) : 'This section is not mounted in this window.'}</Button>
         </div>
     )
 }
