@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { ToolSet } from 'ai'
 import { clearCachedEnvForTests } from '../config/env.js'
 import type { RunContext } from '../runtime/context.js'
@@ -52,30 +52,43 @@ it('leaves both databases off by default and opens each grant on its own', () =>
     expect(desktopSharedDbTools(ctx()).shared_db_query).toBeDefined()
 })
 
-it('keeps the private and shared databases, and their permissions, distinct', async () => {
-    grant({ db: true, sharedDb: true })
-    const tools = both()
+describe('private and shared database routing', () => {
+    beforeAll(async () => {
+        grant({ db: true, sharedDb: true })
+        const tools = both()
+        try {
+            expect(await run(tools, 'db_execute', { statements: [
+                { sql: 'CREATE TABLE notes (body TEXT)' },
+                { sql: 'INSERT INTO notes (body) VALUES (?)', params: ['private note'] },
+                { sql: 'CREATE TABLE private_schema_example (body TEXT)' },
+            ] })).toMatch(/^OK, 3 statements?\b/)
+            expect(await run(tools, 'shared_db_execute', { statements: [
+                { sql: 'CREATE TABLE notes (body TEXT)' },
+                { sql: 'INSERT INTO notes (body) VALUES (?)', params: ['shared note'] },
+                { sql: 'CREATE TABLE shared_schema_example (body TEXT)' },
+            ] })).toMatch(/^OK, 3 statements?\b/)
+        } finally {
+            grant({})
+        }
+    })
 
-    expect(await run(tools, 'db_execute', { statements: [
-        { sql: 'CREATE TABLE IF NOT EXISTS notes (body TEXT)' },
-        { sql: 'INSERT INTO notes (body) VALUES (?)', params: ['private note'] },
-    ] })).toMatch(/^OK, 2 statements?\b/)
-    expect(await run(tools, 'shared_db_execute', { statements: [
-        { sql: 'CREATE TABLE IF NOT EXISTS notes (body TEXT)' },
-        { sql: 'INSERT INTO notes (body) VALUES (?)', params: ['shared note'] },
-    ] })).toMatch(/^OK, 2 statements?\b/)
+    it('keeps the private and shared databases, and their permissions, distinct', async () => {
+        grant({ db: true, sharedDb: true })
+        const tools = both()
+        expect(await run(tools, 'db_query', { sql: 'SELECT body FROM notes' })).toBe('1 row(s)\n[{"body":"private note"}]')
+        expect(await run(tools, 'shared_db_query', { sql: 'SELECT body FROM notes' })).toBe('1 row(s)\n[{"body":"shared note"}]')
+    })
 
-    expect(await run(tools, 'db_query', { sql: 'SELECT body FROM notes' })).toBe('1 row(s)\n[{"body":"private note"}]')
-    expect(await run(tools, 'shared_db_query', { sql: 'SELECT body FROM notes' })).toBe('1 row(s)\n[{"body":"shared note"}]')
-})
-
-it('inspects user tables through each database schema tool', async () => {
-    grant({ db: true, sharedDb: true })
-    const tools = both()
-    expect(await run(tools, 'db_execute', { sql: 'CREATE TABLE IF NOT EXISTS private_schema_example (body TEXT)' })).toMatch(/^OK, 1 statement/)
-    expect(await run(tools, 'shared_db_execute', { sql: 'CREATE TABLE IF NOT EXISTS shared_schema_example (body TEXT)' })).toMatch(/^OK, 1 statement/)
-    expect(await run(tools, 'db_schema')).toContain('private_schema_example')
-    expect(await run(tools, 'shared_db_schema')).toContain('shared_schema_example')
+    it('inspects user tables through each database schema tool', async () => {
+        grant({ db: true, sharedDb: true })
+        const tools = both()
+        const own = await run(tools, 'db_schema')
+        const shared = await run(tools, 'shared_db_schema')
+        expect(own).toContain('private_schema_example')
+        expect(own).not.toContain('shared_schema_example')
+        expect(shared).toContain('shared_schema_example')
+        expect(shared).not.toContain('private_schema_example')
+    })
 })
 
 it('admits SELECT queries while refusing writes through the query tool', async () => {
