@@ -2,6 +2,11 @@ import { isAbsolute, join } from 'node:path'
 import { flag, repoRoot, run } from './lib.mjs'
 import { stageArguments } from './provenance.mjs'
 import { previewSigningArguments } from './signing.mjs'
+import { requestedSubscriptionRunners } from './subscription-runners.mjs'
+
+if (requestedSubscriptionRunners() && !flag('--stage-only')) {
+    throw new Error('The optional subscription runner assets are available only for local staging.')
+}
 
 const outputFlag = process.argv.indexOf('--output-dir')
 const outputDir = outputFlag === -1 ? undefined : process.argv[outputFlag + 1]

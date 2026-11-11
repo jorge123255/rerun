@@ -11,6 +11,10 @@ vi.mock('../../desktop/external-mcp-authority/runtime.js', () => ({ initializeDe
 vi.mock('../../agents/foreman.js', () => ({ ensureForeman: vi.fn(async () => {}) }))
 vi.mock('../../desktop/claude-plan/auth.js', () => ({ bindDesktopClaudePlanAuth: () => ({ status: vi.fn(), action: vi.fn(), stop: vi.fn() }) }))
 vi.mock('../../desktop/claude-plan/runtime.js', () => ({ stopDesktopClaudeWorkers: vi.fn(async () => {}) }))
+vi.mock('../../desktop/subscription-acp/runtime.js', () => ({
+    desktopSubscriptionRunnerAvailable: (provider: string) => provider === 'grok-build',
+    stopDesktopSubscriptionRunners: vi.fn(async () => {}),
+}))
 vi.mock('../../desktop/guest-shell/runtime.js', () => ({ bindDesktopGuestShell: () => ({ close: vi.fn(async () => {}) }) }))
 vi.mock('../../desktop/custom-providers/binding.js', async () => {
     const { Hono } = await import('hono')
@@ -56,6 +60,7 @@ vi.mock('../../http/server.js', async () => {
     return { createServer: () => new Hono().get('/agents/owner/sessions/session', c => c.json({ id: 'session' })).post('/agents/owner/schedules/task/run', c => c.json({ launched: true })) }
 })
 import { desktopRunCommand } from './desktop-run.js'
+import { stopDesktopSubscriptionRunners } from '../../desktop/subscription-acp/runtime.js'
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes }); return { promise, resolve } }
 let listener: () => void
 let fetchApp: (request: Request) => Response | Promise<Response>
@@ -112,8 +117,25 @@ test('closes admission and aborts model preparation before waiting for scheduler
     expect(order[0]).toBe('stop')
     expect(order.indexOf('abort')).toBeLessThan(order.indexOf('drain'))
     expect(mocks.abort).toHaveBeenCalledTimes(2)
+    expect(stopDesktopSubscriptionRunners).toHaveBeenCalledOnce()
     expect(mocks.exit).toHaveBeenCalledWith(0)
     expect((await request('/agents/owner/schedules/task/run', 'POST')).status).toBe(503)
+})
+
+test('exposes only runner availability to authenticated desktop engine callers', async () => {
+    await desktopRunCommand(); listener()
+    await vi.waitFor(() => expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'ready' })))
+    const path = '/desktop/subscription-providers'
+    const unauthenticated = await fetchApp(new Request(`http://127.0.0.1:3222${path}`, {
+        headers: { Host: '127.0.0.1:3222' },
+    }))
+    expect(unauthenticated.status).toBe(401)
+    const installed = await request(path)
+    expect(installed.headers.get('cache-control')).toBe('no-store')
+    await expect(installed.json()).resolves.toEqual({
+        'grok-build': { runtimeAvailable: true },
+        'kimi-code': { runtimeAvailable: false },
+    })
 })
 
 test('reports an unconfirmed writer drain without releasing process custody and permits cleanup retry',async()=>{

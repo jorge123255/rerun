@@ -1,6 +1,13 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { assertDesktopProvider, desktopRouteAllowed } from './policy.js'
 
+test('permits only the read-only subscription runtime capability route', () => {
+    const path = '/desktop/subscription-providers'
+    expect(desktopRouteAllowed('GET', path)).toBe(true)
+    expect(desktopRouteAllowed('POST', path)).toBe(false)
+    expect(desktopRouteAllowed('GET', `${path}/login`)).toBe(false)
+})
+
 afterEach(() => vi.unstubAllEnvs())
 
 test('named API management and Foreman permission routes admit only exact intended methods', () => {

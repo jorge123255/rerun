@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { existsSync, flag, pnpm, resourcesDir, repoRoot } from './lib.mjs'
 import { sourceStamp, stampMatches, writeStamp } from './provenance.mjs'
+import { stageSubscriptionRunners } from './subscription-runners.mjs'
 
 const target = join(resourcesDir, 'runtime', 'engine')
 const dist = join(repoRoot, 'apps', 'engine', 'dist')
@@ -48,5 +49,6 @@ const claudePlatform = dirname(claudeSdk.resolve('@anthropic-ai/claude-agent-sdk
 const claudeBinary = await realpath(join(claudePlatform, 'claude'))
 if (relative(target, claudeBinary).startsWith('..')) throw new Error('Claude executable escapes the staged engine')
 await cp(join(repoRoot, 'scripts/desktop/claude-runner.sb'), join(claudePlatform, 'rerun-claude.sb'))
+await stageSubscriptionRunners(target)
 await writeStamp(target, stamp)
 console.log(`staged engine -> ${target}`)

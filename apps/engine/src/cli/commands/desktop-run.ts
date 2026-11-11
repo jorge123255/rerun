@@ -3,6 +3,7 @@ import { bindDesktopComputerPanel } from '../../desktop/computer-panel/binding.j
 import { bindDesktopGuestShell } from '../../desktop/guest-shell/runtime.js'
 import { bindDesktopClaudePlanAuth } from '../../desktop/claude-plan/auth.js'
 import { stopDesktopClaudeWorkers } from '../../desktop/claude-plan/runtime.js'
+import { desktopSubscriptionRunnerAvailable, stopDesktopSubscriptionRunners } from '../../desktop/subscription-acp/runtime.js'
 import { createDesktopTriggerToolRuntime } from '../../desktop/trigger-tools/runtime.js'
 import { ensureForeman } from '../../agents/foreman.js'
 import { bindDesktopForeman } from '../../desktop/foreman/binding.js'
@@ -142,6 +143,10 @@ export async function desktopRunCommand(): Promise<void> {
         return c.json(await claudeLogin.action(parsed.data, c.req.raw.signal))
     })
     app.get('/desktop/codex-login', async c => c.json(await codexLoginStatus()))
+    app.get('/desktop/subscription-providers', c => c.json({
+        'grok-build': { runtimeAvailable: desktopSubscriptionRunnerAvailable('grok-build') },
+        'kimi-code': { runtimeAvailable: desktopSubscriptionRunnerAvailable('kimi-code') },
+    }, 200, { 'Cache-Control': 'no-store' }))
     app.post('/desktop/codex-login', async c => {
         const parsed = desktopCodexAction.safeParse((await c.req.json().catch(() => null))?.action)
         if (!parsed.success) return c.json({ error: 'Invalid sign-in action.' }, 400)
@@ -195,6 +200,7 @@ export async function desktopRunCommand(): Promise<void> {
             diagnostic.track('guest-shell', () => guestShell.close()),
             diagnostic.track('external-mcp', () => closeDesktopExternalMcp()),
             diagnostic.track('claude-workers', () => stopDesktopClaudeWorkers()),
+            diagnostic.track('subscription-runners', () => stopDesktopSubscriptionRunners()),
         ])
         // Preparing scheduled runs already register a controller in runAgent. Signal those
         // before draining preparation, otherwise a stuck provider can prevent its own Stop.
