@@ -83,10 +83,6 @@ function exclusive<T>(root: string, id: string, action: () => Promise<T>): Promi
     const clear = () => { if (locks().get(key) === result) locks().delete(key) }
     void result.then(clear,clear); return result
 }
-function stableId(requestId: string, role: string) {
-    const raw = hash([requestId,role]); return `${raw.slice(0,8)}-${raw.slice(8,12)}-4${raw.slice(13,16)}-a${raw.slice(17,20)}-${raw.slice(20,32)}`
-}
-
 export async function createDesktopForemanCreationAuthority(runtime: DesktopRuntime, db: Client): Promise<{ creation: ForemanCreationAuthority; setup: ForemanSetupAuthority }> {
     const engine = engineOf(runtime)
     const engineClient: DesktopTemplateEngineClient = {
