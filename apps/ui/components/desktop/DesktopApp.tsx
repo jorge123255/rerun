@@ -71,6 +71,7 @@ export type DesktopSessionView = {
     id: string; agentId: string; title: string; createdAt: string; updatedAt: string
     kind?: 'general' | 'thread'; firstMessage?: string | null
     source?: SessionSource; automationName?: string | null; originAgentName?: string | null; runStatus?: Run['status'] | null
+    automationOutcome?: 'done' | 'nothing'
 }
 export type DesktopBootstrap = ConnectionsList & {
     theme: ThemePreference
@@ -923,6 +924,7 @@ function CoworkerChat({ agent, attention, overview, requested, requestedPanel, o
                         && session.createdAt === next.createdAt && session.updatedAt === next.updatedAt
                         && session.source === next.source && session.automationName === next.automationName
                         && session.originAgentName === next.originAgentName && session.runStatus === next.runStatus
+                        && session.automationOutcome === next.automationOutcome
                 }) ? previous : body.sessions
             })
             if (restoreTabs) setBootstrap({ layout: body.tabs ?? null })

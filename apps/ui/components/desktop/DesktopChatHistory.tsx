@@ -42,7 +42,8 @@ function ChatHistoryRow({ conversation, pendingSummary, active, busy, onOpen }: 
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="flex min-w-0 items-center gap-1.5">
                     {automated && <SourceIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
-                    <span title={conversation.title} className="min-w-0 flex-1 truncate text-sm font-medium">{conversation.title}</span>
+                    <span title={conversation.title} className={cn('min-w-0 flex-1 truncate text-sm font-medium',
+                        automated && conversation.automationOutcome === 'nothing' && 'text-muted-foreground')}>{conversation.title}</span>
                     {pendingSummary !== undefined && <Badge size="xs" tone="orange" glow={false} className="shrink-0">{t('needs')}</Badge>}
                 </span>
                 {conversation.firstMessage && <span className="truncate text-xs text-muted-foreground">{conversation.firstMessage}</span>}

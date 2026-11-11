@@ -1,4 +1,4 @@
-import { sessionSourceSchema } from '@rerun/contracts'
+import { desktopAutomationResultSchema, sessionSourceSchema } from '@rerun/contracts'
 import { z } from 'zod'
 import { messageDayLabel } from '@rerun/i18n/format'
 
@@ -17,6 +17,7 @@ export const desktopChatHistoryConversationSchema = z.object({
     pendingQuestion: z.string().nullable(),
     kind: z.enum(['general', 'thread']).optional(),
     firstMessage: z.string().nullable().optional(),
+    automationOutcome: desktopAutomationResultSchema.shape.outcome.optional(),
 })
 export type DesktopChatHistoryConversation = z.infer<typeof desktopChatHistoryConversationSchema>
 

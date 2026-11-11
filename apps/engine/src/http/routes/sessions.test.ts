@@ -61,6 +61,41 @@ describe('GET /agents/:id/sessions', () => {
 })
 
 describe('GET /agents/:id/sessions?view=threads', () => {
+    it('publishes only the result of an owned automation with a successful terminal receipt', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const { startRun, finishRun } = await import('../../db/repos/runs.js')
+        const { recordRunCompletion } = await import('../../db/completed-runs.js')
+        const { readUnlabelledAutomationReport, recordDesktopAutomationResult } = await import('../../db/desktop-automation-results.js')
+        const { closeSystemDb } = await import('../../db/systemDb.js')
+        try {
+            const routine = await createSession(id, 'schedule: digest', undefined, 'schedule')
+            const run = await startRun(id, routine.id)
+            const identity = { agentId: id, sessionId: routine.id, runId: run.id, source: 'schedule' } as const
+            const signal = new AbortController().signal
+            const result = { title: 'No new leads', outcome: 'nothing' } as const
+            await finishRun(id, run.id, null, 0)
+            expect(await readUnlabelledAutomationReport(identity)).toBeNull()
+            await recordDesktopAutomationResult(identity, result, signal)
+            expect((await (await app.request(`/agents/${id}/sessions?view=threads`)).json()).threads
+                .find((row: Session) => row.id === routine.id)).not.toHaveProperty('automationResult')
+            await recordRunCompletion({ ...identity, trigger: { source: 'schedule', name: 'Digest', slug: 'digest' }, text: 'No new leads were found and nothing changed.' })
+            expect(await readUnlabelledAutomationReport({ ...identity, source: 'trigger' })).toBeNull()
+            expect(await readUnlabelledAutomationReport({ ...identity, agentId: 'other-owner' })).toBeNull()
+            expect(await readUnlabelledAutomationReport(identity)).toContain('No new leads')
+            await recordDesktopAutomationResult(identity, result, signal)
+            await recordDesktopAutomationResult(identity, { title: 'Duplicate result', outcome: 'done' }, signal)
+            expect(await readUnlabelledAutomationReport(identity)).toBeNull()
+            closeSystemDb(id)
+            for (const path of ['', '?view=threads']) {
+                const response = await app.request(`/agents/${id}/sessions${path}`)
+                expect(response.status).toBe(200)
+                const body = await response.json()
+                expect((body.threads ?? body.sessions).find((row: Session) => row.id === routine.id)).toMatchObject({ automationResult: result })
+            }
+            expect((await listed()).find(row => row.id === routine.id)?.title).toBe('schedule: digest')
+        } finally { vi.unstubAllEnvs() }
+    })
+
     it('projects only owned branch metadata without returning run errors or the scheduled prompt', async () => {
         vi.stubEnv('RERUN_DESKTOP_APP', '1')
         const { startRun, finishRun, failRun } = await import('../../db/repos/runs.js')

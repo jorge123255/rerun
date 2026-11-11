@@ -1,13 +1,13 @@
 import { generateText, NoObjectGeneratedError, Output } from 'ai'
 import { z } from 'zod'
-import { parseDesktopSubscriptionConnectionId, providerSchema } from '@rerun/contracts'
+import { providerSchema } from '@rerun/contracts'
 import { isUsable, resolveConfiguredModel, resolveRunModel } from '../agents/availability.js'
 import { getAgent } from '../agents/registry.js'
 import { modelFor } from '../agents/providers.js'
 import type { LoadedAgent } from '../agents/types.js'
 import { ensureCliAuth } from '../connections/cli-auth.js'
 import { findConnection } from '../connections/registry.js'
-import { sameDesktopOpencodeConnection } from '../connections/snapshot.js'
+import { sameConnectionSnapshot } from '../connections/snapshot.js'
 import type { LoadedConnection } from '../connections/types.js'
 import { HttpError } from '../lib/errors.js'
 import { computeNextRun, isValidTimezone } from '../schedules/next-run.js'
@@ -101,19 +101,11 @@ Respond with ONLY a JSON object, no prose, no code fences:
 { "mode": "cron" | "runAt", "cron": "...", "runAt": "...", "timezone": "...", "label": "..." }`
 }
 
-function sameScheduleConnection(expected: LoadedConnection, current: LoadedConnection): boolean {
-    if (current.id !== expected.id || current.config.provider !== expected.config.provider) return false
-    if (expected.opencode) return sameDesktopOpencodeConnection(expected, current)
-    if (expected.custom) return current.custom?.revision === expected.custom.revision
-    // Registry projections for subscriptions have a credential generation in the connection ID.
-    return current === expected || parseDesktopSubscriptionConnectionId(expected.id)?.provider === expected.config.provider
-}
-
 async function assertCurrentScheduleConnection(expected: LoadedConnection, model: string, signal: AbortSignal) {
     signal.throwIfAborted()
     const current = await findConnection(expected.id)
     signal.throwIfAborted()
-    if (!current || !sameScheduleConnection(expected, current) || !isUsable(current, model)) {
+    if (!current || !sameConnectionSnapshot(expected, current) || !isUsable(current, model)) {
         throw new HttpError(409, 'The selected connection changed. Preview was not accepted.')
     }
 }

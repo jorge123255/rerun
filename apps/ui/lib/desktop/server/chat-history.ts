@@ -1,5 +1,5 @@
 import 'server-only'
-import { sessionSourceSchema, type SessionSource } from '@rerun/contracts'
+import { sessionSourceSchema, type DesktopAutomationResult, type SessionSource } from '@rerun/contracts'
 import type { DesktopSessionKind } from '../general-threads'
 import type { DesktopSession } from './store'
 
@@ -10,6 +10,7 @@ export type DesktopHistoryEngineSession = {
     agentId: string
     source: SessionSource
     updatedAt: string
+    automationResult?: DesktopAutomationResult
 }
 
 export type DesktopChatHistoryDependencies = {
@@ -31,6 +32,7 @@ export type DesktopChatHistoryConversation = {
     pendingQuestion: string | null
     kind: DesktopSessionKind
     firstMessage: string | null
+    automationOutcome?: DesktopAutomationResult['outcome']
 }
 
 export type DesktopChatHistory = {
@@ -98,12 +100,14 @@ export async function readDesktopChatHistory(dependencies: DesktopChatHistoryDep
 
     const conversations = ownedSessions.map(session => {
         const engine = engineById.get(session.engineSessionId)
+        const result = engine?.source === 'schedule' || engine?.source === 'trigger' ? engine.automationResult : undefined
         const pendingQuestion = labels.get(session.id) ?? null
         return {
             id: session.id,
             agentId: session.agentId,
             engineSessionId: session.engineSessionId,
-            title: session.title,
+            title: result?.title ?? session.title,
+            ...(result && { automationOutcome: result.outcome }),
             createdAt: session.createdAt,
             updatedAt: engine?.updatedAt ?? session.updatedAt,
             source: engine?.source ?? null,

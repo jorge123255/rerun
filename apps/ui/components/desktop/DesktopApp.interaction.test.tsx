@@ -604,6 +604,7 @@ test('open General picks up a saved sibling without rewriting the active layout'
     const newSibling = { ...base, id: 'new-sibling', title: 'New thread', kind: 'thread', firstMessage: 'Saved on another surface' }
     const routine = { ...sibling, source: 'schedule', automationName: 'Weekly digest', firstMessage: null }
     let runStatus = 'running'
+    let outcome: 'done' | 'nothing' | undefined
     let waiting = false
     const path = '/api/desktop/agents/researcher/sessions'
     const initial = { sessions: [general, sibling], tabs: { revision: 2, activeIndex: 0, tabs: [{ uid: generalTabUid(coworker.id), id: general.id, title: 'General' }] } }
@@ -611,7 +612,9 @@ test('open General picks up a saved sibling without rewriting the active layout'
     const fetcher = mockDesktopFetch((url, init) => {
         if (url === settingsUrl) return Response.json(disconnected)
         if (url === path) return Response.json(initial)
-        if (url === path + '?view=threads') return background?.clone() ?? Response.json({ sessions: [general, { ...routine, runStatus }, newSibling] })
+        if (url === path + '?view=threads') return background?.clone() ?? Response.json({
+            sessions: [general, { ...routine, runStatus, ...(outcome && { automationOutcome: outcome, title: 'No new leads' }) }, newSibling],
+        })
         if (url === '/api/desktop/board-activity') return Response.json({
             agents: { [coworker.id]: 'idle' },
             attention: { items: waiting ? [{ id: 'ask', agentId: coworker.id, agentName: coworker.name, agentEnabled: true,
@@ -652,6 +655,14 @@ test('open General picks up a saved sibling without rewriting the active layout'
         waiting = false
         await tick()
         expect(branch().textContent).not.toContain('Needs you')
+        outcome = 'done'
+        await tick()
+        expect(branch().textContent).toContain('No new leads')
+        const title = () => [...branch().querySelectorAll('button span')].find(span => span.textContent === 'No new leads')!
+        expect(title().classList.contains('text-muted-foreground')).toBe(false)
+        outcome = 'nothing'
+        await tick()
+        expect(title().classList.contains('text-muted-foreground')).toBe(true)
         expect(fetcher.mock.calls.filter(([url, options]) => url.endsWith('/tabs') && options?.method === 'PUT')).toHaveLength(0)
         await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Close panel"]')!.click())
         const requests = fetcher.mock.calls.filter(([url]) => url === path + '?view=threads').length

@@ -46,6 +46,7 @@ import { registerRunAbort, setRunCancel, unregisterRunAbort } from './run-contro
 import { assertExactDesktopScheduleModel } from '../desktop/schedule-model.js'
 import { assertDesktopProvider, desktopApp } from '../desktop/policy.js'
 import { beginDesktopAgentWork } from '../desktop/agent-lifecycle.js'
+import { labelDesktopAutomationResult } from '../desktop/automation-result.js'
 import { runCurator } from './curator.js'
 import { repairToolCall } from './tool-repair.js'
 import { stepWithScreenshots } from './screenshots.js'
@@ -412,6 +413,9 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
                     model,
                     costMicros,
                 })
+                if (desktopApp() && outcome.kind === 'done' && trigger.source !== 'chat' && admission !== null) {
+                    await labelDesktopAutomationResult(agent, sessionId, run.id, trigger, admission, controller.signal)
+                }
                 const proposed = skillProposals.at(-1)
                 if (outcome.kind === 'done' && proposed) await emitSkillProposalEvent(agent, sessionId, run.id, proposed, author)
             }

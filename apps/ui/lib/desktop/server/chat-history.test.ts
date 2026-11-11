@@ -53,6 +53,22 @@ test('missing General metadata does not make the Threads filters incomplete', as
     expect(filterDesktopChats(history.conversations, 'automations', '').map(row => row.id)).toEqual(['routine'])
 })
 
+test('uses a published result title for the owned automation without replacing its local chat id', async () => {
+    const result = { title: 'No new leads', outcome: 'nothing' } as const
+    const history = await readDesktopChatHistory({
+        listLocalSessions: async () => [local('routine'), local('ordinary'), local('foreign')],
+        listEngineSessions: async () => [
+            { ...remote('routine', 'schedule'), automationResult: result },
+            { ...remote('ordinary'), automationResult: result },
+            { ...remote('foreign', 'trigger', 'engine-bob'), automationResult: result },
+        ],
+    }, agent)
+    expect(history.conversations.find(row => row.id === 'routine')).toMatchObject({ title: result.title, automationOutcome: result.outcome })
+    expect(history.conversations.find(row => row.id === 'ordinary')).toMatchObject({ title: 'Chat ordinary' })
+    expect(history.conversations.find(row => row.id === 'foreign')).toMatchObject({ title: 'Chat foreign' })
+    expect(filterDesktopChats(history.conversations, 'automations', 'new leads').map(row => row.id)).toEqual(['routine'])
+})
+
 test('bounds pending-request reads while processing the full saved list beyond one screen', async () => {
     const sessions = Array.from({ length: 75 }, (_, index) => local(String(index)))
     let active = 0, maximum = 0

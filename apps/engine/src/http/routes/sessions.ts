@@ -35,7 +35,7 @@ sessionRoutes.get('/', async c => {
         if (!desktopApp() || !agentExists(agentId)) return c.json({ error: 'Not found' }, 404)
         return c.json(desktopThreadMetadataListSchema.parse({ threads: await listDesktopThreadMetadata(agentId) }))
     }
-    return c.json({ sessions: await listSessions(agentId) })
+    return c.json({ sessions: await listSessions(agentId, desktopApp()) })
 })
 
 sessionRoutes.get('/:sid', async c => {
