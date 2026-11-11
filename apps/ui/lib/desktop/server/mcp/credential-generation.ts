@@ -34,7 +34,7 @@ export type McpCredentialGenerationOptions = {
     now?: () => number
 }
 
-function credentialGenerationToken(key: Buffer, agent: string, name: string, registration: { registrationId: string; revision: string }, sealed: string | null): string {
+export function credentialGenerationToken(key: Buffer, agent: string, name: string, registration: { registrationId: string; revision: string }, sealed: string | null): string {
     return createHmac('sha256', key)
         .update(JSON.stringify(['mcp-credential-generation-v1', agent, name, registration.registrationId, registration.revision, sealed ?? 'none']))
         .digest('base64url')

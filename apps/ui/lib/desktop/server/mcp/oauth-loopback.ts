@@ -1,12 +1,13 @@
 import 'server-only'
 import {createHash,randomBytes} from 'node:crypto'
 import {createServer,type Server} from 'node:http'
-import type {RemoteMcpStore,OAuthTokenBundle} from './store'
+import type {RemoteMcpStore,OAuthTokenBundle,BrowserOAuthWriteAdmission} from './store'
 import {abortable,type McpAccess} from './remote'
 import {discoverLoopbackOAuth,oauthJson,publicOAuthAddress,type OAuthJson,type OAuthMetadata} from './oauth-network'
 export type OAuthStatus={state:'idle'|'waiting'|'connected'|'error'|'unsupported';message?:string}
 type Attempt={slot:string;ended:boolean;controller:AbortController;server?:Server;timer:ReturnType<typeof setTimeout>;status:OAuthStatus;revision:string;url:string;used:boolean;release:()=>void}
 type BrowserCredentialStore=Pick<RemoteMcpStore,'browserCredentialState'|'replaceOAuth'>
+type BrowserApprovalCheck=(credential:NonNullable<Awaited<ReturnType<BrowserCredentialStore['browserCredentialState']>>>,signal:AbortSignal)=>Promise<BrowserOAuthWriteAdmission>
 export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'writeOAuth'|'lifecycle'>,access:McpAccess,json:OAuthJson=oauthJson,credentials?:BrowserCredentialStore) {
  const attempts=new Map<string,Attempt>(),refreshes=new Map<string,Promise<string>>()
  const terminal=new Map<string,{revision:string;url:string;status:OAuthStatus}>()
@@ -39,19 +40,25 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   if(typeof data.access_token!=='string' || !/^[\x21-\x7e]{1,8192}$/.test(data.access_token) || typeof data.expires_in!=='number' || !Number.isFinite(data.expires_in) || data.expires_in<=0 || data.expires_in>365*86400 || data.refresh_token!==undefined && (typeof data.refresh_token!=='string' || data.refresh_token.length>8192) || data.scope!==undefined && (typeof data.scope!=='string' || data.scope.length>8192))throw new Error('Unsupported token bundle')
   return {accessToken:data.access_token,refreshToken:typeof data.refresh_token==='string'?data.refresh_token:previous?.refreshToken,expiresAt:Date.now()+data.expires_in*1000,resource:meta.resource,issuer:meta.issuer,tokenEndpoint:meta.token,clientId,scope:typeof data.scope==='string'?data.scope:previous?.scope}
  }
- async function start(agent:string,name:string,revision:string,stop:AbortSignal) {
+ async function start(agent:string,name:string,revision:string,stop:AbortSignal,approval?:BrowserApprovalCheck) {
   if(closed)throw new Error('OAuth unavailable')
   // A stale dialog must not invalidate a newer attempt or an active bearer/OAuth call.
   const admission=store.lifecycle.watch(agent,name)
-  const admitted=await authority(agent,name,revision,AbortSignal.any([stop,AbortSignal.timeout(30_000)]),admission)
+  const admissionSignal=AbortSignal.any([stop,AbortSignal.timeout(30_000)])
+  const admitted=await authority(agent,name,revision,admissionSignal,admission)
   if(admitted.bearer)throw new Error('Clear the configured bearer before OAuth')
   const expected=await credentials?.browserCredentialState(agent,name)
-  if(credentials && (!expected || expected.registrationId!==admitted.id || expected.revision!==revision))throw new Error('MCP OAuth credential unavailable')
+  if(credentials && (!expected || expected.registrationId!==admitted.id || expected.revision!==revision || expected.resource!==admitted.url))throw new Error('MCP OAuth credential unavailable')
   async function assertCredentialCurrent(signal:AbortSignal) {
-   if(!credentials || !expected)return
+   if(!credentials || !expected){
+    if(approval)throw new Error('MCP OAuth credential unavailable')
+    return
+   }
    const current=await abortable(credentials.browserCredentialState(agent,name),signal)
-   if(!current || current.registrationId!==expected.registrationId || current.revision!==expected.revision || current.sealed!==expected.sealed)throw new Error('MCP credential generation changed.')
+   if(!current || current.registrationId!==expected.registrationId || current.revision!==expected.revision || current.resource!==expected.resource || current.sealed!==expected.sealed)throw new Error('MCP credential generation changed.')
+   return approval?.(current,signal)
   }
+  if(approval)await assertCredentialCurrent(admissionSignal)
   admission();stop.throwIfAborted()
   const slot=key(agent,name),old=attempts.get(slot)
   if(attempts.size>=128 && !old)throw new Error('OAuth unavailable')
@@ -89,9 +96,11 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
       ticket.assertCurrent();callbackSignal.throwIfAborted()
       const token=await json(meta.token,callbackSignal,new URLSearchParams({grant_type:'authorization_code',code:url.searchParams.get('code')!,redirect_uri:redirectUri,client_id:clientId,code_verifier:verifier,resource:meta.resource}))
       await authority(agent,name,revision,callbackSignal,ticket.assertCurrent)
+      const approvedWrite=approval ? await assertCredentialCurrent(callbackSignal) : undefined
+      ticket.assertCurrent();callbackSignal.throwIfAborted()
       const bundle=tokens(token,meta,clientId)
       // The browser may have been open while another writer changed the credential.
-      if(credentials && expected)await abortable(credentials.replaceOAuth(agent,name,expected,bundle,callbackSignal),callbackSignal)
+      if(credentials && expected)await abortable(credentials.replaceOAuth(agent,name,expected,bundle,callbackSignal,approvedWrite),callbackSignal)
       else await abortable(store.writeOAuth(agent,name,revision,bundle,callbackSignal),callbackSignal)
       await authority(agent,name,revision,callbackSignal,ticket.assertCurrent)
       answer(200,'Connected. You can close this window.');end(attempt,{state:'connected'})

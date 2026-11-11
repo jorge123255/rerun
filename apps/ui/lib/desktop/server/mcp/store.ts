@@ -18,6 +18,7 @@ export function bindRemoteTransportDrain(store: Pick<RemoteMcpStore, 'lifecycle'
     transportDrains.set(store.lifecycle, drain)
 }
 export type OAuthTokenBundle={refreshPending?:string;accessToken:string;refreshToken?:string;expiresAt:number;resource:string;issuer:string;tokenEndpoint:string;clientId:string;scope?:string}
+export type BrowserOAuthWriteAdmission = { requestId: string; attemptId: string; sealedApproval: string; expiresAt: number }
 export function remoteMcpStore(db: Client, key: () => Buffer) {
     const lifecycle = remoteMcpLifecycle()
     function seal(agent: string, name: string, value: string) {
@@ -36,7 +37,7 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
         const result = await db.execute({ sql: 'SELECT id,transport,name,url,revision,bearer IS NOT NULL AS has_bearer FROM desktop_remote_mcp WHERE agent_id=? ORDER BY name', args:[agent] })
         return result.rows.map(r => ({ id:String(r.id), transport:String(r.transport) as 'http' | 'sse', name:String(r.name), url:String(r.url), revision:String(r.revision), hasBearer:!!r.has_bearer }))
     }
-    function commitOAuth(agent:string,name:string,revision:string,bundle:OAuthTokenBundle,signal:AbortSignal,expected?:{registrationId:string;sealed:string|null}) {
+    function commitOAuth(agent:string,name:string,revision:string,bundle:OAuthTokenBundle,signal:AbortSignal,expected?:{registrationId:string;sealed:string|null},approval?:BrowserOAuthWriteAdmission) {
         return lifecycle.commitCredentials(agent,name,signal,async check=>{
             check()
             const remote=(await db.execute({sql:'SELECT transport FROM desktop_remote_mcp WHERE agent_id=? AND name=?',args:[agent,name]})).rows[0]
@@ -46,8 +47,16 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
             const encrypted=seal(agent,`oauth:${name}`,JSON.stringify(bundle))
             const predicate = expected ? ' AND id=? AND (SELECT bundle FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=?) IS ?' : ''
             const match = expected ? [expected.registrationId, agent, name, expected.sealed] : []
+            const active = approval ? ` AND ? > unixepoch('subsec') * 1000 AND EXISTS (
+                SELECT 1 FROM desktop_mcp_sign_in_browser_approvals b
+                JOIN desktop_mcp_sign_in_attempts a ON a.attempt_id=b.attempt_id
+                JOIN desktop_mcp_sign_in_requests r ON r.request_id=a.request_id
+                WHERE b.sealed=? AND a.attempt_id=? AND r.request_id=? AND r.agent_id=?
+                    AND r.active_attempt_id=a.attempt_id AND a.state='pending' AND r.status='connecting'
+            )` : ''
+            const approved = approval ? [approval.expiresAt, approval.sealedApproval, approval.attemptId, approval.requestId, agent] : []
             try {
-                const result=await db.execute({sql:`INSERT INTO desktop_remote_mcp_oauth(agent_id,name,revision,bundle) SELECT agent_id,name,revision,? FROM desktop_remote_mcp WHERE agent_id=? AND name=? AND revision=?${predicate} ON CONFLICT(agent_id,name) DO UPDATE SET revision=excluded.revision,bundle=excluded.bundle`,args:[encrypted,agent,name,revision,...match]})
+                const result=await db.execute({sql:`INSERT INTO desktop_remote_mcp_oauth(agent_id,name,revision,bundle) SELECT agent_id,name,revision,? FROM desktop_remote_mcp WHERE agent_id=? AND name=? AND revision=?${predicate}${active} ON CONFLICT(agent_id,name) DO UPDATE SET revision=excluded.revision,bundle=excluded.bundle`,args:[encrypted,agent,name,revision,...match,...approved]})
                 check()
                 if(result.rowsAffected!==1)throw new Error(expected ? 'MCP credential generation changed.' : 'MCP server changed')
             } catch(error) {
@@ -63,11 +72,11 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
         })
     }
     async function readCredentialState(agent:string,name:string,query:Pick<Client, 'execute'>,browser:boolean) {
-        const row=(await query.execute({sql:`SELECT s.id,s.revision,s.transport,s.bearer IS NOT NULL AS has_bearer,o.bundle
+        const row=(await query.execute({sql:`SELECT s.id,s.revision,s.url,s.transport,s.bearer IS NOT NULL AS has_bearer,o.bundle
             FROM desktop_remote_mcp s LEFT JOIN desktop_remote_mcp_oauth o ON s.agent_id=o.agent_id AND s.name=o.name
             WHERE s.agent_id=? AND s.name=?`,args:[agent,name]})).rows[0]
         return row && (row.transport === 'http' || browser && row.transport === 'sse') && !row.has_bearer && row.id
-            ? { registrationId:String(row.id), revision:String(row.revision), sealed:row.bundle == null ? null : String(row.bundle) } : null
+            ? { registrationId:String(row.id), revision:String(row.revision), resource:String(row.url), sealed:row.bundle == null ? null : String(row.bundle) } : null
     }
     return {
         list, lifecycle,
@@ -84,8 +93,8 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
         async writeOAuth(agent:string,name:string,revision:string,bundle:OAuthTokenBundle,signal:AbortSignal) {
             await commitOAuth(agent,name,revision,bundle,signal)
         },
-        replaceOAuth(agent:string,name:string,expected:{registrationId:string;revision:string;sealed:string|null},bundle:OAuthTokenBundle,signal:AbortSignal) {
-            return commitOAuth(agent,name,expected.revision,bundle,signal,expected)
+        replaceOAuth(agent:string,name:string,expected:{registrationId:string;revision:string;sealed:string|null},bundle:OAuthTokenBundle,signal:AbortSignal,approval?:BrowserOAuthWriteAdmission) {
+            return commitOAuth(agent,name,expected.revision,bundle,signal,expected,approval)
         },
         async read(agent: string, name: string): Promise<Omit<RemoteServer, 'hasBearer'> & { bearer: string }> {
             const row = (await db.execute({ sql:'SELECT * FROM desktop_remote_mcp WHERE agent_id=? AND name=?',args:[agent,name] })).rows[0]

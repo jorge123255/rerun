@@ -30,6 +30,7 @@ export async function desktopMcpSignInPorts(runtime: DesktopRuntime, sessionId: 
     const agent = await findDesktopAgent(db, session.agentId)
     if (!agent || agent.workspaceId !== 1) throw new DesktopHttpError(404, 'Coworker not found.')
     const store = createDesktopMcpSignInStore(db), service = await getDesktopRemoteMcpService(runtime), attempts = state(runtime)
+    const approvals = service.browserApprovals({ owner: agent.id, sessionId: session.id, engineAgentId: agent.engineAgentId, engineSessionId: session.engineSessionId })
     const initialOwner = watchDesktopMcpOwner(runtime, agent.id), initialSession = watchDesktopSecretAuthority(runtime, agent.id, session.id)
     const check = (signal: AbortSignal) => { signal.throwIfAborted(); service.shutdownSignal.throwIfAborted(); initialOwner(); initialSession() }
     async function owner(signal: AbortSignal) {
@@ -70,7 +71,7 @@ export async function desktopMcpSignInPorts(runtime: DesktopRuntime, sessionId: 
     }
     const slot = (target: DesktopMcpSignInOAuthTarget) => JSON.stringify([agent!.id, target.source.server.name])
     const exact = (target: DesktopMcpSignInOAuthTarget) => { const current = attempts.owners.get(slot(target)); return !!current && current.requestId === target.requestId && current.attemptId === target.attemptId }
-    const browser = createDesktopMcpSignInRuntimePorts({ store, authority,
+    const browser = createDesktopMcpSignInRuntimePorts({ store, authority, captureBrowserApproval: approvals.capture,
         source: async (id, signal) => {
             if (id !== session!.id) throw new DesktopHttpError(409, 'MCP sign-in conversation changed.')
             const pending = await readSource(signal)
@@ -84,9 +85,14 @@ export async function desktopMcpSignInPorts(runtime: DesktopRuntime, sessionId: 
                     const current = await authority(target.source, signal)
                     const request = await store.read(target.requestId)
                     if (!target.attemptId || request?.activeAttemptId !== target.attemptId || !sameSource(request.source, target.source)) throw new DesktopHttpError(409, 'MCP sign-in attempt changed.')
-                    attempts.owners.set(slot(target), { requestId: target.requestId, attemptId: target.attemptId })
-                    const result = await service.oauth.start(agent!.id, target.source.server.name, target.source.server.revision, signal)
+                    const result = await service.oauth.start(agent!.id, target.source.server.name, target.source.server.revision, signal, async (credential, callbackSignal) => {
+                        const current = await authority(target.source, callbackSignal)
+                        const approved = await approvals.assertCurrent(target, credential)
+                        current.check()
+                        return approved
+                    })
                     current.check()
+                    attempts.owners.set(slot(target), { requestId: target.requestId, attemptId: target.attemptId })
                     return { ...result.status, ...(result.authorizationUrl ? { authorizationUrl: result.authorizationUrl } : {}) }
                 })
             },
