@@ -34,6 +34,9 @@ async function click(label: string) {
 
 it('protects the default model and requires explicit Console opt-in', async () => {
     const onModelsChange = await mount()
+    expect(document.body.textContent).toContain('Paid by your Go plan.')
+    expect(document.body.textContent).toContain('Billed per token, off until you switch one on.')
+    expect(document.body.textContent).not.toMatch(/\b\d+ of \d+ on\b/)
     const defaultToggle = document.querySelector('[aria-label="Turn off DeepSeek V4 Pro"]')
     expect(defaultToggle).toHaveProperty('disabled', true)
     expect(document.querySelector('[aria-label="Turn on GPT-5"]')).toHaveProperty('disabled', true)

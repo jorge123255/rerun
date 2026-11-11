@@ -13,8 +13,8 @@ import { desktopOpencodeModelRows, desktopOpencodePlanOf, type DesktopOpencodeMo
 import { Badge } from '@rerun/ui/primitives'
 
 const SECTIONS: { plan: DesktopOpencodePlan; title: string; hint: string }[] = [
-    { plan: 'go', title: 'Included in OpenCode Go', hint: 'Paid by your Go plan, within its 5-hour, weekly and monthly limits.' },
-    { plan: 'console', title: 'Console, paid with your credits', hint: 'Billed per token from your OpenCode credits. Off until you switch one on.' },
+    { plan: 'go', title: 'Included in OpenCode Go', hint: 'Paid by your Go plan.' },
+    { plan: 'console', title: 'Console, paid with your credits', hint: 'Billed per token, off until you switch one on.' },
 ]
 
 export type DesktopOpencodeModelsChange = { enabledModelIds: string[]; consoleEnabled: boolean }
@@ -110,10 +110,9 @@ export function DesktopOpencodeModels({ catalog, enabledModelIds, defaultModelId
                     <DetailBlock
                         key={section.plan}
                         title={section.title}
-                        aside={<span className="flex items-center gap-2 text-[11px] text-muted-foreground tabular-nums">
-                            {section.plan === 'console' && <Switch checked={consoleEnabled} disabled={disabled || !firstConsole} onCheckedChange={toggleConsole} aria-label="Use OpenCode Console credits" />}
-                            {inPlan.filter(row => row.enabled).length} of {inPlan.length} on
-                        </span>}
+                        aside={section.plan === 'console'
+                            ? <Switch checked={consoleEnabled} disabled={disabled || !firstConsole} onCheckedChange={toggleConsole} aria-label="Use OpenCode Console credits" />
+                            : undefined}
                     >
                         <p className="text-[11px] text-muted-foreground">{section.hint}</p>
                         {shown.length === 0 ? (
