@@ -1,3 +1,4 @@
+import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { coworkerWorkspace, withCoworkerFiles } from '@/lib/desktop/server/coworker-files'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { FILES_IMPORT_ABORTED, FilesImportError } from '../../../../../../../../engine/src/desktop/files-import/errors'
@@ -17,8 +18,16 @@ async function importBytes(request: Request): Promise<Uint8Array> {
         throw tooLarge()
     }
     if (request.signal.aborted) throw aborted()
+    const verifySize = (received: number) => {
+        if (declared !== null && Number(declared) !== received) {
+            throw new DesktopHttpError(400, 'The upload size did not match the file size.')
+        }
+    }
     const reader = request.body?.getReader()
-    if (!reader) return new Uint8Array()
+    if (!reader) {
+        verifySize(0)
+        return new Uint8Array()
+    }
     const cancel = () => { void reader.cancel().catch(() => {}) }
     request.signal.addEventListener('abort', cancel, { once: true })
     const chunks: Uint8Array[] = []
@@ -33,6 +42,7 @@ async function importBytes(request: Request): Promise<Uint8Array> {
             if (size > MAX_UPLOAD_FILE_BYTES) throw tooLarge()
             chunks.push(part.value)
         }
+        verifySize(size)
         return chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks, size)
     } catch (error) {
         if (request.signal.aborted) throw aborted()

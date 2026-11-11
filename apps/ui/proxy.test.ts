@@ -156,6 +156,12 @@ describe('proxy matcher', () => {
         expect(matches('/logo.png')).toBe(false)
     })
 
+    it('keeps authenticated coworker uploads out of the body-buffering proxy', () => {
+        expect(matches('/api/desktop/agents/agent-1/files/import')).toBe(false)
+        expect(matches('/api/desktop/agents/agent-1/files/content')).toBe(true)
+        expect(matches('/api/desktop/agents/agent-1/files/download')).toBe(true)
+    })
+
     it('puts the gated render trees back in for the gate alone', () => {
         expect(matches('/render/kit')).toBe(true)
         expect(matches('/render/kit/buttons')).toBe(true)
