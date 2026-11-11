@@ -20,12 +20,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ agen
         const agent = await findDesktopAgent(db, agentId)
         if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
         const engine = engineOf(runtime)
+        const savedOnly = new URL(request.url).searchParams.get('view') === 'saved'
         let history: DesktopChatHistory
         try {
             history = await readDesktopChatHistory({
                 listLocalSessions: id => listDesktopSessions(db, id),
                 listEngineSessions: id => listSessions(engine, id),
-                pendingQuestionFor: async id => {
+                pendingQuestionFor: savedOnly ? undefined : async id => {
                     const history = createDesktopHumanRequestHistory(runtime, agent.id)
                     const { question } = await readDesktopQuestion(runtime, id, { history })
                     if (question) return question.questions[0].question.slice(0, 200)

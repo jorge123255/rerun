@@ -62,7 +62,7 @@ test('same-title results open their exact older transcripts, preserve Chats sele
             { id: `${agentId}-newest`, agentId, title: 'Newer conversation', createdAt: '', updatedAt: '' },
             { id: `${agentId}-shared`, agentId, title: 'Shared plan', createdAt: '', updatedAt: '' },
         ] }) }
-        const historyAgent = url.match(/^\/api\/desktop\/agents\/([^/]+)\/chat-history$/)?.[1]
+        const historyAgent = url.match(/^\/api\/desktop\/agents\/([^/]+)\/chat-history\?view=saved$/)?.[1]
         if (historyAgent) return Response.json({ conversations: [
             { id: `${historyAgent}-newest`, agentId: historyAgent, engineSessionId: `${historyAgent}-engine-new`, title: 'Newer conversation', createdAt: '', updatedAt: '', source: 'dashboard', needsYou: false, pendingQuestion: null },
             { id: `${historyAgent}-shared`, agentId: historyAgent, engineSessionId: `${historyAgent}-engine-shared`, title: 'Shared plan', createdAt: '', updatedAt: '', source: 'dashboard', needsYou: false, pendingQuestion: null },

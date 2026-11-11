@@ -883,8 +883,9 @@ function CoworkerChat({ agent, attention, overview, requested, requestedPanel, o
     onClosePanel: () => void
 }) {
     const [sessions, setSessions] = useState<DesktopSessionView[] | null>(null)
-    const needsYouSessions = useMemo(() => new Set(attention.items
-        .filter(item => item.agentId === agent.id && item.kind !== 'info').map(item => item.sessionId)), [agent.id, attention.items])
+    const pendingChatSummaries = useMemo(() => new Map(attention.items
+        .filter(item => item.agentId === agent.id && item.kind !== 'info')
+        .map(item => [item.sessionId, item.summary])), [agent.id, attention.items])
     const [bootstrap, setBootstrap] = useState<{ layout: DesktopTabLayout | null } | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [checkedRequest, setCheckedRequest] = useState<DesktopChatRequest | null>(null)
@@ -950,7 +951,7 @@ function CoworkerChat({ agent, attention, overview, requested, requestedPanel, o
         {missing && checkedRequest !== requested && !error && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">Opening conversation…</p>}
         {!error && !bootstrap && <p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p>}
         {!bootstrap || !sessions ? dismiss : <DesktopChatTabs onOpenCoworkerChat={onOpenCoworkerChat}
-            agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} needsYouSessions={needsYouSessions} sessions={sessions} initialLayout={bootstrap.layout}
+            agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} pendingChatSummaries={pendingChatSummaries} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
             refreshSessions={readSessions} refreshThreads={refreshThreads} reload={reload} modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}
     </>

@@ -36,8 +36,8 @@ function rows(sessionId: string, kind: 'question' | 'approval' | 'takeover'): Me
         { id: `${sessionId}-result`, sessionId, role: 'tool', contentJson: JSON.stringify([{ type: 'tool-result', toolName, toolCallId: `${sessionId}-call`, output: { type: 'json', value: { status: 'delivered' } } }]), toolCallsJson: null, createdAt: time },
     ]
 }
-function request(agentId: string, cookie = runtime.app.sessionToken) {
-    return new Request(`${runtime.app.origin}/api/desktop/agents/${agentId}/chat-history`, { headers: {
+function request(agentId: string, cookie = runtime.app.sessionToken, search = '') {
+    return new Request(`${runtime.app.origin}/api/desktop/agents/${agentId}/chat-history${search}`, { headers: {
         host: new URL(runtime.app.origin).host, cookie: `rerun-desktop-session=${cookie}`,
     } })
 }
@@ -174,4 +174,15 @@ test('board attention shares a transcript for the takeover fallback and still ho
     expect(afterStop.unavailableAgentIds).toEqual([])
     expect(afterStop.items.some(item => item.sessionId === approval.id)).toBe(false)
     expect(afterStop.items.some(item => item.sessionId === question.id)).toBe(true)
+})
+
+test('saved thread listing remains available without reading pending forms or full transcripts', async () => {
+    failedHistories.add(question.engineSessionId)
+    const response = await GET(request(alice.id, runtime.app.sessionToken, '?view=saved'), { params: Promise.resolve({ agentId: alice.id }) })
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body).toMatchObject({ enrichment: 'ok', questions: 'not-requested' })
+    expect(body.conversations.map((row: { id: string }) => row.id).sort()).toEqual([question.id, approval.id, acceptedQuestion.id, acceptedApproval.id].sort())
+    expect(body.conversations.find((row: { id: string }) => row.id === approval.id).source).toBe('schedule')
+    expect(calls).toEqual(['GET /agents/engine-alice/sessions'])
 })

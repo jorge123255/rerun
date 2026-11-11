@@ -23,7 +23,7 @@ export type DesktopChatHistoryConversation = z.infer<typeof desktopChatHistoryCo
 export const desktopChatHistorySchema = z.object({
     conversations: z.array(desktopChatHistoryConversationSchema),
     enrichment: z.enum(['ok', 'unavailable']),
-    questions: z.enum(['ok', 'unavailable']),
+    questions: z.enum(['ok', 'unavailable', 'not-requested']),
 })
 export type DesktopChatHistory = z.infer<typeof desktopChatHistorySchema>
 

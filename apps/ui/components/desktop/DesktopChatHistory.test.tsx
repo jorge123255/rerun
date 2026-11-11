@@ -230,6 +230,12 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
     const initialData: DesktopBootstrap = { theme: 'system', profile: { id: 1, displayName: 'Test' }, workspace: { id: 1, name: 'Disposable' }, agents, connections: [], default: null }
     const layouts = new Map<string, {activeIndex: number; tabs: {uid: string; id: string | null}[]; revision: number}>()
     const sent: Record<string, string>[] = []
+    const historyReads: string[] = []
+    const pending = { id: 'pending-beta', kind: 'approval', agentId: 'alice', agentName: 'Alice', agentEnabled: true,
+        sessionId: 'beta', title: 'Bananas', summary: 'Review the board draft', updatedAt: createdAt }
+    const unrelated = { ...pending, id: 'foreign-alpha', agentId: 'bob', agentName: 'Bob', sessionId: 'alpha', summary: 'Foreign status' }
+    const info = { ...pending, id: 'info-alpha', kind: 'info', sessionId: 'alpha', summary: 'Informational notice' }
+    let boardItems: typeof pending[] = []
     let finish!: () => void
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
         const recentResponse = recent.handle(url, init)
@@ -247,8 +253,11 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
             return Response.json({ tabs: layout })
         }
         if (url === '/api/desktop/settings') return Response.json({ connections: [], default: null })
-        const history = url.match(/^\/api\/desktop\/agents\/([^/]+)\/chat-history$/)
-        if (history) return Response.json(historyOf(saved.filter(s => s.agentId === history[1])))
+        const history = url.match(/^\/api\/desktop\/agents\/([^/]+)\/chat-history\?view=saved$/)
+        if (history) {
+            historyReads.push(url)
+            return Response.json(historyOf(saved.filter(s => s.agentId === history[1])))
+        }
         const list = url.match(/^\/api\/desktop\/agents\/([^/]+)\/sessions$/)
         if (list) return Response.json({ sessions: saved.filter(s => s.agentId === list[1]), tabs: layouts.get(list[1]) ?? null })
         const messages = url.match(/^\/api\/desktop\/sessions\/([^/]+)\/messages$/)
@@ -269,7 +278,8 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
         if ((init?.method ?? 'GET') === 'GET') {
             if (/^\/api\/desktop\/sessions\/[^/]+\/stop$/.test(url)) return Response.json({ running: false })
             if (/^\/api\/desktop\/sessions\/[^/]+\/feedback(?:\?|$)/.test(url)) return Response.json({ votes: [] })
-            if (url === '/api/desktop/board-activity') return Response.json({ agents: {} })
+            if (url === '/api/desktop/board-activity') return Response.json({ agents: { alice: 'idle', bob: 'idle' },
+                attention: { items: boardItems, unavailableAgentIds: [], checkedAt: createdAt } })
             if (url === '/api/desktop/pending-inbox') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: '2026-11-05T00:00:00Z' })
             if (url === '/api/desktop/completions') return Response.json({ items: [], unavailableAgentIds: [], enabledAt: '2026-11-05T00:00:00Z', checkedAt: '2026-11-05T00:00:00Z', nextCursor: null })
         }
@@ -287,7 +297,17 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
         await act(async () => { root.render(<DesktopApp initialData={initialData} />) })
         await openAlice()
         expect(visible().textContent).toContain('Apples answer')
+        boardItems = [pending, unrelated, info]
+        await settle(3100)
         await history()
+        const thread = (id: string) => document.querySelector(`[role="dialog"] [data-thread-row="${id}"]`)
+        expect(historyReads).toEqual(['/api/desktop/agents/alice/chat-history?view=saved'])
+        expect(thread('beta')?.textContent).toContain('Review the board draft')
+        expect(thread('alpha')?.textContent).not.toMatch(/Foreign status|Informational notice|Needs you/)
+        boardItems = []
+        await settle(3100)
+        expect(thread('beta')?.textContent).not.toContain('Review the board draft')
+        expect(historyReads).toHaveLength(1)
         await choose('Bananas')
         expect(visible().textContent).toContain('Bananas answer')
         expect(visible().textContent).not.toContain('Apples answer')
@@ -347,7 +367,7 @@ test('history read failure can be retried without turning it into an empty saved
         if (url.endsWith('/saved/messages')) return Response.json({ messages: [] })
         if (url.endsWith('/saved/stop')) return Response.json({ running: false })
         if (url.endsWith('/sessions')) return ++reads === 1 ? Response.json({ error: 'History unavailable' }, { status: 503 }) : Response.json({ sessions: [session('saved', 'alice', 'Recovered')] })
-        if (url.endsWith('/chat-history')) return Response.json(historyOf([session('saved', 'alice', 'Recovered')]))
+        if (url.endsWith('/chat-history?view=saved')) return Response.json(historyOf([session('saved', 'alice', 'Recovered')]))
         if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
         if ((init?.method ?? 'GET') === 'GET') {
             if (/^\/api\/desktop\/sessions\/[^/]+\/feedback(?:\?|$)/.test(url)) return Response.json({ votes: [] })

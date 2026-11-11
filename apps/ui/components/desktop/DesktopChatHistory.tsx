@@ -23,8 +23,9 @@ import { cn } from '@/lib/utils'
 import { DesktopNeedsChats } from './DesktopNeedsChats'
 import { useDesktopPendingInbox } from './useDesktopPendingInbox'
 
-function ChatHistoryRow({ conversation, active, busy, onOpen }: {
+function ChatHistoryRow({ conversation, pendingSummary, active, busy, onOpen }: {
     conversation: DesktopChatHistoryConversation
+    pendingSummary?: string
     active: boolean
     busy: boolean
     onOpen: () => void
@@ -39,28 +40,19 @@ function ChatHistoryRow({ conversation, active, busy, onOpen }: {
                 <span className="flex min-w-0 items-center gap-1.5">
                     {automated && <SourceIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
                     <span title={conversation.title} className="min-w-0 flex-1 truncate text-sm font-medium">{conversation.title}</span>
-                    {conversation.needsYou && <Badge size="xs" tone="orange" glow={false} className="shrink-0">Needs you</Badge>}
+                    {pendingSummary !== undefined && <Badge size="xs" tone="orange" glow={false} className="shrink-0">Needs you</Badge>}
                 </span>
                 {conversation.firstMessage && <span className="truncate text-xs text-muted-foreground">{conversation.firstMessage}</span>}
-                {conversation.needsYou && conversation.pendingQuestion && (
+                {pendingSummary && (
                     <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
                         <MessageCircleQuestionIcon aria-hidden className="size-3 shrink-0" />
-                        <span className="truncate">{conversation.pendingQuestion}</span>
+                        <span className="truncate">{pendingSummary}</span>
                     </span>
                 )}
             </span>
             {updatedAt && <time dateTime={updatedAt} title={`Updated ${fullDateTime(updatedAt)}`}
                 className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{messageTime(updatedAt)}</time>}
         </button>
-    )
-}
-
-function NeedsFilterNote({ onRetry }: { onRetry: () => void }) {
-    return (
-        <div role="status" className="flex flex-col items-center gap-2 px-3 py-5 text-center text-xs text-muted-foreground">
-            <span>Pending requests could not be loaded.</span>
-            <Button type="button" size="sm" variant="outline" onClick={onRetry}>Retry</Button>
-        </div>
     )
 }
 
@@ -73,9 +65,10 @@ function ClassificationFilterNote({ onRetry, partial }: { onRetry: () => void; p
     )
 }
 
-function ChatHistoryList({ history, filter, query, selectedId, busy, onSelect, onRetry }: {
+function ChatHistoryList({ history, filter, query, selectedId, busy, pendingChatSummaries, onSelect, onRetry }: {
     history: DesktopChatHistory
-    filter: DesktopChatFilter
+    pendingChatSummaries?: ReadonlyMap<string, string>
+    filter: Exclude<DesktopChatFilter, 'needs'>
     query: string
     selectedId: string | null
     busy: boolean
@@ -85,41 +78,39 @@ function ChatHistoryList({ history, filter, query, selectedId, busy, onSelect, o
     const { t } = useDesktopLocale()
     const shown = filterDesktopChats(history.conversations, filter, query)
     const groups = groupDesktopChats(shown)
-    const questionsUnavailable = history.questions === 'unavailable'
     const classificationUnavailable = (filter === 'chats' || filter === 'automations') && history.enrichment === 'unavailable'
     const empty = query.trim()
         ? 'No matching conversations.'
-        : filter === 'needs' ? t('emptyNeeds')
-            : filter === 'automations' ? t('emptyAutomations')
-                : filter === 'chats' ? t('emptyThreads')
-                    : 'No thread yet.'
+        : filter === 'automations' ? t('emptyAutomations')
+            : filter === 'chats' ? t('emptyThreads')
+                : 'No thread yet.'
     return (
         <div className="max-h-[min(420px,50dvh)] min-h-0 overflow-y-auto">
             {history.enrichment === 'unavailable' && !classificationUnavailable && (
                 <p className="px-2.5 py-1 text-[11px] text-muted-foreground">Recent activity could not be read. Showing saved dates.</p>
             )}
-            {filter === 'needs' && questionsUnavailable && <NeedsFilterNote onRetry={onRetry} />}
             {classificationUnavailable && <ClassificationFilterNote onRetry={onRetry}
                 partial={history.conversations.some(row => row.kind !== 'general' && row.source !== null)} />}
             {groups.map(({ day, entries }) => (
                 <div key={day} className="pb-1">
                     <p className="px-2.5 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{day}</p>
                     {entries.map(conversation => (
-                        <ChatHistoryRow key={conversation.id} conversation={conversation} active={selectedId === conversation.id}
+                        <ChatHistoryRow key={conversation.id} conversation={conversation} pendingSummary={pendingChatSummaries?.get(conversation.id)} active={selectedId === conversation.id}
                             busy={busy} onOpen={() => onSelect(conversation.id)} />
                     ))}
                 </div>
             ))}
-            {shown.length === 0 && !classificationUnavailable && !(filter === 'needs' && questionsUnavailable) && (
+            {shown.length === 0 && !classificationUnavailable && (
                 <p className="px-3 py-6 text-center text-xs text-muted-foreground">{empty}</p>
             )}
         </div>
     )
 }
 
-function ChatHistoryPanel({ agentId, selectedId, busy, onSelect, titleId, descriptionId, initialFilter = 'all' }: {
+function ChatHistoryPanel({ agentId, selectedId, busy, pendingChatSummaries, onSelect, titleId, descriptionId, initialFilter = 'all' }: {
     initialFilter?: DesktopChatFilter
     agentId: string
+    pendingChatSummaries?: ReadonlyMap<string, string>
     selectedId: string | null
     busy: boolean
     onSelect: (id: string) => void
@@ -138,7 +129,7 @@ function ChatHistoryPanel({ agentId, selectedId, busy, onSelect, titleId, descri
         const controller = new AbortController()
         void (async () => {
             try {
-                const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/chat-history`, { signal: controller.signal, cache: 'no-store' })
+                const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/chat-history?view=saved`, { signal: controller.signal, cache: 'no-store' })
                 const body = await response.json().catch(() => ({}))
                 if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not load conversations')
                 const parsed = desktopChatHistorySchema.parse(body)
@@ -193,15 +184,16 @@ function ChatHistoryPanel({ agentId, selectedId, busy, onSelect, titleId, descri
                     Loading conversations…
                 </p>
             ) : (
-                <ChatHistoryList history={history} filter={filter} query={query} selectedId={selectedId} busy={busy} onSelect={onSelect} onRetry={retry} />
+                <ChatHistoryList history={history} filter={filter} query={query} selectedId={selectedId} busy={busy} pendingChatSummaries={pendingChatSummaries} onSelect={onSelect} onRetry={retry} />
             )}
         </>
     )
 }
 
-export function DesktopChatHistory({ agentId, count, selectedId, busy, onSelect, control }: {
+export function DesktopChatHistory({ agentId, count, selectedId, busy, pendingChatSummaries, onSelect, control }: {
     control?: { needsRequest: number | null; active: boolean; onOpenChange: (open: boolean) => void }
     agentId: string
+    pendingChatSummaries?: ReadonlyMap<string, string>
     count?: number
     selectedId: string | null
     busy: boolean
@@ -232,7 +224,7 @@ export function DesktopChatHistory({ agentId, count, selectedId, busy, onSelect,
                 onInteractOutside={event => { if (document.querySelector('[role="alertdialog"][data-state="open"]')) event.preventDefault() }}
                 onEscapeKeyDown={event => { if (document.querySelector('[role="alertdialog"][data-state="open"]')) event.preventDefault() }} aria-labelledby={titleId} aria-describedby={descriptionId}
                 className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1.5rem)] gap-2 overflow-hidden p-2">
-                {visible && <ChatHistoryPanel key={`${agentId}/${seenRequest}`} initialFilter={initialFilter} agentId={agentId} selectedId={selectedId} busy={busy}
+                {visible && <ChatHistoryPanel key={`${agentId}/${seenRequest}`} initialFilter={initialFilter} agentId={agentId} selectedId={selectedId} busy={busy} pendingChatSummaries={pendingChatSummaries}
                     titleId={titleId} descriptionId={descriptionId}
                     onSelect={id => { onSelect(id); setOpen(false) }} />}
             </PopoverContent>

@@ -23,7 +23,7 @@ import { DesktopRunHistory } from './DesktopRunHistory'
 type Props = {
     agent: DesktopAgentView
     sessions: DesktopSessionView[]
-    needsYouSessions?: ReadonlySet<string>
+    pendingChatSummaries?: ReadonlyMap<string, string>
     initialLayout: DesktopTabLayout | null
     requested: DesktopChatRequest | null
     requestedPanel?: DesktopCoworkerPanelRequest | null
@@ -55,7 +55,7 @@ function initialTabs(agentId: string, layout: DesktopTabLayout | null, sessions:
     return id && session ? openSessionTab(pinned, id, session.title) : pinned
 }
 
-export function DesktopChatTabs({ agent, sessions, needsYouSessions, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, refreshThreads, reload, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: Props) {
+export function DesktopChatTabs({ agent, sessions, pendingChatSummaries, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, refreshThreads, reload, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: Props) {
     const { t } = useDesktopLocale()
     const [layout, setLayout] = useState(() => initialTabs(agent.id, initialLayout, sessions, requested))
     const [rejectedRequest, setRejectedRequest] = useState<DesktopChatRequest | null>(() => {
@@ -342,7 +342,7 @@ export function DesktopChatTabs({ agent, sessions, needsYouSessions, initialLayo
             const visible = !rejectedRequest && active.uid === tab.uid
             if (!visible && !visited.includes(tab.uid)) return null
             return <div key={tab.uid} data-desktop-tab-active={visible} hidden={!visible} className={visible ? 'flex h-full min-h-0 flex-col' : 'hidden'}>
-                <DesktopConversation overview={overview} agent={agent} sessionId={tab.id} sessions={sessions} needsYouSessions={needsYouSessions} tabUid={tab.uid} active={selected && visible}
+                <DesktopConversation overview={overview} agent={agent} sessionId={tab.id} sessions={sessions} pendingChatSummaries={pendingChatSummaries} tabUid={tab.uid} active={selected && visible}
                     requestedPanel={selected && visible ? requestedPanel : null} onPanelRequestHandled={onPanelRequestHandled}
                     tabStrip={visible ? strip : false} onTabActivity={report} initialDraft={drafts[tab.uid]} onStartFork={startFork} onFinishFork={finishFork}
                     onSelectSession={(id, title) => {
@@ -352,7 +352,7 @@ export function DesktopChatTabs({ agent, sessions, needsYouSessions, initialLayo
                     onChatSession={(id, sourceDraft) => bindSession(tab.uid, id, sourceDraft)}
                     onOpenCoworkerChat={onOpenCoworkerChat}
                     modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
-                    renderHistory={(_busy, control) => <DesktopChatHistory control={control} agentId={agent.id} count={sessions.length} selectedId={tab.id} busy={false} onSelect={id => open(id, sessions.find(s => s.id === id)?.title ?? 'Conversation')} />}
+                    renderHistory={(_busy, control) => <DesktopChatHistory control={control} agentId={agent.id} pendingChatSummaries={pendingChatSummaries} count={sessions.length} selectedId={tab.id} busy={false} onSelect={id => open(id, sessions.find(s => s.id === id)?.title ?? 'Conversation')} />}
                     renderRunHistory={control => <DesktopRunHistory agent={agent} dialogControl={control} />} />
             </div>
         })}

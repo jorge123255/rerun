@@ -191,11 +191,11 @@ function scheduledRunOf(message: UIMessage) {
     return parseScheduledRun(prompt)
 }
 
-export function DesktopConversation({ agent, sessionId, sessions, needsYouSessions, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: {
+export function DesktopConversation({ agent, sessionId, sessions, pendingChatSummaries, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: {
     agent: DesktopAgentView
     sessionId: string | null
     sessions: DesktopSessionView[]
-    needsYouSessions?: ReadonlySet<string>
+    pendingChatSummaries?: ReadonlyMap<string, string>
     onSelectSession: (id: string | null, title?: string) => void
     onStartFork?: (uid: string) => boolean
     onFinishFork?: (uid: string) => void
@@ -1315,7 +1315,7 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
                 <ConversationContent className="gap-4 px-3.5 py-4">
                     <DesktopConversationFind open={findOpen && active} onOpenChange={setFindOpen} />
                     {!ready && !historyError && !busy && <p role="status" className="text-sm text-muted-foreground">Loading conversation…</p>}
-                    {threadRows.leading.map(thread => <DesktopThreadBranch key={thread.id} thread={thread} needsYou={needsYouSessions?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />)}
+                    {threadRows.leading.map(thread => <DesktopThreadBranch key={thread.id} thread={thread} needsYou={pendingChatSummaries?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />)}
                     {ready && transcript.length === 0 && threadRows.leading.length === 0 && !busy && (
                         <div className="py-16 text-center">
                             <div className="text-sm font-medium">Start a conversation with {agent.name}</div>
@@ -1327,7 +1327,7 @@ export function DesktopConversation({ agent, sessionId, sessions, needsYouSessio
                         const branches = threadRows.after.get(messageIndex) ?? []
                         const withBranches = (content: ReactNode) => branches.length === 0 ? content
                             : <div key={message.id}>{content}{branches.map(thread =>
-                                <DesktopThreadBranch key={thread.id} thread={thread} needsYou={needsYouSessions?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />
+                                <DesktopThreadBranch key={thread.id} thread={thread} needsYou={pendingChatSummaries?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />
                             )}</div>
                         const scheduledRun = scheduledRunOf(message)
                         const triggerPayload = message.role === 'user' ? parseTriggerPayload(message.parts.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n')) : null
