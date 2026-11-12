@@ -69,7 +69,7 @@ export function DesktopForemanComposer({
             }}>
             <InputGroup className="rounded-xl bg-card">
                 {attachments && <InputGroupAddon align="block-start" className="min-w-0">{attachments}</InputGroupAddon>}
-                <div className="relative min-w-0 flex-1">
+                <div className="relative w-full min-w-0">
                     <InputGroupTextarea
                         {...mentions?.textareaProps}
                         ref={mentions?.inputRef}
