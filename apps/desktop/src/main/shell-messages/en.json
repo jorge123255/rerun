@@ -94,6 +94,10 @@
         "opening": "Opening your conversation…",
         "unavailable": "Could not open a conversation. Try again when the workspace is ready."
     },
+    "startup": {
+        "keychainPrompt": "If macOS asks for Keychain access, choose Allow to open your local workspace.",
+        "keychainBlocked": "Rerun couldn’t access secure storage. Unlock your login Keychain, then choose Try again and allow access if macOS asks."
+    },
     "updates": {
         "upToDate": "You’re up to date",
         "upToDateDetail": "Rerun {version} is the latest version.",

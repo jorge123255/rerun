@@ -94,6 +94,10 @@
         "opening": "Abrindo a conversa…",
         "unavailable": "Não foi possível abrir a conversa. Tente novamente quando o espaço de trabalho estiver pronto."
     },
+    "startup": {
+        "keychainPrompt": "Se o macOS pedir acesso às Chaves, escolha Permitir para abrir seu workspace local.",
+        "keychainBlocked": "O Rerun não conseguiu acessar o armazenamento seguro. Desbloqueie suas Chaves de início de sessão, tente novamente e permita o acesso se o macOS solicitar."
+    },
     "updates": {
         "upToDate": "Você está atualizado",
         "upToDateDetail": "O Rerun {version} é a versão mais recente.",

@@ -39,3 +39,14 @@ test('Mac strings use the upstream packs and interpolate the app name', () => {
     assert.equal(shellText('xx')('menu.view.reload'), 'Reload')
     for (const value of [null, '', {}, '../../de', 'fr;en', 'fr-CA-foo', 'es_419']) assert.equal(shellLocale(value), null)
 })
+
+test('Keychain startup guidance follows the selected Mac language', () => {
+    const english = shellText('en')
+    assert.match(english('startup.keychainPrompt'), /Keychain access/)
+    assert.match(english('startup.keychainBlocked'), /Unlock your login Keychain/)
+    for (const locale of ['de', 'es', 'fr', 'pt']) {
+        const translated = shellText(locale)
+        assert.notEqual(translated('startup.keychainPrompt'), english('startup.keychainPrompt'))
+        assert.notEqual(translated('startup.keychainBlocked'), english('startup.keychainBlocked'))
+    }
+})

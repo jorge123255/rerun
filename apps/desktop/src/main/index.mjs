@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { mkdirSync } from 'node:fs'
 import { createWorkspaceCoordinator, seedLegacyCatalog, getWorkspace } from './workspaces/index.mjs'
-import { loadBundle, loadIdentity, workspaceIdentity } from './runtime.mjs'
+import { DesktopSecureStorageError, loadBundle, loadIdentityFromSafeStorage, workspaceIdentity } from './runtime.mjs'
 import { RuntimeSupervisor } from './supervisor.mjs'
 import { createDesktopNotifications } from './notifications.mjs'
 import { createNotificationClickHandoff } from './notification-click-handoff.mjs'
@@ -86,6 +86,10 @@ let clickReady = null
 let desktopNotifications = createNotices()
 let localUnread = 0
 let hubUnread = 0
+function publishBootStatus(state, message) {
+    bootStatus = { state, message }
+    if (window && !window.isDestroyed()) window.webContents.send('desktop:status', bootStatus)
+}
 function showMainWindow() {
     showWindowOnReady = true
     if (!window || window.isDestroyed()) return
@@ -222,10 +226,12 @@ else {
             cancelled: resumeAfterCancelledQuit,
         }).catch(() => { if (!quittingNow) resumeAfterCancelledQuit() })
     })
-    app.whenReady().then(launch).catch(() => {
-        bootStatus = { state: 'error', message: 'Desktop setup failed. Check that this app has a complete bundled runtime and access to Mac secure storage.' }
+    app.whenReady().then(launch).catch(error => {
+        const secureStorageBlocked = mac && error instanceof DesktopSecureStorageError
+        const message = secureStorageBlocked ? shellText(shellLanguage?.forScope('local'))('startup.keychainBlocked')
+            : 'Desktop setup failed. Check that this app has a complete bundled runtime and access to secure storage.'
         if (supervisor) supervisor.publish('error', 'Workspace state could not be verified. Restore the workspace state before retrying.')
-        else if (window && !window.isDestroyed()) window.webContents.send('desktop:status', bootStatus)
+        else publishBootStatus('error', message)
     })
 }
 
@@ -473,9 +479,10 @@ async function launch() {
             if (registrationId && clickReady?.registrationId === registrationId && clickReady.contents === event.sender) clickReady = null
         } catch {}
     })
+    if (mac) bootStatus = { state: 'starting', message: shellText(shellLanguage.forScope('local'))('startup.keychainPrompt') }
     await window.loadFile(startup)
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('Mac secure storage is unavailable')
-    const identity = await loadIdentity(dataRoot, { encrypt: value => safeStorage.encryptString(value), decrypt: value => safeStorage.decryptString(value) })
+    const identity = await loadIdentityFromSafeStorage(dataRoot, safeStorage)
+    publishBootStatus('starting', 'Preparing local runtime…')
     const resources = app.isPackaged ? process.resourcesPath : resolve(directory, '../../resources')
     const bundle = await loadBundle(resources)
     if (process.platform === 'darwin') app.setAboutPanelOptions({ version: bundle.buildId })

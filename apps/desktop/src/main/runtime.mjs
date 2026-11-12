@@ -61,6 +61,24 @@ export async function loadIdentity(root, cipher) {
     return identity
 }
 
+export class DesktopSecureStorageError extends Error {
+    constructor(cause) {
+        super('Desktop secure storage is unavailable', { cause })
+    }
+}
+
+export async function loadIdentityFromSafeStorage(root, safeStorage) {
+    function useSecureStorage(operation) {
+        try { return operation() }
+        catch (cause) { throw new DesktopSecureStorageError(cause) }
+    }
+    if (!useSecureStorage(() => safeStorage.isEncryptionAvailable())) throw new DesktopSecureStorageError()
+    return loadIdentity(root, {
+        encrypt: value => useSecureStorage(() => safeStorage.encryptString(value)),
+        decrypt: value => useSecureStorage(() => safeStorage.decryptString(value)),
+    })
+}
+
 export function workspaceIdentity(identity, workspaceId) {
     if (!validWorkspaceId(workspaceId)) throw new Error('Invalid workspace identity')
     if (workspaceId === 1) return identity

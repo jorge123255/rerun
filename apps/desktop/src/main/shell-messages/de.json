@@ -94,6 +94,10 @@
         "opening": "Unterhaltung wird geöffnet…",
         "unavailable": "Die Unterhaltung konnte nicht geöffnet werden. Versuche es erneut, sobald der Arbeitsbereich bereit ist."
     },
+    "startup": {
+        "keychainPrompt": "Wenn macOS nach dem Schlüsselbundzugriff fragt, wähle Erlauben, um deinen lokalen Workspace zu öffnen.",
+        "keychainBlocked": "Rerun konnte nicht auf den sicheren Speicher zugreifen. Entsperre deinen Anmeldeschlüsselbund, versuche es erneut und erlaube den Zugriff, wenn macOS danach fragt."
+    },
     "updates": {
         "upToDate": "Alles auf dem neuesten Stand",
         "upToDateDetail": "Rerun {version} ist die neueste Version.",
