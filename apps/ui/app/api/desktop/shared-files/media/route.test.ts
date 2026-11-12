@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -14,6 +14,8 @@ vi.mock('@/lib/desktop/server/pdf-text', () => ({ extractDesktopPdfText: async (
 import { GET as media } from './route'
 import { GET as pdf } from '../pdf/route'
 import { GET as pdfText } from '../pdf-text/route'
+import { GET as download } from '../download/route'
+import { GET as listing } from '../route'
 
 const env = { ...process.env }
 const origin = 'http://127.0.0.1:3189'
@@ -59,4 +61,27 @@ test('PDF page and text are derived from the same exact document hash', async ()
     expect(text.status).toBe(200)
     expect(text.headers.get('x-pdf-sha256')).toBe(page.headers.get('x-pdf-sha256'))
     expect(new TextDecoder().decode(await text.arrayBuffer())).not.toContain('%PDF')
+})
+
+test('the native download requires an authenticated workspace and returns only the listed version', async () => {
+    const dir = join(root, 'workspaces', '2', 'engine', 'shared')
+    const path = "Bob's report.zip", bytes = Uint8Array.of(21, 22, 23)
+    await writeFile(join(dir, path), bytes)
+    const { entries } = await (await listing(request(''))).json()
+    const version = entries.find((entry: { name: string }) => entry.name === path)?.deleteRevision
+    const url = '/download?' + new URLSearchParams({ path, version, workspaceId: '2' })
+    const unsigned = request(url)
+    unsigned.headers.delete('cookie')
+    expect((await download(unsigned)).status).toBe(401)
+    expect((await download(request(url.replace('workspaceId=2', 'workspaceId=1')))).status).toBe(409)
+    expect((await download(request(url + '&path=extra'))).status).toBe(400)
+    expect((await download(request(url + '&identity=' + 'f'.repeat(64)))).status).toBe(409)
+    const response = await download(request(url))
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-disposition')).toBe("attachment; filename*=UTF-8''Bob%27s%20report.zip")
+    expect(response.headers.get('x-rerun-shared-version')).toBe(version)
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes)
+    await rename(join(dir, path), join(dir, 'original.zip'))
+    await writeFile(join(dir, path), bytes)
+    expect((await download(request(url))).status).toBe(409)
 })

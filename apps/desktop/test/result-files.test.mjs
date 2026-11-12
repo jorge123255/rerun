@@ -97,3 +97,70 @@ test('failed, incomplete and superseded coworker downloads leave the existing de
         assert.equal(await readFile(filePath, 'utf8'), 'existing')
     } finally { await rm(root, { recursive: true, force: true }) }
 })
+
+test('Shared Files Save As binds workspace, listed version and preview identity after the picker', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rerun-save-shared-'))
+    try {
+        const filePath = join(root, 'recording.mp4'), window = {}
+        const runtime = { ...loopback, workspaceId: 7 }
+        const selected = { workspaceId: 7, path: 'nested/recording.mp4', version: 'd'.repeat(64), identity: 'e'.repeat(64) }
+        const bytes = Uint8Array.of(3, 4, 5)
+        let canceled = true
+        let dialogs = 0
+        let requests = 0
+        let version = selected.version
+        const { saveSharedFile } = createDesktopFileSaves({
+            context: () => ({ runtime, window }),
+            dialog: { showSaveDialog: async (_window, options) => {
+                dialogs++
+                assert.equal(options.defaultPath, 'recording.mp4')
+                return { canceled, filePath }
+            } },
+            fetchFile: async (url, options) => {
+                requests++
+                assert.equal(url.origin, loopback.app.origin)
+                assert.equal(url.pathname, '/api/desktop/shared-files/download')
+                assert.deepEqual(Object.fromEntries(url.searchParams), { ...selected, workspaceId: '7' })
+                assert.equal(options.headers.Cookie, 'rerun-desktop-session=disposable-test-session')
+                assert.equal(options.redirect, 'error')
+                const response = originalResponse(bytes)
+                response.headers.set('x-rerun-shared-version', version)
+                response.headers.set('x-rerun-shared-sha256', selected.identity)
+                return response
+            },
+        })
+        await assert.rejects(saveSharedFile({ ...selected, workspaceId: 8 }), /workspace changed/)
+        await assert.rejects(saveSharedFile({ ...selected, path: '../private.txt' }), /Shared Files/)
+        assert.equal(dialogs, 0)
+        assert.equal(await saveSharedFile(selected), false)
+        assert.equal(requests, 0)
+        await assert.rejects(readFile(filePath), { code: 'ENOENT' })
+        canceled = false
+        version = 'f'.repeat(64)
+        await assert.rejects(saveSharedFile(selected), /Could not read this shared file/)
+        await assert.rejects(readFile(filePath), { code: 'ENOENT' })
+        version = selected.version
+        assert.equal(await saveSharedFile(selected), true)
+        assert.deepEqual(new Uint8Array(await readFile(filePath)), bytes)
+    } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('Shared Files Save As leaves an existing destination untouched if the workspace changes during the picker', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rerun-save-shared-'))
+    try {
+        const filePath = join(root, 'report.txt')
+        await writeFile(filePath, 'existing')
+        const window = {}
+        let runtime = { ...loopback, workspaceId: 7 }
+        const { saveSharedFile } = createDesktopFileSaves({
+            context: () => ({ runtime, window }),
+            dialog: { showSaveDialog: async () => {
+                runtime = { ...runtime, workspaceId: 8 }
+                return { canceled: false, filePath }
+            } },
+            fetchFile: () => assert.fail('a stale picker cannot fetch'),
+        })
+        await assert.rejects(saveSharedFile({ workspaceId: 7, path: 'report.txt', version: 'd'.repeat(64) }), /workspace changed/)
+        assert.equal(await readFile(filePath, 'utf8'), 'existing')
+    } finally { await rm(root, { recursive: true, force: true }) }
+})

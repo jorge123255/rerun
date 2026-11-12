@@ -48,12 +48,12 @@ export function FilePreview({ fileName, content, rawUrl, loading }: FilePreviewP
         <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground">
             <FileIcon className="size-8" />
             <p className="text-xs">No preview available for this file type</p>
-            <Button asChild variant="outline" size="sm">
+            {rawUrl && <Button asChild variant="outline" size="sm">
                 <a href={rawUrl} download={fileName}>
                     <DownloadIcon className="size-3.5" />
                     Download
                 </a>
-            </Button>
+            </Button>}
         </div>
     )
 }

@@ -22,7 +22,9 @@ type FileListProps = {
     onDelete?: (name: string, entry: FileEntry) => void
     canDelete?: (entry: FileEntry) => boolean
     deleteScope?: 'box' | 'workspace'
-    onDownload?: (name: string) => void
+    onDownload?: (name: string, entry: FileEntry) => void
+    canDownload?: (entry: FileEntry) => boolean
+    downloadLabel?: string
     onUpload: (entries: UploadEntry[]) => void
     emptyDescription?: string
     uploadDisabled?: boolean
@@ -89,7 +91,8 @@ function ListSkeleton() {
 
 // A folder of the shared folder as Notion lists a database: the folder name as the page title, one
 // line per entry, actions on hover, and the whole page as a drop zone.
-export function FileList({ title, entries, onOpen, onRename, canRename, onDelete, canDelete, deleteScope = 'box', onDownload, onUpload, emptyDescription, uploadDisabled = false }: FileListProps) {
+export function FileList({ title, entries, onOpen, onRename, canRename, onDelete, canDelete, deleteScope = 'box', onDownload, canDownload,
+    downloadLabel = 'Download', onUpload, emptyDescription, uploadDisabled = false }: FileListProps) {
     const [renaming, setRenaming] = useState<string | null>(null)
     const renameAfterClose = useRef<string | null>(null)
     const [deleting, setDeleting] = useState<FileEntry | null>(null)
@@ -145,6 +148,7 @@ export function FileList({ title, entries, onOpen, onRename, canRename, onDelete
                     <div className="divide-y divide-border/60">
                         {entries.map(entry => {
                             const renameAllowed = Boolean(onRename) && (canRename?.(entry) ?? true)
+                            const downloadAllowed = entry.type !== 'dir' && !!onDownload && (canDownload?.(entry) ?? true)
                             const Glyph = entry.type === 'dir' ? FolderIcon : FileIcon
                             return (
                                 <div
@@ -172,7 +176,7 @@ export function FileList({ title, entries, onOpen, onRename, canRename, onDelete
                                     </span>
                                     <span className="text-right text-xs tabular-nums text-muted-foreground max-sm:hidden">{entry.type === 'dir' ? '' : formatBytes(entry.size)}</span>
                                     <span className="truncate text-xs text-muted-foreground max-sm:hidden">{kindLabel(entry)}</span>
-                                    {(renameAllowed || onDelete && (!canDelete || canDelete(entry)) || entry.type !== 'dir' && onDownload) && <DropdownMenu>
+                                    {(renameAllowed || onDelete && (!canDelete || canDelete(entry)) || downloadAllowed) && <DropdownMenu>
                                         <DropdownMenuTrigger asChild>
                                             <Button
                                                 size="icon-xs"
@@ -191,9 +195,9 @@ export function FileList({ title, entries, onOpen, onRename, canRename, onDelete
                                                 renameAfterClose.current = null
                                                 setRenaming(entry.name)
                                             }}>
-                                            {entry.type !== 'dir' && onDownload && (
-                                                <DropdownMenuItem onSelect={() => onDownload(entry.name)}>
-                                                    <DownloadIcon /> Download
+                                            {downloadAllowed && (
+                                                <DropdownMenuItem onSelect={() => onDownload?.(entry.name, entry)}>
+                                                    <DownloadIcon /> {downloadLabel}
                                                 </DropdownMenuItem>
                                             )}
                                             {renameAllowed && <DropdownMenuItem onSelect={() => { renameAfterClose.current = entry.name }}>

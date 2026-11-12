@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('desktopApp', {
     },
     saveResultFile: (name, bytes) => ipcRenderer.invoke('desktop:result-save', { name, bytes }),
     saveCoworkerFile: value => ipcRenderer.invoke('desktop:coworker-file-save', { agentId: value?.agentId, path: value?.path, version: value?.version }),
+    saveSharedFile: value => ipcRenderer.invoke('desktop:shared-file-save', { workspaceId: value?.workspaceId, path: value?.path, version: value?.version, identity: value?.identity }),
     templates: {
         pickImport: () => ipcRenderer.invoke('desktop:template-pick'),
         saveArtifact: value => ipcRenderer.invoke('desktop:template-save', { artifactId: value?.artifactId }),

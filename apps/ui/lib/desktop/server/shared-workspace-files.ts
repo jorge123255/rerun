@@ -14,7 +14,7 @@ import {
     renameSharedFile,
     replaceSharedText,
     resolveEngineSharedDirectory,
-    sharedDeleteRevision,
+    sharedFileRevision,
     sharedDeleteParentPath,
     withSharedDeleteFolder,
     SharedWorkspaceFileError,
@@ -108,7 +108,7 @@ export async function deleteDesktopSharedFile(runtime: DesktopRuntime, workspace
         const root = await desktopSharedDirectory(runtime, signal)
         return await withSharedDeleteFolder(root, folderPath, { signal, beforeCommit }, (folder, rootPin, guard) =>
             deleteFromPinnedFolder(folder.path, folder.pinned, folder, { ...rootPin, validateEntry: assertSharedDeleteEntry }, path,
-                guard, entry => sharedDeleteRevision(entry) === revision))
+                guard, entry => sharedFileRevision(entry) === revision))
     } catch (error) { rethrowDesktopSharedFileError(error) }
 }
 

@@ -62,3 +62,25 @@ it('forgets an expanded folder in Company Brain only after its exact deletion is
         expect(refresh).toHaveBeenCalledExactlyOnceWith('docs')
     } finally { await act(async () => root.unmount()) }
 })
+
+it('uses the selected shared file and its version for Company Brain Save As', async () => {
+    const host = document.createElement('div'), root = createRoot(host)
+    const saveSharedFile = vi.fn().mockResolvedValue(true)
+    vi.stubGlobal('desktopApp', { saveSharedFile })
+    const file = { name: 'report.csv', type: 'file' as const, size: 8, modified: '', deleteRevision: '4'.repeat(64) }
+    const files = { expand: vi.fn(), entriesOf: () => [file] } as unknown as ComponentProps<typeof DesktopBrainFolder>['files']
+    try {
+        await act(async () => root.render(createElement(DesktopBrainFolder, {
+            path: 'docs', workspaceId: 7, files, onSelect: vi.fn(), onUpload: vi.fn(), importResults: [], importing: false, onRetryImport: vi.fn(),
+        })))
+        expect(harness.list?.downloadLabel).toBe('Save As')
+        expect(harness.list?.canDownload?.({ ...file, type: 'dir' })).toBe(false)
+        expect(harness.list?.canDownload?.({ ...file, deleteRevision: undefined })).toBe(false)
+        expect(harness.list?.canDownload?.(file)).toBe(true)
+        await act(async () => harness.list?.onDownload?.(file.name, file))
+        expect(saveSharedFile).toHaveBeenCalledExactlyOnceWith({ workspaceId: 7, path: 'docs/report.csv', version: file.deleteRevision })
+    } finally {
+        await act(async () => root.unmount())
+        vi.unstubAllGlobals()
+    }
+})

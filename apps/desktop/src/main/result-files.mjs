@@ -10,25 +10,26 @@ function validName(name) {
         && !name.startsWith('.') && !/[\\/\p{Cc}]/u.test(name)
 }
 
-async function fetchCoworkerBytes(fetchFile, original, { agentId, path, version }, check) {
-    const url = new URL(`/api/desktop/agents/${encodeURIComponent(agentId)}/files/download`, original.runtime.app.origin)
-    url.search = new URLSearchParams({ path, version }).toString()
+async function fetchWorkspaceBytes(fetchFile, original, pathname, params, limit, label, check, headers = {}) {
+    const url = new URL(pathname, original.runtime.app.origin)
+    url.search = new URLSearchParams(params).toString()
     const signal = AbortSignal.timeout(30_000)
     const response = await fetchFile(url, {
         headers: { Cookie: `rerun-desktop-session=${original.runtime.app.sessionToken}` },
         cache: 'no-store',
         redirect: 'error',
         signal,
-    }).catch(() => { throw new Error('Could not read this coworker file.') })
+    }).catch(() => { throw new Error(`Could not read this ${label} file.`) })
     const length = response.headers.get('content-length')
     const size = length !== null && /^\d+$/.test(length) ? Number(length) : NaN
     if (!response.ok || response.headers.get('content-type') !== 'application/octet-stream'
-        || !Number.isSafeInteger(size) || size > COWORKER_MAX_BYTES || !response.body) {
+        || !Number.isSafeInteger(size) || size > limit || !response.body
+        || Object.entries(headers).some(([name, expected]) => response.headers.get(name) !== expected)) {
         await response.body?.cancel().catch(() => {})
         if (response.status === 409) throw new Error('This file changed. Reopen it in Files before saving.')
         if (response.status === 404) throw new Error('This file was not found.')
-        if (response.status === 413 || size > COWORKER_MAX_BYTES) throw new Error('Files can be up to 100 MiB.')
-        throw new Error('Could not read this coworker file.')
+        if (response.status === 413 || size > limit) throw new Error(`Files can be up to ${limit / (1024 * 1024)} MiB.`)
+        throw new Error(`Could not read this ${label} file.`)
     }
     const reader = response.body.getReader()
     try {
@@ -36,14 +37,14 @@ async function fetchCoworkerBytes(fetchFile, original, { agentId, path, version 
         const bytes = new Uint8Array(size)
         let offset = 0
         for (;;) {
-            const { done, value } = await reader.read().catch(() => { throw new Error('Could not finish reading this coworker file.') })
+            const { done, value } = await reader.read().catch(() => { throw new Error(`Could not finish reading this ${label} file.`) })
             check()
             if (done) break
-            if (value.byteLength > size - offset) throw new Error('Could not confirm this coworker file’s length.')
+            if (value.byteLength > size - offset) throw new Error(`Could not confirm this ${label} file’s length.`)
             bytes.set(value, offset)
             offset += value.byteLength
         }
-        if (offset !== size) throw new Error('Could not confirm this coworker file’s length.')
+        if (offset !== size) throw new Error(`Could not confirm this ${label} file’s length.`)
         return bytes
     } finally {
         await reader.cancel().catch(() => {})
@@ -54,14 +55,15 @@ async function fetchCoworkerBytes(fetchFile, original, { agentId, path, version 
 export function createDesktopFileSaves({ dialog, context, fetchFile = fetch }) {
     let busy = false
 
-    async function saveFile(name, loadBytes) {
+    async function saveFile(name, loadBytes, workspaceId) {
         if (busy) throw new Error('Finish the open Save dialog first.')
         busy = true
         try {
             const original = context()
             const check = () => {
                 const current = context()
-                if (!original?.runtime || current?.runtime !== original.runtime || current?.window !== original.window) throw new Error('The workspace changed. Open the file again.')
+                if (!original?.runtime || (workspaceId !== undefined && original.runtime.workspaceId !== workspaceId)
+                    || current?.runtime !== original.runtime || current?.window !== original.window) throw new Error('The workspace changed. Open the file again.')
             }
             check()
             const picked = await dialog.showSaveDialog(original.window, { title: 'Save file', defaultPath: name })
@@ -106,7 +108,24 @@ export function createDesktopFileSaves({ dialog, context, fetchFile = fetch }) {
             if (!validName(name) || parts.length > 64 || parts.some(part => !part || part === '.' || part === '..' || /[\\\p{Cc}]/u.test(part))) {
                 throw new Error('Choose a file from Coworker Files.')
             }
-            return saveFile(name, (original, check) => fetchCoworkerBytes(fetchFile, original, { agentId, path, version }, check))
+            return saveFile(name, (original, check) => fetchWorkspaceBytes(fetchFile, original,
+                `/api/desktop/agents/${encodeURIComponent(agentId)}/files/download`, { path, version }, COWORKER_MAX_BYTES, 'coworker', check))
+        },
+        async saveSharedFile(value) {
+            const { workspaceId, path, version, identity } = value ?? {}
+            const digest = /^[a-f0-9]{64}$/
+            if (!value || Object.keys(value).some(key => !['workspaceId', 'path', 'version', 'identity'].includes(key))
+                || !Number.isSafeInteger(workspaceId) || workspaceId < 1 || typeof path !== 'string' || path.length > 4096
+                || typeof version !== 'string' || !digest.test(version)
+                || (identity !== undefined && (typeof identity !== 'string' || !digest.test(identity)))) {
+                throw new Error('Choose a file from Shared Files.')
+            }
+            const parts = path.split('/')
+            if (parts.length > 32 || !parts.every(validName)) throw new Error('Choose a file from Shared Files.')
+            const params = { workspaceId, path, version, ...(identity !== undefined && { identity }) }
+            const headers = { 'x-rerun-shared-version': version, ...(identity !== undefined && { 'x-rerun-shared-sha256': identity }) }
+            return saveFile(parts.at(-1), (original, check) => fetchWorkspaceBytes(fetchFile, original,
+                '/api/desktop/shared-files/download', params, RESULT_MAX_BYTES, 'shared', check, headers), workspaceId)
         },
     }
 }

@@ -83,7 +83,7 @@ function stamp(mtimeNs: bigint): string {
     return new Date(Number(mtimeNs / BigInt(1_000_000))).toISOString()
 }
 
-export function sharedDeleteRevision(info: BigIntStats): string {
+export function sharedFileRevision(info: BigIntStats): string {
     return createHash('sha256').update([info.dev, info.ino, info.mode, info.uid, info.nlink, info.size, info.mtimeNs, info.ctimeNs].join(':')).digest('hex')
 }
 
@@ -321,7 +321,7 @@ export async function listSharedDirectory(root: string, path: string, access?: S
                     if (!info || info.isSymbolicLink() || info.uid !== currentUid()) continue
                     if (info.isDirectory() || info.isFile() && info.nlink === BigInt(1)) entries.push({
                         name, type: info.isDirectory() ? 'dir' : 'file', size: info.isDirectory() ? 0 : Number(info.size), modifiedAt: stamp(info.mtimeNs),
-                        ...(access?.deleteMetadata && { deleteRevision: sharedDeleteRevision(info) }),
+                        ...(access?.deleteMetadata && { deleteRevision: sharedFileRevision(info) }),
                     })
                 }
                 entries.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1))
@@ -412,7 +412,7 @@ async function readSharedTextPage(root: string, path: string, offset: number, au
                 ? { expectedBytes: size, expectedSha256: createHash('sha256').update(bytes).digest('hex') }
                 : null
             return { path: rel, content, size, truncated, offset, nextOffset: truncated ? end : null, editIdentity,
-                ...(audience === 'editor' && { deleteRevision: sharedDeleteRevision(after) }),
+                ...(audience === 'editor' && { deleteRevision: sharedFileRevision(after) }),
             }
         } finally {
             await handle?.close()

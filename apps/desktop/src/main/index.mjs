@@ -35,7 +35,7 @@ let quittingNow = false
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const draftQuit = new BeforeQuitDrafts()
-const { saveResultFile, saveCoworkerFile } = createDesktopFileSaves({ dialog, context: () => {
+const { saveResultFile, saveCoworkerFile, saveSharedFile } = createDesktopFileSaves({ dialog, context: () => {
     if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
     return { runtime, window }
 } })
@@ -204,6 +204,7 @@ async function launch() {
     ipcMain.handle('desktop:template-save', (event, value) => { trusted(event); return templateFiles.saveArtifact(value) })
     ipcMain.handle('desktop:result-save', (event, value) => { trusted(event); return saveResultFile(value) })
     ipcMain.handle('desktop:coworker-file-save', (event, value) => { trusted(event); return saveCoworkerFile(value) })
+    ipcMain.handle('desktop:shared-file-save', (event, value) => { trusted(event); return saveSharedFile(value) })
     ipcMain.handle('desktop:notify', (event, value) => {
         trusted(event)
         const scope = clickScope()
