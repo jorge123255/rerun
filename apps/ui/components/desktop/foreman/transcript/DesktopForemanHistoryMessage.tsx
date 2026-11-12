@@ -9,6 +9,7 @@ import { safeForemanHistoryLink } from './parts'
 import { DesktopChatLinkLabel, safeDesktopChatLink } from '../../DesktopChatLinkLabel'
 import { DesktopHistoricalCardView } from '../../tool-presentations/DesktopHistoricalCardView'
 import { DesktopHistoricalStepGroup } from '../../tool-presentations/DesktopHistoricalStepGroup'
+import type { DesktopHistoricalGenericItem } from '../../tool-presentations/plan'
 import type { ForemanHistoryPart } from './parts'
 
 const noPlugins: PluginConfig = {}
@@ -59,8 +60,16 @@ function SavedSource({ url, title }: { url: string; title: string }) {
 
 /** Pure saved-parts presentation. No action callbacks, resource readers or live widgets. */
 export function DesktopForemanHistoryMessage({ history, userLinks }: { history: readonly ForemanHistoryPart[]; userLinks?: boolean }) {
+    const blocks: (Exclude<ForemanHistoryPart, { kind: 'tool' }> | { kind: 'tool-group'; key: string; items: DesktopHistoricalGenericItem[] })[] = []
+    for (const part of history) {
+        if (part.kind === 'tool') {
+            const previous = blocks.at(-1)
+            if (previous?.kind === 'tool-group') previous.items.push(part.item)
+            else blocks.push({ kind: 'tool-group', key: part.key, items: [part.item] })
+        } else blocks.push(part)
+    }
     return <div className="flex min-w-0 max-w-full flex-col gap-2 break-words">
-        {history.map(part => {
+        {blocks.map(part => {
             switch (part.kind) {
                 case 'text': return <div key={part.key} data-chat-find-message className="contents"><DesktopForemanMarkdown text={part.text} userLinks={userLinks} /></div>
                 case 'reasoning': return <details key={part.key} className="text-xs text-muted-foreground"><summary>Thinking</summary><DesktopForemanMarkdown text={part.text} /></details>
@@ -76,7 +85,7 @@ export function DesktopForemanHistoryMessage({ history, userLinks }: { history: 
                     </SourcesContent>
                 </Sources>
                 case 'card': return <DesktopHistoricalCardView key={part.key} card={part.card} />
-                case 'tool': return <DesktopHistoricalStepGroup key={part.key} items={[part.item]} />
+                case 'tool-group': return <DesktopHistoricalStepGroup key={part.key} items={part.items} />
                 case 'unknown': return <p key={part.key} className="text-xs text-muted-foreground" role="note">{part.label}</p>
             }
         })}

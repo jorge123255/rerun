@@ -37,7 +37,7 @@ import { foremanAlternateSnapshot } from '../foreman-alternates/snapshot'
 import { foremanTranscriptRevision } from '../../../../../engine/src/desktop/foreman/transcript-revision.ts'
 import { desktopForemanContext } from '../../foreman/context'
 import { desktopForemanRunFailure } from '../../foreman/run-failure'
-import { DESKTOP_FOREMAN_LIVE_REPLY_LIMIT } from '../../foreman/live-reply'
+import { createForemanReplyPreview } from './reply-preview'
 import { consumeDesktopDocumentAdmission, resolveDesktopDocumentAdmission } from '../document-attachments/binding'
 import { desktopDocumentStore } from '../document-attachments/store'
 import { listDesktopCoworkerCallTargets } from '../coworker-calls/authority'
@@ -47,7 +47,7 @@ import { revalidateDesktopCoworkerMentions } from '@/components/desktop/mentions
 const KEY = Symbol.for('rerun.desktop.foreman.binding.v1')
 const SHUTDOWN_KEY = Symbol.for('rerun.desktop.foreman.shutdown.v1')
 type Subscriber = { chat: DesktopForemanChatRef; send: (event: DesktopForemanLiveEvent) => void }
-type ReplyActivity = { binding: DesktopForemanBinding; sessionId: string; writingPart: string | null; text: string }
+type ReplyActivity = { binding: DesktopForemanBinding; sessionId: string; preview: ReturnType<typeof createForemanReplyPreview> }
 type Binding = Awaited<ReturnType<typeof createBinding>>
 const bindings = () => ((globalThis as unknown as Record<symbol, Map<string, Promise<Binding>>>)[KEY] ??= new Map())
 const shutdowns = () => ((globalThis as unknown as Record<symbol, WeakMap<Promise<Binding>, Promise<void>>>)[SHUTDOWN_KEY] ??= new WeakMap())
@@ -223,37 +223,12 @@ async function createBinding(runtime: DesktopRuntime) {
             clearTimeout(timeout)
         }
         if (response.body && replyActivity?.binding.runId !== turn.binding.runId) {
-            const activity: ReplyActivity = { binding: turn.binding, sessionId: turn.sessionId, writingPart: null, text: '' }
+            const activity: ReplyActivity = { binding: turn.binding, sessionId: turn.sessionId, preview: createForemanReplyPreview(turn.binding.runId) }
             replyActivity = activity
-            let started = false
-            let textPart: string | null = null
-            // Keep a bounded preview of assistant text only. Tool input/output, reasoning,
-            // metadata and errors still go through their existing saved projections.
+            // Keep a bounded preview. Tool arguments, results and errors still go through
+            // their existing saved projections.
             void parseJsonEventStream({ stream: response.body, schema: uiMessageChunkSchema }).pipeTo(new WritableStream({
-                write(result) {
-                    if (!result.success) return
-                    const chunk = result.value
-                    if (chunk.type === 'start') {
-                        started = chunk.messageId === turn.binding.runId
-                        activity.writingPart = null
-                        activity.text = ''
-                        textPart = null
-                    } else if (started && chunk.type === 'text-delta') {
-                        if (chunk.delta.trim()) activity.writingPart = chunk.id
-                        const separator = textPart !== null && textPart !== chunk.id ? '\n\n' : ''
-                        const remaining = DESKTOP_FOREMAN_LIVE_REPLY_LIMIT - activity.text.length
-                        if (remaining > 0) activity.text += (separator + chunk.delta).slice(0, remaining)
-                        textPart = chunk.id
-                    } else if (chunk.type === 'text-end' && chunk.id === activity.writingPart
-                        || chunk.type === 'reasoning-start' || chunk.type === 'tool-input-start'
-                        || chunk.type === 'finish-step' || chunk.type === 'finish' || chunk.type === 'abort' || chunk.type === 'error') {
-                        activity.writingPart = null
-                        if (chunk.type === 'abort' || chunk.type === 'error') {
-                            started = false
-                            activity.text = ''
-                        }
-                    }
-                },
+                write(result) { if (result.success) activity.preview.accept(result.value) },
             })).catch(() => {}).finally(() => {
                 if (replyActivity === activity) replyActivity = undefined
             })
@@ -490,9 +465,8 @@ async function createBinding(runtime: DesktopRuntime) {
                 && view.live.model.connectionId === activity.binding.model.connectionId && view.live.model.model === activity.binding.model.model ? activity : undefined
             // The engine can store assistant rows just before it records the terminal status.
             // As soon as that history is available it takes the place of the preview.
-            const liveReply = currentReply?.text.trim() && messages.at(-1)?.role === 'user'
-                ? { runId: currentReply.binding.runId, text: currentReply.text } : null
-            return { ...owner, view, messages: projected, retrySnapshot, writing: !!currentReply?.writingPart, liveReply,
+            const liveReply = currentReply && messages.at(-1)?.role === 'user' ? currentReply.preview.read() : null
+            return { ...owner, view, messages: projected, retrySnapshot, writing: !!currentReply?.preview.writing, liveReply,
                 context: history.some(message => message.role === 'assistant') ? settled?.context ?? null : null,
                 runFailure: pending || approval ? null : settled?.runFailure ?? null,
                 runSources, callSources, starter: await starterDecisions.view(owner.chat),

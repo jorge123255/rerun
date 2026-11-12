@@ -9,6 +9,7 @@ import type { ExactDockFeed } from '@/lib/desktop/foreman-dock/feed'
 import type { ForemanPlacement } from '@/lib/foreman-layout'
 import { useIsMobile as useMediaQuery } from '@rerun/ui/primitives/use-is-mobile'
 import type { DesktopForemanActionPorts, DesktopForemanChatRef, DesktopForemanPlacement } from '@/lib/desktop/foreman-client'
+import type { DesktopForemanLiveReply } from '@/lib/desktop/foreman/live-reply'
 import { DesktopForemanChatLayer, type DesktopForemanMessage } from './DesktopForemanChatLayer'
 import { useDesktopForemanFeedback } from '@/lib/desktop/use-foreman-feedback'
 import { DesktopForemanComposer } from './DesktopForemanComposer'
@@ -68,7 +69,7 @@ export type DesktopForemanColumnProps = {
     imageModel?: boolean
     retrySnapshot?: string
     streaming?: boolean
-    liveReply?: string
+    liveReply?: DesktopForemanLiveReply
     approval?: DesktopPendingApproval | null
     onDecideApproval?: (answer: DesktopApprovalAnswer) => Promise<void>
     question?: DesktopPendingQuestion | null

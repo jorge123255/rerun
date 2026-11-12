@@ -116,7 +116,7 @@ it('uses writing activity only while the server reports an active turn', async (
     expect(column.liveReply).toBeUndefined()
     server.liveReply = { runId: live.runId, text: 'The owned reply' }
     await act(async () => vi.advanceTimersByTimeAsync(1500))
-    expect(column.liveReply).toBe('The owned reply')
+    expect(column.liveReply).toEqual({ runId: live.runId, text: 'The owned reply' })
     server.view.live = null
     await act(async () => vi.advanceTimersByTimeAsync(1500))
     expect(column.orbState).toBe('idle')

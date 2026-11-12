@@ -130,13 +130,21 @@ describe('production Foreman intake phase and model brief', () => {
             expect((await app.state()).writing).toBe(false)
             push({ type: 'start', messageId: id })
             push({ type: 'reasoning-delta', id: 'internal', delta: 'fixture-private-reasoning' })
-            push({ type: 'tool-input-available', toolCallId: 'tool', toolName: 'search_docs', input: { query: 'fixture-private-input' } })
+            push({ type: 'tool-input-available', toolCallId: 'fixture-private-tool-id', toolName: 'search_docs', input: { query: 'fixture-private-input' } })
+            await vi.waitFor(async () => expect((await app.state()).liveReply).toMatchObject({
+                runId: id, text: '', steps: [{ tool: 'search_docs', offset: 0, status: 'running' }],
+            }))
+            push({ type: 'tool-output-available', toolCallId: 'fixture-private-tool-id', output: 'fixture-private-output', preliminary: true })
+            push({ type: 'tool-output-error', toolCallId: 'other-tool-id', errorText: 'fixture-private-error' })
+            await new Promise(resolve => setImmediate(resolve))
+            expect((await app.state()).liveReply?.steps).toEqual([{ tool: 'search_docs', offset: 0, status: 'running' }])
+            push({ type: 'tool-output-available', toolCallId: 'fixture-private-tool-id', output: 'fixture-private-final-output' })
             push({ type: 'text-start', id: 'answer' })
             push({ type: 'text-delta', id: 'answer', delta: 'Visible' })
             push({ type: 'text-delta', id: 'answer', delta: ' ' })
             push({ type: 'text-delta', id: 'answer', delta: 'reply' })
             await vi.waitFor(async () => expect(await app.state()).toMatchObject({
-                writing: true, liveReply: { runId: id, text: 'Visible reply' },
+                writing: true, liveReply: { runId: id, text: 'Visible reply', steps: [{ tool: 'search_docs', offset: 0, status: 'done' }] },
             }))
             expect(JSON.stringify(await app.state())).not.toMatch(/fixture-private|Do not accept this reply/)
             vi.mocked(getRun).mockResolvedValue({ ...run, sessionId: 'foreign-session' })
@@ -144,9 +152,18 @@ describe('production Foreman intake phase and model brief', () => {
             vi.mocked(getRun).mockResolvedValue(run)
             push({ type: 'text-end', id: 'answer' })
             await vi.waitFor(async () => expect((await app.state()).writing).toBe(false))
+            push({ type: 'tool-input-start', toolCallId: 'second', toolName: 'agent_files_list' })
+            push({ type: 'tool-output-error', toolCallId: 'second', errorText: 'fixture-private-error' })
+            push({ type: 'tool-input-start', toolCallId: 'question', toolName: 'ask_user' })
+            push({ type: 'tool-input-available', toolCallId: 'question', toolName: 'ask_user', input: { question: 'fixture-private-question' } })
             push({ type: 'text-start', id: 'answer-2' })
             push({ type: 'text-delta', id: 'answer-2', delta: 'Continuing' })
             await vi.waitFor(async () => expect((await app.state()).liveReply?.text).toBe('Visible reply\n\nContinuing'))
+            expect((await app.state()).liveReply?.steps).toEqual([
+                { tool: 'search_docs', offset: 0, status: 'done' },
+                { tool: 'agent_files_list', offset: 'Visible reply'.length, status: 'error' },
+            ])
+            expect(JSON.stringify(await app.state())).not.toContain('fixture-private')
             push({ type: 'text-delta', id: 'answer-2', delta: 'A'.repeat(DESKTOP_FOREMAN_LIVE_REPLY_LIMIT + 1) })
             await vi.waitFor(async () => expect((await app.state()).liveReply?.text).toHaveLength(DESKTOP_FOREMAN_LIVE_REPLY_LIMIT))
             vi.mocked(getSessionMessages).mockResolvedValue([userMessage, { ...userMessage, id: 'assistant-fixture', role: 'assistant' as const }])

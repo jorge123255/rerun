@@ -9,7 +9,9 @@ import { useDesktopLocale } from '../DesktopLocale'
 import type { DesktopSavedChatDecision } from '@/lib/desktop/saved-chat-decision'
 import { DesktopSavedDecisionReceipt } from '../DesktopSavedDecisionReceipt'
 import type { ForemanHistoryPart } from './transcript/parts'
-import { DesktopForemanHistoryMessage, DesktopForemanMarkdown } from './transcript/DesktopForemanHistoryMessage'
+import { DesktopForemanHistoryMessage } from './transcript/DesktopForemanHistoryMessage'
+import { DesktopForemanLiveReply } from './DesktopForemanLiveReply'
+import type { DesktopForemanLiveReply as LiveReply } from '@/lib/desktop/foreman/live-reply'
 import { DesktopForemanAnswerActions } from './DesktopForemanAnswerActions'
 
 import { AnimatePresence, motion } from 'motion/react'
@@ -110,7 +112,7 @@ export function DesktopForemanChatLayer({
     findHidden?: boolean
     onCloseFind?: () => void
     streaming?: boolean
-    liveReply?: string
+    liveReply?: LiveReply
     writing?: boolean
     restored: boolean
     question?: ReactNode
@@ -155,6 +157,7 @@ export function DesktopForemanChatLayer({
     const previewDocuments = preview && messages.find(message => message.id === preview.messageId)?.documents
     const plan = projectPlanCard(planSnapshot)
     const previewReply = active && restored && streaming ? liveReply : undefined
+    const hasRunningStep = previewReply?.steps?.some(step => step.status === 'running')
     const empty = messages.length === 0 && !previewReply && !error && !runNotice && !plan.view && !build && !question
 
     return (
@@ -214,9 +217,7 @@ export function DesktopForemanChatLayer({
                             <RunCardsSlot runId={message.sourceRunId} register={register} />}
                         </Fragment>
                     ))}</div>
-                    {previewReply && <div data-foreman-live-reply data-chat-find-ignore className="max-w-[95%] rounded-lg px-4 py-3 text-sm text-foreground">
-                        <DesktopForemanMarkdown text={previewReply} streaming />
-                    </div>}
+                    {previewReply && <DesktopForemanLiveReply key={previewReply.runId} reply={previewReply} />}
                     {question}
                     {plan.view && plan.revisionId && (
                         <DesktopPlanCard
@@ -243,7 +244,7 @@ export function DesktopForemanChatLayer({
                             />
                         </motion.div>
                     )}
-                    {active && restored && streaming && (
+                    {active && restored && streaming && (writing || !hasRunningStep) && (
                         <ChatActivityPresentation activity={writing ? t('chatActivity.writing') : null}
                             labels={[t('chatActivity.thinking'), t('chatActivity.processing'), t('chatActivity.crafting')]}
                             indicator={<Orb size={LOADER_ORB_SIZE} state={writing ? 'speaking' : 'thinking'} facing="right" className="shrink-0" />}

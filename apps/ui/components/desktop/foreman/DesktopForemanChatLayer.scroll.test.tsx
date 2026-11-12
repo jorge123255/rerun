@@ -21,7 +21,14 @@ vi.mock('motion/react', async () => {
     const { forwardRef } = await import('react')
     return {
         AnimatePresence: ({ children }: { children: ReactNode }) => children,
-        motion: { div: forwardRef<HTMLDivElement, ComponentProps<'div'> & { initial?: unknown; animate?: unknown; exit?: unknown; transition?: unknown }>(function MotionDiv({ initial: _initial, animate: _animate, exit: _exit, transition: _transition, ...props }, ref) { return <div {...props} ref={ref} /> }) },
+        motion: {
+            div: forwardRef<HTMLDivElement, ComponentProps<'div'> & { initial?: unknown; animate?: unknown; exit?: unknown; transition?: unknown }>(function MotionDiv({ initial: _initial, animate: _animate, exit: _exit, transition: _transition, ...props }, ref) { return <div {...props} ref={ref} /> }),
+            span: forwardRef<HTMLSpanElement, ComponentProps<'span'> & { initial?: unknown; animate?: unknown; exit?: unknown; transition?: unknown; layout?: boolean }>(
+                function MotionSpan({ initial: _initial, animate: _animate, exit: _exit, transition: _transition, layout: _layout, ...props }, ref) {
+                    return <span {...props} ref={ref} />
+                },
+            ),
+        },
     }
 })
 
@@ -126,19 +133,39 @@ it('uses the Chief of Staff orb and announces the current activity only in the o
 it('renders a growing reply without clickable preview links, then shows only the saved answer', async () => {
     const first = '**Live result** [reference](https://example.test) ![Picture](https://example.test/asset.png)'
     const preview = () => host.querySelector('[data-foreman-live-reply]')
-    await render({ streaming: true, liveReply: first })
+    await render({ streaming: true, liveReply: { runId: 'reply', text: first } })
     expect(preview()?.querySelector('[data-streamdown="strong"]')?.textContent).toBe('Live result')
     expect(preview()?.querySelector('a, img')).toBeNull()
     expect(preview()?.textContent).toContain('reference')
-    await render({ streaming: true, liveReply: first + ' continues.' })
+    await render({ streaming: true, liveReply: { runId: 'reply', text: first + ' continues.' } })
     expect(preview()?.textContent).toContain('continues.')
-    await render({ active: false, streaming: true, liveReply: first })
+    await render({ active: false, streaming: true, liveReply: { runId: 'reply', text: first } })
     expect(preview()).toBeNull()
     const text = 'Final saved answer'
     const messages = [...saved, { id: 'final', role: 'assistant' as const, text }]
-    await render({ liveReply: first, messages })
+    await render({ liveReply: { runId: 'reply', text: first }, messages })
     expect(preview()).toBeNull()
     expect(host.textContent?.match(/Final saved answer/g)).toHaveLength(1)
+})
+
+it('groups consecutive live read steps between reply paragraphs and clears them when saved history takes over', async () => {
+    const group = () => host.querySelector('[data-foreman-live-steps]')
+    await render({ streaming: true, liveReply: { runId: 'reply', text: 'Before the tools.\n\nAfter the tools.', steps: [
+        { tool: 'search_docs', offset: 17, status: 'running' },
+        { tool: 'agent_files_list', offset: 17, status: 'error' },
+    ] } })
+    expect(host.querySelectorAll('[data-foreman-live-steps]')).toHaveLength(1)
+    expect(host.textContent).toMatch(/Before the tools.*Running Search Docs.*After the tools/s)
+    expect(host.querySelector('[role="status"]')).toBeNull()
+    const disclosure = group()?.querySelector<HTMLButtonElement>('button[aria-expanded]')
+    expect(disclosure?.getAttribute('aria-label')).toBe('2 steps, 1 failed')
+    await act(async () => disclosure?.click())
+    expect(group()?.textContent).toContain('Agent Files List')
+    const buttons = [...group()!.querySelectorAll('button')]
+    expect(buttons.filter(button => !button.disabled)).toEqual([disclosure])
+    expect(buttons.filter(button => button.disabled)).toHaveLength(2)
+    await render()
+    expect(group()).toBeNull()
 })
 
 it('places saved work after its own prompt even when two prompts have the same text', async () => {

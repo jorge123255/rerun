@@ -164,7 +164,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const voiceModel = props.modelChoice ?? state.model ?? (effective?.available && effective.connectionId && effective.model
         ? { connectionId: effective.connectionId, model: effective.model } : undefined)
     const pendingSend = state.ui.snapshot?.pendingSend
-    const liveReply = state.view.live && state.liveReply?.runId === state.view.live.runId ? state.liveReply.text : undefined
+    const liveReply = state.view.live && state.liveReply?.runId === state.view.live.runId ? state.liveReply : undefined
     const failedConnection = state.runFailure?.connectionId
     const modelPickerView = !props.hidden && props.controlledOpen !== false && props.composerTrailing == null && !intakeOpen && !pendingStarter ? view : undefined
     const modelDisabled = !!(state.view.live || state.question || state.approval || pendingSend || voice?.busy)
