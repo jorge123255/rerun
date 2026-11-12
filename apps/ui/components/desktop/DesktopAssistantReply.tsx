@@ -146,11 +146,12 @@ export function DesktopAssistantReply({ message, streaming, createdAt, onRegener
 }) {
     const { copied, copy } = useCopy(copyFailed, copyReplyText)
     const compactions = desktopCompactionSteps(message.parts, streaming)
+    const lastStepIndex = streaming ? message.parts.findLastIndex(part => !part.type.startsWith('data-')) : -1
     const blocks: ReactNode[] = []
     let text = '', paragraph = ''
     let replyTime = createdAt
     for (const [index, part] of message.parts.entries()) {
-        const live = streaming && index === message.parts.length - 1
+        const live = index === lastStepIndex
         if (part.type === 'text') {
             text += part.text
             paragraph += part.text

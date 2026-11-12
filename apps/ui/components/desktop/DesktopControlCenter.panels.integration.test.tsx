@@ -119,7 +119,7 @@ async function dismissPanel(title: string) {
     await until(() => !panelDialog(title))
 }
 
-function fixture(runStatus?: () => Promise<Response>, productionBoard = false, reply?: (sessionId: string) => string, history?: (sessionId: string) => UIMessage[]) {
+function fixture(runStatus?: (sessionId: string, method: 'GET' | 'POST') => Promise<Response>, productionBoard = false, reply?: (sessionId: string) => string, history?: (sessionId: string) => UIMessage[]) {
     const boxId = '05699308-9d0d-412b-b3e5-69ef56bd2a0e'
     const board: DesktopBoardState = { revision: 1, spaces: [{ id: boxId, name: 'Review Box', col_start: 0, row_start: 0, col_end: 11, row_end: 7 }],
         placements: coworkers.map((agent, index) => ({ agentId: agent.id, spaceId: boxId, col: index * 3, row: 0 })) }
@@ -247,7 +247,10 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false, r
         }
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
-        if (url.pathname.endsWith('/stop') && method === 'GET') return runStatus ? runStatus() : Response.json({ running: false })
+        if (url.pathname.endsWith('/stop')) {
+            if (runStatus && (method === 'GET' || method === 'POST')) return runStatus(decodeURIComponent(url.pathname.split('/')[4]), method)
+            if (method === 'GET') return Response.json({ running: false })
+        }
         if (url.pathname.endsWith('/feedback') && method === 'GET') return Response.json({ votes: [] })
         const background = desktopBackgroundRead(input, init); if (background) return background
         unexpected.push(`${method} ${raw}`)
@@ -486,6 +489,54 @@ test('reopens saved coworker Markdown from the board and keeps prompt dialogs an
     await act(async () => guideButton.click())
     const restoredGuide = await until(() => panelDialog('Reviewer install guide'))
     await verifyFile(restoredGuide)
+})
+
+test('a restored coworker run shows current activity only in its own tab and settles after Stop', async () => {
+    const session = reviewer.id + '-first'
+    let running = true
+    let finishStop!: () => void
+    const stopResponse = new Promise<void>(resolve => { finishStop = resolve })
+    const stoppedSessions: string[] = []
+    const app = fixture(async (id, method) => {
+        if (method === 'POST') {
+            stoppedSessions.push(id)
+            await stopResponse
+            running = false
+            return Response.json({ status: 'cancelled' })
+        }
+        return Response.json({ running: id === session && running })
+    }, true, undefined, id => [{
+        id: 'engine-' + id,
+        role: 'assistant',
+        parts: [{ type: 'text', text: 'Prior saved reply', state: 'streaming' }],
+    }])
+    const activity = (container: HTMLElement) => container.querySelector('[data-desktop-tab-active="true"] [data-chat-find-ignore] [role="status"]')
+    const mounted = await app.mount()
+    const input = await openBoardChat(mounted.container)
+    const firstChat = input.closest('[data-desktop-tab-active]')!
+    expect((await until(() => activity(mounted.container))).textContent).toBe('Thinking...')
+    expect(firstChat.textContent).toContain('Prior saved reply')
+    expect(firstChat.textContent).not.toContain('Writing...')
+
+    await click('Reviewer second chat', mounted.container)
+    await until(() => composer()?.closest('[data-desktop-tab-active]')?.textContent?.includes('Prior saved reply'))
+    expect(activity(mounted.container)).toBeNull()
+
+    await click('Reviewer first chat', mounted.container)
+    await until(() => activity(mounted.container))
+    await click('Stop', firstChat)
+    expect((await until(() => activity(mounted.container))).textContent).toBe('Stopping the current run')
+    expect(stoppedSessions).toEqual([session])
+    await act(async () => finishStop())
+    await until(() => !activity(mounted.container))
+    expect(firstChat.textContent).toContain('Prior saved reply')
+
+    await mounted.unmount()
+    const reopened = await app.mount()
+    await openBoardChat(reopened.container)
+    await until(() => reopened.container.textContent?.includes('Prior saved reply'))
+    expect(activity(reopened.container)).toBeNull()
+    expect(stoppedSessions).toEqual([session])
 })
 
 test('reopens a saved coworker recording from the board and copies only the current transcript', async () => {

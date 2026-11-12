@@ -28,9 +28,10 @@ import kit from '@rerun/i18n/messages/en/kit.json'
 import layout from '@rerun/i18n/messages/en/layout.json'
 import notifications from '@rerun/i18n/messages/en/notifications.json'
 import mobileSettings from '@rerun/i18n/messages/en/mobileSettings.json'
+import subRuns from '@rerun/i18n/messages/en/subRuns.json'
 import workspace from '@rerun/i18n/messages/en/workspace.json'
 
-const englishSource = { account, agent, brain, builder, changelog, chat, common, connections, data, dialogs, foreman, kit, layout, mobileSettings, notifications, workspace }
+const englishSource = { account, agent, brain, builder, changelog, chat, common, connections, data, dialogs, foreman, kit, layout, mobileSettings, notifications, subRuns, workspace }
 type DesktopMessageSource = typeof englishSource
 
 const desktopChangelogCopy = {
@@ -315,6 +316,9 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         linkedFileNotFound: source.agent.agentFileNavigation.notFound,
         send: source.chat.composer.editor.send,
         stop: source.chat.promptInput.stop,
+        stoppingRun: source.chat.queued.stopping,
+        chatActivity: source.chat.activity,
+        subRunTrouble: source.subRuns.trouble,
         cancel: source.common.cancel,
     }
 }

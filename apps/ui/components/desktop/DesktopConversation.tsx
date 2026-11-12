@@ -37,6 +37,7 @@ import { DesktopComputerPanel } from './computer-panel/DesktopComputerPanel'
 import { DesktopSelectedMentionText } from './mentions/DesktopSelectedMentionText'
 import { DesktopWorkspaceMessage } from './DesktopWorkspaceMessage'
 import { DesktopAssistantReply } from './DesktopAssistantReply'
+import { DesktopChatActivity } from './DesktopChatActivity'
 import { DesktopVoiceComposer } from './voice/DesktopVoiceComposer'
 import { DesktopVoiceHistoryMessage } from './voice/DesktopVoiceHistoryMessage'
 import { Button } from '@/components/ui/button'
@@ -732,6 +733,10 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     // even if its subscription still holds the previous chat's messages.
     const showSaved = ready && (!busy || regenerationSource === sessionId && !!sessionId)
     const transcript = showSaved ? history.transcript ?? messages : busy ? messages : []
+    const streamingMessage = !showSaved && (status === 'streaming' || serviceStreaming) ? transcript.at(-1) : undefined
+    const chatActivity = active && !reconnecting && !pendingRequest && generating
+        ? <DesktopChatActivity agentId={agent.id} message={streamingMessage} />
+        : null
     const proposalSourceIds = useMemo(() => desktopSkillProposalIds(transcript), [transcript])
     const proposalSessionId = sessionId ?? liveSessionId
     const proposalsActive = active && !cardOpen && !detailPanel && !!proposalSessionId && proposalSourceIds.size > 0
@@ -1430,7 +1435,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                                             {images.length > 0 && <MessageAttachments paths={images.map(item => item.path)} rawUrlFor={path => images.find(item => item.path === path)?.url ?? ''} />}</>
                                     })()}
                                     {voicePlayer ?? (message.role === 'assistant'
-                                        ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} createdAt={createdAt} streaming={(status === 'streaming' || serviceStreaming) && messageIndex === transcript.length - 1}
+                                        ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} createdAt={createdAt} streaming={message === streamingMessage}
                                             onOpenWorkspaceFile={onOpenWorkspaceFile}
                                             toolInstall={sessionId ? { sessionId, active: active && ready, disabled: draft.quitting || inactive || generating || stopping } : undefined}
                                             childRuns={sessionId ? { sessionId, active, onOpenTarget: onOpenCoworkerChat } : undefined}
@@ -1477,7 +1482,11 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                         if (payload.action === 'open') { setScreenOpen('request'); return }
                         if (payload.action === 'done' || payload.action === 'skip') await decideTakeover(payload)
                     }} />}
-                    {generating && (sessionId ? <DesktopComputerPanel key={sessionId} agentId={agent.id} sessionId={sessionId} active={active} takeoverPending={!!takeover} fullViewerOpen={screenOpen !== null} onOpen={() => setScreenOpen('manual')} fallback={<div className="text-sm text-muted-foreground">{agent.name} is working…</div>} /> : <div className="text-sm text-muted-foreground">{agent.name} is working…</div>)}
+                    {active && stopping
+                        ? <DesktopChatActivity agentId={agent.id} stopping />
+                        : generating && sessionId
+                            ? <DesktopComputerPanel key={sessionId} agentId={agent.id} sessionId={sessionId} active={active} takeoverPending={!!takeover} fullViewerOpen={screenOpen !== null} onOpen={() => setScreenOpen('manual')} fallback={chatActivity} />
+                            : chatActivity}
                     {stopError && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{stopError}</div>}
                     {(history.id === sessionId && history.runsUnavailable) && <p role="status" className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">This reply’s status is unavailable. Nothing was sent again.</p>}
                     {reconnecting && <p role="status" className="text-sm text-muted-foreground">Reconnecting to this reply…</p>}
