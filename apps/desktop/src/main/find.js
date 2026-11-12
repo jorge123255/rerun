@@ -28,10 +28,10 @@ document.addEventListener('keydown', event => {
     if (event.key === 'Escape') {
         event.preventDefault()
         find.close()
-    } else if (event.key === 'Enter' && event.shiftKey && document.activeElement === query && !previous.disabled) {
+    } else if (event.key === 'Enter' && event.target === query) {
         event.preventDefault()
-        search(false, true)
-    } else if (event.metaKey && event.key.toLowerCase() === 'f' && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+        if (!next.disabled) search(!event.shiftKey, true)
+    } else if (event.metaKey && event.key?.toLowerCase() === 'f' && !event.ctrlKey && !event.shiftKey && !event.altKey) {
         event.preventDefault()
         query.focus()
         query.select()

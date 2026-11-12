@@ -66,7 +66,10 @@ export function createWindowFind({ WebContentsView, scopeOf }) {
             view.webContents.once('render-process-gone', () => { if (current === entry) close(window) })
             view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
             void view.webContents.loadFile(fileURLToPath(page)).then(() => {
-                if (active(entry)) view.webContents.focus()
+                if (active(entry)) {
+                    view.webContents.focus()
+                    view.webContents.send('desktop:find-focus')
+                }
                 else if (current === entry) close(window)
             }).catch(() => { if (current === entry) close(window) })
         },

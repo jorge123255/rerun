@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import { pathToFileURL } from 'node:url'
+import { runInNewContext } from 'node:vm'
 import { createWindowFind } from '../src/main/window-find.mjs'
 
 test('page Find accepts only its sandboxed frame and discards stale requests and scopes', async () => {
@@ -41,6 +43,7 @@ test('page Find accepts only its sandboxed frame and discards stale requests and
     await Promise.resolve()
     const sender = currentView.webContents
     const event = { sender, senderFrame: sender.mainFrame }
+    assert.deepEqual(calls.splice(0), [['desktop:find-focus']])
     find.search({ sender, senderFrame: {} }, { text: 'foreign' })
     find.search(event, { text: 'x'.repeat(501) })
     assert.deepEqual(calls, [])
@@ -63,4 +66,24 @@ test('page Find accepts only its sandboxed frame and discards stale requests and
     window.emit('hide')
     assert.equal(contents.listenerCount('found-in-page'), 0)
     assert.deepEqual(calls.slice(-2), ['clearSelection', 'close-bar'])
+})
+
+test('the Find field handles Return and Shift-Return directly after focusing', async () => {
+    const calls = [], listeners = new Map()
+    const query = { value: 'alpha', addEventListener: () => {}, focus: () => calls.push('focus'), select: () => calls.push('select') }
+    const elements = { query, count: {}, previous: { addEventListener: () => {} }, next: {}, close: { addEventListener: () => {} } }
+    const document = {
+        getElementById: id => elements[id],
+        querySelector: () => ({ addEventListener: () => {} }),
+        addEventListener: (event, handler) => listeners.set(event, handler),
+    }
+    const desktopFind = {
+        onResult: handler => handler({ active: 1, total: 2 }),
+        onFocus: handler => handler(),
+        search: (...args) => calls.push(args),
+    }
+    runInNewContext(await readFile(new URL('../src/main/find.js', import.meta.url), 'utf8'), { window: { desktopFind }, document })
+    const preventDefault = () => calls.push('prevent-default')
+    for (const shiftKey of [false, true]) listeners.get('keydown')({ key: 'Enter', shiftKey, target: query, preventDefault })
+    assert.deepEqual(calls, ['focus', 'select', 'prevent-default', ['alpha', true, true], 'prevent-default', ['alpha', false, true]])
 })
