@@ -15,6 +15,7 @@ const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads']
 export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shell, dialog, dataRoot, available, openFind, closeFind }) {
     const file = resolve(dataRoot, 'connected-hub.json')
     const windows = new Map()
+    const childWindows = new Map()
     const usedSessions = new Set()
     const version = app.getVersion()
     let picker = null, connecting = null
@@ -25,7 +26,22 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
         return entry && sameHub(entry.contents.mainFrame?.url, entry.origin) ? entry : null
     }
     const downloads = createHubDownloads({ app, shell,
-        ownerOf: contents => available() ? connected(windows.get(contents)?.window) : null,
+        ownerOf: contents => {
+            if (!available()) return null
+            const child = childWindows.get(contents)
+            if (child) {
+                const url = contents.mainFrame?.url
+                if (url && url !== 'about:blank' && !sameHub(url, child.entry.origin)) return null
+                return connected(child.entry.window)
+            }
+            return connected(windows.get(contents)?.window)
+        },
+        closeEmptyWindow: contents => {
+            const child = childWindows.get(contents)
+            if (child && !child.window.isDestroyed() && !sameHub(contents.mainFrame?.url, child.entry.origin)) {
+                child.window.destroy()
+            }
+        },
         notify: (entry, value) => {
             if (connected(entry.window) === entry) entry.contents.send('hub:download', value)
         },
@@ -122,11 +138,29 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
         contents.on('will-redirect', navigation)
         contents.on('will-attach-webview', event => event.preventDefault())
         contents.setWindowOpenHandler(({ url }) => {
-            if (available() && connected(window) && window.isFocused()) {
-                if (sameHub(url, origin)) void window.loadURL(url).catch(() => {})
-                else external(url)
+            if (!available() || connected(window) !== entry || !window.isFocused()) return { action: 'deny' }
+            if (sameHub(url, origin)) {
+                return {
+                    action: 'allow',
+                    overrideBrowserWindowOptions: {
+                        width: 520, height: 700, show: false, autoHideMenuBar: true, backgroundColor: '#101214',
+                        webPreferences: { session: desktopSession, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true },
+                    },
+                }
             }
+            external(url)
             return { action: 'deny' }
+        })
+        contents.on('did-create-window', (child, { url }) => {
+            if (!available() || connected(window) !== entry || !sameHub(url, origin)) { child.destroy(); return }
+            const source = child.webContents
+            childWindows.set(source, { window: child, entry })
+            child.once('closed', () => childWindows.delete(source))
+            source.setWindowOpenHandler(() => ({ action: 'deny' }))
+            source.on('will-navigate', navigation)
+            source.on('will-redirect', navigation)
+            source.on('will-attach-webview', event => event.preventDefault())
+            source.on('did-finish-load', () => { if (sameHub(source.mainFrame?.url, origin)) show(child) })
         })
         for (const event of ['focus', 'blur', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'show', 'hide', 'minimize', 'restore']) {
             window.on(event, () => { if (connected(window)) contents.send('hub:window-state', stateOf(window)) })
@@ -145,6 +179,9 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
         window.once('closed', () => {
             closeFind(window)
             windows.delete(contents)
+            for (const child of childWindows.values()) {
+                if (child.entry === entry && !child.window.isDestroyed()) child.window.destroy()
+            }
             auth.cancel()
             entry.closeAttempt?.(true)
         })

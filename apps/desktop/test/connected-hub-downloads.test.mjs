@@ -13,12 +13,14 @@ function fixture(t) {
     t.after(() => rmSync(root, { recursive: true, force: true }))
     const session = new EventEmitter()
     const owner = { origin, contents: { session } }, another = { origin, contents: { session } }
-    const messages = [], revealed = [], recent = []
+    const child = { session }
+    const messages = [], revealed = [], recent = [], settled = []
     const downloads = createHubDownloads({
         app: { getPath: () => root, addRecentDocument: path => recent.push(path) },
         shell: { showItemInFolder: path => revealed.push(path) },
-        ownerOf: contents => contents === owner.contents ? owner : null,
+        ownerOf: contents => contents === owner.contents || contents === child ? owner : null,
         notify: (source, value) => messages.push({ source, ...value }),
+        closeEmptyWindow: contents => settled.push(contents),
     })
     downloads.track(session)
     downloads.track(session)
@@ -33,7 +35,7 @@ function fixture(t) {
         session.emit('will-download', { preventDefault() { refused = true } }, item, contents)
         return { item, refused }
     }
-    return { root, owner, another, messages, revealed, recent, downloads, begin }
+    return { root, owner, another, child, messages, revealed, recent, settled, downloads, begin }
 }
 
 test('server filenames stay within one bounded leaf and foreign URL chains are refused', () => {
@@ -89,4 +91,16 @@ test('a foreign sender, a foreign redirect and a cancelled transfer publish noth
     assert.deepEqual(readdirSync(f.root), [])
     assert.deepEqual(f.messages.map(value => value.state), ['progressing', 'cancelled'])
     assert.deepEqual(f.recent, [])
+})
+
+test('a child export reports to its opener and settles only the initiating contents', t => {
+    const f = fixture(t)
+    assert(f.begin({ contents: f.child, urls: ['https://other.test/export'] }).refused)
+    const { item, refused } = f.begin({ contents: f.child })
+    assert.equal(refused, false)
+    assert.deepEqual(f.settled, [])
+    writeFileSync(item.destination, 'export')
+    item.emit('done', null, 'completed')
+    assert.deepEqual(f.messages.map(value => [value.source, value.state]), [[f.owner, 'progressing'], [f.owner, 'completed']])
+    assert.deepEqual(f.settled, [f.child])
 })

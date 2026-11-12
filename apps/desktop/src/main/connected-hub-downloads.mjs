@@ -73,7 +73,7 @@ function publish(root, rootInfo, temporary, filename) {
     throw new Error('No unused download name')
 }
 
-export function createHubDownloads({ app, shell, ownerOf, notify, now = Date.now }) {
+export function createHubDownloads({ app, shell, ownerOf, notify, closeEmptyWindow, now = Date.now }) {
     const tracked = new WeakSet()
     const active = new Map()
     const completed = new Map()
@@ -101,6 +101,7 @@ export function createHubDownloads({ app, shell, ownerOf, notify, now = Date.now
                 event.preventDefault()
                 discard(temporary)
                 report('interrupted')
+                closeEmptyWindow?.(contents)
                 return
             }
 
@@ -122,6 +123,7 @@ export function createHubDownloads({ app, shell, ownerOf, notify, now = Date.now
                     try { app.addRecentDocument(saved.path); app.dock?.downloadFinished(saved.path) } catch {}
                     report('completed', saved.filename)
                 } else report(state === 'cancelled' ? 'cancelled' : 'interrupted')
+                closeEmptyWindow?.(contents)
             })
             report('progressing')
         })
