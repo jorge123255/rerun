@@ -26,6 +26,7 @@ test('the Mac Settings item opens only the current desktop frame', () => {
     installMacApplicationMenu({
         Menu, appName: 'Rerun Desktop Preview', settingsWindow: () => current,
         isDesktopPage: url => url === desktopUrl,
+        openDocumentation: () => calls.push('documentation'),
     })
 
     assert.equal(menu[0].label, 'Rerun Desktop Preview')
@@ -47,6 +48,9 @@ test('the Mac Settings item opens only the current desktop frame', () => {
     current = window
     settings.click()
     assert.deepEqual(calls, ['restore', 'show', 'focus', ['desktop:open-settings']])
+    const help = menu.find(item => item.role === 'help')
+    help.submenu.find(item => item.id === 'rerun-documentation').click()
+    assert.equal(calls.at(-1), 'documentation')
 })
 
 test('the preload forwards the Settings signal without exposing its IPC event', async () => {

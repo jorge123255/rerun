@@ -1,4 +1,4 @@
-export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDesktopPage }) {
+export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDesktopPage, openDocumentation }) {
     const template = [
         { label: appName, submenu: [
             { role: 'about' },
@@ -29,6 +29,9 @@ export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDes
         { role: 'editMenu' },
         { role: 'viewMenu' },
         { role: 'windowMenu' },
+        { role: 'help', submenu: [
+            { id: 'rerun-documentation', label: 'Rerun Documentation', click: openDocumentation },
+        ] },
     ]
     Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }

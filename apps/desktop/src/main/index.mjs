@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, safeStorage, shell, session, Tray } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, safeStorage, shell, session, Tray } from 'electron'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { mkdir } from 'node:fs/promises'
@@ -17,6 +17,7 @@ import { desktopMicrophonePermissions } from './media-permissions.mjs'
 import { createDesktopFileSaves } from './result-files.mjs'
 import { installMacApplicationMenu } from './application-menu.mjs'
 import { createMacMenuBar } from './mac-menu-bar.mjs'
+import { attachDesktopContextMenu, externalDesktopLink } from './window-context-menu.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
@@ -72,6 +73,10 @@ function setMacUnread(count) {
     app.setBadgeCount(count)
     try { menuBar?.setUnread(count) }
     catch { console.warn('Could not update the Rerun menu-bar item.') }
+}
+function openExternal(href) {
+    const url = externalDesktopLink(href)
+    if (url) void shell.openExternal(url).catch(() => {})
 }
 function runtimeScope() {
     const current = supervisor?.runtime
@@ -168,6 +173,7 @@ async function launch() {
         installMacApplicationMenu({
             Menu, appName: app.name, isDesktopPage,
             settingsWindow: () => !quitting && !transitioning && runtimeScope() && draftQuit.ready ? window : null,
+            openDocumentation: () => openExternal('https://docs.rerun.build'),
         })
         try {
             menuBar = createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow: showMainWindow })
@@ -365,6 +371,11 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
         if (!quittingNow && process.platform === 'darwin') { event.preventDefault(); window.hide() }
     })
     const contents = window.webContents
+    if (process.platform === 'darwin') attachDesktopContextMenu({
+        window: boardWindow, Menu, clipboard, openExternal, locale: app.getLocale(),
+        currentScope: () => !quitting && !transitioning && window === boardWindow && !boardWindow.isDestroyed()
+            && runtimeScope() && isDesktopPage(contents.mainFrame?.url) ? rendererEpoch : null,
+    })
     rendererEpoch = randomUUID()
     const invalidateRenderer = () => {
         if (window?.webContents !== contents) return
@@ -388,10 +399,7 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
         if (!runtime || url.origin !== runtime.app.origin || url.pathname !== '/desktop') event.preventDefault()
     })
     window.webContents.setWindowOpenHandler(({ url }) => {
-        try {
-            const parsed = new URL(url)
-            if (parsed.protocol === 'https:' && !parsed.username && !parsed.password) void shell.openExternal(parsed.href)
-        } catch {}
+        openExternal(url)
         return { action: 'deny' }
     })
     activeSession = desktopSession
