@@ -11,8 +11,8 @@ import { useDesktopLocale } from './DesktopLocale'
 
 export function DesktopSavedDecisionReceipt({ decision, documents, onOpenDocument }: {
     decision: DesktopSavedChatDecision
-    documents: DesktopDocumentReference[]
-    onOpenDocument?: (index: number) => void
+    documents: readonly DesktopDocumentReference[]
+    onOpenDocument?: (index: number, trigger: HTMLButtonElement) => void
 }) {
     const { t } = useDesktopLocale()
     if (decision.kind === 'question-dismissed') {
@@ -54,7 +54,7 @@ export function DesktopSavedDecisionReceipt({ decision, documents, onOpenDocumen
                 {item.attachmentIds.map(id => {
                     const at = documents.findIndex(file => file.attachmentId === id)
                     if (at < 0) return null
-                    return <Button key={id} type="button" size="sm" variant="secondary" disabled={!onOpenDocument} onClick={() => onOpenDocument?.(at)}
+                    return <Button key={id} type="button" size="sm" variant="secondary" disabled={!onOpenDocument} onClick={event => onOpenDocument?.(at, event.currentTarget)}
                         className="max-w-full"><span className="truncate">{documents[at].name}</span></Button>
                 })}
             </div>}

@@ -294,3 +294,26 @@ it('submits the authoritative Foreman card through the answer action and blocks 
     await client.answerQuestion(answer)
     expect(bodies).toEqual([{ action: 'answer', chat, input: answer }])
 })
+
+it('shows only the exact saved decision and keeps other calls with a reused ID visible', async () => {
+    const tool = { type: 'tool-request_approval', toolName: 'request_approval', toolCallId: 'same-call', state: 'output-available' }
+    const receipt = { sourceMessageId: 'engine-first', sourceToolCallId: 'same-call', decision: {
+        kind: 'approvals', items: [{ action: 'Review the draft', decision: 'declined', note: 'Tomorrow.' }],
+    } }
+    server.messages = [
+        { id: 'engine-first', role: 'assistant', parts: [{ type: 'text', text: 'First request' }, tool] },
+        { id: 'engine-decision', role: 'user', parts: [{ type: 'text', text: 'The wire decision' }], metadata: { savedDecision: receipt } },
+        { id: 'engine-later', role: 'assistant', parts: [tool] },
+        { id: 'engine-paste', role: 'user', parts: [{ type: 'text', text: 'The wire decision' }] },
+    ]
+    const messages = desktopForemanMessages(await readDesktopForemanState())
+    expect(messages[0].history.map(part => part.kind)).toEqual(['text'])
+    expect(messages[1].savedDecision).toEqual(receipt.decision)
+    expect(messages[2].history.map(part => part.kind)).toEqual(['tool'])
+    expect(messages[3].savedDecision).toBeUndefined()
+
+    server.messages[1].metadata = { savedDecision: { ...receipt, decision: { kind: 'approvals', items: [] } } }
+    const invalid = desktopForemanMessages(await readDesktopForemanState())
+    expect(invalid[1].savedDecision).toBeUndefined()
+    expect(invalid[0].history.map(part => part.kind)).toEqual(['text', 'tool'])
+})

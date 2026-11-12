@@ -33,7 +33,7 @@ export const desktopSavedChatReceiptSchema = z.strictObject({
 })
 export type DesktopSavedChatReceipt = z.infer<typeof desktopSavedChatReceiptSchema>
 
-export function desktopSavedChatReceiptOf(message: UIMessage, agentId: string, sessionId: string | null) {
+export function desktopSavedChatReceiptOf(message: UIMessage, agentId: string, sessionId: string | null, tabUid?: string) {
     if (message.role !== 'user' || !message.id.startsWith('engine-') || !sessionId ||
         !message.metadata || typeof message.metadata !== 'object' || !('savedDecision' in message.metadata)) return null
     const receipt = desktopSavedChatReceiptSchema.safeParse(message.metadata.savedDecision)
@@ -42,6 +42,7 @@ export function desktopSavedChatReceiptOf(message: UIMessage, agentId: string, s
     const decision = receipt.data.decision
     const ids = decision.kind === 'answers' ? decision.items.flatMap(item => item.attachmentIds) : []
     if (new Set(ids).size !== ids.length || ids.length !== documents.data.length ||
-        !documents.data.every(file => ids.includes(file.attachmentId) && file.scope.agentId === agentId && file.scope.sessionId === sessionId)) return null
+        !documents.data.every(file => ids.includes(file.attachmentId) && file.scope.agentId === agentId && file.scope.sessionId === sessionId
+            && (!tabUid || file.scope.tabUid === tabUid))) return null
     return { ...receipt.data, documents: documents.data }
 }

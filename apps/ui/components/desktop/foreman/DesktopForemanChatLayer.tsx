@@ -2,8 +2,8 @@
 
 import { useDesktopLocale } from '../DesktopLocale'
 
-import type { DesktopAnsweredQuestionRecap } from '@/lib/desktop/foreman/answered-question-recap'
-import { DesktopForemanAnsweredQuestion } from './transcript/DesktopForemanAnsweredQuestion'
+import type { DesktopSavedChatDecision } from '@/lib/desktop/saved-chat-decision'
+import { DesktopSavedDecisionReceipt } from '../DesktopSavedDecisionReceipt'
 import type { ForemanHistoryPart } from './transcript/parts'
 import { DesktopForemanHistoryMessage } from './transcript/DesktopForemanHistoryMessage'
 import { DesktopForemanAnswerActions } from './DesktopForemanAnswerActions'
@@ -39,7 +39,7 @@ export type DesktopForemanMessage = {
     sourceRunId?: string
     docs?: UIMessage['parts']
     history?: readonly ForemanHistoryPart[]
-    answeredQuestions?: readonly DesktopAnsweredQuestionRecap[]
+    savedDecision?: DesktopSavedChatDecision
     documents?: readonly DesktopDocumentReference[]
     coworkerMentions?: readonly DesktopCoworkerMention[]
 }
@@ -164,7 +164,12 @@ export function DesktopForemanChatLayer({
                     )}
                     <div ref={transcript} className="contents">{messages.map(message => (
                         <Fragment key={message.id}>
-                        <div
+                        {restored && message.role === 'user' && message.savedDecision ? (
+                            <div data-chat-find-message className="contents">
+                                <DesktopSavedDecisionReceipt decision={message.savedDecision} documents={message.documents ?? []}
+                                    onOpenDocument={attachmentsActive ? (index, trigger) => setPreview({ messageId: message.id, index, trigger }) : undefined} />
+                            </div>
+                        ) : <div
                             className={cn(
                                 'max-w-[95%] rounded-lg px-4 py-3 text-sm',
                                 message.role === 'user' ? 'ml-auto bg-secondary' : 'bg-transparent text-foreground',
@@ -178,7 +183,6 @@ export function DesktopForemanChatLayer({
                                 {message.role === 'user' && message.coworkerMentions?.length
                                     ? <div data-chat-find-message className="whitespace-pre-wrap wrap-anywhere"><DesktopSelectedMentionText text={message.text} metadata={message} /></div>
                                     : <DesktopForemanHistoryMessage history={message.history} userLinks={message.role === 'user'} />}
-                                <DesktopForemanAnsweredQuestion recaps={message.answeredQuestions ?? []} />
                                 {message.role === 'assistant' && message.text.trim() && answerFeedback && (
                                     <DesktopForemanAnswerActions
                                         rating={answerFeedback.ratingOf(message.id)}
@@ -193,7 +197,7 @@ export function DesktopForemanChatLayer({
                                     ? <DesktopSelectedMentionText text={message.text} metadata={message} /> : message.text}</div>
                                 {message.docs?.map((part, index) => <DesktopForemanDocsTool key={index} part={part as import('ai').ToolUIPart} restored={restored} />)}
                             </>}
-                        </div>
+                        </div>}
                         {renderChildWork && restored && message.role === 'user' && message.sourceRunId &&
                             <RunCardsSlot runId={message.sourceRunId} register={register} />}
                         </Fragment>

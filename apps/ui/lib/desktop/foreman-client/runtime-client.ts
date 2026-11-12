@@ -7,7 +7,7 @@ import {
     foremanDecisionSchema, foremanBuildSchema, foremanLiveEventSchema, foremanDigestSchema, visibleText,
     type DesktopForemanModelRef, type DesktopForemanLiveEvent,
 } from '@rerun/contracts'
-import { answeredQuestionRecapsForMessage, desktopAnsweredQuestionRecapSchema } from '@/lib/desktop/foreman/answered-question-recap'
+import { desktopSavedChatReceiptOf } from '@/lib/desktop/saved-chat-decision'
 import { foremanHistoryParts } from '@/components/desktop/foreman/transcript/parts'
 import { desktopPendingApprovalSchema, type DesktopApprovalAnswer } from '@/lib/desktop/approvals'
 import { desktopPendingQuestionSchema, type DesktopQuestionAnswer } from '@/lib/desktop/questions'
@@ -30,7 +30,6 @@ const stateSchema = z.strictObject({
     question: desktopPendingQuestionSchema.nullable().optional(),
     approval: desktopPendingApprovalSchema.nullable().optional(),
     starter: desktopStarterViewSchema.nullable().optional(),
-    answeredQuestions: z.array(desktopAnsweredQuestionRecapSchema).max(2048).optional(),
     retrySnapshot: foremanDigestSchema.optional(),
     context: desktopForemanContextSchema.nullable().optional(),
     runSources: z.array(z.strictObject({ messageId: z.string().min(1).max(256), runId: z.string().min(1).max(128) })).max(5000).optional(),
@@ -39,6 +38,7 @@ const stateSchema = z.strictObject({
         metadata: z.object({
             documents: z.array(desktopDocumentReferenceSchema).max(DESKTOP_DOCUMENT_MAX_FILES).optional(),
             coworkerMentions: desktopCoworkerMentionsSchema.optional(),
+            savedDecision: z.unknown().optional(),
         }).optional(),
     })).max(5000),
     ui: z.strictObject({ snapshot: desktopForemanSavedUiSchema.nullable(), revision: z.number().int().nonnegative() }),
@@ -72,25 +72,35 @@ const post = async (input: unknown, signal?: AbortSignal) => json(await fetch('/
 export function desktopForemanMessages(state: DesktopForemanClientState) {
     const scope = foremanDocumentScope(state.chat, state.sessionId)
     const sourceByMessage = new Map(state.runSources?.map(source => [source.messageId, source.runId]))
+    const receipts = new Map<string, NonNullable<ReturnType<typeof desktopSavedChatReceiptOf>>>()
+    const answeredCalls = new Map<string, Set<string>>()
+    for (const { id, role, metadata } of state.messages) {
+        const receipt = desktopSavedChatReceiptOf({ id, role, metadata, parts: [] }, scope.agentId, state.sessionId, scope.tabUid)
+        if (!receipt) continue
+        receipts.set(id, receipt)
+        const calls = answeredCalls.get(receipt.sourceMessageId) ?? new Set<string>()
+        calls.add(receipt.sourceToolCallId)
+        answeredCalls.set(receipt.sourceMessageId, calls)
+    }
     return state.messages.map(({ id, role, parts, metadata }) => {
-        const answeredQuestions = answeredQuestionRecapsForMessage(state.answeredQuestions ?? [], id)
+        const receipt = receipts.get(id)
         const documents = role === 'user' ? metadata?.documents?.filter(item => item.scope.agentId === scope.agentId
             && item.scope.tabUid === scope.tabUid && item.scope.sessionId === scope.sessionId) : undefined
         return {
             id,
             role,
             ...(role === 'user' && sourceByMessage.has(id) && { sourceRunId: sourceByMessage.get(id) }),
-            history: foremanHistoryParts(id, parts),
+            history: foremanHistoryParts(id, parts, answeredCalls.get(id)),
             ...(documents?.length && { documents }),
             ...(role === 'user' && desktopCoworkerMentionFieldsOf(metadata?.coworkerMentions)),
-            ...(answeredQuestions.length > 0 && { answeredQuestions }),
+            ...(receipt && { savedDecision: receipt.decision }),
             text: visibleText(parts, '\n'),
             docs: parts.filter(part => part && typeof part === 'object' && (
                 (part as { type?: string }).type === 'tool-search_docs' ||
                 (part as { type?: string; toolName?: string }).type === 'dynamic-tool' && (part as { toolName?: string }).toolName === 'search_docs'
             )) as UIMessage['parts'],
         }
-    }).filter(message => message.history.length > 0 || message.documents?.length)
+    }).filter(message => message.history.length > 0 || message.documents?.length || message.savedDecision)
 }
 function emptyUi(chat: DesktopForemanChatRef): DesktopForemanPersistedUi {
     return { ...chat, open: true, tab: 'assistant', draft: '', pendingPlanRevisionId: null, decision: { status: 'idle' }, build: null, discoveries: null, placement: DEFAULT_DESKTOP_FOREMAN_PLACEMENT }

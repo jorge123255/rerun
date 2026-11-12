@@ -21,7 +21,7 @@ export function safeForemanHistoryLink(raw: unknown): string | null {
     } catch { return null }
 }
 
-export function foremanHistoryParts(messageId: string, parts: readonly unknown[]): ForemanHistoryPart[] {
+export function foremanHistoryParts(messageId: string, parts: readonly unknown[], answeredCalls?: ReadonlySet<string>): ForemanHistoryPart[] {
     return parts.flatMap((raw, index): ForemanHistoryPart[] => {
         if (isContextPart(raw)) return []
         const part = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
@@ -34,7 +34,10 @@ export function foremanHistoryParts(messageId: string, parts: readonly unknown[]
         }
         if (part.type === 'dynamic-tool' || typeof part.type === 'string' && part.type.startsWith('tool-')) {
             const tool: DesktopHistoricalToolSource = part
-            if (desktopHistoricalToolName(tool) === 'search_docs' && projectDesktopToolStatus(tool) === 'succeeded') {
+            const name = desktopHistoricalToolName(tool)
+            if (part.state === 'output-available' && typeof part.toolCallId === 'string' && answeredCalls?.has(part.toolCallId)
+                && (name === 'ask_user' || name === 'request_approval')) return []
+            if (name === 'search_docs' && projectDesktopToolStatus(tool) === 'succeeded') {
                 let output = part.output
                 if (typeof output === 'string' && output.length <= 100000) { try { output = JSON.parse(output) } catch { output = null } }
                 const parsed = desktopForemanDocsResultSchema.safeParse(output)
@@ -49,7 +52,6 @@ export function foremanHistoryParts(messageId: string, parts: readonly unknown[]
             if (card) return [{ key, kind: 'card', card }]
             const status = projectDesktopToolStatus(tool)
             const identity = resolveDesktopHistoricalIdentity(tool)
-            const name = desktopHistoricalToolName(tool)
             return [{ key, kind: 'tool', item: { key, toolName: name, label: redactHistoricalText(toolLabelOf(name || 'tool'), 200), status: status === 'running' || status === 'pending' ? 'unknown' : status, detail: null, identity: identity.ok ? identity.identity : { ownerId: null, workspaceId: null, runId: null } } }]
         }
         if (part.type === 'reasoning' && typeof part.text === 'string') return [{ key, kind: 'reasoning', text: part.text }]

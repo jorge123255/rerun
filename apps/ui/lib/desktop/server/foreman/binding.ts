@@ -1,4 +1,3 @@
-import { readAnsweredQuestionRecaps } from './answered-question-recap'
 import 'server-only'
 import { createHash } from 'node:crypto'
 import { COMPANY_BRIEF_MODEL_PROVIDERS, FOREMAN_AGENT_ID, desktopCoworkerMentionFieldsOf, documentScopeKey, foremanDocumentScope, questionDocumentIndex, type CompanyBriefModelRef, type DesktopForemanBinding, type DesktopForemanChatRef, type DesktopForemanLiveEvent, type DesktopForemanModelRef } from '@rerun/contracts'
@@ -9,6 +8,7 @@ import { DesktopHttpError } from '../auth'
 import { openDesktopDatabase } from '../database'
 import { desktopModel, engineOf, readDesktopProviders } from '../settings'
 import { readDesktopBoardState } from '../spaces'
+import { withForemanSavedDecisions } from '../saved-chat-decisions'
 import { listDesktopAgents } from '../store'
 import type { DesktopRuntime } from '../runtime'
 import { openForemanRuntime } from './server'
@@ -291,7 +291,6 @@ async function createBinding(runtime: DesktopRuntime) {
                 const checked = revalidateDesktopCoworkerMentions(text, coworkerMentions, roster, false)
                 if (!checked.ok) throw new DesktopHttpError(400, checked.error)
             }
-            let answerFileNames: string[][] | undefined
             if (documents) {
                 const questionId = answer?.action === 'answer' ? answer.questionId : undefined
                 const scope = foremanDocumentScope(chat, owner.sessionId, questionId)
@@ -310,7 +309,6 @@ async function createBinding(runtime: DesktopRuntime) {
                         group.push(record.attachment.name)
                     }
                     text = foremanQuestionText(question, answer, files)
-                    answerFileNames = files
                 }
                 const admission = await resolveDesktopDocumentAdmission(runtime, FOREMAN_AGENT_ID, documents, AbortSignal.timeout(20_000))
                 if (admission.references.some(item => item.kind === 'image')
@@ -331,7 +329,6 @@ async function createBinding(runtime: DesktopRuntime) {
                 'When the user asks to design or add coworkers, propose their jobs with show_plan. Nothing is created until they confirm the card. Never treat chat text as approval.'].filter(Boolean).join('\n\n')
             const turn: ForemanTurn = { binding: { ...chat, runId: requestId, model }, sessionId: owner.sessionId, text, brief: { instructions, tools: [] },
                 ...(answer && question && { question: question.guard, answerIntent: answer }),
-                ...(answerFileNames && { answerFileNames }),
                 ...(decision && approval && { approval: approval.guard, approvalIntent: decision }), ...(starter && { starterOfferId: starter.input.offerId }),
                 ...(documents && { documents }), ...desktopCoworkerMentionFieldsOf(coworkerMentions) }
             await checkVoice(guard)
@@ -415,8 +412,8 @@ async function createBinding(runtime: DesktopRuntime) {
             const attempt = saved?.answerIntent?.questionId === pending?.view.id && saved?.answerIntent
             const approvalAttempt = saved?.approvalIntent?.approvalId === approval?.view.id && saved?.approvalIntent
             const history = await hideDesktopForemanIntakeKickoff(runtime, db, owner, publicDesktopHistory(transformEngineMessages(messages)))
-            const [answeredQuestions, context] = await Promise.all([
-                readAnsweredQuestionRecaps(db, owner.chat.chatId, history),
+            const [projected, context] = await Promise.all([
+                withForemanSavedDecisions(db, owner, messages, history),
                 !view.live && history.some(message => message.role === 'assistant') ? readContext(owner).catch(() => null) : null,
             ])
             const retrySnapshot = foremanAlternateSnapshot(runtime, owner.chat, owner.sessionId,
@@ -432,7 +429,7 @@ async function createBinding(runtime: DesktopRuntime) {
             const callSources = knownRuns.size
                 ? (await listDesktopForemanCallSources(db, owner.chat.chatId, owner.sessionId)).filter(row => knownRuns.has(row.runId))
                 : []
-            return { ...owner, view, messages: history, retrySnapshot, answeredQuestions, context, runSources, callSources, starter: await starterDecisions.view(owner.chat),
+            return { ...owner, view, messages: projected, retrySnapshot, context, runSources, callSources, starter: await starterDecisions.view(owner.chat),
                 approval: approval ? { ...approval.view, ...(approvalAttempt && {
                     attempt: { requestId: approvalAttempt.requestId, decisions: approvalAttempt.decisions },
                 }) } : null,

@@ -251,3 +251,22 @@ it('routes Mac Find to the active Chief of Staff transcript and resets it when t
         userAgent.mockRestore()
     }
 })
+
+it('renders the saved Chief of Staff decision as one read-only card and keeps ordinary text in history', async () => {
+    const raw = 'Here are my approval decisions:'
+    const messages: Props['messages'] = [
+        { id: 'engine-request', role: 'assistant', text: 'Two suggested changes' },
+        { id: 'engine-answer', role: 'user', text: raw, savedDecision: { kind: 'approvals', items: [
+            { action: 'Review the draft', decision: 'approved' },
+            { action: 'Rename the draft', decision: 'declined', note: 'Keep its name.' },
+        ] } },
+        { id: 'engine-paste', role: 'user', text: raw },
+    ]
+    await render({ messages })
+    expect(host.textContent).toContain('Review the draft')
+    expect(host.textContent).toContain('Approved')
+    expect(host.textContent).toContain('Not now')
+    expect(host.textContent).toContain('Keep its name.')
+    expect(host.textContent?.split(raw)).toHaveLength(2)
+    expect(Array.from(host.querySelectorAll('button')).some(button => /^(Approve|Decline)$/.test(button.textContent ?? ''))).toBe(false)
+})
