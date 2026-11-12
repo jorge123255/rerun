@@ -14,9 +14,11 @@ function fixture() {
         const contents = Object.assign(new EventEmitter(), {
             mainFrame: { url },
             isDestroyed: () => destroyed,
+            isCrashed: () => crashed,
             send: (...args) => messages.push(args),
         })
         let destroyed = false
+        let crashed = false
         contents.reload = () => {
             navigations.push(contents.mainFrame.url)
             contents.emit('did-finish-load')
@@ -28,6 +30,7 @@ function fixture() {
             entry, messages, navigations,
             event: (frame = contents.mainFrame) => ({ sender: contents, senderFrame: frame }),
             destroy: () => { destroyed = true; contents.emit('destroyed') },
+            crash: () => { crashed = true; contents.emit('render-process-gone') },
         }
     }
     return { registry, create }
@@ -48,6 +51,30 @@ test('native board requests require a managed main frame and its exact runtime',
     assert.throws(() => registry.trusted(second.event(), runtime), /Untrusted/)
     second.destroy()
     assert.deepEqual(registry.list(), [primary.entry])
+})
+
+test('a crashed document cannot use board IPC or acknowledge a draft drain', async () => {
+    const { registry, create } = fixture()
+    const board = create(true)
+    board.crash()
+    assert.equal(registry.ready(board.entry, runtime), false)
+    assert.throws(() => registry.trusted(board.event(), runtime), /Untrusted/)
+    assert.equal(await registry.flush(board.entry, runtime), false)
+})
+
+test('a recovery page grants only recovery IPC to the managed main frame of that workspace runtime', () => {
+    const { registry, create } = fixture()
+    for (const primary of [true, false]) {
+        const board = create(primary, startupUrl)
+        assert.equal(registry.recoveryPage(board.event(), runtime), null)
+        board.entry.rendererFailure = runtime
+        assert.equal(registry.recoveryPage(board.event(), runtime), board.entry)
+        assert.throws(() => registry.trusted(board.event(), runtime), /Untrusted/)
+        assert.equal(registry.recoveryPage(board.event(), { workspaceId: 1 }), null)
+        assert.equal(registry.recoveryPage(board.event({ url: startupUrl }), runtime), null)
+        board.crash()
+        assert.equal(registry.recoveryPage(board.event(), runtime), null)
+    }
 })
 
 test('both boards must acknowledge a draft flush with their own request and registration', async () => {

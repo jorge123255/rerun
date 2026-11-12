@@ -66,6 +66,8 @@ let openingLocalWorkspace
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const boards = createBoardWindows({ startupUrl: pathToFileURL(startup).href, isDesktopPage })
+const rendererCrashInterval = 60_000
+const rendererFailureStatus = { state: 'error', message: 'The workspace window closed unexpectedly. Try reopening it.' }
 const changingBoards = new Set()
 const phonePairingWindow = createPhonePairingWindow({ BrowserWindow })
 const quickAsk = createQuickAskWindow({ app, BrowserWindow, screen, showBoard: showMainWindow,
@@ -87,7 +89,7 @@ const sharesFor = candidate => createDesktopCoworkerShareFiles({ dialog, context
 const remoteMachineIpc = createRemoteMachineIpc({ trusted: trustedPrimary, context: () => {
     const current = supervisor?.runtime
     if (quitting || transitioning || !remoteMachines || !runtime || runtime !== current || supervisor.status.state !== 'ready'
-        || remoteClosures.has(current.workspaceId) || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
+        || remoteClosures.has(current.workspaceId) || !boards.ready(boards.get(window), current)) return null
     return { binding: remoteMachines, actor: { installId: remoteInstallId, workspaceId: current.workspaceId,
         launchNonce: current.launchNonce, rendererEpoch: boards.get(window).epoch } }
 } })
@@ -217,7 +219,7 @@ function clickScope() {
 }
 function flushNotificationClicks() {
     clickHandoff.flush(clickScope(), target => {
-        if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return false
+        if (quitting || transitioning || !boards.ready(boards.get(window), runtime)) return false
         if (!clickReady || clickReady.contents !== window.webContents) return false
         window.webContents.send('desktop:notification-click', target)
         return true
@@ -403,7 +405,11 @@ async function launch() {
         }
     }
     await prepareWorkspaceWindow(1, false)
-    ipcMain.handle('desktop:status', event => { trusted(event); return supervisor?.status ?? bootStatus })
+    ipcMain.handle('desktop:status', event => {
+        if (boards.recoveryPage(event, runtime)) return rendererFailureStatus
+        trusted(event)
+        return supervisor?.status ?? bootStatus
+    })
     if (mac) {
         const onStartupPage = event => {
             trustedPrimary(event)
@@ -435,7 +441,7 @@ async function launch() {
                 if (boardContext(board.window)) shellLanguage.set('local', value)
             } catch { /* Ignore untrusted frames. */ }
         })
-        ipcMain.handle('desktop:mac-fullscreen', event => trusted(event).window.isFullScreen())
+        ipcMain.handle('desktop:mac-fullscreen', event => (boards.recoveryPage(event, runtime) ?? trusted(event)).window.isFullScreen())
         const assertBoard = event => {
             trusted(event)
             if (quitting || transitioning || !runtimeScope() || !isDesktopPage(event.senderFrame.url)) throw new Error('The workspace is unavailable')
@@ -465,6 +471,11 @@ async function launch() {
         }
     }
     ipcMain.handle('desktop:retry', async event => {
+        const board = boards.recoveryPage(event, runtime)
+        if (board) {
+            if (!canRecoverBoard(board, runtime)) return false
+            return reopenBoardRenderer(board, board.rendererCrash)
+        }
         trustedPrimary(event)
         if (event.senderFrame.url !== pathToFileURL(startup).href || transitioning || quitting || changingBoards.size) return false
         if (!supervisor) {
@@ -505,7 +516,10 @@ async function launch() {
         if (quitting || transitioning) return { ok: false, code: 'busy', message: 'Wait for this workspace change to finish.' }
         return runWorkspaceTransition(() => workspaces.recoverSwitch(input))
     })
-    ipcMain.handle('desktop:quit', event => { trusted(event); app.quit() })
+    ipcMain.handle('desktop:quit', event => {
+        if (!boards.recoveryPage(event, runtime)) trusted(event)
+        app.quit()
+    })
     const trustedPhonePairing = (event, readOnly = false) => {
         if (!phonePairingWindow.isTrusted(event) || (!readOnly && quitting)) throw new Error('Phone pairing is unavailable.')
         if (!phonePairing) throw new Error('Open a local workspace before pairing an iPhone.')
@@ -631,7 +645,7 @@ async function initializeLocalWorkspace(identity) {
         currentRenderer: () => {
             const current = supervisor.runtime
             if (quitting || transitioning || !runtime || current !== runtime || supervisor.status.state !== 'ready'
-                || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
+                || !boards.ready(boards.get(window), current)) return null
             return { epoch: boards.get(window).epoch, workspaceId: current.workspaceId, launchNonce: current.launchNonce }
         },
         // The canonical local workspace supervisor is connected here. Remote activation
@@ -743,7 +757,8 @@ function createBoardWindow(desktopSession, bounds, primary = false) {
         const reportFullscreen = () => {
             if (contents.isDestroyed()) return
             const frame = contents.mainFrame
-            if ((primary && frame?.url === pathToFileURL(startup).href) || boards.ready(board, runtime)) {
+            if (((primary || board.rendererFailure === runtime && runtime) && frame?.url === pathToFileURL(startup).href)
+                || boards.ready(board, runtime)) {
                 frame.send('desktop:mac-fullscreen-changed', boardWindow.isFullScreen())
             }
         }
@@ -770,7 +785,18 @@ function createBoardWindow(desktopSession, bounds, primary = false) {
     contents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
         if (isMainFrame && !isInPlace) invalidateRenderer()
     })
-    contents.on('render-process-gone', invalidateRenderer)
+    contents.on('render-process-gone', (_event, details) => {
+        invalidateRenderer()
+        const current = board.runtime
+        if (!mac || details.reason === 'clean-exit' || !canRecoverBoard(board, current)) return
+        const at = performance.now()
+        const repeated = board.rendererCrash?.runtime === current && at - board.rendererCrash.at < rendererCrashInterval
+        const crash = { runtime: current, at }
+        board.rendererCrash = crash
+        if (repeated && contents.getURL() === pathToFileURL(startup).href) return
+        if (repeated || board.rendererFailure === current) void showBoardRendererFailure(board, crash)
+        else void reopenBoardRenderer(board, crash)
+    })
     contents.on('destroyed', invalidateRenderer)
     contents.on('will-attach-webview', event => event.preventDefault())
     for (const eventName of ['will-navigate', 'will-redirect']) {
@@ -783,6 +809,30 @@ function createBoardWindow(desktopSession, bounds, primary = false) {
         return { action: 'deny' }
     })
     return board
+}
+
+function canRecoverBoard(board, current) {
+    return !!current && !quitting && !transitioning && runtime === current && board.runtime === current
+        && runtimeScope() && boards.get(board.window) === board
+}
+
+async function showBoardRendererFailure(board, crash) {
+    if (board.rendererCrash !== crash || !canRecoverBoard(board, crash.runtime)) return
+    board.rendererFailure = crash.runtime
+    await board.window.loadFile(startup).catch(() => {})
+}
+
+async function reopenBoardRenderer(board, crash) {
+    if (board.rendererCrash !== crash || !canRecoverBoard(board, crash.runtime)) return false
+    try {
+        await loadBoard(board, crash.runtime)
+        if (board.rendererCrash !== crash || !canRecoverBoard(board, crash.runtime)) return false
+        board.rendererFailure = null
+        return true
+    } catch {
+        await showBoardRendererFailure(board, crash)
+        return false
+    }
 }
 
 async function reloadBoard(candidate) {

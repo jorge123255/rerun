@@ -35,6 +35,7 @@ function reloadDocument(contents) {
 export function createBoardWindows({ startupUrl, isDesktopPage }) {
     const entries = new Map()
     const live = entry => entry && !entry.window.isDestroyed() && !entry.contents.isDestroyed()
+    const hasRenderer = entry => live(entry) && !entry.contents.isCrashed()
 
     function get(window) {
         if (!window || window.isDestroyed()) return null
@@ -48,13 +49,22 @@ export function createBoardWindows({ startupUrl, isDesktopPage }) {
     }
 
     function ready(entry, runtime) {
-        return !!runtime && live(entry) && entry.runtime === runtime && isDesktopPage(entry.contents.mainFrame?.url)
+        return !!runtime && hasRenderer(entry) && entry.runtime === runtime && isDesktopPage(entry.contents.mainFrame?.url)
+    }
+
+    function recoveryPage(event, runtime) {
+        const entry = entries.get(event.sender)
+        if (runtime && hasRenderer(entry) && entry.rendererFailure === runtime
+            && event.senderFrame && event.senderFrame === entry.contents.mainFrame
+            && event.senderFrame.url === startupUrl) return entry
+        return null
     }
 
     function trusted(event, runtime) {
         const entry = entries.get(event.sender)
-        if (live(entry) && event.senderFrame && event.senderFrame === entry.contents.mainFrame
-            && (ready(entry, runtime) || (entry.primary && event.senderFrame.url === startupUrl))) return entry
+        if (hasRenderer(entry) && event.senderFrame && event.senderFrame === entry.contents.mainFrame
+            && (ready(entry, runtime) || (entry.primary && event.senderFrame.url === startupUrl
+                && !recoveryPage(event, runtime)))) return entry
         throw new Error('Untrusted desktop request')
     }
 
@@ -80,7 +90,8 @@ export function createBoardWindows({ startupUrl, isDesktopPage }) {
     return {
         register(window, { primary }) {
             const contents = window.webContents
-            const entry = { window, contents, primary, drafts: new BeforeQuitDrafts(), epoch: randomUUID(), runtime: null }
+            const entry = { window, contents, primary, drafts: new BeforeQuitDrafts(), epoch: randomUUID(),
+                runtime: null, rendererCrash: null, rendererFailure: null }
             entries.set(contents, entry)
             contents.once('destroyed', () => {
                 entries.delete(contents)
@@ -88,7 +99,7 @@ export function createBoardWindows({ startupUrl, isDesktopPage }) {
             })
             return entry
         },
-        get, ready, trusted, invalidate, flush, reload,
+        get, ready, trusted, recoveryPage, invalidate, flush, reload,
         list: () => [...entries.values()].filter(live),
         async flushAll(runtime, requireReady = false) {
             const current = [...entries.values()].filter(entry => live(entry) && entry.runtime === runtime)
