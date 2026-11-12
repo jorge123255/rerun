@@ -169,6 +169,20 @@ function fixture(runStatus?: (sessionId: string, method: 'GET' | 'POST') => Prom
         const recentResponse = recent.handle(input, init)
         if (recentResponse) return recentResponse
         if (productionBoard && url.pathname === '/api/desktop/spaces' && method === 'GET') return Response.json({ board })
+        if (productionBoard && method === 'GET') {
+            if (url.pathname === '/api/desktop/brain/ui-state') return Response.json({ records: [] })
+            if (url.pathname === '/api/desktop/brain/pages') return Response.json({ pages: [] })
+            if (url.pathname === '/api/desktop/brain/proposals') return Response.json({ proposals: [] })
+            if (url.pathname === '/api/desktop/brain/proposals/count') return Response.json({ count: 0 })
+            if (url.pathname === '/api/desktop/shared-data') return Response.json({ tables: [] })
+            if (url.pathname === '/api/desktop/shared-files') return Response.json({ path: '', truncated: false, entries: [
+                { name: 'board-report.csv', type: 'file', size: 10, modifiedAt: date },
+            ] })
+            if (url.pathname === '/api/desktop/shared-files/read' && url.searchParams.get('path') === 'board-report.csv') {
+                return Response.json({ path: 'board-report.csv', content: 'x,y\r\n1,2\r\n', truncated: false, size: 10, offset: 0, nextOffset: null,
+                    editIdentity: { expectedBytes: 10, expectedSha256: 'a'.repeat(64) } })
+            }
+        }
         if (productionBoard && url.pathname === '/api/desktop/workspaces/2/board-camera') {
             if (method === 'GET') return Response.json({ workspaceId: 2, revision: 0, camera: null })
             const { workspaceId, requestId, expectedRevision, camera } = fxCameraWriteSchema.parse(JSON.parse(String(init?.body)))
@@ -322,6 +336,17 @@ async function openBoardChat(container: HTMLElement, name = 'Reviewer') {
     await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })) })
     return until(composer)
 }
+
+test('opening a shared file in Company Brain from the board enables editing in the active workspace', async () => {
+    await fixture(undefined, true).mount()
+    await act(async () => { window.dispatchEvent(new Event('rerun-desktop-open-brain')) })
+    const dialog = await until(() => panelDialog('Company Brain'))
+    const file = await until(() => [...dialog.querySelectorAll<HTMLElement>('aside [role="button"]')]
+        .find(button => button.textContent?.trim() === 'board-report.csv'))
+    await act(async () => { file.click() })
+    await until(() => dialog.querySelector('main')?.textContent?.includes('x,y'))
+    expect([...dialog.querySelectorAll('main button')].map(button => button.textContent?.trim())).toContain('Edit')
+})
 
 test.each([
     { surface: 'Apps, Knowledge and Files', targets: [

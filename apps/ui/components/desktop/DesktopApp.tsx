@@ -855,7 +855,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     focusFromControlCenter(target.agentId)
                     selectCoworker(target.agentId, target.sessionId)
                 }} />
-            <DesktopBrainDialog actions={brainActions} hideTrigger dialogControl={{open:brainOpen,onOpenChange:setBrainOpen}}
+            <DesktopBrainDialog actions={brainActions} workspaceId={runtimeWorkspaceId} hideTrigger dialogControl={{open:brainOpen,onOpenChange:setBrainOpen}}
                 refreshKey={brainRefresh} openProposalsKey={brainProposalOpen} openSlug={brainSlug} onOpenConsumed={()=>setBrainSlug(null)}
                 renderProposals={()=><DesktopBrainProposalsPanel onOpenPage={setBrainSlug} onDecided={()=>setBrainRefresh(value=>value+1)}/>}/>
             <DesktopSharedData hideTrigger dialogControl={{ open: sharedDataOpen, onOpenChange: setSharedDataOpen }} onCloseAutoFocus={event => {

@@ -29,7 +29,7 @@ export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false
     /** Root can pass a section or a table later. Absent until that wiring lands. */
     route?: DesktopBrainRoute | null
     onRouteConsumed?: () => void
-    /** Active workspace. Root passes `runtimeWorkspaceId`. Absent until that one line lands. */
+    /** The active runtime workspace for shared file actions. */
     workspaceId?: number | null
 }) {
     const { t } = useDesktopLocale()
