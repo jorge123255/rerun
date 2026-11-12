@@ -1,4 +1,12 @@
+import { foremanBindingSchema } from '@rerun/contracts'
 import { z } from 'zod'
+
+// A wake-up for the authenticated state read. It carries no preview or action.
+export const desktopForemanReplyChangedSchema = z.strictObject({
+    type: z.literal('reply-changed'),
+    binding: foremanBindingSchema,
+})
+export type DesktopForemanReplyChanged = z.infer<typeof desktopForemanReplyChangedSchema>
 
 export const DESKTOP_FOREMAN_LIVE_REPLY_LIMIT = 24_000
 export const DESKTOP_FOREMAN_LIVE_STEP_LIMIT = 48

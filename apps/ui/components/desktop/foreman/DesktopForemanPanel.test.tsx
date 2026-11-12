@@ -124,6 +124,49 @@ it('uses writing activity only while the server reports an active turn', async (
     expect(column.liveReply).toBeUndefined()
 })
 
+it('refreshes a live reply between polls and catches updates during a state read', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal('EventSource', Source)
+    const chat = { workspaceId: '1', chatId: 'fmc_abcdefgh' }
+    const live = { runId: randomUUID(), model: { connectionId: 'connection', model: 'model' } }
+    const server = { chat, sessionId: 'session', model: null, messages: [], writing: true,
+        liveReply: { runId: live.runId, text: 'Initial' },
+        view: { contractVersion: 1, chat, phase: 'plan', live, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
+        ui: { revision: 0, snapshot: null } }
+    let completeRead: ((response: Response) => void) | undefined
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json(server))
+    vi.stubGlobal('fetch', fetch)
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopForemanPanel onClose={vi.fn()} onOpenCoworker={vi.fn()} onOpenCalledChat={vi.fn()} onOpenBox={vi.fn()} agentNameOf={id => id} />))
+    const feed = sources.find(source => !source.closed)!
+    const binding = { ...chat, ...live }
+    const update = (target = binding) => feed.onmessage!({ data: JSON.stringify({ type: 'reply-changed', binding: target }) })
+    const reads = fetch.mock.calls.length
+
+    await act(async () => {
+        update({ ...binding, workspaceId: '2' })
+        update({ ...binding, runId: randomUUID() })
+        update({ ...binding, model: { ...live.model, model: 'another-model' } })
+    })
+    expect(fetch).toHaveBeenCalledTimes(reads)
+    const staleResponse = Response.json(server)
+    fetch.mockImplementationOnce(() => new Promise(resolve => { completeRead = resolve }))
+    await act(async () => update())
+    expect(fetch).toHaveBeenCalledTimes(reads + 1)
+    server.liveReply.text = 'Latest progress'
+    await act(async () => { update(); update() })
+    expect(fetch).toHaveBeenCalledTimes(reads + 1)
+    await act(async () => completeRead!(staleResponse))
+    expect(fetch).toHaveBeenCalledTimes(reads + 2)
+    expect(column.liveReply?.text).toBe('Latest progress')
+
+    // Polling still updates the panel when the event feed is interrupted.
+    server.liveReply.text = 'Recovered by polling'
+    await act(async () => vi.advanceTimersByTimeAsync(1500))
+    expect(column.liveReply?.text).toBe('Recovered by polling')
+})
+
 it('shows the saved connection failure with a Settings action and clears it when a newer run settles', async () => {
     vi.useFakeTimers()
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)

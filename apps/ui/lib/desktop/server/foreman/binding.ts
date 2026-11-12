@@ -38,6 +38,7 @@ import { foremanTranscriptRevision } from '../../../../../engine/src/desktop/for
 import { desktopForemanContext } from '../../foreman/context'
 import { desktopForemanRunFailure } from '../../foreman/run-failure'
 import { createForemanReplyPreview } from './reply-preview'
+import type { DesktopForemanReplyChanged } from '../../foreman/live-reply'
 import { consumeDesktopDocumentAdmission, resolveDesktopDocumentAdmission } from '../document-attachments/binding'
 import { desktopDocumentStore } from '../document-attachments/store'
 import { listDesktopCoworkerCallTargets } from '../coworker-calls/authority'
@@ -46,7 +47,9 @@ import { revalidateDesktopCoworkerMentions } from '@/components/desktop/mentions
 
 const KEY = Symbol.for('rerun.desktop.foreman.binding.v1')
 const SHUTDOWN_KEY = Symbol.for('rerun.desktop.foreman.shutdown.v1')
-type Subscriber = { chat: DesktopForemanChatRef; send: (event: DesktopForemanLiveEvent) => void }
+const REPLY_UPDATE_INTERVAL = 350
+type ForemanEvent = DesktopForemanLiveEvent | DesktopForemanReplyChanged
+type Subscriber = { chat: DesktopForemanChatRef; send: (event: ForemanEvent) => void }
 type ReplyActivity = { binding: DesktopForemanBinding; sessionId: string; preview: ReturnType<typeof createForemanReplyPreview> }
 type Binding = Awaited<ReturnType<typeof createBinding>>
 const bindings = () => ((globalThis as unknown as Record<symbol, Map<string, Promise<Binding>>>)[KEY] ??= new Map())
@@ -69,6 +72,10 @@ async function createBinding(runtime: DesktopRuntime) {
     const starterDecisions = createDesktopLocalStarterDecisions(runtime, db)
     const starterOffers = createDesktopLocalStarterOffers(runtime, db)
     const subscribers = new Set<Subscriber>()
+    const publish = (event: ForemanEvent) => {
+        const chat = 'binding' in event ? event.binding : event.chat
+        for (const subscriber of subscribers) if (subscriber.chat.chatId === chat.chatId && subscriber.chat.workspaceId === chat.workspaceId) subscriber.send(event)
+    }
     let replyActivity: ReplyActivity | undefined
     type VoiceGuard = { signal: AbortSignal; assertCurrent(): Promise<void> }
     const voiceLifetime = new AbortController()
@@ -147,10 +154,7 @@ async function createBinding(runtime: DesktopRuntime) {
         },
         creation: creation.creation,
         setup: creation.setup,
-        events: { publish: event => {
-            const chat = 'binding' in event ? event.binding : event.chat
-            for (const subscriber of subscribers) if (subscriber.chat.chatId === chat.chatId && subscriber.chat.workspaceId === chat.workspaceId) subscriber.send(event)
-        } },
+        events: { publish },
         collectDiscovery: async ({ binding, discoveryId, url, signal, emit }) => { await companyDiscovery.collectForForeman({ binding, discoveryId, url, signal, emit }) },
     }, async () => String((await db.execute('SELECT name FROM desktop_workspace WHERE id=1')).rows[0]?.name ?? 'My workspace'))
     async function intakeContext(chat: DesktopForemanChatRef, activeRequestId?: string, text?: string) {
@@ -225,12 +229,25 @@ async function createBinding(runtime: DesktopRuntime) {
         if (response.body && replyActivity?.binding.runId !== turn.binding.runId) {
             const activity: ReplyActivity = { binding: turn.binding, sessionId: turn.sessionId, preview: createForemanReplyPreview(turn.binding.runId) }
             replyActivity = activity
-            // Keep a bounded preview. Tool arguments, results and errors still go through
-            // their existing saved projections.
+            // Coalesce changes to the public preview. State reads still check run ownership
+            // and prefer the canonical saved history as soon as it becomes available.
+            let replyTimer: ReturnType<typeof setTimeout> | undefined
+            const notifyReplyChange = () => {
+                if (!voiceLifetime.signal.aborted) publish({ type: 'reply-changed', binding: activity.binding })
+            }
             void parseJsonEventStream({ stream: response.body, schema: uiMessageChunkSchema }).pipeTo(new WritableStream({
-                write(result) { if (result.success) activity.preview.accept(result.value) },
+                write(result) {
+                    if (!result.success || !activity.preview.accept(result.value) || replyTimer || replyActivity !== activity || !subscribers.size) return
+                    replyTimer = setTimeout(() => {
+                        replyTimer = undefined
+                        if (replyActivity === activity) notifyReplyChange()
+                    }, REPLY_UPDATE_INTERVAL)
+                },
             })).catch(() => {}).finally(() => {
-                if (replyActivity === activity) replyActivity = undefined
+                if (replyTimer) clearTimeout(replyTimer)
+                if (replyActivity !== activity) return
+                replyActivity = undefined
+                notifyReplyChange()
             })
         } else if (response.body) {
             void response.body.pipeTo(new WritableStream({ write() {} })).catch(() => {})

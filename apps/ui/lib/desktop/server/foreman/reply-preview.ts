@@ -9,11 +9,17 @@ export function createForemanReplyPreview(runId: string) {
     let text = ''
     let textPart: string | null = null
     let writingPart: string | null = null
+    let stepRevision = 0
     const steps = new Map<string, DesktopForemanLiveStep>()
-    const clear = () => { text = ''; textPart = null; writingPart = null; steps.clear() }
+    const clear = () => {
+        text = ''; textPart = null; writingPart = null
+        if (steps.size) { steps.clear(); stepRevision++ }
+    }
     const finishStep = (id: string, status: 'done' | 'error') => {
         const step = steps.get(id)
-        if (step?.status === 'running') steps.set(id, { ...step, status })
+        if (step?.status !== 'running') return
+        steps.set(id, { ...step, status })
+        stepRevision++
     }
     return {
         get writing() { return !!writingPart },
@@ -22,13 +28,11 @@ export function createForemanReplyPreview(runId: string) {
             return { runId, text, ...(steps.size && { steps: [...steps.values()] }) }
         },
         accept(chunk: UIMessageChunk) {
+            const previousText = text, wasWriting = !!writingPart, previousStepRevision = stepRevision
             if (chunk.type === 'start') {
                 clear()
                 started = chunk.messageId === runId
-                return
-            }
-            if (!started) return
-            switch (chunk.type) {
+            } else if (started) switch (chunk.type) {
                 case 'text-delta': {
                     if (chunk.delta.trim()) writingPart = chunk.id
                     const separator = textPart !== null && textPart !== chunk.id ? '\n\n' : ''
@@ -51,6 +55,7 @@ export function createForemanReplyPreview(runId: string) {
                     if (previous && previous.tool !== tool.data) break
                     if (!previous && steps.size < DESKTOP_FOREMAN_LIVE_STEP_LIMIT) {
                         steps.set(id, { tool: tool.data, offset: text.length, status: 'running' })
+                        stepRevision++
                     }
                     if (chunk.type === 'tool-input-error') finishStep(id, 'error')
                     break
@@ -76,6 +81,7 @@ export function createForemanReplyPreview(runId: string) {
                     clear()
                     break
             }
+            return previousText !== text || wasWriting !== !!writingPart || previousStepRevision !== stepRevision
         },
     }
 }

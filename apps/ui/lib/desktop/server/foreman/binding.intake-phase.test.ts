@@ -104,6 +104,10 @@ describe('production Foreman intake phase and model brief', () => {
     it('previews only public reply text from the active owned turn', async () => {
         const app = await desktopForeman(runtime)
         const id = randomUUID()
+        const subscription = new AbortController()
+        const events = vi.fn()
+        await app.subscribe(chat, subscription.signal, events)
+        await expect(app.subscribe({ ...chat, workspaceId: '2' }, subscription.signal, vi.fn())).rejects.toThrow()
         let stream!: ReadableStreamDefaultController<Uint8Array>
         const body = new ReadableStream<Uint8Array>({ start(controller) { stream = controller } })
         const push = (chunk: object) => stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`))
@@ -128,6 +132,7 @@ describe('production Foreman intake phase and model brief', () => {
             push({ type: 'text-delta', id: 'foreign', delta: 'Do not accept this reply' })
             await new Promise(resolve => setImmediate(resolve))
             expect((await app.state()).writing).toBe(false)
+            expect(events).not.toHaveBeenCalled()
             push({ type: 'start', messageId: id })
             push({ type: 'reasoning-delta', id: 'internal', delta: 'fixture-private-reasoning' })
             push({ type: 'tool-input-available', toolCallId: 'fixture-private-tool-id', toolName: 'search_docs', input: { query: 'fixture-private-input' } })
@@ -147,6 +152,8 @@ describe('production Foreman intake phase and model brief', () => {
                 writing: true, liveReply: { runId: id, text: 'Visible reply', steps: [{ tool: 'search_docs', offset: 0, status: 'done' }] },
             }))
             expect(JSON.stringify(await app.state())).not.toMatch(/fixture-private|Do not accept this reply/)
+            await vi.waitFor(() => expect(events).toHaveBeenCalledExactlyOnceWith({ type: 'reply-changed', binding: { ...chat, runId: id, model } }))
+            subscription.abort()
             vi.mocked(getRun).mockResolvedValue({ ...run, sessionId: 'foreign-session' })
             expect(await app.state()).toMatchObject({ writing: false, liveReply: null })
             vi.mocked(getRun).mockResolvedValue(run)
@@ -172,7 +179,8 @@ describe('production Foreman intake phase and model brief', () => {
             expect(await app.state()).toMatchObject({ writing: false, liveReply: null })
             app.closeVoiceAdmission()
             expect(signal?.aborted).toBe(true)
-        } finally { vi.useRealTimers(); stream.close() }
+            expect(events).toHaveBeenCalledTimes(1)
+        } finally { subscription.abort(); vi.useRealTimers(); stream.close() }
     })
 
     it('reads the context of an exact completed Foreman run and refuses foreign or unrecorded usage', async () => {

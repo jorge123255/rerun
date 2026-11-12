@@ -24,7 +24,7 @@ import { desktopForemanSavedUiSchema } from './ui-schema'
 import { desktopStarterViewSchema, localStarterDecisionSchema, type DesktopLocalStarterDecision } from './starter'
 import { desktopForemanContextSchema } from '../foreman/context'
 import { desktopForemanRunFailureSchema } from '../foreman/run-failure'
-import { desktopForemanLiveReplySchema } from '../foreman/live-reply'
+import { desktopForemanLiveReplySchema, desktopForemanReplyChangedSchema } from '../foreman/live-reply'
 import { checkedDesktopCoworkerMentions, desktopCoworkerMentionFieldsOf, desktopCoworkerMentionsSchema, desktopDocumentReferenceSchema, foremanDocumentScope, DESKTOP_DOCUMENT_MAX_FILES } from '@rerun/contracts'
 export { desktopForemanSavedUiSchema } from './ui-schema'
 const stateSchema = z.strictObject({
@@ -130,6 +130,7 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
     let sending = false
     let modelGeneration = 0
     let closed = false, refreshing: Promise<DesktopForemanClientState> | undefined
+    let replyRefreshPending = false
     const requests = new Set<AbortController>()
     const discoveryListeners = new Set<(event: Extract<DesktopForemanLiveEvent, { type: 'discovery' }>['event']) => void>()
     const seenNavigation = new Set<string>()
@@ -154,7 +155,14 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
             }
             publish(value)
             return value
-        }).finally(() => { refreshing = undefined; requests.delete(controller) })
+        }).finally(() => {
+            refreshing = undefined
+            requests.delete(controller)
+            if (replyRefreshPending) {
+                replyRefreshPending = false
+                changed()
+            }
+        })
         return refreshing
     }
     const changed = () => { if (!closed && !isDesktopQuitting()) void refresh().catch(error => { if (!closed) options.onError(error instanceof Error ? error.message : 'Could not refresh Foreman.') }) }
@@ -301,6 +309,17 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
     }
     const acceptEvent = (value: unknown) => {
         if (closed || isDesktopQuitting()) return
+        const reply = desktopForemanReplyChangedSchema.safeParse(value)
+        if (reply.success) {
+            const target = reply.data.binding
+            const live = state.view.live
+            if (!sameForemanChat(chat, target) || live && (live.runId !== target.runId
+                || live.model.connectionId !== target.model.connectionId || live.model.model !== target.model.model)) return
+            // A poll already in flight may have read before the new output arrived.
+            if (refreshing) replyRefreshPending = true
+            else changed()
+            return
+        }
         const parsed = foremanLiveEventSchema.safeParse(value)
         if (!parsed.success) return
         const event = parsed.data
