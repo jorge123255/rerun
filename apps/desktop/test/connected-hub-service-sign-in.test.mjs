@@ -190,6 +190,22 @@ test('concurrent hubs cannot complete each other and each claim uses its own ses
     assert.equal(pageA.sent.length, 1)
 })
 
+test('two windows of one hub can complete their own Connect attempts independently', async () => {
+    const { flow, opened } = signIn()
+    const first = hub({ origin: originA, id: 14, responder: connected })
+    const second = hub({ origin: originA, id: 15, responder: connected })
+    await consider(flow, first, ticket(originA, { jti: jtiA, agentId: 'agent-1', key: 'calendar', workspaceId: 7 }))
+    await consider(flow, second, ticket(originA, { jti: jtiB, agentId: 'agent-1', key: 'calendar', workspaceId: 12 }))
+    assert.equal(opened.length, 2)
+    await flow.complete(success(jtiB))
+    assert.deepEqual(first.sent, [])
+    assert.deepEqual(second.sent, [event({ status: 'success' })])
+    assert.equal(new Headers(second.calls[0].init.headers).get('x-workspace-id'), '12')
+    await flow.complete(success(jtiA))
+    assert.deepEqual(first.sent, [event({ status: 'success' })])
+    assert.equal(new Headers(first.calls[0].init.headers).get('x-workspace-id'), '7')
+})
+
 test('rejected callbacks write nothing and never report success', async () => {
     let time = 5_000_000
     const { flow, opened } = signIn(() => time)

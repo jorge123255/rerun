@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { runInNewContext } from 'node:vm'
 import { test } from 'node:test'
-import { checkHub, hubPartition, normalizeHubOrigin, parseHubLink, registerHubProtocol, sameHub } from '../src/main/connected-hub-policy.mjs'
+import { checkHub, hubPartition, hubWindowAddress, normalizeHubOrigin, parseHubLink, registerHubProtocol, sameHub } from '../src/main/connected-hub-policy.mjs'
 import { createHubAuth } from '../src/main/connected-hub-auth.mjs'
 
 const origin = 'https://hub.example.test'
@@ -71,6 +71,13 @@ test('the packaged Mac preview registers its declared development scheme without
     assert.equal(registerHubProtocol(app), false)
 })
 
+test('a new hub window preserves the page and existing workspace or adds the originating tab pin', () => {
+    assert.equal(hubWindowAddress(origin + '/board?label=a%20b#chat', origin, '7'), origin + '/board?label=a%20b&workspace=7#chat')
+    assert.equal(hubWindowAddress(origin + '/board?workspace=9#chat', origin, '7'), origin + '/board?workspace=9#chat')
+    assert.equal(hubWindowAddress(origin + '/board', origin, '-1'), origin + '/board')
+    assert.equal(hubWindowAddress('https://other.test/board', origin, '7'), null)
+})
+
 test('browser sign-in uses PKCE and exchanges a matching state once on its own hub', async () => {
     let opened, exchanges = 0
     const auth = createHubAuth({ origin, openBrowser: async url => { opened = new URL(url) }, fetcher: async (url, request) => {
@@ -124,7 +131,7 @@ test('the hub preload exposes only its approved audience and drops the privilege
         const ipcRenderer = { sendSync: () => value, on: (channel, fn) => listeners.set(channel, fn),
             removeListener: channel => listeners.delete(channel), invoke: async (...args) => { requests.push(args); return false } }
         const contextBridge = { exposeInMainWorld: (name, api) => { exposed[name] = api } }
-        runInNewContext(source, { require: () => ({ ipcRenderer, contextBridge }) })
+        runInNewContext(source, { require: () => ({ ipcRenderer, contextBridge }), sessionStorage: { getItem: () => '7' } })
         return { exposed, listeners, requests }
     }
     assert.deepEqual(Object.keys(bootstrap(null).exposed), [])
@@ -150,7 +157,7 @@ test('the hub preload exposes only its approved audience and drops the privilege
     assert.deepEqual(clicks, [[notice.id]])
     assert.equal(await native.exposed.rerunShell.notifications.show(notice), false)
     native.exposed.rerunShell.badge.set(2)
-    assert.deepEqual(native.requests, [['hub:notify', notice], ['hub:badge', 2]])
+    assert.deepEqual(native.requests, [['hub:notify', notice], ['hub:badge', 2, '7']])
     const quickAsk = bootstrap({ audience: 'hub-quick-ask', shortcut: 'CommandOrControl+Shift+Space' })
     const composer = quickAsk.exposed.rerunShell
     assert.deepEqual(Array.from(composer.capabilities), ['quickAsk'])

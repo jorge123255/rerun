@@ -20,7 +20,7 @@ import { attachDesktopContextMenu, externalDesktopLink } from './window-context-
 import { createWindowFind } from './window-find.mjs'
 import { createQuickAskWindow } from './quick-ask-window.mjs'
 import { loadQuickAskShortcut } from './quick-ask-shortcut.mjs'
-import { createBoardWindows } from './board-windows.mjs'
+import { cascadeWindowBounds, createBoardWindows } from './board-windows.mjs'
 import { createConnectedHubs } from './connected-hubs.mjs'
 import { parseHubLink, registerHubProtocol } from './connected-hub-policy.mjs'
 
@@ -32,7 +32,7 @@ let storageSetupError
 let window
 let menuBar
 let shortcutPreference
-let lastQuickAskWindow
+let lastWorkspaceWindow
 let showWindowOnReady = true
 let supervisor
 let runtime
@@ -96,7 +96,7 @@ function setMacUnread(count) {
     publishMacUnread()
 }
 function toggleQuickAsk() {
-    const focused = BrowserWindow.getFocusedWindow() ?? lastQuickAskWindow
+    const focused = BrowserWindow.getFocusedWindow() ?? lastWorkspaceWindow
     if (connectedHubs?.toggleQuickAsk(focused)) quickAsk.reset()
     else quickAsk.toggle()
 }
@@ -247,7 +247,7 @@ async function launch() {
             available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate),
             setUnread: count => { hubUnread = count; publishMacUnread() }, desktopSettings, changeDesktopSettings })
         app.on('browser-window-focus', (_event, candidate) => {
-            if (boards.get(candidate) || connectedHubs.scopeOf(candidate)) lastQuickAskWindow = candidate
+            if (boards.get(candidate) || connectedHubs.ownsWindow(candidate)) lastWorkspaceWindow = candidate
         })
         if (pendingHubLink) {
             const link = pendingHubLink
@@ -267,7 +267,11 @@ async function launch() {
                 windowFind.open(connectedHubs.scopeOf(focused) ? focused : focusedBoard())
             },
             openQuickAsk: toggleQuickAsk,
-            openNewWindow: () => { void openAdditionalBoard().catch(() => {}) },
+            openNewWindow: (_item, candidate) => {
+                const focused = candidate ?? BrowserWindow.getFocusedWindow() ?? lastWorkspaceWindow
+                if (connectedHubs.duplicateWindow(focused)) return
+                void openAdditionalBoard().catch(() => {})
+            },
             openHubPicker: connectedHubs.openPicker,
         })
         try {
@@ -595,13 +599,7 @@ async function openAdditionalBoard(bounds) {
     if (!bounds) {
         const from = focusedBoard()
         if (!boardContext(from)) return
-        const { x, y, width, height } = from.getBounds()
-        const { workArea } = screen.getDisplayMatching({ x, y, width, height })
-        bounds = {
-            x: Math.max(workArea.x, Math.min(x + 28, workArea.x + workArea.width - width)),
-            y: Math.max(workArea.y, Math.min(y + 28, workArea.y + workArea.height - height)),
-            width, height,
-        }
+        bounds = cascadeWindowBounds(from, screen)
     }
     const current = runtime
     if (!mac || !runtimeScope() || !activeSession) return

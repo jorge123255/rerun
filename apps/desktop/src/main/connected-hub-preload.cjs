@@ -82,7 +82,11 @@ if (bootstrap?.audience === 'picker') {
             show: notice => ipcRenderer.invoke('hub:notify', notice).catch(() => false),
             onClick: callback => subscribe('hub:notification-click', callback),
         },
-        badge: { set: count => { void ipcRenderer.invoke('hub:badge', count).catch(() => {}) } },
+        badge: { set: count => {
+            let workspace = null
+            try { workspace = sessionStorage.getItem('rerun:tab-workspace') } catch {}
+            void ipcRenderer.invoke('hub:badge', count, workspace).catch(() => {})
+        } },
         settings: {
             get: () => ipcRenderer.invoke('hub:settings'),
             set: patch => ipcRenderer.invoke('hub:set-settings', { quickAsk: patch?.quickAsk, openAtLogin: patch?.openAtLogin }),

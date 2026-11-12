@@ -1,6 +1,16 @@
 import { randomUUID } from 'node:crypto'
 import { BeforeQuitDrafts } from './before-quit.mjs'
 
+export function cascadeWindowBounds(window, screen) {
+    const { x, y, width, height } = window.getBounds()
+    const { workArea } = screen.getDisplayMatching({ x, y, width, height })
+    return {
+        x: Math.max(workArea.x, Math.min(x + 28, workArea.x + workArea.width - width)),
+        y: Math.max(workArea.y, Math.min(y + 28, workArea.y + workArea.height - height)),
+        width, height,
+    }
+}
+
 export function createBoardWindows({ startupUrl, isDesktopPage }) {
     const entries = new Map()
     const live = entry => entry && !entry.window.isDestroyed() && !entry.contents.isDestroyed()

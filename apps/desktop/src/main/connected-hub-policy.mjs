@@ -43,6 +43,24 @@ export function isHubPath(path) {
     return typeof path === 'string' && /^\/(?![\/\\])[\x21-\x7e]{0,1999}$/.test(path) && !path.includes('\\')
 }
 
+export function parseHubWorkspaceId(raw) {
+    if (typeof raw !== 'string' || !/^\d+$/.test(raw)) return null
+    const id = Number(raw)
+    return Number.isSafeInteger(id) && id > 0 ? id : null
+}
+
+export function hubWindowAddress(page, origin, workspace) {
+    if (!sameHub(page, origin)) return null
+    const address = new URL(page)
+    const id = parseHubWorkspaceId(workspace)
+    const selected = address.searchParams.get('workspace')
+    if (id && !parseHubWorkspaceId(selected)) {
+        if (selected === null) address.search += `${address.search ? '&' : '?'}workspace=${id}`
+        else address.searchParams.set('workspace', String(id))
+    }
+    return address.href
+}
+
 export async function readHubJson(response) {
     const reader = response.body?.getReader()
     if (!reader) return null

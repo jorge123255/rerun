@@ -1,7 +1,8 @@
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
-import { checkHub, hubPartition, HUB_API_VERSION, normalizeHubOrigin, sameHub } from './connected-hub-policy.mjs'
+import { checkHub, hubPartition, hubWindowAddress, HUB_API_VERSION, normalizeHubOrigin, parseHubWorkspaceId, sameHub } from './connected-hub-policy.mjs'
+import { cascadeWindowBounds } from './board-windows.mjs'
 import { createHubAuth } from './connected-hub-auth.mjs'
 import { createHubDownloads, isHubDownload } from './connected-hub-downloads.mjs'
 import { createConnectedHubQuickAsk } from './connected-hub-quick-ask.mjs'
@@ -28,7 +29,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     const shellIdentity = { apiVersion: HUB_API_VERSION, version, platform: 'mac', channel: 'dev' }
     const notices = createNativeNotifications({ Notification })
     const quickAsk = createConnectedHubQuickAsk({ app, BrowserWindow, screen, preload,
-        current: entry => available() && connected(entry.window) === entry,
+        current: entry => available() && connected(entry.window) === entry && singleQuickAskReceiver(entry),
         showOwner: entry => show(entry.window),
         onUnavailable: entry => { void dialog.showMessageBox(entry.window, { type: 'warning', title: 'Quick Ask',
             message: 'Quick Ask could not open on this Rerun server.', buttons: ['OK'] }).catch(() => {}) },
@@ -36,10 +37,23 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     let picker = null, acceptedPicker = null, connecting = null
     let pendingOpen = null, openingLink = false
 
-    function connected(window) {
+    function entryFor(window) {
         if (!window || window.isDestroyed()) return null
-        const entry = windows.get(window.webContents)
+        return windows.get(window.webContents) ?? null
+    }
+    function connected(window) {
+        const entry = entryFor(window)
         return entry && !entry.recovery?.state() && sameHub(entry.contents.mainFrame?.url, entry.origin) ? entry : null
+    }
+    function singleQuickAskReceiver(entry) {
+        // The upstream web composer writes one origin-wide key; its receiver
+        // must be unique because workspace choice belongs to each tab.
+        return ![...windows.values()].some(other => other !== entry && other.origin === entry.origin && !other.window.isDestroyed())
+            && ![...childWindows.values()].some(child => child.entry.origin === entry.origin
+                && !child.window.isDestroyed() && sameHub(child.window.webContents.mainFrame?.url, entry.origin))
+    }
+    function resetHubQuickAsk(origin) {
+        for (const entry of windows.values()) if (entry.origin === origin) quickAsk.reset(entry)
     }
     const downloads = createHubDownloads({ app, shell,
         ownerOf: contents => {
@@ -74,8 +88,19 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         return connected(entry?.window) && event.senderFrame && event.senderFrame === entry.contents.mainFrame ? entry : null
     }
     function publishUnread() {
+        const byOrigin = new Map()
+        for (const { origin, native } of windows.values()) {
+            if (!native?.unread) continue
+            if (!byOrigin.has(origin)) byOrigin.set(origin, new Map())
+            const counts = byOrigin.get(origin)
+            counts.set(native.workspaceId, Math.max(counts.get(native.workspaceId) ?? 0, native.unread))
+        }
         let count = 0
-        for (const { native } of windows.values()) count += native?.unread ?? 0
+        for (const counts of byOrigin.values()) {
+            const unscoped = counts.get(null) ?? 0
+            counts.delete(null)
+            count += Math.max(unscoped, [...counts.values()].reduce((sum, value) => sum + value, 0))
+        }
         setUnread(count)
     }
     function invalidateNative(entry) {
@@ -170,11 +195,11 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     const stateOf = window => ({ focused: window.isFocused(), visible: window.isVisible() && !window.isMinimized(),
         fullscreen: window.isFullScreen(), maximized: window.isMaximized() })
 
-    async function openHub(origin, desktopSession, path, signal, offline) {
+    async function openHub(origin, desktopSession, path, signal, offline, bounds) {
         signal.throwIfAborted()
         const address = new URL(path ?? '/', origin)
         if (!sameHub(address, origin)) return false
-        const existing = [...windows.values()].find(entry => entry.origin === origin && !entry.window.isDestroyed())
+        const existing = !bounds && [...windows.values()].find(entry => entry.origin === origin && !entry.window.isDestroyed())
         if (existing) {
             const target = path === null ? existing.recovery.target() : address.href
             if (offline) {
@@ -186,7 +211,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             show(existing.window)
             return true
         }
-        const window = new BrowserWindow({ width: 1220, height: 820, minWidth: 720, minHeight: 520, show: false,
+        const window = new BrowserWindow({ width: 1220, height: 820, ...bounds, minWidth: 720, minHeight: 520, show: false,
             title: 'Rerun', backgroundColor: '#101214', titleBarStyle: 'hidden', trafficLightPosition: { x: 12, y: 8 },
             webPreferences: preferences(desktopSession) })
         const contents = window.webContents
@@ -257,6 +282,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             source.on('will-navigate', navigation)
             source.on('will-redirect', navigation)
             source.on('will-attach-webview', event => event.preventDefault())
+            source.on('did-navigate', (_event, url) => { if (sameHub(url, origin)) resetHubQuickAsk(origin) })
             source.on('did-finish-load', () => { if (sameHub(source.mainFrame?.url, origin)) show(child) })
         })
         for (const event of ['focus', 'blur', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'show', 'hide', 'minimize', 'restore']) {
@@ -296,6 +322,25 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             return true
         } catch { abort(); return false }
         finally { signal.removeEventListener('abort', abort) }
+    }
+
+    async function duplicateHub(entry) {
+        const scope = entry.scope
+        const offline = entry.recovery.onOfflinePage()
+        let address = entry.recovery.target()
+        if (!offline) {
+            if (connected(entry.window) !== entry) return
+            const frame = entry.contents.mainFrame
+            const page = frame.url
+            const workspace = await frame.executeJavaScript('sessionStorage.getItem("rerun:tab-workspace")').catch(() => null)
+            if (!available() || connected(entry.window) !== entry || entry.scope !== scope
+                || entry.contents.mainFrame !== frame || frame.url !== page) return
+            address = hubWindowAddress(page, entry.origin, workspace)
+        }
+        if (!address) return
+        resetHubQuickAsk(entry.origin)
+        await openHub(entry.origin, entry.contents.session, address, AbortSignal.timeout(25000), offline,
+            cascadeWindowBounds(entry.window, screen))
     }
 
     async function connect(address, path = null, parent) {
@@ -350,7 +395,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         const entry = hubSender(event)
         if (!entry || !available()) { event.returnValue = null; return }
         invalidateNative(entry)
-        entry.native = { frame: event.senderFrame, id: randomUUID(), unread: 0 }
+        entry.native = { frame: event.senderFrame, id: randomUUID(), unread: 0, workspaceId: null }
         event.returnValue = { audience: 'hub', ...shellIdentity, capabilities }
     })
     ipcMain.handle('hub:quick-ask-close', event => quickAsk.close(quickAsk.sender(event)))
@@ -378,11 +423,13 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             return changeDesktopSettings(value, assertCurrent)
         }],
         ['hub:notify', (entry, value, frame) => notify(entry, value, frame)],
-        ['hub:badge', (entry, count, frame) => {
+        ['hub:badge', (entry, count, frame, workspace) => {
             if (entry.native?.frame !== frame || !Number.isSafeInteger(count) || count < 0) return
             const unread = Math.min(count, 9999)
-            if (entry.native.unread === unread) return
+            const workspaceId = parseHubWorkspaceId(workspace)
+            if (entry.native.unread === unread && entry.native.workspaceId === workspaceId) return
             entry.native.unread = unread
+            entry.native.workspaceId = workspaceId
             publishUnread()
         }],
         ['hub:open-picker', () => openPicker()],
@@ -396,8 +443,23 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
 
     return {
         openPicker,
+        ownsWindow: window => !!entryFor(window),
         scopeOf: window => available() ? connected(window)?.scope : null,
-        toggleQuickAsk: window => quickAsk.toggle(window, connected(window)),
+        duplicateWindow(window) {
+            const entry = entryFor(window)
+            if (!entry) return false
+            if (available()) void duplicateHub(entry).catch(() => {})
+            return true
+        },
+        toggleQuickAsk(window) {
+            const entry = connected(window)
+            if (entry && !singleQuickAskReceiver(entry)) {
+                void dialog.showMessageBox(window, { type: 'info', title: 'Quick Ask',
+                    message: 'Close the other windows for this Rerun server to use Quick Ask here.', buttons: ['OK'] }).catch(() => {})
+                return true
+            }
+            return quickAsk.toggle(window, entry)
+        },
         resetQuickAsk: () => quickAsk.reset(),
         async openLink(link) {
             if (!available()) return

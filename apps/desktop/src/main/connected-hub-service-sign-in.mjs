@@ -18,7 +18,7 @@ const registrationPattern = /^[1-9][0-9]{0,15}$/
 // event: the parked row is single-use, and the page treats a bare success as done.
 export function createHubServiceSignIn({ openBrowser, now = Date.now, channel = 'dev' }) {
     const byJti = new Map()
-    const byOrigin = new Map()
+    const byWindow = new Map()
     const spentClaims = new Map()
 
     function intact(attempt) {
@@ -38,7 +38,7 @@ export function createHubServiceSignIn({ openBrowser, now = Date.now, channel = 
         attempt.spent = true
         attempt.controller.abort()
         if (byJti.get(attempt.jti) === attempt) byJti.delete(attempt.jti)
-        if (byOrigin.get(attempt.origin) === attempt) byOrigin.delete(attempt.origin)
+        if (byWindow.get(attempt.entry) === attempt) byWindow.delete(attempt.entry)
         clearTimeout(attempt.timer)
         attempt.unwatch?.()
         attempt.unwatch = null
@@ -110,7 +110,7 @@ export function createHubServiceSignIn({ openBrowser, now = Date.now, channel = 
 
     return {
         cancel(entry, registrationId, frame) {
-            const attempt = byOrigin.get(entry?.origin)
+            const attempt = byWindow.get(entry)
             if (attempt?.entry === entry && attempt.registrationId === registrationId && attempt.frame === frame) drop(attempt)
         },
         cancelAll() {
@@ -130,12 +130,12 @@ export function createHubServiceSignIn({ openBrowser, now = Date.now, channel = 
                 report(attempt, { status: 'error', message: 'Start a new service sign-in to continue' })
                 return true
             }
-            drop(byOrigin.get(entry.origin))
+            drop(byWindow.get(entry))
             Object.assign(attempt, { jti: ticket.jti, route: ticket.route, workspaceId: ticket.workspaceId,
                 timer: setTimeout(() => drop(attempt), TTL_MS) })
             attempt.timer.unref?.()
             byJti.set(attempt.jti, attempt)
-            byOrigin.set(attempt.origin, attempt)
+            byWindow.set(attempt.entry, attempt)
             watch(attempt)
             try { await Promise.resolve(openBrowser(ticket.href)) }
             catch {
