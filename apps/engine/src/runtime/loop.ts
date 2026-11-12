@@ -5,6 +5,7 @@ import { FOREMAN_AGENT_ID, RERUN_CONNECTION_ID, desktopCoworkerMentionContextPar
 import { applyCaching, withTailBreakpoint } from '../agents/caching.js'
 import { desktopCodexEffort, desktopCustomEffort, desktopSubscriptionEffort, mergeProviderOptions, reasoningProviderOptions } from '../agents/reasoning.js'
 import { prepareRunHistory } from './compaction/compact.js'
+import { recordDesktopCompaction } from '../db/repos/compactions.js'
 import { repairToolPairs } from './compaction/repair.js'
 import { approvalSummary, canonicalHitlName, findPendingHitl, hitlStepLacksMessage, hitlTurnIsOver, isHitlToolName, secretSummary, takeoverSummary, type PendingHitl } from '../tools/builtin/hitl.js'
 import { CLI_PROVIDERS, resolveModel, type ModelOverride } from '../agents/providers.js'
@@ -256,7 +257,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     let releaseConnectionAdmission = () => {}
     let nativeWorker: DesktopNativeWorker | undefined
     let closeModel = async (): Promise<void> => {}
-    let appendP: Promise<unknown> = Promise.resolve()
+    let appendP: Promise<MessageRow | void> = Promise.resolve()
     let contextUsage: (() => ContextOccupancy | undefined) | undefined
     let quickReplies: (() => QuickRepliesCapture | undefined) | undefined
     let cliAuthP: Promise<() => void> | undefined
@@ -564,6 +565,14 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             if (queuedUser) await appendP
             appendP.catch(err => logger.error({ err: String(err), agent: agent.id }, 'append user message failed'))
             turn = { role: 'user', content: [{ type: 'text', text: shared ? signText(userText, author) : userText }, ...context] }
+        }
+        // The display receipt belongs to the prompt that caused compaction. Keep it outside
+        // model history and wait for that user row to exist before recording it.
+        const receipt = ctx.compactionReceipt
+        if (receipt) {
+            const userId = savedUser?.id ?? queuedUser?.id ?? (await appendP.catch(() => undefined))?.id
+            if (userId) await recordDesktopCompaction(agent.id, sessionId, run.id, userId, receipt).catch(error =>
+                logger.warn({ err: String(error), run: run.id }, 'could not save compaction receipt'))
         }
         const turnMessages = [...history, turn]
 

@@ -2,6 +2,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { vi } from 'vitest'
+import type { RunContext } from '../context.js'
 import type { CustomProviderSnapshot } from '@rerun/contracts'
 
 process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-compact-'))
@@ -91,11 +92,12 @@ function longHistory(): Row[] {
 function context(model = 'gpt-4o', extra: Record<string, unknown> = {}) {
     const writes: Array<{ type: string; id: string; data: Record<string, unknown> }> = []
     const logger = { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
-    const ctx = { agent: { id: 'compact-agent', resolved: { provider: 'openai', model, connection: null } }, sessionId: 'sess', provider: 'openai', model, logger, writer: { write: (chunk: never) => writes.push(chunk) }, ...extra } as never
+    const ctx = { agent: { id: 'compact-agent', resolved: { provider: 'openai', model, connection: null } }, sessionId: 'sess', provider: 'openai', model, logger, writer: { write: (chunk: never) => writes.push(chunk) }, ...extra } as unknown as RunContext
     return { ctx, writes, logger }
 }
 
 afterEach(() => {
+    vi.unstubAllEnvs()
     state.rows = []
     state.checkpoint = null
     state.afterArgs = []
@@ -314,4 +316,24 @@ describe('prepareRunHistory', () => {
         expect(await prepareRunHistory(ctx, 'system')).toHaveLength(3)
         expect(state.saved).toHaveLength(1)
     })
+})
+
+it('sets only the terminal Mac compaction receipt and keeps aborted attempts unconfirmed', async () => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    state.rows = longHistory()
+    const completed = context()
+    await prepareRunHistory(completed.ctx, 'system')
+    expect(completed.ctx.compactionReceipt).toEqual({ id: completed.writes[1].id, ...completed.writes[1].data })
+
+    state.summary = new Error('Fixture summary failed')
+    const failed = context()
+    await prepareRunHistory(failed.ctx, 'system')
+    expect(failed.ctx.compactionReceipt).toEqual({ id: failed.writes[0].id, status: 'error' })
+
+    const stop = new AbortController()
+    stop.abort()
+    const aborted = context('gpt-4o', { abortSignal: stop.signal })
+    await prepareRunHistory(aborted.ctx, 'system')
+    expect(aborted.ctx.compactionReceipt).toBeUndefined()
+    expect(aborted.writes.map(event => event.data.status)).toEqual(['running'])
 })

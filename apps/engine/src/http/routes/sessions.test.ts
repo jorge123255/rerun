@@ -170,7 +170,37 @@ describe('GET /agents/:id/sessions/:sid/messages', () => {
         ])
     })
 
+    it('restores a settled compaction only on its owned Mac prompt after reopening the database', async () => {
+        const { recordDesktopCompaction } = await import('../../db/repos/compactions.js')
+        const { closeSystemDb } = await import('../../db/systemDb.js')
+        closeSystemDb(id)
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const session = await createSession(id, 'Compacted')
+            const sibling = await createSession(id, 'Other')
+            const runId = crypto.randomUUID()
+            const user = await reserveDesktopQueuedTurn(id, { runId, sessionId: session.id, message: 'Saved prompt' })
+            const wrong = await appendMessage(id, session.id, { role: 'user', content: 'Saved prompt' })
+            const other = await appendMessage(id, sibling.id, { role: 'user', content: 'Saved prompt' })
+            const receipt = { id: 'a'.repeat(21), status: 'done' as const, messagesCompacted: 8, tokensRecovered: 1234 }
+            await recordDesktopCompaction(id, session.id, runId, wrong.id, { id: 'b'.repeat(21), status: 'error' })
+            await recordDesktopCompaction(id, session.id, runId, other.id, { id: 'b'.repeat(21), status: 'error' })
+            await recordDesktopCompaction(id, session.id, runId, user.id, receipt)
+            await recordDesktopCompaction(id, session.id, runId, user.id, { id: 'b'.repeat(21), status: 'error' })
+            closeSystemDb(id)
+            const path = `/agents/${id}/sessions/${session.id}/messages`
+            const { messages } = await (await app.request(path + '?view=desktop-decisions')).json()
+            expect(messages[0]).toMatchObject({ id: user.id, desktopCompaction: receipt })
+            expect(messages[1]).not.toHaveProperty('desktopCompaction')
+            expect(messages[0].contentJson).not.toContain(receipt.id)
+            expect((await (await app.request(path)).json()).messages[0]).not.toHaveProperty('desktopCompaction')
+            expect((await app.request(`/agents/otheragent/sessions/${session.id}/messages?view=desktop-decisions`)).status).toBe(404)
+        } finally { vi.unstubAllEnvs() }
+    })
+
+
     it('adds the exact queued user binding only to the desktop decision history view', async () => {
+        const { closeSystemDb } = await import('../../db/systemDb.js')
         const session = await createSession(id, 'decisions')
         const sibling = await createSession(id, 'sibling')
         const runId = crypto.randomUUID()
@@ -178,6 +208,7 @@ describe('GET /agents/:id/sessions/:sid/messages', () => {
         const normal = await appendMessage(id, session.id, { role: 'user', content: 'Saved decision' })
         await reserveDesktopQueuedTurn(id, { runId: crypto.randomUUID(), sessionId: sibling.id, message: 'Other chat' })
         const path = `/agents/${id}/sessions/${session.id}/messages`
+        closeSystemDb(id)
         vi.stubEnv('RERUN_DESKTOP_APP', '1')
         try {
             const result = await app.request(path + '?view=desktop-decisions')

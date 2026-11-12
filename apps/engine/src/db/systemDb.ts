@@ -274,6 +274,15 @@ async function open(id: string): Promise<SystemDb> {
     mkdirSync(agentDataDir(id), { recursive: true })
     const client = createClient({ url: `file:${systemDbPath(id)}` })
     await migrateSystemDb(client, systemDbPath(id))
+    // Mac display receipts have an additive table, independent of the shared engine ladder.
+    // A profile can already be on a newer shared ladder and still need this local table.
+    if (desktopApp()) await client.execute(`
+        CREATE TABLE IF NOT EXISTS desktop_chat_compactions (
+            message_id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+            run_id TEXT NOT NULL UNIQUE REFERENCES runs(id) ON DELETE CASCADE,
+            receipt TEXT NOT NULL
+        );
+    `)
     // Reconcile the managed Mac Foreman's tables independently of the shared migration ladder.
     if (desktopApp() && id === FOREMAN_AGENT_ID) await client.executeMultiple(`
         CREATE TABLE IF NOT EXISTS desktop_foreman_reply_sources (

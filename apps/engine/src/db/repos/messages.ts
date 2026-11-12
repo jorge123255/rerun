@@ -5,6 +5,7 @@ import { getSystemDb } from '../systemDb.js'
 import { messages, sessions, type MessageRow } from '../schema.js'
 import { newId, nowIso } from '../../lib/ids.js'
 import type { InStatement, InValue } from '@libsql/client'
+import { savedCompactionColumn, withSavedCompaction } from './compactions.js'
 import { foremanReplySourceUpdate, type ForemanReplyTurn } from './foreman-reply-sources.js'
 
 // What was said, which is not everything that carries a `text`: a reasoning part does too, and so
@@ -96,8 +97,9 @@ export async function listDesktopForemanMessages(sessionId: string) {
         WHERE receipt.message_id = messages.id AND run.session_id = messages.session_id
           AND run.agent_id = ${FOREMAN_AGENT_ID} AND messages.role = 'user'
     )`
-    return db.select({ ...getTableColumns(messages), foremanRunId }).from(messages)
+    const rows = await db.select({ ...getTableColumns(messages), foremanRunId, savedCompaction: savedCompactionColumn(FOREMAN_AGENT_ID) }).from(messages)
         .where(eq(messages.sessionId, sessionId)).orderBy(asc(messages.createdAt), asc(sql`rowid`))
+    return rows.map(withSavedCompaction)
 }
 
 // The internal desktop history projection can identify the exact user row admitted for a
@@ -110,8 +112,9 @@ export async function listDesktopDecisionMessages(agentId: string, sessionId: st
         WHERE receipt.message_id = messages.id AND run.session_id = messages.session_id
           AND run.agent_id = ${agentId} AND messages.role = 'user'
     )`
-    return db.select({ ...getTableColumns(messages), desktopRunId }).from(messages)
+    const rows = await db.select({ ...getTableColumns(messages), desktopRunId, savedCompaction: savedCompactionColumn(agentId) }).from(messages)
         .where(eq(messages.sessionId, sessionId)).orderBy(asc(messages.createdAt), asc(sql`rowid`))
+    return rows.map(withSavedCompaction)
 }
 
 /** Read only the text attachment explicitly stored with this user message. */

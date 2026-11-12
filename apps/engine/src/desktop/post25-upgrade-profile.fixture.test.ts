@@ -88,6 +88,7 @@ test('an earlier desktop data-dir 8 and system.db 10 upgrade once and stay put o
     expect(createHash('sha256').update(await readFile(scheduleFile(AGENT, 'morning-digest'), 'utf8')).digest('hex')).toBe(routineBefore)
     expect(await tableNames(raw(), customTables)).toEqual(expectedCustom)
     expect(await tableNames(reopened.client, triggerTables)).toEqual(expectedTrigger)
+    expect((await reopened.client.execute('SELECT receipt FROM desktop_chat_compactions')).rows).toEqual([])
     closeSystemDb(AGENT)
     expect(agentDataDir(AGENT).startsWith(root)).toBe(true)
 

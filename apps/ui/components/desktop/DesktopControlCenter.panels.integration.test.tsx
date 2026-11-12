@@ -1077,3 +1077,32 @@ test('reopens the localized workspace checklist from Help after a persisted dism
     expect(document.body.textContent).toContain('Connecter un modèle')
     expect(app.contentWrites).toEqual([])
 })
+
+test('reopens saved compaction at its original prompt, with no step in the sibling chat', async () => {
+    const app = fixture(undefined, true, undefined, id => [
+        { id: 'engine-compaction-prompt', role: 'user', parts: [{ type: 'text', text: 'A saved prompt' }], ...(id === reviewer.id + '-first' && {
+            metadata: { compactionReceipt: { id: 'a'.repeat(21), status: 'done', messagesCompacted: 8, tokensRecovered: 1234 } },
+        }) },
+        { id: 'engine-follow-up', role: 'assistant', parts: [{ type: 'text', text: 'A saved reply' }] },
+    ])
+    const log = (container: HTMLElement) => container.querySelector('[data-desktop-tab-active="true"] [role="log"]')
+    const check = async (container: HTMLElement) => {
+        const shown = await until(() => log(container)?.textContent?.includes('Context compacted') ? log(container) : null)
+        expect(shown.textContent).toMatch(/A saved prompt.*Context compacted.*A saved reply/)
+        expect(shown.textContent).toContain('8 earlier messages summarized')
+        expect(shown.textContent).toContain('1,234 tokens')
+        expect(shown.textContent?.match(/Context compacted/g)).toHaveLength(1)
+    }
+    const mounted = await app.mount()
+    await openBoardChat(mounted.container)
+    await check(mounted.container)
+    await click('Reviewer second chat', mounted.container)
+    await until(() => log(mounted.container)?.textContent?.includes('A saved reply'))
+    expect(log(mounted.container)?.textContent).not.toContain('Context compacted')
+    await mounted.unmount()
+    const restored = await app.mount()
+    await openBoardChat(restored.container)
+    await click('Reviewer first chat', restored.container)
+    await check(restored.container)
+    expect(app.contentWrites).toEqual([])
+})

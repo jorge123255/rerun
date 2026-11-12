@@ -2,6 +2,8 @@
 
 import { useDesktopLocale } from './DesktopLocale'
 import { desktopLocaleTag } from '@/lib/desktop/locale'
+import { CompactionStep } from '@/components/chat/CompactionBlock'
+import { savedCompactionOf } from '@/lib/desktop/compaction'
 import { ChatTimeSeparator } from '@/components/chat/ChatTimeSeparator'
 import { MessageTimeTooltip } from '@/components/chat/MessageTimeTooltip'
 import { ExpandableMessageBody } from '@/components/chat/ExpandableMessageBody'
@@ -1483,10 +1485,12 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                     <div ref={findTranscript} className="contents">{transcript.map((message, messageIndex) => {
                         const branches = threadRows.after.get(messageIndex) ?? []
                         const createdAt = messageTimes[messageIndex]
+                        const compaction = savedCompactionOf(message)
                         const withTimeline = (content: ReactNode) => <Fragment key={message.id}>
                             {timeBreaks.has(messageIndex) && <ChatTimeSeparator createdAt={createdAt} locale={locale} />}
                             <div className={branches.length === 0 ? 'contents' : undefined}>
                                 <div className="contents" data-chat-find-message>{content}</div>
+                                {compaction && <CompactionStep data={compaction} />}
                                 {branches.map(thread =>
                                     <DesktopThreadBranch key={thread.id} thread={thread} needsYou={pendingChatSummaries?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />
                                 )}

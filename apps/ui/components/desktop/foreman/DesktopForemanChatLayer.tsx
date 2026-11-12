@@ -1,5 +1,7 @@
 'use client'
 
+import { CompactionStep } from '@/components/chat/CompactionBlock'
+import type { DesktopCompactionReceipt } from '@rerun/contracts'
 import { useDesktopLocale } from '../DesktopLocale'
 
 import type { DesktopSavedChatDecision } from '@/lib/desktop/saved-chat-decision'
@@ -40,6 +42,7 @@ export type DesktopForemanMessage = {
     docs?: UIMessage['parts']
     history?: readonly ForemanHistoryPart[]
     savedDecision?: DesktopSavedChatDecision
+    compaction?: DesktopCompactionReceipt
     documents?: readonly DesktopDocumentReference[]
     coworkerMentions?: readonly DesktopCoworkerMention[]
 }
@@ -198,6 +201,7 @@ export function DesktopForemanChatLayer({
                                 {message.docs?.map((part, index) => <DesktopForemanDocsTool key={index} part={part as import('ai').ToolUIPart} restored={restored} />)}
                             </>}
                         </div>}
+                        {restored && message.role === 'user' && message.compaction && <CompactionStep data={message.compaction} />}
                         {renderChildWork && restored && message.role === 'user' && message.sourceRunId &&
                             <RunCardsSlot runId={message.sourceRunId} register={register} />}
                         </Fragment>

@@ -1,4 +1,4 @@
-import type { DesktopResolvedDocument } from '@rerun/contracts'
+import type { DesktopCompactionReceipt, DesktopResolvedDocument } from '@rerun/contracts'
 import type { DesktopCoworkerMention, DesktopWorkspaceAttachment, DesktopResolvedAttachment, MessageAuthor, Provider } from '@rerun/contracts'
 import type { UIMessageStreamWriter } from 'ai'
 import type { TurnOrder } from '../agents/turn-order.js'
@@ -29,5 +29,6 @@ export type RunContext = {
     hostBreaker?: HostBreaker
     partialResults?: PartialResult[]
     skillProposals?: SkillProposalNotice[]
+    compactionReceipt?: DesktopCompactionReceipt
     screenshots?: ScreenshotStore
 }

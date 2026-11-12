@@ -7,6 +7,7 @@ import {
     foremanDecisionSchema, foremanBuildSchema, foremanLiveEventSchema, foremanDigestSchema, visibleText,
     type DesktopForemanModelRef, type DesktopForemanLiveEvent,
 } from '@rerun/contracts'
+import { savedCompactionOf } from '@/lib/desktop/compaction'
 import { desktopSavedChatReceiptOf } from '@/lib/desktop/saved-chat-decision'
 import { foremanHistoryParts } from '@/components/desktop/foreman/transcript/parts'
 import { desktopPendingApprovalSchema, type DesktopApprovalAnswer } from '@/lib/desktop/approvals'
@@ -39,6 +40,7 @@ const stateSchema = z.strictObject({
             documents: z.array(desktopDocumentReferenceSchema).max(DESKTOP_DOCUMENT_MAX_FILES).optional(),
             coworkerMentions: desktopCoworkerMentionsSchema.optional(),
             savedDecision: z.unknown().optional(),
+            compactionReceipt: z.unknown().optional(),
         }).optional(),
     })).max(5000),
     ui: z.strictObject({ snapshot: desktopForemanSavedUiSchema.nullable(), revision: z.number().int().nonnegative() }),
@@ -84,6 +86,7 @@ export function desktopForemanMessages(state: DesktopForemanClientState) {
     }
     return state.messages.map(({ id, role, parts, metadata }) => {
         const receipt = receipts.get(id)
+        const compaction = savedCompactionOf({ role, metadata })
         const documents = role === 'user' ? metadata?.documents?.filter(item => item.scope.agentId === scope.agentId
             && item.scope.tabUid === scope.tabUid && item.scope.sessionId === scope.sessionId) : undefined
         return {
@@ -94,6 +97,7 @@ export function desktopForemanMessages(state: DesktopForemanClientState) {
             ...(documents?.length && { documents }),
             ...(role === 'user' && desktopCoworkerMentionFieldsOf(metadata?.coworkerMentions)),
             ...(receipt && { savedDecision: receipt.decision }),
+            ...(compaction && { compaction }),
             text: visibleText(parts, '\n'),
             docs: parts.filter(part => part && typeof part === 'object' && (
                 (part as { type?: string }).type === 'tool-search_docs' ||

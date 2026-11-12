@@ -28,7 +28,15 @@ export const sessionsListSchema = z.object({ sessions: z.array(sessionSchema) })
 export const messageRoleSchema = z.enum(['user', 'assistant', 'tool'])
 export type MessageRole = z.infer<typeof messageRoleSchema>
 
+const compactionId = z.string().regex(/^[a-z0-9]{21}$/)
+export const desktopCompactionReceiptSchema = z.discriminatedUnion('status', [
+    z.strictObject({ id: compactionId, status: z.literal('done'), messagesCompacted: z.number().int().positive(), tokensRecovered: z.number().int().nonnegative() }),
+    z.strictObject({ id: compactionId, status: z.literal('error') }),
+])
+export type DesktopCompactionReceipt = z.infer<typeof desktopCompactionReceiptSchema>
+
 export const messageSchema = z.object({
+    desktopCompaction: desktopCompactionReceiptSchema.optional(),
     desktopRunId: z.string().uuid().nullish(),
     foremanRunId: z.string().min(1).max(128).nullish(),
     id: z.string(),

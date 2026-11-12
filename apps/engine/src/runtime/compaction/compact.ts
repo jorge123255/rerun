@@ -10,6 +10,7 @@ import { ensureCliAuth } from '../../connections/cli-auth.js'
 import { listMessagesAfter, storedContent } from '../../db/repos/messages.js'
 import { getLatestCheckpoint, saveCheckpoint } from '../../db/repos/checkpoints.js'
 import { newId } from '../../lib/ids.js'
+import { desktopApp } from '../../desktop/policy.js'
 import { deadlineSignal, raceAbort } from '../../lib/abort.js'
 import type { RunContext } from '../context.js'
 import { signHistoryMessage } from '../message-authors.js'
@@ -136,6 +137,7 @@ export async function prepareRunHistory(ctx: RunContext, system: string, overrid
     if (newThroughRowIndex < 0) return working
 
     const checkpointId = newId()
+    const desktop = desktopApp()
     ctx.writer?.write({ type: 'data-compaction', id: checkpointId, data: { status: 'running' } })
 
     try {
@@ -149,11 +151,16 @@ export async function prepareRunHistory(ctx: RunContext, system: string, overrid
 
         const view = repairToolPairs([summaryMessage, ...tail])
         const tokensRecovered = Math.max(0, estimateTokens(middle) - estimateTokens([summaryMessage]))
-        ctx.writer?.write({ type: 'data-compaction', id: checkpointId, data: { status: 'done', messagesCompacted: newThroughRowIndex + 1, tokensRecovered } })
+        const result = { status: 'done' as const, messagesCompacted: newThroughRowIndex + 1, tokensRecovered }
+        if (desktop) ctx.compactionReceipt = { id: checkpointId, ...result }
+        ctx.writer?.write({ type: 'data-compaction', id: checkpointId, data: result })
         ctx.logger.info({ agent: agentId, session: ctx.sessionId, messagesCompacted: newThroughRowIndex + 1, tokensRecovered }, 'context compacted')
         return view
     } catch (error) {
-        ctx.writer?.write({ type: 'data-compaction', id: checkpointId, data: { status: 'error' } })
+        if (!desktop || !ctx.abortSignal?.aborted) {
+            if (desktop) ctx.compactionReceipt = { id: checkpointId, status: 'error' }
+            ctx.writer?.write({ type: 'data-compaction', id: checkpointId, data: { status: 'error' } })
+        }
         ctx.logger.error({ agent: agentId, err: String(error) }, 'compaction failed')
         return working
     }
