@@ -1,4 +1,4 @@
-export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDesktopPage, openDocumentation }) {
+export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDesktopPage, openDocumentation, openFind }) {
     const template = [
         { label: appName, submenu: [
             { role: 'about' },
@@ -26,7 +26,12 @@ export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDes
             { role: 'quit' },
         ] },
         { role: 'fileMenu' },
-        { role: 'editMenu' },
+        { role: 'editMenu', submenu: [
+            { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
+            { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'pasteAndMatchStyle' },
+            { role: 'delete' }, { role: 'selectAll' }, { type: 'separator' },
+            { id: 'rerun-find', label: 'Find…', click: openFind },
+        ] },
         { role: 'viewMenu' },
         { role: 'windowMenu' },
         { role: 'help', submenu: [

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, safeStorage, shell, session, Tray } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, safeStorage, shell, session, Tray, WebContentsView } from 'electron'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { mkdir } from 'node:fs/promises'
@@ -18,6 +18,7 @@ import { createDesktopFileSaves } from './result-files.mjs'
 import { installMacApplicationMenu } from './application-menu.mjs'
 import { createMacMenuBar } from './mac-menu-bar.mjs'
 import { attachDesktopContextMenu, externalDesktopLink } from './window-context-menu.mjs'
+import { createWindowFind } from './window-find.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
@@ -39,6 +40,9 @@ let quittingNow = false
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const draftQuit = new BeforeQuitDrafts()
+const windowFind = createWindowFind({ WebContentsView, scopeOf: candidate => !quitting && !transitioning
+    && candidate && candidate === window && !candidate.isDestroyed() && runtimeScope()
+    && isDesktopPage(candidate.webContents.mainFrame?.url) ? rendererEpoch : null })
 const { saveResultFile, saveCoworkerFile, saveSharedFile } = createDesktopFileSaves({ dialog, context: () => {
     if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
     return { runtime, window }
@@ -114,6 +118,7 @@ else {
         event.preventDefault()
         if (quitting || transitioning) return
         quitting = true
+        windowFind.close(window)
         void completeDesktopQuit({
             flush: () => {
                 if (!window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url) || !draftQuit.ready) return true
@@ -174,6 +179,7 @@ async function launch() {
             Menu, appName: app.name, isDesktopPage,
             settingsWindow: () => !quitting && !transitioning && runtimeScope() && draftQuit.ready ? window : null,
             openDocumentation: () => openExternal('https://docs.rerun.build'),
+            openFind: () => windowFind.open(window),
         })
         try {
             menuBar = createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow: showMainWindow })
@@ -187,6 +193,13 @@ async function launch() {
     app.setPath('userData', dataRoot)
     await prepareWorkspaceWindow(1, false)
     ipcMain.handle('desktop:status', event => { trusted(event); return supervisor?.status ?? bootStatus })
+    if (process.platform === 'darwin') {
+        ipcMain.on('desktop:find-open', event => {
+            try { trusted(event); windowFind.open(window) } catch { /* Ignore untrusted frames. */ }
+        })
+        ipcMain.on('desktop:find-query', (event, input) => windowFind.search(event, input))
+        ipcMain.on('desktop:find-close', event => windowFind.dismiss(event))
+    }
     ipcMain.handle('desktop:retry', async event => {
         trusted(event)
         if (transitioning || quitting) return false
@@ -378,6 +391,7 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
     })
     rendererEpoch = randomUUID()
     const invalidateRenderer = () => {
+        windowFind.close(boardWindow)
         if (window?.webContents !== contents) return
         setMacUnread(0)
         rendererEpoch = randomUUID()

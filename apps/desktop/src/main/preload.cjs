@@ -21,6 +21,7 @@ ipcRenderer.on('desktop:before-quit', (_event, value) => {
 })
 
 contextBridge.exposeInMainWorld('desktopApp', {
+    ...(process.platform === 'darwin' ? { openFind: () => ipcRenderer.send('desktop:find-open') } : {}),
     workspaces: {
         list: () => ipcRenderer.invoke('desktop:workspaces-list'),
         create: input => ipcRenderer.invoke('desktop:workspaces-create', input),

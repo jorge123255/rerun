@@ -8,6 +8,7 @@ const required = [
     'startup.css', 'startup.js', 'runtime.mjs', 'supervisor.mjs', 'ui-host.mjs', 'notifications.mjs', 'application-menu.mjs',
     'mac-menu-bar.mjs', 'tray/trayTemplate.png', 'tray/trayTemplate@2x.png',
     'window-context-menu.mjs',
+    'window-find.mjs', 'find-preload.cjs', 'find.html', 'find.js', 'find.css',
 ]
 
 const src = join(desktopDir, 'src', 'main')

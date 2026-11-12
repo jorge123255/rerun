@@ -27,6 +27,7 @@ test('the Mac Settings item opens only the current desktop frame', () => {
         Menu, appName: 'Rerun Desktop Preview', settingsWindow: () => current,
         isDesktopPage: url => url === desktopUrl,
         openDocumentation: () => calls.push('documentation'),
+        openFind: () => calls.push('find'),
     })
 
     assert.equal(menu[0].label, 'Rerun Desktop Preview')
@@ -51,6 +52,10 @@ test('the Mac Settings item opens only the current desktop frame', () => {
     const help = menu.find(item => item.role === 'help')
     help.submenu.find(item => item.id === 'rerun-documentation').click()
     assert.equal(calls.at(-1), 'documentation')
+    const edit = menu.find(item => item.role === 'editMenu')
+    assert(edit.submenu.some(item => item.role === 'paste'))
+    edit.submenu.find(item => item.id === 'rerun-find').click()
+    assert.equal(calls.at(-1), 'find')
 })
 
 test('the preload forwards the Settings signal without exposing its IPC event', async () => {
@@ -61,7 +66,7 @@ test('the preload forwards the Settings signal without exposing its IPC event', 
         assert.equal(name, 'desktopApp')
         desktopApp = api
     } }
-    runInNewContext(source, { require: () => ({ contextBridge, ipcRenderer }) })
+    runInNewContext(source, { process: { platform: 'darwin' }, require: () => ({ contextBridge, ipcRenderer }) })
 
     const calls = []
     const unsubscribe = desktopApp.onOpenSettings((...args) => calls.push(args))

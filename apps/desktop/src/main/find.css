@@ -1,0 +1,20 @@
+:root { color-scheme: light dark; font: 13px system-ui, sans-serif; }
+body { margin: 0; padding: 3px; background: transparent; }
+form {
+    box-sizing: border-box; display: flex; align-items: center; gap: 4px; height: 44px;
+    padding: 4px 5px 4px 10px; border: 1px solid light-dark(#d1d1d6, #48484a); border-radius: 10px;
+    background: light-dark(#fff, #262629); color: light-dark(#19191b, #f2f2f7);
+    box-shadow: 0 1px 4px #0003;
+}
+input {
+    flex: 1; min-width: 0; background: transparent; border: 0; padding: 3px 2px;
+    color: inherit; font: inherit;
+}
+output { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+button {
+    flex: 0 0 26px; height: 28px; border: 0; border-radius: 5px;
+    background: transparent; color: inherit; font: 16px system-ui, sans-serif;
+}
+button:enabled:hover { background: light-dark(#ededf0, #3a3a3d); }
+button:disabled { opacity: .4; }
+input:focus-visible, button:focus-visible { outline: 2px solid Highlight; outline-offset: 1px; border-radius: 4px; }

@@ -153,8 +153,7 @@ function editingFieldFocused(): boolean {
 }
 
 // ⌘F on a Mac, Ctrl+F elsewhere opens the center. Pressed while the center is open it closes
-// the center and opens Find in the active conversation. Electron has no browser find
-// bar, so the event is not left to the default. ⌘K
+// the center and opens Find in the active conversation or the Mac page. ⌘K
 // toggles the center where nothing else holds it — never from an open coworker chat or from an
 // editing field. The capture listener precedes every local handler, like the original's.
 export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen, disabled = false }: {
@@ -180,10 +179,11 @@ export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen, d
                 return
             }
             if (open) {
-                event.preventDefault()
-                event.stopPropagation()
                 setOpen(false)
-                window.dispatchEvent(new Event('rerun-desktop-conversation-find'))
+                if (!window.dispatchEvent(new Event('rerun-desktop-conversation-find', { cancelable: true }))) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                }
                 return
             }
             event.preventDefault()
@@ -192,4 +192,16 @@ export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen, d
         window.addEventListener('keydown', onKey, true)
         return () => window.removeEventListener('keydown', onKey, true)
     }, [open, setOpen, conversationOpen, disabled])
+    useEffect(() => {
+        const openFind = (window as Window & { desktopApp?: { openFind?: () => void } }).desktopApp?.openFind
+        if (!openFind) return
+        const fallback = (event: KeyboardEvent) => {
+            if (event.defaultPrevented || isDesktopQuitting() || event.key?.toLowerCase() !== 'f'
+                || !event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+            event.preventDefault()
+            openFind()
+        }
+        window.addEventListener('keydown', fallback)
+        return () => window.removeEventListener('keydown', fallback)
+    }, [])
 }

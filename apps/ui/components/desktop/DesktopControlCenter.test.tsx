@@ -145,6 +145,31 @@ const render = (root: ReturnType<typeof createRoot>, overrides: Overrides = {}) 
         darkTheme={overrides.darkTheme} />)
 })
 
+test('the second Mac Find opens page Find only when no conversation claims it', async () => {
+    const openFind = vi.fn()
+    vi.stubGlobal('desktopApp', { openFind })
+    const { root } = mount()
+    await render(root)
+    await press('f', { metaKey: true })
+    expect(dialog()).not.toBeNull()
+    expect(openFind).not.toHaveBeenCalled()
+    await press('f', { metaKey: true })
+    expect(dialog()).toBeNull()
+    expect(openFind).toHaveBeenCalledOnce()
+
+    const findInConversation = vi.fn((event: Event) => event.preventDefault())
+    window.addEventListener('rerun-desktop-conversation-find', findInConversation)
+    try {
+        await press('f', { metaKey: true })
+        await press('f', { metaKey: true })
+        expect(dialog()).toBeNull()
+        expect(findInConversation).toHaveBeenCalledOnce()
+        expect(openFind).toHaveBeenCalledOnce()
+    } finally {
+        window.removeEventListener('rerun-desktop-conversation-find', findInConversation)
+    }
+})
+
 test('⌘F opens and closes the center and claims nothing else, ⌘K toggles where nothing holds it, and Ctrl+F stays a caret key', async () => {
     const { root } = mount()
     await render(root)

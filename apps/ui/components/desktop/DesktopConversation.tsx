@@ -1229,7 +1229,11 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     const expandable = isLongMessage(input)
     useEffect(() => {
         if (!active) return
-        const openFind = () => setFindOpen(true)
+        const openFind = (event: Event) => {
+            if (event.defaultPrevented) return
+            event.preventDefault()
+            setFindOpen(true)
+        }
         window.addEventListener('rerun-desktop-conversation-find', openFind)
         return () => window.removeEventListener('rerun-desktop-conversation-find', openFind)
     }, [active])

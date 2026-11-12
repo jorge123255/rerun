@@ -1,0 +1,66 @@
+import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
+import { test } from 'node:test'
+import { pathToFileURL } from 'node:url'
+import { createWindowFind } from '../src/main/window-find.mjs'
+
+test('page Find accepts only its sandboxed frame and discards stale requests and scopes', async () => {
+    let scope = 'workspace-renderer', lastRequest = 0, currentView
+    const calls = []
+    const contents = Object.assign(new EventEmitter(), {
+        isDestroyed: () => false,
+        findInPage: (text, options) => { calls.push({ text, options }); return ++lastRequest },
+        stopFindInPage: action => calls.push(action),
+        focus: () => calls.push('focus-board'),
+    })
+    const window = Object.assign(new EventEmitter(), {
+        isDestroyed: () => false,
+        webContents: contents,
+        getContentSize: () => [900, 600],
+        contentView: { addChildView: view => assert.equal(view, currentView), removeChildView: view => assert.equal(view, currentView) },
+    })
+    class View {
+        constructor({ webPreferences }) {
+            assert.equal(webPreferences.sandbox, true)
+            assert.equal(webPreferences.contextIsolation, true)
+            assert.equal(webPreferences.nodeIntegration, false)
+            assert.equal(webPreferences.partition, 'rerun-desktop-find')
+            currentView = this
+            this.webContents = Object.assign(new EventEmitter(), {
+                mainFrame: { url: '' }, isDestroyed: () => false,
+                loadFile: async path => { this.webContents.mainFrame.url = pathToFileURL(path).href },
+                setWindowOpenHandler: () => {}, focus: () => {}, send: (...args) => calls.push(args),
+                close: () => calls.push('close-bar'),
+            })
+        }
+        setBackgroundColor() {}
+        setBounds(bounds) { assert.deepEqual(bounds, { x: 508, y: 12, width: 380, height: 52 }) }
+    }
+    const find = createWindowFind({ WebContentsView: View, scopeOf: owner => owner === window ? scope : null })
+    find.open(window)
+    await Promise.resolve()
+    const sender = currentView.webContents
+    const event = { sender, senderFrame: sender.mainFrame }
+    find.search({ sender, senderFrame: {} }, { text: 'foreign' })
+    find.search(event, { text: 'x'.repeat(501) })
+    assert.deepEqual(calls, [])
+    find.search(event, { text: 'alpha' })
+    find.search(event, { text: 'alpha', step: true, forward: false })
+    assert.deepEqual(calls, [
+        { text: 'alpha', options: { forward: true, findNext: true } },
+        { text: 'alpha', options: { forward: false, findNext: false } },
+    ])
+    contents.emit('found-in-page', {}, { requestId: 1, finalUpdate: true, matches: 4 })
+    contents.emit('found-in-page', {}, { requestId: 2, finalUpdate: false, matches: 1 })
+    assert.equal(calls.length, 2)
+    contents.emit('found-in-page', {}, { requestId: 2, finalUpdate: true, matches: 4, activeMatchOrdinal: 3 })
+    assert.deepEqual(calls.at(-1), ['desktop:find-result', { total: 4, active: 3 }])
+    find.search(event, { text: '' })
+    assert.deepEqual(calls.slice(-2), ['clearSelection', ['desktop:find-result', { total: 0, active: 0 }]])
+    scope = 'another-renderer'
+    find.search(event, { text: 'stale' })
+    assert.equal(lastRequest, 2)
+    window.emit('hide')
+    assert.equal(contents.listenerCount('found-in-page'), 0)
+    assert.deepEqual(calls.slice(-2), ['clearSelection', 'close-bar'])
+})

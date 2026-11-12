@@ -63,7 +63,11 @@ function ForemanTranscriptFind({ transcript, hidden, onClose }: {
 }) {
     const [open, setOpen] = useState(false)
     useEffect(() => {
-        const find = () => setOpen(true)
+        const find = (event: Event) => {
+            if (event.defaultPrevented) return
+            event.preventDefault()
+            setOpen(true)
+        }
         window.addEventListener('rerun-desktop-conversation-find', find)
         return () => window.removeEventListener('rerun-desktop-conversation-find', find)
     }, [])
