@@ -13,6 +13,11 @@ if (bootstrap?.audience === 'picker') {
         savedOrigin: () => ipcRenderer.invoke('hub:saved-origin'),
         connect: address => ipcRenderer.invoke('hub:connect', address),
     })
+} else if (bootstrap?.audience === 'hub-offline') {
+    contextBridge.exposeInMainWorld('rerunHubOffline', {
+        state: () => ipcRenderer.invoke('hub:offline-state'),
+        retry: () => ipcRenderer.invoke('hub:offline-retry'),
+    })
 } else if (bootstrap?.audience === 'hub-quick-ask') {
     contextBridge.exposeInMainWorld('rerunShell', {
         apiVersion: bootstrap.apiVersion,

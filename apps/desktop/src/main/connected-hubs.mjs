@@ -5,6 +5,7 @@ import { checkHub, hubPartition, HUB_API_VERSION, normalizeHubOrigin, sameHub } 
 import { createHubAuth } from './connected-hub-auth.mjs'
 import { createHubDownloads } from './connected-hub-downloads.mjs'
 import { createConnectedHubQuickAsk } from './connected-hub-quick-ask.mjs'
+import { createHubRecovery } from './connected-hub-recovery.mjs'
 import { createHubServiceSignIn } from './connected-hub-service-sign-in.mjs'
 import { atomicPrivateJSON, readJSON } from './workspaces/paths.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
@@ -13,6 +14,7 @@ import { QUICK_ASK_SHORTCUT } from './quick-ask-window.mjs'
 import { externalDesktopLink } from './window-context-menu.mjs'
 
 const pickerPage = new URL('./connected-hub.html', import.meta.url)
+const offlinePage = new URL('./connected-hub-offline.html', import.meta.url)
 const preload = fileURLToPath(new URL('./connected-hub-preload.cjs', import.meta.url))
 const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads', 'notifications', 'badge', 'settings', 'oauth']
 
@@ -36,7 +38,7 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
     function connected(window) {
         if (!window || window.isDestroyed()) return null
         const entry = windows.get(window.webContents)
-        return entry && sameHub(entry.contents.mainFrame?.url, entry.origin) ? entry : null
+        return entry && !entry.recovery?.state() && sameHub(entry.contents.mainFrame?.url, entry.origin) ? entry : null
     }
     const downloads = createHubDownloads({ app, shell,
         ownerOf: contents => {
@@ -62,6 +64,10 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
     const serviceSignIn = createHubServiceSignIn({ channel: 'dev', openBrowser: url => shell.openExternal(url) })
     const localSender = event => picker && !picker.isDestroyed() && event.sender === picker.webContents
         && event.senderFrame && event.senderFrame === picker.webContents.mainFrame && event.senderFrame.url === pickerPage.href
+    function offlineSender(event) {
+        const entry = windows.get(event.sender)
+        return available() && entry?.recovery.onOfflinePage() && event.senderFrame === entry.contents.mainFrame ? entry : null
+    }
     function hubSender(event) {
         const entry = windows.get(event.sender)
         return connected(entry?.window) && event.senderFrame && event.senderFrame === entry.contents.mainFrame ? entry : null
@@ -137,13 +143,18 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
     const stateOf = window => ({ focused: window.isFocused(), visible: window.isVisible() && !window.isMinimized(),
         fullscreen: window.isFullScreen(), maximized: window.isMaximized() })
 
-    async function openHub(origin, desktopSession, path, signal) {
+    async function openHub(origin, desktopSession, path, signal, offline) {
         signal.throwIfAborted()
         const address = new URL(path, origin)
         if (!sameHub(address, origin)) return false
-        const existing = [...windows.values()].find(entry => entry.origin === origin && connected(entry.window))
+        const existing = [...windows.values()].find(entry => entry.origin === origin && !entry.window.isDestroyed())
         if (existing) {
-            if (path !== '/') await existing.window.loadURL(address.href)
+            const target = path === '/' ? existing.recovery.target() : address.href
+            if (offline) {
+                if (!existing.recovery.onOfflinePage() && !await existing.recovery.showOffline(target, 'offline')) return false
+            } else if (path !== '/' || existing.recovery.state()) {
+                if (!await existing.recovery.navigate(target)) return false
+            }
             signal.throwIfAborted()
             show(existing.window)
             return true
@@ -159,6 +170,17 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
         const auth = createHubAuth({ origin, openBrowser: url => shell.openExternal(url), fetcher: (url, init) =>
             desktopSession.fetch(url, { ...init, headers: { ...init.headers, 'User-Agent': userAgent } }) })
         const entry = { origin, window, contents, auth, scope: randomUUID(), closeAttempt: null }
+        entry.recovery = createHubRecovery({ window, origin, offlinePage, available,
+            check: signal => checkHub(origin, version, desktopSession.fetch.bind(desktopSession),
+                AbortSignal.any([signal, AbortSignal.timeout(5000)])),
+            invalidate: () => {
+                entry.scope = randomUUID()
+                auth.cancel()
+                quickAsk.reset(entry)
+                closeFind(window)
+                invalidateNative(entry)
+            },
+        })
         windows.set(contents, entry)
         const microphone = desktopMicrophonePermissions({
             context: source => available() && source && connected(windows.get(source)?.window)?.origin === origin
@@ -234,9 +256,9 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
         const abort = () => { if (!window.isDestroyed()) window.destroy() }
         signal.addEventListener('abort', abort, { once: true })
         try {
-            await window.loadURL(address.href)
+            const opened = offline ? await entry.recovery.showOffline(address.href, 'offline') : await entry.recovery.navigate(address.href)
             signal.throwIfAborted()
-            if (!connected(window)) throw new Error('Server left its origin')
+            if (!opened) throw new Error('Server left its origin')
             show(window)
             return true
         } catch { abort(); return false }
@@ -253,10 +275,11 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
             const desktopSession = session.fromPartition(hubPartition(origin))
             const result = await checkHub(origin, version, desktopSession.fetch.bind(desktopSession),
                 AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]))
-            if (!result.ok) return result
+            const offline = !result.ok && result.reason === 'unreachable' && await savedOrigin() === origin
+            if (!result.ok && !offline) return result
             if (!available() || (parent && picker !== parent)) return { ok: false, reason: 'busy' }
             const opening = AbortSignal.any([controller.signal, AbortSignal.timeout(25000)])
-            if (!await openHub(origin, desktopSession, path, opening)) return { ok: false, reason: 'unreachable' }
+            if (!await openHub(origin, desktopSession, path, opening, offline)) return { ok: false, reason: 'unreachable' }
             // The connection is usable even if the convenience of remembering its address fails.
             await atomicPrivateJSON(file, { origin }).catch(() => {})
             if (parent && !parent.isDestroyed()) setTimeout(() => { if (!parent.isDestroyed()) parent.close() }, 0)
@@ -278,6 +301,7 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
 
     ipcMain.on('hub:bootstrap', event => {
         if (localSender(event)) { event.returnValue = { audience: 'picker' }; return }
+        if (offlineSender(event)) { event.returnValue = { audience: 'hub-offline' }; return }
         if (quickAsk.sender(event)) {
             event.returnValue = { audience: 'hub-quick-ask', ...shellIdentity, shortcut: QUICK_ASK_SHORTCUT }
             return
@@ -292,6 +316,8 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
     ipcMain.handle('hub:quick-ask-sent', (event, path) => quickAsk.sent(quickAsk.sender(event), path))
     ipcMain.handle('hub:saved-origin', event => localSender(event) ? savedOrigin() : null)
     ipcMain.handle('hub:connect', (event, address) => localSender(event) ? connect(address, '/', picker) : { ok: false, reason: 'invalid' })
+    ipcMain.handle('hub:offline-state', event => offlineSender(event)?.recovery.state() ?? null)
+    ipcMain.handle('hub:offline-retry', event => offlineSender(event)?.recovery.retry() ?? null)
     for (const [channel, action] of [
         ['hub:window-state', entry => stateOf(entry.window)],
         ['hub:window-chrome', (entry, colors) => {

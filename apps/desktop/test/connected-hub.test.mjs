@@ -111,6 +111,11 @@ test('the hub preload exposes only its approved audience and drops the privilege
     }
     assert.deepEqual(Object.keys(bootstrap(null).exposed), [])
     assert.deepEqual(Object.keys(bootstrap({ audience: 'picker' }).exposed), ['rerunHubPicker'])
+    const offline = bootstrap({ audience: 'hub-offline' })
+    assert.deepEqual(Object.keys(offline.exposed), ['rerunHubOffline'])
+    await offline.exposed.rerunHubOffline.state()
+    await offline.exposed.rerunHubOffline.retry()
+    assert.deepEqual(offline.requests, [['hub:offline-state'], ['hub:offline-retry']])
     const { exposed, listeners } = bootstrap({ audience: 'hub', capabilities: ['auth'] })
     assert.deepEqual(Object.keys(exposed), ['rerunShell'])
     const seen = []
