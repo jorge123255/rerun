@@ -636,7 +636,12 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         if (currentAgents.current.some(agent => agent.id === hit.agentId)) selectCoworker(hit.agentId, hit.id)
     }
 
-    const openSettings = () => { if (creationAdmission.current.settingsAllowed && !workspaceDialogActive && !themeSavingRef.current && !isDesktopQuitting()) setSettings(true) }
+    const openSettingsAt = (tab: typeof settingsTab) => {
+        if (!creationAdmission.current.settingsAllowed || workspaceDialogActive || themeSavingRef.current || isDesktopQuitting()) return
+        setSettingsTab(tab)
+        setSettings(true)
+    }
+    const openSettings = () => openSettingsAt('AI providers')
     function rememberWorkspaceDialogFocus(agentId?: string) {
         workspaceDialogReturnFocus.current = agentId
             ? Array.from(boardFrame.current?.querySelectorAll<HTMLElement>('[data-tile-id]') ?? []).find(tile => tile.dataset.tileId === agentId) ?? null
@@ -785,7 +790,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     <DesktopForemanPanel controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout} mentionTargets={foremanMentionTargets}
                         hidden={controlCenterDisabled || controlCenterOpen || panelOpen || settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
                         findEnabled={foremanOpen && !panelOpen && !controlCenterDisabled}
-                        centerOpen={controlCenterOpen} onOpenTranscriptionSettings={() => { setSettingsTab('Tool services'); setSettings(true) }} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('The Chief of Staff chat was closed.')); setForemanOpen(false) }}
+                        centerOpen={controlCenterOpen} onOpenTranscriptionSettings={() => openSettingsAt('Tool services')} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('The Chief of Staff chat was closed.')); setForemanOpen(false) }}
                         onOpenCoworker={openForemanCoworker} onOpenCalledChat={openCoworkerChat} onOpenBox={openForemanBox}
                         onReviewTemplate={reviewTemplate} providers={providers} onOpenModelSettings={openSettings}
                         agentNameOf={id => currentAgents.current.find(agent => agent.id === id)?.name ?? 'Coworker'} />

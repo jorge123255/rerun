@@ -1,6 +1,6 @@
 'use client'
 
-import { useId, useState } from 'react'
+import { useId, useImperativeHandle, useState, type Ref } from 'react'
 import type { ConnectionSummary, DesktopForemanModelRef } from '@rerun/contracts'
 import { UsageRing } from '@/components/agent/UsageRing'
 import { Button } from '@/components/ui/button'
@@ -11,7 +11,10 @@ import { CheckIcon, ChevronDownIcon } from '@/lib/icons'
 import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopModelPillUsageTooltip, useDesktopModelPillUsage } from '../usage/DesktopModelPillUsage'
 
-export function DesktopForemanModelPill({ view, connections, disabled, saving, onPick, onSettings }: {
+export type DesktopForemanModelPillHandle = { open(): void }
+
+export function DesktopForemanModelPill({ ref, view, connections, disabled, saving, onPick, onSettings }: {
+    ref?: Ref<DesktopForemanModelPillHandle>
     view: DesktopModelView
     connections?: readonly ConnectionSummary[]
     disabled: boolean
@@ -23,6 +26,13 @@ export function DesktopForemanModelPill({ view, connections, disabled, saving, o
     const [open, setOpen] = useState(false)
     const [error, setError] = useState<string>()
     const titleId = useId()
+    useImperativeHandle(ref, () => ({
+        open() {
+            if (disabled || saving) return
+            setError(undefined)
+            setOpen(true)
+        },
+    }), [disabled, saving])
     const { effective, conversation } = view
     const usage = useDesktopModelPillUsage(effective, connections)
     const label = !effective.model ? t('foreman.modelPicker.setUp') : effective.source === 'workspace'

@@ -145,6 +145,58 @@ test('the native Settings menu and the keyboard shortcut share the desktop admis
     expect(listeners.size).toBe(0)
 })
 
+test('Chief of Staff reconnect opens AI providers after the transcription setup has opened Tool services', async () => {
+    vi.stubGlobal('EventSource', class { close() {} })
+    const container = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(container)
+    const chat = { workspaceId: '1', chatId: 'fmc_settings' }
+    const model = { connectionId: 'plan', model: 'fixture-model' }
+    const attemptId = '00000000-0000-4000-8000-000000000001'
+    const providers: ConnectionsList = { default: model, connections: [{ id: 'plan', name: 'Fixture', provider: 'codex', models: [model.model],
+        connected: true, credentialRejected: false, planLimits: null, createdAt: '', extraModels: [] }] }
+    const fetcher = mockDesktopFetch((url, init) => {
+        const method = init?.method ?? 'GET'
+        if (url === settingsUrl && method === 'GET') return Response.json(providers)
+        if (url === '/api/desktop/codex-login' && method === 'POST') {
+            expect(JSON.parse(String(init?.body))).toEqual({ action: 'refresh' })
+            return Response.json({ status: { phase: 'connected' }, providers })
+        }
+        if (url === '/api/desktop/foreman' && method === 'GET') return Response.json({
+            chat, sessionId: 'chief-fixture', model: null, runFailure: 'unauthorized',
+            messages: [{ id: 'saved-user', role: 'user', parts: [{ type: 'text', text: 'An existing question' }] }],
+            view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
+            ui: { revision: 0, snapshot: null },
+        })
+        if (url === '/api/desktop/foreman' && method === 'POST') {
+            const change = JSON.parse(String(init?.body))
+            expect(change.action).toBe('ui')
+            return Response.json({ revision: change.expectedRevision + 1 })
+        }
+        if (url.startsWith('/api/desktop/foreman/voice?')) return Response.json({ target: { chat, model }, receipt: null, setup: 'transcription',
+            attempt: { attemptId, revision: attemptId, phase: 'review', transcript: null, error: null, messageId: null, updatedAt: '2026-11-11T00:00:00Z',
+                recording: { attemptId, sha256: 'a'.repeat(64), byteLength: 10, mimeType: 'audio/webm', extension: 'webm', transcriptionFormat: 'webm', durationMs: 1300, levels: [0.2] } },
+        })
+        if (url === '/api/desktop/auxiliary' && method === 'GET') return Response.json([])
+        if (url.startsWith('/api/desktop/foreman/') || url.startsWith('/api/desktop/agents/foreman/')) return new Response(null, { status: 404 })
+    })
+    const findButton = (text: string) => [...container.querySelectorAll('button')].find(button => button.textContent?.trim() === text)
+    const section = () => container.querySelector('nav[aria-label="Settings sections"] [aria-current="page"]')?.textContent?.trim()
+    try {
+        await act(async () => root.render(<DesktopApp initialData={{ ...providers, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />))
+        await act(async () => container.querySelector<HTMLButtonElement>('[data-foreman-orb] button')!.click())
+        expect(findButton('Set up transcription')).toBeDefined()
+        await act(async () => findButton('Set up transcription')!.click())
+        expect(section()).toBe('Tool services')
+        await act(async () => findButton('Team board')!.click())
+        expect(section()).toBeUndefined()
+        await act(async () => findButton('Reconnect')!.click())
+        expect(section()).toBe('AI providers')
+        expect(fetcher.mock.calls.some(([url, init]) => url === settingsUrl && init?.method === 'PATCH')).toBe(false)
+    } finally {
+        await act(async () => root.unmount())
+    }
+})
+
 test('a reopened workspace can replace a saved key and recover after a failed save', async () => {
     const container = document.createElement('div')
     document.body.append(container)

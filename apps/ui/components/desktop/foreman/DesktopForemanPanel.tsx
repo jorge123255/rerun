@@ -22,7 +22,7 @@ import { useDesktopForemanIntake } from '@/lib/desktop/foreman-intake'
 import { createDesktopForemanIntakeClient } from '@/lib/desktop/foreman-intake/client'
 import { DesktopForemanFilePermissions } from './DesktopForemanFilePermissions'
 import { buildDesktopModelView } from '@/lib/desktop/chat-model'
-import { DesktopForemanModelPill } from './DesktopForemanModelPill'
+import { DesktopForemanModelPill, type DesktopForemanModelPillHandle } from './DesktopForemanModelPill'
 import { DesktopForemanContext } from './DesktopForemanContext'
 
 export type DesktopForemanCommand = { id: string; chat: DesktopForemanChatRef; text: string; signal: AbortSignal; settle: (error?: Error) => void }
@@ -81,6 +81,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const [dockFeed, setDockFeed] = useState(() => projectFeed(initial))
     const [voice, setVoice] = useState<{ slot: ReactNode; busy: boolean } | null>(null)
     const [modelSaving, setModelSaving] = useState(false)
+    const modelPicker = useRef<DesktopForemanModelPillHandle>(null)
     const [error, setError] = useState<string | null>(null)
     const current = useRef(props)
     current.current = props
@@ -162,6 +163,10 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const voiceModel = props.modelChoice ?? state.model ?? (effective?.available && effective.connectionId && effective.model
         ? { connectionId: effective.connectionId, model: effective.model } : undefined)
     const pendingSend = state.ui.snapshot?.pendingSend
+    const modelPickerView = !props.hidden && props.controlledOpen !== false && props.composerTrailing == null && !intakeOpen && !pendingStarter ? view : undefined
+    const modelDisabled = !!(state.view.live || state.question || state.approval || pendingSend || voice?.busy)
+    const canSwitchModel = !modelDisabled && !modelSaving && modelPickerView?.catalog.some(group =>
+        group.models.some(model => group.connectionId !== effective?.connectionId || model.id !== effective?.model))
     return <>
     {voiceModel && <ForemanVoiceOwner target={{ chat: state.chat, model: voiceModel }}
         active={!props.hidden && !state.view.live && !state.question && !state.approval && !intakeOpen && !pendingStarter && !pendingSend && !modelSaving} engage={() => {}}
@@ -179,18 +184,19 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         approval={state.approval} onDecideApproval={client.decideApproval}
         starter={state.starter} onStarterAnswer={client.answerStarter} intakeFinished={intake.finished}
         runNotice={state.runFailure && !pendingSend ? <ProviderErrorNotice kind={state.runFailure}
+            onSwitchModel={canSwitchModel ? () => modelPicker.current?.open() : undefined}
             onReconnect={props.onOpenModelSettings} onOpenConnections={props.onOpenModelSettings} /> : null}
         streaming={!!state.view.live} orbState={state.view.live ? 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
         headerActions={<><DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} onApprovalPermissionChanged={() => { void client.refresh().catch(() => {}) }} />{error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}</>}
-        composerTrailing={props.composerTrailing ?? (!props.hidden && props.controlledOpen !== false && view && <div className="flex min-w-0 items-center">
-            <DesktopForemanModelPill view={view} connections={providers?.connections} saving={modelSaving} onSettings={props.onOpenModelSettings}
-                disabled={!!state.view.live || !!state.question || !!state.approval || !!state.ui.snapshot?.pendingSend || !!voice?.busy}
+        composerTrailing={props.composerTrailing ?? (modelPickerView && <div className="flex min-w-0 items-center">
+            <DesktopForemanModelPill ref={modelPicker} view={modelPickerView} connections={providers?.connections} saving={modelSaving}
+                onSettings={props.onOpenModelSettings} disabled={modelDisabled}
                 onPick={async model => {
                     setModelSaving(true)
                     try { await client.setModel(state.model, model) } finally { setModelSaving(false) }
                 }} />
-            <DesktopForemanContext context={state.context} effective={view.effective} />
+            <DesktopForemanContext context={state.context} effective={modelPickerView.effective} />
         </div>)}
     /></>
 }

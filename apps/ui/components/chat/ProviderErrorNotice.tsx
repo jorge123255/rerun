@@ -81,9 +81,9 @@ export function ProviderErrorNotice({ kind, message = '', onSwitchModel, onOpenC
         actions.push({
             key: 'switch',
             leading: <Icon icon={GaugeIcon} size="sm" />,
-            title: 'Switch to another model',
-            cta: 'Switch',
-            description: onSwitchModel ? 'Pick another model for this conversation.' : 'Pick another connection of this workspace.',
+            title: onSwitchModel ? 'Switch to another model' : 'Open provider settings',
+            cta: onSwitchModel ? 'Switch' : 'Settings',
+            description: onSwitchModel ? 'Pick another model for this conversation.' : 'Add or reconnect a provider for this workspace.',
             onClick: switchModel,
         })
     }

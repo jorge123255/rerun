@@ -122,12 +122,13 @@ it('shows the saved connection failure with a Settings action and clears it when
     expect(document.querySelector('[role="alert"]')).toBeNull()
 })
 
-it('keeps the Chief of Staff picker bound to the restored model and switches to the workspace plan', async () => {
+it('opens the exact chat model picker from a settled failure and saves only an explicit selection', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     vi.stubGlobal('EventSource', Source)
     const chat = { workspaceId: '1', chatId: 'fmc_abcdefgh' }
     const picked: DesktopForemanModelRef = { connectionId: 'api', model: 'local-model' }
-    const server = { chat, sessionId: 'session', model: picked as DesktopForemanModelRef | null, messages: [],
+    const server = { chat, sessionId: 'session', model: picked as DesktopForemanModelRef | null, runFailure: 'provider_error',
+        messages: [{ id: 'saved-prompt', role: 'user', parts: [{ type: 'text', text: 'An existing question' }] }],
         view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
         ui: { revision: 0, snapshot: null },
     }
@@ -137,6 +138,7 @@ it('keeps the Chief of Staff picker bound to the restored model and switches to 
     const providers = { default: { connectionId: 'plan', model: 'plan-model' }, connections: [defaultConnection,
         { ...defaultConnection, id: 'api', name: 'API', provider: 'openrouter' as const, models: ['local-model'], planLimits: null }] }
     const changes: unknown[] = []
+    const onOpenModelSettings = vi.fn()
     vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>(async (url, init) => {
         if (url !== '/api/desktop/foreman') return new Response(null, { status: 404 })
         if (!init?.body) return Response.json(server)
@@ -149,18 +151,27 @@ it('keeps the Chief of Staff picker bound to the restored model and switches to 
     const mount = async () => {
         root = createRoot(document.body.appendChild(document.createElement('div')))
         await act(async () => root!.render(<DesktopForemanPanel onClose={vi.fn()} onOpenCoworker={vi.fn()} onOpenCalledChat={vi.fn()} onOpenBox={vi.fn()}
-            agentNameOf={id => id} providers={providers} />))
+            agentNameOf={id => id} providers={providers} onOpenModelSettings={onOpenModelSettings} />))
     }
     await mount()
     expect(trigger().getAttribute('aria-label')).toContain('local-model')
     expect(document.querySelector('[data-slot="model-usage-ring"]')).toBeNull()
-    await act(async () => trigger().click())
+    const switchModel = [...document.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Switch')!
+    await act(async () => switchModel.click())
+    expect(onOpenModelSettings).not.toHaveBeenCalled()
+    expect(trigger().getAttribute('aria-expanded')).toBe('true')
+    expect(changes).toEqual([])
     const workspace = Array.from(document.querySelectorAll('button')).find(button => button.textContent?.startsWith('Workspace default'))!
     await act(async () => workspace.click())
     expect(changes).toEqual([{ action: 'model', chat, expected: picked, model: null }])
     expect(trigger().getAttribute('aria-label')).toContain('Session 27% used')
     await act(async () => root!.unmount())
+    providers.connections.splice(1, 1)
     await mount()
     expect(trigger().getAttribute('aria-label')).toContain('Session 27% used')
+    const fallback = document.querySelector<HTMLButtonElement>('[role="alert"] button')!
+    expect(fallback.textContent?.trim()).toBe('Settings')
+    await act(async () => fallback.click())
+    expect(onOpenModelSettings).toHaveBeenCalledOnce()
     expect(changes).toHaveLength(1)
 })
