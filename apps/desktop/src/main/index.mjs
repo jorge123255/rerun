@@ -27,6 +27,8 @@ import { createConnectedHubs } from './connected-hubs.mjs'
 import { hubConnectionError } from './connected-hub-messages.mjs'
 import { parseHubLink, registerHubProtocol } from './connected-hub-policy.mjs'
 import { configureStartupProfile, hasLocalWorkspace } from './startup-workspace.mjs'
+import { createMacPhonePairingService } from './mac-phone-pairing/index.mjs'
+import { createPhonePairingWindow } from './mac-phone-pairing-window.mjs'
 
 const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, Notification, safeStorage, screen, shell, session, Tray, WebContentsView } = electron
 const directory = fileURLToPath(new URL('.', import.meta.url))
@@ -56,11 +58,13 @@ let pendingHubLink
 let transitioning = false
 let quitting = false
 let quittingNow = false
+let phonePairing
 let openingLocalWorkspace = false
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const boards = createBoardWindows({ startupUrl: pathToFileURL(startup).href, isDesktopPage })
 const changingBoards = new Set()
+const phonePairingWindow = createPhonePairingWindow({ BrowserWindow })
 const quickAsk = createQuickAskWindow({ app, BrowserWindow, screen, showBoard: showMainWindow,
     language: () => shellLanguage?.forScope('local'), boardScope: () =>
     boardContext(window) ? { epoch: boards.get(window).epoch, contents: window.webContents } : null,
@@ -236,6 +240,8 @@ else {
                 await connectedHubs?.closeAll()
                 await shortcutPreference?.flush()
                 await remoteMachines?.close()
+                phonePairingWindow.close()
+                await phonePairing?.stop()
                 await supervisor?.stop()
                 saveBoardPlacement?.()
                 await windowPlacements?.flush()
@@ -328,6 +334,7 @@ async function launch() {
                 void openAdditionalBoard().catch(() => {})
             },
             openHubPicker: connectedHubs.openPicker,
+            openPhonePairing: () => phonePairingWindow.open(),
             reloadWindow: (_item, candidate) => {
                 const last = lastWorkspaceWindow && !lastWorkspaceWindow.isDestroyed() ? lastWorkspaceWindow : window
                 const target = candidate ?? BrowserWindow.getFocusedWindow() ?? last
@@ -458,6 +465,16 @@ async function launch() {
         return runWorkspaceTransition(() => workspaces.recoverSwitch(input))
     })
     ipcMain.handle('desktop:quit', event => { trusted(event); app.quit() })
+    const trustedPhonePairing = event => {
+        if (quitting || !phonePairingWindow.isTrusted(event)) throw new Error('Phone pairing is unavailable.')
+        if (!phonePairing) throw new Error('Open a local workspace before pairing an iPhone.')
+        return phonePairing
+    }
+    ipcMain.handle('desktop:phone-pairing-status', event => trustedPhonePairing(event).status())
+    ipcMain.handle('desktop:phone-pairing-enable', (event, enabled) => trustedPhonePairing(event).setPhoneAccessEnabled(enabled === true))
+    ipcMain.handle('desktop:phone-pairing-offer', event => trustedPhonePairing(event).createOffer())
+    ipcMain.handle('desktop:phone-pairing-approve', (event, deviceId) => trustedPhonePairing(event).approveDevice(deviceId))
+    ipcMain.handle('desktop:phone-pairing-revoke', (event, deviceId) => trustedPhonePairing(event).revokeDevice(deviceId))
     ipcMain.handle('desktop:remote-machines-actor', event => remoteMachineIpc.actor(event))
     ipcMain.handle('desktop:remote-machines-execute', (event, command) => remoteMachineIpc.execute(event, command))
     ipcMain.handle('desktop:coworker-share-pick', event => sharesFor(trusted(event).window).pickImport())
@@ -602,6 +619,15 @@ async function initializeLocalWorkspace() {
         },
         verifyRuntimeIdentity: async workspaceId => supervisor.status.state === 'ready' && supervisor.runtime?.workspaceId === workspaceId,
     } })
+    if (mac) {
+        phonePairing = createMacPhonePairingService({
+            dataRoot,
+            installId: identity.installId,
+            getRuntime: () => !quitting && !transitioning && runtimeScope() ? runtime : null,
+        })
+        // An unavailable optional listener cannot prevent the local board from opening.
+        void phonePairing.restore().catch(() => console.warn('Could not restore local phone pairing.'))
+    }
     await startWorkspace()
 }
 

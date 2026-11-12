@@ -317,7 +317,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     return { response: new Response(body, { status: 200, headers }), sessionId: session.id }
 }
 
-export async function readDesktopHistory(runtime: DesktopRuntime, sessionId: string): Promise<HistoryMessage[]> {
+export async function readDesktopHistory(runtime: DesktopRuntime, sessionId: string, { acknowledgeAlternate = true } = {}): Promise<HistoryMessage[]> {
     const db = await openDesktopDatabase(runtime.dataRoot)
     const session = await findDesktopSession(db, sessionId)
     if (!session) throw new DesktopHttpError(404, 'Conversation not found')
@@ -330,7 +330,9 @@ export async function readDesktopHistory(runtime: DesktopRuntime, sessionId: str
         const projected = await withDesktopSavedDecisions(db, agent.id, session.id, messages, history)
         // Only a read of this specific alternate acknowledges it. Opening the original, or an
         // older alternate while a newer request is pending, leaves the pending attempt alone.
-        await db.execute({ sql: 'UPDATE desktop_regeneration_requests SET pending = 0 WHERE alternate_session_id = ? AND pending = 1', args: [session.id] })
+        if (acknowledgeAlternate) {
+            await db.execute({ sql: 'UPDATE desktop_regeneration_requests SET pending = 0 WHERE alternate_session_id = ? AND pending = 1', args: [session.id] })
+        }
         return projected
     } catch (cause) {
         if (cause instanceof EngineRequestError && cause.status === 404) throw new DesktopHttpError(404, 'Conversation not found')

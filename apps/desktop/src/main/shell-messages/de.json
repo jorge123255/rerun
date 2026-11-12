@@ -13,6 +13,7 @@
             "closeWindow": "Fenster schließen",
             "newWindow": "Neues Fenster",
             "connect": "Mit Rerun verbinden…",
+            "connectPhone": "iPhone verbinden …",
             "openLocal": "Lokalen Workspace öffnen"
         },
         "edit": {

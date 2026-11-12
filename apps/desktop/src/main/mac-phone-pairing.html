@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+  <link rel="stylesheet" href="mac-phone-pairing.css">
+  <title>Connect iPhone</title>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">CONNECT IPHONE</p>
+    <h1>Pair a phone with this Mac</h1>
+    <p>This preview supports pairing clients running on this Mac.</p>
+    <label class="toggle">
+      <input id="enable-access" type="checkbox">
+      <span>Allow local pairing</span>
+    </label>
+    <p class="footnote">A physical iPhone needs a secure local network connection and the matching iPhone app.</p>
+    <p id="origin" class="mono" hidden></p>
+    <div class="actions">
+      <button id="create-offer" hidden>Create pairing offer</button>
+    </div>
+    <pre id="offer" hidden></pre>
+    <section id="pending" hidden>
+      <h2>Waiting for approval</h2>
+      <ul id="pending-list"></ul>
+    </section>
+    <section id="approved" hidden>
+      <h2>Paired phones</h2>
+      <ul id="approved-list"></ul>
+    </section>
+    <p id="error" class="error" hidden></p>
+  </main>
+  <script src="mac-phone-pairing.js"></script>
+</body>
+</html>

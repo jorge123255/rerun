@@ -31,6 +31,7 @@ test('the Mac Settings item opens only the current desktop frame', () => {
         openNewWindow: () => calls.push('new-window'),
         openLocalWorkspace: () => calls.push('open-local'),
         openHubPicker: () => calls.push('connect-hub'),
+        openPhonePairing: () => calls.push('connect-phone'),
         reloadWindow: (_item, target) => calls.push(['reload', target]),
     })
 
@@ -70,6 +71,10 @@ test('the Mac Settings item opens only the current desktop frame', () => {
     assert.equal(calls.at(-1), 'open-local')
     menu.find(item => item.role === 'fileMenu').submenu.find(item => item.id === 'rerun-connect-hub').click()
     assert.equal(calls.at(-1), 'connect-hub')
+    const connectPhone = menu.find(item => item.role === 'fileMenu').submenu.find(item => item.id === 'rerun-connect-phone')
+    assert.equal(connectPhone.label, 'Connect iPhone…')
+    connectPhone.click()
+    assert.equal(calls.at(-1), 'connect-phone')
     const view = menu.find(item => item.label === 'View')
     assert(!view.role)
     assert(!view.submenu.some(item => ['reload', 'forceReload', 'toggleDevTools'].includes(item.role)))

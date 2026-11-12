@@ -14,6 +14,8 @@ const required = [
     'connected-hub-quick-ask.mjs', 'connected-hub-service-sign-in.mjs',
     'connected-hub-recovery.mjs', 'connected-hub-messages.mjs', 'connected-hub-offline.html', 'connected-hub-offline.js',
     'connected-hub-preload.cjs', 'connected-hub.html', 'connected-hub.js', 'connected-hub.css',
+    'mac-phone-pairing-window.mjs', 'mac-phone-pairing-preload.cjs', 'mac-phone-pairing.html', 'mac-phone-pairing.js', 'mac-phone-pairing.css',
+    'mac-phone-pairing/index.mjs', 'mac-phone-pairing/protocol.mjs', 'mac-phone-pairing/crypto.mjs', 'mac-phone-pairing/store.mjs', 'mac-phone-pairing/offers.mjs', 'mac-phone-pairing/workspace-access.mjs', 'mac-phone-pairing/engine-reads.mjs', 'mac-phone-pairing/transport.mjs', 'mac-phone-pairing/service.mjs',
     'window-find.mjs', 'find-preload.cjs', 'find.html', 'find.js', 'find.css',
     'quick-ask-window.mjs', 'quick-ask-shortcut.mjs', 'quick-ask-preload.cjs', 'quick-ask.html', 'quick-ask.js', 'quick-ask.css',
 ]

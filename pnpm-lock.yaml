@@ -478,6 +478,8 @@ importers:
         specifier: ^5
         version: 5.9.3
 
+  packages/mac-pairing-client: {}
+
   packages/ui:
     dependencies:
       '@hookform/resolvers':
