@@ -8,7 +8,10 @@ import type { DesktopForemanColumnProps } from './DesktopForemanColumn'
 import { cancelDraftShutdown, flushDesktopDrafts, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { DEFAULT_DESKTOP_FOREMAN_PLACEMENT, flushDesktopForemanUiSaves, saveForemanUiIfMatching } from '@/lib/desktop/foreman-client'
 let column: DesktopForemanColumnProps
-vi.mock('./DesktopForemanColumn', () => ({ DesktopForemanColumn: (props: DesktopForemanColumnProps) => { column = props; return <button onClick={props.onClose}>Close Foreman</button> } }))
+vi.mock('./DesktopForemanColumn', () => ({ DesktopForemanColumn: (props: DesktopForemanColumnProps) => {
+    column = props
+    return <><button onClick={props.onClose}>Close Foreman</button>{props.runNotice}</>
+} }))
 let root: Root | undefined
 const sources: Source[] = []
 class Source {
@@ -89,4 +92,31 @@ it('pauses parked Foreman SSE and polling before Quit, drains its admitted draft
     expect(onOpenBox).toHaveBeenCalledTimes(2)
     expect(actions).toEqual(['ui']); expect(onOpenCoworker).not.toHaveBeenCalled()
     expect(server.ui.snapshot).toMatchObject({ draft: snapshot.draft })
+})
+
+it('shows the saved connection failure with a Settings action and clears it when a newer run settles', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal('EventSource', Source)
+    const chat = { workspaceId: '1', chatId: 'fmc_abcdefgh' }
+    const server = { chat, sessionId: 'session', model: null, messages: [], runFailure: 'unauthorized' as string | null,
+        view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
+        ui: { revision: 0, snapshot: null },
+    }
+    const fetch = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(server))
+    vi.stubGlobal('fetch', fetch)
+    const onOpenModelSettings = vi.fn()
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopForemanPanel onClose={vi.fn()} onOpenCoworker={vi.fn()} onOpenBox={vi.fn()}
+        agentNameOf={id => id} onOpenModelSettings={onOpenModelSettings} />))
+    const alert = document.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('Connection signed out')
+    expect(alert?.textContent).toContain('This connection needs to be signed in again')
+    await act(async () => alert?.querySelector('button')?.click())
+    expect(onOpenModelSettings).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls.every(([, init]) => !init?.body)).toBe(true)
+
+    server.runFailure = null
+    await act(async () => vi.advanceTimersByTimeAsync(1500))
+    expect(document.querySelector('[role="alert"]')).toBeNull()
 })

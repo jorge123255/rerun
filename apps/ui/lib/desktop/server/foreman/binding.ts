@@ -35,6 +35,7 @@ import { FOREMAN_ALTERNATE_SQL } from '../foreman-alternates/repository'
 import { foremanAlternateSnapshot } from '../foreman-alternates/snapshot'
 import { foremanTranscriptRevision } from '../../../../../engine/src/desktop/foreman/transcript-revision.ts'
 import { desktopForemanContext } from '../../foreman/context'
+import { desktopForemanRunFailure } from '../../foreman/run-failure'
 import { consumeDesktopDocumentAdmission, resolveDesktopDocumentAdmission } from '../document-attachments/binding'
 import { desktopDocumentStore } from '../document-attachments/store'
 import { listDesktopCoworkerCallTargets } from '../coworker-calls/authority'
@@ -87,15 +88,18 @@ async function createBinding(runtime: DesktopRuntime) {
             return { state: 'unknown' as const }
         }
     }
-    const readContext = async ({ chat, sessionId }: Awaited<ReturnType<typeof ownedForemanChat>>) => {
-        const row = (await db.execute({ sql: "SELECT request_id FROM desktop_foreman_turns WHERE chat_id=? AND status IN ('admitted','finished') ORDER BY rowid DESC LIMIT 1",
+    const readSettledRun = async ({ chat, sessionId }: Awaited<ReturnType<typeof ownedForemanChat>>) => {
+        const row = (await db.execute({ sql: 'SELECT request_id, status FROM desktop_foreman_turns WHERE chat_id=? ORDER BY rowid DESC LIMIT 1',
             args: [chat.chatId] })).rows[0]
-        if (!row) return null
+        if (row?.status !== 'admitted' && row?.status !== 'finished') return null
         const saved = await lookupRun(String(row.request_id), 1500)
-        if (saved.state !== 'present' || saved.run.status !== 'done' || !saved.run.finishedAt) return null
+        if (saved.state !== 'present' || !saved.run.finishedAt) return null
         const { binding, sessionId: turnSessionId } = saved.turn.body
         if (turnSessionId !== sessionId || binding.runId !== saved.run.id || binding.chatId !== chat.chatId || binding.workspaceId !== chat.workspaceId) return null
-        return desktopForemanContext(saved.run, binding.model)
+        return {
+            context: saved.run.status === 'done' ? desktopForemanContext(saved.run, binding.model) : null,
+            runFailure: saved.run.status === 'error' ? desktopForemanRunFailure(saved.run.error) : null,
+        }
     }
     const live = async (chat: DesktopForemanChatRef) => {
         await ownedForemanChat(db, chat)
@@ -412,9 +416,9 @@ async function createBinding(runtime: DesktopRuntime) {
             const attempt = saved?.answerIntent?.questionId === pending?.view.id && saved?.answerIntent
             const approvalAttempt = saved?.approvalIntent?.approvalId === approval?.view.id && saved?.approvalIntent
             const history = await hideDesktopForemanIntakeKickoff(runtime, db, owner, publicDesktopHistory(transformEngineMessages(messages)))
-            const [projected, context] = await Promise.all([
+            const [projected, settled] = await Promise.all([
                 withForemanSavedDecisions(db, owner, messages, history),
-                !view.live && history.some(message => message.role === 'assistant') ? readContext(owner).catch(() => null) : null,
+                !view.live ? readSettledRun(owner).catch(() => null) : null,
             ])
             const retrySnapshot = foremanAlternateSnapshot(runtime, owner.chat, owner.sessionId,
                 foremanTranscriptRevision(owner.chat, owner.sessionId, messages))
@@ -429,7 +433,10 @@ async function createBinding(runtime: DesktopRuntime) {
             const callSources = knownRuns.size
                 ? (await listDesktopForemanCallSources(db, owner.chat.chatId, owner.sessionId)).filter(row => knownRuns.has(row.runId))
                 : []
-            return { ...owner, view, messages: projected, retrySnapshot, context, runSources, callSources, starter: await starterDecisions.view(owner.chat),
+            return { ...owner, view, messages: projected, retrySnapshot,
+                context: history.some(message => message.role === 'assistant') ? settled?.context ?? null : null,
+                runFailure: pending || approval ? null : settled?.runFailure ?? null,
+                runSources, callSources, starter: await starterDecisions.view(owner.chat),
                 approval: approval ? { ...approval.view, ...(approvalAttempt && {
                     attempt: { requestId: approvalAttempt.requestId, decisions: approvalAttempt.decisions },
                 }) } : null,

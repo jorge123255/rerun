@@ -23,6 +23,7 @@ import { DEFAULT_DESKTOP_FOREMAN_PLACEMENT, type DesktopForemanPersistedUi } fro
 import { desktopForemanSavedUiSchema } from './ui-schema'
 import { desktopStarterViewSchema, localStarterDecisionSchema, type DesktopLocalStarterDecision } from './starter'
 import { desktopForemanContextSchema } from '../foreman/context'
+import { desktopForemanRunFailureSchema } from '../foreman/run-failure'
 import { checkedDesktopCoworkerMentions, desktopCoworkerMentionFieldsOf, desktopCoworkerMentionsSchema, desktopDocumentReferenceSchema, foremanDocumentScope, DESKTOP_DOCUMENT_MAX_FILES } from '@rerun/contracts'
 export { desktopForemanSavedUiSchema } from './ui-schema'
 const stateSchema = z.strictObject({
@@ -33,6 +34,7 @@ const stateSchema = z.strictObject({
     starter: desktopStarterViewSchema.nullable().optional(),
     retrySnapshot: foremanDigestSchema.optional(),
     context: desktopForemanContextSchema.nullable().optional(),
+    runFailure: desktopForemanRunFailureSchema.nullable().optional(),
     runSources: z.array(z.strictObject({ messageId: z.string().min(1).max(256), runId: z.string().min(1).max(128) })).max(5000).optional(),
     callSources: z.array(z.strictObject({ callId: z.uuid(), runId: z.string().min(1).max(128) })).max(5000).optional(),
     messages: z.array(z.object({ id: z.string().max(256), role: z.enum(['user', 'assistant']), parts: z.array(z.unknown()).max(4096),

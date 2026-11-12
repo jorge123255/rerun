@@ -75,6 +75,7 @@ export type DesktopForemanColumnProps = {
     agentNameOf: (agentId: string) => string
     orbState?: OrbActivity
     headerActions?: ReactNode
+    runNotice?: ReactNode
     /** Root mounts discoveries on the board; receives live overlay state. */
     renderBoardOverlay?: (input: { discoveries: import('@/lib/desktop/foreman-client').DesktopDiscoveriesState; live: boolean }) => ReactNode
     className?: string
@@ -122,6 +123,7 @@ export function DesktopForemanColumn({
     agentNameOf,
     orbState = 'idle',
     headerActions,
+    runNotice,
     renderBoardOverlay,
     className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, controlledOpen, hidden, centerOpen, findEnabled, dockFeed, voiceSlot, intake, intakeFinished, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
@@ -312,6 +314,7 @@ export function DesktopForemanColumn({
                         leadState={foreman.leadState}
                         live={foreman.live}
                         error={(starterError?.offerId === starter?.offerId ? starterError?.message : null) || alternates.error || foreman.error || (foreman.blocked ? `Blocked: ${foreman.blocked.replaceAll('_', ' ')}` : null)}
+                        runNotice={runNotice}
                         onConfirmPlan={foreman.confirmPlan}
                         onAskChanges={() => foreman.askChanges()}
                         onRetryDecision={foreman.retryDecision}

@@ -128,6 +128,44 @@ describe('production Foreman intake phase and model brief', () => {
         expect(await app.state()).toMatchObject({ context: null, messages: [{ id: 'engine-assistant-fixture' }] })
     })
 
+    it('restores only the exact settled failure across reopen without disclosing provider details', async () => {
+        const app = await desktopForeman(runtime)
+        const id = randomUUID()
+        await app.send(chat, id, 'Review this fixture')
+        vi.mocked(getSessionMessages).mockResolvedValue([{ id: 'user-fixture', sessionId: 'original-session', role: 'user',
+            contentJson: JSON.stringify([{ type: 'text', text: 'Review this fixture' }]), toolCallsJson: null, createdAt: timestamp, foremanRunId: id }])
+        const failed = { id, agentId: 'foreman', sessionId: 'original-session', status: 'error',
+            finishedAt: timestamp, error: '401 Unauthorized fixture-private-provider-detail' } as Awaited<ReturnType<typeof getRun>>
+        vi.mocked(getRun).mockResolvedValue(failed)
+        const result = await app.state()
+        expect(result).toMatchObject({ runFailure: 'unauthorized', context: null, messages: [{ id: 'engine-user-fixture' }] })
+        expect(JSON.stringify(result)).not.toContain('fixture-private-provider-detail')
+
+        state.db.close()
+        state.db = open()
+        const reopened = await desktopForeman({ ...runtime, launchNonce: randomUUID() })
+        expect((await reopened.state()).runFailure).toBe('unauthorized')
+        expect(sent).toHaveLength(1)
+
+        for (const mismatch of [{ sessionId: 'foreign-session' }, { id: randomUUID() }, { agentId: 'another-coworker' },
+            { finishedAt: null }, { status: 'cancelled' as const }]) {
+            vi.mocked(getRun).mockResolvedValue({ ...failed, ...mismatch })
+            expect((await reopened.state()).runFailure).toBeNull()
+        }
+        vi.mocked(getRun).mockResolvedValue({ ...failed, error: 'fixture-private-provider-detail' })
+        expect((await reopened.state()).runFailure).toBe('generic')
+        vi.mocked(getRun).mockResolvedValue(failed)
+
+        const next = randomUUID()
+        vi.mocked(fetch).mockRejectedValueOnce(new Error('Lost response to next request'))
+        await expect(reopened.send(chat, next, 'Try the replacement connection')).rejects.toThrow('Lost response to next request')
+        expect((await reopened.state()).runFailure).toBeNull()
+        vi.mocked(getRun).mockImplementation(async (_engine, _agent, runId) => runId === id ? failed
+            : { ...failed, id: runId, status: 'done', error: null })
+        await expect(reopened.send(chat, next, 'Try the replacement connection')).resolves.toEqual({ runId: next })
+        expect((await reopened.state()).runFailure).toBeNull()
+    })
+
     it('keeps a selected model on the chat and follows the workspace on every turn after clearing it', async () => {
         const app = await desktopForeman(runtime)
         const { connections } = await readDesktopProviders(runtime)

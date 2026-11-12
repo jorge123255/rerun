@@ -164,14 +164,12 @@ const KIND_MESSAGES: Partial<Record<ChatErrorKind, string>> = {
     session_gone: 'This coworker cannot reach this conversation anymore, so the message was not sent. Start a new conversation to keep going.',
 }
 
-export function friendlyError(message: string): string {
-    if (!message) return GENERIC_ERROR
-    const kind = classifyChatError(message)
+export function friendlyError(message: string, kind = classifyChatError(message)): string {
     if (kind === 'usage_limit') return subscriptionLimitMessage(describeSubscriptionLimit(message))
     if (isModelAtCapacity(kind, message)) return 'This model has no room right now. Try again in a moment or pick another model.'
     const known = KIND_MESSAGES[kind]
     if (known) return known
-    return stripErrorPrefix(message) || GENERIC_ERROR
+    return (message && stripErrorPrefix(message)) || GENERIC_ERROR
 }
 
 /**

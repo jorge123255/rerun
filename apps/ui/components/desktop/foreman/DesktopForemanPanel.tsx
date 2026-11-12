@@ -1,5 +1,7 @@
 'use client'
 
+import { ProviderErrorNotice } from '@/components/chat/ProviderErrorNotice'
+
 import { useDesktopLocale } from '../DesktopLocale'
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
@@ -176,6 +178,8 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         question={state.question} onAnswerQuestion={client.answerQuestion}
         approval={state.approval} onDecideApproval={client.decideApproval}
         starter={state.starter} onStarterAnswer={client.answerStarter} intakeFinished={intake.finished}
+        runNotice={state.runFailure && !pendingSend ? <ProviderErrorNotice kind={state.runFailure}
+            onReconnect={props.onOpenModelSettings} onOpenConnections={props.onOpenModelSettings} /> : null}
         streaming={!!state.view.live} orbState={state.view.live ? 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
         headerActions={<><DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} onApprovalPermissionChanged={() => { void client.refresh().catch(() => {}) }} />{error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}</>}

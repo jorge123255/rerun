@@ -83,6 +83,7 @@ export function DesktopForemanChatLayer({
     nextSteps,
     leadState,
     error,
+    runNotice,
     onConfirmPlan,
     onAskChanges,
     onRetryDecision,
@@ -115,6 +116,7 @@ export function DesktopForemanChatLayer({
     leadState: DesktopLeadSetupState
     live: boolean
     error?: string | null
+    runNotice?: ReactNode
     onConfirmPlan: () => void
     onAskChanges: () => void
     onRetryDecision?: () => void
@@ -147,7 +149,7 @@ export function DesktopForemanChatLayer({
     }, [])
     const previewDocuments = preview && messages.find(message => message.id === preview.messageId)?.documents
     const plan = projectPlanCard(planSnapshot)
-    const empty = messages.length === 0 && !error && !plan.view && !build && !question
+    const empty = messages.length === 0 && !error && !runNotice && !plan.view && !build && !question
 
     return (
         <div className={cn('pointer-events-auto relative flex min-h-0 w-full flex-1 flex-col', className)}>
@@ -239,6 +241,7 @@ export function DesktopForemanChatLayer({
                         </div>
                     )}
                     {renderChildWork?.(runSlots)}
+                    {runNotice}
                     {children}
                 </ConversationContent>
                 <ConversationScrollButton />
