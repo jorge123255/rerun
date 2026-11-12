@@ -318,6 +318,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         stop: source.chat.promptInput.stop,
         stoppingRun: source.chat.queued.stopping,
         chatActivity: source.chat.activity,
+        chatSteps: source.chat.steps,
         subRunTrouble: source.subRuns.trouble,
         cancel: source.common.cancel,
     }

@@ -733,6 +733,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     // even if its subscription still holds the previous chat's messages.
     const showSaved = ready && (!busy || regenerationSource === sessionId && !!sessionId)
     const transcript = showSaved ? history.transcript ?? messages : busy ? messages : []
+    const latestAssistant = transcript.findLast(message => message.role === 'assistant')
     const streamingMessage = !showSaved && (status === 'streaming' || serviceStreaming) ? transcript.at(-1) : undefined
     const chatActivity = active && !reconnecting && !pendingRequest && generating
         ? <DesktopChatActivity agentId={agent.id} message={streamingMessage} />
@@ -1435,7 +1436,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                                             {images.length > 0 && <MessageAttachments paths={images.map(item => item.path)} rawUrlFor={path => images.find(item => item.path === path)?.url ?? ''} />}</>
                                     })()}
                                     {voicePlayer ?? (message.role === 'assistant'
-                                        ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} createdAt={createdAt} streaming={message === streamingMessage}
+                                        ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} createdAt={createdAt} streaming={message === streamingMessage} latest={message === latestAssistant}
                                             onOpenWorkspaceFile={onOpenWorkspaceFile}
                                             toolInstall={sessionId ? { sessionId, active: active && ready, disabled: draft.quitting || inactive || generating || stopping } : undefined}
                                             childRuns={sessionId ? { sessionId, active, onOpenTarget: onOpenCoworkerChat } : undefined}

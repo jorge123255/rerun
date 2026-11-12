@@ -4,6 +4,7 @@ import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { act, type ReactNode } from 'react'
 import type { UIMessage } from 'ai'
 import { appendVoiceMarker, buildVoiceMarker } from '@rerun/contracts'
+import { desktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { desktopVoiceAudioReference } from '@/lib/desktop/voice/voice'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -489,6 +490,51 @@ test('reopens saved coworker Markdown from the board and keeps prompt dialogs an
     await act(async () => guideButton.click())
     const restoredGuide = await until(() => panelDialog('Reviewer install guide'))
     await verifyFile(restoredGuide)
+})
+
+test('opens saved work steps from the board in order without hiding the reply or file result', async () => {
+    const app = fixture(undefined, true, undefined, sessionId => [{
+        id: 'engine-' + sessionId, role: 'assistant', parts: [
+            { type: 'reasoning', text: 'Private provider analysis' },
+            { type: 'reasoning', text: 'Checked the draft.', providerMetadata: desktopSummaryMetadata },
+            { type: 'tool-fs_read', toolCallId: 'read', state: 'output-available', input: { path: 'notes/draft.md' }, output: 'Saved fixture text' },
+            { type: 'text', text: 'Here is the result.' },
+            { type: 'tool-card_file', toolCallId: 'file', state: 'output-available', input: {},
+                output: { kind: 'file', files: [{ path: 'notes/draft.md', name: 'draft.md', size: 18, scope: 'agent' }] } },
+            { type: 'tool-fs_read', toolCallId: 'refused', state: 'output-error', input: { path: 'notes/missing.md' }, errorText: 'File was not found.' },
+        ],
+    }])
+    async function verify(container: HTMLElement) {
+        const input = await openBoardChat(container)
+        const chat = input.closest<HTMLElement>('[data-desktop-tab-active]')!
+        const group = await until(() => chat.querySelector<HTMLButtonElement>('button[aria-label="2 steps"]'))
+        const failed = chat.querySelector<HTMLButtonElement>('button[aria-label="1 step, 1 failed"]')!
+        const card = chat.querySelector('[data-file-card]')!
+        expect(card).not.toBeNull()
+        expect(group.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+        expect(card.compareDocumentPosition(failed) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+        expect(chat.textContent).toContain('Here is the result.')
+        expect(group.getAttribute('aria-expanded')).toBe('false')
+        expect(failed.getAttribute('aria-expanded')).toBe('false')
+        expect(chat.textContent).not.toContain('Checked the draft.')
+        await act(async () => group.click())
+        expect(group.getAttribute('aria-expanded')).toBe('true')
+        expect(chat.textContent).toContain('Checked the draft.')
+        const read = [...chat.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Read File'))!
+        await act(async () => read.click())
+        expect(chat.textContent).toContain('Saved fixture text')
+        expect(chat.textContent).not.toContain('Private provider analysis')
+        expect(chat.textContent).not.toContain('File was not found.')
+        await act(async () => failed.click())
+        expect(chat.textContent).toContain('File was not found.')
+        expect(app.fileReads).toEqual([])
+        expect(app.contentWrites).toEqual([])
+    }
+    const mounted = await app.mount()
+    await verify(mounted.container)
+    await mounted.unmount()
+    const restored = await app.mount()
+    await verify(restored.container)
 })
 
 test('a restored coworker run shows current activity only in its own tab and settles after Stop', async () => {

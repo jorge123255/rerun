@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import type { UIMessage } from 'ai'
-import { act } from 'react'
+import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { publicDesktopHistory, type HistoryMessage } from '@/lib/chat/engine-history'
@@ -8,6 +8,26 @@ import { desktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { DesktopAssistantReply } from './DesktopAssistantReply'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+// happy-dom does not implement the browser animation used when a step group expands.
+vi.mock('motion/react', async original => {
+    const actual = await original<typeof import('motion/react')>()
+    const { createElement, forwardRef } = await import('react')
+    const plain = (tag: string) => forwardRef<HTMLElement, Record<string, unknown>>(({ children, ...props }, ref) =>
+        createElement(tag, { ...Object.fromEntries(Object.entries(props).filter(([name]) => !actual.isValidMotionProp(name))), ref }, children as ReactNode))
+    const elements = new Map<string, ReturnType<typeof plain>>()
+    const element = (tag: string) => {
+        if (!elements.has(tag)) elements.set(tag, plain(tag))
+        return elements.get(tag)!
+    }
+    return { ...actual, AnimatePresence: ({ children }: { children: ReactNode }) => <>{children}</>,
+        motion: new Proxy(actual.motion, { get(target, key, receiver) {
+            if (key === 'create') return (tag: unknown) => typeof tag === 'string' ? element(tag) : tag
+            return typeof key === 'string' && key !== 'then' ? element(key) : Reflect.get(target, key, receiver)
+        } }),
+    }
+})
+
 let container: HTMLDivElement
 let root: Root
 beforeEach(() => {
@@ -29,6 +49,14 @@ const markdown = [
 
 async function render(parts: UIMessage['parts'], streaming = false, agentId?: string) {
     await act(async () => root.render(<DesktopAssistantReply message={{ id: 'test-reply', role: 'assistant', parts }} streaming={streaming} agentId={agentId} />))
+}
+
+async function openSteps(label = '1 step') {
+    const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!
+    expect(button?.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => button.click())
+    expect(button.getAttribute('aria-expanded')).toBe('true')
+    return button
 }
 
 function mockClipboard() {
@@ -184,17 +212,23 @@ test('copies each draft verbatim and keeps the whole reply and ordinary code sep
 
 test('draws a live compaction step with the original wording and settles it in place', async () => {
     const running = { type: 'data-compaction' as const, id: 'checkpoint-1', data: { status: 'running' } }
-    await render([running], true)
+    const reasoning = { type: 'reasoning' as const, text: 'Compared the options.', providerMetadata: desktopSummaryMetadata }
+    await render([reasoning, running], true)
+    expect(container.textContent).toContain('Compacting')
+    expect(container.textContent).not.toContain('Compacting context…')
+    const group = await openSteps('2 steps')
     expect(container.textContent).toContain('Compacting context…')
     expect(container.textContent).not.toContain('earlier messages summarized')
 
     const done = { type: 'data-compaction' as const, id: 'checkpoint-1', data: { status: 'done', messagesCompacted: 12, tokensRecovered: 900 } }
     await render([
-        { type: 'reasoning', text: 'Compared the options.', providerMetadata: desktopSummaryMetadata },
+        reasoning,
         running,
         done,
         { type: 'text', text: 'Final answer.' },
     ])
+    expect(container.querySelector('button[aria-label="2 steps"]')).toBe(group)
+    expect(group.getAttribute('aria-expanded')).toBe('true')
     expect(container.textContent).toContain('Thought')
     expect(container.textContent).toContain('Compared the options.')
     expect(container.textContent).toContain('Context compacted')
@@ -223,6 +257,7 @@ test('a received error event still shows the original failure wording', async ()
         { type: 'data-compaction' as const, id: 'checkpoint-1', data: { status: 'error' } },
         { type: 'text', text: 'Answer after a failed compaction.' },
     ])
+    await openSteps('1 step, 1 failed')
     const failed = [...container.querySelectorAll('button')].filter(button => button.textContent?.includes('Context compaction failed'))
     expect(failed).toHaveLength(1)
     expect(container.textContent).not.toContain('Compacting context…')
@@ -231,6 +266,7 @@ test('a received error event still shows the original failure wording', async ()
 
 test('a completed compaction with invalid metrics keeps its wording without a count', async () => {
     await render([{ type: 'data-compaction' as const, id: 'checkpoint-1', data: { status: 'done', messagesCompacted: Number.NaN, tokensRecovered: -1 } }])
+    await openSteps()
     expect(container.textContent).toContain('Context compacted')
     expect(container.textContent).not.toContain('earlier messages summarized')
     expect(container.textContent).not.toContain('tokens recovered')
@@ -244,6 +280,7 @@ test('a compaction row leaves reasoning, sources and feedback in place', async (
         { type: 'text', text: 'Answer.' },
         { type: 'source-url', sourceId: 's1', url: 'https://example.org/report', title: 'Report' },
     ] }} streaming={false} feedbackRating="up" onRate={onRate} />))
+    await openSteps('2 steps')
     expect(container.textContent).toContain('Context compacted')
     expect(container.textContent).toContain('3 earlier messages summarized')
     expect(container.textContent).toContain('Thought')
@@ -261,6 +298,7 @@ test('withholds draft copying until the closing fence arrives and excludes reaso
     await render([summary, { type: 'text', text: draft }], true)
     const draftCopy = () => container.querySelector<HTMLButtonElement>('[aria-label="Copy draft"]')!
     expect(draftCopy().disabled).toBe(true)
+    await openSteps()
     const summaryButton = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Thought'))!
     await act(async () => summaryButton.click())
     expect(container.querySelector('pre')?.textContent).toContain('Summary only')
@@ -372,6 +410,9 @@ test('shows a real read step on its reply, keeping literal file contents and err
     const base = { type: 'dynamic-tool' as const, toolName: 'mcp__rerun__fs_read', toolCallId: 'read-1', input: { path: 'notes/plan.md' } }
     const row = () => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.includes('Read File'))!
     await render([{ ...base, state: 'input-available' }], true)
+    expect(container.textContent).toContain('Running Read File')
+    expect(container.textContent).not.toContain('notes/plan.md')
+    await openSteps()
     expect(row().textContent).toContain('notes/plan.md')
     await act(async () => row().click())
     expect(row().getAttribute('aria-expanded')).toBe('true')
@@ -400,6 +441,7 @@ test('expands actual native steps with the same plain-text input and output acro
         input: { type: 'commandExecution', command: 'printf test', cwd: '/private/profile' } }
     const output = { type: 'commandExecution', status: 'completed', exitCode: 0, aggregatedOutput: '<b>sample</b>', _meta: 'engine-only' }
     await render([{ ...part, state: 'input-available' }], true)
+    await openSteps()
     const button = Array.from(container.querySelectorAll('button')).find(el => el.textContent?.includes('Terminal'))!
     await act(async () => button.click())
     expect(container.textContent).toContain('printf test')
@@ -495,6 +537,7 @@ test('keeps an honest tool-result step for a malformed recorded file card', asyn
     await render([{ type: 'dynamic-tool', toolName: 'card_file', toolCallId: 'card-3', state: 'output-available',
         input: { files: [{ path: '../../escape.md' }] }, output }], false, 'agent-1')
     expect(container.querySelector('[data-file-card]')).toBeNull()
+    await openSteps()
     const row = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('Show a file'))!
     expect(row).not.toBeUndefined()
     await act(async () => row.click())
@@ -567,22 +610,43 @@ test('a restored generic receipt keeps its status and does not render a secret o
         }] as HistoryMessage['parts'],
     }])
     await show(failed.id, failed.parts as UIMessage['parts'])
+    await openSteps('1 step, 1 failed')
     expect(container.textContent).toContain('Read File')
     expect(container.textContent).toContain('[redacted]')
     expect(container.querySelector('[data-historical="group"]')).toBeNull()
     expect(container.querySelector('[data-owner="foreign-agent"]')).toBeNull()
-    await act(async () => container.querySelector('button')!.click())
+    const failureRow = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('Read File'))!
+    await act(async () => failureRow.click())
     expect(container.textContent).toContain('Error')
     expect(container.textContent).toContain('notes/[redacted].md')
     expectPrivate()
 
     await show('engine-open', [{
         type: 'dynamic-tool', toolName: 'fs_read', toolCallId: 'open-read', state: 'input-available', input: { path: 'notes/plan.md' },
-    }])
+        acknowledgement: 'recorded',
+    } as UIMessage['parts'][number]])
+    expect(container.textContent).toContain('1 unknown')
+    await act(async () => container.querySelector('button')!.click())
     expect(container.textContent).toContain('Read File')
-    expect(container.textContent).toContain('notes/plan.md')
-    expect(container.textContent).not.toContain('Unknown')
-    expect(container.querySelector('[data-historical="group"]')).toBeNull()
+    expect(container.textContent).not.toContain('notes/plan.md')
+    expect(container.querySelector('[data-status="unknown"]')).not.toBeNull()
+    expect(container.querySelector('[data-status="running"]')).toBeNull()
+})
+
+test('keeps grouped steps on their own recorded run identity', async () => {
+    const read = (id: string, runId: string, output: string) => ({
+        type: 'tool-fs_read', toolCallId: id, state: 'output-available', input: { path: 'sample.md' }, output,
+        ownerId: 'coworker', workspaceId: 'local', runId,
+    }) as UIMessage['parts'][number]
+    await render([
+        read('read-1', 'run-a', 'First saved tool result'),
+        read('read-2', 'run-a', 'Second saved tool result'),
+        read('read-3', 'run-b', 'Other run result'),
+    ], false, 'coworker')
+    await openSteps('2 steps')
+    expect(container.querySelector('button[aria-label="1 step"]')?.getAttribute('aria-expanded')).toBe('false')
+    expect([...container.querySelectorAll('button')].filter(button => button.textContent?.includes('Read File'))).toHaveLength(2)
+    expect(container.textContent).not.toContain('Other run result')
 })
 
 test('saved image_generation part rehydrates the same authorized preview without a generation or tool POST', async () => {

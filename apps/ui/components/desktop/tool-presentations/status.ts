@@ -19,6 +19,8 @@ export type DesktopHistoricalContext = {
     runId?: string | null
     /** A restarted run without an explicit recorded acknowledgement stays unknown. */
     restarted?: boolean
+    /** An unfinished part only represents live work while its reply is streaming. */
+    live?: boolean
 }
 
 export type DesktopHistoricalToolSource = {
@@ -200,12 +202,12 @@ export function projectDesktopToolStatus(part: DesktopHistoricalToolSource, cont
     switch (state) {
         case 'input-streaming':
         case 'input-available':
-            return 'running'
+            return context?.live === false ? 'unknown' : 'running'
         case 'approval-requested':
         case 'approval-responded':
             return 'pending'
         case 'output-available':
-            if (part.preliminary === true) return 'running'
+            if (part.preliminary === true) return context?.live === false ? 'unknown' : 'running'
             return desktopHistoricalToolName(part) === 'notify_user' ? notificationStatus(part.output) : 'succeeded'
         default:
             return 'unknown'

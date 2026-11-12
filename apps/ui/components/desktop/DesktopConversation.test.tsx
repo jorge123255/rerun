@@ -93,19 +93,18 @@ describe('DesktopConversation', () => {
         chat.messages = [{ id: 'answer', role: 'assistant', parts: [
             { type: 'reasoning', text: 'Private trace' },
             { type: 'reasoning', text: 'Legacy mixed block', providerMetadata: { 'codex-app-server': { isSummary: true } } },
-            { type: 'reasoning', text: 'Comparing the options.', providerMetadata: { 'codex-app-server': { isPublicSummary: true, encrypted: 'Opaque bytes' } } },
+            { type: 'reasoning', text: 'Comparing the options.', state: 'streaming', providerMetadata: { 'codex-app-server': { isPublicSummary: true, encrypted: 'Opaque bytes' } } },
         ] }]
         try {
             chat.status = 'streaming'
             const live = render()
-            expect(live).toContain('Thinking...')
-            expect(live).toContain('Comparing the options.')
+            expect(live).toContain('>Thinking<')
             chat.status = 'ready'
             const saved = render()
-            expect(saved).toContain('Thought')
-            expect(saved).toContain('Comparing the options.')
+            expect(saved).not.toContain('>Thinking<')
             for (const html of [live, saved]) {
-                expect(html).not.toMatch(/Private trace|Legacy mixed block|Opaque bytes/)
+                expect(html).toContain('aria-label="1 step"')
+                expect(html).not.toMatch(/Comparing the options|Private trace|Legacy mixed block|Opaque bytes/)
             }
         } finally { chat.messages = []; chat.status = 'ready' }
     })
