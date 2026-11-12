@@ -3,6 +3,7 @@
 import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { act, type ReactNode } from 'react'
 import type { UIMessage } from 'ai'
+import type { DesktopPendingQuestion } from '@/lib/desktop/questions'
 import { appendVoiceMarker, buildVoiceMarker } from '@rerun/contracts'
 import { desktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { desktopVoiceAudioReference } from '@/lib/desktop/voice/voice'
@@ -120,7 +121,7 @@ async function dismissPanel(title: string) {
     await until(() => !panelDialog(title))
 }
 
-function fixture(runStatus?: (sessionId: string, method: 'GET' | 'POST') => Promise<Response>, productionBoard = false, reply?: (sessionId: string) => string, history?: (sessionId: string) => UIMessage[]) {
+function fixture(runStatus?: (sessionId: string, method: 'GET' | 'POST') => Promise<Response>, productionBoard = false, reply?: (sessionId: string) => string, history?: (sessionId: string) => UIMessage[], pendingQuestion?: (sessionId: string) => DesktopPendingQuestion | null) {
     const boxId = '05699308-9d0d-412b-b3e5-69ef56bd2a0e'
     const board: DesktopBoardState = { revision: 1, spaces: [{ id: boxId, name: 'Review Box', col_start: 0, row_start: 0, col_end: 11, row_end: 7 }],
         placements: coworkers.map((agent, index) => ({ agentId: agent.id, spaceId: boxId, col: index * 3, row: 0 })) }
@@ -246,7 +247,7 @@ function fixture(runStatus?: (sessionId: string, method: 'GET' | 'POST') => Prom
             const id = decodeURIComponent(url.pathname.split('/')[4])
             return Response.json({ messages: history?.(id) ?? [{ id: `${id}-answer`, role: 'assistant', parts: [{ type: 'text', text: reply?.(id) ?? answer(id) }] }] })
         }
-        if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
+        if (url.pathname.endsWith('/questions') && method === 'GET') return Response.json({ question: pendingQuestion?.(decodeURIComponent(url.pathname.split('/')[4])) ?? null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/stop')) {
             if (runStatus && (method === 'GET' || method === 'POST')) return runStatus(decodeURIComponent(url.pathname.split('/')[4]), method)
@@ -490,6 +491,97 @@ test('reopens saved coworker Markdown from the board and keeps prompt dialogs an
     await act(async () => guideButton.click())
     const restoredGuide = await until(() => panelDialog('Reviewer install guide'))
     await verifyFile(restoredGuide)
+})
+
+test('returns from chat history to the exact waiting question without sending or focusing a sibling chat', async () => {
+    const question: DesktopPendingQuestion = {
+        id: 'a'.repeat(64), messageId: 'question-message', toolCallId: 'question-call',
+        questions: [
+            { question: 'Which report should I review?', options: ['Quarterly report', 'Annual report'] },
+            { question: 'What should I check?', options: ['Totals', 'Assumptions'] },
+        ],
+    }
+    const resize = new Map<Element, ResizeObserverCallback>()
+    vi.stubGlobal('ResizeObserver', class {
+        private target?: Element
+        constructor(private readonly callback: ResizeObserverCallback) {}
+        observe(target: Element) { this.target = target; resize.set(target, this.callback) }
+        disconnect() { if (this.target && resize.get(this.target) === this.callback) resize.delete(this.target) }
+        unobserve(target: Element) { if (resize.get(target) === this.callback) resize.delete(target) }
+    })
+    const sightings: { node: HTMLElement; scroller: HTMLElement; notify: (visible: boolean) => void; disconnected: boolean }[] = []
+    vi.stubGlobal('IntersectionObserver', class {
+        private observation?: typeof sightings[number]
+        constructor(private readonly callback: IntersectionObserverCallback, private readonly options: IntersectionObserverInit) {}
+        observe(node: HTMLElement) {
+            if (!(this.options?.root instanceof HTMLElement)) return
+            const observation = { node, scroller: this.options.root, disconnected: false,
+                notify: (visible: boolean) => {
+                    const bounds = node.getBoundingClientRect()
+                    this.callback([{ target: node, isIntersecting: visible, time: 0, boundingClientRect: bounds,
+                        rootBounds: this.observation!.scroller.getBoundingClientRect(),
+                        intersectionRect: visible ? bounds : new DOMRect(), intersectionRatio: visible ? 1 : 0,
+                    }], this as unknown as IntersectionObserver)
+                } }
+            this.observation = observation
+            sightings.push(observation)
+        }
+        disconnect() { if (this.observation) this.observation.disconnected = true }
+        unobserve() { this.disconnect() }
+    })
+    const session = reviewer.id + '-first'
+    const app = fixture(undefined, true, undefined, undefined, id => id === session ? question : null)
+    const pillLabel = '2 questions waiting, go to it'
+    const pill = (container: HTMLElement) => container.querySelector<HTMLButtonElement>(`button[aria-label="${pillLabel}"]`)
+    const observation = (container: HTMLElement) => sightings.find(entry =>
+        !entry.disconnected && container.contains(entry.node) && entry.node.textContent?.includes('Which report should I review?'))
+    const checkPending = async (container: HTMLElement) => {
+        const entry = await until(() => observation(container))
+        const { node, scroller } = entry
+        expect(scroller.contains(node)).toBe(true)
+        expect(node.getAttribute('aria-label')).toBe('2 questions waiting')
+        expect(container.querySelector('[data-slot="desktop-composer"]')?.contains(node)).toBe(false)
+        expect(node.closest('[role="log"]')).not.toBeNull()
+        expect(node.closest('[role="log"]')?.textContent).toContain(app.answer(session))
+        Object.defineProperties(scroller, { clientHeight: { value: 420 }, scrollHeight: { value: 1600 } })
+        Object.defineProperty(node, 'offsetHeight', { value: 900 })
+        vi.spyOn(scroller, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 60, 440, 420))
+        vi.spyOn(node, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 580, 440, 900))
+        const scrollTo = vi.spyOn(scroller, 'scrollTo').mockImplementation(() => {})
+        scroller.scrollTop = 100
+        // The ResizeObserver is the browser input that detects the question is taller than the chat.
+        const tall = await until(() => resize.get(node))
+        await act(async () => { tall([], {} as ResizeObserver) })
+        await until(() => scrollTo.mock.calls.length > 0)
+        expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 608, behavior: 'instant' })
+        await act(async () => entry.notify(true))
+        expect(pill(container)).toBeNull()
+        await act(async () => entry.notify(false))
+        const button = await until(() => pill(container))
+        await act(async () => button.click())
+        expect(scrollTo).toHaveBeenLastCalledWith({ top: 608, behavior: 'smooth' })
+        expect(document.activeElement).toBe(node)
+        expect(vi.mocked(fetch).mock.calls.some(([url, init]) => init?.method === 'POST' &&
+            (/\/questions$/.test(String(url)) || String(url) === '/api/desktop/chat'))).toBe(false)
+        return { entry, button, scrollTo }
+    }
+
+    const mounted = await app.mount()
+    await openBoardChat(mounted.container)
+    const initial = await checkPending(mounted.container)
+    await click('Reviewer second chat', mounted.container)
+    await until(() => composer()?.closest('[data-desktop-tab-active]')?.textContent?.includes(app.answer(reviewer.id + '-second')))
+    expect(pill(mounted.container)).toBeNull()
+    expect(initial.entry.disconnected).toBe(true)
+    await act(async () => initial.button.click())
+    expect(initial.scrollTo).toHaveBeenCalledTimes(2)
+
+    await mounted.unmount()
+    const restored = await app.mount()
+    await openBoardChat(restored.container)
+    if (!observation(restored.container)) await click('Reviewer first chat', restored.container)
+    const reopened = await checkPending(restored.container)
+    expect(reopened.entry.node).not.toBe(initial.entry.node)
 })
 
 test('opens saved work steps from the board in order without hiding the reply or file result', async () => {

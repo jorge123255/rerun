@@ -319,6 +319,9 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         stoppingRun: source.chat.queued.stopping,
         chatActivity: source.chat.activity,
         chatSteps: source.chat.steps,
+        chatRequestCue: source.chat.hitlCue,
+        jumpToChatRequest: source.chat.pendingHitl.goTo,
+        scrollToLatestMessage: source.chat.conversation.scrollToLatest,
         subRunTrouble: source.subRuns.trouble,
         cancel: source.common.cancel,
     }
