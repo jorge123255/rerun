@@ -25,6 +25,7 @@ import { loadQuickAskShortcut } from './quick-ask-shortcut.mjs'
 import { cascadeWindowBounds, createBoardWindows } from './board-windows.mjs'
 import { captureWindowPlacement, createWindowPlacements, restoreWindowZoom } from './window-placement.mjs'
 import { createConnectedHubs } from './connected-hubs.mjs'
+import { hubConnectionError } from './connected-hub-messages.mjs'
 import { parseHubLink, registerHubProtocol } from './connected-hub-policy.mjs'
 import { hasLocalWorkspace } from './startup-workspace.mjs'
 
@@ -354,6 +355,12 @@ async function launch() {
             return event.senderFrame.url === pathToFileURL(startup).href && bootStatus.state === 'choose' && !quitting
         }
         ipcMain.handle('desktop:startup-local', event => choosingWorkspace(event) && startLocalWorkspace())
+        ipcMain.handle('desktop:startup-cloud', async event => {
+            if (!choosingWorkspace(event)) return { ok: false }
+            const locale = shellLanguage.forScope('local')
+            const result = await connectedHubs.openCloud()
+            return result.ok ? result : { ...result, message: hubConnectionError(locale, result) }
+        })
         ipcMain.handle('desktop:startup-connect', event => {
             if (!choosingWorkspace(event)) return false
             connectedHubs.openPicker()
@@ -502,7 +509,10 @@ async function launch() {
         const t = shellText(shellLanguage.forScope('local'))
         bootStatus = existingLocal ? { state: 'starting', message: t('startup.keychainPrompt') } : {
             state: 'choose', message: t('startup.chooseWorkspace'),
-            choices: { local: t('startup.runLocally'), connect: t('startup.connectServer') },
+            choices: {
+                local: t('startup.runLocally'), cloud: t('startup.signInCloud'), connect: t('startup.connectServer'),
+                connecting: t('server.connecting'), unreachable: t('server.unreachable'),
+            },
         }
     }
     await window.loadFile(startup)

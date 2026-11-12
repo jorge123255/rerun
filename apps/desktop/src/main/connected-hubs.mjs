@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
-import { checkHub, hubPartition, hubWindowAddress, HUB_API_VERSION, normalizeHubOrigin, parseHubWorkspaceId, sameHub } from './connected-hub-policy.mjs'
+import { checkHub, hubPartition, hubWindowAddress, HUB_API_VERSION, normalizeHubOrigin, parseHubWorkspaceId, RERUN_CLOUD_ORIGIN, sameHub } from './connected-hub-policy.mjs'
 import { cascadeWindowBounds } from './board-windows.mjs'
 import { hubConnectionError, hubOfflineCopy, hubPickerCopy, hubRecoveryView } from './connected-hub-messages.mjs'
 import { shellText } from './shell-language.mjs'
@@ -422,12 +422,14 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     ipcMain.handle('hub:quick-ask-close', event => quickAsk.close(quickAsk.sender(event)))
     ipcMain.handle('hub:quick-ask-sent', (event, path) => quickAsk.sent(quickAsk.sender(event), path))
     ipcMain.handle('hub:saved-origin', event => localSender(event) ? savedOrigin() : null)
-    ipcMain.handle('hub:connect', async (event, address) => {
+    async function connectFromPicker(event, address) {
         if (!localSender(event)) return { ok: false, reason: 'invalid' }
         const locale = pickerLocale
         const result = await connect(address, { parent: picker })
         return result.ok ? result : { ...result, message: hubConnectionError(locale, result) }
-    })
+    }
+    ipcMain.handle('hub:connect', connectFromPicker)
+    ipcMain.handle('hub:connect-cloud', event => connectFromPicker(event, RERUN_CLOUD_ORIGIN))
     ipcMain.handle('hub:offline-state', event => {
         const entry = offlineSender(event)
         return entry ? hubRecoveryView(entry.locale, entry.recovery.state()) : null
@@ -478,6 +480,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
 
     return {
         openPicker,
+        openCloud: () => connect(RERUN_CLOUD_ORIGIN),
         async reopenRemembered() {
             const origin = await savedOrigin()
             if (!origin || !available() || picker || openingLink || pendingOpen || connecting) return false

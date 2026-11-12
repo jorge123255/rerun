@@ -135,7 +135,10 @@ test('the hub preload exposes only its approved audience and drops the privilege
         return { exposed, listeners, requests }
     }
     assert.deepEqual(Object.keys(bootstrap(null).exposed), [])
-    assert.deepEqual(Object.keys(bootstrap({ audience: 'picker' }).exposed), ['rerunHubPicker'])
+    const picker = bootstrap({ audience: 'picker' })
+    assert.deepEqual(Object.keys(picker.exposed), ['rerunHubPicker'])
+    await picker.exposed.rerunHubPicker.connectCloud('https://wrong.example.test')
+    assert.deepEqual(picker.requests, [['hub:connect-cloud']])
     const offline = bootstrap({ audience: 'hub-offline' })
     assert.deepEqual(Object.keys(offline.exposed), ['rerunHubOffline'])
     await offline.exposed.rerunHubOffline.state()

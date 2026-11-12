@@ -13,6 +13,7 @@ if (bootstrap?.audience === 'picker') {
         copy: bootstrap.copy,
         savedOrigin: () => ipcRenderer.invoke('hub:saved-origin'),
         connect: address => ipcRenderer.invoke('hub:connect', address),
+        connectCloud: () => ipcRenderer.invoke('hub:connect-cloud'),
     })
 } else if (bootstrap?.audience === 'hub-offline') {
     contextBridge.exposeInMainWorld('rerunHubOffline', {

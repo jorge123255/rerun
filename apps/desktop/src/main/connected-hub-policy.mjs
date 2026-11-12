@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 
 export const HUB_SCHEME = 'rerun-desktop-dev'
 export const HUB_API_VERSION = 1
+export const RERUN_CLOUD_ORIGIN = 'https://app.rerun.build'
 const loopback = new Set(['localhost', '127.0.0.1', '[::1]'])
 const semver = /^(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})(?:-([0-9A-Za-z.-]{1,64}))?$/
 const token = /^[A-Za-z0-9_-]{16,128}$/

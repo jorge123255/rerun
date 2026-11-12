@@ -1,6 +1,7 @@
 const form = document.querySelector('form')
 const address = document.querySelector('#server-address')
-const submit = form.querySelector('button')
+const submit = form.querySelector('button[type="submit"]')
+const cloud = document.querySelector('#connect-cloud')
 const error = document.querySelector('#connection-error')
 const picker = window.rerunHubPicker
 const copy = picker?.copy
@@ -11,28 +12,34 @@ if (copy) {
     document.querySelector('main > p').textContent = copy.description
     form.querySelector('label').textContent = copy.label
     submit.textContent = copy.connect
+    cloud.textContent = copy.useCloud
 }
 void picker?.savedOrigin().then(origin => { if (!address.value && origin) address.value = origin }, () => {})
 address.addEventListener('input', () => {
     error.hidden = true
     address.removeAttribute('aria-invalid')
 })
-form.addEventListener('submit', async event => {
-    event.preventDefault()
+async function connect(useCloud) {
     if (submit.disabled || !picker) return
     error.hidden = true
-    submit.disabled = true
-    address.disabled = true
-    submit.textContent = copy.connecting
+    address.removeAttribute('aria-invalid')
+    submit.disabled = cloud.disabled = address.disabled = true
+    const button = useCloud ? cloud : submit
+    button.textContent = copy.connecting
     try {
-        const result = await picker.connect(address.value)
+        const result = await (useCloud ? picker.connectCloud() : picker.connect(address.value))
         if (result.ok) return
         error.textContent = result.message ?? copy.unreachable
     } catch { error.textContent = copy.unreachable }
-    address.setAttribute('aria-invalid', 'true')
-    address.disabled = false
-    submit.disabled = false
-    submit.textContent = copy.connect
+    if (!useCloud) address.setAttribute('aria-invalid', 'true')
+    submit.disabled = cloud.disabled = address.disabled = false
+    button.textContent = useCloud ? copy.useCloud : copy.connect
     error.hidden = false
-    address.focus()
+    const retryTarget = useCloud ? cloud : address
+    retryTarget.focus()
+}
+form.addEventListener('submit', event => {
+    event.preventDefault()
+    void connect(false)
 })
+cloud.addEventListener('click', () => { void connect(true) })

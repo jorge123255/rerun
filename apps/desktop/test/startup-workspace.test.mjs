@@ -30,28 +30,48 @@ test('the startup screen routes each choice separately and keeps the latest stat
         return elements.get(id)
     }
     const calls = []
-    let notify, initialStatus
+    let notify, initialStatus, finishCloud
     const desktopApp = {
         onStatus: handler => { notify = handler },
         getStatus: () => new Promise(resolve => { initialStatus = resolve }),
         openLocalWorkspace: async () => { calls.push('local') },
         connectToServer: async () => { calls.push('server') },
+        signInToCloud: () => {
+            calls.push('cloud')
+            return new Promise(resolve => { finishCloud = resolve })
+        },
     }
     runInNewContext(source, { document: { getElementById }, window: { desktopApp } })
-    const choices = { state: 'choose', message: 'Choose a workspace', choices: { local: 'Run on This Mac', connect: 'Connect to a Server' } }
+    const choices = { state: 'choose', message: 'Choose a workspace', choices: {
+        local: 'Run on This Mac', connect: 'Connect to a Server', cloud: 'Sign in to Rerun Cloud',
+        connecting: 'Connecting…', unreachable: 'Nothing answered at this address.',
+    } }
     notify(choices)
     assert.deepEqual(calls, [])
     assert.equal(elements.get('run-locally').textContent, 'Run on This Mac')
     assert.equal(elements.get('connect-server').hidden, false)
     assert.equal(elements.get('local-footnote').hidden, true)
+    const cloud = elements.get('sign-in-cloud')
+    assert.equal(cloud.textContent, choices.choices.cloud)
+    const pendingCloud = cloud.click()
+    await cloud.click()
+    assert.equal(cloud.textContent, choices.choices.connecting)
+    assert.deepEqual(calls, ['cloud'])
+    finishCloud({ ok: false, message: 'Try again shortly.' })
+    await pendingCloud
+    assert.equal(elements.get('cloud-error').hidden, false)
+    assert.equal(elements.get('cloud-error').textContent, 'Try again shortly.')
+    assert.equal(cloud.disabled, false)
     elements.get('connect-server').click()
-    assert.deepEqual(calls, ['server'])
+    assert.deepEqual(calls, ['cloud', 'server'])
     elements.get('run-locally').click()
-    assert.deepEqual(calls, ['server', 'local'])
+    assert.deepEqual(calls, ['cloud', 'server', 'local'])
     notify({ state: 'starting', message: 'Preparing local runtime…' })
     initialStatus(choices)
     await Promise.resolve()
     assert.equal(elements.get('run-locally').hidden, true)
     assert.equal(elements.get('connect-server').hidden, true)
+    assert.equal(cloud.hidden, true)
+    assert.equal(elements.get('cloud-error').hidden, true)
     assert.equal(elements.get('message').textContent, 'Preparing local runtime…')
 })

@@ -16,10 +16,12 @@
     <p id="message" role="status">Preparing your local workspace…</p>
     <div class="actions">
       <button id="run-locally" hidden></button>
+      <button id="sign-in-cloud" class="secondary" hidden></button>
       <button id="connect-server" class="secondary" hidden></button>
       <button id="retry" hidden>Try again</button>
       <button id="quit" class="secondary">Quit</button>
     </div>
+    <p id="cloud-error" class="connection-error" role="alert" hidden></p>
     <p id="local-footnote" class="footnote">Your workspace and history stay on this Mac. AI providers use the network when you chat.</p>
   </main>
   <script src="startup.js"></script>

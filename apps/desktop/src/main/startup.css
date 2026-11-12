@@ -12,5 +12,7 @@ h1 { font-size: clamp(34px, 6vw, 56px); font-weight: 500; line-height: 1.05; let
 button { min-height: 44px; border: 0; border-radius: 9px; background: #c6e581; color: #172116; font: inherit; padding: 10px 20px; cursor: pointer; }
 button:focus-visible { outline: 2px solid white; outline-offset: 4px; }
 button.secondary { background: #25282a; color: #f4f4f0; }
+button:disabled { cursor: default; opacity: .65; }
+.connection-error { color: #ffc0b3; }
 .footnote { max-width: 400px; color: #8a918b; font-size: 12px; line-height: 1.7; }
 [hidden] { display: none; }

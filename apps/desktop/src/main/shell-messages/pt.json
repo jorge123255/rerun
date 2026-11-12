@@ -55,6 +55,7 @@
     "server": {
         "label": "Endereço do servidor",
         "connect": "Conectar",
+        "useCloud": "Usar Rerun Cloud",
         "unreachable": "Nada respondeu neste endereço.",
         "notRerun": "Este endereço não é um servidor Rerun.",
         "tooOld": "Este servidor exige a versão {version} do app ou mais recente.",
@@ -96,7 +97,8 @@
         "unavailable": "Não foi possível abrir a conversa. Tente novamente quando o espaço de trabalho estiver pronto."
     },
     "startup": {
-        "chooseWorkspace": "Execute o Rerun neste Mac ou conecte-se a um servidor Rerun existente.",
+        "chooseWorkspace": "Escolha onde seu workspace será executado.",
+        "signInCloud": "Entrar no Rerun Cloud",
         "runLocally": "Executar neste Mac",
         "connectServer": "Conectar a um servidor",
         "keychainPrompt": "Se o macOS pedir acesso às Chaves, escolha Permitir para abrir seu workspace local.",

@@ -7,5 +7,4 @@ input { min-width: 0; padding: 12px; border: 1px solid #525752; border-radius: 9
 input:focus-visible { outline: 2px solid #c6e581; outline-offset: 2px; }
 input[aria-invalid="true"] { border-color: #f5a898; }
 button { margin-top: 8px; }
-button:disabled { cursor: default; opacity: .65; }
 #connection-error { color: #ffc0b3; margin: 0; }
