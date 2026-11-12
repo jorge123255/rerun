@@ -54,7 +54,7 @@ function json(response, status, body) {
     response.end(payload)
 }
 
-async function startWorkspaceFixture(beforeRead = async () => {}, onSend, onStream) {
+async function startWorkspaceFixture(beforeRead = async () => {}, onSend, onStream, onStop) {
     return listen(async (request, response) => {
         if (request.headers.cookie !== `rerun-desktop-session=${SESSION_COOKIE}`) return json(response, 401, { error: 'Unauthorized' })
         const url = new URL(request.url, 'http://127.0.0.1')
@@ -73,6 +73,11 @@ async function startWorkspaceFixture(beforeRead = async () => {}, onSend, onStre
             const input = JSON.parse(Buffer.concat(chunks))
             onSend(input)
             return json(response, 202, { runId: input.runId })
+        }
+        if (request.method === 'DELETE' && onStop) {
+            assert.equal(request.headers.origin, 'http://' + request.headers.host)
+            const runId = url.searchParams.get('runId')
+            return onStop(runId) ? json(response, 200, { runId }) : json(response, 404, { error: 'not found' })
         }
         if (url.searchParams.get('stream') === '1' && onStream) return onStream(response)
         if (url.searchParams.has('runId')) return json(response, 200, { status: 'done' })
@@ -247,12 +252,17 @@ test('private-network pairing pins TLS and scopes approvals through restart and 
     assert.equal(restored.listening, false)
 })
 
-test('only the granted HTTPS device can send to its own saved chat, with stable per-device receipts', async t => {
+test('only the granted HTTPS device can send and stop its own turns, with stable per-device receipts', async t => {
     const host = localPairingAddresses()[0]
     if (!host) { t.skip('no assigned private IPv4 address'); return }
     const root = await dataRoot(t)
     const submissions = []
-    const workspace = await startWorkspaceFixture(undefined, body => submissions.push(body))
+    const stopped = []
+    const workspace = await startWorkspaceFixture(undefined, body => submissions.push(body), undefined, runId => {
+        if (!submissions.some(message => message.runId === runId)) return false
+        stopped.push(runId)
+        return true
+    })
     t.after(workspace.close)
     const { service } = createService(t, root, { workspace })
     await service.setPhoneAccessEnabled(true)
@@ -268,8 +278,10 @@ test('only the granted HTTPS device can send to its own saved chat, with stable 
     const other = await pair()
     const message = { requestId: 'b4e687b7-e978-4411-a3bb-7d49c0486c11', text: 'Phone fixture message' }
     const send = () => client.sendMessage(AGENT.id, CHAT.id, message)
+    const stop = () => client.stopSentTurn(AGENT.id, CHAT.id, message.requestId)
     assert.equal((await client.openSavedChat(AGENT.id, CHAT.id)).permissions.sendMessages, false)
     await assert.rejects(send, { status: 403 })
+    await assert.rejects(stop, { status: 403 })
     assert.equal(submissions.length, 0)
     await service.setSendMessages(deviceId, true)
     assert.equal((await client.openSavedChat(AGENT.id, CHAT.id)).permissions.sendMessages, true)
@@ -281,6 +293,11 @@ test('only the granted HTTPS device can send to its own saved chat, with stable 
     assert.equal((await client.readSentTurn(AGENT.id, CHAT.id, message.requestId)).status, 'done')
     await assert.rejects(() => other.client.sendMessage(AGENT.id, CHAT.id, message), { status: 403 })
     await assert.rejects(() => client.sendMessage(AGENT.id, 'foreign-chat', message), { status: 404 })
+    await service.setSendMessages(other.deviceId, true)
+    await assert.rejects(() => other.client.stopSentTurn(AGENT.id, CHAT.id, message.requestId), { status: 404 })
+    await assert.rejects(() => client.stopSentTurn(AGENT.id, 'foreign-chat', message.requestId), { status: 404 })
+    await stop()
+    assert.deepEqual(stopped, [submissions[0].runId])
     await service.stop()
     const { service: restarted } = createService(t, root, { workspace })
     await restarted.restore()
@@ -289,8 +306,11 @@ test('only the granted HTTPS device can send to its own saved chat, with stable 
     assert.deepEqual(submissions[0], submissions[2])
     await restarted.setSendMessages(deviceId, false)
     await assert.rejects(send, { status: 403 })
+    await assert.rejects(stop, { status: 403 })
     await restarted.revokeDevice(deviceId)
     await assert.rejects(send, { status: 401 })
+    await assert.rejects(stop, { status: 401 })
+    assert.deepEqual(stopped, [submissions[0].runId])
     assert.equal(submissions.length, 3)
 })
 

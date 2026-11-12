@@ -3,12 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
-import { createDesktopAgent } from '@/lib/desktop/server/store'
+import { createDesktopAgent, createDesktopSession } from '@/lib/desktop/server/store'
 import { setDesktopWorkspaceFrozen } from '@/lib/desktop/server/workspace-admission'
 import { createAgent, createConnection, setBoxDefault } from '@/lib/engine/client'
 import { disposableRunEngine } from '@/test/desktop-run-engine.mjs'
 import { POST as desktopChat } from '../chat/route'
-import { GET, POST } from './route'
+import { DELETE, GET, POST } from './route'
 
 test.runIf(process.env.RERUN_PHONE_SEND_ACCEPTANCE === '1')('a phone reconnects to the same live reply and replays the saved turn after restart', async () => {
     const env = { ...process.env }
@@ -82,7 +82,26 @@ test.runIf(process.env.RERUN_PHONE_SEND_ACCEPTANCE === '1')('a phone reconnects 
         expect((await POST(request(path, 'POST', body))).status).toBe(202)
         expect(await (await GET(request(statusPath))).json()).toEqual({ status: 'done' })
         expect(await (await GET(request(path))).json()).toEqual(saved)
+        expect((await DELETE(request(statusPath, 'DELETE'))).status).toBe(200)
+        expect(await (await GET(request(statusPath))).json()).toEqual({ status: 'done' })
         expect(engine.providerMessages).toHaveLength(2)
+
+        const cancellable = { runId: '4ce8e801-9bbd-8c6e-8221-2e326471724d', text: 'Stop only this phone turn' }
+        const cancellablePath = path + '&runId=' + cancellable.runId
+        expect((await POST(request(path, 'POST', cancellable))).status).toBe(202)
+        await engine.waitForProviderRequest(3)
+        const otherChat = await createDesktopSession(await openDesktopDatabase(root), { agentId: agent.id, engineSessionId: 'other-saved-chat', title: 'Other saved chat' })
+        const wrongChatPath = endpoint + `?agentId=${agent.id}&chatId=${otherChat.id}&runId=${cancellable.runId}`
+        expect((await DELETE(request(wrongChatPath, 'DELETE'))).status).toBe(404)
+        expect(await (await GET(request(cancellablePath))).json()).toEqual({ status: 'running' })
+        expect((await DELETE(request(cancellablePath, 'DELETE'))).status).toBe(200)
+        await expect.poll(async () => (await (await GET(request(cancellablePath))).json()).status, { timeout: 6000 }).toBe('cancelled')
+        expect((await DELETE(request(cancellablePath, 'DELETE'))).status).toBe(200)
+        await engine.stop()
+        await engine.start()
+        expect(await (await GET(request(cancellablePath))).json()).toEqual({ status: 'cancelled' })
+        expect(await (await GET(request(statusPath))).json()).toEqual({ status: 'done' })
+        expect(engine.providerMessages).toHaveLength(3)
     } finally {
         await closeDesktopDatabase(root)
         await engine.close()

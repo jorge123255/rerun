@@ -48,3 +48,15 @@ export async function sendWorkspaceMessage(runtime, { agentId, chatId, runId, te
         default: return { code: 'unavailable', status: 502 }
     }
 }
+
+export async function stopWorkspaceTurn(runtime, target) {
+    const { address, headers } = workspaceRequest(runtime, target)
+    const response = await fetch(address, {
+        method: 'DELETE', redirect: 'error', signal: AbortSignal.timeout(8500),
+        headers: { ...headers, Origin: runtime.app.origin },
+    })
+    if (response.status === 404) throw hiddenWorkspaceError()
+    if (response.status === 200 && (await response.json()).runId === target.runId) return null
+    void response.body?.cancel().catch(() => {})
+    return response.status === 409 ? { code: 'turn_blocked', status: 409 } : { code: 'unavailable', status: 502 }
+}

@@ -65,4 +65,6 @@ A phone starts with read access. To let one phone send to saved chats in its
 paired workspace, turn on **Send messages** for it in the Mac pairing window.
 The phone uses the chat’s existing model and coworker settings. A stable send
 ID lets the phone retry a missing acknowledgement without starting a second
-turn. The client polls the exact run and refreshes the saved chat at completion.
+turn. The client follows reply text and refreshes the saved chat at completion.
+Stop can cancel the exact turn sent by that approved device. The client reads
+the saved outcome so a reply that finishes first still shows as completed.

@@ -4,7 +4,7 @@ import { createServer } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { API_PREFIX, CREDENTIAL_CLAIM_TTL_MS, DEVICE_STATUS, ERRORS, LOOPBACK_HOST, PROTOCOL_VERSION, SERVICE_NAME } from './protocol.mjs'
 import { hashSecret, hashesEqual, randomSecret } from './crypto.mjs'
-import { readWorkspaceChats, readWorkspaceReply, sendWorkspaceMessage } from './workspace-reads.mjs'
+import { readWorkspaceChats, readWorkspaceReply, sendWorkspaceMessage, stopWorkspaceTurn } from './workspace-reads.mjs'
 import { assertDeviceWorkspace, hiddenWorkspaceError } from './workspace-access.mjs'
 import { publicDevice } from './store.mjs'
 
@@ -204,7 +204,8 @@ export function createPairingTransport({
         if (!route) return fail(response, ERRORS.not_found, 404)
         const [, rawWorkspaceId, agentId, chatId, requestId, streaming] = route
         const sending = request.method === 'POST' && chatId && !requestId
-        if (!sending && request.method !== 'GET') return fail(response, ERRORS.not_found, 404)
+        const stopping = request.method === 'DELETE' && requestId && !streaming
+        if (!sending && !stopping && request.method !== 'GET') return fail(response, ERRORS.not_found, 404)
         const presented = hashSecret(BEARER.exec(request.headers.authorization ?? '')?.[1])
         const device = await authenticate(presented)
         if (!device) return fail(response, ERRORS.unauthorized)
@@ -215,19 +216,22 @@ export function createPairingTransport({
         const current = getRuntime()
         try {
             await workspaceFor(device, workspaceId, current)
-            if (sending) {
+            if (sending || stopping) {
                 if (!tls || device.sendMessages !== true) return fail(response, 'send_not_allowed', 403)
-                const body = await readBody(request, MESSAGE_BODY_LIMIT)
-                if (!body || Object.keys(body).length !== 2 || typeof body.requestId !== 'string' || !UUID.test(body.requestId)
-                    || typeof body.text !== 'string' || !body.text.trim() || body.text.length > 20_000) return fail(response, 'invalid_message', 400)
+                const body = sending ? await readBody(request, MESSAGE_BODY_LIMIT) : null
+                if (sending && (!body || Object.keys(body).length !== 2 || typeof body.requestId !== 'string' || !UUID.test(body.requestId)
+                    || typeof body.text !== 'string' || !body.text.trim() || body.text.length > 20_000)) return fail(response, 'invalid_message', 400)
                 return await exclusive(async () => {
                     const authorized = await authenticate(presented)
                     if (!authorized || authorized.deviceId !== device.deviceId) return fail(response, ERRORS.unauthorized)
                     if (authorized.sendMessages !== true) return fail(response, 'send_not_allowed', 403)
                     await workspaceFor(authorized, workspaceId, current)
-                    const runId = phoneRunId(authorized, agentId, chatId, body.requestId)
-                    const failure = await sendWorkspaceMessage(current, { agentId, chatId, runId, text: body.text })
-                    return failure ? fail(response, failure.code, failure.status) : send(response, 202, { requestId: body.requestId })
+                    const turnRequestId = stopping ? requestId : body.requestId
+                    const runId = phoneRunId(authorized, agentId, chatId, turnRequestId)
+                    const failure = stopping
+                        ? await stopWorkspaceTurn(current, { agentId, chatId, runId })
+                        : await sendWorkspaceMessage(current, { agentId, chatId, runId, text: body.text })
+                    return failure ? fail(response, failure.code, failure.status) : send(response, stopping ? 200 : 202, { requestId: turnRequestId })
                 })
             }
             const runId = requestId ? phoneRunId(device, agentId, chatId, requestId) : undefined

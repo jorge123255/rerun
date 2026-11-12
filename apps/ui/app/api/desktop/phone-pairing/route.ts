@@ -3,12 +3,14 @@ import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { readDesktopHistory, startDesktopChat } from '@/lib/desktop/server/engine'
 import { desktopRoute } from '@/lib/desktop/server/http'
+import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { phoneReplyStream } from '@/lib/desktop/server/phone-reply'
+import { withDesktopSecretSessionTransition } from '@/lib/desktop/server/secret-requests/lifecycle'
 import { engineOf } from '@/lib/desktop/server/settings'
 import { findDesktopAgent, findDesktopSession, listDesktopAgents, listDesktopSessions } from '@/lib/desktop/server/store'
 import { desktopThreadViews } from '@/lib/desktop/server/thread-views'
 import { desktopSessionView } from '@/lib/desktop/server/views'
-import { EngineRequestError, getRun, reconnectRun } from '@/lib/engine/client'
+import { cancelRun, EngineRequestError, getRun, reconnectRun } from '@/lib/engine/client'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,6 +18,18 @@ const id = /^[A-Za-z0-9_-]{1,200}$/
 const options = { headers: { 'cache-control': 'no-store' } }
 const uuid = z.string().uuid()
 const turnInput = z.object({ runId: uuid, text: z.string().max(20_000).refine(text => !!text.trim()) }).strict()
+
+async function ownedRun(runtime: DesktopRuntime, engineAgentId: string, engineSessionId: string, runId: string) {
+    const conn = engineOf(runtime)
+    try {
+        const run = await getRun(conn, engineAgentId, runId)
+        if (run.id !== runId || run.sessionId !== engineSessionId || run.agentId !== engineAgentId) throw new DesktopHttpError(404, 'Not found')
+        return { conn, run }
+    } catch (error) {
+        if (error instanceof EngineRequestError && error.status === 404) throw new DesktopHttpError(404, 'Not found')
+        throw error
+    }
+}
 
 export async function GET(request: Request): Promise<Response> {
     return desktopRoute(request, async runtime => {
@@ -45,23 +59,17 @@ export async function GET(request: Request): Promise<Response> {
         const chat = await findDesktopSession(db, chatId)
         if (chat?.agentId !== agentId) throw new DesktopHttpError(404, 'Not found')
         if (runId) {
-            try {
-                const run = await getRun(engineOf(runtime), agent.engineAgentId, runId)
-                if (run.id !== runId || run.sessionId !== chat.engineSessionId || run.agentId !== agent.engineAgentId) throw new DesktopHttpError(404, 'Not found')
-                if (streaming) {
-                    if (run.status !== 'running') return new Response(null, { ...options, status: 204 })
-                    const reply = await reconnectRun(engineOf(runtime), agent.engineAgentId, runId)
-                    if (reply.status === 204) return new Response(null, { ...options, status: 204 })
-                    if (!reply.ok || !reply.body) throw new DesktopHttpError(502, 'This reply is unavailable.')
-                    return new Response(phoneReplyStream(reply.body, runId), {
-                        headers: { ...options.headers, 'content-type': 'application/x-ndjson' },
-                    })
-                }
-                return Response.json({ status: run.status }, options)
-            } catch (error) {
-                if (error instanceof EngineRequestError && error.status === 404) throw new DesktopHttpError(404, 'Not found')
-                throw error
+            const { conn, run } = await ownedRun(runtime, agent.engineAgentId, chat.engineSessionId, runId)
+            if (streaming) {
+                if (run.status !== 'running') return new Response(null, { ...options, status: 204 })
+                const reply = await reconnectRun(conn, agent.engineAgentId, runId)
+                if (reply.status === 204) return new Response(null, { ...options, status: 204 })
+                if (!reply.ok || !reply.body) throw new DesktopHttpError(502, 'This reply is unavailable.')
+                return new Response(phoneReplyStream(reply.body, runId), {
+                    headers: { ...options.headers, 'content-type': 'application/x-ndjson' },
+                })
             }
+            return Response.json({ status: run.status }, options)
         }
         const history = await readDesktopHistory(runtime, chatId, { acknowledgeAlternate: false })
         const { id: savedId, title, createdAt, updatedAt, kind } = desktopSessionView(chat)
@@ -88,5 +96,34 @@ export async function POST(request: Request): Promise<Response> {
         void response.body?.cancel().catch(() => {})
         if (sessionId !== chatId || response.headers.get('x-run-id') !== runId) throw new DesktopHttpError(502, 'Could not confirm this message.')
         return Response.json({ runId }, { ...options, status: 202 })
+    })
+}
+
+export async function DELETE(request: Request): Promise<Response> {
+    return desktopRoute(request, async runtime => {
+        const { searchParams } = new URL(request.url)
+        const agentId = searchParams.get('agentId')
+        const chatId = searchParams.get('chatId')
+        const runId = searchParams.get('runId')
+        if (!agentId || !id.test(agentId) || !chatId || !id.test(chatId) || !runId || !uuid.safeParse(runId).success) {
+            throw new DesktopHttpError(404, 'Not found')
+        }
+        const db = await openDesktopDatabase(runtime.dataRoot)
+        const agent = await findDesktopAgent(db, agentId)
+        const chat = await findDesktopSession(db, chatId)
+        if (!agent || chat?.agentId !== agentId) throw new DesktopHttpError(404, 'Not found')
+        const { conn, run } = await ownedRun(runtime, agent.engineAgentId, chat.engineSessionId, runId)
+        if (run.status === 'running') {
+            try {
+                await withDesktopSecretSessionTransition(runtime, chatId, () => cancelRun(conn, agent.engineAgentId, runId))
+            } catch (error) {
+                if (!(error instanceof EngineRequestError) || error.status !== 409) {
+                    if (error instanceof EngineRequestError && error.status === 404) throw new DesktopHttpError(404, 'Not found')
+                    throw new DesktopHttpError(502, 'Could not stop this reply. Try again.')
+                }
+            }
+        }
+        // A successful stop request can race a normal completion. Read the run to learn its terminal state.
+        return Response.json({ runId }, options)
     })
 }

@@ -57,6 +57,7 @@ export function createMacPairingClient(options: {
     listSavedChats(coworkerId: string, signal?: AbortSignal): Promise<{ chats: MacChat[] }>
     openSavedChat(coworkerId: string, chatId: string, signal?: AbortSignal): Promise<{ chat: MacChat; messages: MacMessage[]; permissions?: { sendMessages: boolean } }>
     sendMessage(coworkerId: string, chatId: string, message: MacOutgoingMessage, signal?: AbortSignal): Promise<{ requestId: string }>
+    stopSentTurn(coworkerId: string, chatId: string, requestId: string, signal?: AbortSignal): Promise<void>
     readSentTurn(coworkerId: string, chatId: string, requestId: string, signal?: AbortSignal): Promise<{ status: 'running' | 'done' | 'error' | 'cancelled' }>
     streamSentTurn(coworkerId: string, chatId: string, requestId: string, onFrame: (frame: MacReplyFrame) => void, signal?: AbortSignal): Promise<void>
     readMacSession(): Promise<MacSession | null>

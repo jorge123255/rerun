@@ -185,6 +185,10 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
             if (!['running', 'done', 'error', 'cancelled'].includes(result?.status)) throw new Error('invalid_turn_status')
             return result
         },
+        async stopSentTurn(agentId, sessionId, requestId, signal) {
+            const result = await chatRequest(agentId, sessionId, '/turns/' + encodeURIComponent(requestId), { method: 'DELETE', signal })
+            if (result?.requestId !== requestId) throw new Error('invalid_stop_receipt')
+        },
         async streamSentTurn(agentId, sessionId, requestId, onFrame, signal) {
             const session = await sessionOrThrow()
             const pin = session.certificateFingerprint
