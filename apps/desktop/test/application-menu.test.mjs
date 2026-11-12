@@ -28,6 +28,7 @@ test('the Mac Settings item opens only the current desktop frame', () => {
         isDesktopPage: url => url === desktopUrl,
         openDocumentation: () => calls.push('documentation'),
         openFind: () => calls.push('find'),
+        openNewWindow: () => calls.push('new-window'),
     })
 
     assert.equal(menu[0].label, 'Rerun Desktop Preview')
@@ -56,6 +57,10 @@ test('the Mac Settings item opens only the current desktop frame', () => {
     assert(edit.submenu.some(item => item.role === 'paste'))
     edit.submenu.find(item => item.id === 'rerun-find').click()
     assert.equal(calls.at(-1), 'find')
+    const newWindow = menu.find(item => item.role === 'fileMenu').submenu.find(item => item.id === 'rerun-new-window')
+    assert.equal(newWindow.accelerator, 'CmdOrCtrl+Shift+N')
+    newWindow.click()
+    assert.equal(calls.at(-1), 'new-window')
 })
 
 test('the preload forwards the Settings signal without exposing its IPC event', async () => {

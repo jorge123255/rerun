@@ -7,7 +7,7 @@ const required = [
     'index.js', 'index.mjs', 'preload.cjs', 'before-quit.mjs', 'startup.html',
     'startup.css', 'startup.js', 'runtime.mjs', 'supervisor.mjs', 'ui-host.mjs', 'notifications.mjs', 'application-menu.mjs',
     'mac-menu-bar.mjs', 'tray/trayTemplate.png', 'tray/trayTemplate@2x.png',
-    'window-context-menu.mjs', 'displayed-image.mjs',
+    'window-context-menu.mjs', 'displayed-image.mjs', 'board-windows.mjs',
     'window-find.mjs', 'find-preload.cjs', 'find.html', 'find.js', 'find.css',
     'quick-ask-window.mjs', 'quick-ask-shortcut.mjs', 'quick-ask-preload.cjs', 'quick-ask.html', 'quick-ask.js', 'quick-ask.css',
 ]

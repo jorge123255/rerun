@@ -2,13 +2,12 @@ import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, n
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { mkdir } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
 import { createWorkspaceCoordinator, seedLegacyCatalog, getWorkspace } from './workspaces/index.mjs'
 import { loadBundle, loadIdentity, workspaceIdentity } from './runtime.mjs'
 import { RuntimeSupervisor } from './supervisor.mjs'
 import { createDesktopNotifications } from './notifications.mjs'
 import { createNotificationClickHandoff } from './notification-click-handoff.mjs'
-import { BeforeQuitDrafts, completeDesktopQuit } from './before-quit.mjs'
+import { completeDesktopQuit } from './before-quit.mjs'
 import { createDesktopTemplateFiles } from './templates.mjs'
 import { createDesktopCoworkerShareFiles } from './coworker-share-files.mjs'
 import { createNativeRemoteMachines } from './remote-machines/binding.mjs'
@@ -21,6 +20,7 @@ import { attachDesktopContextMenu, externalDesktopLink } from './window-context-
 import { createWindowFind } from './window-find.mjs'
 import { createQuickAskWindow } from './quick-ask-window.mjs'
 import { loadQuickAskShortcut } from './quick-ask-shortcut.mjs'
+import { createBoardWindows } from './board-windows.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
@@ -34,7 +34,6 @@ let runtime
 let workspaces
 let remoteMachines
 let remoteInstallId
-let rendererEpoch = randomUUID()
 const remoteClosures = new Map()
 let activeSession
 let activeWorkspaceId
@@ -43,34 +42,28 @@ let quitting = false
 let quittingNow = false
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
-const draftQuit = new BeforeQuitDrafts()
+const boards = createBoardWindows({ startupUrl: pathToFileURL(startup).href, isDesktopPage })
+const closingBoards = new Set()
 const quickAsk = createQuickAskWindow({ app, BrowserWindow, screen, showBoard: showMainWindow, boardScope: () =>
-    !quitting && !transitioning && runtimeScope() && window && !window.isDestroyed() && isDesktopPage(window.webContents.mainFrame?.url)
-        ? { epoch: rendererEpoch, contents: window.webContents } : null,
+    boardContext(window) ? { epoch: boards.get(window).epoch, contents: window.webContents } : null,
 })
-const windowFind = createWindowFind({ WebContentsView, scopeOf: candidate => !quitting && !transitioning
-    && candidate && candidate === window && !candidate.isDestroyed() && runtimeScope()
-    && isDesktopPage(candidate.webContents.mainFrame?.url) ? rendererEpoch : null,
+const windowFind = createWindowFind({ WebContentsView, scopeOf: candidate => boardContext(candidate)?.rendererEpoch ?? null,
     topInset: candidate => mac && !candidate.isFullScreen() ? 28 : 0,
 })
-const { saveResultFile, saveCoworkerFile, saveSharedFile, saveDisplayedImage } = createDesktopFileSaves({ dialog, context: () => {
-    if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
-    return { runtime, window, rendererEpoch }
-} })
-const templateFiles = createDesktopTemplateFiles({ dialog, context: () => {
-    if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
-    return { runtime, window }
-} })
-const coworkerShareFiles = createDesktopCoworkerShareFiles({ dialog, context: () => {
-    if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
-    return { runtime, window }
-} })
-const remoteMachineIpc = createRemoteMachineIpc({ trusted, context: () => {
+function boardContext(candidate) {
+    const entry = boards.get(candidate)
+    if (quitting || transitioning || closingBoards.has(candidate) || !runtimeScope() || !boards.ready(entry, runtime)) return null
+    return { runtime, window: candidate, rendererEpoch: entry.epoch }
+}
+const filesFor = candidate => createDesktopFileSaves({ dialog, context: () => boardContext(candidate) })
+const templatesFor = candidate => createDesktopTemplateFiles({ dialog, context: () => boardContext(candidate) })
+const sharesFor = candidate => createDesktopCoworkerShareFiles({ dialog, context: () => boardContext(candidate) })
+const remoteMachineIpc = createRemoteMachineIpc({ trusted: trustedPrimary, context: () => {
     const current = supervisor?.runtime
     if (quitting || transitioning || !remoteMachines || !runtime || runtime !== current || supervisor.status.state !== 'ready'
         || remoteClosures.has(current.workspaceId) || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
     return { binding: remoteMachines, actor: { installId: remoteInstallId, workspaceId: current.workspaceId,
-        launchNonce: current.launchNonce, rendererEpoch } }
+        launchNonce: current.launchNonce, rendererEpoch: boards.get(window).epoch } }
 } })
 const clickHandoff = createNotificationClickHandoff()
 let clickReady = null
@@ -92,10 +85,26 @@ function openExternal(href) {
     const url = externalDesktopLink(href)
     if (url) void shell.openExternal(url).catch(() => {})
 }
-function reportImageSaveFailure(error) {
+function reportImageSaveFailure(candidate, error) {
     const options = { type: 'warning', title: 'Save Image', message: safeDisplayedImageError(error), buttons: ['OK'], defaultId: 0, noLink: true }
-    const parent = window && !window.isDestroyed() ? window : null
+    const parent = candidate && !candidate.isDestroyed() ? candidate : null
     void (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options)).catch(() => {})
+}
+function focusedBoard() {
+    const focused = BrowserWindow.getFocusedWindow()
+    return boards.get(focused) ? focused : window
+}
+async function confirmDiscard(candidate, action) {
+    const options = {
+        type: 'warning', title: 'Unsaved changes',
+        message: 'Some changes haven’t been saved.',
+        detail: 'Stay in Rerun to review or save your changes.',
+        buttons: ['Stay', action + ' without saving'], defaultId: 0, cancelId: 0, noLink: true,
+    }
+    const parent = candidate && !candidate.isDestroyed() ? candidate : null
+    if (parent) { parent.show(); parent.focus() }
+    const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
+    return result.response === 1
 }
 function runtimeScope() {
     const current = supervisor?.runtime
@@ -131,27 +140,13 @@ else {
     app.on('before-quit', event => {
         if (quittingNow) return
         event.preventDefault()
-        if (quitting || transitioning) return
+        if (quitting || transitioning || closingBoards.size) return
         quitting = true
-        windowFind.close(window)
+        for (const board of boards.list()) windowFind.close(board.window)
         quickAsk.reset()
         void completeDesktopQuit({
-            flush: () => {
-                if (!window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url) || !draftQuit.ready) return true
-                return draftQuit.request(value => window.webContents.send('desktop:before-quit', value))
-            },
-            confirmDiscard: async () => {
-                const options = {
-                    type: 'warning', title: 'Unsaved changes',
-                    message: 'Some changes haven’t been saved.',
-                    detail: 'Stay in Rerun to review or save your changes, or quit without saving them.',
-                    buttons: ['Stay', 'Quit without saving'], defaultId: 0, cancelId: 0, noLink: true,
-                }
-                const parent = window && !window.isDestroyed() ? window : null
-                if (parent) { parent.show(); parent.focus() }
-                const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
-                return result.response === 1
-            },
+            flush: () => boards.flushAll(runtime),
+            confirmDiscard: () => confirmDiscard(focusedBoard(), 'Quit'),
             stop: async () => { await shortcutPreference?.flush(); await remoteMachines?.close(); await supervisor?.stop() },
             quit: () => { clickHandoff.stop(); quittingNow = true; app.quit() },
             cancelled: resumeAfterCancelledQuit,
@@ -165,9 +160,13 @@ else {
 }
 
 function trusted(event) {
-    if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('Untrusted desktop request')
-    const url = new URL(event.senderFrame.url)
-    if (url.href !== pathToFileURL(startup).href && (!runtime || url.origin !== runtime.app.origin || url.pathname !== '/desktop')) throw new Error('Untrusted desktop page')
+    return boards.trusted(event, runtime)
+}
+
+function trustedPrimary(event) {
+    const entry = trusted(event)
+    if (!entry.primary || entry.window !== window) throw new Error('This operation requires the main workspace window')
+    return entry
 }
 
 function isDesktopPage(href) {
@@ -181,12 +180,12 @@ function isDesktopPage(href) {
 function resumeAfterCancelledQuit() {
     quitting = false
     // The renderer stays frozen after an ACK, until shutdown or this explicit cancellation.
-    try {
-        if (window && !window.isDestroyed() && isDesktopPage(window.webContents.mainFrame.url)) {
-            window.webContents.send('desktop:quit-cancelled')
-        }
-    } catch {}
+    for (const board of boards.list()) resumeBoard(board)
     flushNotificationClicks()
+}
+
+function resumeBoard(board) {
+    try { if (boards.ready(board, runtime)) board.contents.send('desktop:quit-cancelled') } catch {}
 }
 
 async function launch() {
@@ -198,10 +197,14 @@ async function launch() {
         app.once('will-quit', shortcutPreference.unregister)
         installMacApplicationMenu({
             Menu, appName: app.name, isDesktopPage,
-            settingsWindow: () => !quitting && !transitioning && runtimeScope() && draftQuit.ready ? window : null,
+            settingsWindow: () => {
+                const candidate = focusedBoard()
+                return boardContext(candidate) && boards.get(candidate).drafts.ready ? candidate : null
+            },
             openDocumentation: () => openExternal('https://docs.rerun.build'),
-            openFind: () => windowFind.open(window),
+            openFind: () => windowFind.open(focusedBoard()),
             openQuickAsk: () => quickAsk.toggle(),
+            openNewWindow: () => { void openAdditionalBoard().catch(() => {}) },
         })
         try {
             menuBar = createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow: showMainWindow,
@@ -215,11 +218,11 @@ async function launch() {
     ipcMain.handle('desktop:status', event => { trusted(event); return supervisor?.status ?? bootStatus })
     if (mac) {
         ipcMain.on('desktop:find-open', event => {
-            try { trusted(event); windowFind.open(window) } catch { /* Ignore untrusted frames. */ }
+            try { windowFind.open(trusted(event).window) } catch { /* Ignore untrusted frames. */ }
         })
         ipcMain.on('desktop:find-query', (event, input) => windowFind.search(event, input))
         ipcMain.on('desktop:find-close', event => windowFind.dismiss(event))
-        ipcMain.handle('desktop:mac-fullscreen', event => { trusted(event); return window.isFullScreen() })
+        ipcMain.handle('desktop:mac-fullscreen', event => trusted(event).window.isFullScreen())
         const assertBoard = event => {
             trusted(event)
             if (quitting || transitioning || !runtimeScope() || !isDesktopPage(event.senderFrame.url)) throw new Error('The workspace is unavailable')
@@ -232,24 +235,25 @@ async function launch() {
         ipcMain.handle('desktop:quick-ask-send', (event, text) => quickAsk.send(event, text))
         ipcMain.on('desktop:quick-ask-close', event => quickAsk.close(event))
         for (const [channel, action] of [
-            ['desktop:quick-ask-ready', (event, value) => quickAsk.register(event, value, rendererEpoch)],
+            ['desktop:quick-ask-ready', (event, value) => quickAsk.register(event, value, boards.get(window).epoch)],
             ['desktop:quick-ask-unready', quickAsk.unregister],
             ['desktop:quick-ask-ack', quickAsk.acknowledge],
         ]) {
             ipcMain.on(channel, (event, value) => {
-                try { trusted(event); if (isDesktopPage(event.senderFrame.url)) action(event, value) } catch {}
+                try { trustedPrimary(event); if (isDesktopPage(event.senderFrame.url)) action(event, value) } catch {}
             })
         }
     }
     ipcMain.handle('desktop:retry', async event => {
-        trusted(event)
-        if (transitioning || quitting) return false
+        trustedPrimary(event)
+        if (event.senderFrame.url !== pathToFileURL(startup).href || transitioning || quitting || closingBoards.size) return false
         if (!supervisor) { app.relaunch(); app.quit(); return true }
         if (!workspaces) return false
         if (['starting', 'stopping'].includes(supervisor.status.state)) return false
         const pending = (await workspaces.reconcile()).openReceipt
         if (pending) return runWorkspaceTransition(() => workspaces.recoverSwitch({ requestId: pending.requestId, workspaceId: pending.toWorkspaceId }))
         await closeRemoteWorkspace(supervisor.runtime?.workspaceId)
+        retireAdditionalBoards()
         runtime = null
         await window.loadFile(startup)
         await supervisor.stop()
@@ -278,12 +282,12 @@ async function launch() {
     ipcMain.handle('desktop:quit', event => { trusted(event); app.quit() })
     ipcMain.handle('desktop:remote-machines-actor', event => remoteMachineIpc.actor(event))
     ipcMain.handle('desktop:remote-machines-execute', (event, command) => remoteMachineIpc.execute(event, command))
-    ipcMain.handle('desktop:coworker-share-pick', event => { trusted(event); return coworkerShareFiles.pickImport() })
-    ipcMain.handle('desktop:template-pick', event => { trusted(event); return templateFiles.pickImport() })
-    ipcMain.handle('desktop:template-save', (event, value) => { trusted(event); return templateFiles.saveArtifact(value) })
-    ipcMain.handle('desktop:result-save', (event, value) => { trusted(event); return saveResultFile(value) })
-    ipcMain.handle('desktop:coworker-file-save', (event, value) => { trusted(event); return saveCoworkerFile(value) })
-    ipcMain.handle('desktop:shared-file-save', (event, value) => { trusted(event); return saveSharedFile(value) })
+    ipcMain.handle('desktop:coworker-share-pick', event => sharesFor(trusted(event).window).pickImport())
+    ipcMain.handle('desktop:template-pick', event => templatesFor(trusted(event).window).pickImport())
+    ipcMain.handle('desktop:template-save', (event, value) => templatesFor(trusted(event).window).saveArtifact(value))
+    ipcMain.handle('desktop:result-save', (event, value) => filesFor(trusted(event).window).saveResultFile(value))
+    ipcMain.handle('desktop:coworker-file-save', (event, value) => filesFor(trusted(event).window).saveCoworkerFile(value))
+    ipcMain.handle('desktop:shared-file-save', (event, value) => filesFor(trusted(event).window).saveSharedFile(value))
     ipcMain.handle('desktop:notify', (event, value) => {
         trusted(event)
         const scope = clickScope()
@@ -292,7 +296,7 @@ async function launch() {
     })
     ipcMain.on('desktop:inbox-badge', (event, value) => {
         try {
-            trusted(event)
+            trustedPrimary(event)
             const scope = runtimeScope()
             if (!scope || !isDesktopPage(event.senderFrame.url) || value?.workspaceId !== scope.workspaceId
                 || value.launchNonce !== scope.launchNonce || !Number.isSafeInteger(value.count) || value.count < 0) return
@@ -300,20 +304,23 @@ async function launch() {
         } catch { /* A stale or untrusted renderer cannot update native badges. */ }
     })
     ipcMain.handle('desktop:save-draining-draft', (event, value) => {
-        trusted(event)
-        const signal = draftQuit.signalFor(value)
+        const board = trusted(event)
+        const signal = board.drafts.signalFor(value)
         if (!signal || !runtime || runtime !== supervisor?.runtime || !isDesktopPage(event.senderFrame.url)) {
             throw new Error('The pending draft save is no longer active')
         }
         return supervisor.saveDrainingDraft(value.agentId, value.body, signal)
     })
     for (const [channel, handle] of [
-        ['desktop:drafts-ready', value => draftQuit.register(value?.registrationId)],
-        ['desktop:drafts-unready', value => draftQuit.unregister(value?.registrationId)],
-        ['desktop:drafts-flushed', value => draftQuit.acknowledge(value)],
+        ['desktop:drafts-ready', (drafts, value) => drafts.register(value?.registrationId)],
+        ['desktop:drafts-unready', (drafts, value) => drafts.unregister(value?.registrationId)],
+        ['desktop:drafts-flushed', (drafts, value) => drafts.acknowledge(value)],
     ]) ipcMain.on(channel, (event, value) => {
         // Event handlers must ignore untrusted frames rather than throw in the main process.
-        try { trusted(event); if (isDesktopPage(event.senderFrame.url)) handle(value) } catch {}
+        try {
+            const board = trusted(event)
+            if (boards.ready(board, runtime)) handle(board.drafts, value)
+        } catch {}
     })
     const clickRegistration = value => {
         const registrationId = value?.registrationId
@@ -321,7 +328,7 @@ async function launch() {
     }
     ipcMain.on('desktop:notification-clicks-ready', (event, value) => {
         try {
-            trusted(event)
+            trustedPrimary(event)
             const registrationId = clickRegistration(value)
             if (!registrationId || !isDesktopPage(event.senderFrame.url)) return
             clickReady = { contents: event.sender, registrationId }
@@ -330,7 +337,7 @@ async function launch() {
     })
     ipcMain.on('desktop:notification-clicks-unready', (event, value) => {
         try {
-            trusted(event)
+            trustedPrimary(event)
             const registrationId = clickRegistration(value)
             if (registrationId && clickReady?.registrationId === registrationId && clickReady.contents === event.sender) clickReady = null
         } catch {}
@@ -345,24 +352,28 @@ async function launch() {
     remoteInstallId = identity.installId
     remoteMachines = createNativeRemoteMachines({ dataRoot, installId: identity.installId, safeStorage,
         workspaceKey: workspaceId => workspaceIdentity(identity, workspaceId).encryptionKey,
-        supervisor, draftQuit,
+        supervisor,
+        draftQuit: {
+            get ready() { return boards.get(window)?.drafts.ready === true },
+            request: () => boards.flushAll(runtime, true),
+        },
         currentRenderer: () => {
             const current = supervisor.runtime
             if (quitting || transitioning || !runtime || current !== runtime || supervisor.status.state !== 'ready'
                 || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
-            return { epoch: rendererEpoch, workspaceId: current.workspaceId, launchNonce: current.launchNonce }
-        },
-        sendDraftFlush: value => {
-            if (!window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) throw new Error('The workspace window is unavailable')
-            window.webContents.send('desktop:before-quit', value)
+            return { epoch: boards.get(window).epoch, workspaceId: current.workspaceId, launchNonce: current.launchNonce }
         },
         // The canonical local workspace supervisor is connected here. Remote activation
         // needs an owned loopback gateway and durable lifecycle receipts; neither is
         // replaced by a health response. Missing transitions fail before any effect.
     })
     supervisor.on('status', status => {
-        if (!window?.isDestroyed()) window.webContents.send('desktop:status', status)
-        if (status.state === 'error') { runtime = null; void window.loadFile(startup) }
+        for (const board of boards.list()) board.contents.send('desktop:status', status)
+        if (status.state === 'error') {
+            retireAdditionalBoards()
+            runtime = null
+            if (window && !window.isDestroyed()) void window.loadFile(startup)
+        }
     })
     await seedLegacyCatalog(dataRoot, identity.installId)
     workspaces = createWorkspaceCoordinator({ dataRoot, installId: identity.installId, ports: {
@@ -372,11 +383,7 @@ async function launch() {
             await supervisor.admissions('unfreeze', context.requestId)
             if (runtime === supervisor.runtime) resumeAfterCancelledQuit()
         },
-        flushDrafts: async () => {
-            if (!runtime || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return { saved: true }
-            if (!draftQuit.ready) return { saved: false }
-            return { saved: await draftQuit.request(value => window.webContents.send('desktop:before-quit', value)) }
-        },
+        flushDrafts: async () => ({ saved: await boards.flushAll(runtime, true) }),
         prepareRecovery: () => supervisor.prepareWorkspaceRecovery(),
         stopAndDrain: async () => { await closeRemoteWorkspace(supervisor.runtime?.workspaceId); await supervisor.stop() },
         bindAndStart: async workspaceId => {
@@ -403,7 +410,11 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
     const partition = workspaceId === 1 ? profile : `persist:rerun-desktop-workspace-${workspaceId}`
     const desktopSession = session.fromPartition(partition)
     const microphone = desktopMicrophonePermissions({
-        context: () => !quitting && !transitioning && window && !window.isDestroyed() && window.isVisible() ? window : null,
+        context: contents => {
+            if (!contents || contents.isDestroyed()) return null
+            const candidate = BrowserWindow.fromWebContents(contents)
+            return boardContext(candidate) && contents.session === desktopSession && candidate.isVisible() ? candidate : null
+        },
         isDesktopPage,
     })
     desktopSession.setPermissionRequestHandler(microphone.request)
@@ -413,48 +424,58 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
     if (old && !old.isDestroyed()) old.destroy()
     desktopNotifications.close()
     desktopNotifications = createNotices()
-    window = new BrowserWindow({
+    window = createBoardWindow(desktopSession, bounds, true).window
+    activeSession = desktopSession
+    activeWorkspaceId = workspaceId
+    if (load) await window.loadFile(startup)
+}
+
+function createBoardWindow(desktopSession, bounds, primary = false) {
+    const boardWindow = new BrowserWindow({
         ...(bounds || { width: 1220, height: 820 }), minWidth: 720, minHeight: 520, show: false,
         title: 'Rerun Desktop Preview', backgroundColor: '#101214',
         ...(mac ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 12, y: 8 } } : {}),
-        webPreferences: { preload: resolve(directory, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, partition },
+        webPreferences: { preload: resolve(directory, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, session: desktopSession },
     })
-    const boardWindow = window
-    boardWindow.once('ready-to-show', () => { if (showWindowOnReady && window === boardWindow) boardWindow.show() })
-    window.on('close', event => {
-        if (quitting && !quittingNow) { event.preventDefault(); return }
-        if (!quittingNow && process.platform === 'darwin') { event.preventDefault(); window.hide() }
+    const board = boards.register(boardWindow, { primary })
+    boardWindow.once('ready-to-show', () => {
+        if (primary ? showWindowOnReady && window === boardWindow : boards.ready(board, runtime)) boardWindow.show()
     })
-    const contents = window.webContents
+    boardWindow.on('close', event => {
+        if (quittingNow) return
+        if (quitting || transitioning) { event.preventDefault(); return }
+        if (!mac) return
+        event.preventDefault()
+        if (primary) boardWindow.hide()
+        else void closeAdditionalBoard(board)
+    })
+    const { contents } = board
     if (mac) {
         // The authenticated board draws its strip on first paint. This marker only affects layout.
         contents.setUserAgent(contents.getUserAgent() + ' RerunLocalDesktopMac/1')
         const reportFullscreen = () => {
-            if (window !== boardWindow || contents.isDestroyed()) return
+            if (contents.isDestroyed()) return
             const frame = contents.mainFrame
-            if (frame?.url === pathToFileURL(startup).href || isDesktopPage(frame?.url)) {
+            if ((primary && frame?.url === pathToFileURL(startup).href) || boards.ready(board, runtime)) {
                 frame.send('desktop:mac-fullscreen-changed', boardWindow.isFullScreen())
             }
         }
         boardWindow.on('enter-full-screen', reportFullscreen)
         boardWindow.on('leave-full-screen', reportFullscreen)
     }
-    if (process.platform === 'darwin') attachDesktopContextMenu({
+    if (mac) attachDesktopContextMenu({
         window: boardWindow, Menu, clipboard, openExternal, locale: app.getLocale(),
-        currentScope: () => !quitting && !transitioning && window === boardWindow && !boardWindow.isDestroyed()
-            && runtimeScope() && isDesktopPage(contents.mainFrame?.url) ? rendererEpoch : null,
-        saveImage: (pageURL, srcURL) => saveDisplayedImage(pageURL, srcURL),
-        reportFailure: reportImageSaveFailure,
+        currentScope: () => boardContext(boardWindow)?.rendererEpoch ?? null,
+        saveImage: (pageURL, srcURL) => filesFor(boardWindow).saveDisplayedImage(pageURL, srcURL),
+        reportFailure: error => reportImageSaveFailure(boardWindow, error),
     })
-    rendererEpoch = randomUUID()
     const invalidateRenderer = () => {
         windowFind.close(boardWindow)
-        if (window?.webContents !== contents) return
+        if (!contents.isDestroyed()) boards.invalidate(board)
+        if (!primary || window !== boardWindow) return
         quickAsk.invalidate()
         setMacUnread(0)
-        rendererEpoch = randomUUID()
         clickReady = null
-        draftQuit.reset()
         // Revoke the lease immediately, then drain only this workspace's remote work.
         // A failed drain cannot turn an old receipt into a successful connection.
         void closeRemoteWorkspace(activeWorkspaceId).catch(() => {})
@@ -464,28 +485,79 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
     })
     contents.on('render-process-gone', invalidateRenderer)
     contents.on('destroyed', invalidateRenderer)
-    window.webContents.on('will-attach-webview', event => event.preventDefault())
-    window.webContents.on('will-navigate', (event, target) => {
-        let url
-        try { url = new URL(target) } catch { event.preventDefault(); return }
-        if (!runtime || url.origin !== runtime.app.origin || url.pathname !== '/desktop') event.preventDefault()
-    })
-    window.webContents.setWindowOpenHandler(({ url }) => {
+    contents.on('will-attach-webview', event => event.preventDefault())
+    for (const eventName of ['will-navigate', 'will-redirect']) {
+        contents.on(eventName, (event, target) => {
+            if (!runtime || board.runtime !== runtime || !isDesktopPage(target)) event.preventDefault()
+        })
+    }
+    contents.setWindowOpenHandler(({ url }) => {
         openExternal(url)
         return { action: 'deny' }
     })
-    activeSession = desktopSession
-    activeWorkspaceId = workspaceId
-    if (load) await window.loadFile(startup)
+    return board
+}
+
+async function closeAdditionalBoard(board) {
+    const candidate = board.window
+    if (closingBoards.has(candidate)) return
+    closingBoards.add(candidate)
+    try {
+        windowFind.close(candidate)
+        await completeDesktopQuit({
+            flush: () => boards.flush(board, runtime),
+            confirmDiscard: () => confirmDiscard(candidate, 'Close'),
+            stop: async () => {},
+            quit: () => { if (!candidate.isDestroyed()) candidate.destroy() },
+            cancelled: () => resumeBoard(board),
+        })
+    } finally { closingBoards.delete(candidate) }
+}
+
+async function loadBoard(board, current) {
+    board.runtime = current
+    await board.window.loadURL(`${current.app.origin}/desktop`)
+}
+
+function retireAdditionalBoards() {
+    return boards.list().filter(board => !board.primary).map(board => {
+        const bounds = board.window.getBounds()
+        board.window.destroy()
+        return bounds
+    })
+}
+
+async function openAdditionalBoard(bounds) {
+    if (!bounds) {
+        const from = focusedBoard()
+        if (!boardContext(from)) return
+        const { x, y, width, height } = from.getBounds()
+        const { workArea } = screen.getDisplayMatching({ x, y, width, height })
+        bounds = {
+            x: Math.max(workArea.x, Math.min(x + 28, workArea.x + workArea.width - width)),
+            y: Math.max(workArea.y, Math.min(y + 28, workArea.y + workArea.height - height)),
+            width, height,
+        }
+    }
+    const current = runtime
+    if (!mac || !runtimeScope() || !activeSession) return
+    const board = createBoardWindow(activeSession, bounds)
+    try {
+        await loadBoard(board, current)
+        if (boards.ready(board, runtime) && !board.window.isVisible()) board.window.show()
+    }
+    catch { if (!board.window.isDestroyed()) board.window.destroy() }
 }
 
 async function displayWorkspace() {
     const current = supervisor.runtime
     if (!current || supervisor.status.state !== 'ready') throw new Error('Workspace is not ready')
+    const extraBounds = retireAdditionalBoards()
     runtime = current
     if (activeWorkspaceId !== current.workspaceId) await prepareWorkspaceWindow(current.workspaceId)
     await activeSession.cookies.set({ url: current.app.origin, name: 'rerun-desktop-session', value: current.app.sessionToken, httpOnly: true, sameSite: 'strict', path: '/' })
-    await window.loadURL(`${current.app.origin}/desktop`)
+    await loadBoard(boards.get(window), current)
+    await Promise.all(extraBounds.map(bounds => openAdditionalBoard(bounds)))
     clickHandoff.retain(runtimeScope())
 }
 async function startWorkspace() {
@@ -502,13 +574,15 @@ async function startWorkspace() {
     }
 }
 async function runWorkspaceTransition(operation) {
-    if (transitioning) return { ok: false, code: 'busy', message: 'A workspace change is already in progress.' }
+    if (transitioning || closingBoards.size) return { ok: false, code: 'busy', message: 'A window or workspace change is already in progress.' }
     transitioning = true
     quickAsk.reset()
     const previous = supervisor.runtime
     try {
         const result = await operation()
-        if (result.ok) await displayWorkspace()
+        if (result.ok) {
+            if (supervisor.runtime !== previous || runtime !== previous) await displayWorkspace()
+        }
         else if (supervisor.runtime !== previous || (await workspaces.reconcile()).requiresManualRecovery) {
             runtime = null
             await window.loadFile(startup)
