@@ -32,6 +32,7 @@ export type DesktopForemanPanelProps = {
     onOpenCoworker: (target: { agentId: string; sessionId?: string }) => void | Promise<void>
     onOpenCalledChat: (target: { agentId: string; sessionId: string }) => Promise<void>
     onOpenBox: (spaceId: string) => void | Promise<void>
+    onBuildCompleted?: (workspaceId: string, signal: AbortSignal) => Promise<boolean>
     onClose: () => void
     agentNameOf: (agentId: string) => string
     /** Opens the template library on one local template's review. Nothing is installed from it. */
@@ -89,8 +90,25 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const active = useRef(false)
     const [client, setClient] = useState<ReturnType<typeof createDesktopForemanClient> | null>(null)
     useEffect(() => {
+        let refreshedBuildId: string | undefined
+        let boardRefresh: AbortController | undefined
         const client = createDesktopForemanClient(initial, {
-            onState: next => { if (active.current) { setState(next); setDockFeed(projectFeed(next)); setError(null) } },
+            onState: next => {
+                if (!active.current) return
+                setState(next)
+                setDockFeed(projectFeed(next))
+                setError(null)
+                const build = next.view.build
+                const refreshBoard = current.current.onBuildCompleted
+                if (!refreshBoard || build?.state !== 'completed' || refreshedBuildId === build.buildId || boardRefresh || isDesktopQuitting()) return
+                const controller = new AbortController()
+                boardRefresh = controller
+                void refreshBoard(next.chat.workspaceId, controller.signal).then(refreshed => {
+                    if (refreshed && !controller.signal.aborted) refreshedBuildId = build.buildId
+                }).catch(() => { /* The next authenticated state read can retry the board refresh. */ }).finally(() => {
+                    if (boardRefresh === controller) boardRefresh = undefined
+                })
+            },
             onError: message => { if (active.current) setError(message) },
             onOpenCoworker: target => { if (active.current && !isDesktopQuitting()) return current.current.onOpenCoworker(target) },
             onOpenBox: spaceId => { if (active.current && !isDesktopQuitting()) return current.current.onOpenBox(spaceId) },
@@ -113,6 +131,8 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         }
         const pauseFeed = () => {
             ++generation
+            boardRefresh?.abort()
+            boardRefresh = undefined
             if (timer) clearTimeout(timer)
             timer = undefined
             if (events) { events.onmessage = null; events.close(); events = undefined }

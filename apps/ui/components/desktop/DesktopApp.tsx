@@ -628,6 +628,17 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         if (isDesktopQuitting()) return
         presentCoworker(owner.id, target.sessionId ?? null)
     }
+    async function refreshForemanBoard(buildWorkspaceId: string, signal: AbortSignal) {
+        const workspaceId = workspaceDialogLease.current.workspaceId
+        const current = () => !signal.aborted && ownsBoardWorkspace(workspaceId)
+        if (workspaceId === null || String(workspaceId) !== buildWorkspaceId || !current()) return false
+        const { agents } = await json<{ agents: DesktopAgentView[] }>(await fetch('/api/desktop/agents', {
+            cache: 'no-store', signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+        }))
+        if (!current() || !await boardState.refresh(signal) || !current()) return false
+        mergeBoardAgents(agents)
+        return true
+    }
     async function openForemanBox(spaceId: string) {
         const refreshed = await boardState.refresh()
         const board = boardState.current()
@@ -662,11 +673,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const openExternalMcp = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) { rememberWorkspaceDialogFocus(); setExternalMcpOpen(true) } }
     const openServers = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) { rememberWorkspaceDialogFocus(); setServersOpen(true) } }
     const openImportCoworker = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) { rememberWorkspaceDialogFocus(); setImportCoworkerOpen(true) } }
-    function ownsImportedCoworkerWorkspace(workspaceId: number | null) {
+    function ownsBoardWorkspace(workspaceId: number | null) {
         return workspaceId !== null && workspaceMounted.current && workspaceDialogLease.current.workspaceId === workspaceId && !isDesktopQuitting()
     }
     function readImportedCoworker(agentId: string, workspaceId: number | null) {
-        const current = () => ownsImportedCoworkerWorkspace(workspaceId)
+        const current = () => ownsBoardWorkspace(workspaceId)
         if (!current()) return Promise.resolve(null)
         const key = JSON.stringify([workspaceId, agentId])
         const pending = importedCoworkerReads.current.get(key)
@@ -690,7 +701,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         const workspaceId = runtimeWorkspaceId
         // The acknowledged copy belongs to the workspace, even if Done closes its dialog
         // before this read finishes. Closing the dialog must not select a chat or cancel it.
-        const current = () => ownsImportedCoworkerWorkspace(workspaceId)
+        const current = () => ownsBoardWorkspace(workspaceId)
         try {
             const result = await readImportedCoworker(agentId, workspaceId)
             if (result && current()) mergeBoardAgents(result.agents)
@@ -700,7 +711,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         if (!workspaceDialogLease.current.active || isDesktopQuitting()) return
         const epoch = workspaceDialogEpoch.current
         const workspaceId = workspaceDialogLease.current.workspaceId
-        const current = () => epoch === workspaceDialogEpoch.current && workspaceDialogLease.current.active && ownsImportedCoworkerWorkspace(workspaceId)
+        const current = () => epoch === workspaceDialogEpoch.current && workspaceDialogLease.current.active && ownsBoardWorkspace(workspaceId)
         const selectedAtStart = selectedAgentRef.current
         try {
             const result = await readImportedCoworker(agentId, workspaceId)
@@ -799,7 +810,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                         hidden={controlCenterDisabled || controlCenterOpen || panelOpen || settings || workspaceSettings || profileOpen || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
                         findEnabled={foremanOpen && !panelOpen && !controlCenterDisabled}
                         centerOpen={controlCenterOpen} onOpenTranscriptionSettings={() => openSettingsAt('Tool services')} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('The Chief of Staff chat was closed.')); setForemanOpen(false) }}
-                        onOpenCoworker={openForemanCoworker} onOpenCalledChat={openCoworkerChat} onOpenBox={openForemanBox}
+                        onOpenCoworker={openForemanCoworker} onOpenCalledChat={openCoworkerChat} onOpenBox={openForemanBox} onBuildCompleted={refreshForemanBoard}
                         onReviewTemplate={reviewTemplate} providers={providers} onOpenModelSettings={openSettings}
                         onReconnectConnection={connectionId => openSettingsAt('AI providers', connectionId)}
                         agentNameOf={id => currentAgents.current.find(agent => agent.id === id)?.name ?? 'Coworker'} />

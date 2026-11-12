@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { randomUUID } from 'node:crypto'
-import type { ConnectionSummary, DesktopForemanModelRef } from '@rerun/contracts'
+import type { ConnectionSummary, DesktopForemanBuild, DesktopForemanModelRef } from '@rerun/contracts'
 import { StrictMode, act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -22,6 +22,38 @@ class Source {
     close() { this.closed = true }
 }
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; await flushDesktopForemanUiSaves(); document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.useRealTimers(); cancelDraftShutdown(); sources.length = 0 })
+
+it('refreshes the board once a build completes and retries an unconfirmed refresh without reopening a coworker', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal('EventSource', Source)
+    const chat = { workspaceId: '7', chatId: 'fmc_abcdefgh' }
+    const build: DesktopForemanBuild = {
+        buildId: 'fmb_abcdefgh', decisionId: 'fmd_abcdefgh', revisionId: 'fmr_abcdefgh', state: 'running', boxes: [],
+        items: [], leadItemKey: null, setup: { state: 'not_started', agentId: null, sessionId: null, error: null },
+        startedAt: 'now', updatedAt: 'now',
+    }
+    const server = { chat, sessionId: 'session', model: null, messages: [],
+        view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build, discovery: null, blocked: null },
+        ui: { revision: 0, snapshot: null } }
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(server)))
+    const onBuildCompleted = vi.fn<(_workspace: string, _signal: AbortSignal) => Promise<boolean>>()
+        .mockResolvedValueOnce(false).mockResolvedValue(true)
+    const onOpenCoworker = vi.fn()
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopForemanPanel onClose={vi.fn()} onOpenCoworker={onOpenCoworker}
+        onOpenCalledChat={vi.fn()} onOpenBox={vi.fn()} onBuildCompleted={onBuildCompleted} agentNameOf={id => id} />))
+    expect(onBuildCompleted).not.toHaveBeenCalled()
+
+    build.state = 'completed'
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+    expect(onBuildCompleted).toHaveBeenCalledOnce()
+    expect(onBuildCompleted).toHaveBeenCalledWith(chat.workspaceId, expect.any(AbortSignal))
+    await act(async () => { await vi.advanceTimersByTimeAsync(4500) })
+    expect(onBuildCompleted).toHaveBeenCalledTimes(2)
+    expect(onOpenCoworker).not.toHaveBeenCalled()
+})
+
 it('keeps a usable exact-chat adapter through StrictMode and closes every live subscription on unmount', async () => {
     cancelDraftShutdown(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', { randomUUID }); vi.stubGlobal('EventSource', Source)
     const chat = { workspaceId: '1', chatId: 'fmc_abcdefgh' }
