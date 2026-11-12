@@ -10,6 +10,7 @@ import { desktopCoworkerMentionsSchema, validDesktopCoworkerMentionFields } from
 
 export const DESKTOP_FOREMAN_CONTRACT_VERSION = 1 as const
 export const DESKTOP_FOREMAN_TURN_MAX_BYTES = 384 * 1024
+export const DESKTOP_FOREMAN_TURN_TEXT_LIMIT = 20_000
 
 export const DESKTOP_FOREMAN_LIMITS = {
     maxBoxes: 5,
@@ -67,7 +68,7 @@ export function foremanDocumentScope(chat: DesktopForemanChatRef, sessionId: str
 
 export const desktopForemanTurnSchema = z.strictObject({
     binding: foremanBindingSchema.extend({ runId: z.uuid() }), sessionId: z.uuid(),
-    text: z.string().max(20_000),
+    text: z.string().max(DESKTOP_FOREMAN_TURN_TEXT_LIMIT),
     brief: foremanBriefSchema.extend({ instructions: z.string().min(1).max(12_000), tools: z.array(z.never()).max(0), hubToken: z.never().optional() }).strict(),
     question: foremanQuestionGuardSchema.optional(),
     approval: foremanQuestionGuardSchema.optional(),

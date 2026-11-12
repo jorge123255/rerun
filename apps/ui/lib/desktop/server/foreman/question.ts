@@ -1,7 +1,7 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { foremanQuestionGuardSchema, HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions } from '@rerun/contracts'
+import { DESKTOP_FOREMAN_TURN_TEXT_LIMIT, foremanQuestionGuardSchema, HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions } from '@rerun/contracts'
 import { request } from '@/lib/engine/client'
 import { desktopPendingApprovalSchema, type DesktopApprovalAnswer } from '../../approvals'
 import { desktopPendingQuestionSchema, type DesktopQuestionAnswer } from '../../questions'
@@ -38,7 +38,7 @@ export function foremanApprovalText(approval: NonNullable<Pending['approval']>, 
     if (approval.view.id !== answer.approvalId) throw new DesktopHttpError(409, 'This Foreman approval has changed. Reopen it before deciding.')
     if (approval.view.approvals.length !== answer.decisions.length) throw new DesktopHttpError(400, 'Approve or decline each action in this form.')
     const text = serializeApprovalDecisions(approval.view.approvals.map((item, index) => ({ ...item, ...answer.decisions[index] })))
-    if (text.length > 20_000) throw new DesktopHttpError(400, 'Shorten the decisions before sending them.')
+    if (text.length > DESKTOP_FOREMAN_TURN_TEXT_LIMIT) throw new DesktopHttpError(400, 'Shorten the decisions before sending them.')
     return text
 }
 

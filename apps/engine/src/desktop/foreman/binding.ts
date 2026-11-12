@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { RERUN_PUBLIC_DOCS_CORPUS, FOREMAN_AGENT_ID } from '@rerun/contracts'
+import { DESKTOP_FOREMAN_TURN_TEXT_LIMIT, RERUN_PUBLIC_DOCS_CORPUS, FOREMAN_AGENT_ID } from '@rerun/contracts'
 import type { RunContext } from '../../runtime/context.js'
 import { getAgent } from '../../agents/registry.js'
 import { getRun } from '../../db/repos/runs.js'
@@ -57,7 +57,7 @@ export async function desktopForemanTools(ctx: RunContext) {
     })
     const docs = installedDocs
     Object.assign(tools, desktopForemanDocsTools({ binding, corpus: RERUN_PUBLIC_DOCS_CORPUS, assertCurrent: current, search: docs ? (input, requestSignal) => docs.search(input, requestSignal ?? signal) : null }))
-    Object.assign(tools, askUserTool(ctx), desktopApprovalTools(ctx), foremanAgentFileTools(ctx))
+    Object.assign(tools, askUserTool(ctx), desktopApprovalTools(ctx, DESKTOP_FOREMAN_TURN_TEXT_LIMIT), foremanAgentFileTools(ctx))
     const workspaceReads = readForemanWorkspaceReads()
     let workspaceGranted = false
     try { workspaceGranted = !!workspaceReads && await workspaceReads.grant(binding.workspaceId) === true } catch { workspaceGranted = false }

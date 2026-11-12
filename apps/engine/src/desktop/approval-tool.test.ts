@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { z } from 'zod'
-import { desktopApprovalGuardSchema, desktopApprovalInput, desktopRerunGrantsOf, desktopRerunToolCatalog, findDesktopApproval, findDesktopQuestion, serializeApprovalDecisions } from '@rerun/contracts'
+import { DESKTOP_FOREMAN_TURN_TEXT_LIMIT, desktopApprovalGuardSchema, desktopApprovalInput, desktopRerunGrantsOf, desktopRerunToolCatalog, findDesktopApproval, findDesktopQuestion, serializeApprovalDecisions } from '@rerun/contracts'
 import type { RunContext } from '../runtime/context.js'
 
 const root = mkdtempSync(join(tmpdir(), 'rerun-mac-approval-tool-'))
@@ -14,6 +14,7 @@ const { agentDir } = await import('../config/paths.js')
 const { agentConfigSchema } = await import('../agents/types.js')
 const { writeAgentConfig } = await import('../agents/config-write.js')
 const { readAgentConfig } = await import('../agents/loader.js')
+const { desktopApprovalTools } = await import('./approval-tool.js')
 const { buildTools } = await import('../tools/registry.js')
 const { HITL_ACK } = await import('../tools/builtin/hitl.js')
 const { createServer } = await import('../http/server.js')
@@ -70,6 +71,18 @@ describe('desktop request_approval grant', () => {
         expect(text).toContain('**APPROVED** — Use blue')
         expect(text).toContain('**DECLINED** — Use green\nReason: Keep it plain.')
         expect(text).toContain('Do not perform any declined action')
+    })
+
+    it('rejects a proposed batch that could not fit a decision turn even with no notes', async () => {
+        await patch(alpha, { tools: { desktopToolGrants: { requestApproval: true } } })
+        const config = await readAgentConfig(alpha)
+        const ctx = { agent: { id: alpha, config }, turnOrder: 'call-first' } as RunContext
+        const oversized = { approvals: Array.from({ length: 6 }, (_, index) => ({ action: `${index} ` + 'x'.repeat(3600) })) }
+        expect(desktopApprovalInput(oversized)).not.toBeNull()
+        const tool = desktopApprovalTools(ctx, DESKTOP_FOREMAN_TURN_TEXT_LIMIT).request_approval!
+        await expect(tool.execute!(oversized, options)).rejects.toThrow('decisions fit')
+        await expect(tool.execute!(input, options)).resolves.toEqual(HITL_ACK)
+        await expect(desktopApprovalTools(ctx).request_approval!.execute!(oversized, options)).resolves.toEqual(HITL_ACK)
     })
 
     it('rechecks a cached tool after grant revocation, disable, cancellation and configuration removal', async () => {
