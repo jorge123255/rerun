@@ -68,6 +68,7 @@ export type DesktopForemanColumnProps = {
     imageModel?: boolean
     retrySnapshot?: string
     streaming?: boolean
+    liveReply?: string
     approval?: DesktopPendingApproval | null
     onDecideApproval?: (answer: DesktopApprovalAnswer) => Promise<void>
     question?: DesktopPendingQuestion | null
@@ -119,6 +120,7 @@ export function DesktopForemanColumn({
     imageModel,
     retrySnapshot,
     streaming,
+    liveReply,
     approval, onDecideApproval, question, onAnswerQuestion,
     agentNameOf,
     orbState = 'idle',
@@ -298,6 +300,7 @@ export function DesktopForemanColumn({
                         findHidden={hidden}
                         onCloseFind={() => column.current?.querySelector<HTMLTextAreaElement>('textarea[data-desktop-foreman-composer]:not([disabled])')?.focus({ preventScroll: true })}
                         streaming={streaming}
+                        liveReply={liveReply}
                         restored={foreman.restored}
                         question={foreman.restored && !streaming && pendingRequest ? <>
                             {question && onAnswerQuestion && <DesktopQuestionCard question={question} disabled={hidden || !!foreman.blocked}

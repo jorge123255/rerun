@@ -24,12 +24,14 @@ import { desktopForemanSavedUiSchema } from './ui-schema'
 import { desktopStarterViewSchema, localStarterDecisionSchema, type DesktopLocalStarterDecision } from './starter'
 import { desktopForemanContextSchema } from '../foreman/context'
 import { desktopForemanRunFailureSchema } from '../foreman/run-failure'
+import { desktopForemanLiveReplySchema } from '../foreman/live-reply'
 import { checkedDesktopCoworkerMentions, desktopCoworkerMentionFieldsOf, desktopCoworkerMentionsSchema, desktopDocumentReferenceSchema, foremanDocumentScope, DESKTOP_DOCUMENT_MAX_FILES } from '@rerun/contracts'
 export { desktopForemanSavedUiSchema } from './ui-schema'
 const stateSchema = z.strictObject({
     chat: foremanChatRefSchema, sessionId: z.string().min(1).max(128), model: foremanModelRefSchema.nullable(),
     view: foremanConversationViewSchema,
     writing: z.boolean().optional(),
+    liveReply: desktopForemanLiveReplySchema.nullable().optional(),
     question: desktopPendingQuestionSchema.nullable().optional(),
     approval: desktopPendingApprovalSchema.nullable().optional(),
     starter: desktopStarterViewSchema.nullable().optional(),

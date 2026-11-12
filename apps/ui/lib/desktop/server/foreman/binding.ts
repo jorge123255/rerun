@@ -37,6 +37,7 @@ import { foremanAlternateSnapshot } from '../foreman-alternates/snapshot'
 import { foremanTranscriptRevision } from '../../../../../engine/src/desktop/foreman/transcript-revision.ts'
 import { desktopForemanContext } from '../../foreman/context'
 import { desktopForemanRunFailure } from '../../foreman/run-failure'
+import { DESKTOP_FOREMAN_LIVE_REPLY_LIMIT } from '../../foreman/live-reply'
 import { consumeDesktopDocumentAdmission, resolveDesktopDocumentAdmission } from '../document-attachments/binding'
 import { desktopDocumentStore } from '../document-attachments/store'
 import { listDesktopCoworkerCallTargets } from '../coworker-calls/authority'
@@ -46,6 +47,7 @@ import { revalidateDesktopCoworkerMentions } from '@/components/desktop/mentions
 const KEY = Symbol.for('rerun.desktop.foreman.binding.v1')
 const SHUTDOWN_KEY = Symbol.for('rerun.desktop.foreman.shutdown.v1')
 type Subscriber = { chat: DesktopForemanChatRef; send: (event: DesktopForemanLiveEvent) => void }
+type ReplyActivity = { binding: DesktopForemanBinding; sessionId: string; writingPart: string | null; text: string }
 type Binding = Awaited<ReturnType<typeof createBinding>>
 const bindings = () => ((globalThis as unknown as Record<symbol, Map<string, Promise<Binding>>>)[KEY] ??= new Map())
 const shutdowns = () => ((globalThis as unknown as Record<symbol, WeakMap<Promise<Binding>, Promise<void>>>)[SHUTDOWN_KEY] ??= new WeakMap())
@@ -67,7 +69,7 @@ async function createBinding(runtime: DesktopRuntime) {
     const starterDecisions = createDesktopLocalStarterDecisions(runtime, db)
     const starterOffers = createDesktopLocalStarterOffers(runtime, db)
     const subscribers = new Set<Subscriber>()
-    let replyActivity: { binding: DesktopForemanBinding; writingPart: string | null } | undefined
+    let replyActivity: ReplyActivity | undefined
     type VoiceGuard = { signal: AbortSignal; assertCurrent(): Promise<void> }
     const voiceLifetime = new AbortController()
     async function checkVoice(guard?: VoiceGuard) {
@@ -194,28 +196,39 @@ async function createBinding(runtime: DesktopRuntime) {
     async function dispatch(turn: ForemanTurn, replayOnly: boolean, guard?: VoiceGuard): Promise<{ runId: string }> {
         await checkVoice(guard)
         await assertDesktopWorkspaceAdmission(runtime)
-        const response = await fetch(`${runtime.engine.origin}/desktop/foreman/chat`, {
-            method: 'POST', headers: { authorization: `Bearer ${runtime.engine.apiKey}`, 'content-type': 'application/json' },
-            body: JSON.stringify({ ...foremanTurnWire(turn), replayOnly }), signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(guard ? [guard.signal, voiceLifetime.signal] : [])]), redirect: 'error',
-        })
-        if (!response.ok) {
-            const missing = response.status === 404 && replayOnly && (await response.json().catch(() => null))?.code === 'queued_turn_not_found'
-            await response.body?.cancel().catch(() => {})
-            // Only an explicit send retry reaches here. The engine checks the saved receipt
-            // under its admission lock, so reusing this exact turn cannot create a duplicate.
-            if (missing) return dispatch(turn, false, guard)
-            throw new DesktopHttpError(response.status === 409 ? 409 : 503, 'The Foreman message was not confirmed. Retry this same message before starting another.')
-        }
-        if (response.headers.get('x-run-id') !== turn.binding.runId || response.headers.get('x-session-id') !== turn.sessionId) {
-            await response.body?.cancel().catch(() => {})
-            throw new DesktopHttpError(503, 'The Foreman returned a different conversation.')
+        const admission = new AbortController()
+        const timeout = setTimeout(() => admission.abort(), 30_000)
+        let response: Response
+        try {
+            response = await fetch(`${runtime.engine.origin}/desktop/foreman/chat`, {
+                method: 'POST', headers: { authorization: `Bearer ${runtime.engine.apiKey}`, 'content-type': 'application/json' },
+                body: JSON.stringify({ ...foremanTurnWire(turn), replayOnly }),
+                signal: AbortSignal.any([admission.signal, voiceLifetime.signal, ...(guard ? [guard.signal] : [])]), redirect: 'error',
+            })
+            if (!response.ok) {
+                const missing = response.status === 404 && replayOnly && (await response.json().catch(() => null))?.code === 'queued_turn_not_found'
+                await response.body?.cancel().catch(() => {})
+                // Only an explicit send retry reaches here. The engine checks the saved receipt
+                // under its admission lock, so reusing this exact turn cannot create a duplicate.
+                if (missing) return dispatch(turn, false, guard)
+                throw new DesktopHttpError(response.status === 409 ? 409 : 503, 'The Foreman message was not confirmed. Retry this same message before starting another.')
+            }
+            if (response.headers.get('x-run-id') !== turn.binding.runId || response.headers.get('x-session-id') !== turn.sessionId) {
+                await response.body?.cancel().catch(() => {})
+                throw new DesktopHttpError(503, 'The Foreman returned a different conversation.')
+            }
+        } finally {
+            // The admission deadline applies through response validation. The accepted
+            // stream belongs to the run and stays available until settlement or shutdown.
+            clearTimeout(timeout)
         }
         if (response.body && replyActivity?.binding.runId !== turn.binding.runId) {
-            const activity = { binding: turn.binding, writingPart: null as string | null }
+            const activity: ReplyActivity = { binding: turn.binding, sessionId: turn.sessionId, writingPart: null, text: '' }
             replyActivity = activity
             let started = false
-            // The original engine response is already drained here. Keep only the active
-            // text part identity so no stream contents become part of the public state.
+            let textPart: string | null = null
+            // Keep a bounded preview of assistant text only. Tool input/output, reasoning,
+            // metadata and errors still go through their existing saved projections.
             void parseJsonEventStream({ stream: response.body, schema: uiMessageChunkSchema }).pipeTo(new WritableStream({
                 write(result) {
                     if (!result.success) return
@@ -223,12 +236,22 @@ async function createBinding(runtime: DesktopRuntime) {
                     if (chunk.type === 'start') {
                         started = chunk.messageId === turn.binding.runId
                         activity.writingPart = null
-                    } else if (started && chunk.type === 'text-delta' && chunk.delta.trim()) {
-                        activity.writingPart = chunk.id
+                        activity.text = ''
+                        textPart = null
+                    } else if (started && chunk.type === 'text-delta') {
+                        if (chunk.delta.trim()) activity.writingPart = chunk.id
+                        const separator = textPart !== null && textPart !== chunk.id ? '\n\n' : ''
+                        const remaining = DESKTOP_FOREMAN_LIVE_REPLY_LIMIT - activity.text.length
+                        if (remaining > 0) activity.text += (separator + chunk.delta).slice(0, remaining)
+                        textPart = chunk.id
                     } else if (chunk.type === 'text-end' && chunk.id === activity.writingPart
                         || chunk.type === 'reasoning-start' || chunk.type === 'tool-input-start'
                         || chunk.type === 'finish-step' || chunk.type === 'finish' || chunk.type === 'abort' || chunk.type === 'error') {
                         activity.writingPart = null
+                        if (chunk.type === 'abort' || chunk.type === 'error') {
+                            started = false
+                            activity.text = ''
+                        }
                     }
                 },
             })).catch(() => {}).finally(() => {
@@ -462,10 +485,14 @@ async function createBinding(runtime: DesktopRuntime) {
                 ? (await listDesktopForemanCallSources(db, owner.chat.chatId, owner.sessionId)).filter(row => knownRuns.has(row.runId))
                 : []
             const activity = replyActivity
-            const writing = !!(activity?.writingPart && view.live?.runId === activity.binding.runId
-                && owner.chat.chatId === activity.binding.chatId && owner.chat.workspaceId === activity.binding.workspaceId
-                && view.live.model.connectionId === activity.binding.model.connectionId && view.live.model.model === activity.binding.model.model)
-            return { ...owner, view, messages: projected, retrySnapshot, writing,
+            const currentReply = activity && view.live?.runId === activity.binding.runId
+                && owner.chat.chatId === activity.binding.chatId && owner.chat.workspaceId === activity.binding.workspaceId && owner.sessionId === activity.sessionId
+                && view.live.model.connectionId === activity.binding.model.connectionId && view.live.model.model === activity.binding.model.model ? activity : undefined
+            // The engine can store assistant rows just before it records the terminal status.
+            // As soon as that history is available it takes the place of the preview.
+            const liveReply = currentReply?.text.trim() && messages.at(-1)?.role === 'user'
+                ? { runId: currentReply.binding.runId, text: currentReply.text } : null
+            return { ...owner, view, messages: projected, retrySnapshot, writing: !!currentReply?.writingPart, liveReply,
                 context: history.some(message => message.role === 'assistant') ? settled?.context ?? null : null,
                 runFailure: pending || approval ? null : settled?.runFailure ?? null,
                 runSources, callSources, starter: await starterDecisions.view(owner.chat),

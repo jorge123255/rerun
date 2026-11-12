@@ -164,6 +164,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const voiceModel = props.modelChoice ?? state.model ?? (effective?.available && effective.connectionId && effective.model
         ? { connectionId: effective.connectionId, model: effective.model } : undefined)
     const pendingSend = state.ui.snapshot?.pendingSend
+    const liveReply = state.view.live && state.liveReply?.runId === state.view.live.runId ? state.liveReply.text : undefined
     const failedConnection = state.runFailure?.connectionId
     const modelPickerView = !props.hidden && props.controlledOpen !== false && props.composerTrailing == null && !intakeOpen && !pendingStarter ? view : undefined
     const modelDisabled = !!(state.view.live || state.question || state.approval || pendingSend || voice?.busy)
@@ -189,7 +190,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
             onSwitchModel={canSwitchModel ? () => modelPicker.current?.open() : undefined}
             onReconnect={failedConnection && props.onReconnectConnection ? () => props.onReconnectConnection?.(failedConnection) : props.onOpenModelSettings}
             onOpenConnections={props.onOpenModelSettings} /> : null}
-        streaming={!!state.view.live} orbState={state.view.live ? state.writing ? 'speaking' : 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
+        streaming={!!state.view.live} liveReply={liveReply} orbState={state.view.live ? state.writing ? 'speaking' : 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
         headerActions={<><DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} onApprovalPermissionChanged={() => { void client.refresh().catch(() => {}) }} />{error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}</>}
         composerTrailing={props.composerTrailing ?? (modelPickerView && <div className="flex min-w-0 items-center">

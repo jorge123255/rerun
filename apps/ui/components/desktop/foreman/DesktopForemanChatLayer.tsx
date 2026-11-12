@@ -9,7 +9,7 @@ import { useDesktopLocale } from '../DesktopLocale'
 import type { DesktopSavedChatDecision } from '@/lib/desktop/saved-chat-decision'
 import { DesktopSavedDecisionReceipt } from '../DesktopSavedDecisionReceipt'
 import type { ForemanHistoryPart } from './transcript/parts'
-import { DesktopForemanHistoryMessage } from './transcript/DesktopForemanHistoryMessage'
+import { DesktopForemanHistoryMessage, DesktopForemanMarkdown } from './transcript/DesktopForemanHistoryMessage'
 import { DesktopForemanAnswerActions } from './DesktopForemanAnswerActions'
 
 import { AnimatePresence, motion } from 'motion/react'
@@ -76,6 +76,7 @@ export function DesktopForemanChatLayer({
     active = true,
     findScope, findHidden, onCloseFind,
     streaming,
+    liveReply,
     writing,
     restored,
     question,
@@ -109,6 +110,7 @@ export function DesktopForemanChatLayer({
     findHidden?: boolean
     onCloseFind?: () => void
     streaming?: boolean
+    liveReply?: string
     writing?: boolean
     restored: boolean
     question?: ReactNode
@@ -152,7 +154,8 @@ export function DesktopForemanChatLayer({
     }, [])
     const previewDocuments = preview && messages.find(message => message.id === preview.messageId)?.documents
     const plan = projectPlanCard(planSnapshot)
-    const empty = messages.length === 0 && !error && !runNotice && !plan.view && !build && !question
+    const previewReply = active && restored && streaming ? liveReply : undefined
+    const empty = messages.length === 0 && !previewReply && !error && !runNotice && !plan.view && !build && !question
 
     return (
         <div className={cn('pointer-events-auto relative flex min-h-0 w-full flex-1 flex-col', className)}>
@@ -211,6 +214,9 @@ export function DesktopForemanChatLayer({
                             <RunCardsSlot runId={message.sourceRunId} register={register} />}
                         </Fragment>
                     ))}</div>
+                    {previewReply && <div data-foreman-live-reply data-chat-find-ignore className="max-w-[95%] rounded-lg px-4 py-3 text-sm text-foreground">
+                        <DesktopForemanMarkdown text={previewReply} streaming />
+                    </div>}
                     {question}
                     {plan.view && plan.revisionId && (
                         <DesktopPlanCard

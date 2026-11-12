@@ -102,6 +102,7 @@ it('uses writing activity only while the server reports an active turn', async (
     const chat = { workspaceId: '1', chatId: 'fmc_abcdefgh' }
     const live = { runId: randomUUID(), model: { connectionId: 'connection', model: 'model' } }
     const server = { chat, sessionId: 'session', model: null, messages: [], writing: false,
+        liveReply: null as { runId: string; text: string } | null,
         view: { contractVersion: 1, chat, phase: 'plan', live: live as typeof live | null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
         ui: { revision: 0, snapshot: null } }
     vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>(async () => Response.json(server)))
@@ -109,12 +110,18 @@ it('uses writing activity only while the server reports an active turn', async (
     await act(async () => root!.render(<DesktopForemanPanel onClose={vi.fn()} onOpenCoworker={vi.fn()} onOpenCalledChat={vi.fn()} onOpenBox={vi.fn()} agentNameOf={id => id} />))
     expect(column.orbState).toBe('thinking')
     server.writing = true
+    server.liveReply = { runId: randomUUID(), text: 'An older reply' }
     await act(async () => vi.advanceTimersByTimeAsync(1500))
     expect(column.orbState).toBe('speaking')
+    expect(column.liveReply).toBeUndefined()
+    server.liveReply = { runId: live.runId, text: 'The owned reply' }
+    await act(async () => vi.advanceTimersByTimeAsync(1500))
+    expect(column.liveReply).toBe('The owned reply')
     server.view.live = null
     await act(async () => vi.advanceTimersByTimeAsync(1500))
     expect(column.orbState).toBe('idle')
     expect(column.streaming).toBe(false)
+    expect(column.liveReply).toBeUndefined()
 })
 
 it('shows the saved connection failure with a Settings action and clears it when a newer run settles', async () => {

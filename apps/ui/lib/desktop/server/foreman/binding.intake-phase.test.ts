@@ -49,6 +49,7 @@ import { createDesktopForemanIntakeBinding } from './intake'
 import { initializeDesktopRound41 } from '../round41-schema'
 import { POST as foremanAction } from '@/app/api/desktop/foreman/route'
 import { projectPlanCard, revisionToTrustedSnapshot } from '@/lib/desktop/foreman-client/plan-view'
+import { DESKTOP_FOREMAN_LIVE_REPLY_LIMIT } from '../../foreman/live-reply'
 
 const chat = { workspaceId: '1', chatId: 'fmc_phaseprimary01' }
 const answers = { companyUrl: 'acme.com', industry: 'saas' as const, decidedIndustry: null, industryLabel: null, position: 'Founder', firstName: 'Ada' }
@@ -100,40 +101,61 @@ describe('production Foreman intake phase and model brief', () => {
     })
     afterEach(async () => { state.db.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); await rm(directory, { recursive: true, force: true }) })
 
-    it('reports writing only for the active owned turn and does not publish stream contents', async () => {
+    it('previews only public reply text from the active owned turn', async () => {
         const app = await desktopForeman(runtime)
         const id = randomUUID()
         let stream!: ReadableStreamDefaultController<Uint8Array>
         const body = new ReadableStream<Uint8Array>({ start(controller) { stream = controller } })
         const push = (chunk: object) => stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`))
-        vi.stubGlobal('fetch', vi.fn(async () => new Response(body, {
+        const transport = vi.fn<typeof globalThis.fetch>(async () => new Response(body, {
             headers: { 'x-run-id': id, 'x-session-id': 'original-session', 'content-type': 'text/event-stream' },
-        })))
+        }))
+        vi.stubGlobal('fetch', transport)
         const run = { id, agentId: 'foreman', sessionId: 'original-session', status: 'running' } as Awaited<ReturnType<typeof getRun>>
         vi.mocked(getRun).mockResolvedValue(run)
+        const userMessage = { id: 'user-fixture', sessionId: 'original-session', role: 'user' as const,
+            contentJson: JSON.stringify([{ type: 'text', text: 'Review this fixture' }]), toolCallsJson: null, createdAt: timestamp }
+        vi.mocked(getSessionMessages).mockResolvedValue([userMessage])
         try {
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
             await app.send(chat, id, 'Review this fixture')
+            const signal = transport.mock.calls[0]?.[1]?.signal
+            vi.advanceTimersByTime(31_000)
+            vi.useRealTimers()
+            expect(signal?.aborted).toBe(false)
             expect((await app.state()).writing).toBe(false)
             push({ type: 'start', messageId: randomUUID() })
             push({ type: 'text-delta', id: 'foreign', delta: 'Do not accept this reply' })
             await new Promise(resolve => setImmediate(resolve))
             expect((await app.state()).writing).toBe(false)
             push({ type: 'start', messageId: id })
+            push({ type: 'reasoning-delta', id: 'internal', delta: 'fixture-private-reasoning' })
+            push({ type: 'tool-input-available', toolCallId: 'tool', toolName: 'search_docs', input: { query: 'fixture-private-input' } })
             push({ type: 'text-start', id: 'answer' })
-            push({ type: 'text-delta', id: 'answer', delta: 'fixture-private-unverified-chunk' })
-            await vi.waitFor(async () => expect((await app.state()).writing).toBe(true))
-            expect(JSON.stringify(await app.state())).not.toContain('fixture-private-unverified-chunk')
+            push({ type: 'text-delta', id: 'answer', delta: 'Visible' })
+            push({ type: 'text-delta', id: 'answer', delta: ' ' })
+            push({ type: 'text-delta', id: 'answer', delta: 'reply' })
+            await vi.waitFor(async () => expect(await app.state()).toMatchObject({
+                writing: true, liveReply: { runId: id, text: 'Visible reply' },
+            }))
+            expect(JSON.stringify(await app.state())).not.toMatch(/fixture-private|Do not accept this reply/)
             vi.mocked(getRun).mockResolvedValue({ ...run, sessionId: 'foreign-session' })
-            expect((await app.state()).writing).toBe(false)
+            expect(await app.state()).toMatchObject({ writing: false, liveReply: null })
             vi.mocked(getRun).mockResolvedValue(run)
             push({ type: 'text-end', id: 'answer' })
             await vi.waitFor(async () => expect((await app.state()).writing).toBe(false))
             push({ type: 'text-start', id: 'answer-2' })
             push({ type: 'text-delta', id: 'answer-2', delta: 'Continuing' })
-            await vi.waitFor(async () => expect((await app.state()).writing).toBe(true))
+            await vi.waitFor(async () => expect((await app.state()).liveReply?.text).toBe('Visible reply\n\nContinuing'))
+            push({ type: 'text-delta', id: 'answer-2', delta: 'A'.repeat(DESKTOP_FOREMAN_LIVE_REPLY_LIMIT + 1) })
+            await vi.waitFor(async () => expect((await app.state()).liveReply?.text).toHaveLength(DESKTOP_FOREMAN_LIVE_REPLY_LIMIT))
+            vi.mocked(getSessionMessages).mockResolvedValue([userMessage, { ...userMessage, id: 'assistant-fixture', role: 'assistant' as const }])
+            expect((await app.state()).liveReply).toBeNull()
             vi.mocked(getRun).mockResolvedValue({ ...run, status: 'done', finishedAt: timestamp })
-            expect((await app.state()).writing).toBe(false)
-        } finally { stream.close() }
+            expect(await app.state()).toMatchObject({ writing: false, liveReply: null })
+            app.closeVoiceAdmission()
+            expect(signal?.aborted).toBe(true)
+        } finally { vi.useRealTimers(); stream.close() }
     })
 
     it('reads the context of an exact completed Foreman run and refuses foreign or unrecorded usage', async () => {

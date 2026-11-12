@@ -123,6 +123,24 @@ it('uses the Chief of Staff orb and announces the current activity only in the o
     expect(host.textContent).toContain('Saved message 11')
 })
 
+it('renders a growing reply without clickable preview links, then shows only the saved answer', async () => {
+    const first = '**Live result** [reference](https://example.test) ![Picture](https://example.test/asset.png)'
+    const preview = () => host.querySelector('[data-foreman-live-reply]')
+    await render({ streaming: true, liveReply: first })
+    expect(preview()?.querySelector('[data-streamdown="strong"]')?.textContent).toBe('Live result')
+    expect(preview()?.querySelector('a, img')).toBeNull()
+    expect(preview()?.textContent).toContain('reference')
+    await render({ streaming: true, liveReply: first + ' continues.' })
+    expect(preview()?.textContent).toContain('continues.')
+    await render({ active: false, streaming: true, liveReply: first })
+    expect(preview()).toBeNull()
+    const text = 'Final saved answer'
+    const messages = [...saved, { id: 'final', role: 'assistant' as const, text }]
+    await render({ liveReply: first, messages })
+    expect(preview()).toBeNull()
+    expect(host.textContent?.match(/Final saved answer/g)).toHaveLength(1)
+})
+
 it('places saved work after its own prompt even when two prompts have the same text', async () => {
     await render({
         messages: [

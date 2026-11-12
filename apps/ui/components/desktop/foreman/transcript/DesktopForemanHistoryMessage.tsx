@@ -20,6 +20,7 @@ const components: Components = {
     },
     img: ({ alt }) => <span>{alt || 'Image'}</span>,
 }
+const liveComponents: Components = { ...components, a: ({ children }) => <span>{children}</span> }
 const userLinkComponents: Components = {
     ...components,
     a: ({ href, children }) => safeDesktopChatLink(href)
@@ -40,13 +41,15 @@ class LiteralFallback extends Component<{ text: string; children: ReactNode }, {
     }
 }
 
-function SavedMarkdown({ text, userLinks = false }: { text: string; userLinks?: boolean }) {
-    return <LiteralFallback key={text} text={text}><MessageResponse components={userLinks ? userLinkComponents : components} plugins={noPlugins}
-        allowedTags={userLinks ? userLinkTags : undefined} remarkPlugins={userLinks ? userLinkPlugins : undefined}
-        rehypePlugins={noRehypePlugins} controls={false} skipHtml mode="static" isAnimating={false}
-        className="min-w-0 wrap-anywhere [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto">
-        {text}
-    </MessageResponse></LiteralFallback>
+export function DesktopForemanMarkdown({ text, userLinks = false, streaming = false }: { text: string; userLinks?: boolean; streaming?: boolean }) {
+    return <LiteralFallback key={streaming ? 'live' : text} text={text}>
+        <MessageResponse components={streaming ? liveComponents : userLinks ? userLinkComponents : components} plugins={noPlugins}
+            allowedTags={userLinks ? userLinkTags : undefined} remarkPlugins={userLinks ? userLinkPlugins : undefined}
+            rehypePlugins={noRehypePlugins} controls={false} skipHtml mode={streaming ? 'streaming' : 'static'} isAnimating={streaming}
+            className="min-w-0 wrap-anywhere [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto">
+            {text}
+        </MessageResponse>
+    </LiteralFallback>
 }
 
 function SavedSource({ url, title }: { url: string; title: string }) {
@@ -59,16 +62,16 @@ export function DesktopForemanHistoryMessage({ history, userLinks }: { history: 
     return <div className="flex min-w-0 max-w-full flex-col gap-2 break-words">
         {history.map(part => {
             switch (part.kind) {
-                case 'text': return <div key={part.key} data-chat-find-message className="contents"><SavedMarkdown text={part.text} userLinks={userLinks} /></div>
-                case 'reasoning': return <details key={part.key} className="text-xs text-muted-foreground"><summary>Thinking</summary><SavedMarkdown text={part.text} /></details>
+                case 'text': return <div key={part.key} data-chat-find-message className="contents"><DesktopForemanMarkdown text={part.text} userLinks={userLinks} /></div>
+                case 'reasoning': return <details key={part.key} className="text-xs text-muted-foreground"><summary>Thinking</summary><DesktopForemanMarkdown text={part.text} /></details>
                 case 'link': return <SavedSource key={part.key} url={part.url} title={part.title} />
                 case 'docs': return <Sources key={part.key} defaultOpen className="min-w-0 max-w-full">
                     <SourcesTrigger type="button" count={part.links.length} />
                     <SourcesContent className="w-full max-w-full min-w-0">
-                        {part.note && <SavedMarkdown text={part.note} />}
+                        {part.note && <DesktopForemanMarkdown text={part.note} />}
                         {part.links.map((link, index) => <div key={`${index}:${link.url}`} className="min-w-0">
                             <SavedSource url={link.url} title={link.title} />
-                            {link.text && <div className="max-h-48 overflow-auto text-xs"><SavedMarkdown text={link.text} /></div>}
+                            {link.text && <div className="max-h-48 overflow-auto text-xs"><DesktopForemanMarkdown text={link.text} /></div>}
                         </div>)}
                     </SourcesContent>
                 </Sources>
