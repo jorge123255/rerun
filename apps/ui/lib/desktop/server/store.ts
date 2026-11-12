@@ -9,6 +9,7 @@ import { insertDesktopAgentWithPlacement, readDesktopBoardState } from './spaces
 import { withRosterWrite } from './roster-writes'
 import { FIRST_MESSAGE_MAX_CHARS, GENERAL_SESSION_TITLE, kindOfStoredSession, openingMessage, type DesktopSessionKind } from '../general-threads'
 import { conversationSearchKey } from '../chat-search'
+import { readDesktopProfile } from './local-profile'
 
 export type DesktopAgent = {
     id: string
@@ -78,9 +79,9 @@ export function sessionOf(row: Row): DesktopSession {
     }
 }
 
-export async function readDesktopBootstrap(db: Client) {
+export async function readDesktopBootstrap(db: Client, profileDb = db) {
     const [profile, workspace, roster, appearance, recentCoworkers, savedIcon] = await Promise.all([
-        db.execute('SELECT id, display_name FROM desktop_profile WHERE id = 1'),
+        readDesktopProfile(profileDb),
         db.execute('SELECT id, name FROM desktop_workspace WHERE id = 1'),
         readDesktopRosterSnapshot(db),
         db.execute('SELECT theme FROM desktop_appearance WHERE workspace_id = 1'),
@@ -88,7 +89,7 @@ export async function readDesktopBootstrap(db: Client) {
         readDesktopWorkspaceIconSelection(db),
     ])
     return {
-        profile: { id: 1, displayName: String(profile.rows[0].display_name) },
+        profile,
         workspace: { id: 1, name: String(workspace.rows[0].name) },
         agents: roster.agents,
         theme: desktopTheme.parse(appearance.rows[0]?.theme ?? 'system'),

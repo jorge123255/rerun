@@ -9,6 +9,8 @@ import { connectionsListSchema, PROVIDER_LABELS, type ConnectionsList, type Run,
 import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import type { SettingsChange } from '@/lib/desktop/settings'
 import { DesktopSettings } from './DesktopSettings'
+import { DesktopLocalProfileDialog } from './DesktopLocalProfileDialog'
+import { desktopProfilePhotoUrl } from '@/lib/desktop/local-profile'
 import { ArrowLeft, X } from 'lucide-react'
 import { SidePanel } from '@/components/layout/SidePanel'
 import { SIDE_PANEL_GAP, loadSidePanelWidth } from '@/lib/side-panel-width'
@@ -76,7 +78,7 @@ export type DesktopSessionView = {
 }
 export type DesktopBootstrap = ConnectionsList & {
     theme: ThemePreference
-    profile: { id: number; displayName: string }
+    profile: { id: number; displayName: string; photoId?: string | null }
     workspace: { id: number; name: string }
     runtimeWorkspaceId?: number
     runtimeLaunchNonce?: string
@@ -233,6 +235,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [workspaceName, setWorkspaceName] = useState(initialData.workspace.name)
     const [savedIcon, setSavedIcon] = useState({ iconCatalogId: initialData.iconCatalogId ?? null, iconUploadId: initialData.iconUploadId ?? null })
     const [workspaceSettings, setWorkspaceSettings] = useState(false)
+    const [profileOpen, setProfileOpen] = useState(false)
+    const [profile, setProfile] = useState(initialData.profile)
     const [settings, setSettings] = useState(false)
     const [settingsTab, setSettingsTab] = useState<'AI providers' | 'Tool services'>('AI providers')
     const [settingsConnection, setSettingsConnection] = useState<string | null>(null)
@@ -312,7 +316,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const selectedAgent = agents.find(agent => agent.id === selectedAgentId) ?? null
     const currentAgents = useRef(agents)
     currentAgents.current = agents
-    const modalOrActionActive = workspaceDialogActive || templatesActive || settings || workspaceSettings || shortcutsOpen || helpOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || !!busy || placingCopy || quitting || themeSaving || boardState.saving || creationNavigationBlocked
+    const modalOrActionActive = workspaceDialogActive || templatesActive || settings || workspaceSettings || profileOpen || shortcutsOpen || helpOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || !!busy || placingCopy || quitting || themeSaving || boardState.saving || creationNavigationBlocked
     const changelog = useDesktopChangelog(initialData.runtimeLaunchNonce, !modalOrActionActive && !boardInteraction && !controlCenterOpen && !panelOpen)
     const coworkerPanelBlocked = modalOrActionActive || changelog.open
     const controlCenterDisabled = coworkerPanelBlocked || boardInteraction
@@ -320,7 +324,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     useEffect(() => {
         const openFromShortcut = () => {
             if (!creationAdmission.current.settingsAllowed || workspaceDialogActive || templatesActive || shortcutsOpen || helpOpen || changelog.open
-                || notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || workspaceSettings || boardInteraction
+                || notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || workspaceSettings || profileOpen || boardInteraction
                 || boardState.saving || themeSavingRef.current || isDesktopQuitting()) return false
             if (!settings) setSettingsConnection(null)
             setSettings(true)
@@ -333,7 +337,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         const unsubscribe = bridge?.onOpenSettings?.(openFromShortcut)
         window.addEventListener('keydown', keydown)
         return () => { unsubscribe?.(); window.removeEventListener('keydown', keydown) }
-    }, [workspaceDialogActive, templatesActive, workspaceSettings, shortcutsOpen, helpOpen, changelog.open, notificationsTarget, sharedDataOpen, sharedFilesOpen, brainOpen, boardInteraction, boardState.saving, settings])
+    }, [workspaceDialogActive, templatesActive, workspaceSettings, profileOpen, shortcutsOpen, helpOpen, changelog.open, notificationsTarget, sharedDataOpen, sharedFilesOpen, brainOpen, boardInteraction, boardState.saving, settings])
 
     useEffect(() => {
         if (panelOpen && !settings && !requestedPanel && !workspaceDialogLease.current.active) panelContent.current?.focus({ preventScroll: true })
@@ -724,10 +728,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setNotificationsTarget({ agentId: agentId ?? null })
     }
     const modelLabel = defaultProvider ? providers.default?.model : undefined
-    const workspaceMenu = <DesktopWorkspaceMenu workspaceName={workspaceName} {...savedIcon} profileName={initialData.profile.displayName}
+    const workspaceMenu = <DesktopWorkspaceMenu workspaceName={workspaceName} {...savedIcon} profileName={profile.displayName} profilePhoto={desktopProfilePhotoUrl(profile.photoId)}
         navigationDisabled={creationNavigationBlocked || workspaceDialogActive || quitting} settingsDisabled={!creationSettingsAllowed || workspaceDialogActive || quitting}
         agents={agents} selected={panelOpen ? selectedAgentId : null} providerLabel={sidebarProvider && PROVIDER_LABELS[sidebarProvider.provider]}
         modelLabel={modelLabel} onBoard={() => showBoard()} onCoworker={selectCoworker} onSettings={openSettings}
+        onProfile={() => { if (!controlCenterDisabled && !isDesktopQuitting()) setProfileOpen(true) }}
         onWorkspaceSettings={() => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting()) setWorkspaceSettings(true) }}
         onTemplates={() => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting()) setTemplatesOpen(true) }}
         onShortcuts={openShortcuts}
@@ -756,9 +761,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     newCoworker={creation.placement} onPlaceCoworker={creation.place} onCancelCoworker={creation.cancel}
                     templatePlacement={templatePlacement.placement} onPlaceTemplate={templatePlacement.place} onCancelTemplate={templatePlacement.cancel} onReviewTemplate={reviewTemplatePlacement}
                     creationChecking={creation.checking} creationError={creation.checkError} onRetryCreation={creation.refresh}
-                    boardDisabled={workspaceDialogActive || templatesActive || settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || controlCenterOpen || !!busy || quitting || themeSaving}
+                    boardDisabled={workspaceDialogActive || templatesActive || settings || workspaceSettings || profileOpen || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || controlCenterOpen || !!busy || quitting || themeSaving}
                     onBoardInteractionChange={setBoardInteraction}
-                    visibleSessionId={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
+                    visibleSessionId={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !profileOpen && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetLeft={panelOpen ? 0 : foremanLeftTrack} panelInsetRight={panelOpen ? panelInsetRight : foremanRightTrack} onOpen={selectCoworker}
                     onOpenSettings={openBoardCoworkerSettings}
                     onRename={renameCoworker} onShare={agent => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting() && currentAgents.current.some(current => current.id === agent.id)) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) } }} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
@@ -770,9 +775,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     newCoworker={creation.placement} onPlaceCoworker={creation.place} onCancelCoworker={creation.cancel}
                     templatePlacement={templatePlacement.placement} onPlaceTemplate={templatePlacement.place} onCancelTemplate={templatePlacement.cancel} onReviewTemplate={reviewTemplatePlacement}
                     creationChecking={creation.checking} creationError={creation.checkError} onRetryCreation={creation.refresh}
-                    boardDisabled={workspaceDialogActive || templatesActive || settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || controlCenterOpen || !!busy || quitting || themeSaving}
+                    boardDisabled={workspaceDialogActive || templatesActive || settings || workspaceSettings || profileOpen || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || controlCenterOpen || !!busy || quitting || themeSaving}
                     onBoardInteractionChange={setBoardInteraction}
-                    visibleSessionId={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
+                    visibleSessionId={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !profileOpen && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetLeft={panelOpen ? 0 : foremanLeftTrack} panelInsetRight={panelOpen ? panelInsetRight : foremanRightTrack} onOpen={selectCoworker}
                     onOpenSettings={openBoardCoworkerSettings}
                     onRename={renameCoworker} onShare={agent => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting() && currentAgents.current.some(current => current.id === agent.id)) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) } }} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
@@ -791,7 +796,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 {foremanEngaged && <div className="pointer-events-none absolute inset-2 z-40 grid min-h-0" style={{ gridTemplateColumns: `${foremanLeftTrack}px minmax(0,1fr) ${foremanRightTrack}px` }}>
 
                     <DesktopForemanPanel controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout} mentionTargets={foremanMentionTargets}
-                        hidden={controlCenterDisabled || controlCenterOpen || panelOpen || settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
+                        hidden={controlCenterDisabled || controlCenterOpen || panelOpen || settings || workspaceSettings || profileOpen || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
                         findEnabled={foremanOpen && !panelOpen && !controlCenterDisabled}
                         centerOpen={controlCenterOpen} onOpenTranscriptionSettings={() => openSettingsAt('Tool services')} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('The Chief of Staff chat was closed.')); setForemanOpen(false) }}
                         onOpenCoworker={openForemanCoworker} onOpenCalledChat={openCoworkerChat} onOpenBox={openForemanBox}
@@ -808,7 +813,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                     closePanel()
                                 }
                             }}>
-                            <CoworkerChat workspaceId={runtimeWorkspaceId} attention={boardActivity.attention} onOpenCoworkerChat={openCoworkerChat} key={selectedAgent.id} agent={overview ? { ...selectedAgent, spaceId: overviewBox } : selectedAgent} overview={overview} requested={requestedSession} selected={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
+                            <CoworkerChat workspaceId={runtimeWorkspaceId} attention={boardActivity.attention} onOpenCoworkerChat={openCoworkerChat} key={selectedAgent.id} agent={overview ? { ...selectedAgent, spaceId: overviewBox } : selectedAgent} overview={overview} requested={requestedSession} selected={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !profileOpen && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
                                 requestedPanel={requestedPanel?.agentId === selectedAgent.id ? requestedPanel : null} onPanelRequestHandled={panelRequestHandled}
                                 onVisibleSession={reportVisibleSession}
                                 onClosePanel={closePanel} modelLabel={modelLabel} connections={providers.connections} onOpenModelSettings={openSettings} />
@@ -835,6 +840,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 }} />
             <DesktopNewAgentDialog open={creating} onOpenChange={setCreating} onCreate={prepareCoworker} first={!agents.length}
                 resolvingReceipt={creation.checking} />
+            <DesktopLocalProfileDialog open={profileOpen} onOpenChange={setProfileOpen} profile={profile} onSaved={setProfile} />
             <DesktopWorkspaceSettings open={workspaceSettings} onOpenChange={setWorkspaceSettings} workspaceName={workspaceName}
                 onSaved={saved => { setWorkspaceName(saved.name); setSavedIcon({ iconCatalogId: saved.iconCatalogId ?? null, iconUploadId: saved.iconUploadId ?? null }) }} />
             {workspaceDialogActive && runtimeWorkspaceId === null && <DesktopWorkspaceDialogStatus title={shareTarget ? `Share ${shareTarget.name}` : importCoworkerOpen ? 'Import coworker' : serversOpen ? 'Servers' : 'API keys & MCP'} error={workspaceIdentityError} onClose={closeWorkspaceDialogs} onRetry={() => setWorkspaceIdentityAttempt(value => value + 1)} />}
@@ -843,7 +849,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             {runtimeWorkspaceId !== null && shareTarget && <DesktopCoworkerShareLauncher key={`${runtimeWorkspaceId}:${shareTarget.id}`} workspaceId={runtimeWorkspaceId} agentId={shareTarget.id} agentName={shareTarget.name} onClose={closeWorkspaceDialogs} onImported={refreshImportedCoworker} onOpenCoworker={agentId => { void openImportedCoworker(agentId) }} />}
             {runtimeWorkspaceId !== null && importCoworkerOpen && <DesktopPortableCoworkerImport key={runtimeWorkspaceId} workspaceId={runtimeWorkspaceId} onClose={closeWorkspaceDialogs} onImported={refreshImportedCoworker} onOpenCoworker={agentId => { void openImportedCoworker(agentId) }} />}
             <DesktopNotificationDelivery
-                visibleSessionId={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
+                visibleSessionId={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !profileOpen && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
                 onOpenConversation={target => {
                     if (controlCenterDisabled || isDesktopQuitting() || !currentAgents.current.some(agent => agent.id === target.agentId)) return
                     focusFromControlCenter(target.agentId)

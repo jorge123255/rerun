@@ -11,6 +11,7 @@ import { reconcileDesktopEnabled } from './coworker-enabled'
 import { reconcileDesktopDeletions } from './coworker-delete'
 import { openDesktopDatabase } from './database'
 import { readDesktopBootstrap } from './store'
+import { desktopProfileDatabase } from './local-profile'
 import { desktopAgentView } from './views'
 import type { DesktopRuntime } from './runtime'
 
@@ -31,7 +32,7 @@ export async function readDesktopWorkspace(runtime: DesktopRuntime) {
             await reconcileDesktopRenames(db, engineOf(runtime), runtime.launchNonce)
             await reconcileDesktopDuplicates(db, engineOf(runtime))
             await reconcileDesktopEnabled(db, engineOf(runtime))
-            return readDesktopBootstrap(db)
+            return readDesktopBootstrap(db, await desktopProfileDatabase(runtime))
         }),
         readDesktopProviders(runtime),
     ])

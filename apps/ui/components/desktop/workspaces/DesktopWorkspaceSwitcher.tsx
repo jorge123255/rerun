@@ -1,5 +1,6 @@
 'use client'
 
+import { CardAvatar } from '@rerun/ui/chat'
 import { WorkspacePill } from '@rerun/ui/chrome'
 import { CheckIcon, Loader2Icon, PlusIcon, SettingsIcon } from '@/lib/icons'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -25,11 +26,12 @@ import { toast } from 'sonner'
  */
 export function DesktopWorkspaceSwitcher({
     client,
-    profileLabel = 'Rerun Local',
+    profileLabel = 'Rerun Local', profilePhoto,
     className, menuItems, activeDisplay, disabled = false, onCloseAutoFocus, onRenameActive, workspaceSettingsInMenu = false,
 }: {
     client: DesktopWorkspaceClient
     profileLabel?: string
+    profilePhoto?: string | null
     className?: string
     menuItems?: ReactNode
     activeDisplay?: { name: string; iconCatalogId?: string | null; iconUploadId?: string | null }
@@ -121,7 +123,10 @@ export function DesktopWorkspaceSwitcher({
                     />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" side="bottom" className="w-64 max-h-[calc(100dvh-5rem)] overflow-y-auto" onCloseAutoFocus={onCloseAutoFocus}>
-                    <DropdownMenuLabel className="truncate text-xs font-normal text-muted-foreground">{profileLabel}</DropdownMenuLabel>
+                    <DropdownMenuLabel className="flex min-w-0 items-center gap-2 text-xs font-normal text-muted-foreground">
+                        {profilePhoto && <CardAvatar src={profilePhoto} fileUrl={path => path === profilePhoto ? path : null} name={profileLabel} className="size-5" />}
+                        <span className="truncate">{profileLabel}</span>
+                    </DropdownMenuLabel>
                     {menuItems}
                     <DropdownMenuSeparator />
                     {sorted.map(workspace => {

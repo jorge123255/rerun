@@ -48,6 +48,11 @@ async function initialize(dataRoot: string): Promise<Client> {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS desktop_profile_photo (
+            profile_id INTEGER PRIMARY KEY REFERENCES desktop_profile(id),
+            identity TEXT NOT NULL,
+            bytes BLOB NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS desktop_language (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             locale TEXT

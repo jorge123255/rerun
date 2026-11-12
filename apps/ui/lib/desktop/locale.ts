@@ -203,11 +203,20 @@ const desktopControlCenterCopy = {
     },
 } satisfies Record<Locale, { desktopDescription: string; search: string; closeHint: string }>
 
+const localProfileCopy = {
+    en: { description: 'Your display name and photo on this Mac.', photoHelp: 'Shown in the workspace menu.' },
+    fr: { description: 'Votre nom et votre photo sur ce Mac.', photoHelp: 'Visible dans le menu de l’espace de travail.' },
+    es: { description: 'Tu nombre y tu foto en este Mac.', photoHelp: 'Se muestra en el menú del espacio de trabajo.' },
+    pt: { description: 'Seu nome e sua foto neste Mac.', photoHelp: 'Exibida no menu do espaço de trabalho.' },
+    de: { description: 'Dein Name und dein Foto auf diesem Mac.', photoHelp: 'Wird im Arbeitsbereichsmenü angezeigt.' },
+} satisfies Record<Locale, { description: string; photoHelp: string }>
+
 export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
     return {
         ...mac[locale],
         brain: source.brain,
         filesGrid: source.files.grid,
+        localProfile: { ...localProfileCopy[locale], title: source.account.tabs.profile.label, fields: source.account.profile },
         brainDesktop: desktopBrainCopy[locale],
         sharedData: {
             emptyTitle: source.data.shared.emptyTitle,

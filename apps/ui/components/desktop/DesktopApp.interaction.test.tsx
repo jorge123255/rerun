@@ -731,3 +731,81 @@ test('open General picks up a saved sibling without rewriting the active layout'
         vi.useRealTimers()
     }
 })
+
+test('the board workspace menu edits the local profile and displays the saved name and photo', async () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const photoId = '11111111-1111-4111-8111-111111111111'
+    const profilePath = '/api/desktop/profile'
+    const copy = desktopMessages('en', await loadMessages('en')).localProfile
+    let failName = true
+    let profile = { id: 1, displayName: 'Local User', photoId: null as string | null }
+    const fetcher = mockDesktopFetch((url, init) => {
+        if (url === settingsUrl && !init?.method) return Response.json(disconnected)
+        if (url === profilePath && init?.method === 'PUT') {
+            if (failName) return Response.json({ error: 'Could not save' }, { status: 409 })
+            profile = { ...profile, displayName: JSON.parse(String(init.body)).name }
+            return Response.json(profile)
+        }
+        if (url === profilePath + '/photo' && init?.method === 'PUT') {
+            profile = { ...profile, photoId }
+            return Response.json(profile)
+        }
+        if (url === profilePath + '/photo' && init?.method === 'DELETE') {
+            profile = { ...profile, photoId: null }
+            return Response.json(profile)
+        }
+    })
+    const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]')!
+    const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(element =>
+        element.getAttribute('aria-label') === label || element.textContent?.trim() === label)!
+    const avatar = () => document.querySelector(`img[src="${profilePath}/photo?id=${photoId}"]`)
+    async function openWorkspaceMenu() {
+        const menu = container.querySelector<HTMLButtonElement>('[aria-label^="Workspace menu,"]')!
+        menu.focus()
+        await act(async () => { menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })) })
+    }
+    async function openProfile() {
+        await openWorkspaceMenu()
+        const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(el => el.textContent?.trim() === copy.title)!
+        await act(async () => { item.click() })
+        expect(dialog().querySelector('[data-slot="dialog-title"]')?.textContent).toBe(copy.title)
+    }
+    try {
+        await act(async () => { root.render(<DesktopApp initialData={{ ...disconnected, theme: 'system', profile,
+            workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
+        await openProfile()
+        const field = dialog().querySelector<HTMLInputElement>('input[autocomplete="name"]')!
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, '  Élodie Park  ')
+            field.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+        await act(async () => { button(copy.fields.save).click() })
+        expect(fetcher).toHaveBeenCalledWith(profilePath, expect.objectContaining({ method: 'PUT', body: '{"name":"Élodie Park"}' }))
+        expect(field.value).toBe('  Élodie Park  ')
+        failName = false
+        await act(async () => { button(copy.fields.save).click() })
+        expect(field.value).toBe('Élodie Park')
+        const input = dialog().querySelector<HTMLInputElement>('input[type="file"]')!
+        const photo = new File(['fixture'], 'profile.png', { type: 'image/png' })
+        await act(async () => {
+            Object.defineProperty(input, 'files', { configurable: true, value: [photo] })
+            input.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+        expect(fetcher).toHaveBeenCalledWith(profilePath + '/photo', expect.objectContaining({ method: 'PUT', body: photo }))
+        expect(avatar()).toBeTruthy()
+        await act(async () => { dialog().querySelector<HTMLButtonElement>('[data-slot="dialog-close"]')!.click() })
+        await openWorkspaceMenu()
+        expect(document.querySelector('[role="menu"]')?.textContent).toContain('Élodie Park')
+        expect(document.querySelector('[role="menu"]')?.contains(avatar())).toBe(true)
+        const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(el => el.textContent?.trim() === copy.title)!
+        await act(async () => { item.click() })
+        await act(async () => { button(copy.fields.changePhoto).click() })
+        await act(async () => { button(copy.fields.removePhoto).click() })
+        expect(fetcher).toHaveBeenCalledWith(profilePath + '/photo', expect.objectContaining({ method: 'DELETE' }))
+        expect(avatar()).toBeNull()
+    } finally {
+        await act(async () => root.unmount())
+    }
+})
