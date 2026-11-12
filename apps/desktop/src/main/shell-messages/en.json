@@ -12,7 +12,8 @@
             "title": "File",
             "closeWindow": "Close Window",
             "newWindow": "New Window",
-            "connect": "Connect to Rerun…"
+            "connect": "Connect to Rerun…",
+            "openLocal": "Open Local Workspace"
         },
         "edit": {
             "title": "Edit",
@@ -59,7 +60,7 @@
         "tooOld": "This server needs version {version} of the app or later.",
         "insecure": "This address is not encrypted. Use https:// unless the server runs on this computer.",
         "title": "Connect to Rerun",
-        "description": "Open a Rerun server in its own window. Your local workspace stays open.",
+        "description": "Open a Rerun server in its own window.",
         "connecting": "Connecting…",
         "unsupported": "This server uses a different Rerun desktop protocol.",
         "busy": "Another connection is in progress. Try again shortly."
@@ -95,6 +96,9 @@
         "unavailable": "Could not open a conversation. Try again when the workspace is ready."
     },
     "startup": {
+        "chooseWorkspace": "Run Rerun on this Mac or connect to an existing Rerun server.",
+        "runLocally": "Run on This Mac",
+        "connectServer": "Connect to a Server",
         "keychainPrompt": "If macOS asks for Keychain access, choose Allow to open your local workspace.",
         "keychainBlocked": "Rerun couldn’t access secure storage. Unlock your login Keychain, then choose Try again and allow access if macOS asks."
     },

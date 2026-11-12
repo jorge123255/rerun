@@ -12,7 +12,8 @@
             "title": "Ablage",
             "closeWindow": "Fenster schließen",
             "newWindow": "Neues Fenster",
-            "connect": "Mit Rerun verbinden…"
+            "connect": "Mit Rerun verbinden…",
+            "openLocal": "Lokalen Workspace öffnen"
         },
         "edit": {
             "title": "Bearbeiten",
@@ -59,7 +60,7 @@
         "tooOld": "Dieser Server braucht Version {version} der App oder neuer.",
         "insecure": "Diese Adresse ist nicht verschlüsselt. Nutze https://, außer der Server läuft auf diesem Computer.",
         "title": "Mit Rerun verbinden",
-        "description": "Öffne einen Rerun-Server in einem eigenen Fenster. Dein lokaler Arbeitsbereich bleibt geöffnet.",
+        "description": "Öffne einen Rerun-Server in einem eigenen Fenster.",
         "connecting": "Verbindung wird hergestellt…",
         "unsupported": "Dieser Server verwendet ein anderes Rerun-Desktop-Protokoll.",
         "busy": "Eine andere Verbindung wird gerade hergestellt. Versuche es gleich noch einmal."
@@ -95,6 +96,9 @@
         "unavailable": "Die Unterhaltung konnte nicht geöffnet werden. Versuche es erneut, sobald der Arbeitsbereich bereit ist."
     },
     "startup": {
+        "chooseWorkspace": "Führe Rerun auf diesem Mac aus oder verbinde dich mit einem vorhandenen Rerun-Server.",
+        "runLocally": "Auf diesem Mac ausführen",
+        "connectServer": "Mit einem Server verbinden",
         "keychainPrompt": "Wenn macOS nach dem Schlüsselbundzugriff fragt, wähle Erlauben, um deinen lokalen Workspace zu öffnen.",
         "keychainBlocked": "Rerun konnte nicht auf den sicheren Speicher zugreifen. Entsperre deinen Anmeldeschlüsselbund, versuche es erneut und erlaube den Zugriff, wenn macOS danach fragt."
     },

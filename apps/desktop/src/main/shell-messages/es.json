@@ -12,7 +12,8 @@
             "title": "Archivo",
             "closeWindow": "Cerrar ventana",
             "newWindow": "Nueva ventana",
-            "connect": "Conectar con Rerun…"
+            "connect": "Conectar con Rerun…",
+            "openLocal": "Abrir espacio de trabajo local"
         },
         "edit": {
             "title": "Edición",
@@ -59,7 +60,7 @@
         "tooOld": "Este servidor necesita la versión {version} de la app o una posterior.",
         "insecure": "Esta dirección no está cifrada. Usa https:// salvo que el servidor esté en esta computadora.",
         "title": "Conectar con Rerun",
-        "description": "Abre un servidor de Rerun en su propia ventana. Tu espacio de trabajo local sigue abierto.",
+        "description": "Abre un servidor de Rerun en su propia ventana.",
         "connecting": "Conectando…",
         "unsupported": "Este servidor usa otro protocolo de escritorio de Rerun.",
         "busy": "Hay otra conexión en curso. Vuelve a intentarlo en breve."
@@ -95,6 +96,9 @@
         "unavailable": "No se pudo abrir la conversación. Vuelve a intentarlo cuando el espacio de trabajo esté listo."
     },
     "startup": {
+        "chooseWorkspace": "Ejecuta Rerun en este Mac o conéctate a un servidor de Rerun existente.",
+        "runLocally": "Ejecutar en este Mac",
+        "connectServer": "Conectar a un servidor",
         "keychainPrompt": "Si macOS solicita acceso al llavero, elige Permitir para abrir tu espacio de trabajo local.",
         "keychainBlocked": "Rerun no pudo acceder al almacenamiento seguro. Desbloquea tu llavero de inicio de sesión, vuelve a intentarlo y permite el acceso si macOS lo solicita."
     },

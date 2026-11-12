@@ -14,8 +14,13 @@
     <p class="eyebrow">DESKTOP PREVIEW</p>
     <h1>Your coworkers.<br>Your Mac.</h1>
     <p id="message" role="status">Preparing your local workspace…</p>
-    <div class="actions"><button id="retry" hidden>Try again</button><button id="quit" class="secondary">Quit</button></div>
-    <p class="footnote">Your workspace and history stay on this Mac. AI providers use the network when you chat.</p>
+    <div class="actions">
+      <button id="run-locally" hidden></button>
+      <button id="connect-server" class="secondary" hidden></button>
+      <button id="retry" hidden>Try again</button>
+      <button id="quit" class="secondary">Quit</button>
+    </div>
+    <p id="local-footnote" class="footnote">Your workspace and history stay on this Mac. AI providers use the network when you chat.</p>
   </main>
   <script src="startup.js"></script>
 </body>

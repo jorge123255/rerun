@@ -29,6 +29,7 @@ test('the Mac Settings item opens only the current desktop frame', () => {
         openDocumentation: () => calls.push('documentation'),
         openFind: () => calls.push('find'),
         openNewWindow: () => calls.push('new-window'),
+        openLocalWorkspace: () => calls.push('open-local'),
         openHubPicker: () => calls.push('connect-hub'),
         reloadWindow: (_item, target) => calls.push(['reload', target]),
     })
@@ -63,6 +64,10 @@ test('the Mac Settings item opens only the current desktop frame', () => {
     assert.equal(newWindow.accelerator, 'CmdOrCtrl+Shift+N')
     newWindow.click()
     assert.equal(calls.at(-1), 'new-window')
+    const local = menu.find(item => item.role === 'fileMenu').submenu.find(item => item.id === 'rerun-open-local')
+    assert.equal(local.label, 'Open Local Workspace')
+    local.click()
+    assert.equal(calls.at(-1), 'open-local')
     menu.find(item => item.role === 'fileMenu').submenu.find(item => item.id === 'rerun-connect-hub').click()
     assert.equal(calls.at(-1), 'connect-hub')
     const view = menu.find(item => item.label === 'View')

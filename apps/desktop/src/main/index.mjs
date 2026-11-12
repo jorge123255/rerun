@@ -26,6 +26,7 @@ import { cascadeWindowBounds, createBoardWindows } from './board-windows.mjs'
 import { captureWindowPlacement, createWindowPlacements, restoreWindowZoom } from './window-placement.mjs'
 import { createConnectedHubs } from './connected-hubs.mjs'
 import { parseHubLink, registerHubProtocol } from './connected-hub-policy.mjs'
+import { hasLocalWorkspace } from './startup-workspace.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
@@ -54,6 +55,7 @@ let pendingHubLink
 let transitioning = false
 let quitting = false
 let quittingNow = false
+let openingLocalWorkspace = false
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const boards = createBoardWindows({ startupUrl: pathToFileURL(startup).href, isDesktopPage })
@@ -89,6 +91,13 @@ let hubUnread = 0
 function publishBootStatus(state, message) {
     bootStatus = { state, message }
     if (window && !window.isDestroyed()) window.webContents.send('desktop:status', bootStatus)
+}
+function reportStartupError(error) {
+    const secureStorageBlocked = mac && error instanceof DesktopSecureStorageError
+    const message = secureStorageBlocked ? shellText(shellLanguage?.forScope('local'))('startup.keychainBlocked')
+        : 'Desktop setup failed. Check that this app has a complete bundled runtime and access to secure storage.'
+    if (supervisor) supervisor.publish('error', 'Workspace state could not be verified. Restore the workspace state before retrying.')
+    else publishBootStatus('error', message)
 }
 function showMainWindow() {
     showWindowOnReady = true
@@ -226,13 +235,7 @@ else {
             cancelled: resumeAfterCancelledQuit,
         }).catch(() => { if (!quittingNow) resumeAfterCancelledQuit() })
     })
-    app.whenReady().then(launch).catch(error => {
-        const secureStorageBlocked = mac && error instanceof DesktopSecureStorageError
-        const message = secureStorageBlocked ? shellText(shellLanguage?.forScope('local'))('startup.keychainBlocked')
-            : 'Desktop setup failed. Check that this app has a complete bundled runtime and access to secure storage.'
-        if (supervisor) supervisor.publish('error', 'Workspace state could not be verified. Restore the workspace state before retrying.')
-        else publishBootStatus('error', message)
-    })
+    app.whenReady().then(launch).catch(reportStartupError)
 }
 
 function trusted(event) {
@@ -266,6 +269,7 @@ function resumeBoard(board) {
 
 async function launch() {
     if (storageSetupError) throw storageSetupError
+    const openRememberedHub = !pendingHubLink
     if (mac) {
         if (app.isPackaged && !registerHubProtocol(app)) console.warn('Could not register Rerun development links with macOS.')
         shortcutPreference = await loadQuickAskShortcut({ dataRoot, globalShortcut, open: toggleQuickAsk })
@@ -305,6 +309,10 @@ async function launch() {
                 windowFind.open(connectedHubs.scopeOf(focused) ? focused : focusedBoard())
             },
             openQuickAsk: toggleQuickAsk,
+            openLocalWorkspace: () => {
+                showMainWindow()
+                if (bootStatus.state === 'choose') void startLocalWorkspace()
+            },
             openNewWindow: (_item, candidate) => {
                 const focused = candidate ?? BrowserWindow.getFocusedWindow() ?? lastWorkspaceWindow
                 if (connectedHubs.duplicateWindow(focused)) return
@@ -341,6 +349,16 @@ async function launch() {
     await prepareWorkspaceWindow(1, false)
     ipcMain.handle('desktop:status', event => { trusted(event); return supervisor?.status ?? bootStatus })
     if (mac) {
+        const choosingWorkspace = event => {
+            trustedPrimary(event)
+            return event.senderFrame.url === pathToFileURL(startup).href && bootStatus.state === 'choose' && !quitting
+        }
+        ipcMain.handle('desktop:startup-local', event => choosingWorkspace(event) && startLocalWorkspace())
+        ipcMain.handle('desktop:startup-connect', event => {
+            if (!choosingWorkspace(event)) return false
+            connectedHubs.openPicker()
+            return true
+        })
         ipcMain.on('desktop:find-open', event => {
             try { windowFind.open(trusted(event).window) } catch { /* Ignore untrusted frames. */ }
         })
@@ -479,12 +497,41 @@ async function launch() {
             if (registrationId && clickReady?.registrationId === registrationId && clickReady.contents === event.sender) clickReady = null
         } catch {}
     })
-    if (mac) bootStatus = { state: 'starting', message: shellText(shellLanguage.forScope('local'))('startup.keychainPrompt') }
+    const existingLocal = !mac || await hasLocalWorkspace(dataRoot)
+    if (mac) {
+        const t = shellText(shellLanguage.forScope('local'))
+        bootStatus = existingLocal ? { state: 'starting', message: t('startup.keychainPrompt') } : {
+            state: 'choose', message: t('startup.chooseWorkspace'),
+            choices: { local: t('startup.runLocally'), connect: t('startup.connectServer') },
+        }
+    }
     await window.loadFile(startup)
+    if (existingLocal) await startLocalWorkspace()
+    else if (openRememberedHub) await connectedHubs.reopenRemembered()
+}
+
+async function startLocalWorkspace() {
+    if (quitting || openingLocalWorkspace || supervisor) return false
+    openingLocalWorkspace = true
+    try {
+        if (mac) publishBootStatus('starting', shellText(shellLanguage.forScope('local'))('startup.keychainPrompt'))
+        await initializeLocalWorkspace()
+        return true
+    } catch (error) {
+        if (!quitting) reportStartupError(error)
+        return false
+    } finally {
+        openingLocalWorkspace = false
+    }
+}
+
+async function initializeLocalWorkspace() {
     const identity = await loadIdentityFromSafeStorage(dataRoot, safeStorage)
+    if (quitting) return
     publishBootStatus('starting', 'Preparing local runtime…')
     const resources = app.isPackaged ? process.resourcesPath : resolve(directory, '../../resources')
     const bundle = await loadBundle(resources)
+    if (quitting) return
     if (process.platform === 'darwin') app.setAboutPanelOptions({ version: bundle.buildId })
     supervisor = new RuntimeSupervisor({ bundle, root: dataRoot, identity })
     remoteInstallId = identity.installId
@@ -514,6 +561,7 @@ async function launch() {
         }
     })
     await seedLegacyCatalog(dataRoot, identity.installId)
+    if (quitting) return
     workspaces = createWorkspaceCoordinator({ dataRoot, installId: identity.installId, ports: {
         isQuitInProgress: () => quitting,
         freezeAdmissions: context => supervisor.admissions('freeze', context.requestId),

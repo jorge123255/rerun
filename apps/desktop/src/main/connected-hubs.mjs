@@ -149,7 +149,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             if (!available() || picker || connecting || pendingOpen !== request) return
             if (!origin) { openPicker(); return }
             pendingOpen = null
-            const result = await connect(origin, request.path)
+            const result = await connect(origin, { path: request.path, remember: false })
             if (!result.ok && available()) {
                 pendingOpen ??= request
                 openPicker()
@@ -356,7 +356,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             cascadeWindowBounds(entry.window, screen))
     }
 
-    async function connect(address, path = null, parent) {
+    async function connect(address, { path = null, parent, remember = true } = {}) {
         if (!available() || connecting) return { ok: false, reason: 'busy' }
         const origin = normalizeHubOrigin(address)
         if (!origin) return { ok: false, reason: 'invalid' }
@@ -374,7 +374,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             if (!await openHub(origin, desktopSession, request?.path ?? path, opening, offline)) return { ok: false, reason: 'unreachable' }
             if (request && pendingOpen === request) pendingOpen = null
             // The connection is usable even if the convenience of remembering its address fails.
-            await atomicPrivateJSON(file, { origin }).catch(() => {})
+            if (remember) await atomicPrivateJSON(file, { origin }).catch(() => {})
             if (parent && !parent.isDestroyed()) {
                 acceptedPicker = parent
                 setTimeout(() => { if (!parent.isDestroyed()) parent.close() }, 0)
@@ -425,7 +425,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     ipcMain.handle('hub:connect', async (event, address) => {
         if (!localSender(event)) return { ok: false, reason: 'invalid' }
         const locale = pickerLocale
-        const result = await connect(address, null, picker)
+        const result = await connect(address, { parent: picker })
         return result.ok ? result : { ...result, message: hubConnectionError(locale, result) }
     })
     ipcMain.handle('hub:offline-state', event => {
@@ -478,6 +478,11 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
 
     return {
         openPicker,
+        async reopenRemembered() {
+            const origin = await savedOrigin()
+            if (!origin || !available() || picker || openingLink || pendingOpen || connecting) return false
+            return (await connect(origin, { remember: false })).ok
+        },
         ownsWindow: window => !!entryFor(window),
         languageScopeOf: window => entryFor(window)?.origin ?? null,
         scopeOf: window => available() ? connected(window)?.scope : null,

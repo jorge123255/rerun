@@ -1,7 +1,7 @@
 import { QUICK_ASK_SHORTCUT } from './quick-ask-window.mjs'
 import { shellText } from './shell-language.mjs'
 
-export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDesktopPage, openDocumentation, openFind, openQuickAsk, openNewWindow, openHubPicker, reloadWindow, devTools, locale, checkForUpdates, updateItem }) {
+export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDesktopPage, openDocumentation, openFind, openQuickAsk, openNewWindow, openLocalWorkspace, openHubPicker, reloadWindow, devTools, locale, checkForUpdates, updateItem }) {
     const t = shellText(locale)
     const name = { name: appName }
     const template = [
@@ -36,6 +36,7 @@ export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDes
         ] },
         { role: 'fileMenu', label: t('menu.file.title'), submenu: [
             { id: 'rerun-new-window', label: t('menu.file.newWindow'), accelerator: 'CmdOrCtrl+Shift+N', click: openNewWindow },
+            ...(openLocalWorkspace ? [{ id: 'rerun-open-local', label: t('menu.file.openLocal'), click: openLocalWorkspace }] : []),
             { id: 'rerun-connect-hub', label: t('menu.file.connect'), click: openHubPicker },
             { id: 'rerun-quick-ask', label: t('tray.quickAsk'), accelerator: QUICK_ASK_SHORTCUT, registerAccelerator: false, click: openQuickAsk },
             { type: 'separator' }, { role: 'close', label: t('menu.file.closeWindow') },

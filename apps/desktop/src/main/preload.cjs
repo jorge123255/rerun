@@ -123,6 +123,8 @@ contextBridge.exposeInMainWorld('desktopApp', {
         },
     },
     getStatus: () => ipcRenderer.invoke('desktop:status'),
+    openLocalWorkspace: () => ipcRenderer.invoke('desktop:startup-local'),
+    connectToServer: () => ipcRenderer.invoke('desktop:startup-connect'),
     retry: () => ipcRenderer.invoke('desktop:retry'),
     quit: () => ipcRenderer.invoke('desktop:quit'),
     onBeforeQuit: listener => {
@@ -150,7 +152,10 @@ contextBridge.exposeInMainWorld('desktopApp', {
     },
     onStatus: listener => {
         if (typeof listener !== 'function') throw new TypeError('Expected a status listener')
-        const handler = (_event, value) => listener({ state: value.state, message: value.message })
+        const handler = (_event, value) => listener({
+            state: value.state, message: value.message,
+            ...(value.choices && { choices: { local: value.choices.local, connect: value.choices.connect } }),
+        })
         ipcRenderer.on('desktop:status', handler)
         return () => ipcRenderer.removeListener('desktop:status', handler)
     },
