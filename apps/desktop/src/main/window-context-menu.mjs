@@ -1,4 +1,4 @@
-import { displayedImageTarget, sameDisplayedImage } from './displayed-image.mjs'
+import { displayedImageTarget } from './displayed-image.mjs'
 
 export function externalDesktopLink(href) {
     try {
@@ -17,7 +17,8 @@ const labels = {
     de: ['Ausschneiden', 'Kopieren', 'Einfügen', 'Alles auswählen', 'Zum Wörterbuch hinzufügen', 'Link öffnen', 'Link kopieren', 'Bild kopieren', 'Bild sichern'],
 }
 
-export function attachDesktopContextMenu({ window, Menu, clipboard, openExternal, locale, currentScope, saveImage, reportFailure }) {
+export function attachDesktopContextMenu({ window, Menu, clipboard, openExternal, locale, currentScope,
+    saveImage, canSaveImage = displayedImageTarget, reportFailure }) {
     const contents = window.webContents
     const language = locale.toLowerCase().split('-')[0]
     const [cut, copy, paste, selectAll, dictionary, openLink, copyLink, copyImage, saveImageLabel] =
@@ -49,13 +50,11 @@ export function attachDesktopContextMenu({ window, Menu, clipboard, openExternal
         ])
         if (params.mediaType === 'image' && params.hasImageContents && !protectedField) {
             const image = [item('copy-image', copyImage, () => contents.copyImageAt(params.x, params.y))]
-            // Save only an image this board frame actually painted, and only through the Mac save flow.
-            const target = typeof saveImage === 'function' ? displayedImageTarget(params.pageURL, params.srcURL) : null
-            if (target) image.push(item('save-image', saveImageLabel, () => {
-                if (!sameDisplayedImage(target, displayedImageTarget(params.pageURL, params.srcURL))) return
-                void Promise.resolve(saveImage(params.pageURL, params.srcURL)).catch(error => {
-                    if (typeof reportFailure === 'function') reportFailure(error)
-                })
+            const { pageURL, srcURL } = params
+            if (typeof saveImage === 'function' && canSaveImage(pageURL, srcURL)) image.push(item('save-image', saveImageLabel, () => {
+                if (pageURL !== params.pageURL || srcURL !== params.srcURL) return
+                try { void Promise.resolve(saveImage(pageURL, srcURL)).catch(error => reportFailure?.(error)) }
+                catch (error) { reportFailure?.(error) }
             }))
             groups.push(image)
         }

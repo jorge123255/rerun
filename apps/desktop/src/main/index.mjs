@@ -243,7 +243,7 @@ async function launch() {
     if (mac) {
         if (app.isPackaged && !registerHubProtocol(app)) console.warn('Could not register Rerun development links with macOS.')
         shortcutPreference = await loadQuickAskShortcut({ dataRoot, globalShortcut, open: toggleQuickAsk })
-        connectedHubs = createConnectedHubs({ app, BrowserWindow, Notification, ipcMain, session, shell, dialog, screen, dataRoot,
+        connectedHubs = createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot,
             available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate),
             setUnread: count => { hubUnread = count; publishMacUnread() }, desktopSettings, changeDesktopSettings })
         app.on('browser-window-focus', (_event, candidate) => {

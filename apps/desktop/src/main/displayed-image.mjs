@@ -74,12 +74,6 @@ function sharedTarget(src) {
     return { kind: 'shared', ...file, ...(params.identity !== undefined && { identity: params.identity }) }
 }
 
-export function sameDisplayedImage(left, right) {
-    return !!left && !!right && left.kind === right.kind && left.agentId === right.agentId
-        && left.path === right.path && left.name === right.name && left.raster === right.raster && left.identity === right.identity
-        && left.revision === right.revision
-}
-
 /** Kind implied by the file bytes, not by the filename. */
 export function verifiedImageKind(bytes) {
     if (!(bytes instanceof Uint8Array)) return null

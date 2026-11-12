@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { checkHub, hubPartition, HUB_API_VERSION, normalizeHubOrigin, sameHub } from './connected-hub-policy.mjs'
 import { createHubAuth } from './connected-hub-auth.mjs'
-import { createHubDownloads } from './connected-hub-downloads.mjs'
+import { createHubDownloads, isHubDownload } from './connected-hub-downloads.mjs'
 import { createConnectedHubQuickAsk } from './connected-hub-quick-ask.mjs'
 import { createHubRecovery } from './connected-hub-recovery.mjs'
 import { createHubServiceSignIn } from './connected-hub-service-sign-in.mjs'
@@ -11,14 +11,14 @@ import { atomicPrivateJSON, readJSON } from './workspaces/paths.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
 import { createNativeNotifications, hubNotificationPayload } from './notifications.mjs'
 import { QUICK_ASK_SHORTCUT } from './quick-ask-window.mjs'
-import { externalDesktopLink } from './window-context-menu.mjs'
+import { attachDesktopContextMenu, externalDesktopLink } from './window-context-menu.mjs'
 
 const pickerPage = new URL('./connected-hub.html', import.meta.url)
 const offlinePage = new URL('./connected-hub-offline.html', import.meta.url)
 const preload = fileURLToPath(new URL('./connected-hub-preload.cjs', import.meta.url))
 const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads', 'notifications', 'badge', 'settings', 'oauth']
 
-export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain, session, shell, dialog, screen, dataRoot,
+export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot,
     available, openFind, closeFind, setUnread, desktopSettings, changeDesktopSettings }) {
     const file = resolve(dataRoot, 'connected-hub.json')
     const windows = new Map()
@@ -137,7 +137,8 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
         void shell.openExternal(url).catch(() => {})
         return true
     }
-    const preferences = desktopSession => ({ preload, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, session: desktopSession })
+    const preferences = desktopSession => ({ preload, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true,
+        spellcheck: true, session: desktopSession })
 
     function openPicker() {
         if (!available()) return
@@ -208,6 +209,12 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
             },
         })
         windows.set(contents, entry)
+        attachDesktopContextMenu({
+            window, Menu, clipboard, openExternal: external, locale: app.getLocale(),
+            currentScope: () => available() && connected(window) === entry ? entry.scope : null,
+            canSaveImage: (_page, source) => isHubDownload([source], origin),
+            saveImage: (_page, source) => contents.downloadURL(source),
+        })
         const microphone = desktopMicrophonePermissions({
             context: source => available() && source && connected(windows.get(source)?.window)?.origin === origin
                 && windows.get(source).window.isVisible() ? windows.get(source).window : null,

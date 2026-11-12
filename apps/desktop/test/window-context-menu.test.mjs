@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { test } from 'node:test'
 import { attachDesktopContextMenu, externalDesktopLink } from '../src/main/window-context-menu.mjs'
+import { isHubDownload } from '../src/main/connected-hub-downloads.mjs'
 
 function fixture(locale = 'en-US', extras = {}) {
     const frame = { url: 'http://127.0.0.1:51329/desktop' }
@@ -113,6 +114,30 @@ test('a failed Save Image reports the failure and cancellation does not', async 
     item('save-image').click()
     await new Promise(resolve => setImmediate(resolve))
     assert.equal(failures.length, 1)
+})
+
+test('hosted Save Image uses the displayed hub URL and refuses foreign and stale targets', () => {
+    const origin = 'https://hub.example.test'
+    const saved = [], errors = []
+    const { emit, item, contents, setScope } = fixture('en-US', {
+        canSaveImage: (_page, src) => isHubDownload([src], origin),
+        saveImage: (page, src) => { saved.push([page, src]); throw new Error('Download refused') },
+        reportFailure: error => errors.push(error.message),
+    })
+    const page = origin + '/board'
+    contents.mainFrame.url = page
+    emit({ mediaType: 'image', hasImageContents: true, srcURL: 'https://cdn.example.test/chart.png' })
+    assert(item('copy-image'))
+    assert.equal(item('save-image'), undefined)
+    const source = origin + '/chart.png?version=1'
+    emit({ mediaType: 'image', hasImageContents: true, srcURL: source })
+    const save = item('save-image')
+    save.click()
+    assert.deepEqual(saved, [[page, source]])
+    assert.deepEqual(errors, ['Download refused'])
+    setScope('new-document')
+    save.click()
+    assert.equal(saved.length, 1)
 })
 
 test('subframes and stale menus cannot dispatch after navigation or a new context event', () => {
