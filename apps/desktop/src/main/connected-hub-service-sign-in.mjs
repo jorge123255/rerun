@@ -86,6 +86,7 @@ export function createHubServiceSignIn({ openBrowser, now = Date.now, channel = 
         if (typeof json.exp !== 'number' || !Number.isFinite(json.exp) || json.exp <= now() || json.exp > now() + TICKET_SKEW_MS) return null
         if (typeof json.jti !== 'string' || !claimToken.test(json.jti)
             || typeof json.agentId !== 'string' || !agentIdPattern.test(json.agentId)) return null
+        if (!Number.isSafeInteger(json.workspaceId) || json.workspaceId < 1) return null
         const hasKey = Object.hasOwn(json, 'key')
         const hasServer = Object.hasOwn(json, 'server')
         if (hasKey === hasServer) return null
@@ -95,7 +96,7 @@ export function createHubServiceSignIn({ openBrowser, now = Date.now, channel = 
         const route = hasKey
             ? `/api/v1/agents/${agent}/services/${encodeURIComponent(subject)}/authorized`
             : `/api/v1/agents/${agent}/mcp/${encodeURIComponent(subject)}/authorized`
-        return { href: url.href, jti: json.jti, route }
+        return { href: url.href, jti: json.jti, route, workspaceId: json.workspaceId }
     }
 
     function bindable(entry, frame, registrationId) {
@@ -130,7 +131,8 @@ export function createHubServiceSignIn({ openBrowser, now = Date.now, channel = 
                 return true
             }
             drop(byOrigin.get(entry.origin))
-            Object.assign(attempt, { jti: ticket.jti, route: ticket.route, timer: setTimeout(() => drop(attempt), TTL_MS) })
+            Object.assign(attempt, { jti: ticket.jti, route: ticket.route, workspaceId: ticket.workspaceId,
+                timer: setTimeout(() => drop(attempt), TTL_MS) })
             attempt.timer.unref?.()
             byJti.set(attempt.jti, attempt)
             byOrigin.set(attempt.origin, attempt)
@@ -153,7 +155,9 @@ export function createHubServiceSignIn({ openBrowser, now = Date.now, channel = 
             try {
                 const response = await attempt.session.fetch(attempt.origin + attempt.route, {
                     method: 'POST', redirect: 'error', credentials: 'include',
-                    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                    // The upstream tab pins this header for its requests. A main-process
+                    // fetch must do the same or it can claim against a different workspace.
+                    headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'x-workspace-id': String(attempt.workspaceId) },
                     body: JSON.stringify({ claim: attempt.jti }),
                     signal: AbortSignal.any([attempt.controller.signal, AbortSignal.timeout(15_000)]),
                 })

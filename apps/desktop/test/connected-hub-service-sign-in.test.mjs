@@ -12,7 +12,7 @@ const jtiB = 'b'.repeat(22)
 
 function ticket(origin, claims, now = Date.now) {
     const payload = Buffer.from(JSON.stringify({
-        kind: 'ticket', desktop: 'dev', exp: now() + 60_000, ...claims,
+        kind: 'ticket', desktop: 'dev', exp: now() + 60_000, workspaceId: 1, ...claims,
     })).toString('base64url')
     const token = `${payload}.${'s'.repeat(43)}`
     return `${origin}/api/oauth/mobile/start?t=${encodeURIComponent(token)}`
@@ -135,6 +135,33 @@ test('an MCP connect and a 204 claim use the same hub session', async () => {
     await flow.complete(success(jtiB))
     assert.equal(page.calls[0].url, 'http://127.0.0.1:8371/api/v1/agents/agent-9/mcp/linear/authorized')
     assert.deepEqual(page.sent, [event({ status: 'success' })])
+})
+
+test('the service claim names the ticket workspace after the account default changes', async () => {
+    const { flow } = signIn()
+    let defaultWorkspace = 2
+    const page = hub({ origin: originA, id: 12, responder: (_url, init) => {
+        const header = new Headers(init.headers).get('x-workspace-id')
+        const selectedWorkspace = header === null ? defaultWorkspace : Number(header)
+        return selectedWorkspace === 7 ? connected() : new Response(null, { status: 409 })
+    } })
+    await consider(flow, page, ticket(originA, { jti: jtiA, agentId: 'agent-1', key: 'gmail', workspaceId: 7 }))
+    defaultWorkspace = 19
+    await flow.complete(success(jtiA))
+    assert.deepEqual(page.sent, [event({ status: 'success' })])
+    assert.equal(new Headers(page.calls[0].init.headers).get('x-workspace-id'), '7')
+})
+
+test('a ticket without a valid workspace never opens the browser or submits a claim', async () => {
+    const { flow, opened } = signIn()
+    const page = hub({ origin: originA, id: 13, responder: connected })
+    for (const workspaceId of [undefined, null, 0, -1, 2.5, '7', Number.MAX_SAFE_INTEGER + 1]) {
+        assert.equal(await consider(flow, page, ticket(originA, { jti: jtiA, agentId: 'agent-1', key: 'gmail', workspaceId })), true)
+        assert.equal(page.sent.at(-1).value.result.status, 'error')
+    }
+    await flow.complete(success(jtiA))
+    assert.deepEqual(opened, [])
+    assert.deepEqual(page.calls, [])
 })
 
 test('concurrent hubs cannot complete each other and each claim uses its own session', async () => {
