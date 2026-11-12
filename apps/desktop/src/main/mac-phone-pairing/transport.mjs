@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
+import { createServer as createHttpsServer } from 'node:https'
 import { API_PREFIX, CREDENTIAL_CLAIM_TTL_MS, DEVICE_STATUS, ERRORS, LOOPBACK_HOST, PROTOCOL_VERSION, SERVICE_NAME } from './protocol.mjs'
 import { hashSecret, hashesEqual, randomSecret } from './crypto.mjs'
 import { readWorkspaceChats } from './workspace-reads.mjs'
@@ -42,26 +43,31 @@ async function readBody(request) {
 }
 
 export function createPairingTransport({
-    now = Date.now, host = LOOPBACK_HOST, port = 0, installId, fingerprint,
+    now = Date.now, host = LOOPBACK_HOST, port = 0, installId, fingerprint, tls,
     getSettings, getStore, saveStore, getRuntime, dataRoot, offers, exclusive,
 }) {
     const claims = new Map()
     let closing = false
+    const certificateFingerprint = tls?.certificateFingerprint
+    const inScope = device => device.certificateFingerprint === certificateFingerprint
 
     function address() {
         const value = server.address()
         if (closing || !value || typeof value === 'string') return null
-        return { host: value.address, port: value.port, origin: `http://${value.address}:${value.port}` }
+        return { host: value.address, port: value.port, origin: `${tls ? 'https' : 'http'}://${value.address}:${value.port}` }
     }
 
     async function enabled() {
-        return !closing && (await getSettings()).phoneAccessEnabled && !closing
+        if (closing) return false
+        const settings = await getSettings()
+        return !closing && settings.phoneAccessEnabled
+            && (tls ? settings.lanBindingEnabled && settings.lanAddress === host : !settings.lanBindingEnabled)
     }
 
     async function authenticate(presented) {
         if (!presented || !(await enabled())) return null
         const store = await getStore()
-        return store.devices.find(device => device.status === DEVICE_STATUS.approved
+        return store.devices.find(device => inScope(device) && device.status === DEVICE_STATUS.approved
             && hashesEqual(device.credentialHash, presented)) ?? null
     }
 
@@ -76,7 +82,7 @@ export function createPairingTransport({
         if (!(await enabled())) return fail(response, ERRORS.disabled, 403)
         const current = getRuntime()
         const offer = offers.redeem(body)
-        if (!current || !offer || offer.workspaceId !== current.workspaceId) return fail(response, ERRORS.invalid_offer)
+        if (!current || !offer || offer.origin !== address()?.origin || offer.workspaceId !== current.workspaceId) return fail(response, ERRORS.invalid_offer)
         const store = await getStore()
         if (getRuntime() !== current) return fail(response, ERRORS.invalid_offer)
         const requestToken = randomSecret()
@@ -91,6 +97,7 @@ export function createPairingTransport({
             approvedAt: null,
             revokedAt: null,
             lastSeenAt: null,
+            ...(certificateFingerprint ? { certificateFingerprint } : {}),
         }
         store.devices.push(device)
         await saveStore(store)
@@ -102,7 +109,7 @@ export function createPairingTransport({
         const presented = hashSecret(body.requestToken)
         const store = await getStore()
         const device = store.devices.find(entry => entry.deviceId === body.deviceId)
-        if (!device || !hashesEqual(device.requestTokenHash, presented)) return fail(response, ERRORS.unauthorized)
+        if (!device || !inScope(device) || !hashesEqual(device.requestTokenHash, presented)) return fail(response, ERRORS.unauthorized)
         const claim = claims.get(device.deviceId)
         if (device.status === DEVICE_STATUS.revoked || (device.status === DEVICE_STATUS.pending
             && now() - Date.parse(device.createdAt) >= CREDENTIAL_CLAIM_TTL_MS)) {
@@ -127,10 +134,11 @@ export function createPairingTransport({
         }
         const path = request.url ?? ''
         if (request.method === 'GET' && path === `${API_PREFIX}/meta`) {
+            if (tls) return fail(response, ERRORS.not_found, 404)
             if (!(await enabled())) return fail(response, ERRORS.disabled, 403)
             return send(response, 200, {
                 service: SERVICE_NAME, version: PROTOCOL_VERSION, macId: installId, fingerprint,
-                phoneAccessEnabled: true, lanBindingEnabled: false,
+                phoneAccessEnabled: true, lanBindingEnabled: Boolean(tls),
             })
         }
         if (request.method === 'POST' && path === `${API_PREFIX}/pair/redeem`) {
@@ -170,17 +178,27 @@ export function createPairingTransport({
         }
     }
 
-    const server = createServer({ requestTimeout: 10_000, headersTimeout: 5_000, keepAliveTimeout: 1_000 }, (request, response) => {
+    const serverOptions = { requestTimeout: 10_000, headersTimeout: 5_000, keepAliveTimeout: 1_000 }
+    const onRequest = (request, response) => {
         handle(request, response).catch(() => {
             if (!response.headersSent) fail(response, 'unavailable', 500)
             else response.end()
         })
+    }
+    const server = tls
+        ? createHttpsServer({ ...serverOptions, key: tls.key, cert: tls.cert, minVersion: 'TLSv1.2', handshakeTimeout: 5000 }, onRequest)
+        : createServer(serverOptions, onRequest)
+    const sockets = new Set()
+    server.maxConnections = 32
+    server.on('connection', socket => {
+        sockets.add(socket)
+        socket.once('close', () => sockets.delete(socket))
     })
 
     return {
-        address,
+        address, certificateFingerprint, inScope,
         async listen() {
-            if (host !== LOOPBACK_HOST) throw Object.assign(new Error(ERRORS.lan_off), { code: ERRORS.lan_off })
+            if (!tls && host !== LOOPBACK_HOST) throw Object.assign(new Error(ERRORS.lan_off), { code: ERRORS.lan_off })
             await new Promise((resolve, reject) => {
                 server.once('error', reject)
                 server.listen(port, host, () => { server.removeListener('error', reject); resolve() })
@@ -192,7 +210,7 @@ export function createPairingTransport({
             if (!server.listening) return
             await new Promise((resolve, reject) => {
                 server.close(error => error ? reject(error) : resolve())
-                server.closeAllConnections()
+                for (const socket of sockets) socket.destroy()
             })
         },
         async approve(deviceId) {
@@ -200,7 +218,7 @@ export function createPairingTransport({
             const store = await getStore()
             const device = store.devices.find(entry => entry.deviceId === deviceId)
             const at = now()
-            if (!device || device.status !== DEVICE_STATUS.pending || at - Date.parse(device.createdAt) >= CREDENTIAL_CLAIM_TTL_MS) {
+            if (!device || !inScope(device) || device.status !== DEVICE_STATUS.pending || at - Date.parse(device.createdAt) >= CREDENTIAL_CLAIM_TTL_MS) {
                 throw hiddenWorkspaceError()
             }
             await workspaceFor(device, device.workspaceId, current)

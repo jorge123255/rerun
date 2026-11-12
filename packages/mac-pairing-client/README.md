@@ -1,14 +1,17 @@
 # @rerun/mac-pairing-client
 
-The **Connect to This Mac** preview runs against a listener on `127.0.0.1`.
-Open **File → Connect iPhone…** in the Mac app to allow local pairing and
-approve a test client. The client can list coworkers and read saved chat text
-in the workspace approved on the Mac. Mac-paired sessions have their own
-storage key, separate from cloud and self-hosted Supabase sessions.
+Open **File → Connect iPhone…** in the Mac app. Access starts off, and turning
+it on starts on `127.0.0.1`. To pair over the local network, choose a private
+IPv4 address assigned to the Mac. Only the pairing listener uses that address,
+over HTTPS. The board and engine stay on loopback.
 
-A physical phone needs a matching iPhone app and a secure local-network
-transport. The existing iPhone server picker requires a Rerun hub with
-Supabase authentication.
+Each offer is tied to the currently open workspace. It expires within two
+minutes and can be redeemed once. After approval on the Mac, the client can
+list coworkers and read their saved chats in that workspace. Approvals survive
+restart on the same endpoint and revocation takes effect immediately.
+
+The stock iPhone app still needs a Mac pairing screen and a native TLS adapter.
+Its existing server picker requires a Rerun hub with Supabase authentication.
 
 ## Why the stock iPhone app cannot sign in to the Mac unmodified
 
@@ -30,8 +33,28 @@ Keep the existing cloud and "Use your own server" paths untouched. In `StartStep
 - Label: "Connect to This Mac".
 - Action: `goTo({ name: 'mac-pairing' })`, **not** `switchServer(...)`.
 - New step: paste or scan the Mac offer (JSON or `rerun-mac://pair?...`).
-- Call `createMacPairingClient({ storage: SecureStore }).connectToThisMac(offer)` and `waitForApproval()`.
+- Call `createMacPairingClient({ storage: SecureStore, pinnedFetch }).connectToThisMac(offer)` and `waitForApproval()`.
 - Persist only under `rerun.mac-pairing.session` (`PHONE_SESSION_KEY`). Never write `rerun.server`, `rerun.workspace-id`, or supabase-js keys.
 - After approval, list coworkers and open a saved chat through this client. Do not send those reads to `/api/v1/*` and do not attach a Supabase JWT.
 
 `startSignInEntries()` returns the three entries in the intended order: cloud, own-server, this-mac.
+
+### Native HTTPS adapter
+
+The Mac offer carries `certificateFingerprint`, the lower-case hex SHA-256
+digest of the leaf certificate's DER bytes. The existing `fingerprint` field
+identifies the Rerun install. The client persists the certificate pin and
+calls `pinnedFetch(url, certificateFingerprint, options)` for every HTTPS
+request. The adapter must validate the exact pin, certificate validity and IP
+address before sending any HTTP data, honor cancellation, and refuse
+redirects. It returns a response with `ok`, `status`, and `json()`. The
+client refuses LAN offers if the adapter is absent. Cloud and self-hosted
+networking can continue to use the system trust store.
+
+The listener binds one explicitly selected address. It restores that address
+and port after restart while access is enabled. If the address is gone, the
+Mac asks the user to choose again. Moving to a different address gives the
+phone a new endpoint and requires a new offer. The Mac stores a private
+certificate key per address in its own application data with mode 0600.
+Loopback approvals cannot authenticate to the HTTPS listener, and HTTPS
+approvals are bound to the certificate that accepted them.

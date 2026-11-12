@@ -25,6 +25,7 @@ export const ERRORS = Object.freeze({
     not_found: 'not_found',
     disabled: 'disabled',
     lan_off: 'lan_off',
+    lan_address_unavailable: 'lan_address_unavailable',
     workspace_not_active: 'workspace_not_active',
 })
 

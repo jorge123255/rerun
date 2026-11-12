@@ -13,7 +13,7 @@ export function createOfferBook({ now = Date.now, ttlMs = DEFAULT_OFFER_TTL_MS }
     }
 
     return {
-        issue({ workspaceId, macId, fingerprint, origin }) {
+        issue({ workspaceId, macId, fingerprint, origin, certificateFingerprint }) {
             const at = now()
             prune(at)
             const secret = randomSecret()
@@ -39,6 +39,7 @@ export function createOfferBook({ now = Date.now, ttlMs = DEFAULT_OFFER_TTL_MS }
                 expiresAt: new Date(offer.expiresAt).toISOString(),
                 origin,
                 ttlMs: lifetime,
+                ...(certificateFingerprint ? { certificateFingerprint } : {}),
             }
         },
 

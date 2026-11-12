@@ -1,11 +1,15 @@
 import { API_PREFIX, SERVICE_NAME } from './protocol.mjs'
 import { createMacSessionStore } from './session-store.mjs'
 
-function loopbackOrigin(origin) {
-    if (typeof origin !== 'string' || !/^http:\/\/127\.0\.0\.1:[1-9]\d{0,4}$/.test(origin)) throw new Error('invalid_origin')
+function pairingOrigin(origin, certificateFingerprint) {
+    if (typeof origin !== 'string') throw new Error('invalid_origin')
     const parsed = new URL(origin)
-    if (parsed.origin !== origin) throw new Error('invalid_origin')
-    return parsed.origin
+    if (parsed.origin !== origin || !parsed.port) throw new Error('invalid_origin')
+    if (parsed.protocol === 'http:' && parsed.hostname === '127.0.0.1' && !certificateFingerprint) return origin
+    const privateAddress = /^(?:10\.\d+|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d+\.\d+$/.test(parsed.hostname)
+    if (parsed.protocol === 'https:' && privateAddress && typeof certificateFingerprint === 'string'
+        && /^[0-9a-f]{64}$/.test(certificateFingerprint)) return origin
+    throw new Error('invalid_origin')
 }
 
 function parseOffer(input) {
@@ -23,23 +27,28 @@ function parseOffer(input) {
         workspaceId: Number(url.searchParams.get('workspace')),
         macId: url.searchParams.get('mac'),
         fingerprint: url.searchParams.get('fp'),
+        certificateFingerprint: url.searchParams.get('tls') ?? undefined,
         secret: url.searchParams.get('secret'),
         origin: url.searchParams.get('origin'),
         expiresAt: url.searchParams.get('exp'),
     }
 }
 
-async function request(origin, path, { method = 'GET', body, credential, fetchImpl } = {}) {
+async function request(connection, path, { method = 'GET', body, credential, fetchImpl, pinnedFetch } = {}) {
+    const { origin, certificateFingerprint } = connection
+    const url = `${pairingOrigin(origin, certificateFingerprint)}${API_PREFIX}${path}`
     const headers = { Accept: 'application/json' }
     if (body !== undefined) headers['Content-Type'] = 'application/json'
     if (credential) headers.Authorization = `Bearer ${credential}`
-    const response = await fetchImpl(`${loopbackOrigin(origin)}${API_PREFIX}${path}`, {
+    const options = {
         method,
         headers,
         redirect: 'error',
         signal: AbortSignal.timeout(10_000),
         body: body === undefined ? undefined : JSON.stringify(body),
-    })
+    }
+    if (certificateFingerprint && typeof pinnedFetch !== 'function') throw new Error('pinned_transport_required')
+    const response = certificateFingerprint ? await pinnedFetch(url, certificateFingerprint, options) : await fetchImpl(url, options)
     const payload = await response.json().catch(() => null)
     if (!response.ok) {
         const error = new Error(payload?.error ?? 'request_failed')
@@ -55,6 +64,7 @@ export function encodeOfferLink(offer) {
     url.searchParams.set('v', String(offer.version ?? 1))
     url.searchParams.set('mac', offer.macId)
     url.searchParams.set('fp', offer.fingerprint)
+    if (offer.certificateFingerprint) url.searchParams.set('tls', offer.certificateFingerprint)
     url.searchParams.set('offer', offer.offerId)
     url.searchParams.set('workspace', String(offer.workspaceId))
     url.searchParams.set('origin', offer.origin)
@@ -63,7 +73,7 @@ export function encodeOfferLink(offer) {
     return url.toString()
 }
 
-export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, now = Date.now, deviceName = 'Test Phone' } = {}) {
+export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinnedFetch, now = Date.now, deviceName = 'Test Phone' } = {}) {
     const sessions = createMacSessionStore(storage)
 
     async function sessionOrThrow() {
@@ -79,9 +89,9 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, now 
             const offer = parseOffer(input)
             if (offer.kind !== SERVICE_NAME || offer.version !== 1) throw new Error('invalid_offer')
             if (!offer.origin || !offer.macId || !offer.fingerprint || !offer.secret) throw new Error('invalid_offer')
-            const pending = await request(offer.origin, '/pair/redeem', {
+            const pending = await request(offer, '/pair/redeem', {
                 method: 'POST',
-                fetchImpl,
+                fetchImpl, pinnedFetch,
                 body: {
                     offerId: offer.offerId,
                     macId: offer.macId,
@@ -98,6 +108,7 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, now 
                 origin: offer.origin,
                 macId: offer.macId,
                 fingerprint: offer.fingerprint,
+                certificateFingerprint: offer.certificateFingerprint,
                 workspaceId: pending.workspaceId,
                 deviceId: pending.deviceId,
                 requestToken: pending.requestToken,
@@ -108,9 +119,9 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, now 
         async waitForApproval() {
             const session = await sessions.read()
             if (!session?.requestToken || !session.deviceId || !session.origin) throw new Error('not_paired')
-            const result = await request(session.origin, '/pair/status', {
+            const result = await request(session, '/pair/status', {
                 method: 'POST',
-                fetchImpl,
+                fetchImpl, pinnedFetch,
                 body: { deviceId: session.deviceId, requestToken: session.requestToken },
             })
             if (result.status === 'approved' && result.credential) {
@@ -123,6 +134,7 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, now 
                     origin: session.origin,
                     macId: session.macId,
                     fingerprint: session.fingerprint,
+                    certificateFingerprint: session.certificateFingerprint,
                     workspaceId: result.workspaceId,
                     deviceId: result.deviceId,
                     credential: result.credential,
@@ -133,15 +145,15 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, now 
         },
         async listCoworkers() {
             const session = await sessionOrThrow()
-            return request(session.origin, `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers`, { credential: session.credential, fetchImpl })
+            return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers`, { credential: session.credential, fetchImpl, pinnedFetch })
         },
         async listSavedChats(agentId) {
             const session = await sessionOrThrow()
-            return request(session.origin, `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers/${encodeURIComponent(agentId)}/chats`, { credential: session.credential, fetchImpl })
+            return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers/${encodeURIComponent(agentId)}/chats`, { credential: session.credential, fetchImpl, pinnedFetch })
         },
         async openSavedChat(agentId, sessionId) {
             const session = await sessionOrThrow()
-            return request(session.origin, `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers/${encodeURIComponent(agentId)}/chats/${encodeURIComponent(sessionId)}`, { credential: session.credential, fetchImpl })
+            return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers/${encodeURIComponent(agentId)}/chats/${encodeURIComponent(sessionId)}`, { credential: session.credential, fetchImpl, pinnedFetch })
         },
         readMacSession: () => sessions.read(),
         clearMacSession: () => sessions.clear(),

@@ -488,6 +488,7 @@ async function launch() {
     }
     ipcMain.handle('desktop:phone-pairing-status', event => trustedPhonePairing(event).status())
     ipcMain.handle('desktop:phone-pairing-enable', (event, enabled) => trustedPhonePairing(event).setPhoneAccessEnabled(enabled === true))
+    ipcMain.handle('desktop:phone-pairing-network', (event, address) => trustedPhonePairing(event).setLanAddress(address))
     ipcMain.handle('desktop:phone-pairing-offer', event => trustedPhonePairing(event).createOffer())
     ipcMain.handle('desktop:phone-pairing-approve', (event, deviceId) => trustedPhonePairing(event).approveDevice(deviceId))
     ipcMain.handle('desktop:phone-pairing-revoke', (event, deviceId) => trustedPhonePairing(event).revokeDevice(deviceId))

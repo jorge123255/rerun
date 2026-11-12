@@ -1,7 +1,8 @@
 import { macFingerprint } from './crypto.mjs'
+import { isPrivateAddress, loadLanIdentity, localPairingAddresses } from './lan-identity.mjs'
 import { createOfferBook } from './offers.mjs'
 import { DEFAULT_OFFER_TTL_MS, ERRORS, LOOPBACK_HOST } from './protocol.mjs'
-import { listPublicDevices, readDeviceStore, readSettings, writeDeviceStore, writeSettings } from './store.mjs'
+import { listPublicDevices, publicDevice, readDeviceStore, readSettings, writeDeviceStore, writeSettings } from './store.mjs'
 import { createPairingTransport } from './transport.mjs'
 import { getWorkspace } from '../workspaces/catalog.mjs'
 
@@ -34,25 +35,37 @@ export function createMacPhonePairingService({
         return work
     }
 
-    function newTransport(port) {
+    function newTransport(port, host = listenHost, tls) {
         return createPairingTransport({
-            now, host: listenHost, port, installId, fingerprint, getSettings: settings,
+            now, host, port, installId, fingerprint, tls, getSettings: settings,
             getStore: store, saveStore, getRuntime, dataRoot, offers, exclusive,
         })
     }
 
-    async function start(current) {
-        if (transport?.address()) return
-        if (listenHost !== LOOPBACK_HOST || current.lanBindingEnabled) throw refusal(ERRORS.lan_off)
-        const next = newTransport(listenPort || current.loopbackPort || 0)
+    async function start(current, lanAddress = current.lanAddress, { renew = false } = {}) {
+        const host = lanAddress || listenHost
+        if (lanAddress && (!isPrivateAddress(host) || !localPairingAddresses().includes(host))) {
+            throw refusal(ERRORS.lan_address_unavailable)
+        }
+        if (transport?.address()?.host === host) return
+        const tls = lanAddress ? await loadLanIdentity(dataRoot, host, { renew }) : undefined
+        const port = tls ? (host === current.lanAddress ? current.lanPort : undefined) : (listenPort || current.loopbackPort)
+        const next = newTransport(port || 0, host, tls)
         await next.listen()
         try {
-            await writeSettings(dataRoot, { ...current, phoneAccessEnabled: true, loopbackPort: next.address().port })
-            transport = next
+            const bound = next.address().port
+            await writeSettings(dataRoot, {
+                ...current, phoneAccessEnabled: true, lanAddress,
+                ...(tls ? { lanPort: bound } : { loopbackPort: bound }),
+            })
         } catch (error) {
             await next.close()
             throw error
         }
+        const previous = transport
+        transport = next
+        offers.clear()
+        await previous?.close()
     }
 
     async function stop() {
@@ -64,16 +77,21 @@ export function createMacPhonePairingService({
 
     async function status() {
         const current = await settings()
-        const devices = listPublicDevices(await store())
+        const selectedWorkspaceId = getRuntime()?.workspaceId ?? null
+        const devices = (await store()).devices.filter(device => device.status !== 'pending'
+            || (device.workspaceId === selectedWorkspaceId && transport?.inScope(device)))
+            .map(publicDevice)
         const address = transport?.address() ?? null
         return {
             phoneAccessEnabled: current.phoneAccessEnabled,
-            lanBindingEnabled: false,
+            lanBindingEnabled: current.lanBindingEnabled,
             lanOffByDefault: true,
+            lanAddress: current.lanAddress ?? null,
+            lanAddresses: localPairingAddresses(),
             listening: Boolean(address),
             bindHost: address?.host ?? null,
             origin: address?.origin ?? null,
-            selectedWorkspaceId: getRuntime()?.workspaceId ?? null,
+            selectedWorkspaceId,
             macId: installId,
             fingerprint,
             devices,
@@ -88,13 +106,18 @@ export function createMacPhonePairingService({
             const current = await settings()
             if (enabled === true) await start(current)
             else {
-                await writeSettings(dataRoot, { ...current, phoneAccessEnabled: false })
+                await writeSettings(dataRoot, { ...current, phoneAccessEnabled: false, lanAddress: null })
                 await stop()
             }
             return status()
         }),
-        // LAN activation requires an authenticated transport. This preview binds loopback only.
-        async setLanBindingEnabled() { throw refusal(ERRORS.lan_off) },
+        setLanAddress: address => exclusive(async () => {
+            const current = await settings()
+            if (!current.phoneAccessEnabled) throw refusal(ERRORS.disabled)
+            if (address !== null && !isPrivateAddress(address)) throw refusal(ERRORS.lan_address_unavailable)
+            await start(current, address, { renew: true })
+            return status()
+        }),
         restore: () => exclusive(async () => {
             const current = await settings()
             if (current.phoneAccessEnabled) await start(current)
@@ -111,6 +134,7 @@ export function createMacPhonePairingService({
             if (!workspace || getRuntime() !== current) throw refusal(ERRORS.not_found)
             return offers.issue({
                 workspaceId: current.workspaceId, macId: installId, fingerprint, origin: transport.address().origin,
+                certificateFingerprint: transport.certificateFingerprint,
             })
         }),
         devices: async () => listPublicDevices(await store()),

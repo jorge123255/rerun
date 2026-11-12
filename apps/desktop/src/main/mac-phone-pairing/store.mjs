@@ -6,6 +6,7 @@ import { defaultSettings, DEVICES_FILE, DEVICE_STATUS, PROTOCOL_VERSION, SETTING
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const HASH = /^[0-9a-f]{64}$/
+const validPort = port => Number.isInteger(port) && port >= 1 && port <= 65535
 
 export function pairingDir(dataRoot) {
     return join(dataRoot, STORAGE_DIR)
@@ -34,18 +35,24 @@ export async function readSettings(dataRoot) {
     if (saved?.version !== PROTOCOL_VERSION || typeof saved.phoneAccessEnabled !== 'boolean' || typeof saved.lanBindingEnabled !== 'boolean') {
         return defaultSettings()
     }
-    const loopbackPort = Number.isInteger(saved.loopbackPort) && saved.loopbackPort >= 1 && saved.loopbackPort <= 65535 ? saved.loopbackPort : undefined
-    return { version: PROTOCOL_VERSION, phoneAccessEnabled: saved.phoneAccessEnabled, lanBindingEnabled: saved.lanBindingEnabled, ...(loopbackPort ? { loopbackPort } : {}) }
+    const { loopbackPort, lanAddress, lanPort } = saved
+    if (saved.lanBindingEnabled && typeof lanAddress !== 'string') return defaultSettings()
+    return {
+        version: PROTOCOL_VERSION, phoneAccessEnabled: saved.phoneAccessEnabled, lanBindingEnabled: saved.lanBindingEnabled,
+        ...(validPort(loopbackPort) ? { loopbackPort } : {}),
+        ...(saved.lanBindingEnabled ? { lanAddress, ...(validPort(lanPort) ? { lanPort } : {}) } : {}),
+    }
 }
 
 export async function writeSettings(dataRoot, settings) {
     await ensurePairingDir(dataRoot)
-    const loopbackPort = Number.isInteger(settings.loopbackPort) && settings.loopbackPort >= 1 && settings.loopbackPort <= 65535 ? settings.loopbackPort : undefined
+    const { loopbackPort, lanAddress, lanPort } = settings
     const next = {
         version: PROTOCOL_VERSION,
         phoneAccessEnabled: settings.phoneAccessEnabled === true,
-        lanBindingEnabled: false,
-        ...(loopbackPort ? { loopbackPort } : {}),
+        lanBindingEnabled: Boolean(lanAddress),
+        ...(validPort(loopbackPort) ? { loopbackPort } : {}),
+        ...(lanAddress ? { lanAddress, ...(validPort(lanPort) ? { lanPort } : {}) } : {}),
     }
     await atomicPrivateJSON(settingsPath(dataRoot), next)
     return next
@@ -61,6 +68,7 @@ function publicDevice(device) {
         approvedAt: device.approvedAt,
         revokedAt: device.revokedAt,
         lastSeenAt: device.lastSeenAt,
+        network: device.certificateFingerprint ? 'lan' : 'loopback',
     }
 }
 
@@ -78,6 +86,7 @@ function validateStore(value, installId) {
             || (device.name !== null && (typeof device.name !== 'string' || device.name.length > 80))
             || (device.credentialHash !== null && !HASH.test(device.credentialHash))
             || (device.requestTokenHash !== null && !HASH.test(device.requestTokenHash))
+            || (device.certificateFingerprint !== undefined && !HASH.test(device.certificateFingerprint))
             || !Object.values(DEVICE_STATUS).includes(device.status)
             || !Number.isFinite(Date.parse(device.createdAt))) {
             throw new Error('Phone pairing records need recovery.')

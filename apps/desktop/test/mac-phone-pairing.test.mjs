@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { createMacPhonePairingService, CUSTOM_SERVER_KEY, LOOPBACK_HOST, PHONE_SESSION_KEY } from '../src/main/mac-phone-pairing/index.mjs'
 import { hashSecret } from '../src/main/mac-phone-pairing/crypto.mjs'
+import { localPairingAddresses } from '../src/main/mac-phone-pairing/lan-identity.mjs'
 import { createWorkspace, seedLegacyCatalog } from '../src/main/workspaces/catalog.mjs'
 import { createMacPairingClient, createMemoryStorage, startSignInEntries } from '../../../packages/mac-pairing-client/src/index.mjs'
+import { pinnedFetch } from './mac-phone-pairing-client-fixture.mjs'
 
 const INSTALL_ID = '2f1c8a16-6d4a-4c3a-9b2e-0c1d9a7e4b11'
 const SESSION_COOKIE = 'desktop-test-cookie'
@@ -114,7 +116,7 @@ test('phone access and LAN stay off, and constructing the service does not liste
     assert.equal(status.bindHost, null)
     assert.equal(service.address(), null)
     await assert.rejects(() => service.createOffer(1), error => error.code === 'disabled')
-    await assert.rejects(() => service.setLanBindingEnabled(true), error => error.code === 'lan_off')
+    await assert.rejects(() => service.setLanAddress('192.168.1.2'), error => error.code === 'disabled')
 })
 
 test('enabling phone access starts a loopback transport and never enables LAN', async t => {
@@ -128,7 +130,70 @@ test('enabling phone access starts a loopback transport and never enables LAN', 
     assert.match(status.origin, /^http:\/\/127\.0\.0\.1:\d+$/)
     const settings = JSON.parse(await readFile(join(root, 'mac-phone-pairing', 'settings.json'), 'utf8'))
     assert.equal(settings.lanBindingEnabled, false)
+    await assert.rejects(() => service.setLanAddress('0.0.0.0'), error => error.code === 'lan_address_unavailable')
+    await assert.rejects(() => service.setLanAddress('127.0.0.1'), error => error.code === 'lan_address_unavailable')
+    assert.equal(service.origin(), status.origin)
     await service.stop()
+})
+
+test('private-network pairing pins TLS and scopes approvals through restart and revocation', async t => {
+    const host = localPairingAddresses()[0]
+    if (!host) { t.skip('no assigned private IPv4 address'); return }
+    const root = await dataRoot(t)
+    const workspace = await startWorkspaceFixture()
+    t.after(workspace.close)
+    const { service } = createService(t, root, { workspace })
+    const loopback = await service.setPhoneAccessEnabled(true)
+    const oldPhone = await pairedClient(service)
+    const oldOffer = await service.createOffer(1)
+    const lan = await service.setLanAddress(host)
+    assert.equal(lan.bindHost, host)
+    assert.match(lan.origin, /^https:\/\//)
+    await assert.rejects(fetch(loopback.origin))
+    await assert.rejects(fetch(lan.origin.replace('https:', 'http:')))
+    const offer = await service.createOffer(1)
+    assert.match(offer.certificateFingerprint, /^[0-9a-f]{64}$/)
+    const { mode } = await stat(join(root, 'mac-phone-pairing', `lan-${host}.json`))
+    assert.equal(mode & 0o777, 0o600)
+    const abort = AbortSignal.timeout(5000)
+    assert.equal((await pinnedFetch(lan.origin + '/api/mac-pairing/v1/meta', offer.certificateFingerprint, { signal: abort })).status, 404)
+    const coworkers = lan.origin + '/api/mac-pairing/v1/workspaces/1/coworkers'
+    assert.equal((await pinnedFetch(coworkers, offer.certificateFingerprint, {
+        signal: abort, headers: { Authorization: `Bearer ${(await oldPhone.client.readMacSession()).credential}` },
+    })).status, 401)
+    const storage = createMemoryStorage()
+    const client = createMacPairingClient({ storage, pinnedFetch })
+    await assert.rejects(() => client.connectToThisMac({ ...oldOffer, origin: lan.origin, certificateFingerprint: offer.certificateFingerprint }), /invalid_offer/)
+    const forgedPin = '0'.repeat(64)
+    await assert.rejects(() => client.connectToThisMac({ ...offer, certificateFingerprint: forgedPin }), /untrusted_mac/)
+    assert.equal(await client.readMacSession(), null)
+    const pending = await client.connectToThisMac(client.encodeOfferLink(offer))
+    await service.approveDevice(pending.deviceId)
+    await client.waitForApproval()
+    const session = await client.readMacSession()
+    assert.equal(session.certificateFingerprint, offer.certificateFingerprint)
+    assert.equal((await client.openSavedChat(AGENT.id, CHAT.id)).messages[0].content.text, 'Hello from the Mac workspace')
+    await service.stop()
+
+    const { service: reopened } = createService(t, root, { workspace })
+    assert.equal((await reopened.restore()).origin, lan.origin)
+    assert.equal((await client.listCoworkers()).coworkers[0].name, AGENT.name)
+    const local = await reopened.setLanAddress(null)
+    const wrongTransport = await fetch(local.origin + '/api/mac-pairing/v1/workspaces/1/coworkers', {
+        headers: { Authorization: `Bearer ${session.credential}` },
+    })
+    assert.equal(wrongTransport.status, 401)
+    await reopened.revokeDevice(pending.deviceId)
+    const enabledAgain = await reopened.setLanAddress(host)
+    assert.equal((await pinnedFetch(enabledAgain.origin + '/api/mac-pairing/v1/workspaces/1/coworkers', session.certificateFingerprint, {
+        signal: abort, headers: { Authorization: `Bearer ${session.credential}` },
+    })).status, 401)
+    await reopened.setPhoneAccessEnabled(false)
+    const { service: disabled } = createService(t, root, { workspace })
+    const restored = await disabled.restore()
+    assert.equal(restored.phoneAccessEnabled, false)
+    assert.equal(restored.lanBindingEnabled, false)
+    assert.equal(restored.listening, false)
 })
 
 test('pairing success lists coworkers and opens a saved chat through existing desktop workspace reads', async t => {
