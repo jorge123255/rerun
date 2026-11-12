@@ -172,6 +172,13 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
             const session = await sessionOrThrow()
             return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers/${encodeURIComponent(agentId)}/chats`, { credential: session.credential, fetchImpl, pinnedFetch, signal })
         },
+        async startConversation(agentId, { requestId, text }, signal) {
+            const session = await sessionOrThrow()
+            const path = `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers/${encodeURIComponent(agentId)}/chats`
+            const result = await request(session, path, { method: 'POST', body: { requestId, text }, credential: session.credential, fetchImpl, pinnedFetch, signal })
+            if (result?.requestId !== requestId || typeof result.chatId !== 'string' || !/^[a-zA-Z0-9_-]{1,200}$/.test(result.chatId)) throw new Error('invalid_send_receipt')
+            return result.chatId
+        },
         async openSavedChat(agentId, sessionId, signal) {
             return chatRequest(agentId, sessionId, '', { signal })
         },

@@ -26,7 +26,7 @@ import { readCoworkerFile } from './coworker-files'
 import { readDesktopImageSnapshots } from './composer-image-files'
 import { openDesktopDatabase } from './database'
 import { GENERAL_ALREADY_OPEN, GENERAL_SESSION_TITLE, generalTabUid, openingMessage } from '../general-threads'
-import { discardTabStart, existingTabStart, readTabStart, recoverTabSession, reserveTabStart } from './tab-starts'
+import { desktopPhoneTabUid, discardTabStart, existingTabStart, readTabStart, recoverTabSession, reserveTabStart, type DesktopPhoneFirstTurn } from './tab-starts'
 import type { DesktopRuntime } from './runtime'
 import { GeneralAlreadyOpenError, createDesktopAgentWithinRosterWrite, createDesktopSession, findDesktopAgent, findDesktopGeneralSession, findDesktopSession, regenerationRequestId } from './store'
 import { withRosterWrite } from './roster-writes'
@@ -118,7 +118,11 @@ async function readDesktopAttachments(runtime: DesktopRuntime, agentId: string, 
     return files
 }
 
-export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopChatInput, internalCreationRequestId?: string): Promise<{ response: Response; sessionId: string }> {
+export function startDesktopPhoneConversation(runtime: DesktopRuntime, input: { agentId: string; text: string }, start: DesktopPhoneFirstTurn) {
+    return startDesktopChat(runtime, input, undefined, start)
+}
+
+export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopChatInput, internalCreationRequestId?: string, phoneStart?: DesktopPhoneFirstTurn): Promise<{ response: Response; sessionId: string }> {
     if ('text' in input && input.documents) {
         const questionId = questionDocumentId(input.documents.scope.tabUid)
         if (questionId && (!input.question || input.questionDocumentId !== questionId)) {
@@ -146,7 +150,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     const attachmentPaths = regenerate ? [] : desktopAttachmentSelectionsOf(input)
     const attachmentFields = desktopAttachmentFieldsOf(attachmentPaths)
     const openingGeneral = !regenerate && !existing && 'text' in input && input.tabUid === generalTabUid(agent.id)
-    let uid = !regenerate && !existing ? input.tabUid : undefined
+    let uid = !regenerate && !existing ? (phoneStart ? desktopPhoneTabUid(phoneStart.sessionId) : input.tabUid) : undefined
     if (openingGeneral && uid) {
         const seen = await readTabStart(db, agent, uid, input)
         // A different first message lost the race. Resume only after the winning turn is durable;
@@ -159,7 +163,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             uid = undefined
         }
     }
-    const previousStart = !regenerate && uid ? await existingTabStart(db, agent, uid, input) : null
+    const previousStart = !regenerate && uid ? await existingTabStart(db, agent, uid, input, phoneStart) : null
     if (previousStart) {
         const id = await recoverTabSession(db, engineOf(runtime), agent, previousStart)
         if (id && !regenerate && input.documents) await consumeDesktopDocumentAdmission(runtime, input.documents, AbortSignal.timeout(10_000))
@@ -236,7 +240,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
         const result = await validateDesktopCoworkerMentionsAtSend({ listTargets: (owner, options) => desktopCoworkerMentionTargets(runtime, owner, options) }, { agentId: agent.id, text: sourceText, mentions: selected })
         if (!result.ok) throw new DesktopHttpError(409, result.error)
     }
-    const start = !regenerate && uid ? previousStart ?? await reserveTabStart(db, agent, uid, input, runtime.launchNonce) : null
+    const start = !regenerate && uid ? previousStart ?? await reserveTabStart(db, agent, uid, input, runtime.launchNonce, phoneStart) : null
     const engineResponse = replay ?? await (queued ? startQueuedChat : chat)(engineOf(runtime), agent.engineAgentId, {
         ...(regenerate ? {
             sessionId: existing!.engineSessionId,
@@ -287,7 +291,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
         session = regenerate
             ? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: 'Alternate · ' + existing!.title.replace(/^Alternate · /, ''), regenerationRequestId: requestId, model: savedChoice(existing) })
             : existing ?? await createDesktopSession(db, {
-                agentId: agent.id, engineSessionId,
+                id: phoneStart?.sessionId, agentId: agent.id, engineSessionId,
                 title: openingGeneral ? GENERAL_SESSION_TITLE : desktopChatTitle(input),
                 model: firstChoice,
                 kind: openingGeneral ? 'general' : 'thread',

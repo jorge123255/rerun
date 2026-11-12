@@ -31,15 +31,18 @@ export async function readWorkspaceReply(runtime, target, signal) {
     throw new Error('Local reply is unavailable')
 }
 
-export async function sendWorkspaceMessage(runtime, { agentId, chatId, runId, text }) {
+export async function sendWorkspaceMessage(runtime, { agentId, chatId, runId, text, newChatId }) {
     const { address, headers } = workspaceRequest(runtime, { agentId, chatId })
     const response = await fetch(address, {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(8500),
         headers: { ...headers, Origin: runtime.app.origin, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, runId }),
+        body: JSON.stringify({ text, runId, ...(newChatId && { chatId: newChatId }) }),
     })
     if (response.status === 404) throw hiddenWorkspaceError()
-    if (response.status === 202 && (await response.json()).runId === runId) return null
+    if (response.status === 202) {
+        const receipt = await response.json()
+        if (receipt.runId === runId && (!newChatId || receipt.chatId === newChatId)) return null
+    }
     void response.body?.cancel().catch(() => {})
     switch (response.status) {
         case 400: return { code: 'invalid_message', status: 400 }

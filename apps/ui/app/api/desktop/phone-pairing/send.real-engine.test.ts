@@ -102,6 +102,34 @@ test.runIf(process.env.RERUN_PHONE_SEND_ACCEPTANCE === '1')('a phone reconnects 
         expect(await (await GET(request(cancellablePath))).json()).toEqual({ status: 'cancelled' })
         expect(await (await GET(request(statusPath))).json()).toEqual({ status: 'done' })
         expect(engine.providerMessages).toHaveLength(3)
+
+        const newPath = endpoint + '?agentId=' + agent.id
+        const first = { chatId: '4ce8e801-9bbd-8c6e-8221-2e32647172c1', runId: '4ce8e801-9bbd-8c6e-8221-2e32647172d1', text: 'A fresh thread from the phone' }
+        const before = await (await GET(request(newPath))).json()
+        expect(before.chats.some((chat: { id: string }) => chat.id === first.chatId)).toBe(false)
+        const responses = await Promise.all([POST(request(newPath, 'POST', first)), POST(request(newPath, 'POST', first))])
+        for (const response of responses) {
+            expect(response.status).toBe(202)
+            expect(await response.json()).toEqual({ runId: first.runId, chatId: first.chatId })
+        }
+        await engine.waitForProviderRequest(4)
+        expect((await POST(request(newPath, 'POST', { ...first, text: 'A different first message' }))).status).toBe(409)
+        const newChat = newPath + '&chatId=' + first.chatId
+        engine.finishReply()
+        await expect.poll(async () => (await (await GET(request(newChat + '&runId=' + first.runId))).json()).status).toBe('done')
+        const thread = await (await GET(request(newChat))).json()
+        expect(thread.chat).toMatchObject({ id: first.chatId, kind: 'thread', title: first.text })
+        expect(thread.messages.map((message: { content: { text: string } }) => message.content.text)).toEqual([first.text, 'A completed local run.'])
+        const oldChat = await (await GET(request(path))).json()
+        expect(oldChat.messages.some((message: { content: { text: string } }) => message.content.text === first.text)).toBe(false)
+        await closeDesktopDatabase(root)
+        await engine.stop()
+        await engine.start()
+        expect((await POST(request(newPath, 'POST', first))).status).toBe(202)
+        const after = await (await GET(request(newPath))).json()
+        expect(after.chats.filter((chat: { id: string }) => chat.id === first.chatId)).toHaveLength(1)
+        expect(engine.providerMessages).toHaveLength(4)
+
     } finally {
         await closeDesktopDatabase(root)
         await engine.close()

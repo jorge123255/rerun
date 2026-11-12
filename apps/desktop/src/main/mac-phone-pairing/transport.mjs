@@ -15,12 +15,16 @@ const ID = /^[A-Za-z0-9_-]{1,200}$/
 const WORKSPACE = /^[1-9]\d*$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-function phoneRunId(device, agentId, chatId, requestId) {
-    const bytes = createHash('sha256').update(JSON.stringify(['rerun-mac-phone-turn-v1', device.deviceId, agentId, chatId, requestId.toLowerCase()])).digest()
+function phoneUuid(parts) {
+    const bytes = createHash('sha256').update(JSON.stringify(parts)).digest()
     bytes[6] = (bytes[6] & 0x0f) | 0x80
     bytes[8] = (bytes[8] & 0x3f) | 0x80
     const hex = bytes.subarray(0, 16).toString('hex')
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+function phoneRunId(device, agentId, chatId, requestId) {
+    return phoneUuid(['rerun-mac-phone-turn-v1', device.deviceId, agentId, chatId, requestId.toLowerCase()])
 }
 
 function send(response, status, body) {
@@ -203,7 +207,8 @@ export function createPairingTransport({
         const route = path.startsWith(API_PREFIX) && /^\/workspaces\/([^/]+)\/coworkers(?:\/([^/]+)\/chats(?:\/([^/]+)(?:\/turns\/([^/]+)(\/stream)?)?)?)?$/.exec(path.slice(API_PREFIX.length))
         if (!route) return fail(response, ERRORS.not_found, 404)
         const [, rawWorkspaceId, agentId, chatId, requestId, streaming] = route
-        const sending = request.method === 'POST' && chatId && !requestId
+        const sending = request.method === 'POST' && agentId && !requestId
+        const creating = sending && !chatId
         const stopping = request.method === 'DELETE' && requestId && !streaming
         if (!sending && !stopping && request.method !== 'GET') return fail(response, ERRORS.not_found, 404)
         const presented = hashSecret(BEARER.exec(request.headers.authorization ?? '')?.[1])
@@ -227,11 +232,12 @@ export function createPairingTransport({
                     if (authorized.sendMessages !== true) return fail(response, 'send_not_allowed', 403)
                     await workspaceFor(authorized, workspaceId, current)
                     const turnRequestId = stopping ? requestId : body.requestId
-                    const runId = phoneRunId(authorized, agentId, chatId, turnRequestId)
+                    const newChatId = creating ? phoneUuid(['rerun-mac-phone-chat-v1', authorized.deviceId, agentId, turnRequestId.toLowerCase()]) : undefined
+                    const runId = phoneRunId(authorized, agentId, chatId ?? newChatId, turnRequestId)
                     const failure = stopping
                         ? await stopWorkspaceTurn(current, { agentId, chatId, runId })
-                        : await sendWorkspaceMessage(current, { agentId, chatId, runId, text: body.text })
-                    return failure ? fail(response, failure.code, failure.status) : send(response, stopping ? 200 : 202, { requestId: turnRequestId })
+                        : await sendWorkspaceMessage(current, { agentId, chatId, runId, text: body.text, newChatId })
+                    return failure ? fail(response, failure.code, failure.status) : send(response, stopping ? 200 : 202, { requestId: turnRequestId, ...(newChatId && { chatId: newChatId }) })
                 })
             }
             const runId = requestId ? phoneRunId(device, agentId, chatId, requestId) : undefined
@@ -251,8 +257,8 @@ export function createPairingTransport({
                 const authorized = await authenticate(presented)
                 if (!authorized || authorized.deviceId !== device.deviceId) return fail(response, ERRORS.unauthorized)
                 await workspaceFor(authorized, workspaceId, current)
-                return send(response, 200, chatId && !requestId ? {
-                    ...payload, permissions: { sendMessages: Boolean(tls && authorized.sendMessages === true && payload.chat?.acceptsMessages) },
+                return send(response, 200, agentId && !requestId ? {
+                    ...payload, permissions: { sendMessages: Boolean(tls && authorized.sendMessages === true && (chatId ? payload.chat?.acceptsMessages : payload.acceptsMessages)) },
                 } : payload)
             })
         } catch (error) {

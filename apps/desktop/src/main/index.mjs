@@ -481,12 +481,12 @@ async function launch() {
         return runWorkspaceTransition(() => workspaces.recoverSwitch(input))
     })
     ipcMain.handle('desktop:quit', event => { trusted(event); app.quit() })
-    const trustedPhonePairing = event => {
-        if (quitting || !phonePairingWindow.isTrusted(event)) throw new Error('Phone pairing is unavailable.')
+    const trustedPhonePairing = (event, readOnly = false) => {
+        if (!phonePairingWindow.isTrusted(event) || (!readOnly && quitting)) throw new Error('Phone pairing is unavailable.')
         if (!phonePairing) throw new Error('Open a local workspace before pairing an iPhone.')
         return phonePairing
     }
-    ipcMain.handle('desktop:phone-pairing-status', event => trustedPhonePairing(event).status())
+    ipcMain.handle('desktop:phone-pairing-status', event => trustedPhonePairing(event, true).status())
     ipcMain.handle('desktop:phone-pairing-enable', (event, enabled) => trustedPhonePairing(event).setPhoneAccessEnabled(enabled === true))
     ipcMain.handle('desktop:phone-pairing-network', (event, address) => trustedPhonePairing(event).setLanAddress(address))
     ipcMain.handle('desktop:phone-pairing-offer', event => trustedPhonePairing(event).createOffer())

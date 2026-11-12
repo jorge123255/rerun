@@ -64,15 +64,15 @@ async function startWorkspaceFixture(beforeRead = async () => {}, onSend, onStre
         const chat = url.searchParams.get('chatId')
         if (!agent && !chat) return json(response, 200, { coworkers: [AGENT] })
         if (agent !== AGENT.id) return json(response, 404, { error: 'not found' })
-        if (!chat) return json(response, 200, { chats: [CHAT] })
-        if (chat !== CHAT.id) return json(response, 404, { error: 'not found' })
+        if (!chat && request.method === 'GET') return json(response, 200, { chats: [CHAT], acceptsMessages: true })
+        if (chat && chat !== CHAT.id) return json(response, 404, { error: 'not found' })
         if (request.method === 'POST' && onSend) {
             assert.equal(request.headers.origin, 'http://' + request.headers.host)
             const chunks = []
             for await (const chunk of request) chunks.push(chunk)
             const input = JSON.parse(Buffer.concat(chunks))
             onSend(input)
-            return json(response, 202, { runId: input.runId })
+            return json(response, 202, { runId: input.runId, ...(input.chatId && { chatId: input.chatId }) })
         }
         if (request.method === 'DELETE' && onStop) {
             assert.equal(request.headers.origin, 'http://' + request.headers.host)
@@ -312,6 +312,17 @@ test('only the granted HTTPS device can send and stop its own turns, with stable
     await assert.rejects(stop, { status: 401 })
     assert.deepEqual(stopped, [submissions[0].runId])
     assert.equal(submissions.length, 3)
+    await assert.rejects(() => client.startConversation(AGENT.id, message), { status: 401 })
+    const otherStart = () => other.client.startConversation(AGENT.id, message)
+    assert.equal((await other.client.listSavedChats(AGENT.id)).permissions.sendMessages, true)
+    const chatId = await otherStart()
+    assert.equal(await otherStart(), chatId)
+    assert.equal(submissions[3].chatId, chatId)
+    assert.deepEqual(submissions[3], submissions[4])
+    await restarted.setSendMessages(other.deviceId, false)
+    assert.equal((await other.client.listSavedChats(AGENT.id)).permissions.sendMessages, false)
+    await assert.rejects(otherStart, { status: 403 })
+    assert.equal(submissions.length, 5)
 })
 
 test('pairing success lists coworkers and opens a saved chat through existing desktop workspace reads', async t => {

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
-import { readDesktopHistory, startDesktopChat } from '@/lib/desktop/server/engine'
+import { readDesktopHistory, startDesktopChat, startDesktopPhoneConversation } from '@/lib/desktop/server/engine'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { phoneReplyStream } from '@/lib/desktop/server/phone-reply'
@@ -17,6 +17,7 @@ export const dynamic = 'force-dynamic'
 const id = /^[A-Za-z0-9_-]{1,200}$/
 const options = { headers: { 'cache-control': 'no-store' } }
 const uuid = z.string().uuid()
+const newConversationInput = z.object({ chatId: uuid, runId: uuid, text: z.string().max(20_000).refine(text => !!text.trim()) }).strict()
 const turnInput = z.object({ runId: uuid, text: z.string().max(20_000).refine(text => !!text.trim()) }).strict()
 
 async function ownedRun(runtime: DesktopRuntime, engineAgentId: string, engineSessionId: string, runId: string) {
@@ -52,7 +53,7 @@ export async function GET(request: Request): Promise<Response> {
         if (!agent) throw new DesktopHttpError(404, 'Not found')
         if (!chatId) {
             const views = await desktopThreadViews(runtime, db, agent, await listDesktopSessions(db, agentId))
-            return Response.json({ chats: views.map(({ id, agentId, title, createdAt, updatedAt, kind }) => (
+            return Response.json({ acceptsMessages: agent.enabled, chats: views.map(({ id, agentId, title, createdAt, updatedAt, kind }) => (
                 { id, agentId, title, createdAt, updatedAt, kind }
             )) }, options)
         }
@@ -87,8 +88,18 @@ export async function POST(request: Request): Promise<Response> {
         const { searchParams } = new URL(request.url)
         const agentId = searchParams.get('agentId')
         const chatId = searchParams.get('chatId')
-        if (!agentId || !id.test(agentId) || !chatId || !id.test(chatId)) throw new DesktopHttpError(404, 'Not found')
-        const body = turnInput.safeParse(await request.json().catch(() => null))
+        if (!agentId || !id.test(agentId) || (chatId !== null && !id.test(chatId))) throw new DesktopHttpError(404, 'Not found')
+        const input = await request.json().catch(() => null)
+        if (chatId === null) {
+            const body = newConversationInput.safeParse(input)
+            if (!body.success) throw new DesktopHttpError(400, 'Write a message.')
+            const { chatId: newId, runId, text } = body.data
+            const { response, sessionId } = await startDesktopPhoneConversation(runtime, { agentId, text }, { sessionId: newId, runId })
+            void response.body?.cancel().catch(() => {})
+            if (sessionId !== newId || response.headers.get('x-run-id') !== runId) throw new DesktopHttpError(502, 'Could not confirm this conversation.')
+            return Response.json({ runId, chatId: sessionId }, { ...options, status: 202 })
+        }
+        const body = turnInput.safeParse(input)
         if (!body.success) throw new DesktopHttpError(400, 'Write a message.')
         const { runId, text } = body.data
         const { response, sessionId } = await startDesktopChat(runtime, { agentId, sessionId: chatId, text, requestId: runId })

@@ -61,8 +61,10 @@ approvals are bound to the certificate that accepted them.
 
 ## Sending from an approved iPhone
 
-A phone starts with read access. To let one phone send to saved chats in its
-paired workspace, turn on **Send messages** for it in the Mac pairing window.
+A phone starts with read access. To let one phone start conversations and
+send to saved chats in its paired workspace, turn on **Send messages** in
+the Mac pairing window. A new draft becomes a saved thread when its first
+message is admitted.
 The phone uses the chat’s existing model and coworker settings. A stable send
 ID lets the phone retry a missing acknowledgement without starting a second
 turn. The client follows reply text and refreshes the saved chat at completion.

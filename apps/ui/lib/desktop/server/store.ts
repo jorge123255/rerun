@@ -183,9 +183,9 @@ export async function findDesktopGeneralSession(db: Client, agentId: string): Pr
     return result.rows[0] ? sessionOf(result.rows[0]) : null
 }
 
-export async function createDesktopSession(db: Client, input: { agentId: string; engineSessionId: string; title: string; regenerationRequestId?: string; model?: { connectionId: string; model: string } | null; kind?: DesktopSessionKind; firstMessage?: string | null }): Promise<DesktopSession> {
+export async function createDesktopSession(db: Client, input: { id?: string; agentId: string; engineSessionId: string; title: string; regenerationRequestId?: string; model?: { connectionId: string; model: string } | null; kind?: DesktopSessionKind; firstMessage?: string | null }): Promise<DesktopSession> {
     const now = new Date().toISOString()
-    const id = crypto.randomUUID()
+    const id = input.id ?? crypto.randomUUID()
     const kind = input.kind ?? 'thread'
     const title = (kind === 'general' ? GENERAL_SESSION_TITLE : input.title).slice(0, 80) || 'New conversation'
     const firstMessage = kind === 'general' ? null : openingMessage(input.firstMessage)?.slice(0, FIRST_MESSAGE_MAX_CHARS) ?? null

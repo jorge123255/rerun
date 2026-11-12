@@ -54,7 +54,8 @@ export function createMacPairingClient(options: {
     connectToThisMac(input: string | MacOffer, signal?: AbortSignal): Promise<Pending>
     waitForApproval(signal?: AbortSignal): Promise<Approval>
     listCoworkers(signal?: AbortSignal): Promise<{ coworkers: MacCoworker[] }>
-    listSavedChats(coworkerId: string, signal?: AbortSignal): Promise<{ chats: MacChat[] }>
+    listSavedChats(coworkerId: string, signal?: AbortSignal): Promise<{ chats: MacChat[]; permissions?: { sendMessages: boolean } }>
+    startConversation(coworkerId: string, message: MacOutgoingMessage, signal?: AbortSignal): Promise<string>
     openSavedChat(coworkerId: string, chatId: string, signal?: AbortSignal): Promise<{ chat: MacChat; messages: MacMessage[]; permissions?: { sendMessages: boolean } }>
     sendMessage(coworkerId: string, chatId: string, message: MacOutgoingMessage, signal?: AbortSignal): Promise<{ requestId: string }>
     stopSentTurn(coworkerId: string, chatId: string, requestId: string, signal?: AbortSignal): Promise<void>
