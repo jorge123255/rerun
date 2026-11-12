@@ -117,7 +117,7 @@ export function DesktopMcpSignInBlock({ sessionId, request, active = true, inlin
     const waiting = oauth?.state === 'waiting'
     const canCancel = waiting || !!view.activeAttemptId
     const error = oauth?.message ?? view.error
-    const deviceAvailable = (oauth?.deviceAvailable || initialOAuth?.deviceAvailable) && !canCancel && !connected
+    const deviceAvailable = oauth?.deviceAvailable && !canCancel && !connected
 
     return <div className={cn('relative space-y-3 overflow-hidden rounded-lg border border-border bg-muted/30 p-3', !inline && 'mb-2')}>
         <BorderBeam animated pattern="arcs" tone="brand" glow width={1} duration={7} />

@@ -40,6 +40,24 @@ test('duplicate connect reserves once and preserves cancelled tombstones', async
     const cancelled = await store.cancel({ ...input, operation: 'cancel', expectedRevision: a.request.revision }, authority)
     await expect(store.begin({ ...input, expectedRevision: cancelled.revision }, authority)).rejects.toThrow()
 })
+test('cancelling a restored browser attempt returns the current device option for the unresolved request', async () => {
+    const { store, input } = await fixture()
+    const begun = await store.begin(input, authority)
+    const cancel = vi.fn(async () => {})
+    const status = vi.fn(async () => ({ state: 'idle' as const, deviceAvailable: true }))
+    const runtime = createDesktopMcpSignInRuntimePorts({
+        store, source: async () => null, authority: async () => authority,
+        oauth: { start: async () => ({ state: 'idle' }), status, cancel, ready: async () => {} },
+        send: async () => { throw Error('Cancel must not send a continuation') },
+    })
+    const result = await runtime.cancel({ ...input, operation: 'cancel', expectedRevision: begun.revision }, new AbortController().signal)
+    expect(cancel).toHaveBeenCalledWith({ requestId: input.requestId, attemptId: input.attemptId, source }, expect.any(AbortSignal))
+    expect(status).toHaveBeenCalledWith({ requestId: input.requestId, attemptId: undefined, source }, expect.any(AbortSignal))
+    expect(cancel.mock.invocationCallOrder[0]).toBeLessThan(status.mock.invocationCallOrder[0]!)
+    expect(result.oauth).toEqual({ state: 'idle', deviceAvailable: true })
+    expect(result.request?.activeAttemptId).toBeUndefined()
+    expect(result.request?.receipt).toBeUndefined()
+})
 test('sealed recovery after runtime recreation is replay-only even when the queue has no record', async () => {
     const { store, db, input } = await fixture(), begun = await store.begin(input, authority)
     await store.seal({ ...input, expectedRevision: begun.revision }, 'connected', authority)

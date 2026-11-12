@@ -161,6 +161,24 @@ test('an interrupted browser attempt stays cancellable without showing a live wa
     expect(fetcher).toHaveBeenCalledTimes(1)
 })
 
+test('a fresh cancellation view retires a device option that was available when the card opened', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body))
+        if (body.action === 'connect') return response({
+            request: { ...request, status: 'connecting', activeAttemptId: 'browser-attempt' },
+            oauth: { state: 'unsupported' },
+        })
+        expect(body.action).toBe('cancel')
+        return response({ request: { ...request, revision: 'after-cancel' }, oauth: { state: 'idle' } })
+    }))
+    await mount(request, vi.fn(), { state: 'idle', deviceAvailable: true })
+    expect(button('Use a device code')).toBeDefined()
+    await click('Connect')
+    await click('Cancel')
+    expect(button('Connect')).toBeDefined()
+    expect(button('Use a device code')).toBeUndefined()
+})
+
 
 test('accepted continuation transfers stream ownership across the card unmount', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => acknowledged()))

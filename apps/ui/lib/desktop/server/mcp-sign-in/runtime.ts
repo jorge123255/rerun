@@ -87,8 +87,11 @@ export function createDesktopMcpSignInRuntimePorts(ports: DesktopMcpSignInRuntim
             const current = await validate(input, signal, true)
             const request = await ports.store.cancel(input, current.authority)
             await ports.oauth.cancel(target(current.request), signal)
+            // The browser attempt is retired. Read the remaining methods for the same
+            // request. A failed status read cannot undo the cancellation.
+            const oauth = await ports.oauth.status(target(request), signal).catch((): DesktopMcpSignInOAuthView => ({ state: 'idle' }))
             current.authority.check(); signal.throwIfAborted()
-            return { request, oauth: { state: 'idle' } }
+            return { request, oauth }
         },
         async recover(input: DesktopMcpSignInDecision, signal: AbortSignal): Promise<Response> {
             const authority = await ports.authority(input.source, signal, 'replay')
