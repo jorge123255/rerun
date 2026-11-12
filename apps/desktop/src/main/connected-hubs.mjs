@@ -298,7 +298,8 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
             if (typeof colors?.frameColor === 'string' && /^#[0-9a-f]{6}$/i.test(colors.frameColor)) entry.window.setBackgroundColor(colors.frameColor)
         }],
         ['hub:find', entry => openFind(entry.window)],
-        ['hub:open-link', async (entry, url) => (await serviceSignIn.consider(entry, url)) ? true : external(url)],
+        ['hub:open-link', async (entry, url, frame, registrationId) => (await serviceSignIn.consider(entry, url, registrationId, frame)) ? true : external(url)],
+        ['hub:oauth-cancel', (entry, registrationId, frame) => serviceSignIn.cancel(entry, registrationId, frame)],
         ['hub:show-download', (entry, id) => downloads.show(entry, id)],
         ['hub:settings', () => desktopSettings()],
         ['hub:set-settings', (entry, value, frame) => {
@@ -320,10 +321,10 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
         ['hub:open-picker', () => openPicker()],
         ['hub:auth-start', (entry, options) => entry.auth.start(options?.provider)],
         ['hub:auth-code', (entry, code) => redeem(entry, code)],
-    ]) ipcMain.handle(channel, (event, value) => {
+    ]) ipcMain.handle(channel, (event, value, registrationId) => {
         const entry = hubSender(event)
         if (!entry || !available()) throw new Error('Untrusted Rerun hub request')
-        return action(entry, value, event.senderFrame)
+        return action(entry, value, event.senderFrame, registrationId)
     })
 
     return {

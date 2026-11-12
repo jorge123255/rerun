@@ -27,6 +27,30 @@ if (bootstrap?.audience === 'picker') {
         },
     })
 } else if (bootstrap?.audience === 'hub') {
+    let oauthRegistration = null
+    let oauthSequence = 0
+    function clearOAuth(registration) {
+        if (oauthRegistration !== registration) return
+        oauthRegistration = null
+        ipcRenderer.removeListener('hub:oauth-return', registration.listener)
+        void ipcRenderer.invoke('hub:oauth-cancel', registration.id).catch(() => {})
+    }
+    function onOAuthReturn(callback) {
+        if (typeof callback !== 'function') throw new TypeError('Expected a listener')
+        if (oauthRegistration) {
+            const previous = oauthRegistration
+            clearOAuth(previous)
+            try { previous.callback({ status: 'error', message: 'Another service sign-in started' }) } catch {}
+        }
+        const registration = { id: String(++oauthSequence), callback, listener: (_event, value) => {
+            if (oauthRegistration !== registration || value?.registrationId !== registration.id) return
+            clearOAuth(registration)
+            callback(value.result)
+        } }
+        oauthRegistration = registration
+        ipcRenderer.on('hub:oauth-return', registration.listener)
+        return () => clearOAuth(registration)
+    }
     contextBridge.exposeInMainWorld('rerunShell', {
         apiVersion: bootstrap.apiVersion,
         version: bootstrap.version,
@@ -44,7 +68,7 @@ if (bootstrap?.audience === 'picker') {
             setChrome: colors => { void ipcRenderer.invoke('hub:window-chrome', { frameColor: colors?.frameColor }).catch(() => {}) },
         },
         find: { open: () => { void ipcRenderer.invoke('hub:find').catch(() => {}) } },
-        links: { openExternal: url => ipcRenderer.invoke('hub:open-link', url) },
+        links: { openExternal: url => ipcRenderer.invoke('hub:open-link', url, oauthRegistration?.id) },
         downloads: {
             onEvent: callback => subscribe('hub:download', callback),
             show: id => { void ipcRenderer.invoke('hub:show-download', id).catch(() => {}) },
@@ -58,9 +82,7 @@ if (bootstrap?.audience === 'picker') {
             get: () => ipcRenderer.invoke('hub:settings'),
             set: patch => ipcRenderer.invoke('hub:set-settings', { quickAsk: patch?.quickAsk, openAtLogin: patch?.openAtLogin }),
         },
-        oauth: {
-            onReturn: callback => subscribe('hub:oauth-return', callback),
-        },
+        oauth: { onReturn: onOAuthReturn },
         server: { openPicker: () => { void ipcRenderer.invoke('hub:open-picker').catch(() => {}) } },
     })
 }

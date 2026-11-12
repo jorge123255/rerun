@@ -34,7 +34,7 @@ function hub({ origin, id, responder, scope = `scope-${id}-live` }) {
     const sent = []
     const calls = []
     let destroyed = false
-    let frame = `${origin}/agents/agent-1`
+    const frame = { url: `${origin}/agents/agent-1`, send: (channel, value) => sent.push({ channel, value }) }
     const windowListeners = new Map()
     const contentListeners = new Map()
     const listen = (map, event, fn) => {
@@ -54,9 +54,8 @@ function hub({ origin, id, responder, scope = `scope-${id}-live` }) {
     const contents = {
         id,
         session,
-        get mainFrame() { return { url: frame } },
+        mainFrame: frame,
         isDestroyed: () => destroyed,
-        send(channel, value) { sent.push({ channel, value }) },
         on: (event, fn) => listen(contentListeners, event, fn),
         removeListener: (event, fn) => forget(contentListeners, event, fn),
     }
@@ -70,7 +69,7 @@ function hub({ origin, id, responder, scope = `scope-${id}-live` }) {
         entry, sent, calls, session,
         close() { destroyed = true; emit(windowListeners, 'closed') },
         navigate(url, { inPlace = false, mainFrame = true, retarget = true } = {}) {
-            frame = url
+            frame.url = url
             if (retarget && mainFrame && !inPlace) entry.scope = `left-${scope}`
             emit(contentListeners, 'did-start-navigation', {}, url, inPlace, mainFrame)
         },
@@ -86,15 +85,17 @@ function signIn(now) {
     return { flow, opened }
 }
 
-const connected = () => Response.json({ status: 'connected' })
+const connected = () => new Response(null, { status: 204 })
+const consider = (flow, page, url, registrationId = '1') => flow.consider(page.entry, url, registrationId, page.entry.contents.mainFrame)
+const event = (result, registrationId = '1') => ({ channel: HUB_OAUTH_RETURN, value: { registrationId, result } })
 
 test('a service connect opens the system browser and succeeds only after that hub session confirms the claim', async () => {
     const { flow, opened } = signIn()
     const page = hub({ origin: originA, id: 4, responder: connected })
     const url = ticket(originA, { jti: jtiA, agentId: 'agent-1', key: 'gmail@k3' })
-    assert.equal(await flow.consider(page.entry, 'https://hub-a.example.test/docs'), false)
+    assert.equal(await consider(flow, page, 'https://hub-a.example.test/docs'), false)
     assert.equal(opened.length, 0)
-    assert.equal(await flow.consider(page.entry, url), true)
+    assert.equal(await consider(flow, page, url), true)
     assert.equal(opened.length, 1)
     assert.equal(new URL(opened[0]).origin, originA)
     assert.equal(new URL(opened[0]).pathname, '/api/oauth/mobile/start')
@@ -113,10 +114,13 @@ test('a service connect opens the system browser and succeeds only after that hu
     assert.equal(page.calls[0].init.credentials, 'include')
     assert.deepEqual(JSON.parse(page.calls[0].init.body), { claim: jtiA })
     assert.equal(page.calls[0].init.signal instanceof AbortSignal, true)
-    assert.deepEqual(page.sent, [{ channel: HUB_OAUTH_RETURN, value: { status: 'success' } }])
+    assert.deepEqual(page.sent, [event({ status: 'success' })])
     await flow.complete(success(jtiA))
     assert.equal(page.calls.length, 1)
     assert.equal(page.sent.length, 1)
+    assert.equal(await consider(flow, page, url, '2'), true)
+    assert.equal(opened.length, 1)
+    assert.equal(page.sent.at(-1).value.result.status, 'error')
 })
 
 test('an MCP connect and a 204 claim use the same hub session', async () => {
@@ -125,36 +129,37 @@ test('an MCP connect and a 204 claim use the same hub session', async () => {
         origin: 'http://127.0.0.1:8371', id: 8,
         responder: () => new Response(null, { status: 204 }),
     })
-    assert.equal(await flow.consider(page.entry, ticket('http://127.0.0.1:8371', { jti: jtiB, agentId: 'agent-9', server: 'linear' })), true)
+    assert.equal(await consider(flow, page, ticket('http://127.0.0.1:8371', { jti: jtiB, agentId: 'agent-9', server: 'linear' })), true)
     assert.equal(opened.length, 1)
     assert.equal(new URL(opened[0]).protocol, 'http:')
     await flow.complete(success(jtiB))
     assert.equal(page.calls[0].url, 'http://127.0.0.1:8371/api/v1/agents/agent-9/mcp/linear/authorized')
-    assert.deepEqual(page.sent, [{ channel: HUB_OAUTH_RETURN, value: { status: 'success' } }])
+    assert.deepEqual(page.sent, [event({ status: 'success' })])
 })
 
 test('concurrent hubs cannot complete each other and each claim uses its own session', async () => {
     const { flow, opened } = signIn()
     const pageA = hub({ origin: originA, id: 1, responder: connected })
     const pageB = hub({ origin: originB, id: 2, responder: connected })
-    assert.equal(await flow.consider(pageA.entry, ticket(originA, { jti: jtiA, agentId: 'agent-a', key: 'gmail' })), true)
-    assert.equal(await flow.consider(pageB.entry, ticket(originB, { jti: jtiB, agentId: 'agent-b', server: 'linear' })), true)
+    assert.equal(await consider(flow, pageA, ticket(originA, { jti: jtiA, agentId: 'agent-a', key: 'gmail' })), true)
+    assert.equal(await consider(flow, pageB, ticket(originB, { jti: jtiB, agentId: 'agent-b', server: 'linear' })), true)
     assert.equal(opened.length, 2)
-    assert.equal(await flow.consider(pageB.entry, ticket(originB, { jti: jtiA, agentId: 'agent-b', key: 'gmail' })), true)
+    assert.equal(await consider(flow, pageB, ticket(originB, { jti: jtiA, agentId: 'agent-b', key: 'gmail' })), true)
     assert.equal(opened.length, 2)
+    assert.deepEqual(pageB.sent.splice(0), [event({ status: 'error', message: 'Start a new service sign-in to continue' })])
 
     await flow.complete(success(jtiA))
     assert.equal(pageA.calls.length, 1)
     assert.equal(pageA.calls[0].url, `${originA}/api/v1/agents/agent-a/services/gmail/authorized`)
     assert.equal(pageB.calls.length, 0)
-    assert.deepEqual(pageA.sent.map(item => item.value.status), ['success'])
+    assert.deepEqual(pageA.sent.map(item => item.value.result.status), ['success'])
     assert.equal(pageB.sent.length, 0)
 
     await flow.complete(success(jtiB))
     assert.equal(pageB.calls.length, 1)
     assert.equal(pageB.calls[0].url, `${originB}/api/v1/agents/agent-b/mcp/linear/authorized`)
     assert.equal(pageA.calls.length, 1)
-    assert.deepEqual(pageB.sent.map(item => item.value.status), ['success'])
+    assert.deepEqual(pageB.sent.map(item => item.value.result.status), ['success'])
     assert.equal(pageA.sent.length, 1)
 })
 
@@ -164,7 +169,7 @@ test('rejected callbacks write nothing and never report success', async () => {
     const claim = 'c'.repeat(22)
     const page = hub({ origin: originA, id: 3, responder: () => Response.json({ error: 'nope' }, { status: 409 }) })
     const other = hub({ origin: originB, id: 5, responder: connected })
-    const start = () => flow.consider(page.entry, ticket(originA, { jti: claim, agentId: 'agent-1', key: 'gmail' }, () => time))
+    const start = () => consider(flow, page, ticket(originA, { jti: claim, agentId: 'agent-1', key: 'gmail' }, () => time))
     assert.equal(await start(), true)
     assert.equal(opened.length, 1)
 
@@ -196,7 +201,7 @@ test('rejected callbacks write nothing and never report success', async () => {
 
     time = 5_000_000
     assert.equal(await start(), true)
-    flow.cancel(page.entry)
+    flow.cancel(page.entry, '1', page.entry.contents.mainFrame)
     await flow.complete(success(claim))
     assert.equal(page.calls.length, 0)
 
@@ -221,53 +226,73 @@ test('rejected callbacks write nothing and never report success', async () => {
 
     page.entry.scope = 'scope-3-live'
     page.navigate(`${originA}/agents/agent-1`, { inPlace: true, retarget: false })
-    assert.equal(await flow.consider(page.entry, 'https://evil.example/api/oauth/mobile/start?t=' + 'a'.repeat(40)), true)
-    assert.equal(await flow.consider(page.entry, ticket(originA, { jti: claim, agentId: 'agent-1', key: 'gmail', desktop: 'stable' }, () => time)), true)
+    assert.equal(await consider(flow, page, 'https://evil.example/api/oauth/mobile/start?t=' + 'a'.repeat(40)), true)
+    assert.equal(await consider(flow, page, ticket(originA, { jti: claim, agentId: 'agent-1', key: 'gmail', desktop: 'stable' }, () => time)), true)
     assert.equal(opened.length, 5)
+    assert.deepEqual(page.sent.splice(0).map(item => item.value.result.status), ['error', 'error'])
 
     assert.equal(await start(), true)
-    await flow.consider(other.entry, ticket(originB, { jti: 'f'.repeat(22), agentId: 'agent-b', key: 'slack' }, () => time))
+    await consider(flow, other, ticket(originB, { jti: 'f'.repeat(22), agentId: 'agent-b', key: 'slack' }, () => time))
     await flow.complete(success(claim))
     assert.equal(page.calls.length, 1)
     assert.equal(page.calls[0].url.startsWith(originA), true)
     assert.equal(other.calls.length, 0)
     assert.equal(other.sent.length, 0)
-    assert.deepEqual(page.sent, [{ channel: HUB_OAUTH_RETURN, value: { status: 'error', message: 'The service sign-in could not be confirmed' } }])
+    assert.deepEqual(page.sent, [event({ status: 'error', message: 'The service sign-in could not be confirmed' })])
     await flow.complete(success(claim))
     assert.equal(page.calls.length, 1)
-    assert.equal(page.sent.some(item => item.value.status === 'success'), false)
+    assert.equal(page.sent.some(item => item.value.result.status === 'success'), false)
     assert.equal(other.sent.length, 0)
 })
 
 test('an in-place navigation does not retire the attempt', async () => {
     const { flow } = signIn()
     const page = hub({ origin: originA, id: 6, responder: connected })
-    assert.equal(await flow.consider(page.entry, ticket(originA, { jti: jtiA, agentId: 'agent-1', key: 'gmail' })), true)
+    assert.equal(await consider(flow, page, ticket(originA, { jti: jtiA, agentId: 'agent-1', key: 'gmail' })), true)
     page.navigate(`${originA}/agents/agent-1#account`, { inPlace: true, retarget: false })
     await flow.complete(success(jtiA))
     assert.equal(page.calls.length, 1)
-    assert.equal(page.sent[0].value.status, 'success')
+    assert.equal(page.sent[0].value.result.status, 'success')
 })
 
-test('the hub preload delivers an oauth return without the privileged event', async () => {
+test('a superseded registration and non-authoritative JSON never receive success', async () => {
+    const { flow, opened } = signIn()
+    const page = hub({ origin: originA, id: 7, responder: () => Response.json({ ok: true }) })
+    await consider(flow, page, ticket(originA, { jti: jtiA, agentId: 'agent-1', key: 'gmail' }), '1')
+    await consider(flow, page, ticket(originA, { jti: jtiB, agentId: 'agent-1', key: 'calendar' }), '2')
+    flow.cancel(page.entry, '1', page.entry.contents.mainFrame)
+    await flow.complete(success(jtiA))
+    assert.equal(page.calls.length, 0)
+    await flow.complete(success(jtiB))
+    assert.equal(opened.length, 2)
+    assert.equal(page.calls.length, 1)
+    assert.deepEqual(page.sent, [event({ status: 'error', message: 'The service sign-in could not be confirmed' }, '2')])
+})
+
+test('only the matching Connect listener can receive a hub service sign-in result', async () => {
     const source = await readFile(new URL('../src/main/connected-hub-preload.cjs', import.meta.url), 'utf8')
-    const hubs = await readFile(new URL('../src/main/connected-hubs.mjs', import.meta.url), 'utf8')
-    assert.match(source, /hub:oauth-return/)
-    assert.match(hubs, /'oauth'/)
-    assert.match(hubs, /sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true/)
-    const exposed = {}
-    const listeners = new Map()
+    const exposed = {}, listeners = new Set(), requests = []
     const ipcRenderer = {
         sendSync: () => ({ audience: 'hub', apiVersion: 1, capabilities: ['oauth'] }),
-        on: (channel, fn) => listeners.set(channel, fn),
-        removeListener: channel => listeners.delete(channel),
-        invoke: async () => {},
+        on: (channel, fn) => { if (channel === 'hub:oauth-return') listeners.add(fn) },
+        removeListener: (_channel, fn) => listeners.delete(fn),
+        invoke: async (...args) => { requests.push(args); return true },
     }
     runInNewContext(source, { require: () => ({ ipcRenderer, contextBridge: { exposeInMainWorld: (name, api) => { exposed[name] = api } } }) })
-    const seen = []
-    const unsubscribe = exposed.rerunShell.oauth.onReturn(value => seen.push(value))
-    listeners.get('hub:oauth-return')({ sender: 'privileged' }, { status: 'success' })
-    assert.deepEqual(seen, [{ status: 'success' }])
-    unsubscribe()
+    const first = [], second = []
+    const a = ticket(originA, { jti: jtiA, agentId: 'agent-1', key: 'gmail' })
+    const b = ticket(originA, { jti: jtiB, agentId: 'agent-1', server: 'linear' })
+    exposed.rerunShell.oauth.onReturn(value => first.push(value))
+    await exposed.rerunShell.links.openExternal(a)
+    exposed.rerunShell.oauth.onReturn(value => second.push(value))
+    await exposed.rerunShell.links.openExternal(b)
+    const send = value => { for (const fn of listeners) fn({ sender: 'privileged' }, value) }
+    send({ registrationId: '1', result: { status: 'success' } })
+    assert.deepEqual(first.map(value => value.status), ['error'])
+    assert.deepEqual(second, [])
+    send({ registrationId: '2', result: { status: 'success' } })
+    assert.deepEqual(second.map(value => value.status), ['success'])
+    assert.equal(Object.keys(second[0]).join(','), 'status')
+    assert.deepEqual(requests.filter(([name]) => name === 'hub:open-link').map(([, , id]) => id), ['1', '2'])
     assert.equal(listeners.size, 0)
 })
