@@ -1539,11 +1539,12 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
 
 /** Rename through an identity-bound journal and exclusive native moves. The staged entry is
  * recoverable after a restart, including the case-only rename of a directory on APFS. */
-export async function renameCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, nextName: string): Promise<{ path: string; name: string }> {
-    return withCoworkerFiles(runtime, agentId, () => renameEntry(runtime, agentId, path, nextName))
+export async function renameCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, nextName: string, selectedIdentity?: string): Promise<{ path: string; name: string }> {
+    return withCoworkerFiles(runtime, agentId, () => renameEntry(runtime, agentId, path, nextName, selectedIdentity))
 }
 
-async function renameEntry(runtime: DesktopRuntime, agentId: string, path: string, nextName: string): Promise<{ path: string; name: string }> {
+async function renameEntry(runtime: DesktopRuntime, agentId: string, path: string, nextName: string, selectedIdentity?: string): Promise<{ path: string; name: string }> {
+    if (selectedIdentity !== undefined && !/^\d{1,24}:\d{1,24}$/.test(selectedIdentity)) throw new DesktopHttpError(400, 'Choose the file or folder to rename.')
     if (!simpleName(nextName) || /[\r\n]/.test(nextName) || nextName.length > 255 || Buffer.byteLength(nextName) > 255) throw new DesktopHttpError(400, 'Choose a new name in this folder. A rename can’t include a path.')
     if (reservedName(nextName)) throw new DesktopHttpError(400, 'That name can’t be changed.')
     const workspace = await coworkerWorkspace(runtime, agentId)
@@ -1577,6 +1578,9 @@ async function renameEntry(runtime: DesktopRuntime, agentId: string, path: strin
         const source = await fileStat(join(pinned, sourceName))
         if (!source) throw new DesktopHttpError(404, `“${sourceName}” was not found.`)
         if (source.isSymbolicLink() || (!source.isFile() && !source.isDirectory())) throw new DesktopHttpError(400, 'Choose a file or folder, not a symlink.')
+        if (selectedIdentity !== undefined && selectedIdentity !== `${source.dev}:${source.ino}`) {
+            throw new DesktopHttpError(409, 'This entry changed. Refresh Files and choose it again.')
+        }
         if (claimed(folder, sourceName) || claimed(folder, nextName)) throw new DesktopHttpError(409, 'This file is being saved. Try the rename again once that finishes.')
         if (sourceName === nextName) return { path: located.rel, name: sourceName }
         const names = await readdir(pinned)

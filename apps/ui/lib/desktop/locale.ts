@@ -23,6 +23,7 @@ import chat from '@rerun/i18n/messages/en/chat.json'
 import common from '@rerun/i18n/messages/en/common.json'
 import connections from '@rerun/i18n/messages/en/connections.json'
 import data from '@rerun/i18n/messages/en/data.json'
+import files from '@rerun/i18n/messages/en/files.json'
 import foreman from '@rerun/i18n/messages/en/foreman.json'
 import kit from '@rerun/i18n/messages/en/kit.json'
 import layout from '@rerun/i18n/messages/en/layout.json'
@@ -31,7 +32,7 @@ import mobileSettings from '@rerun/i18n/messages/en/mobileSettings.json'
 import subRuns from '@rerun/i18n/messages/en/subRuns.json'
 import workspace from '@rerun/i18n/messages/en/workspace.json'
 
-const englishSource = { account, agent, brain, builder, changelog, chat, common, connections, data, dialogs, foreman, kit, layout, mobileSettings, notifications, subRuns, workspace }
+const englishSource = { account, agent, brain, builder, changelog, chat, common, connections, data, dialogs, files, foreman, kit, layout, mobileSettings, notifications, subRuns, workspace }
 type DesktopMessageSource = typeof englishSource
 
 const desktopChangelogCopy = {
@@ -206,6 +207,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
     return {
         ...mac[locale],
         brain: source.brain,
+        filesGrid: source.files.grid,
         brainDesktop: desktopBrainCopy[locale],
         sharedData: {
             emptyTitle: source.data.shared.emptyTitle,

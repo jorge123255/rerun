@@ -133,6 +133,23 @@ describe.runIf(!!process.env.RERUN_DESKTOP_RENAME_HELPER)('confined desktop rena
         expect(await readFile(join(dir, names.find(name => name.startsWith('rename-recovery-'))!), 'utf8')).toBe('Alice bytes')
     })
 
+    test('refuses to rename a different entry from the one selected in Files', async () => {
+        const dir = join(workspace('engine-alice'), 'docs')
+        const opened = await preview()
+        await rename(join(dir, 'notes.md'), join(dir, 'original.md'))
+        await writeFile(join(dir, 'notes.md'), 'The replacement')
+        const attempt = (identity: string) => POST(request(alice, '/rename', 'POST',
+            { path: 'docs/notes.md', name: 'brief.md', identity }), { params: Promise.resolve({ agentId: alice }) })
+
+        expect((await attempt(opened.identity)).status).toBe(409)
+        expect((await attempt('invalid')).status).toBe(400)
+        expect(await readdir(dir)).toEqual(['notes.md', 'original.md'])
+        expect(await readFile(join(dir, 'notes.md'), 'utf8')).toBe('The replacement')
+        expect(await readFile(join(dir, 'original.md'), 'utf8')).toBe('Alice bytes')
+        expect((await attempt((await preview()).identity)).status).toBe(200)
+        expect(await preview('docs/brief.md')).toMatchObject({ content: 'The replacement' })
+    })
+
     test('a source replaced before native admission is not moved or overwritten', async () => {
         hooks.beforeMove = async args => {
             if (args[3] !== 'notes.md') return

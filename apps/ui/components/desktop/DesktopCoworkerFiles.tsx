@@ -29,6 +29,7 @@ import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/deskto
 import { useDesktopLocale } from './DesktopLocale'
 
 type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string; exportVersion?: string }
+type ListedSelection = { folder: string; entry: Entry }
 type OpenFile = { path: string; name: string; identity?: string; exportVersion?: string }
 type DeleteTarget = Pick<Entry, 'name' | 'type' | 'identity'> & { path: string }
 type SaveCoworkerFile = (file: { agentId: string; path: string; version: string }) => Promise<boolean>
@@ -93,9 +94,9 @@ function FilesPanel({ agent, initialFilePath, registerCloseGuard }: {
     const [audio, setAudio] = useState<OpenFile | null>(null)
     const [video, setVideo] = useState<OpenFile | null>(null)
     const [pdf, setPdf] = useState<OpenFile | null>(null)
-    const [renaming, setRenaming] = useState<string | null>(null)
-    const [menuName, setMenuName] = useState<string | null>(null)
-    const renameAfterMenu = useRef<string | null>(null)
+    const [renaming, setRenaming] = useState<ListedSelection | null>(null)
+    const [menuTarget, setMenuTarget] = useState<ListedSelection | null>(null)
+    const renameAfterMenu = useRef<ListedSelection | null>(null)
     const [selected, setSelected] = useState<string | null>(null)
     const [renamePending, setRenamePending] = useState(false)
     const [deleting, setDeleting] = useState<DeleteTarget | null>(null)
@@ -261,7 +262,8 @@ function FilesPanel({ agent, initialFilePath, registerCloseGuard }: {
         {previewDeleteAction(file.path, file.identity)}
         {showSaveNotice(saveNotice?.path === file.path)}
     </>
-    const navigationLocked = renamePending || deletePending || renaming !== null || deleting !== null || editingPath !== null || (!!preview && 'conflict' in preview)
+    const renameTarget = renaming?.folder === currentPath ? renaming : null
+    const navigationLocked = renamePending || deletePending || renameTarget !== null || deleting !== null || editingPath !== null || (!!preview && 'conflict' in preview)
     blockSiblingNav.current = navigationLocked
     const openSibling = useCallback((name: string) => {
         if (blockSiblingNav.current) return
@@ -271,18 +273,30 @@ function FilesPanel({ agent, initialFilePath, registerCloseGuard }: {
     const shownSiblings = navigationLocked ? null : siblings
     useFileSiblingKeys(shownSiblings, viewerRef)
     const childPath = (name: string) => currentPath ? `${currentPath}/${name}` : name
+    const currentEntry = (target: ListedSelection | null) => target?.folder === currentPath
+        ? entries.find(entry => entry.name === target.entry.name && entry.type === target.entry.type && entry.identity === target.entry.identity)
+        : undefined
+    const openDirectory = (name: string) => { setSelected(childPath(name)); enter(name) }
     const parentOf = (path: string) => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
     const selectedHere = selected && parentOf(selected) === currentPath ? selected.slice(selected.lastIndexOf('/') + 1) : null
     const retarget = (value: string, from: string, to: string, directory: boolean) => value === from || (directory && value.startsWith(`${from}/`)) ? `${to}${value.slice(from.length)}` : value
-    const renameEntry = async (name: string, next: string) => {
+    const renameEntry = async (target: ListedSelection, next: string) => {
         if (renamingNow.current) return
+        const { name, type, identity } = target.entry
+        if (!currentEntry(target)) {
+            setNotice({ ok: false, folder: target.folder, text: 'This entry changed. Refresh Files and choose it again.' })
+            return
+        }
         renamingNow.current = true
         setRenamePending(true)
         const from = childPath(name)
-        const directory = entries.some(entry => entry.name === name && entry.type === 'dir')
+        const directory = type === 'dir'
         setNotice(null)
         try {
-            const response = await fetch(`${base}/rename`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: from, name: next }) })
+            const response = await fetch(`${base}/rename`, {
+                method: 'POST', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ path: from, name: next, identity }),
+            })
             const body = await response.json().catch(() => null) as { path?: string; name?: string; error?: string } | null
             if (!response.ok || !body?.path) {
                 setNotice({ ok: false, folder: currentPath, text: body?.error ?? `Could not rename “${name}”.` })
@@ -323,7 +337,7 @@ function FilesPanel({ agent, initialFilePath, registerCloseGuard }: {
             setVideo(previous => previous && covered(previous.path) ? null : previous)
             setPdf(previous => previous && covered(previous.path) ? null : previous)
             setEditingPath(previous => covered(previous) ? null : previous)
-            setRenaming(previous => previous === target.name ? null : previous)
+            setRenaming(previous => previous?.folder === folderOf(path) && previous.entry.name === target.name ? null : previous)
         } catch {
             setNotice({ ok: false, folder: folderOf(path), text: `Could not delete “${target.name}”.` })
         } finally {
@@ -341,8 +355,9 @@ function FilesPanel({ agent, initialFilePath, registerCloseGuard }: {
     const withPreviewFeedback = (view: ReactNode) => <>{view}{folderNotice}{deleteConfirmation}</>
 
     const breadcrumbs = currentPath.split('/').filter(Boolean)
-    const menuEntry = menuName ? entries.find(entry => entry.name === menuName) : undefined
-    const menuVersion = menuEntry?.type === 'file' ? menuEntry.exportVersion : undefined
+    const menuEntry = busy ? undefined : currentEntry(menuTarget)
+    const menuVersion = menuEntry?.type === 'file' && menuEntry.exportVersion === menuTarget?.entry.exportVersion
+        ? menuEntry.exportVersion : undefined
 
     // Keyed on the path (as FileDetail does), so opening another file leaves the editor by itself.
     const editing = !!preview && editingPath === preview.path
@@ -472,7 +487,7 @@ function FilesPanel({ agent, initialFilePath, registerCloseGuard }: {
             {imports.dragOver && <p role="status" className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-md border border-dashed bg-background/80 text-sm">Drop files or folders to import</p>}
             {loading && !error ? <FxFilesLoading />
                 : error ? <p role="alert" className="text-sm text-destructive">{error}</p>
-                : <ContextMenu onOpenChange={open => { if (!open) setMenuName(null) }}>
+                : <ContextMenu onOpenChange={open => { if (!open) setMenuTarget(null) }}>
                     <ContextMenuTrigger asChild>
                         <div>
                             <DesktopFilesGrid
@@ -480,42 +495,50 @@ function FilesPanel({ agent, initialFilePath, registerCloseGuard }: {
                                 currentPath={currentPath}
                                 filesBase={base}
                                 selectedName={selectedHere}
-                                renamingName={renaming}
-                                pending={pending}
+                                renamingName={renameTarget?.entry.name}
+                                pending={busy || pending}
                                 textHeads={heads}
                                 onRequestText={request}
                                 onOpenFile={name => openListed(name)}
-                                onOpenDir={name => { setSelected(childPath(name)); enter(name) }}
+                                onOpenDir={openDirectory}
                                 onGoUp={currentPath ? goUp : undefined}
-                                onContextMenu={name => setMenuName(name)}
-                                onClearMenu={() => setMenuName(null)}
-                                renderRename={name => <RenameField name={name} onSubmit={next => { setRenaming(null); void renameEntry(name, next) }} onCancel={() => setRenaming(null)} />}
+                                onContextMenu={name => {
+                                    const entry = entries.find(item => item.name === name)
+                                    setMenuTarget(entry ? { folder: currentPath, entry } : null)
+                                }}
+                                onClearMenu={() => setMenuTarget(null)}
+                                renderRename={name => renameTarget && <RenameField name={name} onSubmit={next => { setRenaming(null); void renameEntry(renameTarget, next) }} onCancel={() => setRenaming(null)} />}
                             />
                         </div>
                     </ContextMenuTrigger>
                     {menuEntry && <ContextMenuContent onCloseAutoFocus={event => {
-                        const name = renameAfterMenu.current
-                        if (!name) return
+                        const target = renameAfterMenu.current
+                        renameAfterMenu.current = null
+                        if (!target || !currentEntry(target)) return
                         // Mount the inline editor after the menu releases its focus trap. Mounting
                         // in onSelect lets that trap blur and immediately cancel the new field.
                         event.preventDefault()
-                        renameAfterMenu.current = null
-                        setRenaming(name)
+                        setRenaming(target)
                     }}>
-                        <ContextMenuLabel className="max-w-56 truncate">{menuEntry.name}</ContextMenuLabel>
+                        <ContextMenuLabel className="max-w-56 truncate pl-7">{menuEntry.name}</ContextMenuLabel>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem className="pl-7" disabled={pending}
+                            onSelect={() => menuEntry.type === 'dir' ? openDirectory(menuEntry.name) : openListed(menuEntry.name)}>
+                            {t(menuEntry.type === 'dir' ? 'filesGrid.openFolder' : 'filesGrid.open')}
+                        </ContextMenuItem>
                         {nativeSave && menuVersion && <ContextMenuItem disabled={pending || savingFile}
                             onSelect={() => void saveAs(childPath(menuEntry.name), menuVersion)}>
                             <DownloadIcon className="size-4" />
                             Save As
                         </ContextMenuItem>}
-                        <ContextMenuItem disabled={pending} onSelect={() => { renameAfterMenu.current = menuEntry.name }}>
+                        <ContextMenuItem disabled={pending} onSelect={() => { renameAfterMenu.current = { folder: currentPath, entry: menuEntry } }}>
                             <PencilIcon className="size-4" />
-                            Rename
+                            {t('filesGrid.rename')}
                         </ContextMenuItem>
                         <ContextMenuSeparator />
                         <ContextMenuItem variant="destructive" disabled={pending} onSelect={() => setDeleting({ path: childPath(menuEntry.name), name: menuEntry.name, type: menuEntry.type, identity: menuEntry.identity })}>
                             <Trash2Icon className="size-4" />
-                            Delete
+                            {t('filesGrid.delete')}
                         </ContextMenuItem>
                     </ContextMenuContent>}
                 </ContextMenu>}
