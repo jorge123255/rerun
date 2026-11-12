@@ -2,6 +2,7 @@
 
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import type { QuestionVoice, QuestionVoiceStatus } from '@rerun/ui/chat'
+import type { DesktopForemanChatRef } from '@rerun/contracts'
 import { z } from 'zod'
 import { desktopAuxiliarySettingsSchema } from '@/lib/desktop/auxiliary'
 import { isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
@@ -16,7 +17,13 @@ type Capture = {
 }
 const transcriptSchema = z.object({ transcript: z.string().trim().min(1).max(20_000) })
 
-export function useDesktopQuestionVoice(sessionId: string | undefined, questionId: string, enabled: boolean) {
+export type DesktopQuestionVoiceTarget = { sessionId: string } | { chat: DesktopForemanChatRef }
+
+export function useDesktopQuestionVoice(target: DesktopQuestionVoiceTarget | undefined, questionId: string, enabled: boolean) {
+    const chat = target && 'chat' in target ? target.chat : undefined
+    const { chatId, workspaceId } = chat ?? {}
+    const url = chat ? '/api/desktop/foreman/questions/transcribe'
+        : target && 'sessionId' in target ? `/api/desktop/sessions/${encodeURIComponent(target.sessionId)}/questions/transcribe` : undefined
     const [status, setStatus] = useState<QuestionVoiceStatus>('idle')
     const [error, setError] = useState<string | null>(null)
     const capture = useRef<Capture | null>(null)
@@ -36,7 +43,7 @@ export function useDesktopQuestionVoice(sessionId: string | undefined, questionI
     }, [invalidate])
 
     useLayoutEffect(() => {
-        if (!sessionId) return
+        if (!url) return
         setStatus('idle')
         setError(null)
         const visibility = () => { if (document.visibilityState !== 'visible') cancel() }
@@ -47,13 +54,13 @@ export function useDesktopQuestionVoice(sessionId: string | undefined, questionI
             unsubscribe()
             invalidate()
         }
-    }, [sessionId, questionId, enabled, cancel, invalidate])
+    }, [url, workspaceId, chatId, questionId, enabled, cancel, invalidate])
 
     const stillCurrent = (current: Capture) => capture.current === current && available.current &&
         !current.controller.signal.aborted && !isDesktopQuitting() && document.visibilityState === 'visible'
 
     function start(deliver: Capture['deliver']) {
-        if (!sessionId || !enabled || capture.current || isDesktopQuitting() || document.visibilityState !== 'visible') return
+        if (!url || !enabled || capture.current || isDesktopQuitting() || document.visibilityState !== 'visible') return
         const current: Capture = { controller: new AbortController(), phase: 'starting', deliver }
         capture.current = current
         setStatus('starting')
@@ -84,7 +91,7 @@ export function useDesktopQuestionVoice(sessionId: string | undefined, questionI
 
     function finish() {
         const current = capture.current
-        if (!sessionId || !current || current.phase !== 'recording' || !stillCurrent(current)) return
+        if (!url || !current || current.phase !== 'recording' || !stillCurrent(current)) return
         current.phase = 'transcribing'
         setStatus('transcribing')
         void (async () => {
@@ -98,9 +105,9 @@ export function useDesktopQuestionVoice(sessionId: string | undefined, questionI
                 const signal = AbortSignal.any([current.controller.signal, AbortSignal.timeout(35_000)])
                 const recording = await encodeDesktopVoiceRecording(take, signal)
                 signal.throwIfAborted()
-                const response = await fetch(`/api/desktop/sessions/${encodeURIComponent(sessionId)}/questions/transcribe`, {
+                const response = await fetch(url, {
                     method: 'POST', signal, cache: 'no-store', headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ questionId, ...recording }),
+                    body: JSON.stringify({ ...(chat && { chat }), questionId, ...recording }),
                 })
                 const body = await response.json().catch(() => null)
                 if (!response.ok) throw new Error(typeof body?.error === 'string' ? body.error : 'Could not transcribe the answer.')
@@ -118,7 +125,7 @@ export function useDesktopQuestionVoice(sessionId: string | undefined, questionI
     }
     limit.current = finish
 
-    const voice: QuestionVoice | undefined = sessionId && enabled ? {
+    const voice: QuestionVoice | undefined = url && enabled ? {
         status, start, finish, discard: cancel,
         render: () => status === 'transcribing'
             ? <span role="status" className="min-w-0 flex-1 text-sm text-muted-foreground">Transcribing…</span>

@@ -36,16 +36,21 @@ afterEach(async () => {
     vi.unstubAllGlobals()
 })
 
-test('records from the options footer and appends to typed text before explicit submit', async () => {
+const foreman = { chat: { workspaceId: '1', chatId: 'fmc_voiceoriginal' } }
+
+test.each([
+    { target: { sessionId: 'session-a' }, url: '/api/desktop/sessions/session-a/questions/transcribe', fields: {} },
+    { target: foreman, url: '/api/desktop/foreman/questions/transcribe', fields: foreman },
+])('records in $url and appends to typed text before explicit submit', async ({ target, url, fields }) => {
     const answer = vi.fn(async () => {})
-    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
-        if (url === '/api/desktop/auxiliary') return settings()
-        expect(url).toBe('/api/desktop/sessions/session-a/questions/transcribe')
-        expect(JSON.parse(String(init?.body))).toMatchObject({ questionId: question.id, durationMs: 1000 })
+    const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
+        if (path === '/api/desktop/auxiliary') return settings()
+        expect(path).toBe(url)
+        expect(JSON.parse(String(init?.body))).toMatchObject({ ...fields, questionId: question.id, durationMs: 1000 })
         return Response.json({ transcript: 'voice words' })
     })
     vi.stubGlobal('fetch', fetcher)
-    await act(async () => root.render(<DesktopQuestionCard question={question} voiceSessionId="session-a" onAnswer={answer} />))
+    await act(async () => root.render(<DesktopQuestionCard question={question} voiceTarget={target} onAnswer={answer} />))
     expect(host.querySelector('textarea')).toBeNull()
     expect(button('record').getAttribute('aria-label')).toBe('Answer with your voice')
     await click('custom')
@@ -69,17 +74,20 @@ test('records from the options footer and appends to typed text before explicit 
     expect(answer).toHaveBeenCalledExactlyOnceWith({ action: 'answer', questionId: question.id, requestId: expect.any(String), answers: [['Typed first voice words']] })
 })
 
-test('discards without transcription and ignores a late response after the question changes', async () => {
+test('discards without transcription and ignores a late Chief of Staff response after changing chats', async () => {
+    const { chat } = foreman
     let complete!: (response: Response) => void
     let signal: AbortSignal | undefined
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
         if (url === '/api/desktop/auxiliary') return settings()
+        expect(url).toBe('/api/desktop/foreman/questions/transcribe')
+        expect(JSON.parse(String(init?.body))).toMatchObject({ chat, questionId: question.id })
         signal = init?.signal ?? undefined
         return new Promise<Response>(resolve => { complete = resolve })
     })
     vi.stubGlobal('fetch', fetcher)
     const answer = vi.fn()
-    await act(async () => root.render(<DesktopQuestionCard question={question} voiceSessionId="session-a" onAnswer={answer} />))
+    await act(async () => root.render(<DesktopQuestionCard question={question} voiceTarget={{ chat }} onAnswer={answer} />))
     await click('record')
     await click('record-discard')
     expect(recorder.cancel).toHaveBeenCalledOnce()
@@ -87,11 +95,10 @@ test('discards without transcription and ignores a late response after the quest
     await click('record')
     await click('record-stop')
     expect(signal?.aborted).toBe(false)
-    const replacement = { ...question, id: 'b'.repeat(64) }
-    await act(async () => root.render(<DesktopQuestionCard question={replacement} voiceSessionId="session-a" onAnswer={answer} />))
+    const replacement = { ...chat, workspaceId: '2' }
+    await act(async () => root.render(<DesktopQuestionCard question={question} voiceTarget={{ chat: replacement }} onAnswer={answer} />))
     expect(signal?.aborted).toBe(true)
     await act(async () => complete(Response.json({ transcript: 'Late transcript' })))
-    expect(host.textContent).not.toContain('Late transcript')
-    expect(host.querySelector('textarea')).toBeNull()
+    expect(host.querySelector('textarea')?.value).toBe('')
     expect(answer).not.toHaveBeenCalled()
 })

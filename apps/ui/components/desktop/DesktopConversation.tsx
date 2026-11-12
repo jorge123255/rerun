@@ -1492,7 +1492,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                 {setupBlocked && <DesktopSetupGate agentId={agent.id} agentName={agent.name} apps={[]} canStart={modelReady} onStartBlocked={onOpenModelSettings} modelSlot={<Button type="button" variant="ghost" size="sm" onClick={onOpenModelSettings}>{modelLabel ?? 'Choose a model'}</Button>} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
                 {setup.view?.skipped && <DesktopSetupSkippedBanner agentId={agent.id} canStart={modelReady} onStartBlocked={onOpenModelSettings} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
                 {question && !webhookOwns('question', question.id) && <DesktopQuestionCard key={question.id} question={question}
-                    voiceSessionId={!cardOpen && !detailPanel && !chatsOpen ? sessionId ?? undefined : undefined}
+                    voiceTarget={!cardOpen && !detailPanel && !chatsOpen && sessionId ? { sessionId } : undefined}
                     documentOwner={sessionId ? { agentId: agent.id, sessionId } : undefined}
                     disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onAnswer={answerQuestion} />}
                 {approval && !webhookOwns('approval', approval.id) && <DesktopApprovalCard key={approval.id} approval={approval} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onDecide={decideApproval} />}

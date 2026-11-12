@@ -297,7 +297,9 @@ export function DesktopForemanColumn({
                         streaming={streaming}
                         restored={foreman.restored}
                         question={foreman.restored && !streaming && pendingRequest ? <>
-                            {question && onAnswerQuestion && <DesktopQuestionCard question={question} disabled={hidden || !!foreman.blocked} onAnswer={onAnswerQuestion} />}
+                            {question && onAnswerQuestion && <DesktopQuestionCard question={question} disabled={hidden || !!foreman.blocked}
+                                voiceTarget={ui.open && !onRoutines && !alternates.open ? { chat } : undefined}
+                                onAnswer={onAnswerQuestion} />}
                             {approval && onDecideApproval && <DesktopApprovalCard approval={approval} disabled={hidden || !!foreman.blocked} onDecide={onDecideApproval} />}
                         </> : null}
                         emptyWelcome={!starterPack && !pendingStarter}

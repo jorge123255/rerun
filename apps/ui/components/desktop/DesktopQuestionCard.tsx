@@ -4,7 +4,7 @@ import { QuestionForm, type QuestionAttachments } from '@rerun/ui/chat'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useDesktopLocale } from './DesktopLocale'
-import { useDesktopQuestionVoice } from './voice/useDesktopQuestionVoice'
+import { useDesktopQuestionVoice, type DesktopQuestionVoiceTarget } from './voice/useDesktopQuestionVoice'
 import { DesktopDocumentChips } from './document-attachments/DesktopDocumentChips'
 import { DESKTOP_IMAGE_UPLOAD_ACCEPT } from '@/lib/desktop/composer-image'
 import { useDesktopDocumentAttachments } from '@/lib/desktop/document-attachments/useDesktopDocumentAttachments'
@@ -14,12 +14,12 @@ import type { DesktopPendingQuestion, DesktopQuestionAnswer, DesktopQuestionPayl
 export type DesktopQuestionCardProps = {
     question: DesktopPendingQuestion
     disabled?: boolean
-    voiceSessionId?: string
+    voiceTarget?: DesktopQuestionVoiceTarget
     documentOwner?: { agentId: string; sessionId: string }
     onAnswer: (payload: DesktopQuestionAnswer) => Promise<void>
 }
 
-function QuestionCard({ question, disabled, voiceSessionId, onAnswer, files }: DesktopQuestionCardProps & {
+function QuestionCard({ question, disabled, voiceTarget, onAnswer, files }: DesktopQuestionCardProps & {
     files?: ReturnType<typeof useDesktopDocumentAttachments>
 }) {
     const { language, t } = useDesktopLocale()
@@ -85,7 +85,7 @@ function QuestionCard({ question, disabled, voiceSessionId, onAnswer, files }: D
         ? { ...question.attempt, questionId: question.id }
         : cancellation
     const locked = disabled || status !== 'idle'
-    const { voice, error: voiceError } = useDesktopQuestionVoice(voiceSessionId, question.id, !locked && !attempt)
+    const { voice, error: voiceError } = useDesktopQuestionVoice(voiceTarget, question.id, !locked && !attempt)
     const group = (index: number) => files?.attachments.filter(file => questionDocumentIndex(file.position) === index) ?? []
     const removeFiles = async (ids: string[]) => {
         for (const id of ids) if (!await files?.remove(id)) return false

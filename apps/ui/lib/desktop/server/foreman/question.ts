@@ -1,14 +1,16 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { DESKTOP_FOREMAN_TURN_TEXT_LIMIT, foremanQuestionGuardSchema, HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions } from '@rerun/contracts'
+import { DESKTOP_FOREMAN_TURN_TEXT_LIMIT, foremanQuestionGuardSchema, HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions, type DesktopForemanChatRef } from '@rerun/contracts'
 import { request } from '@/lib/engine/client'
 import { desktopPendingApprovalSchema, type DesktopApprovalAnswer } from '../../approvals'
 import { desktopPendingQuestionSchema, type DesktopQuestionAnswer } from '../../questions'
 import { DesktopHttpError } from '../auth'
 import type { DesktopRuntime } from '../runtime'
 import { engineOf } from '../settings'
-import type { ForemanChat } from './chat-store'
+import { lastSavedForemanTurn, ownedForemanChat, type ForemanChat } from './chat-store'
+import { openDesktopDatabase } from '../database'
+import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 
 const resultSchema = z.object({ question: z.object({
     guard: foremanQuestionGuardSchema,
@@ -18,9 +20,10 @@ const resultSchema = z.object({ question: z.object({
     approvals: desktopPendingApprovalSchema.shape.approvals,
 }).nullable().optional() })
 
-export async function readPendingForemanRequests(runtime: DesktopRuntime, owner: ForemanChat) {
+export async function readPendingForemanRequests(runtime: DesktopRuntime, owner: ForemanChat, signal?: AbortSignal) {
+    const timeout = AbortSignal.timeout(10_000)
     const { question, approval } = await request(engineOf(runtime), `/desktop/foreman/question?sessionId=${encodeURIComponent(owner.sessionId)}`,
-        { cache: 'no-store', signal: AbortSignal.timeout(10_000) }, value => resultSchema.parse(value))
+        { cache: 'no-store', signal: signal ? AbortSignal.any([signal, timeout]) : timeout }, value => resultSchema.parse(value))
     function identity(guard: z.infer<typeof foremanQuestionGuardSchema>, kind?: 'approval') {
         const id = createHash('sha256').update(JSON.stringify([owner.chat.workspaceId, owner.chat.chatId, owner.sessionId,
             guard.runId, guard.sourceMessageId, guard.toolCallId, guard.digest, ...(kind ? [kind] : [])])).digest('hex')
@@ -30,6 +33,22 @@ export async function readPendingForemanRequests(runtime: DesktopRuntime, owner:
         question: question ? { guard: question.guard, view: { ...identity(question.guard), questions: question.questions } } : null,
         approval: approval ? { guard: approval.guard, view: { ...identity(approval.guard, 'approval'), approvals: approval.approvals } } : null,
     }
+}
+
+export async function requirePendingForemanDictation(runtime: DesktopRuntime, chat: DesktopForemanChatRef, questionId: string, signal: AbortSignal) {
+    if (chat.workspaceId !== String(runtime.workspaceId)) throw new DesktopHttpError(404, 'Conversation not found.')
+    signal.throwIfAborted()
+    assertDesktopWorkspaceAdmission(runtime)
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    const owner = await ownedForemanChat(db, chat)
+    const { question } = await readPendingForemanRequests(runtime, owner, signal)
+    const saved = await lastSavedForemanTurn(db, chat)
+    signal.throwIfAborted()
+    assertDesktopWorkspaceAdmission(runtime)
+    if (question?.view.id !== questionId || saved?.answerIntent?.questionId === questionId) {
+        throw new DesktopHttpError(409, 'This question is no longer available for a voice answer.')
+    }
+    return { db, identity: owner.sessionId }
 }
 
 type Pending = Awaited<ReturnType<typeof readPendingForemanRequests>>

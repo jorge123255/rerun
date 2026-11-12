@@ -12,7 +12,7 @@ import { readDesktopBoardState } from '../spaces'
 import { listDesktopAgents } from '../store'
 import type { DesktopRuntime } from '../runtime'
 import { openForemanRuntime } from './server'
-import { ensureForemanChat, foremanTurn, foremanTurnWire, ownedForemanChat, withForemanChatWrite, type ForemanSendFields, type ForemanTurn } from './chat-store'
+import { ensureForemanChat, foremanTurn, foremanTurnWire, lastSavedForemanTurn, ownedForemanChat, withForemanChatWrite, type ForemanSendFields, type ForemanTurn } from './chat-store'
 import { createDesktopForemanCreationAuthority } from './creation'
 import { foremanPhaseInstructions } from '../../../../../engine/src/desktop/foreman/prompts.ts'
 import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
@@ -208,10 +208,6 @@ async function createBinding(runtime: DesktopRuntime) {
         if (turn.documents) await consumeDesktopDocumentAdmission(runtime, turn.documents, AbortSignal.timeout(10_000))
         return { runId: turn.binding.runId }
     }
-    async function lastSavedTurn(chat: DesktopForemanChatRef) {
-        const row = (await db.execute({ sql: 'SELECT body FROM desktop_foreman_turns WHERE chat_id=? ORDER BY rowid DESC LIMIT 1', args: [chat.chatId] })).rows[0]
-        return row ? JSON.parse(String(row.body)) as ForemanTurn : undefined
-    }
 
     async function send(chat: DesktopForemanChatRef, requestId: string, text: string, requested?: DesktopForemanModelRef, guard?: VoiceGuard,
         resolution?: DesktopQuestionAnswer | DesktopApprovalAnswer, starter?: { input: DesktopLocalStarterDecision; signal: AbortSignal }, fields?: ForemanSendFields) {
@@ -255,7 +251,7 @@ async function createBinding(runtime: DesktopRuntime) {
             const { question, approval } = await readPendingForemanRequests(runtime, owner)
             if (answer) {
                 if (!question) throw new DesktopHttpError(409, 'This Foreman question is no longer waiting for an answer.')
-                const attempted = (await lastSavedTurn(chat))?.answerIntent
+                const attempted = (await lastSavedForemanTurn(db, chat))?.answerIntent
                 if (attempted?.questionId === answer.questionId && attempted.requestId !== requestId) {
                     throw new DesktopHttpError(409, 'An answer is already saved for this question. Retry that answer.')
                 }
@@ -265,7 +261,7 @@ async function createBinding(runtime: DesktopRuntime) {
             }
             if (decision) {
                 if (!approval) throw new DesktopHttpError(409, 'This Foreman approval is no longer waiting for decisions.')
-                const attempted = (await lastSavedTurn(chat))?.approvalIntent
+                const attempted = (await lastSavedForemanTurn(db, chat))?.approvalIntent
                 if (attempted?.approvalId === decision.approvalId && attempted.requestId !== requestId) {
                     throw new DesktopHttpError(409, 'Decisions are already saved for this approval. Retry those decisions.')
                 }
@@ -389,7 +385,7 @@ async function createBinding(runtime: DesktopRuntime) {
             const approvalSource = pendingApproval && await foremanTurn(db, pendingApproval.guard.runId)
             const approval = approvalSource?.body.sessionId === owner.sessionId && approvalSource.body.binding.chatId === owner.chat.chatId
                 && approvalSource.body.binding.workspaceId === owner.chat.workspaceId ? pendingApproval : null
-            const saved = pending || approval ? await lastSavedTurn(owner.chat) : undefined
+            const saved = pending || approval ? await lastSavedForemanTurn(db, owner.chat) : undefined
             const attempt = saved?.answerIntent?.questionId === pending?.view.id && saved?.answerIntent
             const approvalAttempt = saved?.approvalIntent?.approvalId === approval?.view.id && saved?.approvalIntent
             const history = await hideDesktopForemanIntakeKickoff(runtime, db, owner, publicDesktopHistory(transformEngineMessages(messages)))

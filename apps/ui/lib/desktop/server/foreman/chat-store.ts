@@ -55,6 +55,12 @@ export async function ownedForemanChat(db: Pick<Client, 'execute'>, chat: Deskto
     if (!row) throw new DesktopHttpError(404, 'Foreman conversation not found.')
     return { chat, sessionId: String(row.engine_session_id), model: row.model ? JSON.parse(String(row.model)) : null }
 }
+export async function lastSavedForemanTurn(db: Client, chat: DesktopForemanChatRef) {
+    const row = (await db.execute({ sql: 'SELECT body FROM desktop_foreman_turns WHERE chat_id=? ORDER BY rowid DESC LIMIT 1',
+        args: [chat.chatId] })).rows[0]
+    return row ? JSON.parse(String(row.body)) as ForemanTurn : undefined
+}
+
 export async function foremanTurn(db: Client, id: string) {
     const row = (await db.execute({ sql: 'SELECT * FROM desktop_foreman_turns WHERE request_id=?', args: [id] })).rows[0]
     return row ? { body: JSON.parse(String(row.body)) as ForemanTurn, fingerprint: String(row.fingerprint), status: String(row.status), error: row.error ? String(row.error) : null } : null
