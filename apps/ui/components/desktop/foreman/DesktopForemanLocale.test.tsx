@@ -32,6 +32,7 @@ afterEach(async () => {
     if (root) await act(async () => root?.unmount())
     root = undefined
     document.body.replaceChildren()
+    vi.useRealTimers()
 })
 
 async function show(children: ReactNode) {
@@ -239,6 +240,48 @@ it('selects a connected model and returns to the translated workspace default wi
     expect(changes).toHaveBeenLastCalledWith(null)
     expect(trigger().textContent).toContain(workspace.model)
     expect(submit).not.toHaveBeenCalled()
+})
+
+it('shows only the Chief of Staff’s selected plan usage, and removes it when unavailable or stale', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    vi.setSystemTime(new Date('2026-11-11T12:00:00.000Z'))
+    const capturedAt = new Date().toISOString()
+    const codex: ConnectionSummary = { id: 'primary', name: 'Primary', provider: 'codex', models: ['same-model'],
+        extraModels: [], connected: true, credentialRejected: false, createdAt: '',
+        planLimits: { capturedAt, windows: [
+            { kind: 'session', label: null, usedPercent: 32, resetsAt: null },
+            { kind: 'weekly', label: null, usedPercent: 80, resetsAt: null },
+        ] },
+    }
+    const sibling: ConnectionSummary = { ...codex, id: 'sibling', name: 'Sibling',
+        planLimits: { capturedAt, windows: [{ kind: 'session', label: null, usedPercent: 64, resetsAt: null }] } }
+    const api: ConnectionSummary = { ...codex, id: 'api', name: 'API', provider: 'openrouter', planLimits: null }
+    const workspace = { connectionId: codex.id, model: codex.models[0] }
+    const render = (conversation: DesktopForemanModelRef | null, primary = codex) => {
+        const connections = [primary, sibling, api]
+        const view = buildDesktopModelView({ connections, workspace, conversation, coworker: null })
+        return show(<DesktopForemanModelPill view={view} connections={connections} disabled={false} saving={false} onPick={vi.fn()} />)
+    }
+    const rings = () => document.querySelector('[data-slot="model-usage-ring"]')
+    const label = () => document.querySelector('button')?.getAttribute('aria-label')
+    await render(null)
+    expect(rings()?.querySelectorAll('circle')).toHaveLength(4)
+    expect(label()).toContain('Session 32% used, Weekly 80% used')
+    await render({ connectionId: sibling.id, model: sibling.models[0] })
+    expect(rings()?.querySelectorAll('circle')).toHaveLength(2)
+    expect(label()).toContain('Session 64% used')
+    expect(label()).not.toContain('32%')
+    await render({ connectionId: api.id, model: api.models[0] })
+    expect(rings()).toBeNull()
+    await render(null, { ...codex, credentialRejected: true })
+    expect(rings()).toBeNull()
+    await render(null, { ...codex, planLimits: null })
+    expect(rings()).toBeNull()
+    await render(null)
+    expect(rings()).not.toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(300001))
+    expect(rings()).toBeNull()
+    expect(label()).toContain(workspace.model)
 })
 
 it('labels estimated context in French and hides it when the selected model or connection changes', async () => {

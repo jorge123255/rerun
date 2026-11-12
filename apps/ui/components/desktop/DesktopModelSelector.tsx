@@ -4,9 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { ConnectionSummary } from '@rerun/contracts'
 import { ChevronDown, Star } from 'lucide-react'
 import { UsageRing } from '@/components/agent/UsageRing'
-import { TooltipLabeled } from '@/components/ui/tooltip'
-import { desktopPlanPillUsage } from '@/lib/desktop/plan-limits'
-import { planWindowName, planWindowPercent, planWindowReset } from '@/lib/engine/ai-sources'
+import { DesktopModelPillUsageTooltip, useDesktopModelPillUsage } from './usage/DesktopModelPillUsage'
 import { ProviderIcon } from '@/lib/engine/provider-icons'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -49,7 +47,6 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, workspaceM
     const [pending, setPending] = useState<DesktopModelPick | null>(null)
     const [error, setError] = useState<string>()
     const [saving, setSaving] = useState(false)
-    const [, refreshUsageClock] = useState(0)
     const titleId = useId()
     const descriptionId = useId()
     const reported = useRef<string | null>(null)
@@ -118,15 +115,7 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, workspaceM
     const effective = view?.effective
     const label = !effective?.model ? (workspaceModel ? `Default · ${workspaceModel}` : 'Choose model') : effective.available ? `${effective.name ?? 'Model'} · ${effective.label}` : `Unavailable · ${effective.label}`
     const busy = disabled || saving
-    const connection = effective?.available ? connections?.find(item => item.id === effective.connectionId
-        && item.provider === effective.provider && item.connected && !item.credentialRejected) : undefined
-    const usage = active && connection ? desktopPlanPillUsage(connection) : null
-    const nextChange = usage?.nextChangeAt
-    useEffect(() => {
-        if (nextChange === undefined) return
-        const timeout = setTimeout(() => refreshUsageClock(value => value + 1), Math.max(1, nextChange - Date.now()))
-        return () => clearTimeout(timeout)
-    }, [nextChange])
+    const usage = useDesktopModelPillUsage(effective, connections, active)
     const trigger = (
         <PopoverTrigger asChild>
             <Button type="button" size="sm" variant="ghost" className="min-w-0 gap-1 text-xs" disabled={busy && !open}
@@ -140,12 +129,7 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, workspaceM
 
     return (
         <Popover open={open} onOpenChange={setOpen}>
-            {usage ? <TooltipLabeled side="top" label={<ul className="space-y-1">
-                {usage.windows.map((window, index) => {
-                    const reset = planWindowReset(window)
-                    return <li key={`${window.kind}:${window.label ?? ''}:${index}`}>{planWindowName(window)} {planWindowPercent(window)} used{reset ? `, ${reset}` : ''}</li>
-                })}
-            </ul>}>{trigger}</TooltipLabeled> : trigger}
+            <DesktopModelPillUsageTooltip usage={usage}>{trigger}</DesktopModelPillUsageTooltip>
             <PopoverContent align="start" collisionPadding={12} aria-labelledby={titleId} aria-describedby={descriptionId} className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1.5rem)] gap-2 overflow-hidden p-2">
                 <div className="px-2 pt-1">
                     <h2 id={titleId} className="text-sm font-semibold">Model</h2>

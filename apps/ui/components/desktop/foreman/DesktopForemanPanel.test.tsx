@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { randomUUID } from 'node:crypto'
+import type { ConnectionSummary, DesktopForemanModelRef } from '@rerun/contracts'
 import { StrictMode, act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -10,7 +11,7 @@ import { DEFAULT_DESKTOP_FOREMAN_PLACEMENT, flushDesktopForemanUiSaves, saveFore
 let column: DesktopForemanColumnProps
 vi.mock('./DesktopForemanColumn', () => ({ DesktopForemanColumn: (props: DesktopForemanColumnProps) => {
     column = props
-    return <><button onClick={props.onClose}>Close Foreman</button>{props.runNotice}</>
+    return <><button onClick={props.onClose}>Close Foreman</button>{props.runNotice}{props.composerTrailing}</>
 } }))
 let root: Root | undefined
 const sources: Source[] = []
@@ -119,4 +120,47 @@ it('shows the saved connection failure with a Settings action and clears it when
     server.runFailure = null
     await act(async () => vi.advanceTimersByTimeAsync(1500))
     expect(document.querySelector('[role="alert"]')).toBeNull()
+})
+
+it('keeps the Chief of Staff picker bound to the restored model and switches to the workspace plan', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal('EventSource', Source)
+    const chat = { workspaceId: '1', chatId: 'fmc_abcdefgh' }
+    const picked: DesktopForemanModelRef = { connectionId: 'api', model: 'local-model' }
+    const server = { chat, sessionId: 'session', model: picked as DesktopForemanModelRef | null, messages: [],
+        view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
+        ui: { revision: 0, snapshot: null },
+    }
+    const defaultConnection: ConnectionSummary = { id: 'plan', name: 'ChatGPT', provider: 'codex', models: ['plan-model'],
+        extraModels: [], connected: true, credentialRejected: false, createdAt: '', planLimits: { capturedAt: new Date().toISOString(),
+            windows: [{ kind: 'session', label: null, usedPercent: 27, resetsAt: null }] } }
+    const providers = { default: { connectionId: 'plan', model: 'plan-model' }, connections: [defaultConnection,
+        { ...defaultConnection, id: 'api', name: 'API', provider: 'openrouter' as const, models: ['local-model'], planLimits: null }] }
+    const changes: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>(async (url, init) => {
+        if (url !== '/api/desktop/foreman') return new Response(null, { status: 404 })
+        if (!init?.body) return Response.json(server)
+        const change = JSON.parse(String(init.body))
+        changes.push(change)
+        server.model = change.model
+        return Response.json({ model: server.model })
+    }))
+    const trigger = () => document.querySelector<HTMLButtonElement>('button[aria-haspopup="dialog"]')!
+    const mount = async () => {
+        root = createRoot(document.body.appendChild(document.createElement('div')))
+        await act(async () => root!.render(<DesktopForemanPanel onClose={vi.fn()} onOpenCoworker={vi.fn()} onOpenCalledChat={vi.fn()} onOpenBox={vi.fn()}
+            agentNameOf={id => id} providers={providers} />))
+    }
+    await mount()
+    expect(trigger().getAttribute('aria-label')).toContain('local-model')
+    expect(document.querySelector('[data-slot="model-usage-ring"]')).toBeNull()
+    await act(async () => trigger().click())
+    const workspace = Array.from(document.querySelectorAll('button')).find(button => button.textContent?.startsWith('Workspace default'))!
+    await act(async () => workspace.click())
+    expect(changes).toEqual([{ action: 'model', chat, expected: picked, model: null }])
+    expect(trigger().getAttribute('aria-label')).toContain('Session 27% used')
+    await act(async () => root!.unmount())
+    await mount()
+    expect(trigger().getAttribute('aria-label')).toContain('Session 27% used')
+    expect(changes).toHaveLength(1)
 })

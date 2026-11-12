@@ -184,7 +184,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
         headerActions={<><DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} onApprovalPermissionChanged={() => { void client.refresh().catch(() => {}) }} />{error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}</>}
         composerTrailing={props.composerTrailing ?? (!props.hidden && props.controlledOpen !== false && view && <div className="flex min-w-0 items-center">
-            <DesktopForemanModelPill view={view} saving={modelSaving} onSettings={props.onOpenModelSettings}
+            <DesktopForemanModelPill view={view} connections={providers?.connections} saving={modelSaving} onSettings={props.onOpenModelSettings}
                 disabled={!!state.view.live || !!state.question || !!state.approval || !!state.ui.snapshot?.pendingSend || !!voice?.busy}
                 onPick={async model => {
                     setModelSaving(true)
