@@ -26,7 +26,7 @@ export function DesktopCoworkerOverviewScreen({ agentId, name, mood, tab, visibi
     const { t } = useDesktopLocale()
     const view = desktopOverviewViewOf(tab)
     const tabs = desktopOverviewSiblingTabs(tab, visibility)
-    const label = t('coworker.views.' + view)
+    const label = t(`coworker.views.${view}`)
     const screen = useRef<HTMLDivElement>(null)
     const back = useRef<HTMLButtonElement>(null)
     useLayoutEffect(() => {
@@ -48,7 +48,7 @@ export function DesktopCoworkerOverviewScreen({ agentId, name, mood, tab, visibi
                 <Button aria-label={t('closePanel')} variant="ghost" size="icon-sm" onClick={onClose} className="ml-auto"><XIcon className="size-4" /></Button>
             </div>
             <SidePanelTabSwitcher
-                tabs={tabs.map(id => ({ id, icon: TAB_ICONS[id] ?? GlobeIcon, label: t('coworker.tabs.' + id), dot: id === 'services' && servicesNeedConfig }))}
+                tabs={tabs.map(id => ({ id, icon: TAB_ICONS[id] ?? GlobeIcon, label: t(`coworker.tabs.${id}`), dot: id === 'services' && servicesNeedConfig }))}
                 value={tab} label={label} onChange={onTab}
             >
                 <div className="relative min-h-0 flex-1 overflow-hidden">
