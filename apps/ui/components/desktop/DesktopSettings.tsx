@@ -25,7 +25,7 @@ import { DesktopCustomProviderPage } from './connections/custom/DesktopCustomPro
 import { ApiConnectionsPanel } from './connections/api/ApiConnectionsPanel'
 import { createApiConnectionsClient } from '@/lib/desktop/api-connections/client'
 import { desktopApiConnectionUiRoutes } from '@/lib/desktop/api-connections/routes'
-import { DesktopQuickAskSettings } from './DesktopQuickAskSettings'
+import { DesktopMacSettings, desktopMacSettings } from './DesktopMacSettings'
 
 type Props = {
     initialTab?: 'AI providers' | 'Tool services' | 'Workspace' | 'Notifications' | 'Shortcuts'
@@ -40,7 +40,7 @@ type Props = {
 }
 
 const selectClass = 'w-full rounded-md border bg-background px-3 py-2 text-sm'
-const panels = ['AI providers', 'Tool services', 'Workspace', 'Notifications', 'Shortcuts'] as const
+const panels = ['AI providers', 'Tool services', 'Workspace', 'Notifications', 'Shortcuts', 'Desktop app'] as const
 function effortLabel(effort: string) {
     return effort === 'xhigh' ? 'Extra high' : effort.charAt(0).toUpperCase() + effort.slice(1)
 }
@@ -48,7 +48,9 @@ function effortLabel(effort: string) {
 export function DesktopSettings({ providers, workspaceName, onSave, onProviders, initialTab, initialConnectionId = null, workspaceId = null, appStoreBuild = false, onConnectionsChanged }: Props) {
     const { t } = useDesktopLocale()
     const apiConnections = useMemo(() => Number.isSafeInteger(workspaceId) && (workspaceId ?? 0) > 0 ? createApiConnectionsClient(desktopApiConnectionUiRoutes) : null, [workspaceId])
-    const labels = { 'AI providers': t('providers'), 'Tool services': t('toolServices'), Workspace: t('workspace'), Notifications: t('notifications'), Shortcuts: t('shortcuts') }
+    const labels = { 'AI providers': t('providers'), 'Tool services': t('toolServices'), Workspace: t('workspace'), Notifications: t('notifications'), Shortcuts: t('shortcuts'), 'Desktop app': t('macSettings.title') }
+    // The board opens Settings after a user action, with its preload already installed.
+    const hasMacSettings = Boolean(desktopMacSettings())
     const [tab, setTab] = useState<typeof panels[number]>(initialTab ?? 'AI providers')
     const supports = (provider: string) => !appStoreBuild || (provider !== 'codex' && provider !== 'claude' && !isDesktopSubscriptionProvider(provider))
     const standardConnections = providers.connections.filter(c => !hasDesktopApiConnectionPrefix(c.id) && supports(c.provider))
@@ -113,7 +115,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                     <p className="mt-1 text-sm text-muted-foreground">{workspaceName}</p>
                 </header>
                 <nav aria-label={t('settingsSections')} className="flex flex-wrap gap-2 border-b pb-3">
-                    {panels.map(panel => <Button key={panel} size="sm" variant={tab === panel ? 'secondary' : 'ghost'} disabled={busy} aria-current={tab === panel ? 'page' : undefined} onClick={() => {
+                    {panels.filter(panel => panel !== 'Desktop app' || hasMacSettings).map(panel => <Button key={panel} size="sm" variant={tab === panel ? 'secondary' : 'ghost'} disabled={busy} aria-current={tab === panel ? 'page' : undefined} onClick={() => {
                         setTab(panel); setNotice(''); setError(''); setKey('')
                     }}>{labels[panel]}</Button>)}
                 </nav>
@@ -217,10 +219,11 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                         </form>
                         <div className="flex items-center justify-between rounded-xl border p-4"><strong>{t('appearance')}</strong><ThemeToggle onPreferenceChange={theme => void save({ action: 'appearance', theme }, 'Appearance saved.')} /></div>
                     </>}
-                    {tab === 'Shortcuts' && <><DesktopQuickAskSettings /><dl className="grid grid-cols-[1fr_auto] gap-3 rounded-xl border p-4 text-sm">
+                    {tab === 'Shortcuts' && <dl className="grid grid-cols-[1fr_auto] gap-3 rounded-xl border p-4 text-sm">
                         <dt>Open Settings</dt><dd>⌘ ,</dd><dt>Send a chat message</dt><dd>Return</dd><dt>New line in chat</dt><dd>Shift Return</dd>
                         <dt>Open a focused coworker</dt><dd>Return or Space</dd>
-                    </dl></>}
+                    </dl>}
+                    {tab === 'Desktop app' && hasMacSettings && <DesktopMacSettings appStoreBuild={appStoreBuild} />}
                     {tab === 'Notifications' && <DesktopNotificationSettings />}
                     {tab === 'Tool services' && <DesktopAuxiliarySettings />}
                 </fieldset>

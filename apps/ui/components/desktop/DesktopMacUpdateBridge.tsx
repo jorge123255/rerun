@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 
 const TOAST_ID = 'desktop-mac-update'
 
-type MacUpdateState =
+export type MacUpdateState =
     | { status: 'idle' }
     | { status: 'checking' }
     | { status: 'downloading' }
@@ -14,11 +14,12 @@ type MacUpdateState =
 
 type MacUpdates = {
     getState: () => Promise<MacUpdateState>
+    check: () => Promise<MacUpdateState>
     onState: (listener: (state: MacUpdateState) => void) => () => void
     install: () => Promise<unknown> | unknown
 }
 
-function updatesApi(): MacUpdates | null {
+export function desktopMacUpdates(): MacUpdates | null {
     if (typeof window === 'undefined') return null
     const updates = (window as Window & { desktopApp?: { updates?: MacUpdates } }).desktopApp?.updates
     if (!updates || typeof updates.getState !== 'function' || typeof updates.onState !== 'function' || typeof updates.install !== 'function') return null
@@ -44,7 +45,7 @@ function showUpdate(updates: MacUpdates, state: MacUpdateState) {
 
 export function DesktopMacUpdateBridge() {
     useEffect(() => {
-        const updates = updatesApi()
+        const updates = desktopMacUpdates()
         if (!updates) return
         let live = true
         let received = false

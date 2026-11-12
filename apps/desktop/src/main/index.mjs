@@ -441,6 +441,17 @@ async function launch() {
             trusted(event)
             if (quitting || transitioning || !runtimeScope() || !isDesktopPage(event.senderFrame.url)) throw new Error('The workspace is unavailable')
         }
+        const localMacSettings = () => ({
+            openAtLogin: macLoginItemSettings(app)?.openAtLogin ?? null,
+            version: app.isPackaged ? app.getVersion() : null,
+            updatesAvailable: macUpdates?.enabled() === true,
+        })
+        ipcMain.handle('desktop:mac-settings', event => { assertBoard(event); return localMacSettings() })
+        ipcMain.handle('desktop:mac-set-open-at-login', (event, enabled) => {
+            assertBoard(event)
+            setMacOpenAtLogin(app, enabled)
+            return localMacSettings()
+        })
         ipcMain.handle('desktop:update-state', event => { assertBoard(event); return macUpdates?.state() ?? { status: 'idle' } })
         ipcMain.handle('desktop:update-check', event => { assertBoard(event); return macUpdates?.checkForUpdates(false) ?? { status: 'idle' } })
         ipcMain.handle('desktop:update-install', event => {

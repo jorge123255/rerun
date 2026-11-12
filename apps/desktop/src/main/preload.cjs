@@ -26,6 +26,13 @@ contextBridge.exposeInMainWorld('desktopApp', {
         setLanguage: locale => {
             if (typeof locale === 'string' && locale.length <= 5) ipcRenderer.send('desktop:language', locale)
         },
+        macSettings: {
+            read: () => ipcRenderer.invoke('desktop:mac-settings'),
+            setOpenAtLogin: enabled => {
+                if (typeof enabled !== 'boolean') throw new TypeError('Expected an Open at Login preference')
+                return ipcRenderer.invoke('desktop:mac-set-open-at-login', enabled)
+            },
+        },
         quickAskSettings: {
             read: () => ipcRenderer.invoke('desktop:quick-ask-settings'),
             set: enabled => ipcRenderer.invoke('desktop:quick-ask-set-shortcut', enabled),

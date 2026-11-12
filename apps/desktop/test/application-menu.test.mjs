@@ -111,7 +111,22 @@ test('the Mac App Store preload leaves updates to the App Store', async () => {
         assert.equal(typeof desktopApp.openLocalWorkspace, 'function')
         assert.equal(typeof desktopApp.signInToCloud, 'function')
         assert.equal(Boolean(desktopApp.updates), !mas)
+        assert.equal(typeof desktopApp.macSettings.read, 'function')
     }
+})
+
+test('the preload uses fixed Mac settings channels and forwards only a boolean login preference', async () => {
+    const source = await readFile(new URL('../src/main/preload.cjs', import.meta.url), 'utf8')
+    const ipcRenderer = new EventEmitter()
+    const calls = []
+    ipcRenderer.invoke = (...args) => calls.push(args)
+    let desktopApp
+    const contextBridge = { exposeInMainWorld: (_name, api) => { desktopApp = api } }
+    runInNewContext(source, { process: { platform: 'darwin' }, require: () => ({ contextBridge, ipcRenderer }) })
+    desktopApp.macSettings.read()
+    assert.throws(() => desktopApp.macSettings.setOpenAtLogin({ enabled: true }), /preference/)
+    desktopApp.macSettings.setOpenAtLogin(false)
+    assert.deepEqual(calls, [['desktop:mac-settings'], ['desktop:mac-set-open-at-login', false]])
 })
 
 test('the Mac full-screen subscription reports booleans and never overwrites a newer event', async () => {
