@@ -93,5 +93,20 @@
         "title": "Question rapide",
         "opening": "Ouverture de la conversation…",
         "unavailable": "Impossible d’ouvrir la conversation. Réessayez quand l’espace de travail est prêt."
+    },
+    "updates": {
+        "upToDate": "Vous êtes à jour",
+        "upToDateDetail": "Rerun {version} est la dernière version.",
+        "failed": "Impossible de rechercher les mises à jour",
+        "readyToInstall": "Rerun {version} est prêt à être installé",
+        "readyDetail": "L’app redémarre pour terminer la mise à jour.",
+        "restartNow": "Redémarrer maintenant",
+        "later": "Plus tard",
+        "check": "Rechercher des mises à jour…",
+        "disabled": "Les mises à jour sont désactivées pour cette version.",
+        "checking": "Recherche de mises à jour…",
+        "downloading": "Téléchargement de la mise à jour…",
+        "restart": "Redémarrer pour mettre à jour…",
+        "ready": "Une mise à jour est prête à être installée."
     }
 }

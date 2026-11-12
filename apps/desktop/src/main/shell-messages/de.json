@@ -93,5 +93,20 @@
         "title": "Schnellfrage",
         "opening": "Unterhaltung wird geöffnet…",
         "unavailable": "Die Unterhaltung konnte nicht geöffnet werden. Versuche es erneut, sobald der Arbeitsbereich bereit ist."
+    },
+    "updates": {
+        "upToDate": "Alles auf dem neuesten Stand",
+        "upToDateDetail": "Rerun {version} ist die neueste Version.",
+        "failed": "Suche nach Updates fehlgeschlagen",
+        "readyToInstall": "Rerun {version} ist bereit zur Installation",
+        "readyDetail": "Die App startet neu, um das Update abzuschließen.",
+        "restartNow": "Jetzt neu starten",
+        "later": "Später",
+        "check": "Nach Updates suchen…",
+        "disabled": "Updates sind für diese Version deaktiviert.",
+        "checking": "Suche nach Updates…",
+        "downloading": "Update wird heruntergeladen…",
+        "restart": "Für das Update neu starten…",
+        "ready": "Ein Update kann installiert werden."
     }
 }

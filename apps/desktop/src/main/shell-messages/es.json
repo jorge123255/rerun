@@ -93,5 +93,20 @@
         "title": "Pregunta rápida",
         "opening": "Abriendo la conversación…",
         "unavailable": "No se pudo abrir la conversación. Vuelve a intentarlo cuando el espacio de trabajo esté listo."
+    },
+    "updates": {
+        "upToDate": "Estás al día",
+        "upToDateDetail": "Rerun {version} es la última versión.",
+        "failed": "No se pudieron buscar actualizaciones",
+        "readyToInstall": "Rerun {version} está listo para instalarse",
+        "readyDetail": "La app se reinicia para terminar la actualización.",
+        "restartNow": "Reiniciar ahora",
+        "later": "Más tarde",
+        "check": "Buscar actualizaciones…",
+        "disabled": "Las actualizaciones están desactivadas en esta versión.",
+        "checking": "Buscando actualizaciones…",
+        "downloading": "Descargando la actualización…",
+        "restart": "Reiniciar para actualizar…",
+        "ready": "Hay una actualización lista para instalar."
     }
 }

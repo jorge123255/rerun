@@ -1,13 +1,17 @@
 import { QUICK_ASK_SHORTCUT } from './quick-ask-window.mjs'
 import { shellText } from './shell-language.mjs'
 
-export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDesktopPage, openDocumentation, openFind, openQuickAsk, openNewWindow, openHubPicker, reloadWindow, devTools, locale }) {
+export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDesktopPage, openDocumentation, openFind, openQuickAsk, openNewWindow, openHubPicker, reloadWindow, devTools, locale, checkForUpdates, updateItem }) {
     const t = shellText(locale)
     const name = { name: appName }
     const template = [
         { label: appName, submenu: [
             { role: 'about', label: t('menu.app.about', name) },
             { type: 'separator' },
+            ...(checkForUpdates ? [{
+                id: 'rerun-check-for-updates', label: updateItem.label, enabled: updateItem.enabled,
+                click: () => { if (updateItem.enabled) checkForUpdates() },
+            }] : []),
             {
                 id: 'rerun-settings',
                 label: t('menu.app.settings'),

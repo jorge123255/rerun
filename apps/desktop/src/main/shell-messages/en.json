@@ -93,5 +93,20 @@
         "title": "Quick Ask",
         "opening": "Opening your conversation…",
         "unavailable": "Could not open a conversation. Try again when the workspace is ready."
+    },
+    "updates": {
+        "upToDate": "You’re up to date",
+        "upToDateDetail": "Rerun {version} is the latest version.",
+        "failed": "Couldn’t check for updates",
+        "readyToInstall": "Rerun {version} is ready to install",
+        "readyDetail": "The app restarts to finish the update.",
+        "restartNow": "Restart Now",
+        "later": "Later",
+        "check": "Check for Updates…",
+        "disabled": "Updates are turned off for this build.",
+        "checking": "Checking for Updates…",
+        "downloading": "Downloading Update…",
+        "restart": "Restart to Update…",
+        "ready": "An update is ready to install."
     }
 }

@@ -21,7 +21,7 @@ export function setMacOpenAtLogin(app, openAtLogin) {
     catch { /* The OS setting remains authoritative if the change is refused. */ }
 }
 
-export function createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow, quickAsk, locale = () => app.getLocale() }) {
+export function createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow, quickAsk, updates, locale = () => app.getLocale() }) {
     const loginSettings = () => macLoginItemSettings(app)
     const image = nativeImage.createEmpty()
     for (const [scaleFactor, suffix] of [[1, ''], [2, '@2x']]) {
@@ -44,6 +44,9 @@ export function createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow, qui
             { id: 'rerun-tray-open', label: t('tray.open', { name: app.name }), click: openWindow },
             ...(quickAsk ? [{ id: 'rerun-tray-quick-ask', label: t('tray.quickAsk'), accelerator: QUICK_ASK_SHORTCUT,
                 registerAccelerator: false, enabled: quickAsk.enabled(), click: () => { if (quickAsk.enabled()) quickAsk.open() } }] : []),
+            ...(updates ? [{
+                id: 'rerun-tray-updates', ...updates.menuItem(), click: () => { if (updates.menuItem().enabled) void updates.checkFromMenu() },
+            }] : []),
             ...(waiting ? [{ id: 'rerun-tray-unread', label: waiting, enabled: false }] : []),
             { type: 'separator' },
             {

@@ -19,6 +19,7 @@ import { DesktopExternalMcpDialog } from './external-mcp/DesktopExternalMcpDialo
 import { DesktopCoworkerShareLauncher, DesktopPortableCoworkerImport, DesktopServersNavigation, DesktopWorkspaceDialogStatus } from './DesktopWorkspaceDialogs'
 import { DesktopWorkspaceSettings } from './DesktopWorkspaceSettings'
 import { DesktopNotificationDelivery } from './DesktopNotificationDelivery'
+import { DesktopMacUpdateBridge } from './DesktopMacUpdateBridge'
 import { DesktopSharedData } from './DesktopSharedData'
 import { DesktopBrainDialog } from './brain/pages/DesktopBrainDialog'
 import { DesktopBrainProposalsPanel } from './brain/proposals/DesktopBrainProposalsPanel'
@@ -803,6 +804,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
 
     return (
         <main className="relative flex h-dvh w-full flex-col overflow-clip bg-frame text-foreground md:p-2">
+            <DesktopMacUpdateBridge />
             <div ref={boardFrame} inert={settings} aria-hidden={settings || undefined}
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
                 {runtimeWorkspaceId != null ? <FxBoardCameraBoundary workspaceId={runtimeWorkspaceId} currentWorkspace={() => runtimeWorkspaceId} persistence={cameraPersistence} bindFlush={flush => { cameraFlush.current = flush }}>{camera => (
