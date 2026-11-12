@@ -5,6 +5,7 @@ export const HUB_API_VERSION = 1
 const loopback = new Set(['localhost', '127.0.0.1', '[::1]'])
 const semver = /^(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})(?:-([0-9A-Za-z.-]{1,64}))?$/
 const token = /^[A-Za-z0-9_-]{16,128}$/
+const claimToken = /^[A-Za-z0-9_-]{16,64}$/
 
 export function normalizeHubOrigin(address) {
     if (typeof address !== 'string' || address.length > 2048 || /[\x00-\x1f\x7f\\]/.test(address)) return null
@@ -96,6 +97,28 @@ export function parseHubLink(input) {
             const path = url.searchParams.get('path') ?? ''
             if (url.searchParams.size === 1 && isHubPath(path)) return { kind: 'open', path }
         }
+        if (url.host === 'oauth' && url.pathname === '/callback') return oauthReturn(url)
     } catch {}
+    return null
+}
+
+// The upstream app return is exactly `status` plus `claim`, or `status` plus `message`.
+// Duplicates, extras and oversized values are rejected here rather than trimmed.
+function oauthReturn(url) {
+    const names = [...url.searchParams.keys()]
+    const unique = new Set(names)
+    if (unique.size !== names.length || !unique.has('status')) return null
+    const status = url.searchParams.get('status')
+    if (status === 'success' && unique.size === 1) return { kind: 'oauth', result: { status: 'success' } }
+    if (status === 'success' && unique.size === 2 && unique.has('claim')) {
+        const claim = url.searchParams.get('claim') ?? ''
+        if (!claimToken.test(claim)) return null
+        return { kind: 'oauth', result: { status: 'success', claim } }
+    }
+    if (status === 'error' && unique.size === 2 && unique.has('message')) {
+        const message = url.searchParams.get('message') ?? ''
+        if (message.length > 300 || /[\x00-\x1f\x7f\\]/.test(message)) return null
+        return { kind: 'oauth', result: { status: 'error', message } }
+    }
     return null
 }

@@ -5,6 +5,7 @@ import { checkHub, hubPartition, HUB_API_VERSION, normalizeHubOrigin, sameHub } 
 import { createHubAuth } from './connected-hub-auth.mjs'
 import { createHubDownloads } from './connected-hub-downloads.mjs'
 import { createConnectedHubQuickAsk } from './connected-hub-quick-ask.mjs'
+import { createHubServiceSignIn } from './connected-hub-service-sign-in.mjs'
 import { atomicPrivateJSON, readJSON } from './workspaces/paths.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
 import { createNativeNotifications, hubNotificationPayload } from './notifications.mjs'
@@ -13,7 +14,7 @@ import { externalDesktopLink } from './window-context-menu.mjs'
 
 const pickerPage = new URL('./connected-hub.html', import.meta.url)
 const preload = fileURLToPath(new URL('./connected-hub-preload.cjs', import.meta.url))
-const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads', 'notifications', 'badge', 'settings']
+const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads', 'notifications', 'badge', 'settings', 'oauth']
 
 export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain, session, shell, dialog, screen, dataRoot,
     available, openFind, closeFind, setUnread, desktopSettings, changeDesktopSettings }) {
@@ -58,6 +59,7 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
             if (connected(entry.window) === entry) entry.contents.send('hub:download', value)
         },
     })
+    const serviceSignIn = createHubServiceSignIn({ channel: 'dev', openBrowser: url => shell.openExternal(url) })
     const localSender = event => picker && !picker.isDestroyed() && event.sender === picker.webContents
         && event.senderFrame && event.senderFrame === picker.webContents.mainFrame && event.senderFrame.url === pickerPage.href
     function hubSender(event) {
@@ -296,7 +298,7 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
             if (typeof colors?.frameColor === 'string' && /^#[0-9a-f]{6}$/i.test(colors.frameColor)) entry.window.setBackgroundColor(colors.frameColor)
         }],
         ['hub:find', entry => openFind(entry.window)],
-        ['hub:open-link', (_entry, url) => external(url)],
+        ['hub:open-link', async (entry, url) => (await serviceSignIn.consider(entry, url)) ? true : external(url)],
         ['hub:show-download', (entry, id) => downloads.show(entry, id)],
         ['hub:settings', () => desktopSettings()],
         ['hub:set-settings', (entry, value, frame) => {
@@ -336,11 +338,16 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
                 if (entry) await redeem(entry, link.code, link.state)
                 return
             }
+            if (link.kind === 'oauth') {
+                await serviceSignIn.complete(link.result)
+                return
+            }
             const origin = await savedOrigin()
             if (origin) await connect(origin, link.path)
             else openPicker()
         },
         async closeAll() {
+            serviceSignIn.cancelAll()
             connecting?.abort()
             quickAsk.reset()
             for (const entry of [...windows.values()]) {

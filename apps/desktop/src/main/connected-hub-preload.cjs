@@ -58,6 +58,9 @@ if (bootstrap?.audience === 'picker') {
             get: () => ipcRenderer.invoke('hub:settings'),
             set: patch => ipcRenderer.invoke('hub:set-settings', { quickAsk: patch?.quickAsk, openAtLogin: patch?.openAtLogin }),
         },
+        oauth: {
+            onReturn: callback => subscribe('hub:oauth-return', callback),
+        },
         server: { openPicker: () => { void ipcRenderer.invoke('hub:open-picker').catch(() => {}) } },
     })
 }
