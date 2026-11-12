@@ -34,13 +34,14 @@ type State = {
     leadState: DesktopLeadSetupState
     blocked: 'decision_uncertain' | 'build_uncertain' | 'setup_uncertain' | null
     error: string | null
+    sendError: string | null
 }
 function initialState(chat: DesktopForemanChatRef, open: boolean): State {
     return {
         ui: { ...chat, open, tab: 'assistant', draft: '', pendingPlanRevisionId: null, decision: { status: 'idle' },
             build: null, discoveries: null, placement: DEFAULT_DESKTOP_FOREMAN_PLACEMENT },
         restored: false, planSnapshot: null, build: null, discoveries: EMPTY_DESKTOP_DISCOVERIES,
-        leadState: { status: 'idle' }, blocked: null, error: null,
+        leadState: { status: 'idle' }, blocked: null, error: null, sendError: null,
     }
 }
 const messageOf = (error: unknown) => error instanceof Error ? error.message : 'The Chief of Staff request failed.'
@@ -106,7 +107,7 @@ export function useDesktopForemanUi({ chat, ports, live, initialOpen = false, re
         }
     }, [owner, ports.persistence, valid, commit])
 
-    const { ui, restored, planSnapshot, build, discoveries, leadState, blocked, error } = owner.state
+    const { ui, restored, planSnapshot, build, discoveries, leadState, blocked, error, sendError } = owner.state
     useEffect(() => {
         if (!restored) return
         const generation = owner.generation
@@ -272,11 +273,12 @@ export function useDesktopForemanUi({ chat, ports, live, initialOpen = false, re
             const accepted = prepareDocuments || coworkerMentions
                 ? await ports.conversation.sendMessage(text, undefined, { prepareDocuments, coworkerMentions })
                 : await ports.conversation.sendMessage(text)
+            if (valid(generation) && accepted && owner.state.sendError) commit(state => ({ ...state, sendError: null }), false)
             if (valid(generation) && accepted && owner.state.ui.draft === submittedDraft
                 && owner.state.ui.draftCoworkerMentions === submittedMentions && submittedDraft.trim() === text) setDraft('')
             return accepted
         } catch (error) {
-            if (valid(generation)) commit(state => ({ ...state, error: messageOf(error) }), false)
+            if (valid(generation)) commit(state => ({ ...state, sendError: messageOf(error) }), false)
             return false
         } finally { owner.sending = false }
     }, [owner, ports.conversation, valid, commit, setDraft])
@@ -314,7 +316,8 @@ export function useDesktopForemanUi({ chat, ports, live, initialOpen = false, re
     }, [owner, valid, commit, ports.build])
 
     return {
-        ui, restored, planSnapshot, build, discoveries, leadState, blocked, error,
+        ui, restored, planSnapshot, build, discoveries, leadState, blocked, error: sendError ?? error,
+        clearSendError: () => { if (owner.state.sendError) commit(state => ({ ...state, sendError: null }), false) },
         nextSteps: projectForemanNextSteps(build), live: isLiveForemanView(live),
         setOpen, setTab, setDraft, setPlacement, setDock, sendMessage, stop, actOnBuild, buildBusy: owner.buildBusy,
         clearDecision: () => { if (owner.state.ui.decision.status !== 'pending' && owner.state.ui.decision.status !== 'uncertain') commit(state => ({ ...state, ui: { ...state.ui, decision: { status: 'idle' } } })) },

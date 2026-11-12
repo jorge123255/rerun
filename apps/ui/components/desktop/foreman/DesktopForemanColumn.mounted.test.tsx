@@ -18,8 +18,8 @@ vi.mock('./dock', () => ({
 vi.mock('@rerun/ui/primitives/use-is-mobile', () => ({ useIsMobile: () => false }))
 vi.mock('./DesktopForemanHeader', () => ({ DesktopForemanHeader: (props: HeaderProps) => <button onClick={() => props.onTabChange('routines')}>Routines tab</button> }))
 vi.mock('./DesktopForemanComposer', () => ({ DesktopForemanComposer: (props: ComposerProps) => <div><textarea data-desktop-foreman-composer aria-label="Message the Foreman" value={props.draft} onChange={event => props.onDraftChange(event.target.value)} disabled={props.disabled} />{props.trailing}{props.controls}<button disabled={props.sendDisabled} onClick={() => props.onSend(props.draft)}>Send draft</button></div> }))
-vi.mock('./DesktopForemanChatLayer', () => ({ DesktopForemanChatLayer: ({ children, renderChildWork, question }: ComponentProps<typeof import('./DesktopForemanChatLayer').DesktopForemanChatLayer>) =>
-    <div>Chat{renderChildWork?.(new Map())}{question}{children}</div> }))
+vi.mock('./DesktopForemanChatLayer', () => ({ DesktopForemanChatLayer: ({ children, renderChildWork, question, error }: ComponentProps<typeof import('./DesktopForemanChatLayer').DesktopForemanChatLayer>) =>
+    <div>Chat{renderChildWork?.(new Map())}{question}{children}{error && <p role="alert">{error}</p>}</div> }))
 vi.mock('./routines/DesktopWorkspaceRoutines', () => ({ DesktopWorkspaceRoutines: () => <div>Routines content</div> }))
 vi.mock('./plan/DesktopPlanBoardPreview', () => ({ DesktopPlanBoardPreview: () => null }))
 import { DesktopForemanColumn } from './DesktopForemanColumn'
@@ -155,21 +155,31 @@ it('renders the saved action card and sends only the decision for its exact requ
     expect(ports.conversation.sendMessage).not.toHaveBeenCalled()
 })
 
-it('retries an unconfirmed send by its saved request ID while keeping a different draft', async () => {
+it('retries an unconfirmed send by its saved request ID, clears the old error, and keeps a different draft', async () => {
     const stored = (await ports.persistence.load(chat))!
-    vi.mocked(ports.persistence.load).mockResolvedValue({ ...stored, draft: 'The next draft' })
     const pendingSend = { requestId: crypto.randomUUID(), text: 'Original message', modelChoice: null }
+    vi.mocked(ports.persistence.load).mockResolvedValue({ ...stored, draft: pendingSend.text })
+    vi.mocked(ports.conversation.sendMessage).mockRejectedValueOnce(new Error('Lost first acknowledgement'))
     const retry = vi.fn(async () => true)
     root = createRoot(document.body.appendChild(document.createElement('div')))
     const render = (pending?: typeof pendingSend) => act(async () => root!.render(
         <DesktopForemanColumn chat={chat} ports={ports} live={null} messages={[]} agentNameOf={id => id}
             controlledOpen pendingSend={pending} onRetryPendingSend={retry} />))
+    await render()
+    await click('Send draft')
+    expect(document.body.textContent).toContain('Lost first acknowledgement')
+    const composer = document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')!
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(composer, 'The next draft')
+        composer.dispatchEvent(new Event('input', { bubbles: true }))
+    })
     await render(pendingSend)
     expect(document.body.textContent).toContain('The previous message is unconfirmed.')
     expect([...document.querySelectorAll('button')].find(button => button.textContent === 'Send draft')?.disabled).toBe(true)
     await click('Retry previous message')
     expect(retry).toHaveBeenCalledExactlyOnceWith(pendingSend.requestId)
-    expect(ports.conversation.sendMessage).not.toHaveBeenCalled()
+    expect(ports.conversation.sendMessage).toHaveBeenCalledExactlyOnceWith(pendingSend.text)
+    expect(document.body.textContent).not.toContain('Lost first acknowledgement')
     await render()
     expect(document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')?.value).toBe('The next draft')
 })

@@ -207,9 +207,10 @@ export function DesktopForemanColumn({
         try {
             if (!await onRetryPendingSend(pendingSend.requestId)) throw new Error(t('foreman.pendingSend.failed'))
             const current = composerScope.current
+            if (current.chatId !== scope.chatId || current.workspaceId !== scope.workspaceId) return
+            foreman.clearSendError()
             const original = trimDesktopCoworkerMentions(scope.draft, scope.mentions)
-            if (current.chatId === scope.chatId && current.workspaceId === scope.workspaceId
-                && current.draft === scope.draft && current.mentions === scope.mentions
+            if (current.draft === scope.draft && current.mentions === scope.mentions
                 && scope.draft.trim() === pendingSend.text
                 && JSON.stringify(original.coworkerMentions ?? []) === JSON.stringify(pendingSend.coworkerMentions ?? [])) {
                 foreman.setDraft('')
