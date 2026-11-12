@@ -14,11 +14,12 @@ if (window.desktopApp.onMacFullscreen) {
 function update(status) {
     message.textContent = status.message || (status.state === 'ready' ? 'Opening your workspace…' : 'Preparing your local workspace…')
     retry.hidden = status.state !== 'error'
-    choices = status.state === 'choose' ? status.choices : null
-    runLocally.hidden = signInCloud.hidden = connectServer.hidden = !choices
-    localFootnote.hidden = !!choices
+    choices = status.choices ?? null
+    runLocally.hidden = !choices?.local
+    signInCloud.hidden = connectServer.hidden = !choices
+    localFootnote.hidden = status.state === 'choose'
     if (choices) {
-        runLocally.textContent = choices.local
+        runLocally.textContent = choices.local ?? ''
         signInCloud.textContent = signInCloud.disabled ? choices.connecting : choices.cloud
         connectServer.textContent = choices.connect
     } else {

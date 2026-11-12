@@ -74,6 +74,7 @@ test('the startup screen routes each choice separately and keeps the latest stat
         onStatus: handler => { notify = handler },
         getStatus: () => new Promise(resolve => { initialStatus = resolve }),
         openLocalWorkspace: async () => { calls.push('local') },
+        retry: async () => { calls.push('retry') },
         connectToServer: async () => { calls.push('server') },
         signInToCloud: () => {
             calls.push('cloud')
@@ -113,4 +114,15 @@ test('the startup screen routes each choice separately and keeps the latest stat
     assert.equal(cloud.hidden, true)
     assert.equal(elements.get('cloud-error').hidden, true)
     assert.equal(elements.get('message').textContent, 'Preparing local runtime…')
+
+    const { local, ...connectedChoices } = choices.choices
+    notify({ state: 'error', message: 'Keychain is unavailable.', choices: connectedChoices })
+    assert.equal(elements.get('message').textContent, 'Keychain is unavailable.')
+    assert.equal(elements.get('run-locally').hidden, true)
+    assert.equal(cloud.hidden, false)
+    assert.equal(elements.get('connect-server').hidden, false)
+    assert.equal(elements.get('retry').hidden, false)
+    elements.get('retry').click()
+    elements.get('connect-server').click()
+    assert.deepEqual(calls.slice(-2), ['retry', 'server'])
 })

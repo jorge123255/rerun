@@ -89,8 +89,16 @@ let clickReady = null
 let desktopNotifications = createNotices()
 let localUnread = 0
 let hubUnread = 0
-function publishBootStatus(state, message) {
-    bootStatus = { state, message }
+function startupChoices(includeLocal = true) {
+    const t = shellText(shellLanguage?.forScope('local'))
+    return {
+        ...(includeLocal ? { local: t('startup.runLocally') } : {}),
+        cloud: t('startup.signInCloud'), connect: t('startup.connectServer'),
+        connecting: t('server.connecting'), unreachable: t('server.unreachable'),
+    }
+}
+function publishBootStatus(state, message, choices) {
+    bootStatus = { state, message, ...(choices ? { choices } : {}) }
     if (window && !window.isDestroyed()) window.webContents.send('desktop:status', bootStatus)
 }
 function reportStartupError(error) {
@@ -98,7 +106,7 @@ function reportStartupError(error) {
     const message = secureStorageBlocked ? shellText(shellLanguage?.forScope('local'))('startup.keychainBlocked')
         : 'Desktop setup failed. Check that this app has a complete bundled runtime and access to secure storage.'
     if (supervisor) supervisor.publish('error', 'Workspace state could not be verified. Restore the workspace state before retrying.')
-    else publishBootStatus('error', message)
+    else publishBootStatus('error', message, secureStorageBlocked ? startupChoices(false) : undefined)
 }
 function showMainWindow() {
     showWindowOnReady = true
@@ -352,19 +360,20 @@ async function launch() {
     await prepareWorkspaceWindow(1, false)
     ipcMain.handle('desktop:status', event => { trusted(event); return supervisor?.status ?? bootStatus })
     if (mac) {
-        const choosingWorkspace = event => {
+        const onStartupPage = event => {
             trustedPrimary(event)
-            return event.senderFrame.url === pathToFileURL(startup).href && bootStatus.state === 'choose' && !quitting
+            return event.senderFrame.url === pathToFileURL(startup).href && !quitting
         }
-        ipcMain.handle('desktop:startup-local', event => choosingWorkspace(event) && startLocalWorkspace())
+        const canConnectToServer = event => onStartupPage(event) && !!bootStatus.choices && !supervisor
+        ipcMain.handle('desktop:startup-local', event => onStartupPage(event) && bootStatus.state === 'choose' && startLocalWorkspace())
         ipcMain.handle('desktop:startup-cloud', async event => {
-            if (!choosingWorkspace(event)) return { ok: false }
+            if (!canConnectToServer(event)) return { ok: false }
             const locale = shellLanguage.forScope('local')
             const result = await connectedHubs.openCloud()
             return result.ok ? result : { ...result, message: hubConnectionError(locale, result) }
         })
         ipcMain.handle('desktop:startup-connect', event => {
-            if (!choosingWorkspace(event)) return false
+            if (!canConnectToServer(event)) return false
             connectedHubs.openPicker()
             return true
         })
@@ -411,7 +420,12 @@ async function launch() {
     ipcMain.handle('desktop:retry', async event => {
         trustedPrimary(event)
         if (event.senderFrame.url !== pathToFileURL(startup).href || transitioning || quitting || changingBoards.size) return false
-        if (!supervisor) { app.relaunch(); app.quit(); return true }
+        if (!supervisor) {
+            if (bootStatus.state === 'error' && bootStatus.choices) return startLocalWorkspace()
+            app.relaunch()
+            app.quit()
+            return true
+        }
         if (!workspaces) return false
         if (['starting', 'stopping'].includes(supervisor.status.state)) return false
         const pending = (await workspaces.reconcile()).openReceipt
@@ -511,10 +525,7 @@ async function launch() {
         const t = shellText(shellLanguage.forScope('local'))
         bootStatus = existingLocal ? { state: 'starting', message: t('startup.keychainPrompt') } : {
             state: 'choose', message: t('startup.chooseWorkspace'),
-            choices: {
-                local: t('startup.runLocally'), cloud: t('startup.signInCloud'), connect: t('startup.connectServer'),
-                connecting: t('server.connecting'), unreachable: t('server.unreachable'),
-            },
+            choices: startupChoices(),
         }
     }
     await window.loadFile(startup)
