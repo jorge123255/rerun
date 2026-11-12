@@ -11,6 +11,7 @@ import { desktopMonitoringCopy } from './i18n/monitoring-messages'
 import { desktopRunHistoryCopy } from './i18n/run-history-messages'
 import { desktopControlCenterDetails } from './i18n/control-center-messages'
 import { desktopBrainCopy } from './i18n/brain-messages'
+import { desktopSharedFilesCopy } from './i18n/shared-files-messages'
 import dialogs from '@rerun/i18n/messages/en/dialogs.json'
 import type { Locale } from '@rerun/i18n'
 import { createTranslator } from 'use-intl/core'
@@ -31,8 +32,9 @@ import notifications from '@rerun/i18n/messages/en/notifications.json'
 import mobileSettings from '@rerun/i18n/messages/en/mobileSettings.json'
 import subRuns from '@rerun/i18n/messages/en/subRuns.json'
 import workspace from '@rerun/i18n/messages/en/workspace.json'
+import ui from '@rerun/i18n/messages/en/ui.json'
 
-const englishSource = { account, agent, brain, builder, changelog, chat, common, connections, data, dialogs, files, foreman, kit, layout, mobileSettings, notifications, subRuns, workspace }
+const englishSource = { account, agent, brain, builder, changelog, chat, common, connections, data, dialogs, files, foreman, kit, layout, mobileSettings, notifications, subRuns, workspace, ui }
 type DesktopMessageSource = typeof englishSource
 
 const desktopChangelogCopy = {
@@ -215,7 +217,9 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
     return {
         ...mac[locale],
         brain: source.brain,
-        filesGrid: source.files.grid,
+        files: source.files,
+        fileUpload: source.ui.upload,
+        sharedFiles: desktopSharedFilesCopy[locale],
         localProfile: { ...localProfileCopy[locale], title: source.account.tabs.profile.label, fields: source.account.profile },
         brainDesktop: desktopBrainCopy[locale],
         sharedData: {

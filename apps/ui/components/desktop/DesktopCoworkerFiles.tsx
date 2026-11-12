@@ -521,7 +521,7 @@ export function DesktopCoworkerFilesBody({ agent, initialFilePath, registerClose
                         <ContextMenuSeparator />
                         <ContextMenuItem className="pl-7" disabled={pending}
                             onSelect={() => menuEntry.type === 'dir' ? openDirectory(menuEntry.name) : openListed(menuEntry.name)}>
-                            {t(menuEntry.type === 'dir' ? 'filesGrid.openFolder' : 'filesGrid.open')}
+                            {t(menuEntry.type === 'dir' ? 'files.grid.openFolder' : 'files.grid.open')}
                         </ContextMenuItem>
                         {nativeSave && menuVersion && <ContextMenuItem disabled={pending || savingFile}
                             onSelect={() => void saveAs(childPath(menuEntry.name), menuVersion)}>
@@ -530,12 +530,12 @@ export function DesktopCoworkerFilesBody({ agent, initialFilePath, registerClose
                         </ContextMenuItem>}
                         <ContextMenuItem disabled={pending} onSelect={() => { renameAfterMenu.current = { folder: currentPath, entry: menuEntry } }}>
                             <PencilIcon className="size-4" />
-                            {t('filesGrid.rename')}
+                            {t('files.grid.rename')}
                         </ContextMenuItem>
                         <ContextMenuSeparator />
                         <ContextMenuItem variant="destructive" disabled={pending} onSelect={() => setDeleting({ path: childPath(menuEntry.name), name: menuEntry.name, type: menuEntry.type, identity: menuEntry.identity })}>
                             <Trash2Icon className="size-4" />
-                            {t('filesGrid.delete')}
+                            {t('files.grid.delete')}
                         </ContextMenuItem>
                     </ContextMenuContent>}
                 </ContextMenu>}

@@ -8,6 +8,7 @@ import { importDesktopSharedFiles, listDesktopSharedFolder, renameDesktopSharedE
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { UploadEntry } from '@/lib/files/upload'
 import { FolderIcon } from '@/lib/icons'
+import { useDesktopLocale } from './DesktopLocale'
 import { DesktopSharedFilePreview } from './shared-files/DesktopSharedFilePreview'
 import { DesktopSharedImportResults } from './shared-files/DesktopSharedImportResults'
 import { useDesktopSharedDelete } from './shared-files/useDesktopSharedDelete'
@@ -20,14 +21,13 @@ import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@
 // shared Files view. Renames stay within the selected folder.
 // Optional FileList actions keep the original layout without advertising unavailable mutations.
 
-const ROOT = 'Files'
 const joinPath = (dir: string, name: string) => (dir ? `${dir}/${name}` : name)
 const parentPath = (path: string) => path.split('/').filter(Boolean).slice(0, -1).join('/')
 
-function folderCrumbs(path: string, onSelect: (path: string) => void): BrainCrumb[] {
+function folderCrumbs(path: string, rootLabel: string, onSelect: (path: string) => void): BrainCrumb[] {
     const parts = path.split('/').filter(Boolean)
     return [
-        { label: ROOT, icon: FolderIcon, onClick: () => onSelect('') },
+        { label: rootLabel, icon: FolderIcon, onClick: () => onSelect('') },
         ...parts.map((part, index) => ({ label: part, onClick: () => onSelect(parts.slice(0, index + 1).join('/')) })),
     ]
 }
@@ -37,6 +37,8 @@ function messageOf(error: unknown, fallback: string): string {
 }
 
 function SharedFolder({ path, onOpen, workspaceId }: { path: string; onOpen: (path: string, directory: boolean) => void; workspaceId?: number | null }) {
+    const { t } = useDesktopLocale()
+    const rootLabel = t('brain.files.root')
     const { deleting, remove } = useDesktopSharedDelete(workspaceId, path)
     const { available: canSaveLocally, saving, savedName, save } = useDesktopSharedSave(workspaceId, path)
     const [entries, setEntries] = useState<DesktopSharedEntry[] | undefined>()
@@ -180,26 +182,26 @@ function SharedFolder({ path, onOpen, workspaceId }: { path: string; onOpen: (pa
     const busy = uploading || renaming || deleting || saving
     return (
         <div className="flex min-h-0 flex-1 flex-col">
-            <BrainTopBar crumbs={folderCrumbs(path, next => onOpen(next, true))} status={truncated ? 'Showing the first 512 entries' : undefined} />
+            <BrainTopBar crumbs={folderCrumbs(path, rootLabel, next => onOpen(next, true))} status={truncated ? t('sharedFiles.truncated') : undefined} />
             <DesktopSharedImportResults results={results} disabled={busy} onRetry={result => void retry(result)} onOpen={path => onOpen(path, false)} />
-            {uploading && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">Importing files…</p>}
-            {savedName && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">Saved {savedName}</p>}
-            {failed ? <div className="space-y-2 px-6 py-6"><p role="alert" className="text-sm text-destructive">{failed}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>Retry</Button></div> : <FileList
+            {uploading && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">{t('sharedFiles.importing')}</p>}
+            {savedName && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">{t('sharedFiles.saved', { name: savedName })}</p>}
+            {failed ? <div className="space-y-2 px-6 py-6"><p role="alert" className="text-sm text-destructive">{failed}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>{t('brain.workspace.retry')}</Button></div> : <FileList
                 key={path}
-                title={path.split('/').filter(Boolean).pop() ?? ROOT}
+                title={path.split('/').filter(Boolean).pop() ?? rootLabel}
                 entries={entries}
                 onOpen={entry => onOpen(joinPath(path, entry.name), entry.type === 'dir')}
-                emptyDescription="Nothing here yet. Import text, images, audio, video, or PDFs for this workspace."
+                emptyDescription={t('sharedFiles.empty')}
                 canRename={entry => !!workspaceId && !!entry.deleteRevision && !busy}
                 onRename={(name, next, entry) => void rename(name, next, entry.deleteRevision)}
                 canDownload={entry => canSaveLocally && entry.type === 'file' && !!entry.deleteRevision && !busy}
                 onDownload={(name, entry) => { if (!importing.current) void save(joinPath(path, name), entry.deleteRevision) }}
-                downloadLabel="Save As"
+                downloadLabel={t('sharedFiles.saveAs')}
                 canDelete={entry => !!workspaceId && !!entry.deleteRevision && !busy}
                 onDelete={async (name, entry) => {
                     if (!importing.current && await remove(joinPath(path, name), entry.deleteRevision)) setAttempt(value => value + 1)
                 }}
-                deleteScope="workspace"
+                deleteDescription={{ file: t('sharedFiles.deleteFile'), folder: t('sharedFiles.deleteFolder') }}
                 uploadDisabled={busy || !entries}
                 onUpload={picked => void upload(picked)}
             />}
@@ -240,14 +242,15 @@ function SharedFilesPanel({ onClose, workspaceId }: { onClose: () => void; works
 export function DesktopSharedFiles({ dialogControl, hideTrigger = false, onCloseAutoFocus, workspaceId }: {
     dialogControl?: DesktopDialogControl; hideTrigger?: boolean; onCloseAutoFocus?: (event: Event) => void; workspaceId?: number | null
 }) {
+    const { t } = useDesktopLocale()
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     return (
         <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
-            {!hideTrigger && <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Shared files</Button></DialogTrigger>}
+            {!hideTrigger && <DialogTrigger asChild><Button type="button" variant="outline" size="sm">{t('sharedFiles.title')}</Button></DialogTrigger>}
             {open && <DialogContent onCloseAutoFocus={onCloseAutoFocus} className="flex h-[80dvh] flex-col sm:max-w-5xl">
                 <DialogHeader>
-                    <DialogTitle>Shared files</DialogTitle>
-                    <DialogDescription>Import files for this workspace. Coworkers with Read shared files can read shared .txt and .md files.</DialogDescription>
+                    <DialogTitle>{t('sharedFiles.title')}</DialogTitle>
+                    <DialogDescription>{t('sharedFiles.description')}</DialogDescription>
                 </DialogHeader>
                 <SharedFilesPanel key={workspaceId ?? 'loading'} workspaceId={workspaceId} onClose={() => setOpen(false)} />
             </DialogContent>}

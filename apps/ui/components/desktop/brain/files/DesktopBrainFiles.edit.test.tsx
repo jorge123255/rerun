@@ -3,6 +3,9 @@ import { act, type ComponentProps } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages, englishDesktopLanguage } from '@/lib/desktop/locale'
+import { DesktopLocale, useDesktopLocale } from '../../DesktopLocale'
 import { DesktopBrainFile } from './DesktopBrainFiles'
 import { DesktopSharedFilePreview } from '../../shared-files/DesktopSharedFilePreview'
 
@@ -116,4 +119,33 @@ test('native quit requires confirmation for an unsaved Brain file and Stay prese
         await click('Discard changes')
         await act(async () => { expect(await flushDesktopDrafts()).toBe(true) })
     } finally { act(cancelDraftShutdown) }
+})
+
+test('Brain Files follows the app language without losing the draft, file name or line endings', async () => {
+    const language = { locale: 'fr', preference: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) } as const
+    fetchFile.mockImplementation(async (_url, init?: RequestInit) => init?.method === 'PUT'
+        ? Response.json({ ok: true, workspaceId: 2, path, editIdentity: saved })
+        : Response.json({ path, content: 'original\r\n', truncated: false, editIdentity: original }))
+    function LanguageSwitch() {
+        const { setLanguage } = useDesktopLocale()
+        return <button type="button" onClick={() => setLanguage(englishDesktopLanguage)}>Switch to English</button>
+    }
+    await act(async () => root.render(<DesktopLocale initial={language}>
+        <LanguageSwitch />
+        <DesktopBrainFile path={path} workspaceId={2} files={files} onSelect={vi.fn()} />
+    </DesktopLocale>))
+    expect(document.querySelector('button[aria-label="Retour au dossier"]')).toBeTruthy()
+    await click('Modifier')
+    await edit('version locale\n')
+    expect(document.body.textContent).toContain('Non enregistré')
+    await click('Annuler')
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('Abandonner vos modifications ?')
+    await click('Continuer à modifier')
+    expect(field().value).toBe('version locale\n')
+    expect(button('Enregistrer')).toBeDefined()
+    await click('Switch to English')
+    expect(field().value).toBe('version locale\n')
+    expect(fetchFile).toHaveBeenCalledTimes(1)
+    await click('Save changes')
+    expect(JSON.parse(fetchFile.mock.calls[1][1].body)).toEqual({ workspaceId: 2, path, content: 'version locale\r\n', base: original })
 })

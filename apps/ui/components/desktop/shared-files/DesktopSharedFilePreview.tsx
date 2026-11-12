@@ -21,16 +21,17 @@ import { DesktopFileAudioPreview } from '../DesktopFileAudioPreview'
 import { DesktopFileVideoPreview } from '../DesktopFileVideoPreview'
 import { DesktopFilePdfPreview } from '../DesktopFilePdfPreview'
 import { FileSiblingControls, useFileSiblingKeys } from '../DesktopFileSiblingNav'
+import { useDesktopLocale } from '../DesktopLocale'
 import { useDesktopSharedDelete } from './useDesktopSharedDelete'
 import { useDesktopSharedSave } from './useDesktopSharedSave'
 
 const joinPath = (dir: string, name: string) => (dir ? `${dir}/${name}` : name)
 const parentPath = (path: string) => path.split('/').filter(Boolean).slice(0, -1).join('/')
 
-function folderCrumbs(path: string, onSelect: (path: string) => void): BrainCrumb[] {
+function folderCrumbs(path: string, rootLabel: string, onSelect: (path: string) => void): BrainCrumb[] {
     const parts = path.split('/').filter(Boolean)
     return [
-        { label: 'Files', icon: FolderIcon, onClick: () => onSelect('') },
+        { label: rootLabel, icon: FolderIcon, onClick: () => onSelect('') },
         ...parts.map((part, index) => ({ label: part, onClick: () => onSelect(parts.slice(0, index + 1).join('/')) })),
     ]
 }
@@ -47,6 +48,7 @@ export function DesktopSharedFilePreview({ path, entries, onOpen, editWorkspaceI
     onTextSaved?: () => void
     onDeleted?: () => void
 }) {
+    const { t } = useDesktopLocale()
     const dir = parentPath(path)
     const name = path.split('/').pop() ?? path
     const kind = filePreviewKind(name)
@@ -78,7 +80,7 @@ export function DesktopSharedFilePreview({ path, entries, onOpen, editWorkspaceI
             .then(page => { if (!controller.signal.aborted) {
                 setPreview({ path, content: page.content, truncated: page.truncated, error: null, editIdentity: page.editIdentity, deleteRevision: page.deleteRevision })
             } })
-            .catch(error => { if (!controller.signal.aborted) setPreview({ path, content: null, truncated: false, error: messageOf(error, 'This file could not be read') }) })
+            .catch(error => { if (!controller.signal.aborted) setPreview({ path, content: null, truncated: false, error: messageOf(error, '') }) })
         return () => controller.abort()
     }, [path, text, attempt])
 
@@ -100,7 +102,7 @@ export function DesktopSharedFilePreview({ path, entries, onOpen, editWorkspaceI
     const selectedRevision = selection?.path === path && selection.revision === listedRevision ? selection.revision : undefined
     const displayedRevision = text ? ready?.deleteRevision : selectedRevision
     const deleteRevision = displayedRevision === listedRevision ? displayedRevision : undefined
-    const saveVersion = text && !ready?.error ? deleteRevision : selectedRevision
+    const saveVersion = text && ready?.error == null ? deleteRevision : selectedRevision
 
     async function saveText(content: string, baseHash: string | null): Promise<SaveFileResult> {
         if (!editWorkspaceId || !editBase.current || baseHash === null) {
@@ -115,7 +117,7 @@ export function DesktopSharedFilePreview({ path, entries, onOpen, editWorkspaceI
             controller.signal.throwIfAborted()
             editBase.current = saved.editIdentity
             savedDeleteRevision.current = saved.deleteRevision
-            if (saved.recoveryPath) toast.success('Changes saved. The previous version is in this folder.')
+            if (saved.recoveryPath) toast.success(t('sharedFiles.previousVersionSaved'))
             return { success: true }
         } catch (error) {
             editBase.current = null
@@ -128,27 +130,27 @@ export function DesktopSharedFilePreview({ path, entries, onOpen, editWorkspaceI
 
     return (
         <div ref={viewerRef} className="flex min-h-0 flex-1 flex-col">
-            <BrainTopBar crumbs={[...folderCrumbs(dir, next => goTo(next, true)), { label: name, icon: FileIcon }]} />
+            <BrainTopBar crumbs={[...folderCrumbs(dir, t('brain.files.root'), next => goTo(next, true)), { label: name, icon: FileIcon }]} />
             <div className="shrink-0 border-t border-border">
-                <PanelEditorHeader title={name} mono onBack={navigationBlocked ? undefined : back} backLabel="Back to folder">
+                <PanelEditorHeader title={name} mono onBack={navigationBlocked ? undefined : back} backLabel={t('sharedFiles.backToFolder')}>
                     <FileSiblingControls siblings={visibleSiblings} />
                     {canSaveLocally && <Button type="button" size="xs" variant="outline" disabled={saving || deleting || editing || !saveVersion}
                         onClick={() => void save(path, saveVersion, (text ? ready?.editIdentity?.expectedSha256 : previewHash) ?? undefined)}>
-                        <DownloadIcon className="size-3.5" />{saving ? 'Saving…' : 'Save As'}
+                        <DownloadIcon className="size-3.5" />{t(saving ? 'sharedFiles.saving' : 'sharedFiles.saveAs')}
                     </Button>}
                     {canEdit && <Button type="button" size="xs" variant="outline" disabled={saving || deleting} onClick={() => {
                         editBase.current = ready.editIdentity ?? null
                         setEditing(true)
-                    }}>Edit</Button>}
-                    {!!editWorkspaceId && deleteRevision && <PanelDeleteButton type="button" label="Delete file" confirm={false}
+                    }}>{t('files.actions.edit')}</Button>}
+                    {!!editWorkspaceId && deleteRevision && <PanelDeleteButton type="button" label={t('files.actions.deleteFile')} confirm={false}
                         disabled={saving || editing || deleting} onClick={() => setConfirmDelete(deleteRevision)} />}
-                    {savedName && <Badge size="xs" tone="green" glow={false}>Saved {savedName}</Badge>}
-                    {ready?.truncated && <Badge size="xs" tone="orange" glow={false}>Truncated</Badge>}
+                    {savedName && <Badge size="xs" tone="green" glow={false}>{t('sharedFiles.saved', { name: savedName })}</Badge>}
+                    {ready?.truncated && <Badge size="xs" tone="orange" glow={false}>{t('files.actions.truncated')}</Badge>}
                 </PanelEditorHeader>
             </div>
             <div className="flex min-h-0 flex-1 flex-col">
                 {text ? (
-                    ready?.error ? <div className="space-y-2 p-3"><p role="alert" className="text-xs text-destructive">{ready.error}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>Retry</Button></div> : <FilePreview fileName={name} content={ready?.content ?? null} rawUrl="" loading={!ready} />
+                    ready?.error != null ? <div className="space-y-2 p-3"><p role="alert" className="text-xs text-destructive">{ready.error || t('files.preview.readFailed')}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>{t('brain.workspace.retry')}</Button></div> : <FilePreview fileName={name} content={ready?.content ?? null} rawUrl="" loading={!ready} />
                 ) : kind === 'image' ? <DesktopFileImagePreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'image')} onBack={back} chrome="body" onPreviewIdentity={setPreviewHash} />
                     : kind === 'audio' ? <DesktopFileAudioPreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'audio')} onBack={back} chrome="body" onPreviewIdentity={setPreviewHash} />
                     : kind === 'video' ? <DesktopFileVideoPreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'video')} onBack={back} chrome="body" onPreviewIdentity={setPreviewHash} />
@@ -175,7 +177,8 @@ export function DesktopSharedFilePreview({ path, entries, onOpen, editWorkspaceI
                 />
             )}
             {confirmDelete && <ConfirmDialog open pending={deleting} onOpenChange={open => { if (!open && !deleting) setConfirmDelete(null) }}
-                title={`Delete ${name}?`} description="The file is deleted from the workspace. This cannot be undone."
+                title={t('files.delete.title', { name })} description={t('sharedFiles.deleteFile')}
+                confirmLabel={t('files.grid.delete')} cancelLabel={t('cancel')}
                 onConfirm={event => {
                     event.preventDefault()
                     void remove(path, confirmDelete).then(removed => {

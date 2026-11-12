@@ -16,6 +16,7 @@ import { FolderIcon } from '@/lib/icons'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
+import { useDesktopLocale } from '../../DesktopLocale'
 
 function folderCrumbs(path: string, rootLabel: string, onSelect: (selection: BrainSelection) => void): BrainCrumb[] {
     const parts = path.split('/').filter(Boolean)
@@ -42,6 +43,7 @@ export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResu
     workspaceId?: number | null
 }) {
     const t = useBrainTranslations()
+    const { t: desktop } = useDesktopLocale()
     const rootLabel = t('files.root')
     const { expand } = files
     const { deleting, remove } = useDesktopSharedDelete(workspaceId, path)
@@ -89,10 +91,10 @@ export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResu
 
     return (
         <div className="flex min-h-0 flex-1 flex-col">
-            <BrainTopBar crumbs={folderCrumbs(path, rootLabel, onSelect)} status={truncatedOf(files, path) ? 'Showing the first 512 entries' : undefined} />
+            <BrainTopBar crumbs={folderCrumbs(path, rootLabel, onSelect)} status={truncatedOf(files, path) ? desktop('sharedFiles.truncated') : undefined} />
             <DesktopSharedImportResults results={results} disabled={importing || deleting || saving} onRetry={onRetryImport} onOpen={next => onSelect({ kind: 'file', path: next })} />
-            {importing && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">Importing files…</p>}
-            {savedName && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">Saved {savedName}</p>}
+            {importing && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">{desktop('sharedFiles.importing')}</p>}
+            {savedName && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">{desktop('sharedFiles.saved', { name: savedName })}</p>}
             <FileList
                 key={`${workspaceId}:${path}`}
                 title={path.split('/').filter(Boolean).pop() ?? rootLabel}
@@ -102,7 +104,7 @@ export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResu
                 canRename={entry => !!workspaceId && !!entry.deleteRevision && !importing && !renaming && !deleting && !saving}
                 canDownload={entry => canSaveLocally && entry.type === 'file' && !!entry.deleteRevision && !importing && !renaming && !deleting && !saving}
                 onDownload={(name, entry) => { if (!pending.current) void save(joinPath(path, name), entry.deleteRevision) }}
-                downloadLabel="Save As"
+                downloadLabel={desktop('sharedFiles.saveAs')}
                 canDelete={entry => !!workspaceId && !!entry.deleteRevision && !importing && !renaming && !deleting && !saving}
                 onDelete={async (name, entry) => {
                     const target = joinPath(path, name)
@@ -110,10 +112,10 @@ export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResu
                     if (entry.type === 'dir') files.forget?.(target)
                     await files.refresh(path)
                 }}
-                deleteScope="workspace"
+                deleteDescription={{ file: desktop('sharedFiles.deleteFile'), folder: desktop('sharedFiles.deleteFolder') }}
                 onUpload={entries => onUpload(entries, path)}
                 uploadDisabled={importing || renaming || deleting || saving}
-                emptyDescription="Nothing here yet. Import text, images, audio, video, or PDFs for this workspace."
+                emptyDescription={desktop('sharedFiles.empty')}
             />
         </div>
     )
