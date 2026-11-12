@@ -3,7 +3,7 @@ import { coworkerToolCatalogs, coworkerToolPatch, type CoworkerToolPatch } from 
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { desktopRoute } from '@/lib/desktop/server/http'
-import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
+import { desktopAppStoreBuild, type DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { engineOf } from '@/lib/desktop/server/settings'
 import { findDesktopAgent } from '@/lib/desktop/server/store'
 import { EngineRequestError, getAgent, patchAgent } from '@/lib/engine/client'
@@ -34,13 +34,18 @@ function toolPayload(patch: CoworkerToolPatch): EngineAgentConfigPatch {
     return { tools: { [patch.group === 'codex' ? 'desktopCodexGrants' : 'desktopToolGrants']: { [patch.id]: patch.enabled } } }
 }
 
+const directBuildRequired = 'This tool requires the direct Mac build.'
+const requiresDirectBuild = (group: 'codex' | 'rerun', id: string) => group === 'codex' || id === 'nativeWriteback'
+
 async function toolsFor(runtime: DesktopRuntime, id: string, patch?: CoworkerToolPatch) {
     const owner = await findDesktopAgent(await openDesktopDatabase(runtime.dataRoot), id)
     if (!owner) throw new DesktopHttpError(404, 'Coworker not found')
     const engine = engineOf(runtime)
     try {
         const current = await getAgent(engine, owner.engineAgentId)
+        const appStore = desktopAppStoreBuild()
         if (patch) {
+            if (appStore && patch.enabled && requiresDirectBuild(patch.group, patch.id)) throw new DesktopHttpError(400, directBuildRequired)
             const row = coworkerToolCatalogs[patch.group].find(entry => entry.id === patch.id)
             if (!row?.available) throw new DesktopHttpError(400, 'This tool is unavailable for this coworker.')
             if (patch.group === 'rerun' && patch.enabled) {
@@ -63,9 +68,13 @@ async function toolsFor(runtime: DesktopRuntime, id: string, patch?: CoworkerToo
                 const nested = row.parent === 'self'
                 const reason = pausedReason(row.id, agent.config)
                 const enabled = !reason && (row.id === 'toolInstall' && !agent.config.selfImprovement.allowToolInstall ? false : row.id === 'self' ? master : nested ? master && rerun[row.id] === true : rerun[row.id] === true)
+                if (appStore && requiresDirectBuild('rerun', row.id)) return { ...row, available: false, unavailableReason: directBuildRequired, enabled }
                 return { ...row, ...(reason && { available: false, unavailableReason: reason }), enabled: row.available && enabled }
             }),
-            codex: coworkerToolCatalogs.codex.map(row => ({ ...row, enabled: row.available && codex[row.id] === true })),
+            codex: coworkerToolCatalogs.codex.map(row => ({
+                ...row, ...(appStore && { available: false, unavailableReason: directBuildRequired }),
+                enabled: row.available && codex[row.id] === true,
+            })),
         }, { headers: { 'cache-control': 'no-store' } })
     } catch (error) {
         if (error instanceof DesktopHttpError) throw error

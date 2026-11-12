@@ -84,6 +84,7 @@ export type DesktopBootstrap = ConnectionsList & {
     workspace: { id: number; name: string }
     runtimeWorkspaceId?: number
     runtimeLaunchNonce?: string
+    appStoreBuild?: boolean
     iconCatalogId?: string | null
     iconUploadId?: string | null
     agents: DesktopAgentView[]
@@ -885,7 +886,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 </div>
                 <DesktopSettings key={JSON.stringify([settingsTab, settingsConnection])} initialTab={settingsTab}
                     initialConnectionId={settingsConnection} providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={applyProviders}
-                    workspaceId={runtimeWorkspaceId} onConnectionsChanged={() => { void refreshProviders() }} />
+                    workspaceId={runtimeWorkspaceId} appStoreBuild={initialData.appStoreBuild} onConnectionsChanged={() => { void refreshProviders() }} />
             </div>}
             <DesktopTemplateNavigation open={templatesOpen} onOpenChange={setTemplatesOpen} onActiveChange={setTemplateFlowActive} onCreateFromScratch={() => showBoard(true)}
                 requestedTemplate={templateToReview} onPlaceTemplate={beginTemplatePlacement} onInstalled={receipt => {

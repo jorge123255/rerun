@@ -90,3 +90,44 @@ it('opens only the failed subscription, and closes its controls if the saved con
         vi.unstubAllGlobals()
     }
 })
+
+it('offers local API keys in App Store mode without mounting subscription sign-in', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const key: ConnectionSummary = {
+        id: 'legacy-openai', name: 'Fixture API key', provider: 'openai', models: ['key-model'],
+        extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '',
+    }
+    const subscription: ConnectionSummary = { ...key, id: 'mac-chatgpt', provider: 'codex', name: 'Saved Codex', models: ['codex-model'] }
+    const providers: ConnectionsList = { connections: [key, subscription], default: { connectionId: subscription.id, model: 'codex-model' } }
+    const fetcher = vi.fn<typeof fetch>(async (url) => {
+        expect(url).toBe('/api/desktop/api-connections/1/catalog')
+        return Response.json({ version: 1, workspaceId: 1, default: null, connections: [] })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const host = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(host)
+    const save = vi.fn(async () => {})
+    try {
+        await act(async () => root.render(<DesktopSettings appStoreBuild providers={providers} workspaceName="Offline fixture"
+            workspaceId={1} onProviders={vi.fn()} onSave={save} />))
+        const model = host.querySelector<HTMLSelectElement>('#desktop-default')!
+        const provider = host.querySelector<HTMLSelectElement>('#desktop-provider')!
+        expect(host.textContent).toContain('Local subscription sign-in and native command tools require the direct Mac build.')
+        expect([...provider.options].map(option => option.value)).not.toContain('add:claude')
+        expect([...provider.options].map(option => option.value)).not.toContain('mac-chatgpt')
+        expect([...provider.options].map(option => option.value)).toContain('add:custom')
+        expect(fetcher.mock.calls.some(([url]) => String(url).includes('subscription-login'))).toBe(false)
+        expect(model.querySelector('optgroup[label="Saved Codex"]')).toBeNull()
+        expect(save).not.toHaveBeenCalled()
+        const option = [...model.options].find(item => item.textContent === 'key-model')!
+        await act(async () => {
+            model.value = option.value
+            model.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+        expect(save).toHaveBeenCalledExactlyOnceWith({ action: 'default', connectionId: key.id, model: 'key-model' })
+    } finally {
+        await act(async () => root.unmount())
+        host.remove()
+        vi.unstubAllGlobals()
+    }
+})

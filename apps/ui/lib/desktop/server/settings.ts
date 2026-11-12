@@ -13,7 +13,7 @@ import { openDesktopDatabase } from './database'
 import { readDesktopBootstrap } from './store'
 import { desktopProfileDatabase } from './local-profile'
 import { desktopAgentView } from './views'
-import type { DesktopRuntime } from './runtime'
+import { desktopAppStoreBuild, type DesktopRuntime } from './runtime'
 
 export function engineOf(runtime: DesktopRuntime) {
     return { baseUrl: runtime.engine.origin, apiKey: runtime.engine.apiKey }
@@ -36,7 +36,7 @@ export async function readDesktopWorkspace(runtime: DesktopRuntime) {
         }),
         readDesktopProviders(runtime),
     ])
-    return { ...bootstrap, ...providers, runtimeWorkspaceId: runtime.workspaceId, runtimeLaunchNonce: runtime.launchNonce, agents: bootstrap.agents.map(desktopAgentView) }
+    return { ...bootstrap, ...providers, ...(desktopAppStoreBuild() && { appStoreBuild: true }), runtimeWorkspaceId: runtime.workspaceId, runtimeLaunchNonce: runtime.launchNonce, agents: bootstrap.agents.map(desktopAgentView) }
 }
 
 export async function desktopModel(runtime: DesktopRuntime) {

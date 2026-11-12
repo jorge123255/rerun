@@ -35,6 +35,7 @@ type Props = {
     onProviders: (providers: ConnectionsList) => void
     onSave: (change: SettingsChange) => Promise<void>
     workspaceId?: number | null
+    appStoreBuild?: boolean
     onConnectionsChanged?: () => void
 }
 
@@ -44,12 +45,13 @@ function effortLabel(effort: string) {
     return effort === 'xhigh' ? 'Extra high' : effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 
-export function DesktopSettings({ providers, workspaceName, onSave, onProviders, initialTab, initialConnectionId = null, workspaceId = null, onConnectionsChanged }: Props) {
+export function DesktopSettings({ providers, workspaceName, onSave, onProviders, initialTab, initialConnectionId = null, workspaceId = null, appStoreBuild = false, onConnectionsChanged }: Props) {
     const { t } = useDesktopLocale()
     const apiConnections = useMemo(() => Number.isSafeInteger(workspaceId) && (workspaceId ?? 0) > 0 ? createApiConnectionsClient(desktopApiConnectionUiRoutes) : null, [workspaceId])
     const labels = { 'AI providers': t('providers'), 'Tool services': t('toolServices'), Workspace: t('workspace'), Notifications: t('notifications'), Shortcuts: t('shortcuts') }
     const [tab, setTab] = useState<typeof panels[number]>(initialTab ?? 'AI providers')
-    const standardConnections = providers.connections.filter(c => !hasDesktopApiConnectionPrefix(c.id))
+    const supports = (provider: string) => !appStoreBuild || (provider !== 'codex' && provider !== 'claude' && !isDesktopSubscriptionProvider(provider))
+    const standardConnections = providers.connections.filter(c => !hasDesktopApiConnectionPrefix(c.id) && supports(c.provider))
     const editable = standardConnections.filter(c => !isDesktopSubscriptionProvider(c.provider))
     const defaultSource = editable.find(c => c.id === providers.default?.connectionId)?.id ?? editable[0]?.id ?? 'add:openai'
     const [source, setSource] = useState(initialConnectionId ?? defaultSource)
@@ -59,14 +61,14 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
     const [busy, setBusy] = useState(false)
     const [notice, setNotice] = useState('')
     const [error, setError] = useState('')
-    const recovery = recoveryId ? providers.connections.find(connection => connection.id === recoveryId) : undefined
+    const recovery = recoveryId ? providers.connections.find(connection => connection.id === recoveryId && supports(connection.provider)) : undefined
     const recoveringNamed = !!recoveryId && hasDesktopApiConnectionPrefix(recoveryId)
     const recoverySubscription = isDesktopSubscriptionProvider(recovery?.provider) ? recovery.provider : undefined
     const recoveryNamed = recovery && desktopApiConnectionIdSchema.safeParse(recovery.id).success
         && desktopApiConnectionProviderSchema.safeParse(recovery.provider).success ? recovery : undefined
     const current = editable.find(c => c.id === source)
     const provider = current ? desktopProvider.parse(current.provider) : desktopProvider.safeParse(source.replace(/^add:/, '')).data ?? 'openai'
-    const missing = desktopProvider.options.filter(p => p !== 'custom' && (p !== 'opencode' || !!workspaceId) && !isDesktopSubscriptionProvider(p) && !editable.some(c => c.provider === p))
+    const missing = desktopProvider.options.filter(p => supports(p) && p !== 'custom' && (p !== 'opencode' || !!workspaceId) && !isDesktopSubscriptionProvider(p) && !editable.some(c => c.provider === p))
     const defaultConnections = standardConnections.filter(c => c.connected && !((c.provider === 'claude' || c.provider === 'opencode') && c.credentialRejected))
     const picks = defaultConnections.flatMap(c => enabledModels(c).map(m => ({ connectionId: c.id, model: m.id })))
     const selected = picks.findIndex(p => p.connectionId === providers.default?.connectionId && p.model === providers.default.model)
@@ -126,6 +128,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                             {recovery && (!recoveringNamed || recoveryNamed) ? <h2 className="text-lg font-semibold">{recovery.name}</h2>
                                 : <p role="status" className="text-sm text-muted-foreground">This connection is no longer available. Choose a provider from AI providers to continue.</p>}
                         </div>}
+                        {appStoreBuild && <p role="status" className="text-sm text-muted-foreground">{t('appStoreLocalProviders')}</p>}
                         {!recoveryId && <div className="space-y-2 rounded-xl border p-4">
                             <label htmlFor="desktop-default" className="font-semibold">{t('defaultModel')}</label>
                             <p className="text-sm text-muted-foreground">Used for the next message to any coworker, including in existing conversations.</p>
@@ -199,9 +202,9 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                 {provider === 'openrouter' && <CustomModelList models={connection.extraModels} reserved={DEFAULT_CONNECTION_MODELS.openrouter} onChange={extras => changeModels(connection.models, extras)} />}
                             </div>}
                         </div>}
-                        {(!recoveryId || recoverySubscription) && <DesktopSubscriptionLogin key={workspaceId ?? 'workspace'}
+                        {!appStoreBuild && (!recoveryId || recoverySubscription) && <DesktopSubscriptionLogin key={workspaceId ?? 'workspace'}
                             only={recoverySubscription} onConnectionsChanged={onConnectionsChanged} />}
-                        {!recoveryId && <p className="text-sm text-muted-foreground">Connect ChatGPT (Codex) or Claude with your subscription, or use an API key for the other providers.</p>}
+                        {!appStoreBuild && !recoveryId && <p className="text-sm text-muted-foreground">Connect ChatGPT (Codex) or Claude with your subscription, or use an API key for the other providers.</p>}
                     </>}
                     {tab === 'Workspace' && <>
                         <DesktopLanguageSettings />
