@@ -5,6 +5,7 @@ import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { ChatTimeSeparator } from '@/components/chat/ChatTimeSeparator'
 import { MessageTimeTooltip } from '@/components/chat/MessageTimeTooltip'
 import { ExpandableMessageBody } from '@/components/chat/ExpandableMessageBody'
+import { ComposerLinkMirror } from '@/components/chat/ComposerLinkMirror'
 import { timeBreaksOf } from '@/lib/chat/message-times'
 import { DesktopConversationOverview, type DesktopConversationOverviewAuthority } from './coworker-overview/conversation-mount'
 
@@ -1539,7 +1540,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                             beginUpload(files)
                         }} />
                     <label htmlFor={composerId} className="sr-only">Message {agent.name}</label>
-                    <DesktopCoworkerMentions agentId={agent.id} text={input} mentions={coworkerMentions} onTextChange={setInput}
+                    <DesktopCoworkerMentions scope={draftKey} agentId={agent.id} text={input} mentions={coworkerMentions} onTextChange={setInput}
                         onMentionsChange={value => { pickedMentions.current = value }}
                         enabled={active && !inactive && draft.loaded && !draft.error && !draft.quitting && !regenerationSource && !detailPanel}
                         refreshKey={`${status}:${lastMessage?.id ?? ''}`}>
@@ -1550,20 +1551,24 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                         ref={mention.inputRef}
                         id={composerId}
                         rows={2}
-                        className={cn('min-h-12 w-full resize-none rounded-none border-0 bg-transparent px-2.5 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent', expandable && 'pr-9')}
+                        className={cn('min-h-12 w-full resize-none rounded-none border-0 bg-transparent px-2.5 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent',
+                            expandable && 'pr-9', mention.linkMirror && 'text-transparent caret-foreground [scrollbar-gutter:stable]')}
                         maxLength={20_000}
                         disabled={inactive || !draft.loaded || !!draft.error || draft.quitting}
                         readOnly={!!regenerationSource || !!attachmentPaths.length && status === 'submitted'}
                         placeholder={placeholder}
-                        value={input}
                         {...mention.textareaProps}
                         onPaste={event => {
                             const files = Array.from(event.clipboardData.files)
-                            if (!files.length) return
+                            if (!files.length) { mention.textareaProps.onPaste(event); return }
                             event.preventDefault()
                             beginUpload(files)
                         }}
                     />
+                    {mention.linkMirror && <ComposerLinkMirror {...mention.linkMirror}
+                        className={cn('px-2.5 py-2 text-base text-foreground md:text-sm [scrollbar-gutter:stable]', expandable && 'pr-9')}
+                        labels={{ open: t('composerLink.open'), unlink: t('composerLink.unlink') }}
+                        editable={!inactive && draft.loaded && !draft.error && !draft.quitting && !regenerationSource && !(attachmentPaths.length && status === 'submitted')} />}
                     </div>
                     {mention.menu}
                     {mention.targetError && /(?:^|\s)@\S*$/.test(input) && <div role="status" className="flex items-center gap-2 px-2.5 pb-2 text-xs text-muted-foreground"><span>{mention.targetError}</span><Button type="button" variant="ghost" size="xs" onClick={mention.retryTargets}>Retry coworkers</Button></div>}

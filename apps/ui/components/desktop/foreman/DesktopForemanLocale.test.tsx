@@ -145,6 +145,72 @@ it('selects the exact enabled coworker by Box on Return, then sends only on a se
     expect(send).toHaveBeenCalledExactlyOnceWith('@Sam', [{ targetId: 'second', token: '@Sam', start: 0, end: 4 }])
 })
 
+it('turns typed HTTPS URLs into keyboard-accessible chips and lets the user open, unlink or cut them without submitting', async () => {
+    const url = 'https://example.invalid/long/path/agenda?revision=42'
+    const unsafe = 'https://user:pass@example.invalid/hidden'
+    const send = vi.fn()
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const change = vi.fn()
+    function Harness() {
+        const [text, setText] = useState('')
+        const onChange = (value: string) => { change(value); setText(value) }
+        const mentions = useDesktopMentionAutocomplete({ text, mentions: [], targets: [], skills: [], onDraftChange: onChange })
+        return <DesktopForemanComposer draft={text} onDraftChange={onChange} mentions={mentions} onSend={send} maxLength={80} />
+    }
+    await show(<Harness />)
+    const field = document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')!
+    const type = (value: string) => act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, value)
+        field.setSelectionRange(value.length, value.length)
+        field.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const space = () => act(async () => field.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true })))
+    const chip = () => document.querySelector<HTMLButtonElement>(`button[aria-label="${url}"]`)
+    try {
+        await type(unsafe)
+        await space()
+        expect(field.value).toBe(unsafe)
+        expect(document.querySelector(`button[aria-label="${unsafe}"]`)).toBeNull()
+        await type(url)
+        await space()
+        const compact = field.value
+        expect(compact).not.toContain(url)
+        expect(change).toHaveBeenLastCalledWith(url + ' ')
+        expect(chip()?.type).toBe('button')
+        // A platform edit that would split a chip cannot replace its source with a partial label.
+        await type(compact.slice(0, 6) + 'X' + compact.slice(7))
+        expect(field.value).toBe(compact)
+        expect(change).toHaveBeenLastCalledWith(url + ' ')
+
+        await act(async () => chip()!.click())
+        await act(async () => button('Ouvrir').click())
+        expect(open).toHaveBeenCalledExactlyOnceWith(url, '_blank', 'noopener,noreferrer')
+        await vi.waitFor(() => expect(document.activeElement).toBe(field))
+        await act(async () => chip()!.click())
+        await act(async () => button('Retirer le lien').click())
+        expect(field.value).toBe(url + ' ')
+        expect(chip()).toBeNull()
+
+        await type(url)
+        await space()
+        const cut = new Event('cut', { bubbles: true, cancelable: true })
+        const setData = vi.fn()
+        Object.defineProperty(cut, 'clipboardData', { value: { setData } })
+        field.setSelectionRange(2, 6)
+        await act(async () => field.dispatchEvent(cut))
+        expect(setData).toHaveBeenCalledExactlyOnceWith('text/plain', url)
+        expect(field.value).toBe(' ')
+        expect(chip()).toBeNull()
+        const longUrl = 'https://example.invalid/agenda?token=' + 'a'.repeat(95)
+        const paste = new Event('paste', { bubbles: true, cancelable: true })
+        Object.defineProperty(paste, 'clipboardData', { value: { files: [], getData: () => longUrl } })
+        await act(async () => field.dispatchEvent(paste))
+        expect(field.value).toBe(' ')
+        expect(change).toHaveBeenLastCalledWith(' ')
+        expect(send).not.toHaveBeenCalled()
+    } finally { open.mockRestore() }
+})
+
 it('selects a connected model and returns to the translated workspace default without submitting the draft', async () => {
     const connection: ConnectionSummary = { id: 'fixture', name: 'Fixture', provider: 'openrouter', createdAt: '', connected: true,
         credentialRejected: false, planLimits: null, models: ['workspace-fixture', 'chosen-fixture'], extraModels: [] }

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import type { DesktopCoworkerCallTarget } from '@rerun/contracts'
@@ -36,9 +36,16 @@ afterEach(async () => {
 
 async function mount(onTextChange = vi.fn(), onMentionsChange = vi.fn(), onSubmit = vi.fn()) {
     root = createRoot(document.body.appendChild(document.createElement('div')))
-    await act(async () => root!.render(<DesktopCoworkerMentions agentId="owner-1" preferredBoxName="Research" text="" mentions={[]} onTextChange={onTextChange} onMentionsChange={onMentionsChange}>
-        {api => <form onSubmit={onSubmit}><textarea ref={api.inputRef} {...api.textareaProps} />{api.menu}</form>}
-    </DesktopCoworkerMentions>))
+    function Composer() {
+        const [text, setText] = useState('')
+        const [mentions, setMentions] = useState<Parameters<typeof DesktopCoworkerMentions>[0]['mentions']>([])
+        return <DesktopCoworkerMentions agentId="owner-1" preferredBoxName="Research" text={text} mentions={mentions}
+            onTextChange={value => { setText(value); onTextChange(value) }}
+            onMentionsChange={value => { setMentions(value); onMentionsChange(value) }}>
+            {api => <form onSubmit={onSubmit}><textarea ref={api.inputRef} {...api.textareaProps} />{api.menu}</form>}
+        </DesktopCoworkerMentions>
+    }
+    await act(async () => root!.render(<Composer />))
     return { onTextChange, onMentionsChange, onSubmit }
 }
 

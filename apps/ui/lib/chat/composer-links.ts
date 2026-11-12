@@ -79,9 +79,10 @@ function labelFor(url: string, links: ComposerLinks): string {
 }
 
 /** Swaps each URL of `text` for its chip label, recording the label in `links` so the text can be expanded back. */
-export function collapseLinks(text: string, links: ComposerLinks): string {
+export function collapseLinks(text: string, links: ComposerLinks, allow: (url: string) => boolean = () => true): string {
     return text.replace(URL_PATTERN, match => {
         const url = trimUrl(match)
+        if (!allow(url)) return match
         const label = labelFor(url, links)
         links.set(label, url)
         return `${label}${match.slice(url.length)}`

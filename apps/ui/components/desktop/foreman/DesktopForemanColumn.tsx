@@ -150,16 +150,17 @@ export function DesktopForemanColumn({
     const editAttachments = attachmentComposer && !hidden && !pendingRequest && !streaming && !sendingDocuments
         && !pendingSend && !foreman.blocked && !sendDisabled && ui.decision.status !== 'pending' && foreman.restored
     const documents = useDesktopDocumentAttachments({ ...foremanDocumentScope(chat, sessionId ?? ''), load: attachmentComposer, enabled: editAttachments })
-    const mentions = useDesktopMentionAutocomplete({
-        targets: editAttachments && mentionTargets ? mentionTargets : NO_MENTION_TARGETS,
-        skills: NO_SKILLS, requireCallable: false, text: ui.draft, mentions: ui.draftCoworkerMentions ?? NO_MENTIONS,
-        onDraftChange: foreman.setDraft,
-    })
     const alternates = useDesktopForemanAlternates({
         chat, snapshot: retrySnapshot, active: !!retrySnapshot && ui.open && !hidden && !onRoutines && !intake && foreman.restored,
         eligible: !!retrySnapshot && !streaming && !pendingRequest && !pendingStarter && !foreman.blocked && ui.decision.status !== 'pending',
     })
     const { close: closeAlternates, open: alternatesOpen } = alternates
+    const mentions = useDesktopMentionAutocomplete({
+        targets: editAttachments && !alternatesOpen && mentionTargets ? mentionTargets : NO_MENTION_TARGETS,
+        skills: NO_SKILLS, requireCallable: false, text: ui.draft, mentions: ui.draftCoworkerMentions ?? NO_MENTIONS,
+        scope: `${chat.workspaceId}:${chat.chatId}`,
+        onDraftChange: foreman.setDraft,
+    })
     const runByCall = useMemo(() => new Map(callSources?.map(source => [source.callId, source.runId])), [callSources])
     const starterInFlight = useRef(false)
     const [starterBusy, setStarterBusy] = useState(false)
@@ -362,7 +363,7 @@ export function DesktopForemanColumn({
                         {retrySendError?.requestId === pendingSend.requestId && <p className="basis-full text-destructive" role="alert">{retrySendError.text}</p>}
                     </div>}
                     <DesktopForemanComposer
-                        mentions={editAttachments && !alternates.open ? mentions : undefined}
+                        mentions={mentions}
                         trailing={intake || pendingStarter ? undefined : composerTrailing}
                         controls={intake || pendingStarter || !ui.open ? undefined : <>
                             {attachmentComposer && <DesktopDocumentPicker disabled={!editAttachments || !documents.loaded} onFiles={documents.add} />}
