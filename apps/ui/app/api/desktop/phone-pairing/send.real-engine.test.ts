@@ -10,10 +10,10 @@ import { disposableRunEngine } from '@/test/desktop-run-engine.mjs'
 import { POST as desktopChat } from '../chat/route'
 import { GET, POST } from './route'
 
-test.runIf(process.env.RERUN_PHONE_SEND_ACCEPTANCE === '1')('a phone send detaches the stream and replays the exact saved turn after restart', async () => {
+test.runIf(process.env.RERUN_PHONE_SEND_ACCEPTANCE === '1')('a phone reconnects to the same live reply and replays the saved turn after restart', async () => {
     const env = { ...process.env }
     const root = await mkdtemp(join(await realpath(tmpdir()), 'rerun-phone-send-'))
-    const engine = await disposableRunEngine(root)
+    const engine = await disposableRunEngine(root, undefined, { initialReplyForRequest: index => index === 2 ? 'Live prefix. ' : '' })
     const endpoint = '/api/desktop/phone-pairing'
     function request(path: string, method = 'GET', body?: object) {
         const { origin, sessionToken } = engine.runtime.app
@@ -50,11 +50,31 @@ test.runIf(process.env.RERUN_PHONE_SEND_ACCEPTANCE === '1')('a phone send detach
         await engine.waitForProviderRequest(2)
         const statusPath = path + '&runId=' + body.runId
         expect(await (await GET(request(statusPath))).json()).toEqual({ status: 'running' })
+        const streamPath = statusPath + '&stream=1'
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const stream = await GET(request(streamPath))
+            expect(stream.headers.get('content-type')).toBe('application/x-ndjson')
+            const reader = stream.body!.getReader()
+            const decoder = new TextDecoder()
+            let received = ''
+            try {
+                const deadline = AbortSignal.timeout(5000)
+                const timedOut = new Promise<never>((_, reject) => deadline.addEventListener('abort', () => reject(new Error('No live prefix arrived. Frames: ' + received.slice(0, 200))), { once: true }))
+                while (!received.includes('Live prefix.')) {
+                    const chunk = await Promise.race([reader.read(), timedOut])
+                    if (chunk.done) break
+                    received += decoder.decode(chunk.value, { stream: true })
+                }
+                expect(received.trim().split('\n').map(line => JSON.parse(line))).toEqual([{ reset: true }, { delta: 'Live prefix.' }])
+                expect(await (await GET(request(statusPath))).json()).toEqual({ status: 'running' })
+            } finally { void reader.cancel().catch(() => {}) }
+        }
         engine.finishReply()
         await expect.poll(async () => (await (await GET(request(statusPath))).json()).status, { timeout: 6000 }).toBe('done')
         const saved = await (await GET(request(path))).json()
         expect(saved.messages.filter((message: { role: string; content: { text: string } }) => message.role === 'user' && message.content.text === body.text)).toHaveLength(1)
-        expect(saved.messages.at(-1)).toMatchObject({ role: 'assistant', content: { text: 'A completed local run.' } })
+        expect(saved.messages.at(-1)).toMatchObject({ role: 'assistant', content: { text: 'Live prefix. A completed local run.' } })
+        expect((await GET(request(streamPath))).status).toBe(204)
         expect(engine.providerMessages).toHaveLength(2)
         await closeDesktopDatabase(root)
         await engine.stop()

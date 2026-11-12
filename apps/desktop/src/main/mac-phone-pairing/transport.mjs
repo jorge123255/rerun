@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { API_PREFIX, CREDENTIAL_CLAIM_TTL_MS, DEVICE_STATUS, ERRORS, LOOPBACK_HOST, PROTOCOL_VERSION, SERVICE_NAME } from './protocol.mjs'
 import { hashSecret, hashesEqual, randomSecret } from './crypto.mjs'
-import { readWorkspaceChats, sendWorkspaceMessage } from './workspace-reads.mjs'
+import { readWorkspaceChats, readWorkspaceReply, sendWorkspaceMessage } from './workspace-reads.mjs'
 import { assertDeviceWorkspace, hiddenWorkspaceError } from './workspace-access.mjs'
 import { publicDevice } from './store.mjs'
 
@@ -35,6 +36,45 @@ function send(response, status, body) {
 
 function fail(response, code, status = 401) {
     send(response, status, { error: code })
+}
+
+async function streamReply(response, open, authorize) {
+    const disconnected = new AbortController()
+    const close = () => disconnected.abort()
+    response.once('close', close)
+    const signal = AbortSignal.any([disconnected.signal, AbortSignal.timeout(60_000)])
+    let reader
+    try {
+        const body = await open(signal)
+        reader = body?.getReader()
+        await authorize(() => {
+            signal.throwIfAborted()
+            if (!reader) return response.writeHead(204, { 'cache-control': 'no-store' }).end()
+            response.writeHead(200, {
+                'content-type': 'application/x-ndjson',
+                'cache-control': 'no-store',
+                'x-content-type-options': 'nosniff',
+            })
+            response.flushHeaders()
+        })
+        while (reader && !signal.aborted) {
+            const { value, done } = await reader.read()
+            if (done) break
+            const writable = await authorize(() => {
+                signal.throwIfAborted()
+                return response.write(value)
+            })
+            if (!writable) await once(response, 'drain', { signal })
+        }
+        if (!response.destroyed && !response.writableEnded) response.end()
+    } catch (error) {
+        if (!response.headersSent && !response.destroyed) throw error
+        if (!response.destroyed) response.end()
+    } finally {
+        response.off('close', close)
+        void reader?.cancel().catch(() => {})
+        disconnected.abort()
+    }
 }
 
 async function readBody(request, limit = BODY_LIMIT) {
@@ -160,9 +200,9 @@ export function createPairingTransport({
             return body ? exclusive(() => claimStatus(response, body)) : fail(response, ERRORS.unauthorized)
         }
 
-        const route = path.startsWith(API_PREFIX) && /^\/workspaces\/([^/]+)\/coworkers(?:\/([^/]+)\/chats(?:\/([^/]+)(?:\/turns\/([^/]+))?)?)?$/.exec(path.slice(API_PREFIX.length))
+        const route = path.startsWith(API_PREFIX) && /^\/workspaces\/([^/]+)\/coworkers(?:\/([^/]+)\/chats(?:\/([^/]+)(?:\/turns\/([^/]+)(\/stream)?)?)?)?$/.exec(path.slice(API_PREFIX.length))
         if (!route) return fail(response, ERRORS.not_found, 404)
-        const [, rawWorkspaceId, agentId, chatId, requestId] = route
+        const [, rawWorkspaceId, agentId, chatId, requestId, streaming] = route
         const sending = request.method === 'POST' && chatId && !requestId
         if (!sending && request.method !== 'GET') return fail(response, ERRORS.not_found, 404)
         const presented = hashSecret(BEARER.exec(request.headers.authorization ?? '')?.[1])
@@ -191,6 +231,15 @@ export function createPairingTransport({
                 })
             }
             const runId = requestId ? phoneRunId(device, agentId, chatId, requestId) : undefined
+            if (streaming) {
+                if (!tls) return fail(response, ERRORS.not_found, 404)
+                return await streamReply(response, signal => readWorkspaceReply(current, { agentId, chatId, runId }, signal), publish => exclusive(async () => {
+                    const authorized = await authenticate(presented)
+                    if (!authorized || authorized.deviceId !== device.deviceId) throw Object.assign(new Error(ERRORS.unauthorized), { code: ERRORS.unauthorized })
+                    await workspaceFor(authorized, workspaceId, current)
+                    return publish()
+                }))
+            }
             const payload = await readWorkspaceChats(current, { agentId, chatId, runId })
             // Device revocation and workspace changes can finish during the network read.
             // The response is released under the same queue used for credential mutations.
@@ -204,6 +253,7 @@ export function createPairingTransport({
             })
         } catch (error) {
             if (error.code === ERRORS.not_found) fail(response, ERRORS.not_found, 404)
+            else if (error.code === ERRORS.unauthorized) fail(response, ERRORS.unauthorized)
             else fail(response, 'unavailable', 502)
         }
     }

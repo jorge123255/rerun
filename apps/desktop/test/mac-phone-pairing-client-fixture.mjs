@@ -3,7 +3,7 @@ import { request } from 'node:http'
 import { connect } from 'node:tls'
 
 // The device must authenticate the TLS peer before sending any HTTP data.
-export async function pinnedFetch(address, fingerprint, { method, headers, body, signal } = {}) {
+export async function pinnedFetch(address, fingerprint, { method, headers, body, signal, onChunk } = {}) {
     const url = new URL(address)
     if (url.protocol !== 'https:') throw new Error('https_required')
     const socket = connect({ host: url.hostname, port: Number(url.port), minVersion: 'TLSv1.2', rejectUnauthorized: false })
@@ -22,7 +22,10 @@ export async function pinnedFetch(address, fingerprint, { method, headers, body,
             }, async res => {
                 try {
                     const chunks = []
-                    for await (const chunk of res) chunks.push(chunk)
+                    for await (const chunk of res) {
+                        chunks.push(chunk)
+                        if (onChunk) await onChunk(chunk)
+                    }
                     if (res.statusCode >= 300 && res.statusCode < 400) throw new Error('redirect_refused')
                     resolve(new Response(Buffer.concat(chunks), { status: res.statusCode }))
                 } catch (error) { reject(error) }

@@ -54,7 +54,7 @@ function json(response, status, body) {
     response.end(payload)
 }
 
-async function startWorkspaceFixture(beforeRead = async () => {}, onSend) {
+async function startWorkspaceFixture(beforeRead = async () => {}, onSend, onStream) {
     return listen(async (request, response) => {
         if (request.headers.cookie !== `rerun-desktop-session=${SESSION_COOKIE}`) return json(response, 401, { error: 'Unauthorized' })
         const url = new URL(request.url, 'http://127.0.0.1')
@@ -74,6 +74,7 @@ async function startWorkspaceFixture(beforeRead = async () => {}, onSend) {
             onSend(input)
             return json(response, 202, { runId: input.runId })
         }
+        if (url.searchParams.get('stream') === '1' && onStream) return onStream(response)
         if (url.searchParams.has('runId')) return json(response, 200, { status: 'done' })
         return json(response, 200, { chat: { ...CHAT, acceptsMessages: true }, messages: [MESSAGE] })
     })
@@ -126,6 +127,47 @@ test('phone access and LAN stay off, and constructing the service does not liste
     assert.equal(service.address(), null)
     await assert.rejects(() => service.createOffer(1), error => error.code === 'disabled')
     await assert.rejects(() => service.setLanAddress('192.168.1.2'), error => error.code === 'disabled')
+})
+
+test('revoking a device while a reply is streaming withholds subsequent text', async t => {
+    const host = localPairingAddresses()[0]
+    if (!host) { t.skip('no assigned private IPv4 address'); return }
+    const root = await dataRoot(t)
+    const release = Promise.withResolvers()
+    const workspace = await startWorkspaceFixture(undefined, undefined, async response => {
+        response.writeHead(200, { 'content-type': 'application/x-ndjson' })
+        response.write('{"delta":"First visible part"}\n')
+        await release.promise
+        response.end('{"delta":"After revocation"}\n')
+    })
+    t.after(() => { release.resolve(); return workspace.close() })
+    const { service } = createService(t, root, { workspace })
+    await service.setPhoneAccessEnabled(true)
+    await service.setLanAddress(host)
+    const client = createMacPairingClient({ storage: createMemoryStorage(), pinnedFetch })
+    const offer = await service.createOffer(1)
+    const pending = await client.connectToThisMac(offer)
+    await service.approveDevice(pending.deviceId)
+    await client.waitForApproval()
+    const session = await client.readMacSession()
+    const url = session.origin + '/api/mac-pairing/v1/workspaces/1/coworkers/' + AGENT.id + '/chats/' + CHAT.id + '/turns/b4e687b7-e978-4411-a3bb-7d49c0486c11/stream'
+    let received = ''
+    const response = await pinnedFetch(url, session.certificateFingerprint, {
+        headers: { Authorization: 'Bearer ' + session.credential },
+        signal: AbortSignal.timeout(5000),
+        async onChunk(chunk) {
+            const first = !received
+            received += chunk.toString()
+            if (!first) return
+            await service.revokeDevice(pending.deviceId)
+            release.resolve()
+        },
+    })
+    assert.equal(response.status, 200)
+    assert.equal(received, '{"delta":"First visible part"}\n')
+    assert.equal((await pinnedFetch(url, session.certificateFingerprint, {
+        headers: { Authorization: 'Bearer ' + session.credential }, signal: AbortSignal.timeout(5000),
+    })).status, 401)
 })
 
 test('enabling phone access starts a loopback transport and never enables LAN', async t => {

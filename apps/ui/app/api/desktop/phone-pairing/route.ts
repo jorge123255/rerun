@@ -3,11 +3,12 @@ import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { readDesktopHistory, startDesktopChat } from '@/lib/desktop/server/engine'
 import { desktopRoute } from '@/lib/desktop/server/http'
+import { phoneReplyStream } from '@/lib/desktop/server/phone-reply'
 import { engineOf } from '@/lib/desktop/server/settings'
 import { findDesktopAgent, findDesktopSession, listDesktopAgents, listDesktopSessions } from '@/lib/desktop/server/store'
 import { desktopThreadViews } from '@/lib/desktop/server/thread-views'
 import { desktopSessionView } from '@/lib/desktop/server/views'
-import { EngineRequestError, getRun } from '@/lib/engine/client'
+import { EngineRequestError, getRun, reconnectRun } from '@/lib/engine/client'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,8 +23,9 @@ export async function GET(request: Request): Promise<Response> {
         const agentId = searchParams.get('agentId')
         const chatId = searchParams.get('chatId')
         const runId = searchParams.get('runId')
+        const streaming = searchParams.get('stream') === '1'
         if ((agentId !== null && !id.test(agentId)) || (chatId !== null && (!id.test(chatId) || !agentId))
-            || (runId !== null && (!chatId || !uuid.safeParse(runId).success))) {
+            || (runId !== null && (!chatId || !uuid.safeParse(runId).success)) || (streaming && !runId)) {
             throw new DesktopHttpError(404, 'Not found')
         }
         const db = await openDesktopDatabase(runtime.dataRoot)
@@ -46,6 +48,15 @@ export async function GET(request: Request): Promise<Response> {
             try {
                 const run = await getRun(engineOf(runtime), agent.engineAgentId, runId)
                 if (run.id !== runId || run.sessionId !== chat.engineSessionId || run.agentId !== agent.engineAgentId) throw new DesktopHttpError(404, 'Not found')
+                if (streaming) {
+                    if (run.status !== 'running') return new Response(null, { ...options, status: 204 })
+                    const reply = await reconnectRun(engineOf(runtime), agent.engineAgentId, runId)
+                    if (reply.status === 204) return new Response(null, { ...options, status: 204 })
+                    if (!reply.ok || !reply.body) throw new DesktopHttpError(502, 'This reply is unavailable.')
+                    return new Response(phoneReplyStream(reply.body, runId), {
+                        headers: { ...options.headers, 'content-type': 'application/x-ndjson' },
+                    })
+                }
                 return Response.json({ status: run.status }, options)
             } catch (error) {
                 if (error instanceof EngineRequestError && error.status === 404) throw new DesktopHttpError(404, 'Not found')
@@ -73,8 +84,7 @@ export async function POST(request: Request): Promise<Response> {
         if (!body.success) throw new DesktopHttpError(400, 'Write a message.')
         const { runId, text } = body.data
         const { response, sessionId } = await startDesktopChat(runtime, { agentId, sessionId: chatId, text, requestId: runId })
-        // The engine drains its own resumable stream. Detach this HTTP subscriber
-        // so the phone can poll the durable run without holding a streaming socket.
+        // The engine owns the run and its replay buffer. The phone attaches separately.
         void response.body?.cancel().catch(() => {})
         if (sessionId !== chatId || response.headers.get('x-run-id') !== runId) throw new DesktopHttpError(502, 'Could not confirm this message.')
         return Response.json({ runId }, { ...options, status: 202 })

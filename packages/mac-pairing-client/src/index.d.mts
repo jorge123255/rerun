@@ -28,6 +28,8 @@ export type MacCoworker = { id: string; name: string; status: string }
 export type MacChat = { id: string; title: string; kind: string; updatedAt: string }
 export type MacMessage = { id: string; role: 'user' | 'assistant'; content: { type: 'text'; text: string }; authorName?: string | null }
 export type MacOutgoingMessage = { requestId: string; text: string }
+export type MacReplyFrame = { reset: true } | { delta: string }
+export type PinnedStream = (url: string, pin: string, authorization: string, onFrame: (frame: MacReplyFrame) => void, signal?: AbortSignal) => Promise<void>
 
 type Request = {
     method: string
@@ -43,6 +45,7 @@ export function createMacPairingClient(options: {
     storage: Storage
     fetch?: (url: string, options: Request) => Promise<Reply>
     pinnedFetch?: PinnedFetch
+    pinnedStream?: PinnedStream
     deviceName?: string
     now?: () => number
 }): {
@@ -55,6 +58,7 @@ export function createMacPairingClient(options: {
     openSavedChat(coworkerId: string, chatId: string, signal?: AbortSignal): Promise<{ chat: MacChat; messages: MacMessage[]; permissions?: { sendMessages: boolean } }>
     sendMessage(coworkerId: string, chatId: string, message: MacOutgoingMessage, signal?: AbortSignal): Promise<{ requestId: string }>
     readSentTurn(coworkerId: string, chatId: string, requestId: string, signal?: AbortSignal): Promise<{ status: 'running' | 'done' | 'error' | 'cancelled' }>
+    streamSentTurn(coworkerId: string, chatId: string, requestId: string, onFrame: (frame: MacReplyFrame) => void, signal?: AbortSignal): Promise<void>
     readMacSession(): Promise<MacSession | null>
     clearMacSession(): Promise<void>
 }

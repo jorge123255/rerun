@@ -84,7 +84,7 @@ export function encodeOfferLink(offer) {
     return url.toString()
 }
 
-export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinnedFetch, now = Date.now, deviceName = 'Test Phone' } = {}) {
+export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinnedFetch, pinnedStream, now = Date.now, deviceName = 'Test Phone' } = {}) {
     const sessions = createMacSessionStore(storage)
 
     async function sessionOrThrow() {
@@ -93,10 +93,13 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
         return session
     }
 
+    function chatPath(session, agentId, chatId) {
+        return `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers/${encodeURIComponent(agentId)}/chats/${encodeURIComponent(chatId)}`
+    }
+
     async function chatRequest(agentId, chatId, suffix, options) {
         const session = await sessionOrThrow()
-        const path = `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers/${encodeURIComponent(agentId)}/chats/${encodeURIComponent(chatId)}`
-        return request(session, path + suffix, { ...options, credential: session.credential, fetchImpl, pinnedFetch })
+        return request(session, chatPath(session, agentId, chatId) + suffix, { ...options, credential: session.credential, fetchImpl, pinnedFetch })
     }
 
     return {
@@ -181,6 +184,14 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
             const result = await chatRequest(agentId, sessionId, '/turns/' + encodeURIComponent(requestId), { signal })
             if (!['running', 'done', 'error', 'cancelled'].includes(result?.status)) throw new Error('invalid_turn_status')
             return result
+        },
+        async streamSentTurn(agentId, sessionId, requestId, onFrame, signal) {
+            const session = await sessionOrThrow()
+            const pin = session.certificateFingerprint
+            if (!pin || typeof pinnedStream !== 'function') throw new Error('pinned_transport_required')
+            const origin = pairingOrigin(session.origin, pin)
+            const url = origin + API_PREFIX + chatPath(session, agentId, sessionId) + '/turns/' + encodeURIComponent(requestId) + '/stream'
+            return pinnedStream(url, pin, 'Bearer ' + session.credential, onFrame, signal)
         },
         readMacSession: () => sessions.read(),
         clearMacSession: () => sessions.clear(),

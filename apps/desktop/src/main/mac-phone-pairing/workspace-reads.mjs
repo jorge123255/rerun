@@ -20,6 +20,17 @@ export async function readWorkspaceChats(runtime, target) {
     return response.json()
 }
 
+export async function readWorkspaceReply(runtime, target, signal) {
+    const { address, headers } = workspaceRequest(runtime, target)
+    address.searchParams.set('stream', '1')
+    const response = await fetch(address, { headers, redirect: 'error', signal })
+    if (response.status === 204) return null
+    if (response.ok && response.body && response.headers.get('content-type')?.split(';')[0] === 'application/x-ndjson') return response.body
+    void response.body?.cancel().catch(() => {})
+    if (response.status === 404) throw hiddenWorkspaceError()
+    throw new Error('Local reply is unavailable')
+}
+
 export async function sendWorkspaceMessage(runtime, { agentId, chatId, runId, text }) {
     const { address, headers } = workspaceRequest(runtime, { agentId, chatId })
     const response = await fetch(address, {
