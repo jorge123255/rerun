@@ -165,6 +165,7 @@ export function desktopRoutineMessages(locale: Locale, source: Source) {
         labels: source.kit.foreman.routines,
         schedule: source.agent.schedule,
         editor,
+        noExecutions: source.agent.agentPanelScheduled.noExecutions,
         modelField: source.agent.runModelField,
         when: picker.when,
         describePlaceholder: picker.describePlaceholder,

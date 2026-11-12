@@ -6,24 +6,29 @@ import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { MarkdownTextarea } from '@/components/ui/markdown-textarea'
 import { Switch } from '@/components/ui/switch'
-import { PanelEditorBody, PanelEditorFooter, PanelEditorHeader, PanelEditorShell } from '@/components/ui/panel-editor'
+import { PanelDeleteButton, PanelEditorBody, PanelEditorFooter, PanelEditorHeader, PanelEditorShell } from '@/components/ui/panel-editor'
 import { TimezoneCombobox } from '@/components/agent/TimezoneCombobox'
 import { RunModelField, type RunModelPick } from '@/components/agent/RunModelField'
 import { desktopModelViewSchema, type DesktopModelView } from '@/lib/desktop/chat-model'
 import type { ConnectionGroup } from '@/lib/engine/model-groups'
-import type { DesktopScheduleEditInput, DesktopWorkspaceRoutine } from '@rerun/contracts'
+import type { DesktopScheduleEditInput, DesktopWorkspaceRoutine, DesktopWorkspaceRoutineChat } from '@rerun/contracts'
+import { HistoryIcon } from '@/lib/icons'
 import { DesktopScheduleDescription } from '../../schedules/DesktopScheduleDescription'
+import { DesktopScheduleHistory } from '../../schedules/DesktopScheduleHistory'
 import { useDesktopLocale } from '../../DesktopLocale'
 import { DesktopTaskNotifyField } from '../../DesktopTaskNotifyField'
 
-export function DesktopWorkspaceRoutineEditor({ routine, externalChange, onBack, onSave, onRun, onRefresh, onKeep }: {
+export function DesktopWorkspaceRoutineEditor({ routine, active, externalChange, onBack, onSave, onDelete, onRun, onOpenChat, onRefresh, onKeep }: {
     routine: DesktopWorkspaceRoutine
+    active: boolean
     externalChange: boolean
     onBack: () => void
     onSave: (input: DesktopScheduleEditInput) => Promise<void>
+    onDelete: () => Promise<void>
     onRun: (routine: DesktopWorkspaceRoutine) => Promise<void>
+    onOpenChat: (chat: DesktopWorkspaceRoutineChat) => void
     onRefresh: () => void
-    onKeep: () => void
+    onKeep?: () => void
 }) {
     const { t } = useDesktopLocale()
     const [name, setName] = useState(routine.name)
@@ -39,6 +44,7 @@ export function DesktopWorkspaceRoutineEditor({ routine, externalChange, onBack,
     const [modelView, setModelView] = useState<DesktopModelView | null>(null)
     const [modelLoadFailed, setModelLoadFailed] = useState(false)
     const [modelDraft, setModelDraft] = useState<RunModelPick | null>(null)
+    const [historyOpen, setHistoryOpen] = useState(false)
     const modelFieldId = useId()
     const pending = useRef(false)
     const agentId = routine.agentId
@@ -76,7 +82,7 @@ export function DesktopWorkspaceRoutineEditor({ routine, externalChange, onBack,
         : status
 
     async function perform(action: () => Promise<void>) {
-        if (externalChange || pending.current) return
+        if (!active || externalChange || pending.current) return
         pending.current = true
         setBusy(true)
         setError('')
@@ -85,14 +91,23 @@ export function DesktopWorkspaceRoutineEditor({ routine, externalChange, onBack,
         finally { pending.current = false; setBusy(false) }
     }
 
+    if (historyOpen && active) {
+        return <DesktopScheduleHistory agentId={agentId} slug={routine.slug} title={routine.name}
+            onBack={() => setHistoryOpen(false)} onOpenChat={onOpenChat} />
+    }
+
     return <PanelEditorShell>
-        <PanelEditorHeader title={t('routines.editor.titleEdit')} backLabel={t('routines.back')} onBack={busy ? undefined : onBack} />
+        <PanelEditorHeader title={t('routines.editor.titleEdit')} backLabel={t('routines.back')} onBack={busy ? undefined : onBack}>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => setHistoryOpen(true)}>
+                <HistoryIcon className="size-3.5 mr-1" />{t('routines.editor.history')}
+            </Button>
+        </PanelEditorHeader>
         <PanelEditorBody>
             {externalChange && <div role="alert" className="space-y-2 text-xs text-destructive">
                 <p>{t('routines.conflict')}</p>
                 <div className="flex flex-wrap gap-2">
                     <Button type="button" size="sm" variant="outline" onClick={onRefresh}>{t('routines.refresh')}</Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={onKeep}>{t('routines.keepDraft')}</Button>
+                    {onKeep && <Button type="button" size="sm" variant="ghost" onClick={onKeep}>{t('routines.keepDraft')}</Button>}
                 </div>
             </div>}
             {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
@@ -127,6 +142,10 @@ export function DesktopWorkspaceRoutineEditor({ routine, externalChange, onBack,
             {resultLabel && <p className="text-xs">{t('routines.lastResult', { status: resultLabel })}</p>}
         </PanelEditorBody>
         <PanelEditorFooter>
+            <PanelDeleteButton label={t('routines.editor.delete')} disabled={busy || externalChange}
+                confirmTitle={t('routines.editor.deleteConfirm', { name: routine.name })}
+                confirmDescription={t('routines.editor.deleteDescription')} confirmLabel={t('routines.editor.delete')} cancelLabel={t('cancel')}
+                onClick={() => void perform(onDelete)} />
             <Button size="sm" variant="outline" disabled={busy || externalChange || pinChanged || savedPinUnavailable || (hasSavedPin && !modelView) || (routine.setupPending && !routine.enabled)} onClick={() => perform(() => onRun(routine))}>{t('routines.runNow')}</Button>
             <Button size="sm" disabled={busy || externalChange || !name.trim() || !body.trim() || !canSaveModel} onClick={() => perform(() => onSave({
                 name, description, body, enabled, timezone, cron: mode === 'cron' ? cron : null,

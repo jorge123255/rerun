@@ -6,7 +6,7 @@ import { authenticateDesktopRequest, DesktopHttpError } from '../auth'
 import { engineOf } from '../settings'
 import { desktopProvider } from '../../settings'
 import { findDesktopAgent } from '../store'
-import { createSchedule,updateSchedule,deleteSchedule,listSchedules,listRuns,listLatestScheduleRuns,getAgent } from '@/lib/engine/client'
+import { createSchedule,updateSchedule,deleteSchedule,listSchedules,listRuns,listLatestScheduleRuns,getAgent,EngineRequestError } from '@/lib/engine/client'
 import { nextRunAt } from '@/lib/schedules/cron'
 import { adoptDesktopScheduledSession } from './adoption'
 
@@ -103,7 +103,7 @@ export function desktopSchedulesApi(db:Client,authorize:ScheduleAccess) {
                     }))
                 }
             } else {
-                const body=await readScheduleBody(request) as {slug?:unknown;input?:unknown;action?:unknown;requestId?:unknown;runId?:unknown}
+                const body=await readScheduleBody(request) as {slug?:unknown;input?:unknown;action?:unknown;requestId?:unknown;runId?:unknown;expectedRevision?:unknown}
                 request.signal.throwIfAborted()
                 await authorize(owner.engineAgentId)
                 request.signal.throwIfAborted()
@@ -112,7 +112,23 @@ export function desktopSchedulesApi(db:Client,authorize:ScheduleAccess) {
                 if(request.method==='PUT') {
                     const value=input.parse(body.input)
                     result=slug ? await updateSchedule(engine,owner.engineAgentId,slug,value as unknown as Parameters<typeof updateSchedule>[3]) : await createSchedule(engine,owner.engineAgentId,{...value,cron:value.cron ?? undefined,runAt:value.runAt ?? undefined})
-                } else if(request.method==='DELETE' && slug) {await deleteSchedule(engine,owner.engineAgentId,slug);result={deleted:slug}}
+                } else if (request.method === 'DELETE' && slug) {
+                    if (body.expectedRevision === undefined) {
+                        await deleteSchedule(engine, owner.engineAgentId, slug)
+                    } else {
+                        const expectedRevision = z.string().regex(/^[a-f0-9]{64}$/).parse(body.expectedRevision)
+                        try {
+                            await deleteSchedule(engine, owner.engineAgentId, slug, { expectedRevision, signal: request.signal })
+                        } catch (error) {
+                            if (error instanceof EngineRequestError) {
+                                const message = error.status === 412 ? 'This routine changed. Refresh it before deleting.' : 'Could not delete this routine.'
+                                throw new DesktopHttpError(error.status, message)
+                            }
+                            throw error
+                        }
+                    }
+                    result = { deleted: slug }
+                }
                 else if (request.method === 'POST' && slug && body.action === 'open-run') {
                     const runId = z.string().regex(/^[a-zA-Z0-9_-]{1,160}$/).parse(body.runId)
                     result = await adoptDesktopScheduledSession(db, engine, { agentId, engineAgentId: owner.engineAgentId, runId, scheduleSlug: slug }, {

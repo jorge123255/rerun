@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils'
 import { RoutineList, routineKey } from '@rerun/ui/foreman'
 import { nextRunAt, routineFrequency } from '@/lib/schedules/cron'
 import type { DesktopWorkspaceRoutinesClient } from '@/lib/desktop/workspace-routines/client'
+import { scheduleRequest } from '@/lib/desktop/schedules/client'
 import type { DesktopScheduleEditInput, DesktopWorkspaceRoutine, DesktopWorkspaceRoutineChat, DesktopWorkspaceRoutinesView } from '@rerun/contracts'
 import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { useDesktopLocale } from '../../DesktopLocale'
@@ -65,7 +66,7 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, dock
             setEditing(current => {
                 if (!current) return null
                 const latest = next.routines.find(routine => routineKey(routine) === routineKey(current.routine))
-                return latest && latest.revision !== current.routine.revision ? { ...current, externalChange: true } : current
+                return latest?.revision !== current.routine.revision ? { ...current, externalChange: true } : current
             })
         } catch (cause) {
             if (own !== listEpoch.current) return
@@ -170,6 +171,16 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, dock
         patch(routineKey(routine), result.routine)
         await load()
     }
+    const deleteRoutine = async (routine: DesktopWorkspaceRoutine) => {
+        const own = lifetime.current
+        const result = await scheduleRequest(routine.agentId, 'DELETE', { slug: routine.slug, expectedRevision: routine.revision })
+        if (result?.deleted !== routine.slug) throw new Error(t('routines.requestFailed'))
+        if (own !== lifetime.current) return
+        ++listEpoch.current
+        setEditing(null)
+        setData(current => current && { ...current, routines: current.routines.filter(item => routineKey(item) !== routineKey(routine)) })
+        await load()
+    }
 
     if (editing) {
         const latest = data?.routines.find(routine => routineKey(routine) === routineKey(editing.routine))
@@ -177,12 +188,15 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, dock
             <DesktopWorkspaceRoutineEditor
                 key={`${editing.routine.agentId}:${editing.routine.slug}:${editing.generation}`}
                 routine={editing.routine}
+                active={active}
                 externalChange={editing.externalChange}
                 onBack={() => setEditing(null)}
                 onSave={saveEdit}
+                onDelete={() => deleteRoutine(editing.routine)}
                 onRun={runNow}
+                onOpenChat={onOpenChat}
                 onRefresh={() => setEditing(latest ? { routine: latest, externalChange: false, generation: editing.generation + 1 } : null)}
-                onKeep={() => setEditing(current => current && latest ? { ...current, routine: latest, externalChange: false } : current)}
+                onKeep={latest && (() => setEditing(current => current ? { ...current, routine: latest, externalChange: false } : null))}
             />
         </div>
     }

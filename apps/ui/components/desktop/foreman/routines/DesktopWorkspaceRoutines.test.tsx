@@ -90,6 +90,65 @@ test('Run now opens the exact adopted result chat and never a guessed session', 
     expect(onOpenChat).toHaveBeenCalledWith(routine.lastResult!.chat)
 })
 
+test('opens an older routine result from History and preserves the editor draft on Back', async () => {
+    const modelFetch = globalThis.fetch
+    const path = '/api/desktop/coworkers/agent-a/schedules'
+    const older = { ...routine.lastResult!.chat, sessionId: 'older-chat', runId: 'older-run' }
+    const open = vi.fn(async () => Response.json(older))
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+        if (url === path + '?history=daily') return Response.json([
+            { id: 'run-a', status: 'done', startedAt: '2026-11-05T08:00:00.000Z' },
+            { id: older.runId, status: 'error', startedAt: '2026-11-04T08:00:00.000Z' },
+        ])
+        if (url === path && init?.method === 'POST') {
+            expect(JSON.parse(String(init.body))).toEqual({ action: 'open-run', slug: 'daily', runId: older.runId })
+            return open()
+        }
+        return modelFetch(url, init)
+    })
+    const { onOpenChat } = await mount()
+    await click('Daily options'); await click('Edit')
+    const name = () => document.querySelector<HTMLInputElement>('input[aria-label="Name"]')!
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(name(), 'Unsaved draft')
+    await act(async () => name().dispatchEvent(new Event('input', { bubbles: true })))
+    await click('History')
+    const rows = [...document.querySelectorAll<HTMLButtonElement>('button')].filter(button => button.textContent?.trim() === 'Open result chat')
+    expect(rows).toHaveLength(2)
+    await act(async () => rows[1].click())
+    expect(onOpenChat).toHaveBeenCalledExactlyOnceWith(older)
+    await click('Back')
+    expect(name().value).toBe('Unsaved draft')
+})
+
+test('confirms deletion of the reviewed revision and leaves the sibling routine visible', async () => {
+    const other = { ...routine, agentId: 'agent-b', name: 'Sibling task' }
+    const api = client([routine, other])
+    const modelFetch = globalThis.fetch
+    const remove = vi.fn(async () => {
+        vi.mocked(api.list).mockResolvedValue({ routines: [other], canRename: true })
+        return Response.json({ deleted: routine.slug })
+    })
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+        if (url === '/api/desktop/coworkers/agent-a/schedules' && init?.method === 'DELETE') {
+            expect(JSON.parse(String(init.body))).toEqual({ slug: routine.slug, expectedRevision: routine.revision })
+            return remove()
+        }
+        return modelFetch(url, init)
+    })
+    await mount(api)
+    await click('Daily options'); await click('Edit'); await click('Delete task')
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('Delete Daily?')
+    await click('Cancel')
+    expect(remove).not.toHaveBeenCalled()
+    await click('Delete task')
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find(button => button.textContent === 'Delete task')
+    expect(confirm).toBeDefined()
+    await act(async () => confirm!.click())
+    expect(remove).toHaveBeenCalledOnce()
+    expect(document.body.textContent).toContain('Sibling task')
+    expect(document.querySelector('[aria-label="Daily options"]')).toBeNull()
+})
+
 test('a routine without a result disables its result link instead of opening the editor', async () => {
     const { lastResult: _lastResult, ...unrun } = routine
     const { onOpenChat, onOpenRoutine } = await mount(client([unrun]))

@@ -776,8 +776,13 @@ export async function runScheduleNow(conn: EngineConnection, agentId: string, sl
     return request(conn, `/agents/${encodeURIComponent(agentId)}/schedules/${encodeURIComponent(slug)}/run`, { method: 'POST' }, d => d as { runId: string; sessionId: string })
 }
 
-export async function deleteSchedule(conn: EngineConnection, agentId: string, slug: string): Promise<void> {
-    const res = await fetch(`${conn.baseUrl}/agents/${encodeURIComponent(agentId)}/schedules/${encodeURIComponent(slug)}`, { method: 'DELETE', headers: buildHeaders(conn) })
+export async function deleteSchedule(conn: EngineConnection, agentId: string, slug: string, condition?: { expectedRevision: string; signal?: AbortSignal }): Promise<void> {
+    const path = `/agents/${encodeURIComponent(agentId)}/schedules/${encodeURIComponent(slug)}`
+    if (condition) {
+        await request(conn, path, { method: 'DELETE', headers: { 'x-desktop-schedule-revision': condition.expectedRevision }, signal: condition.signal }, body => z.object({ deleted: z.literal(slug) }).parse(body))
+        return
+    }
+    const res = await fetch(`${conn.baseUrl}${path}`, { method: 'DELETE', headers: buildHeaders(conn) })
     if (!res.ok && res.status !== 404) {
         const body = await res.text().catch(() => 'Unknown error')
         throw new Error(`rerun-engine DELETE /agents/${agentId}/schedules/${slug} failed: ${res.status} ${body}`)

@@ -40,11 +40,12 @@ type PanelDeleteButtonProps = Omit<ComponentProps<typeof Button>, 'children' | '
     confirmTitle?: string
     confirmDescription?: ReactNode
     confirmLabel?: string
+    cancelLabel?: string
     size?: 'icon-sm' | 'icon-xs'
 }
 
 // La confirmation passe par une dialog, sauf quand l'appelant en fournit déjà une.
-export function PanelDeleteButton({ label, busy = false, confirm = true, confirmTitle, confirmDescription, confirmLabel, size = 'icon-sm', className, onClick, ...props }: PanelDeleteButtonProps) {
+export function PanelDeleteButton({ label, busy = false, confirm = true, confirmTitle, confirmDescription, confirmLabel, cancelLabel, size = 'icon-sm', className, onClick, ...props }: PanelDeleteButtonProps) {
     const button = (
         <Button size={size} variant="destructive" loading={busy} title={label} aria-label={label} className={cn('shrink-0', className)} onClick={confirm ? undefined : onClick} {...props}>
             <Trash2Icon />
@@ -54,7 +55,7 @@ export function PanelDeleteButton({ label, busy = false, confirm = true, confirm
     if (!confirm) return button
 
     return (
-        <ConfirmDialog title={confirmTitle ?? `${label}?`} description={confirmDescription} confirmLabel={confirmLabel} onConfirm={event => onClick?.(event)}>
+        <ConfirmDialog title={confirmTitle ?? `${label}?`} description={confirmDescription} confirmLabel={confirmLabel} cancelLabel={cancelLabel} onConfirm={event => onClick?.(event)}>
             {button}
         </ConfirmDialog>
     )

@@ -8,9 +8,12 @@ import { isValidCron } from '../../schedules/cron.js'
 import { fireSchedule } from '../../runtime/scheduler.js'
 import { getAgent } from '../../agents/registry.js'
 import { hasPendingSetup } from '../../agents/setup.js'
-import { setupPending } from '../../lib/errors.js'
+import { HttpError, setupPending } from '../../lib/errors.js'
 import { authorizeDesktopSchedule } from '../../desktop/schedule-binding.js'
 import { describeDesktopSchedule, desktopScheduleDescriptionInputSchema } from '../../desktop/schedule-description.js'
+import { DesktopScheduleFileConflict, desktopScheduleFiles } from '../../desktop/schedule-tools/files.js'
+import { desktopScheduleDefinitionRevision } from '../../desktop/schedule-tools/revision.js'
+import { assertDesktopRunAdmission } from '../../desktop/workspace-admission.js'
 
 export const scheduleRoutes = new Hono()
 const authorize = async (agentId: string) => { if (desktopApp()) await authorizeDesktopSchedule(agentId) }
@@ -123,6 +126,33 @@ scheduleRoutes.delete('/:slug', async c => {
     const agentId = c.req.param('id')!
     const slug = c.req.param('slug')
     await authorize(agentId)
+    const expected = c.req.header('x-desktop-schedule-revision')
+    if (desktopApp() && expected !== undefined) {
+        if (!/^[a-f0-9]{64}$/.test(expected)) throw new HttpError(400, 'Invalid routine revision')
+        const signal = c.req.raw.signal
+        const admission = assertDesktopRunAdmission()
+        signal.throwIfAborted()
+        const files = desktopScheduleFiles()
+        const current = await files.read(agentId, slug)
+        signal.throwIfAborted()
+        if (current && expected !== desktopScheduleDefinitionRevision(current)) {
+            throw new HttpError(412, 'This routine changed. Refresh it before deleting.')
+        }
+        if (current) {
+            try {
+                await files.replace(agentId, slug, current, null, async () => {
+                    signal.throwIfAborted()
+                    await authorize(agentId)
+                    assertDesktopRunAdmission(admission)
+                    signal.throwIfAborted()
+                })
+            } catch (error) {
+                if (error instanceof DesktopScheduleFileConflict) throw new HttpError(412, 'This routine changed. Refresh it before deleting.')
+                throw error
+            }
+        }
+        return c.json({ deleted: slug })
+    }
     if (!scheduleExists(agentId, slug)) return c.json({ error: 'schedule not found' }, 404)
     await deleteSchedule(agentId, slug)
     return c.json({ deleted: slug })

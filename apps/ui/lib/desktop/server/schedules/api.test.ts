@@ -90,6 +90,17 @@ test('opening a history row resolves the session from the exact run and schedule
     }, { signal: request.signal, authorize: expect.any(Function) })
 })
 
+test('passes the reviewed deletion revision and abort signal to the owned engine schedule', async () => {
+    const expectedRevision = 'a'.repeat(64)
+    const request = new Request('http://localhost/schedules', {
+        method: 'DELETE', body: JSON.stringify({ slug: 'daily', expectedRevision }),
+    })
+    const response = await handle(request)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ deleted: 'daily' })
+    expect(engine.deleteSchedule).toHaveBeenCalledExactlyOnceWith(expect.anything(), 'engine-owner', 'daily', { expectedRevision, signal: request.signal })
+})
+
 test.each(['abort', 'deadline'] as const)('a stalled schedule body settles after %s even if cancellation never settles', async reason => {
     const stop = new AbortController(), late = deferred<ReadableStreamReadResult<Uint8Array>>()
     const read = vi.fn(() => late.promise), cancel = vi.fn(() => new Promise<void>(() => {}))

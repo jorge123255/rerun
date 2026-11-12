@@ -1,8 +1,9 @@
 'use client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { engineRunSchema, type EngineSchedule } from '@/lib/engine/types'
-import { z } from 'zod'
-import { RunStatusBadge } from '@rerun/ui/monitoring'
+import type { EngineSchedule } from '@/lib/engine/types'
+import type { DesktopWorkspaceRoutineChat } from '@rerun/contracts'
+import { ScheduleRequestError, scheduleRequest } from '@/lib/desktop/schedules/client'
+import { DesktopScheduleHistory } from './DesktopScheduleHistory'
 import type { ConnectionGroup } from '@/lib/engine/model-groups'
 import { desktopModelViewSchema, type DesktopModelView } from '@/lib/desktop/chat-model'
 import { desktopProvider } from '@/lib/desktop/settings'
@@ -28,22 +29,8 @@ import { useDesktopScheduleToolNotices } from '@/lib/desktop/use-schedule-tool-n
 import { DesktopScheduleToolNotice } from '../schedule-tools/DesktopScheduleToolNotice'
 import { DesktopTaskNotifyField } from '../DesktopTaskNotifyField'
 
-type Chat={agentId:string;sessionId:string;engineSessionId:string;tabUid:string;title:string;runId:string|null}
+type Chat = DesktopWorkspaceRoutineChat
 type Task=EngineSchedule & {nextRunAt:string|null;lastResult:{status:string;runId:string;chat:Chat}|null}
-const scheduleRuns = z.array(engineRunSchema.pick({ id: true, status: true, startedAt: true }))
-class ScheduleRequestError extends Error {}
-
-async function scheduleRequest(agentId: string, method: string, body?: unknown, query = '', signal?: AbortSignal) {
-    const response = await fetch(`/api/desktop/coworkers/${encodeURIComponent(agentId)}/schedules${query}`, {
-        method, cache: 'no-store', signal,
-        headers: body ? { 'Content-Type': 'application/json' } : {},
-        body: body ? JSON.stringify(body) : undefined,
-    })
-    const result = await response.json()
-    if (!response.ok) throw new ScheduleRequestError(typeof result?.error === 'string' && result.error.trim().length > 0 && result.error.length <= 500 ? result.error : 'Task request failed')
-    return result
-}
-
 export function DesktopCoworkerSchedules(props:{agentId:string;onOpenSession:(chat:Chat)=>void}) {return <Schedules key={props.agentId} {...props}/>}
 function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:Chat)=>void}) {
     const [tasks,setTasks]=useState<Task[]|null>(null),[editing,setEditing]=useState<Task|'new'|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true)
@@ -112,7 +99,7 @@ function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,onOpenSession
     const unverifiedPin=!!pick.model&&!modelView
     const incompletePin=!!pick.model&&(!pick.connectionId||!provider)
     async function perform(action:()=>Promise<void>){if(stale || pending.current)return;pending.current=true;setBusy(true);setError('');try{await action()}catch(e){if(alive.current)setError(e instanceof Error?e.message:'Task request failed')}finally{pending.current=false;if(alive.current)setBusy(false)}}
-    if (historyOpen && task) return <ScheduleHistory agentId={agentId} task={task} onBack={() => setHistoryOpen(false)} onOpenSession={onOpenSession} />
+    if (historyOpen && task) return <DesktopScheduleHistory agentId={agentId} slug={task.slug} title={task.name} onBack={() => setHistoryOpen(false)} onOpenChat={onOpenSession} />
     return <PanelEditorShell><PanelEditorHeader title={task?'Edit task':'New task'} onBack={busy?undefined:()=>{if(!pending.current)onBack()}}>
         {task && <Button size="sm" variant="ghost" disabled={busy} onClick={() => { if (!pending.current) setHistoryOpen(true) }}>History</Button>}
     </PanelEditorHeader><PanelEditorBody>
@@ -136,55 +123,4 @@ function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,onOpenSession
         {onRun && <Button size="sm" variant="outline" title="Run now" disabled={busy || stale || !task?.enabled || unavailablePin || unverifiedPin || incompletePin} onClick={()=>perform(async()=>{manual.current ??=crypto.randomUUID();await onRun(manual.current);manual.current=null})}>Test Run</Button>}
         <Button size="sm" disabled={busy || stale || !name.trim() || !body.trim() || incompletePin} onClick={()=>perform(()=>onSave({name,description,body,enabled,timezone,cron:mode==='cron'?cron:null,runAt:mode==='runAt'?new Date(runAt).toISOString():null,connectionId:pick.connectionId,provider,model:pick.model}))}>{task?'Save changes':'Create task'}</Button>
     </PanelEditorFooter></PanelEditorShell>
-}
-
-function ScheduleHistory({ agentId, task, onBack, onOpenSession }: { agentId: string; task: Task; onBack: () => void; onOpenSession: (chat: Chat) => void }) {
-    const [runs, setRuns] = useState<z.infer<typeof scheduleRuns> | null>(null)
-    const [error, setError] = useState('')
-    const [opening, setOpening] = useState<string | null>(null)
-    const activeOpen = useRef<AbortController | null>(null)
-    useEffect(() => {
-        const controller = new AbortController()
-        void scheduleRequest(agentId, 'GET', undefined, `?history=${encodeURIComponent(task.slug)}`, controller.signal)
-            .then(data => { if (!controller.signal.aborted) setRuns(scheduleRuns.parse(data)) })
-            .catch(error => {
-                if (!controller.signal.aborted) setError(error instanceof ScheduleRequestError ? error.message : 'Could not load task history')
-            })
-        return () => {
-            controller.abort()
-            activeOpen.current?.abort()
-        }
-    }, [agentId, task.slug])
-
-    async function openRun(runId: string) {
-        if (activeOpen.current) return
-        const controller = new AbortController()
-        activeOpen.current = controller
-        setOpening(runId)
-        setError('')
-        try {
-            const chat: Chat = await scheduleRequest(agentId, 'POST', { action: 'open-run', slug: task.slug, runId }, '', controller.signal)
-            if (!controller.signal.aborted) onOpenSession(chat)
-        } catch (error) {
-            if (!controller.signal.aborted) setError(error instanceof ScheduleRequestError ? error.message : 'Could not open result chat')
-        } finally {
-            activeOpen.current = null
-            if (!controller.signal.aborted) setOpening(null)
-        }
-    }
-
-    return <PanelEditorShell>
-        <PanelEditorHeader title={task.name} onBack={onBack} />
-        {error && <p role="alert" className="p-3 text-xs text-destructive">{error}</p>}
-        {runs === null && !error && <p role="status" className="p-3 text-xs text-muted-foreground">Loading task history…</p>}
-        {runs?.length === 0 && <EmptyState icon={CalendarClockIcon} title="No executions yet" />}
-        {runs && runs.length > 0 && <PanelScroller><PanelList>
-            {runs.map(run => <PanelRow key={run.id}
-                title={run.startedAt ? new Date(run.startedAt).toLocaleString() : 'Time not recorded'}
-                meta={<RunStatusBadge status={run.status} />}
-                actions={<Button size="sm" variant="ghost" loading={opening === run.id} disabled={opening !== null}
-                    onClick={() => void openRun(run.id)}>Open result chat</Button>}
-            />)}
-        </PanelList></PanelScroller>}
-    </PanelEditorShell>
 }
