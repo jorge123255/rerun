@@ -39,6 +39,7 @@ export type DesktopForemanPanelProps = {
     providers?: ConnectionsList
     modelChoice?: DesktopForemanModelRef
     onOpenModelSettings?: () => void
+    onReconnectConnection?: (connectionId: string) => void
     composerTrailing?: ReactNode
     controlledOpen?: boolean
     hidden?: boolean
@@ -163,6 +164,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const voiceModel = props.modelChoice ?? state.model ?? (effective?.available && effective.connectionId && effective.model
         ? { connectionId: effective.connectionId, model: effective.model } : undefined)
     const pendingSend = state.ui.snapshot?.pendingSend
+    const failedConnection = state.runFailure?.connectionId
     const modelPickerView = !props.hidden && props.controlledOpen !== false && props.composerTrailing == null && !intakeOpen && !pendingStarter ? view : undefined
     const modelDisabled = !!(state.view.live || state.question || state.approval || pendingSend || voice?.busy)
     const canSwitchModel = !modelDisabled && !modelSaving && modelPickerView?.catalog.some(group =>
@@ -183,9 +185,10 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         question={state.question} onAnswerQuestion={client.answerQuestion}
         approval={state.approval} onDecideApproval={client.decideApproval}
         starter={state.starter} onStarterAnswer={client.answerStarter} intakeFinished={intake.finished}
-        runNotice={state.runFailure && !pendingSend ? <ProviderErrorNotice kind={state.runFailure}
+        runNotice={state.runFailure && !pendingSend ? <ProviderErrorNotice kind={state.runFailure.kind}
             onSwitchModel={canSwitchModel ? () => modelPicker.current?.open() : undefined}
-            onReconnect={props.onOpenModelSettings} onOpenConnections={props.onOpenModelSettings} /> : null}
+            onReconnect={failedConnection && props.onReconnectConnection ? () => props.onReconnectConnection?.(failedConnection) : props.onOpenModelSettings}
+            onOpenConnections={props.onOpenModelSettings} /> : null}
         streaming={!!state.view.live} orbState={state.view.live ? 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
         headerActions={<><DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} onApprovalPermissionChanged={() => { void client.refresh().catch(() => {}) }} />{error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}</>}

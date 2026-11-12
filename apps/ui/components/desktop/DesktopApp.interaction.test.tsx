@@ -145,24 +145,25 @@ test('the native Settings menu and the keyboard shortcut share the desktop admis
     expect(listeners.size).toBe(0)
 })
 
-test('Chief of Staff reconnect opens AI providers after the transcription setup has opened Tool services', async () => {
+test('Chief of Staff reconnect opens the failed connection even after opening transcription settings', async () => {
     vi.stubGlobal('EventSource', class { close() {} })
     const container = document.body.appendChild(document.createElement('div'))
     const root = createRoot(container)
     const chat = { workspaceId: '1', chatId: 'fmc_settings' }
     const model = { connectionId: 'plan', model: 'fixture-model' }
     const attemptId = '00000000-0000-4000-8000-000000000001'
-    const providers: ConnectionsList = { default: model, connections: [{ id: 'plan', name: 'Fixture', provider: 'codex', models: [model.model],
-        connected: true, credentialRejected: false, planLimits: null, createdAt: '', extraModels: [] }] }
+    const failedConnection = 'failed-key'
+    const connection = { id: 'plan', name: 'Workspace default', provider: 'codex' as const, models: [model.model],
+        connected: true, credentialRejected: false, planLimits: null, createdAt: '', extraModels: [] }
+    const providers: ConnectionsList = { default: model, connections: [connection,
+        { ...connection, id: 'sibling-key', provider: 'openai', name: 'OpenAI sibling' },
+        { ...connection, id: failedConnection, provider: 'openai', name: 'Failed OpenAI key', credentialRejected: true },
+    ] }
     const fetcher = mockDesktopFetch((url, init) => {
         const method = init?.method ?? 'GET'
         if (url === settingsUrl && method === 'GET') return Response.json(providers)
-        if (url === '/api/desktop/codex-login' && method === 'POST') {
-            expect(JSON.parse(String(init?.body))).toEqual({ action: 'refresh' })
-            return Response.json({ status: { phase: 'connected' }, providers })
-        }
         if (url === '/api/desktop/foreman' && method === 'GET') return Response.json({
-            chat, sessionId: 'chief-fixture', model: null, runFailure: 'unauthorized',
+            chat, sessionId: 'chief-fixture', model: null, runFailure: { kind: 'unauthorized', connectionId: failedConnection },
             messages: [{ id: 'saved-user', role: 'user', parts: [{ type: 'text', text: 'An existing question' }] }],
             view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
             ui: { revision: 0, snapshot: null },
@@ -191,6 +192,9 @@ test('Chief of Staff reconnect opens AI providers after the transcription setup 
         expect(section()).toBeUndefined()
         await act(async () => findButton('Reconnect')!.click())
         expect(section()).toBe('AI providers')
+        expect(container.querySelector<HTMLSelectElement>('#desktop-provider')?.value).toBe(failedConnection)
+        expect(container.querySelector('#desktop-default')).toBeNull()
+        expect(container.textContent).toContain('Key rejected')
         expect(fetcher.mock.calls.some(([url, init]) => url === settingsUrl && init?.method === 'PATCH')).toBe(false)
     } finally {
         await act(async () => root.unmount())

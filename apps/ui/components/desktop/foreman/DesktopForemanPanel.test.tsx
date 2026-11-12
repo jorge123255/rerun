@@ -100,21 +100,24 @@ it('shows the saved connection failure with a Settings action and clears it when
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     vi.stubGlobal('EventSource', Source)
     const chat = { workspaceId: '1', chatId: 'fmc_abcdefgh' }
-    const server = { chat, sessionId: 'session', model: null, messages: [], runFailure: 'unauthorized' as string | null,
+    const runFailure = { kind: 'unauthorized', connectionId: 'failed-key' }
+    const server = { chat, sessionId: 'session', model: null, messages: [], runFailure: runFailure as typeof runFailure | null,
         view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
         ui: { revision: 0, snapshot: null },
     }
     const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json(server))
     vi.stubGlobal('fetch', fetch)
     const onOpenModelSettings = vi.fn()
+    const onReconnectConnection = vi.fn()
     root = createRoot(document.body.appendChild(document.createElement('div')))
     await act(async () => root!.render(<DesktopForemanPanel onClose={vi.fn()} onOpenCoworker={vi.fn()} onOpenCalledChat={vi.fn()} onOpenBox={vi.fn()}
-        agentNameOf={id => id} onOpenModelSettings={onOpenModelSettings} />))
+        agentNameOf={id => id} onOpenModelSettings={onOpenModelSettings} onReconnectConnection={onReconnectConnection} />))
     const alert = document.querySelector('[role="alert"]')
     expect(alert?.textContent).toContain('Connection signed out')
     expect(alert?.textContent).toContain('This connection needs to be signed in again')
     await act(async () => alert?.querySelector('button')?.click())
-    expect(onOpenModelSettings).toHaveBeenCalledOnce()
+    expect(onReconnectConnection).toHaveBeenCalledExactlyOnceWith('failed-key')
+    expect(onOpenModelSettings).not.toHaveBeenCalled()
     expect(fetch.mock.calls.every(([, init]) => !init?.body)).toBe(true)
 
     server.runFailure = null
@@ -127,7 +130,7 @@ it('opens the exact chat model picker from a settled failure and saves only an e
     vi.stubGlobal('EventSource', Source)
     const chat = { workspaceId: '1', chatId: 'fmc_abcdefgh' }
     const picked: DesktopForemanModelRef = { connectionId: 'api', model: 'local-model' }
-    const server = { chat, sessionId: 'session', model: picked as DesktopForemanModelRef | null, runFailure: 'provider_error',
+    const server = { chat, sessionId: 'session', model: picked as DesktopForemanModelRef | null, runFailure: { kind: 'provider_error', connectionId: picked.connectionId },
         messages: [{ id: 'saved-prompt', role: 'user', parts: [{ type: 'text', text: 'An existing question' }] }],
         view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
         ui: { revision: 0, snapshot: null },

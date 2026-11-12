@@ -138,13 +138,14 @@ describe('production Foreman intake phase and model brief', () => {
             finishedAt: timestamp, error: '401 Unauthorized fixture-private-provider-detail' } as Awaited<ReturnType<typeof getRun>>
         vi.mocked(getRun).mockResolvedValue(failed)
         const result = await app.state()
-        expect(result).toMatchObject({ runFailure: 'unauthorized', context: null, messages: [{ id: 'engine-user-fixture' }] })
+        const failure = { kind: 'unauthorized', connectionId: model.connectionId }
+        expect(result).toMatchObject({ runFailure: failure, context: null, messages: [{ id: 'engine-user-fixture' }] })
         expect(JSON.stringify(result)).not.toContain('fixture-private-provider-detail')
 
         state.db.close()
         state.db = open()
         const reopened = await desktopForeman({ ...runtime, launchNonce: randomUUID() })
-        expect((await reopened.state()).runFailure).toBe('unauthorized')
+        expect((await reopened.state()).runFailure).toEqual(failure)
         expect(sent).toHaveLength(1)
 
         for (const mismatch of [{ sessionId: 'foreign-session' }, { id: randomUUID() }, { agentId: 'another-coworker' },
@@ -153,7 +154,7 @@ describe('production Foreman intake phase and model brief', () => {
             expect((await reopened.state()).runFailure).toBeNull()
         }
         vi.mocked(getRun).mockResolvedValue({ ...failed, error: 'fixture-private-provider-detail' })
-        expect((await reopened.state()).runFailure).toBe('generic')
+        expect((await reopened.state()).runFailure).toEqual({ ...failure, kind: 'generic' })
         vi.mocked(getRun).mockResolvedValue(failed)
 
         const next = randomUUID()

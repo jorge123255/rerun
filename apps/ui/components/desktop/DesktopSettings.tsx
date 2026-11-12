@@ -1,7 +1,7 @@
 import { useDesktopLocale } from './DesktopLocale'
 import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata'
 import { useMemo, useState, type FormEvent } from 'react'
-import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, connectionReasoningOptions, isDesktopSubscriptionProvider, type ConnectionsList } from '@rerun/contracts'
+import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, connectionReasoningOptions, desktopApiConnectionIdSchema, desktopApiConnectionProviderSchema, isDesktopSubscriptionProvider, type ConnectionsList } from '@rerun/contracts'
 import { ThemeToggle } from '@rerun/ui/theme'
 import { DesktopLanguageSettings } from './DesktopLanguageSettings'
 import { DesktopCodexLogin } from './DesktopCodexLogin'
@@ -28,6 +28,7 @@ import { desktopApiConnectionUiRoutes } from '@/lib/desktop/api-connections/rout
 
 type Props = {
     initialTab?: 'AI providers' | 'Tool services' | 'Workspace' | 'Notifications' | 'Shortcuts'
+    initialConnectionId?: string | null
     providers: ConnectionsList
     workspaceName: string
     onProviders: (providers: ConnectionsList) => void
@@ -42,17 +43,23 @@ function effortLabel(effort: string) {
     return effort === 'xhigh' ? 'Extra high' : effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 
-export function DesktopSettings({ providers, workspaceName, onSave, onProviders, initialTab, workspaceId = null, onConnectionsChanged }: Props) {
+export function DesktopSettings({ providers, workspaceName, onSave, onProviders, initialTab, initialConnectionId = null, workspaceId = null, onConnectionsChanged }: Props) {
     const { t } = useDesktopLocale()
     const apiConnections = useMemo(() => Number.isSafeInteger(workspaceId) && (workspaceId ?? 0) > 0 ? createApiConnectionsClient(desktopApiConnectionUiRoutes) : null, [workspaceId])
     const labels = { 'AI providers': t('providers'), 'Tool services': t('toolServices'), Workspace: t('workspace'), Notifications: t('notifications'), Shortcuts: t('shortcuts') }
     const [tab, setTab] = useState<typeof panels[number]>(initialTab ?? 'AI providers')
-    const [source, setSource] = useState(providers.connections.find(c => c.id === providers.default?.connectionId)?.id ?? providers.connections[0]?.id ?? 'add:openai')
+    const defaultSource = providers.connections.find(c => c.id === providers.default?.connectionId)?.id ?? providers.connections[0]?.id ?? 'add:openai'
+    const [source, setSource] = useState(initialConnectionId ?? defaultSource)
+    const [recoveryId, setRecoveryId] = useState(initialConnectionId)
     const [key, setKey] = useState('')
     const [name, setName] = useState(workspaceName)
     const [busy, setBusy] = useState(false)
     const [notice, setNotice] = useState('')
     const [error, setError] = useState('')
+    const recovery = recoveryId ? providers.connections.find(connection => connection.id === recoveryId) : undefined
+    const recoverySubscription = isDesktopSubscriptionProvider(recovery?.provider) ? recovery.provider : undefined
+    const recoveryNamed = recovery && desktopApiConnectionIdSchema.safeParse(recovery.id).success
+        && desktopApiConnectionProviderSchema.safeParse(recovery.provider).success ? recovery : undefined
     const editable = providers.connections.filter(c => !isDesktopSubscriptionProvider(c.provider))
     const current = editable.find(c => c.id === source)
     const provider = current ? desktopProvider.parse(current.provider) : desktopProvider.safeParse(source.replace(/^add:/, '')).data ?? 'openai'
@@ -86,7 +93,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
     }
 
     // A provider that was just added replaces its "add" option with the engine connection.
-    const connection = current ?? (provider === 'custom' ? undefined : providers.connections.find(c => c.provider === provider))
+    const connection = current ?? (recoveryId || provider === 'custom' ? undefined : providers.connections.find(c => c.provider === provider))
     const changeModels = (models: string[], extraModels: string[]) => {
         if (connection) void save({ action: 'models', connectionId: connection.id, models, extraModels }, 'Available models updated.')
     }
@@ -107,7 +114,14 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                 {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
                 <fieldset disabled={busy} className="min-w-0 space-y-5">
                     {tab === 'AI providers' && <>
-                        <div className="space-y-2 rounded-xl border p-4">
+                        {recoveryId && <div className="space-y-2">
+                            <Button type="button" size="sm" variant="ghost" onClick={() => {
+                                setRecoveryId(null); setSource(defaultSource); setKey(''); setNotice(''); setError('')
+                            }}>Back to AI providers</Button>
+                            {recovery ? <h2 className="text-lg font-semibold">{recovery.name}</h2>
+                                : <p role="status" className="text-sm text-muted-foreground">This connection is no longer available. Choose a provider from AI providers to continue.</p>}
+                        </div>}
+                        {!recoveryId && <div className="space-y-2 rounded-xl border p-4">
                             <label htmlFor="desktop-default" className="font-semibold">{t('defaultModel')}</label>
                             <p className="text-sm text-muted-foreground">Used for the next message to any coworker, including in existing conversations.</p>
                             <select id="desktop-default" className={selectClass} disabled={!picks.length} value={selected} onChange={e => {
@@ -131,14 +145,15 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                     {reasoning?.supported.map(level => <option key={level} value={level}>{effortLabel(level)}</option>)}
                                 </select>
                             </div>}
-                        </div>
-                        {apiConnections && workspaceId ? <div className="flex min-h-64 min-w-0 flex-col overflow-hidden rounded-xl border">
-                            <ApiConnectionsPanel workspaceId={workspaceId} currentWorkspace={() => workspaceId} active api={apiConnections} selectionContext={null} onCatalog={() => onConnectionsChanged?.()} />
-                        </div> : <p role="status" className="text-sm text-muted-foreground">Named API-key connections stay unavailable until this workspace identity is confirmed. Choosing a default model here stays on the existing Settings authority.</p>}
-                        <div className="space-y-4 rounded-xl border p-4">
+                        </div>}
+                        {(!recoveryId || recoveryNamed) && (apiConnections && workspaceId ? <div className="flex min-h-64 min-w-0 flex-col overflow-hidden rounded-xl border">
+                            <ApiConnectionsPanel workspaceId={workspaceId} currentWorkspace={() => workspaceId}
+                                active api={apiConnections} initialConnectionId={recoveryNamed?.id} selectionContext={null} onCatalog={() => onConnectionsChanged?.()} />
+                        </div> : <p role="status" className="text-sm text-muted-foreground">Named API-key connections are unavailable until this workspace identity is confirmed.</p>)}
+                        {(!recoveryId || recovery && !recoveryNamed && !recoverySubscription) && <div className="space-y-4 rounded-xl border p-4">
                             <label htmlFor="desktop-provider" className="font-semibold">Provider connection</label>
                             <select id="desktop-provider" className={selectClass} value={connection?.id ?? 'add:' + provider} onChange={e => {
-                                setSource(e.target.value); setKey(''); setNotice(''); setError('')
+                                setRecoveryId(null); setSource(e.target.value); setKey(''); setNotice(''); setError('')
                             }}>
                                 {editable.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                 {workspaceId && <option value="add:custom">Add custom endpoint</option>}
@@ -149,14 +164,14 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                             </div>
                             {provider === 'opencode' ? workspaceId && <DesktopOpencodeSettings key={workspaceId} workspaceId={workspaceId}
                                 rejected={!!connection?.credentialRejected} onProviders={onProviders}
-                                onBack={() => setSource(providers.connections.find(item => item.provider !== 'opencode')?.id ?? 'add:openai')} />
+                                onBack={() => { setRecoveryId(null); setSource(providers.connections.find(item => item.provider !== 'opencode')?.id ?? 'add:openai') }} />
                             : provider === 'custom' ? workspaceId && (connection === undefined || connection.customRevision) ? <DesktopCustomProviderPage
                                 key={connection?.id ?? 'new-custom'}
                                 workspaceId={workspaceId}
                                 identity={connection?.customRevision ? { workspaceId, connectionId: connection.id, revision: connection.customRevision } : null}
                                 takenNames={providers.connections.filter(item => item.id !== connection?.id).map(item => item.name)}
                                 defaultModel={providers.default}
-                                onBack={() => setSource(providers.connections.find(item => item.provider !== 'custom')?.id ?? 'add:openai')}
+                                onBack={() => { setRecoveryId(null); setSource(providers.connections.find(item => item.provider !== 'custom')?.id ?? 'add:openai') }}
                                 onReceipt={receipt => { if (receipt.status === 'recorded') onConnectionsChanged?.() }}
                                 onCatalogChanged={onConnectionsChanged}
                             /> : <p role="status">Custom endpoint settings are unavailable.</p> : provider === 'codex' ? <>
@@ -176,9 +191,10 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                     onCommit={baseUrl => void save({ action: 'endpoint', connectionId: connection.id, baseUrl }, 'Endpoint updated.')} />}
                                 {provider === 'openrouter' && <CustomModelList models={connection.extraModels} reserved={DEFAULT_CONNECTION_MODELS.openrouter} onChange={extras => changeModels(connection.models, extras)} />}
                             </div>}
-                        </div>
-                        <DesktopSubscriptionLogin key={workspaceId ?? 'workspace'} onConnectionsChanged={onConnectionsChanged} />
-                        <p className="text-sm text-muted-foreground">Connect ChatGPT (Codex) or Claude with your subscription, or use an API key for the other providers.</p>
+                        </div>}
+                        {(!recoveryId || recoverySubscription) && <DesktopSubscriptionLogin key={workspaceId ?? 'workspace'}
+                            only={recoverySubscription} onConnectionsChanged={onConnectionsChanged} />}
+                        {!recoveryId && <p className="text-sm text-muted-foreground">Connect ChatGPT (Codex) or Claude with your subscription, or use an API key for the other providers.</p>}
                     </>}
                     {tab === 'Workspace' && <>
                         <DesktopLanguageSettings />

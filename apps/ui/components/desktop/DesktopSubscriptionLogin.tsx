@@ -3,6 +3,7 @@ import {
     desktopSubscriptionLoginSnapshot,
     type DesktopSubscriptionLoginAction,
     type DesktopSubscriptionLoginSnapshot,
+    type DesktopSubscriptionProvider,
 } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 
@@ -27,7 +28,7 @@ async function read(action?: DesktopSubscriptionLoginAction, signal?: AbortSigna
     return desktopSubscriptionLoginSnapshot.parse(await response.json())
 }
 
-export function DesktopSubscriptionLogin({ onConnectionsChanged }: { onConnectionsChanged?: () => void } = {}) {
+export function DesktopSubscriptionLogin({ only, onConnectionsChanged }: { only?: DesktopSubscriptionProvider; onConnectionsChanged?: () => void } = {}) {
     const [snapshot, setSnapshot] = useState<DesktopSubscriptionLoginSnapshot | null>(null)
     const [pending, setPending] = useState(false)
     const [error, setError] = useState<string | null>(null)
@@ -73,10 +74,13 @@ export function DesktopSubscriptionLogin({ onConnectionsChanged }: { onConnectio
         finally { setPending(false) }
     }
 
-    if (!snapshot || providers.every(provider => snapshot[provider].phase === 'unavailable')) return null
+    if (!snapshot) return only
+        ? <p role="status" className="text-sm text-muted-foreground">{error ?? 'Loading subscription sign-in status…'}</p> : null
+    if (only && snapshot[only].phase === 'unavailable') return <p role="status" className="text-sm text-muted-foreground">This subscription sign-in is unavailable.</p>
+    if (!only && providers.every(provider => snapshot[provider].phase === 'unavailable')) return null
     return <div className="space-y-3">
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-        {providers.map(provider => {
+        {(only ? [only] : providers).map(provider => {
             const state = snapshot[provider]
             if (state.phase === 'unavailable') return null
             const name = names[provider]

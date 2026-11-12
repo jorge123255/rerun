@@ -98,7 +98,7 @@ async function createBinding(runtime: DesktopRuntime) {
         if (turnSessionId !== sessionId || binding.runId !== saved.run.id || binding.chatId !== chat.chatId || binding.workspaceId !== chat.workspaceId) return null
         return {
             context: saved.run.status === 'done' ? desktopForemanContext(saved.run, binding.model) : null,
-            runFailure: saved.run.status === 'error' ? desktopForemanRunFailure(saved.run.error) : null,
+            runFailure: saved.run.status === 'error' ? desktopForemanRunFailure(saved.run.error, binding.model.connectionId) : null,
         }
     }
     const live = async (chat: DesktopForemanChatRef) => {

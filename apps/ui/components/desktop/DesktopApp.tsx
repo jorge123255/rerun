@@ -235,6 +235,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [workspaceSettings, setWorkspaceSettings] = useState(false)
     const [settings, setSettings] = useState(false)
     const [settingsTab, setSettingsTab] = useState<'AI providers' | 'Tool services'>('AI providers')
+    const [settingsConnection, setSettingsConnection] = useState<string | null>(null)
     const [templatesOpen, setTemplatesOpen] = useState(false)
     const [templateFlowActive, setTemplateFlowActive] = useState(false)
     const [templateToReview, setTemplateToReview] = useState<DesktopTemplateIdentity | null>(null)
@@ -321,6 +322,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             if (!creationAdmission.current.settingsAllowed || workspaceDialogActive || templatesActive || shortcutsOpen || helpOpen || changelog.open
                 || notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || workspaceSettings || boardInteraction
                 || boardState.saving || themeSavingRef.current || isDesktopQuitting()) return false
+            if (!settings) setSettingsConnection(null)
             setSettings(true)
             return true
         }
@@ -331,7 +333,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         const unsubscribe = bridge?.onOpenSettings?.(openFromShortcut)
         window.addEventListener('keydown', keydown)
         return () => { unsubscribe?.(); window.removeEventListener('keydown', keydown) }
-    }, [workspaceDialogActive, templatesActive, workspaceSettings, shortcutsOpen, helpOpen, changelog.open, notificationsTarget, sharedDataOpen, sharedFilesOpen, brainOpen, boardInteraction, boardState.saving])
+    }, [workspaceDialogActive, templatesActive, workspaceSettings, shortcutsOpen, helpOpen, changelog.open, notificationsTarget, sharedDataOpen, sharedFilesOpen, brainOpen, boardInteraction, boardState.saving, settings])
 
     useEffect(() => {
         if (panelOpen && !settings && !requestedPanel && !workspaceDialogLease.current.active) panelContent.current?.focus({ preventScroll: true })
@@ -636,9 +638,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         if (currentAgents.current.some(agent => agent.id === hit.agentId)) selectCoworker(hit.agentId, hit.id)
     }
 
-    const openSettingsAt = (tab: typeof settingsTab) => {
+    const openSettingsAt = (tab: typeof settingsTab, connectionId: string | null = null) => {
         if (!creationAdmission.current.settingsAllowed || workspaceDialogActive || themeSavingRef.current || isDesktopQuitting()) return
         setSettingsTab(tab)
+        setSettingsConnection(connectionId)
         setSettings(true)
     }
     const openSettings = () => openSettingsAt('AI providers')
@@ -793,6 +796,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                         centerOpen={controlCenterOpen} onOpenTranscriptionSettings={() => openSettingsAt('Tool services')} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('The Chief of Staff chat was closed.')); setForemanOpen(false) }}
                         onOpenCoworker={openForemanCoworker} onOpenCalledChat={openCoworkerChat} onOpenBox={openForemanBox}
                         onReviewTemplate={reviewTemplate} providers={providers} onOpenModelSettings={openSettings}
+                        onReconnectConnection={connectionId => openSettingsAt('AI providers', connectionId)}
                         agentNameOf={id => currentAgents.current.find(agent => agent.id === id)?.name ?? 'Coworker'} />
                 </div>}
                 {selectedAgent && <div inert={!panelOpen || boardInteraction || workspaceDialogActive} aria-hidden={!panelOpen || boardInteraction || workspaceDialogActive || undefined}>
@@ -816,7 +820,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 <div className="border-b px-4 py-2">
                     <Button type="button" variant="ghost" size="sm" onClick={() => setSettings(false)}><ArrowLeft />{panelOpen ? t('backToChat') : t('board')}</Button>
                 </div>
-                <DesktopSettings key={settingsTab} initialTab={settingsTab} providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={applyProviders} workspaceId={runtimeWorkspaceId} onConnectionsChanged={() => { void refreshProviders() }} />
+                <DesktopSettings key={JSON.stringify([settingsTab, settingsConnection])} initialTab={settingsTab}
+                    initialConnectionId={settingsConnection} providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={applyProviders}
+                    workspaceId={runtimeWorkspaceId} onConnectionsChanged={() => { void refreshProviders() }} />
             </div>}
             <DesktopTemplateNavigation open={templatesOpen} onOpenChange={setTemplatesOpen} onActiveChange={setTemplateFlowActive} onCreateFromScratch={() => showBoard(true)}
                 requestedTemplate={templateToReview} onPlaceTemplate={beginTemplatePlacement} onInstalled={receipt => {
