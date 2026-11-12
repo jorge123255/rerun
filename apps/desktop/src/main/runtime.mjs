@@ -16,6 +16,7 @@ export function inside(root, name) {
 export async function loadBundle(resources) {
     const manifest = JSON.parse(await readFile(resolve(resources, 'runtime-manifest.json'), 'utf8'))
     if (manifest.protocolVersion !== PROTOCOL_VERSION || typeof manifest.buildId !== 'string' || !manifest.buildId) throw new Error('Unsupported desktop runtime manifest')
+    if (Object.hasOwn(manifest, 'arch') && manifest.arch !== process.arch) throw new Error('Bundled runtime architecture does not match the Mac app')
     const root = await realpath(resources)
     const paths = {}
     const baseFields = ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath', 'claudePath', 'claudeSandboxPath', 'renameHelperPath', 'pdfHelperPath', 'pdfTextHelperPath']

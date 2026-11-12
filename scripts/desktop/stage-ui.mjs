@@ -3,6 +3,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 import { buildId, existsSync, flag, pnpm, repoRoot, resourcesDir } from './lib.mjs'
 import { sourceStamp, stampMatches, writeStamp } from './provenance.mjs'
 import { stageUiSharp } from './ui-sharp.mjs'
+import { macTarget } from './mac-target.mjs'
 
 const uiDir = join(repoRoot, 'apps', 'ui')
 const standalone = join(uiDir, '.next', 'standalone')
@@ -69,7 +70,7 @@ async function relinkEscaped(dir) {
     }
 }
 await relinkEscaped(uiRoot)
-const sharp = await stageUiSharp({ uiDir, uiRoot, sourceNodeModules: join(repoRoot, 'node_modules') })
+const sharp = await stageUiSharp({ uiDir, uiRoot, sourceNodeModules: join(repoRoot, 'node_modules'), platform: macTarget().platform })
 console.log(`staged complete UI Sharp ${sharp.version} dependency graph (${sharp.aliases.join(', ')})`)
 await writeStamp(uiRoot, stamp)
 if (!existsSync(join(uiRoot, 'server.js'))) throw new Error('staged UI is missing server.js')

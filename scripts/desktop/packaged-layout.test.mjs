@@ -100,6 +100,18 @@ test('loadBundle rejects a UI host path that escapes resources', async () => {
     } finally { await rm(root, { recursive: true, force: true }) }
 })
 
+test('loadBundle rejects a runtime from the other Mac architecture before launching services', async () => {
+    const root = await fakeResources()
+    try {
+        const file = join(root, 'runtime-manifest.json')
+        const manifest = JSON.parse(await readFile(file, 'utf8'))
+        await writeFile(file, JSON.stringify({ ...manifest, arch: process.arch === 'arm64' ? 'x64' : 'arm64' }))
+        await assert.rejects(loadBundle(root), /architecture does not match/)
+        await writeFile(file, JSON.stringify({ ...manifest, arch: process.arch }))
+        assert.equal((await loadBundle(root)).buildId, manifest.buildId)
+    } finally { await rm(root, { recursive: true, force: true }) }
+})
+
 test('the supervisor launches the UI child through the real resource path, never an app.asar path', async () => {
     const resources = await fakeResources(true)
     const dataRoot = await mkdtemp(join(tmpdir(), 'rerun-packaged-data-'))

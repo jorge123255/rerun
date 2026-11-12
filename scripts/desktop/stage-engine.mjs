@@ -1,10 +1,10 @@
 import { cp, mkdir, mkdtemp, rm, chmod, realpath } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
-import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { existsSync, flag, pnpm, resourcesDir, repoRoot } from './lib.mjs'
 import { sourceStamp, stampMatches, writeStamp } from './provenance.mjs'
 import { stageSubscriptionRunners } from './subscription-runners.mjs'
+import { macProviderBinaries } from './mac-provider-binaries.mjs'
 
 const target = join(resourcesDir, 'runtime', 'engine')
 const dist = join(repoRoot, 'apps', 'engine', 'dist')
@@ -31,11 +31,8 @@ try {
 if (!existsSync(join(target, 'dist', 'cli', 'bin.js'))) throw new Error('staged engine is missing dist/cli/bin.js')
 await cp(join(repoRoot, 'apps', 'engine', 'desktop-guest'), join(target, 'desktop-guest'), { recursive: true })
 // Resolve the platform package through the lockfile's installed dependencies, never PATH.
-const engineRequire = createRequire(join(target, 'package.json'))
-const adapter = createRequire(engineRequire.resolve('ai-sdk-provider-codex-cli'))
-const codex = createRequire(adapter.resolve('@openai/codex/package.json'))
-const platform = dirname(codex.resolve('@openai/codex-darwin-arm64/package.json'))
-const bin = dirname(await realpath(join(platform, 'vendor/aarch64-apple-darwin/bin/codex')))
+const { codexBin, claudeRoot } = macProviderBinaries(target)
+const bin = dirname(await realpath(join(codexBin, 'codex')))
 const host = await realpath(join(bin, 'codex-code-mode-host'))
 if (dirname(host) !== bin) throw new Error('Codex tool host is outside its packaged bin directory')
 if (relative(target, bin).startsWith('..')) throw new Error('Codex executable escapes the staged engine')
@@ -43,12 +40,9 @@ await cp(join(repoRoot, 'scripts/desktop/codex-launcher.sh'), join(bin, 'rerun-c
 await chmod(join(bin, 'rerun-codex'), 0o755)
 await cp(join(repoRoot, 'scripts/desktop/codex-launcher.sb'), join(bin, 'rerun-codex.sb'))
 await cp(join(repoRoot, 'scripts/desktop/native-worker.sb'), join(bin, 'rerun-native-worker.sb'))
-const claudeAdapter = createRequire(engineRequire.resolve('ai-sdk-provider-claude-code'))
-const claudeSdk = createRequire(claudeAdapter.resolve('@anthropic-ai/claude-agent-sdk'))
-const claudePlatform = dirname(claudeSdk.resolve('@anthropic-ai/claude-agent-sdk-darwin-arm64/package.json'))
-const claudeBinary = await realpath(join(claudePlatform, 'claude'))
+const claudeBinary = await realpath(join(claudeRoot, 'claude'))
 if (relative(target, claudeBinary).startsWith('..')) throw new Error('Claude executable escapes the staged engine')
-await cp(join(repoRoot, 'scripts/desktop/claude-runner.sb'), join(claudePlatform, 'rerun-claude.sb'))
+await cp(join(repoRoot, 'scripts/desktop/claude-runner.sb'), join(claudeRoot, 'rerun-claude.sb'))
 await stageSubscriptionRunners(target)
 await writeStamp(target, stamp)
 console.log(`staged engine -> ${target}`)

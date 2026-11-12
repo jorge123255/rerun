@@ -3,6 +3,9 @@ import { flag, repoRoot, run } from './lib.mjs'
 import { stageArguments } from './provenance.mjs'
 import { previewSigningArguments } from './signing.mjs'
 import { requestedSubscriptionRunners } from './subscription-runners.mjs'
+import { macTarget } from './mac-target.mjs'
+
+const { arch, appDirectory } = macTarget()
 
 if (requestedSubscriptionRunners() && !flag('--stage-only')) {
     throw new Error('The optional subscription runner assets are available only for local staging.')
@@ -29,11 +32,11 @@ await stage('verify-runtime.mjs')
 if (flag('--stage-only')) {
     console.log('\nstaging complete (--stage-only)')
 } else {
-    const builderArgs = flag('--dmg') ? ['--mac', 'dmg'] : ['--mac', '--arm64']
+    const builderArgs = flag('--dmg') ? ['--mac', 'dmg', `--${arch}`] : ['--mac', `--${arch}`]
     console.log(`\n--- electron-builder ${builderArgs.join(' ')}`)
     const signingArgs = await previewSigningArguments()
     await run('npx', ['--yes', 'electron-builder@26.18.1', ...builderArgs, '--publish', 'never', '--config', 'electron-builder.yml', ...signingArgs, ...(outputDir ? [`-c.directories.output=${outputDir}`] : [])], { cwd: join(repoRoot, 'apps', 'desktop') })
-    const packagedApp = join(outputDir ?? join(repoRoot, 'apps', 'desktop', 'release'), 'mac-arm64', 'Rerun Desktop Preview.app')
+    const packagedApp = join(outputDir ?? join(repoRoot, 'apps', 'desktop', 'release'), appDirectory, 'Rerun Desktop Preview.app')
     await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', packagedApp])
     console.log(`\npackage complete: ${outputDir ?? 'apps/desktop/release'}`)
 }

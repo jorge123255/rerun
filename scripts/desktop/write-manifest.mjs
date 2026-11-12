@@ -1,27 +1,23 @@
 import { mkdir, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
-import { dirname, relative, join } from 'node:path'
+import { relative, join } from 'node:path'
 import { desktopDir, resourcesDir } from './lib.mjs'
 import { sourceStamp, requireStamp } from './provenance.mjs'
 import { stagedSubscriptionManifest } from './subscription-runners.mjs'
+import { macProviderBinaries } from './mac-provider-binaries.mjs'
 
 await mkdir(resourcesDir, { recursive: true })
 const stamp = await sourceStamp()
 for (const directory of [join(desktopDir, 'dist', 'main'), join(resourcesDir, 'runtime', 'ui'), join(resourcesDir, 'runtime', 'engine'), join(resourcesDir, 'runtime', 'helpers'), join(resourcesDir, 'runtime', 'pdf-helper')]) await requireStamp(directory, stamp)
-const engineRequire = createRequire(join(resourcesDir, 'runtime/engine/package.json'))
-const adapter = createRequire(engineRequire.resolve('ai-sdk-provider-codex-cli'))
-const cli = createRequire(adapter.resolve('@openai/codex/package.json'))
-const platform = dirname(cli.resolve('@openai/codex-darwin-arm64/package.json'))
-const claudeAdapter = createRequire(engineRequire.resolve('ai-sdk-provider-claude-code'))
-const claudeSdk = createRequire(claudeAdapter.resolve('@anthropic-ai/claude-agent-sdk'))
-const claudePlatform = dirname(claudeSdk.resolve('@anthropic-ai/claude-agent-sdk-darwin-arm64/package.json'))
+const engineRoot = join(resourcesDir, 'runtime', 'engine')
+const { codexBin, claudeRoot } = macProviderBinaries(engineRoot)
 const manifest = {
     protocolVersion: 1,
     buildId: stamp.buildId,
     sourceCommit: stamp.sourceCommit,
-    codexPath: relative(resourcesDir, join(platform, 'vendor/aarch64-apple-darwin/bin/rerun-codex')),
-    claudePath: relative(resourcesDir, join(claudePlatform, 'claude')),
-    claudeSandboxPath: relative(resourcesDir, join(claudePlatform, 'rerun-claude.sb')),
+    arch: stamp.arch,
+    codexPath: relative(resourcesDir, join(codexBin, 'rerun-codex')),
+    claudePath: relative(resourcesDir, join(claudeRoot, 'claude')),
+    claudeSandboxPath: relative(resourcesDir, join(claudeRoot, 'rerun-claude.sb')),
     nodePath: 'runtime/node/bin/node',
     uiRoot: 'runtime/ui',
     engineEntry: 'runtime/engine/dist/cli/bin.js',
@@ -29,7 +25,7 @@ const manifest = {
     renameHelperPath: 'runtime/helpers/rerun-rename-entry',
     pdfHelperPath: 'runtime/pdf-helper/rerun-render-pdf',
     pdfTextHelperPath: 'runtime/pdf-helper/rerun-pdf-text',
-    ...await stagedSubscriptionManifest(join(resourcesDir, 'runtime/engine'), resourcesDir),
+    ...await stagedSubscriptionManifest(engineRoot, resourcesDir),
 }
 const file = join(resourcesDir, 'runtime-manifest.json')
 await writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`)

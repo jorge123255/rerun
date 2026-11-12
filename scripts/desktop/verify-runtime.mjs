@@ -11,6 +11,7 @@ import { readUiSharpManifest } from './ui-sharp.mjs'
 import { verifyPdfHelper } from './pdf-helper-probe.mjs'
 import { verifyPdfTextHelper } from './pdf-text-probe.mjs'
 import { runtimeSymlinkIsContained } from './runtime-symlinks.mjs'
+import { macTarget, nodeVersion } from './mac-target.mjs'
 
 const execFileAsync = promisify(execFile)
 const failures = []
@@ -53,8 +54,24 @@ check(existsSync(join(uiDir, 'public')), 'ui public staged')
 check(existsSync(join(root, 'runtime', 'node', 'bin', 'npm')) || existsSync(join(root, 'runtime', 'node', 'lib', 'node_modules', 'npm')), 'bundled npm staged')
 refuseFailures()
 
-const nodeVersion = await output(resolved.nodePath, ['--version']).catch(error => `error: ${error.message}`)
-check(nodeVersion === 'v22.23.4', `bundled node runs (${nodeVersion})`)
+const { arch, clang } = macTarget()
+const manifest = JSON.parse(await readFile(join(root, 'runtime-manifest.json'), 'utf8'))
+check(manifest.arch === arch, `manifest targets ${arch}`)
+for (const [name, path] of [
+    ['Node', resolved.nodePath],
+    ['Codex', join(dirname(resolved.codexPath), 'codex')],
+    ['Codex code mode host', join(dirname(resolved.codexPath), 'codex-code-mode-host')],
+    ['Claude', resolved.claudePath],
+    ['File helper', resolved.renameHelperPath],
+    ['PDF renderer', resolved.pdfHelperPath],
+    ['PDF text helper', resolved.pdfTextHelperPath],
+]) {
+    const nativeArch = await output('/usr/bin/lipo', ['-archs', path]).catch(() => 'unverified')
+    check(nativeArch === clang, `${name} targets ${clang} (${nativeArch})`)
+}
+refuseFailures()
+const bundledNodeVersion = await output(resolved.nodePath, ['--version']).catch(error => `error: ${error.message}`)
+check(bundledNodeVersion === nodeVersion, `bundled node runs (${bundledNodeVersion})`)
 
 try {
     await verifyPdfHelper(resolved.pdfHelperPath)

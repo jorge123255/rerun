@@ -7,7 +7,8 @@ import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { desktopDir, output, repoRoot, run } from './lib.mjs'
-import { sourceStamp, STAMP_FILE } from './provenance.mjs'
+import { matchesSourceStamp, sourceStamp, STAMP_FILE } from './provenance.mjs'
+import { macTarget } from './mac-target.mjs'
 
 const exec = promisify(execFile)
 const appID = 'build.rerun.desktop.preview'
@@ -47,7 +48,7 @@ export async function verifyBundle(bundle, stamp) {
         ['engine', await json('runtime/engine/' + STAMP_FILE)],
     ]
     for (const [name, value] of receipts) {
-        if (value?.protocolVersion !== stamp.protocolVersion || value?.sourceCommit !== stamp.sourceCommit || value?.buildId !== stamp.buildId) {
+        if (!matchesSourceStamp(value, stamp)) {
             throw new Error(`${name} receipt does not match ${stamp.sourceCommit}.`)
         }
     }
@@ -127,10 +128,10 @@ export async function installPreview({
             await requireQuit()
             await mkdir(out, { mode: 0o700 })
             await build(out, lock.fd)
-            const candidate = join(out, 'mac-arm64', bundleName)
+            const candidate = join(out, macTarget().appDirectory, bundleName)
             await verifyBundle(candidate, initial)
             const current = await stampOfSource()
-            if (current.sourceCommit !== initial.sourceCommit || current.buildId !== initial.buildId) throw new Error('The source changed during packaging.')
+            if (!matchesSourceStamp(current, initial)) throw new Error('The source changed during packaging.')
             await requireQuit()
             if (await existingApp(destination) !== previous) throw new Error('The installed app changed during packaging. Run the install again.')
             await publishApp(candidate, destination, previous !== undefined)

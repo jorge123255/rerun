@@ -31,31 +31,38 @@ test('the actual package entry forces stages, skips stage-only packaging and dis
         assert(!calls.some(call => call.command === 'npx'))
         // Exercise the actual entry point under CI flags. All commands and signing
         // discovery are intercepted: no builder, native probe or Keychain is run.
-        for (const [input, target] of [[[], ['--mac', '--arm64']], [['--dmg'], ['--mac', 'dmg']]]) {
-            await writeFile(report, '')
-            const outputDir = join(root, 'artifacts')
-            execFileSync(process.execPath, ['--loader', loader, fileURLToPath(new URL('./package.mjs', import.meta.url)), ...input, '--output-dir', outputDir], {
-                env: { ...process.env, CI: 'true', GITHUB_ACTIONS: 'true', PROVENANCE_TEST_REPORT: report },
-                stdio: ['ignore', 'pipe', 'pipe'],
-            })
-            const packaged = (await readFile(report, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
-            const builders = packaged.filter(call => call.command === 'npx')
-            assert.equal(builders.length, 1)
-            assert.deepEqual(builders[0].args, ['--yes', 'electron-builder@26.18.1', ...target, '--publish', 'never', '--config', 'electron-builder.yml', '-c.mac.identity=offline-fixture', `-c.directories.output=${outputDir}`])
-            assert.deepEqual(builders[0].options, { cwd: '/synthetic/apps/desktop' })
-            assert.equal(packaged.filter(call => call.command === '/usr/bin/codesign').length, 1)
+        for (const [arch, appDirectory] of [['arm64', 'mac-arm64'], ['x64', 'mac']]) {
+            const architecture = 'data:text/javascript,' + encodeURIComponent(`Object.defineProperty(process,'arch',{value:${JSON.stringify(arch)}})`)
+            for (const input of [[], ['--dmg']]) {
+                await writeFile(report, '')
+                const outputDir = join(root, 'artifacts')
+                execFileSync(process.execPath, ['--import', architecture, '--loader', loader, fileURLToPath(new URL('./package.mjs', import.meta.url)), ...input, '--output-dir', outputDir], {
+                    env: { ...process.env, CI: 'true', GITHUB_ACTIONS: 'true', PROVENANCE_TEST_REPORT: report },
+                    stdio: ['ignore', 'pipe', 'pipe'],
+                })
+                const packaged = (await readFile(report, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+                const builders = packaged.filter(call => call.command === 'npx')
+                const target = ['--mac', ...(input.length ? ['dmg'] : []), `--${arch}`]
+                assert.equal(builders.length, 1)
+                assert.deepEqual(builders[0].args, ['--yes', 'electron-builder@26.18.1', ...target, '--publish', 'never', '--config', 'electron-builder.yml', '-c.mac.identity=offline-fixture', `-c.directories.output=${outputDir}`])
+                assert.deepEqual(builders[0].options, { cwd: '/synthetic/apps/desktop' })
+                assert.deepEqual(packaged.filter(call => call.command === '/usr/bin/codesign').map(call => call.args.at(-1)),
+                    [join(outputDir, appDirectory, 'Rerun Desktop Preview.app')])
+            }
         }
     } finally { await rm(root, { recursive: true, force: true }) }
 })
 
 test('cached output from another commit or without a build receipt cannot be labelled as current source', async () => {
     const root = await mkdtemp(join(tmpdir(), 'rerun-provenance-'))
-    const current = { protocolVersion: 1, sourceCommit: 'b'.repeat(40), buildId: 'bbbbbbb-desktop-0.1.0' }
+    const current = { protocolVersion: 1, sourceCommit: 'b'.repeat(40), buildId: 'bbbbbbb-desktop-0.1.0', arch: 'arm64' }
     try {
         await writeFile(join(root, 'server.js'), 'synthetic older server')
         await assert.rejects(requireStamp(root, current), /Stale or unverified/)
         await writeStamp(root, { ...current, sourceCommit: 'a'.repeat(40) })
         assert.equal(await stampMatches(root, current), false)
+        await assert.rejects(requireStamp(root, current), /Stale or unverified/)
+        await writeStamp(root, { ...current, arch: 'x64' })
         await assert.rejects(requireStamp(root, current), /Stale or unverified/)
         await writeStamp(root, current)
         await requireStamp(root, current)
