@@ -14,8 +14,8 @@ import type { DesktopAgentView } from '@/components/desktop/DesktopApp'
 import { decideDesktopOverviewWorkspaceSwitch, type DesktopOverviewFlush, type DesktopOverviewRunBoundary } from '@/lib/desktop/coworker-overview/workspace-switch'
 import type { DesktopOverviewIdentity } from '@/lib/desktop/coworker-overview/identity'
 import type { DesktopOverviewAcceptedPanelTab, DesktopOverviewTab } from '@/lib/desktop/coworker-overview/sections'
-import type { DesktopPanelCloseGuard, RegisterDesktopPanelCloseGuard } from '@/lib/desktop/use-dialog-control'
-import type { ReactNode, RefObject } from 'react'
+import type { DesktopPanelCloseControl, RegisterDesktopPanelCloseGuard } from '@/lib/desktop/use-dialog-control'
+import type { ReactNode } from 'react'
 import { DesktopCoworkerOverview } from './DesktopCoworkerOverview'
 import type { DesktopOverviewComputer } from './DesktopCoworkerOverviewComputer'
 
@@ -40,7 +40,7 @@ export type DesktopCoworkerOverviewRootMountProps = {
     onSkillFocusConsumed?: () => void
     onOpenSession?: (sessionId: string, title: string) => void
     onOpenAcceptedPanel?: (tab: DesktopOverviewAcceptedPanelTab) => void
-    closeGuardRef?: RefObject<DesktopPanelCloseGuard | null>
+    closeControl?: DesktopPanelCloseControl
     onClose: () => void
     onShare?: () => void
     onDelete?: (identity: DesktopOverviewIdentity, confirmationName: string) => void | Promise<void>
@@ -74,7 +74,7 @@ export function DesktopCoworkerOverviewRootMount(props: DesktopCoworkerOverviewR
             onOpenComputer={props.onOpenComputer}
             onRenamed={props.onRenamed}
             onOpenAcceptedPanel={props.onOpenAcceptedPanel}
-            closeGuardRef={props.closeGuardRef}
+            closeControl={props.closeControl}
             renderTab={(tab, register) => overviewTab(tab, props, register)}
         />
     )

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useRef, useState, type RefObject } from 'react'
+import { useCallback, useRef, useState } from 'react'
 
 export type DesktopDialogControl = { open: boolean; onOpenChange: (open: boolean) => void }
 
@@ -13,17 +13,21 @@ export function useDesktopDialogControl(control?: DesktopDialogControl) {
 export type DesktopPanelCloseGuard = (close: () => void) => void
 export type RegisterDesktopPanelCloseGuard = (guard: DesktopPanelCloseGuard) => () => void
 
-export function useDesktopPanelCloseGuard(shared?: RefObject<DesktopPanelCloseGuard | null>) {
-    const local = useRef<DesktopPanelCloseGuard | null>(null)
-    const ref = shared ?? local
+export type DesktopPanelCloseControl = {
+    register: RegisterDesktopPanelCloseGuard
+    requestClose: (close: () => void) => void
+}
+
+export function useDesktopPanelCloseGuard(): DesktopPanelCloseControl {
+    const ref = useRef<DesktopPanelCloseGuard | null>(null)
     const register = useCallback<RegisterDesktopPanelCloseGuard>(guard => {
         ref.current = guard
         return () => { if (ref.current === guard) ref.current = null }
-    }, [ref])
+    }, [])
     const requestClose = useCallback((close: () => void) => {
         const guard = ref.current
         if (guard) guard(close)
         else close()
-    }, [ref])
-    return { ref, register, requestClose }
+    }, [])
+    return { register, requestClose }
 }

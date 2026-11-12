@@ -281,7 +281,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     const handledPanel = useRef<DesktopCoworkerPanelRequest | null>(null)
     const conversationRoot = useRef<HTMLDivElement>(null)
     const [panelFocus, setPanelFocus] = useState<'chat' | 'card' | null>(null)
-    const { ref: overviewCloseGuard, requestClose: requestOverviewClose } = useDesktopPanelCloseGuard()
+    const overviewCloseControl = useDesktopPanelCloseGuard()
     const dismissCard = () => {
         if (requestedPanel) { handledPanel.current = requestedPanel; onPanelRequestHandled?.(requestedPanel) }
         setCardOpen(false)
@@ -1399,7 +1399,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
             if (cardOpen && event.key === 'Escape' && !event.defaultPrevented && !(event.target as HTMLElement).closest('[role="dialog"], [role="alertdialog"]')) {
                 event.preventDefault()
                 event.stopPropagation()
-                requestOverviewClose(() => { dismissCard(); setPanelFocus('card') })
+                overviewCloseControl.requestClose(() => { dismissCard(); setPanelFocus('card') })
             }
         }}>
             <header className="relative z-40 grid shrink-0 grid-cols-[minmax(2.5rem,1fr)_minmax(0,max-content)_minmax(2.5rem,1fr)] items-center gap-1 px-3 pt-3">
@@ -1418,7 +1418,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                     )}
                 </div>
                 <h1 aria-label={agent.name} className="min-w-0">
-                    <FloatingPill label="Coworker card" active={cardOpen} onClick={() => cardOpen ? requestOverviewClose(dismissCard) : setCardOpen(true)} className="max-w-full pl-1.5">
+                    <FloatingPill label="Coworker card" active={cardOpen} onClick={() => cardOpen ? overviewCloseControl.requestClose(dismissCard) : setCardOpen(true)} className="max-w-full pl-1.5">
                         <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted">
                             <AgentBuddy agentId={agent.id} mood={inactive ? 'asleep' : generating ? 'working' : 'idle'} size={20} facing="right" />
                         </span>
@@ -1426,14 +1426,14 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                         <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
                     </FloatingPill>
                 </h1>
-                {onClosePanel && <Button type="button" aria-label={t('closePanel')} variant="ghost" size="icon-sm" className="justify-self-end" onClick={() => requestOverviewClose(onClosePanel)}><XIcon className="size-4" /></Button>}
+                {onClosePanel && <Button type="button" aria-label={t('closePanel')} variant="ghost" size="icon-sm" className="justify-self-end" onClick={() => overviewCloseControl.requestClose(onClosePanel)}><XIcon className="size-4" /></Button>}
             </header>
-            {cardOpen && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={() => requestOverviewClose(dismissCard)} />}
+            {cardOpen && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={() => overviewCloseControl.requestClose(dismissCard)} />}
             <section aria-label="Coworker details" hidden={!cardOpen} className={!cardOpen ? "hidden" : overview ? "absolute inset-x-3 top-14 bottom-3 z-40 flex min-h-0 flex-col overflow-auto rounded-2xl border border-border bg-background shadow-xl" : "absolute inset-x-3 top-14 z-40 rounded-2xl border border-border bg-background p-4 shadow-xl"}>
                 {overview && cardOpen && active && <DesktopConversationOverview
                     authority={overview} agent={agent} active={active && !draft.quitting}
                     working={generating} settingsDisabledReason={generating || !!sessionId && engineRunning.id !== sessionId ? 'Wait for this coworker’s current run to finish.' : null}
-                    closeGuardRef={overviewCloseGuard} onClose={dismissCard} onOpenSession={onSelectSession}
+                    closeControl={overviewCloseControl} onClose={dismissCard} onOpenSession={onSelectSession}
                     onOpenAcceptedPanel={panel => dialogControl(panel).onOpenChange(true)}
                 />}
                 <div hidden={!!overview}>
