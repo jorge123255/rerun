@@ -17,6 +17,7 @@ if (bootstrap?.audience === 'picker') {
     contextBridge.exposeInMainWorld('rerunHubOffline', {
         state: () => ipcRenderer.invoke('hub:offline-state'),
         retry: () => ipcRenderer.invoke('hub:offline-retry'),
+        onState: callback => subscribe('hub:offline-state-changed', callback),
     })
 } else if (bootstrap?.audience === 'hub-quick-ask') {
     contextBridge.exposeInMainWorld('rerunShell', {

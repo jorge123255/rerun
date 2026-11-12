@@ -30,6 +30,7 @@ test('the Mac Settings item opens only the current desktop frame', () => {
         openFind: () => calls.push('find'),
         openNewWindow: () => calls.push('new-window'),
         openHubPicker: () => calls.push('connect-hub'),
+        reloadWindow: (_item, target) => calls.push(['reload', target]),
     })
 
     assert.equal(menu[0].label, 'Rerun Desktop Preview')
@@ -64,6 +65,13 @@ test('the Mac Settings item opens only the current desktop frame', () => {
     assert.equal(calls.at(-1), 'new-window')
     menu.find(item => item.role === 'fileMenu').submenu.find(item => item.id === 'rerun-connect-hub').click()
     assert.equal(calls.at(-1), 'connect-hub')
+    const view = menu.find(item => item.label === 'View')
+    assert(!view.role)
+    assert(!view.submenu.some(item => ['reload', 'forceReload', 'toggleDevTools'].includes(item.role)))
+    const reload = view.submenu.find(item => item.id === 'rerun-reload')
+    assert.equal(reload.accelerator, 'CmdOrCtrl+R')
+    reload.click(reload, window)
+    assert.deepEqual(calls.at(-1), ['reload', window])
 })
 
 test('the preload forwards the Settings signal without exposing its IPC event', async () => {

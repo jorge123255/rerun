@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { BeforeQuitDrafts } from './before-quit.mjs'
+import { approveDesktopDraftDrain, BeforeQuitDrafts } from './before-quit.mjs'
 
 export function cascadeWindowBounds(window, screen) {
     const { x, y, width, height } = window.getBounds()
@@ -43,6 +43,23 @@ export function createBoardWindows({ startupUrl, isDesktopPage }) {
         return entry.drafts.request(value => entry.contents.send('desktop:before-quit', value))
     }
 
+    async function reload(entry, runtime, confirmDiscard, resume) {
+        if (!ready(entry, runtime)) return false
+        const { epoch, contents } = entry
+        const frame = contents.mainFrame
+        const address = frame.url
+        const current = () => ready(entry, runtime) && entry.epoch === epoch
+            && contents.mainFrame === frame && frame.url === address
+        try {
+            if (await approveDesktopDraftDrain(() => flush(entry, runtime, true), confirmDiscard, current)) {
+                await entry.window.loadURL(address)
+                return true
+            }
+        } catch { /* A failed navigation must release the original renderer if it still owns the window. */ }
+        if (ready(entry, runtime) && entry.epoch === epoch) resume()
+        return false
+    }
+
     return {
         register(window, { primary }) {
             const contents = window.webContents
@@ -54,7 +71,7 @@ export function createBoardWindows({ startupUrl, isDesktopPage }) {
             })
             return entry
         },
-        get, ready, trusted, invalidate, flush,
+        get, ready, trusted, invalidate, flush, reload,
         list: () => [...entries.values()].filter(live),
         async flushAll(runtime, requireReady = false) {
             const current = [...entries.values()].filter(entry => live(entry) && entry.runtime === runtime)

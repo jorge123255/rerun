@@ -8,20 +8,20 @@ const startupUrl = 'file:///startup.html'
 const runtime = { workspaceId: 1 }
 
 function fixture() {
-    const registry = createBoardWindows({ startupUrl, isDesktopPage: url => url === boardUrl })
+    const registry = createBoardWindows({ startupUrl, isDesktopPage: url => url === boardUrl || url.startsWith(boardUrl + '?') })
     function create(primary = false, url = boardUrl) {
-        const messages = []
+        const messages = [], navigations = []
         const contents = Object.assign(new EventEmitter(), {
             mainFrame: { url },
             isDestroyed: () => destroyed,
             send: (...args) => messages.push(args),
         })
         let destroyed = false
-        const window = { webContents: contents, isDestroyed: () => destroyed }
+        const window = { webContents: contents, isDestroyed: () => destroyed, loadURL: async address => { navigations.push(address) } }
         const entry = registry.register(window, { primary })
         entry.runtime = runtime
         return {
-            entry, messages,
+            entry, messages, navigations,
             event: (frame = contents.mainFrame) => ({ sender: contents, senderFrame: frame }),
             destroy: () => { destroyed = true; contents.emit('destroyed') },
         }
@@ -83,4 +83,44 @@ test('navigation or destruction cancels only the affected board lease and refuse
     second.destroy()
     assert.equal(await closing, false)
     assert.equal(first.entry.drafts.ready, true)
+})
+
+test('Reload waits for the initiating board to drain and keeps its exact page', async () => {
+    const { registry, create } = fixture()
+    const other = create(true)
+    const address = boardUrl + '?view=focus#chat'
+    const target = create(false, address)
+    other.entry.drafts.register('other-board')
+    target.entry.drafts.register('target-board')
+    const reloaded = registry.reload(target.entry, runtime, () => assert.fail('already saved'), () => assert.fail('still reloading'))
+    assert.deepEqual(other.messages, [])
+    assert.deepEqual(target.navigations, [])
+    const [channel, request] = target.messages[0]
+    assert.equal(channel, 'desktop:before-quit')
+    target.entry.drafts.acknowledge({ ...request, saved: true })
+    assert.equal(await reloaded, true)
+    assert.deepEqual(target.navigations, [address])
+    assert.deepEqual(other.navigations, [])
+})
+
+test('Stay resumes the old board and stale discard approval cannot reload a new document', async () => {
+    const { registry, create } = fixture()
+    const target = create()
+    target.entry.drafts.register('target-board')
+    let resumed = 0
+    const reload = confirm => {
+        const reloaded = registry.reload(target.entry, runtime, confirm, () => { resumed++ })
+        const [, request] = target.messages.at(-1)
+        target.entry.drafts.acknowledge({ ...request, saved: false })
+        return reloaded
+    }
+    assert.equal(await reload(() => false), false)
+    assert.equal(resumed, 1)
+    assert.deepEqual(target.navigations, [])
+    assert.equal(await reload(() => {
+        registry.invalidate(target.entry)
+        return true
+    }), false)
+    assert.equal(resumed, 1)
+    assert.deepEqual(target.navigations, [])
 })

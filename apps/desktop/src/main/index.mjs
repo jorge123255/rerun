@@ -54,7 +54,7 @@ let quittingNow = false
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const boards = createBoardWindows({ startupUrl: pathToFileURL(startup).href, isDesktopPage })
-const closingBoards = new Set()
+const changingBoards = new Set()
 const quickAsk = createQuickAskWindow({ app, BrowserWindow, screen, showBoard: showMainWindow, boardScope: () =>
     boardContext(window) ? { epoch: boards.get(window).epoch, contents: window.webContents } : null,
 })
@@ -63,7 +63,7 @@ const windowFind = createWindowFind({ WebContentsView, scopeOf: candidate => boa
 })
 function boardContext(candidate) {
     const entry = boards.get(candidate)
-    if (quitting || transitioning || closingBoards.has(candidate) || !runtimeScope() || !boards.ready(entry, runtime)) return null
+    if (quitting || transitioning || changingBoards.has(candidate) || !runtimeScope() || !boards.ready(entry, runtime)) return null
     return { runtime, window: candidate, rendererEpoch: entry.epoch }
 }
 const filesFor = candidate => createDesktopFileSaves({ dialog, context: () => boardContext(candidate) })
@@ -189,7 +189,7 @@ else {
     app.on('before-quit', event => {
         if (quittingNow) return
         event.preventDefault()
-        if (quitting || transitioning || closingBoards.size) return
+        if (quitting || transitioning || changingBoards.size) return
         quitting = true
         for (const board of boards.list()) windowFind.close(board.window)
         quickAsk.reset()
@@ -279,6 +279,12 @@ async function launch() {
                 void openAdditionalBoard().catch(() => {})
             },
             openHubPicker: connectedHubs.openPicker,
+            reloadWindow: (_item, candidate) => {
+                const last = lastWorkspaceWindow && !lastWorkspaceWindow.isDestroyed() ? lastWorkspaceWindow : window
+                const target = candidate ?? BrowserWindow.getFocusedWindow() ?? last
+                if (!connectedHubs.reloadWindow(target)) void reloadBoard(target).catch(() => {})
+            },
+            devTools: !app.isPackaged,
         })
         try {
             menuBar = createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow: showMainWindow,
@@ -320,7 +326,7 @@ async function launch() {
     }
     ipcMain.handle('desktop:retry', async event => {
         trustedPrimary(event)
-        if (event.senderFrame.url !== pathToFileURL(startup).href || transitioning || quitting || closingBoards.size) return false
+        if (event.senderFrame.url !== pathToFileURL(startup).href || transitioning || quitting || changingBoards.size) return false
         if (!supervisor) { app.relaunch(); app.quit(); return true }
         if (!workspaces) return false
         if (['starting', 'stopping'].includes(supervisor.status.state)) return false
@@ -523,7 +529,7 @@ function createBoardWindow(desktopSession, bounds, primary = false) {
     })
     boardWindow.on('close', event => {
         if (quittingNow) return
-        if (quitting || transitioning) { event.preventDefault(); return }
+        if (quitting || transitioning || changingBoards.has(boardWindow)) { event.preventDefault(); return }
         if (!mac) return
         event.preventDefault()
         if (primary) boardWindow.hide()
@@ -578,10 +584,20 @@ function createBoardWindow(desktopSession, bounds, primary = false) {
     return board
 }
 
+async function reloadBoard(candidate) {
+    const context = boardContext(candidate)
+    if (!context) return
+    const board = boards.get(candidate)
+    changingBoards.add(candidate)
+    try {
+        await boards.reload(board, context.runtime, () => confirmDiscard(candidate, 'Reload'), () => resumeBoard(board))
+    } finally { changingBoards.delete(candidate) }
+}
+
 async function closeAdditionalBoard(board) {
     const candidate = board.window
-    if (closingBoards.has(candidate)) return
-    closingBoards.add(candidate)
+    if (changingBoards.has(candidate)) return
+    changingBoards.add(candidate)
     try {
         windowFind.close(candidate)
         await completeDesktopQuit({
@@ -591,7 +607,7 @@ async function closeAdditionalBoard(board) {
             quit: () => { if (!candidate.isDestroyed()) candidate.destroy() },
             cancelled: () => resumeBoard(board),
         })
-    } finally { closingBoards.delete(candidate) }
+    } finally { changingBoards.delete(candidate) }
 }
 
 async function loadBoard(board, current) {
@@ -648,7 +664,7 @@ async function startWorkspace() {
     }
 }
 async function runWorkspaceTransition(operation) {
-    if (transitioning || closingBoards.size) return { ok: false, code: 'busy', message: 'A window or workspace change is already in progress.' }
+    if (transitioning || changingBoards.size) return { ok: false, code: 'busy', message: 'A window or workspace change is already in progress.' }
     transitioning = true
     quickAsk.reset()
     const previous = supervisor.runtime

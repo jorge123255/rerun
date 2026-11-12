@@ -459,6 +459,20 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             if (available()) void duplicateHub(entry).catch(() => {})
             return true
         },
+        reloadWindow(window) {
+            const entry = entryFor(window)
+            if (!entry) return false
+            if (available() && entry.recovery.onOfflinePage()) {
+                void entry.recovery.retry().then(issue => {
+                    if (issue && available() && entry.recovery.onOfflinePage()) {
+                        entry.contents.mainFrame.send('hub:offline-state-changed', issue)
+                    }
+                }).catch(() => {})
+            } else if (available() && connected(window) && !entry.contents.isLoadingMainFrame()) {
+                entry.contents.reload()
+            }
+            return true
+        },
         toggleQuickAsk(window) {
             const entry = connected(window)
             if (entry && !singleQuickAskReceiver(entry)) {

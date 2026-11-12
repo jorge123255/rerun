@@ -1,6 +1,6 @@
 import { QUICK_ASK_SHORTCUT } from './quick-ask-window.mjs'
 
-export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDesktopPage, openDocumentation, openFind, openQuickAsk, openNewWindow, openHubPicker }) {
+export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDesktopPage, openDocumentation, openFind, openQuickAsk, openNewWindow, openHubPicker, reloadWindow, devTools }) {
     const template = [
         { label: appName, submenu: [
             { role: 'about' },
@@ -39,7 +39,12 @@ export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDes
             { role: 'delete' }, { role: 'selectAll' }, { type: 'separator' },
             { id: 'rerun-find', label: 'Find…', click: openFind },
         ] },
-        { role: 'viewMenu' },
+        { label: 'View', submenu: [
+            { id: 'rerun-reload', label: 'Reload', accelerator: 'CmdOrCtrl+R', click: reloadWindow },
+            ...(devTools ? [{ role: 'toggleDevTools' }] : []),
+            { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
+            { type: 'separator' }, { role: 'togglefullscreen' },
+        ] },
         { role: 'windowMenu' },
         { role: 'help', submenu: [
             { id: 'rerun-documentation', label: 'Rerun Documentation', click: openDocumentation },

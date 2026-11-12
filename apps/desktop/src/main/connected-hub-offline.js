@@ -30,6 +30,7 @@ async function retry(manual) {
     }
 }
 
+bridge?.onState(render)
 void bridge?.state().then(render, () => {})
 button.disabled = !bridge
 button.addEventListener('click', () => void retry(true))
