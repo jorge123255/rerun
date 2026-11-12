@@ -122,6 +122,29 @@ it('places saved work after its own prompt even when two prompts have the same t
     expect(host.textContent?.match(/Second call completed/g)).toHaveLength(1)
 })
 
+it('shortens safe sent links before and after history loads, preserving exact coworker mention styling and named Markdown links', async () => {
+    const url = 'https://example.com/notes/prior/agenda?view=details'
+    const withMention = `@Ada check ${url} then @Ada.`
+    const plain = `Check ${url} or [the named reference](https://example.com/reference) [unsafe](https://user:pass@example.com/hidden)`
+    const messages: Props['messages'] = [
+        { id: 'with-mention', role: 'user', text: withMention, coworkerMentions: [{ targetId: 'ada', token: '@Ada', start: 0, end: 4 }],
+            history: [{ kind: 'text', key: 'saved-mention', text: withMention }] },
+        { id: 'plain', role: 'user', text: plain, history: [{ kind: 'text', key: 'saved-plain', text: plain }] },
+    ]
+    await render({ messages: messages.slice(0, 1), restored: false })
+    expect(host.querySelector('a')?.getAttribute('href')).toBe(url)
+    await render({ messages })
+    const links = [...host.querySelectorAll('a')]
+    expect(links.map(link => [link.textContent, link.getAttribute('href')])).toEqual([
+        ['example.com/…/agenda…', url],
+        ['example.com/…/agenda…', url],
+        ['the named reference', 'https://example.com/reference'],
+    ])
+    expect(host.querySelectorAll('[class*="text-violet-700"]')).toHaveLength(1)
+    expect(host.textContent).toContain('then @Ada.')
+    expect(links.every(link => link.rel === 'noopener noreferrer')).toBe(true)
+})
+
 it('opens the latest restored message after an async history load and after reopening the dock', async () => {
     await render({ messages: [], restored: false })
     const view = geometry(120)

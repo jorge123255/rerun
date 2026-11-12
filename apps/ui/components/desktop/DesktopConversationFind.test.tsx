@@ -26,7 +26,9 @@ test('Find counts and highlights visible text in this transcript, across inline 
                 <DesktopConversationFind open={open} onOpenChange={() => {}} transcript={transcript} />
                 <div ref={transcript}>
                     <p>Search cue in a thread preview</p>
-                    <div data-chat-find-message><p>Search <strong>cue</strong> in the first message</p></div>
+                    <div data-chat-find-message><p>Search <strong>cue</strong> in the first message</p>
+                        <p>Look at <a data-chat-find-url="https://example.com/only-in-target/report">example.com/…/report</a> next</p>
+                    </div>
                     <div data-chat-find-message>
                         <p>SEARCH CUE in the second message</p>
                         <p hidden>Search cue in hidden text</p>
@@ -69,6 +71,11 @@ test('Find counts and highlights visible text in this transcript, across inline 
         await type('block starts')
         expect(status()).toBe('No matches')
         expect(found()).toEqual([])
+        for (const query of ['only-in-target', 'example.com/…/report', 'example.com', 'look at https://example.com/only-in-target/report next']) {
+            await type(query)
+            expect(status()).toBe('1 of 1')
+            expect(current()).toContain('example.com/…/report')
+        }
         await type('search cue')
         await render(false)
         expect(highlights.size).toBe(0)

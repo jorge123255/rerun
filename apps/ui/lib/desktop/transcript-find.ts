@@ -4,7 +4,8 @@ const BLOCK = 'address,article,blockquote,dd,div,dt,figcaption,figure,h1,h2,h3,h
 const ALL_HIGHLIGHTS = 'rerun-chat-find'
 const CURRENT_HIGHLIGHT = 'rerun-chat-find-current'
 
-type Chunk = { node: Text; start: number }
+type Chunk = { node: Text; url: string | null }
+type Match = { first: number; last: number; start: number; end: number }
 
 function visible(element: Element) {
     if (element.matches(IGNORE) || (element.parentElement?.matches('details:not([open])') && element.tagName !== 'SUMMARY')) return false
@@ -31,22 +32,38 @@ export function findTranscriptRanges(transcript: HTMLElement, query: string): Ra
                 return node.parentElement?.matches('details:not([open])') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
             },
         })
-        let chunks: Chunk[] = [], content = '', block: Element | null = null
+        let chunks: Chunk[] = [], block: Element | null = null
         function finishBlock() {
-            let from = 0, to = 0
-            for (const match of content.matchAll(pattern)) {
-                const start = match.index
-                const end = start + match[0].length
-                while (from + 1 < chunks.length && chunks[from + 1].start <= start) from++
-                to = Math.max(from, to)
-                while (to + 1 < chunks.length && chunks[to + 1].start < end) to++
+            const found = new Map<string, Match>()
+            function matchText(fullUrls: boolean) {
+                const offsets: number[] = []
+                let content = ''
+                for (const { node, url } of chunks) {
+                    offsets.push(content.length)
+                    content += fullUrls && url ? url : node.data
+                }
+                let from = 0, to = 0
+                for (const match of content.matchAll(pattern)) {
+                    const start = match.index
+                    const end = start + match[0].length
+                    while (from + 1 < chunks.length && offsets[from + 1] <= start) from++
+                    to = Math.max(from, to)
+                    while (to + 1 < chunks.length && offsets[to + 1] < end) to++
+                    const firstOffset = chunks[from].url ? 0 : start - offsets[from]
+                    const lastOffset = chunks[to].url ? chunks[to].node.length : end - offsets[to]
+                    found.set(`${from}:${firstOffset}:${to}:${lastOffset}`, { first: from, last: to, start: firstOffset, end: lastOffset })
+                }
+            }
+            matchText(false)
+            // A compact label and its original URL both find the same visible chip.
+            if (chunks.some(chunk => chunk.url)) matchText(true)
+            for (const { first, last, start, end } of [...found.values()].sort((a, b) => a.first - b.first || a.start - b.start)) {
                 const range = doc.createRange()
-                range.setStart(chunks[from].node, start - chunks[from].start)
-                range.setEnd(chunks[to].node, end - chunks[to].start)
+                range.setStart(chunks[first].node, start)
+                range.setEnd(chunks[last].node, end)
                 ranges.push(range)
             }
             chunks = []
-            content = ''
         }
 
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
@@ -58,8 +75,7 @@ export function findTranscriptRanges(transcript: HTMLElement, query: string): Ra
                 finishBlock()
                 block = currentBlock
             }
-            chunks.push({ node: part, start: content.length })
-            content += part.data
+            chunks.push({ node: part, url: part.parentElement?.closest('[data-chat-find-url]')?.getAttribute('data-chat-find-url') ?? null })
         }
         finishBlock()
     }

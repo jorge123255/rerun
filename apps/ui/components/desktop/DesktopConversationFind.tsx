@@ -45,7 +45,7 @@ export function DesktopConversationFind({ open, onOpenChange, transcript }: {
         })
         observer.observe(scope, {
             subtree: true, childList: true, characterData: true, attributes: true,
-            attributeFilter: ['open', 'hidden', 'aria-hidden', 'inert', 'class', 'style'],
+            attributeFilter: ['open', 'hidden', 'aria-hidden', 'inert', 'class', 'style', 'data-chat-find-url'],
         })
         return () => { clearTimeout(timer); observer.disconnect() }
     }, [open, query, transcript])

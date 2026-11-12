@@ -37,6 +37,13 @@ export function trimUrl(candidate: string): string {
     return url
 }
 
+export function composerUrlRanges(text: string): (TextRange & { url: string })[] {
+    return Array.from(text.matchAll(URL_PATTERN), match => {
+        const url = trimUrl(match[0])
+        return { url, start: match.index, end: match.index + url.length }
+    })
+}
+
 /** `github.com/…/pull/839`: the host, then the tail of the path, which is what tells two links apart. */
 export function shortenUrl(url: string): string {
     let parsed: URL
@@ -153,11 +160,11 @@ type MarkdownNode = {
  * their text. The title sits on an element inside the link: Streamdown's link-safety button drops the
  * attributes of the link itself.
  */
-export function remarkShortLinks() {
+export function remarkShortLinks({ allow = () => true }: { allow?: (url: string) => boolean } = {}) {
     return (tree: MarkdownNode) => {
         const visit = (node: MarkdownNode) => {
             const onlyChild = node.children?.length === 1 ? node.children[0] : undefined
-            if (node.type === 'link' && node.url && onlyChild?.type === 'text' && onlyChild.value === node.url) {
+            if (node.type === 'link' && node.url && onlyChild?.type === 'text' && onlyChild.value === node.url && allow(node.url)) {
                 onlyChild.value = shortenUrl(node.url)
                 onlyChild.data = { ...onlyChild.data, hName: COMPOSER_LINK_TAG, hProperties: { title: node.url } }
             }

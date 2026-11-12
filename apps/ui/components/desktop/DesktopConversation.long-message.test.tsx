@@ -12,12 +12,13 @@ import { DesktopConversation } from './DesktopConversation'
 
 const agent = { id: 'reader', name: 'Reader', description: '', createdAt: '', updatedAt: '' }
 const marker = 'Find this line below the fold.'
+const url = 'https://example.com/private-fixture-path/result?view=detail'
 const long = '@Ada\n' + 'A paragraph in the saved brief.\n'.repeat(34) + marker
 const saved: UIMessage[] = [
     { id: 'engine-long', role: 'user', metadata: { ...desktopAttachmentFieldsOf(['brief.txt']),
         coworkerMentions: [{ targetId: 'ada', token: '@Ada', start: 0, end: 4 }] },
     parts: [{ type: 'text', text: long }] },
-    { id: 'engine-short', role: 'user', parts: [{ type: 'text', text: 'A short note.' }] },
+    { id: 'engine-short', role: 'user', parts: [{ type: 'text', text: `A short note (${url}).` }] },
     { id: 'engine-answer', role: 'assistant', parts: [{ type: 'text', text: 'The brief is saved.' }] },
 ]
 
@@ -66,6 +67,7 @@ test('folds a saved long message, keeps its attachment outside the fold and reve
         expect(container.querySelector('[aria-label="Find in conversation"]')).not.toBeNull()
     }
     const closeFind = () => click(container.querySelector<HTMLButtonElement>('[aria-label="Close find"]')!)
+    const link = () => container.querySelector<HTMLAnchorElement>('a[data-streamdown="link"]')
     try {
         await render()
         expect(toggle()?.textContent).toBe('Show more')
@@ -77,6 +79,10 @@ test('folds a saved long message, keeps its attachment outside the fold and reve
         expect(body.querySelector('span span')?.textContent).toBe('@Ada')
         expect(body.closest('.is-user')?.textContent).toContain('brief.txt')
         expect(body.textContent).not.toContain('brief.txt')
+        expect(link()?.getAttribute('href')).toBe(url)
+        expect(link()?.getAttribute('target')).toBe('_blank')
+        expect(link()?.getAttribute('rel')).toBe('noopener noreferrer')
+        expect(link()?.textContent).toBe('example.com/…/result…')
 
         await click(toggle()!)
         expect(toggle()!.textContent).toBe('Show less')
@@ -99,6 +105,11 @@ test('folds a saved long message, keeps its attachment outside the fold and reve
         expect([...highlights.get('rerun-chat-find-current')!][0]?.toString()).toBe(marker)
         expect(viewport.style.maxHeight).toBe('')
         expect(container.textContent).toContain('1 of 1')
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'private-fixture-path')
+            input.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+        expect([...highlights.get('rerun-chat-find-current')!][0]?.toString()).toBe('example.com/…/result…')
         await closeFind()
         expect(highlights.size).toBe(0)
         expect(viewport.style.maxHeight).toBe('384px')
@@ -109,6 +120,7 @@ test('folds a saved long message, keeps its attachment outside the fold and reve
         await render()
         expect(toggle()!.textContent).toBe('Show more')
         expect(document.getElementById(toggle()!.getAttribute('aria-controls')!)?.textContent).toBe(long)
+        expect(link()?.getAttribute('href')).toBe(url)
     } finally {
         await act(async () => root.unmount())
         container.remove()

@@ -1397,7 +1397,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                                             onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />
                                         : message.parts.map((part, index) => {
                                             if (part.type !== 'text') return null
-                                            const text = <DesktopSelectedMentionText text={part.text} metadata={message.metadata} />
+                                            const text = <DesktopSelectedMentionText text={part.text} metadata={message.metadata} linkify={message.role === 'user'} />
                                             return <DesktopVoiceHistoryMessage key={index} agentId={agent.id} text={part.text}>
                                                 {message.role === 'user' && part.text ? <ExpandableMessageBody forceExpanded={finding}
                                                     showMore={t('showMore')} showLess={t('showLess')}>{text}</ExpandableMessageBody> : text}

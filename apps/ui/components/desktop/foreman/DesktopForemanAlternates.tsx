@@ -44,7 +44,7 @@ export function DesktopForemanAlternates({ ui, sourceText }: { ui: AlternateUi; 
             {selected && !view && ui.error && <Button type="button" size="sm" variant="outline" onClick={ui.reload}>{t('foreman.retry')}</Button>}
             {view?.messages.map(message => <div key={message.id}
                 className={cn('max-w-[95%] rounded-lg px-4 py-3 text-sm', message.role === 'user' ? 'ml-auto bg-secondary' : 'bg-transparent')}>
-                <DesktopForemanHistoryMessage history={[{ kind: 'text', key: message.id, text: message.text }]} />
+                <DesktopForemanHistoryMessage history={[{ kind: 'text', key: message.id, text: message.text }]} userLinks={message.role === 'user'} />
             </div>)}
             {view && view.status !== 'done' && <p role="status" className="text-xs text-muted-foreground">{t(`foreman.alternates.status.${view.status}`)}</p>}
         </div>

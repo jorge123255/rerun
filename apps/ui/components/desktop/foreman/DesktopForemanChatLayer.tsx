@@ -177,7 +177,7 @@ export function DesktopForemanChatLayer({
                             {restored && message.history ? <>
                                 {message.role === 'user' && message.coworkerMentions?.length
                                     ? <div data-chat-find-message className="whitespace-pre-wrap wrap-anywhere"><DesktopSelectedMentionText text={message.text} metadata={message} /></div>
-                                    : <DesktopForemanHistoryMessage history={message.history} />}
+                                    : <DesktopForemanHistoryMessage history={message.history} userLinks={message.role === 'user'} />}
                                 <DesktopForemanAnsweredQuestion recaps={message.answeredQuestions ?? []} />
                                 {message.role === 'assistant' && message.text.trim() && answerFeedback && (
                                     <DesktopForemanAnswerActions
@@ -189,7 +189,8 @@ export function DesktopForemanChatLayer({
                                     />
                                 )}
                             </> : <>
-                                <div data-chat-find-message className="contents">{message.text}</div>
+                                <div data-chat-find-message className="contents">{message.role === 'user'
+                                    ? <DesktopSelectedMentionText text={message.text} metadata={message} /> : message.text}</div>
                                 {message.docs?.map((part, index) => <DesktopForemanDocsTool key={index} part={part as import('ai').ToolUIPart} restored={restored} />)}
                             </>}
                         </div>
