@@ -11,7 +11,7 @@ const required = [
     'mac-menu-bar.mjs', 'tray/trayTemplate.png', 'tray/trayTemplate@2x.png',
     'window-context-menu.mjs', 'displayed-image.mjs', 'board-windows.mjs',
     'connected-hub-policy.mjs', 'connected-hub-auth.mjs', 'connected-hubs.mjs', 'connected-hub-downloads.mjs',
-    'connected-hub-quick-ask.mjs', 'connected-hub-service-sign-in.mjs',
+    'connected-hub-quick-ask.mjs', 'connected-hub-service-sign-in.mjs', 'connected-hub-payment.mjs',
     'connected-hub-recovery.mjs', 'connected-hub-messages.mjs', 'connected-hub-offline.html', 'connected-hub-offline.js',
     'connected-hub-preload.cjs', 'connected-hub.html', 'connected-hub.js', 'connected-hub.css',
     'mac-phone-pairing-window.mjs', 'mac-phone-pairing-preload.cjs', 'mac-phone-pairing.html', 'mac-phone-pairing.js', 'mac-phone-pairing.css',

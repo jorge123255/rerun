@@ -10,6 +10,7 @@ import { createHubAuth } from './connected-hub-auth.mjs'
 import { createHubDownloads, isHubDownload } from './connected-hub-downloads.mjs'
 import { createConnectedHubQuickAsk } from './connected-hub-quick-ask.mjs'
 import { createHubRecovery } from './connected-hub-recovery.mjs'
+import { createHubPaymentWindows } from './connected-hub-payment.mjs'
 import { createHubServiceSignIn } from './connected-hub-service-sign-in.mjs'
 import { atomicPrivateJSON, readJSON } from './workspaces/paths.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
@@ -48,6 +49,8 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         const entry = entryFor(window)
         return entry && !entry.recovery?.state() && sameHub(entry.contents.mainFrame?.url, entry.origin) ? entry : null
     }
+    const payments = createHubPaymentWindows({ BrowserWindow, show, enabled: !process.mas,
+        isCurrent: entry => available() && connected(entry.window) === entry })
     function singleQuickAskReceiver(entry) {
         // The upstream web composer writes one origin-wide key; its receiver
         // must be unique because workspace choice belongs to each tab.
@@ -259,12 +262,18 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             if (sameHub(url, origin)) return
             event.preventDefault()
         }
+        const openPayment = (event, url) => (!event.initiator || event.initiator === contents.mainFrame) && payments.open(entry, url)
         contents.on('will-navigate', (event, target) => {
             navigation(event, target)
             const url = event.url ?? target
-            if (!sameHub(url, origin) && available() && connected(window) && window.isFocused()) external(url)
+            if (!sameHub(url, origin) && available() && connected(window) && window.isFocused()
+                && !openPayment(event, url)) external(url)
         })
-        contents.on('will-redirect', navigation)
+        contents.on('will-redirect', (event, target) => {
+            navigation(event, target)
+            const url = event.url ?? target
+            if (event.isMainFrame && !sameHub(url, origin)) openPayment(event, url)
+        })
         contents.on('will-attach-webview', event => event.preventDefault())
         contents.setWindowOpenHandler(({ url }) => {
             if (!available() || connected(window) !== entry) return { action: 'deny' }
@@ -297,11 +306,13 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         }
         contents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
             if (!mainFrame || inPlace) return
+            payments.close(entry)
             quickAsk.reset(entry)
             entry.scope = randomUUID()
             closeFind(window)
         })
-        contents.on('render-process-gone', () => { quickAsk.reset(entry); invalidateNative(entry) })
+        contents.on('did-navigate-in-page', (_event, _url, mainFrame) => { if (mainFrame) payments.close(entry) })
+        contents.on('render-process-gone', () => { payments.close(entry); quickAsk.reset(entry); invalidateNative(entry) })
         contents.on('will-prevent-unload', event => {
             const t = shellText(language(entry.origin))
             const result = dialog.showMessageBoxSync(window, { type: 'warning', message: t('unload.message'),
@@ -310,6 +321,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             else entry.closeAttempt?.(false)
         })
         window.once('closed', () => {
+            payments.close(entry)
             closeFind(window)
             quickAsk.reset(entry)
             invalidateNative(entry)
