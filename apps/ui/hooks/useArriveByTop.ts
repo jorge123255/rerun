@@ -41,7 +41,7 @@ export function useArriveByTop(conversationRef: RefObject<ConversationHandle | n
             const conversation = conversationRef.current
             const scrollEl = conversation?.scrollRef.current
             if (!conversation || !scrollEl) return
-            if (align === 'auto' && arrivalOf(blockEl.offsetHeight, scrollEl.clientHeight) !== 'arrive') return
+            if (arrivalOf(blockEl.offsetHeight, scrollEl.clientHeight) !== 'arrive') return
             observer.disconnect()
             frame = requestAnimationFrame(() => bringBlockIn(conversation, blockEl, 'instant'))
         })
