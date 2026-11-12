@@ -155,6 +155,7 @@ contextBridge.exposeInMainWorld('desktopApp', {
         if (typeof listener !== 'function') throw new TypeError('Expected a status listener')
         const handler = (_event, value) => listener({
             state: value.state, message: value.message,
+            ...(typeof value.retryLabel === 'string' && { retryLabel: value.retryLabel }),
             ...(value.choices && { choices: {
                 local: value.choices.local, cloud: value.choices.cloud, connect: value.choices.connect,
                 connecting: value.choices.connecting, unreachable: value.choices.unreachable,

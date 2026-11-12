@@ -1,10 +1,24 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
 import { configureStartupProfile, hasLocalWorkspace } from '../src/main/startup-workspace.mjs'
+
+test('the startup preload forwards the localized retry label', async () => {
+    const source = await readFile(new URL('../src/main/preload.cjs', import.meta.url), 'utf8')
+    const ipcRenderer = new EventEmitter()
+    let desktopApp
+    const contextBridge = { exposeInMainWorld: (_name, api) => { desktopApp = api } }
+    runInNewContext(source, { process: { platform: 'darwin' }, require: () => ({ contextBridge, ipcRenderer }) })
+    const labels = []
+    desktopApp.onStatus(status => labels.push(status.retryLabel))
+    ipcRenderer.emit('desktop:status', {}, { state: 'error', retryLabel: 'Restart Rerun' })
+    ipcRenderer.emit('desktop:status', {}, { state: 'starting' })
+    assert.deepEqual(labels, ['Restart Rerun', undefined])
+})
 
 test('a development profile uses separate storage and packaged builds keep the installed profile', async t => {
     const root = await mkdtemp(join(tmpdir(), 'rerun-startup-profile-'))
