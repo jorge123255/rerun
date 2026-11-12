@@ -544,7 +544,7 @@ test('returns from chat history to the exact waiting question without sending or
         expect(node.closest('[role="log"]')).not.toBeNull()
         expect(node.closest('[role="log"]')?.textContent).toContain(app.answer(session))
         Object.defineProperties(scroller, { clientHeight: { value: 420 }, scrollHeight: { value: 1600 } })
-        Object.defineProperty(node, 'offsetHeight', { value: 900 })
+        Object.defineProperty(node, 'offsetHeight', { value: 900, configurable: true })
         vi.spyOn(scroller, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 60, 440, 420))
         vi.spyOn(node, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 580, 440, 900))
         const scrollTo = vi.spyOn(scroller, 'scrollTo').mockImplementation(() => {})
@@ -561,6 +561,11 @@ test('returns from chat history to the exact waiting question without sending or
         await act(async () => button.click())
         expect(scrollTo).toHaveBeenLastCalledWith({ top: 608, behavior: 'smooth' })
         expect(document.activeElement).toBe(node)
+        // A request can become shorter while later content still extends below it.
+        Object.defineProperty(node, 'offsetHeight', { value: 220 })
+        scroller.scrollTop = 180
+        await act(async () => button.click())
+        expect(scrollTo).toHaveBeenLastCalledWith({ top: 688, behavior: 'smooth' })
         expect(vi.mocked(fetch).mock.calls.some(([url, init]) => init?.method === 'POST' &&
             (/\/questions$/.test(String(url)) || String(url) === '/api/desktop/chat'))).toBe(false)
         return { entry, button, scrollTo }
@@ -574,7 +579,7 @@ test('returns from chat history to the exact waiting question without sending or
     expect(pill(mounted.container)).toBeNull()
     expect(initial.entry.disconnected).toBe(true)
     await act(async () => initial.button.click())
-    expect(initial.scrollTo).toHaveBeenCalledTimes(2)
+    expect(initial.scrollTo).toHaveBeenCalledTimes(3)
 
     await mounted.unmount()
     const restored = await app.mount()

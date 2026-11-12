@@ -14,11 +14,11 @@ export function arrivalOf(blockHeight: number, threadHeight: number): Arrival {
     return blockHeight + TOP_GAP <= threadHeight ? 'stick' : 'arrive'
 }
 
-// A block that fits is shown by following the bottom again, a taller one by its top.
-export function bringBlockIn(conversation: ConversationHandle, blockEl: HTMLElement, behavior: ScrollBehavior) {
+// A block at the end that fits follows the bottom by default. Explicit navigation can target its top.
+export function bringBlockIn(conversation: ConversationHandle, blockEl: HTMLElement, behavior: ScrollBehavior, align: 'auto' | 'start' = 'auto') {
     const scrollEl = conversation.scrollRef.current
     if (!scrollEl) return
-    if (arrivalOf(blockEl.offsetHeight, scrollEl.clientHeight) !== 'arrive') {
+    if (align === 'auto' && arrivalOf(blockEl.offsetHeight, scrollEl.clientHeight) !== 'arrive') {
         void conversation.scrollToBottom(behavior)
         return
     }
@@ -41,7 +41,7 @@ export function useArriveByTop(conversationRef: RefObject<ConversationHandle | n
             const conversation = conversationRef.current
             const scrollEl = conversation?.scrollRef.current
             if (!conversation || !scrollEl) return
-            if (arrivalOf(blockEl.offsetHeight, scrollEl.clientHeight) !== 'arrive') return
+            if (align === 'auto' && arrivalOf(blockEl.offsetHeight, scrollEl.clientHeight) !== 'arrive') return
             observer.disconnect()
             frame = requestAnimationFrame(() => bringBlockIn(conversation, blockEl, 'instant'))
         })

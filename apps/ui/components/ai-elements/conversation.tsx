@@ -115,7 +115,7 @@ export const ConversationScrollButton = ({
   const jumpToPending = () => {
     const blockEl = pending?.blockRef.current;
     if (!blockEl || !scrollRef.current?.contains(blockEl)) return;
-    bringBlockIn(context, blockEl, "smooth");
+    bringBlockIn(context, blockEl, "smooth", pending?.focusOnJump ? "start" : "auto");
     if (pending?.focusOnJump) blockEl.focus({ preventScroll: true });
   };
 
