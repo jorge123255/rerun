@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, Notification, safeStorage, screen, shell, session, Tray, WebContentsView } from 'electron'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { mkdir } from 'node:fs/promises'
+import { mkdirSync } from 'node:fs'
 import { createWorkspaceCoordinator, seedLegacyCatalog, getWorkspace } from './workspaces/index.mjs'
 import { loadBundle, loadIdentity, workspaceIdentity } from './runtime.mjs'
 import { RuntimeSupervisor } from './supervisor.mjs'
@@ -27,6 +27,8 @@ import { parseHubLink } from './connected-hub-policy.mjs'
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
 const mac = process.platform === 'darwin'
+const dataRoot = resolve(app.getPath('appData'), 'Rerun Desktop Preview')
+let storageSetupError
 let window
 let menuBar
 let shortcutPreference
@@ -138,6 +140,13 @@ function createNotices() { return createDesktopNotifications({ Notification, onC
 
 if (!app.requestSingleInstanceLock()) app.quit()
 else {
+    try {
+        // Chromium chooses its network storage before ready. A later userData
+        // override creates partition folders but may leave cookies memory-only.
+        mkdirSync(dataRoot, { recursive: true, mode: 0o700 })
+        app.setPath('userData', dataRoot)
+        app.setPath('sessionData', dataRoot)
+    } catch (error) { storageSetupError = error }
     if (mac) app.on('open-url', (event, address) => {
         const link = parseHubLink(address)
         if (!link) return
@@ -205,9 +214,7 @@ function resumeBoard(board) {
 }
 
 async function launch() {
-    const dataRoot = resolve(app.getPath('appData'), 'Rerun Desktop Preview')
-    await mkdir(dataRoot, { recursive: true, mode: 0o700 })
-    app.setPath('userData', dataRoot)
+    if (storageSetupError) throw storageSetupError
     if (mac) {
         connectedHubs = createConnectedHubs({ app, BrowserWindow, ipcMain, session, shell, dialog, dataRoot,
             available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate) })
