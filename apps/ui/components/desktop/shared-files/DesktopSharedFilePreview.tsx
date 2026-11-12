@@ -7,12 +7,12 @@ import type { SaveFileResult } from '@/app/api/_services/file.service'
 import { filePreviewKind } from '@/lib/files/preview'
 import { useSiblingFiles } from '@/components/files/useSiblingFiles'
 import { Button } from '@/components/ui/button'
-import { PanelDeleteButton } from '@/components/ui/panel-editor'
+import { PanelDeleteButton, PanelEditorHeader } from '@/components/ui/panel-editor'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { desktopFileDraftHost, holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { readDesktopSharedPreview, replaceDesktopSharedText, type DesktopSharedEntry, type DesktopSharedTextIdentity } from '@/lib/desktop/shared-workspace-files'
 import { sharedMediaUrl } from '@/lib/desktop/shared-file-previews'
-import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, FileIcon, FolderIcon } from '@/lib/icons'
+import { DownloadIcon, FileIcon, FolderIcon } from '@/lib/icons'
 import { Badge } from '@rerun/ui/primitives'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -20,6 +20,7 @@ import { DesktopFileImagePreview } from '../DesktopFileImagePreview'
 import { DesktopFileAudioPreview } from '../DesktopFileAudioPreview'
 import { DesktopFileVideoPreview } from '../DesktopFileVideoPreview'
 import { DesktopFilePdfPreview } from '../DesktopFilePdfPreview'
+import { FileSiblingControls, useFileSiblingKeys } from '../DesktopFileSiblingNav'
 import { useDesktopSharedDelete } from './useDesktopSharedDelete'
 import { useDesktopSharedSave } from './useDesktopSharedSave'
 
@@ -51,6 +52,7 @@ export function DesktopSharedFilePreview({ path, entries, onOpen, editWorkspaceI
     const kind = filePreviewKind(name)
     const text = kind === 'text'
     const [preview, setPreview] = useState<{ path: string; content: string | null; truncated: boolean; error: string | null; editIdentity?: DesktopSharedTextIdentity | null; deleteRevision?: string } | null>(null)
+    const viewerRef = useRef<HTMLDivElement>(null)
     const [attempt, setAttempt] = useState(0)
     const [previewHash, setPreviewHash] = useState<string | null>(null)
     const { available: canSaveLocally, saving, savedName, save } = useDesktopSharedSave(editWorkspaceId, path)
@@ -63,8 +65,9 @@ export function DesktopSharedFilePreview({ path, entries, onOpen, editWorkspaceI
     const listedRevision = entries?.find(entry => entry.type === 'file' && entry.name === name)?.deleteRevision
     const [selection, setSelection] = useState<{ path: string; revision: string } | null>(null)
     if (listedRevision && selection?.path !== path) setSelection({ path, revision: listedRevision })
+    const navigationBlocked = saving || deleting || !!confirmDelete || editing
     const goTo = (next: string, directory: boolean) => {
-        if (!saving && !deleting && !confirmDelete) onOpen(next, directory)
+        if (!navigationBlocked && !isDesktopQuitting()) onOpen(next, directory)
     }
 
     useEffect(() => {
@@ -82,10 +85,12 @@ export function DesktopSharedFilePreview({ path, entries, onOpen, editWorkspaceI
     useEffect(() => () => { editController.current?.abort() }, [path])
 
     const siblings = useSiblingFiles({
-        entries: (entries ?? []).filter(entry => entry.type !== 'dir'),
+        entries: entries ?? [],
         openName: name,
         onOpen: next => goTo(joinPath(dir, next), false),
     })
+    const visibleSiblings = navigationBlocked ? null : siblings
+    useFileSiblingKeys(visibleSiblings, viewerRef)
     const ready = preview?.path === path ? preview : null
     // The shared editor preserves LF or CRLF. Keep mixed and bare-CR files read-only.
     const lineBreaks = ready?.content?.replace(/\r\n/g, '')
@@ -122,33 +127,32 @@ export function DesktopSharedFilePreview({ path, entries, onOpen, editWorkspaceI
     }
 
     return (
-        <div className="flex min-h-0 flex-1 flex-col">
-            <BrainTopBar crumbs={[...folderCrumbs(dir, next => goTo(next, true)), { label: name, icon: FileIcon }]}>
-                {siblings && <>
-                    <Button size="icon-sm" variant="ghost" onClick={siblings.previous} title="Previous file" aria-label="Previous file"><ChevronLeftIcon className="size-4" /></Button>
-                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{siblings.index + 1} / {siblings.total}</span>
-                    <Button size="icon-sm" variant="ghost" onClick={siblings.next} title="Next file" aria-label="Next file"><ChevronRightIcon className="size-4" /></Button>
-                </>}
-                {canSaveLocally && <Button type="button" size="xs" variant="outline" disabled={saving || deleting || editing || !saveVersion}
-                    onClick={() => void save(path, saveVersion, (text ? ready?.editIdentity?.expectedSha256 : previewHash) ?? undefined)}>
-                    <DownloadIcon className="size-3.5" />{saving ? 'Saving…' : 'Save As'}
-                </Button>}
-                {canEdit && <Button type="button" size="xs" variant="outline" disabled={saving || deleting} onClick={() => {
-                    editBase.current = ready.editIdentity ?? null
-                    setEditing(true)
-                }}>Edit</Button>}
-                {!!editWorkspaceId && deleteRevision && <PanelDeleteButton type="button" label="Delete file" confirm={false}
-                    disabled={saving || editing || deleting} onClick={() => setConfirmDelete(deleteRevision)} />}
-                {savedName && <Badge size="xs" tone="green" glow={false}>Saved {savedName}</Badge>}
-                {ready?.truncated && <Badge size="xs" tone="orange" glow={false}>Truncated</Badge>}
-            </BrainTopBar>
-            <div className="flex min-h-0 flex-1 flex-col border-t border-border">
+        <div ref={viewerRef} className="flex min-h-0 flex-1 flex-col">
+            <BrainTopBar crumbs={[...folderCrumbs(dir, next => goTo(next, true)), { label: name, icon: FileIcon }]} />
+            <div className="shrink-0 border-t border-border">
+                <PanelEditorHeader title={name} mono onBack={navigationBlocked ? undefined : back} backLabel="Back to folder">
+                    <FileSiblingControls siblings={visibleSiblings} />
+                    {canSaveLocally && <Button type="button" size="xs" variant="outline" disabled={saving || deleting || editing || !saveVersion}
+                        onClick={() => void save(path, saveVersion, (text ? ready?.editIdentity?.expectedSha256 : previewHash) ?? undefined)}>
+                        <DownloadIcon className="size-3.5" />{saving ? 'Saving…' : 'Save As'}
+                    </Button>}
+                    {canEdit && <Button type="button" size="xs" variant="outline" disabled={saving || deleting} onClick={() => {
+                        editBase.current = ready.editIdentity ?? null
+                        setEditing(true)
+                    }}>Edit</Button>}
+                    {!!editWorkspaceId && deleteRevision && <PanelDeleteButton type="button" label="Delete file" confirm={false}
+                        disabled={saving || editing || deleting} onClick={() => setConfirmDelete(deleteRevision)} />}
+                    {savedName && <Badge size="xs" tone="green" glow={false}>Saved {savedName}</Badge>}
+                    {ready?.truncated && <Badge size="xs" tone="orange" glow={false}>Truncated</Badge>}
+                </PanelEditorHeader>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col">
                 {text ? (
                     ready?.error ? <div className="space-y-2 p-3"><p role="alert" className="text-xs text-destructive">{ready.error}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>Retry</Button></div> : <FilePreview fileName={name} content={ready?.content ?? null} rawUrl="" loading={!ready} />
-                ) : kind === 'image' ? <DesktopFileImagePreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'image')} onBack={back} siblings={siblings} onPreviewIdentity={setPreviewHash} />
-                    : kind === 'audio' ? <DesktopFileAudioPreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'audio')} onBack={back} siblings={siblings} onPreviewIdentity={setPreviewHash} />
-                    : kind === 'video' ? <DesktopFileVideoPreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'video')} onBack={back} siblings={siblings} onPreviewIdentity={setPreviewHash} />
-                    : kind === 'pdf' ? <DesktopFilePdfPreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'pdf')} onBack={back} siblings={siblings} onPreviewIdentity={setPreviewHash} />
+                ) : kind === 'image' ? <DesktopFileImagePreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'image')} onBack={back} chrome="body" onPreviewIdentity={setPreviewHash} />
+                    : kind === 'audio' ? <DesktopFileAudioPreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'audio')} onBack={back} chrome="body" onPreviewIdentity={setPreviewHash} />
+                    : kind === 'video' ? <DesktopFileVideoPreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'video')} onBack={back} chrome="body" onPreviewIdentity={setPreviewHash} />
+                    : kind === 'pdf' ? <DesktopFilePdfPreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'pdf')} onBack={back} chrome="body" onPreviewIdentity={setPreviewHash} />
                     : <FilePreview fileName={name} content={null} rawUrl="" loading={false} />}
             </div>
             {editing && ready?.content != null && (

@@ -27,12 +27,13 @@ export type DesktopFileVideoPreviewProps = {
     headerActions?: ReactNode
     viewerRef?: Ref<HTMLDivElement>
     onPreviewIdentity?: (hash: string | null) => void
+    chrome?: 'files' | 'body'
 }
 
 type View = { loading: true } | { error: string } | { src: string }
 
 /** FileDetail header and FilePreview video controls, filled from the authenticated desktop route. */
-export function DesktopFileVideoPreview({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef, headerActions, onPreviewIdentity }: DesktopFileVideoPreviewProps) {
+export function DesktopFileVideoPreview({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef, headerActions, onPreviewIdentity, chrome = 'files' }: DesktopFileVideoPreviewProps) {
     const videoRef = useRef<HTMLVideoElement | null>(null)
     const failed = useRef(false)
     const [view, setView] = useState<View>({ loading: true })
@@ -90,9 +91,9 @@ export function DesktopFileVideoPreview({ name, path, identity, srcUrl, onBack, 
     }, [identity, path, srcUrl, onPreviewIdentity])
 
     return <div ref={viewerRef} className="flex min-h-0 flex-1 flex-col">
-        <PanelEditorHeader title={name} onBack={onBack} mono>
+        {chrome === 'files' && <PanelEditorHeader title={name} onBack={onBack} mono>
             <FileSiblingControls siblings={siblings} />{headerActions}
-        </PanelEditorHeader>
+        </PanelEditorHeader>}
         <div key={path} className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {'src' in view ? <div className="flex h-full items-center justify-center overflow-auto bg-muted p-3">
                 <video ref={bindVideo} controls src={view.src} data-testid="file-video-preview" className="max-h-full max-w-full"
