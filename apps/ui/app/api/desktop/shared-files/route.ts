@@ -1,5 +1,5 @@
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
-import { SHARED_IMPORT_BYTES, deleteDesktopSharedFile, importDesktopSharedFile, listDesktopSharedFiles, renameDesktopSharedFile, replaceDesktopSharedText, rethrowDesktopSharedFileError } from '@/lib/desktop/server/shared-workspace-files'
+import { SHARED_IMPORT_BYTES, deleteDesktopSharedFile, importDesktopSharedFile, listDesktopSharedFiles, renameDesktopSharedEntry, replaceDesktopSharedText, rethrowDesktopSharedFileError } from '@/lib/desktop/server/shared-workspace-files'
 import { z } from 'zod'
 import { readDesktopJson } from '@/lib/desktop/server/request-json'
 import { desktopRoute } from '@/lib/desktop/server/http'
@@ -72,13 +72,20 @@ export function POST(request: Request) {
     })
 }
 
-const renameInput = z.strictObject({ path: z.string().min(1).max(4096), name: z.string().trim().min(1).max(241) })
+const renameFields = z.strictObject({ path: z.string().min(1).max(4096), name: z.string().trim().min(1).max(241) })
+const renameInput = z.union([renameFields, renameFields.extend({
+    workspaceId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    revision: z.string().regex(/^[a-f0-9]{64}$/),
+})])
 
 export function PATCH(request: Request) {
     return desktopRoute(request, async runtime => {
         const input = renameInput.safeParse(await readDesktopJson(request, 16 * 1024))
-        if (!input.success) throw new DesktopHttpError(400, 'Choose a shared file and a new name.')
-        return Response.json(await renameDesktopSharedFile(runtime, input.data.path, input.data.name, request.signal), {
+        if (!input.success) throw new DesktopHttpError(400, 'Choose a shared file or folder and a new name.')
+        const { path, name } = input.data
+        const selection = 'workspaceId' in input.data ? input.data : undefined
+        const result = await renameDesktopSharedEntry(runtime, path, name, request.signal, selection)
+        return Response.json(selection ? { ...result, workspaceId: runtime.workspaceId } : result, {
             headers: { 'cache-control': 'no-store' },
         })
     })

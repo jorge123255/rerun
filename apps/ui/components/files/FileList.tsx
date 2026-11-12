@@ -17,7 +17,7 @@ type FileListProps = {
     // Undefined while the folder is still being listed.
     entries: FileEntry[] | undefined
     onOpen: (entry: FileEntry) => void
-    onRename?: (name: string, next: string) => void
+    onRename?: (name: string, next: string, entry: FileEntry) => void
     canRename?: (entry: FileEntry) => boolean
     onDelete?: (name: string, entry: FileEntry) => void
     canDelete?: (entry: FileEntry) => boolean
@@ -36,7 +36,7 @@ function kindLabel(entry: FileEntry): string {
     return dot > 0 ? entry.name.slice(dot + 1).toUpperCase() : 'File'
 }
 
-function RenameField({ name, onSubmit, onCancel }: { name: string; onSubmit: (next: string) => void; onCancel: () => void }) {
+function RenameField({ name, directory, onSubmit, onCancel }: { name: string; directory: boolean; onSubmit: (next: string) => void; onCancel: () => void }) {
     const [value, setValue] = useState(name)
     const ref = useRef<HTMLInputElement>(null)
     const settled = useRef(false)
@@ -45,9 +45,9 @@ function RenameField({ name, onSubmit, onCancel }: { name: string; onSubmit: (ne
         const input = ref.current
         if (!input) return
         input.focus()
-        const dot = name.lastIndexOf('.')
+        const dot = directory ? -1 : name.lastIndexOf('.')
         input.setSelectionRange(0, dot > 0 ? dot : name.length)
-    }, [name])
+    }, [name, directory])
 
     const submit = () => {
         if (settled.current) return
@@ -93,8 +93,8 @@ function ListSkeleton() {
 // line per entry, actions on hover, and the whole page as a drop zone.
 export function FileList({ title, entries, onOpen, onRename, canRename, onDelete, canDelete, deleteScope = 'box', onDownload, canDownload,
     downloadLabel = 'Download', onUpload, emptyDescription, uploadDisabled = false }: FileListProps) {
-    const [renaming, setRenaming] = useState<string | null>(null)
-    const renameAfterClose = useRef<string | null>(null)
+    const [renaming, setRenaming] = useState<FileEntry | null>(null)
+    const renameAfterClose = useRef<FileEntry | null>(null)
     const [deleting, setDeleting] = useState<FileEntry | null>(null)
     const [dragOver, setDragOver] = useState(false)
 
@@ -155,18 +155,19 @@ export function FileList({ title, entries, onOpen, onRename, canRename, onDelete
                                     key={entry.name}
                                     role="button"
                                     tabIndex={0}
-                                    onClick={() => renaming !== entry.name && onOpen(entry)}
-                                    onKeyDown={event => event.target === event.currentTarget && event.key === 'Enter' && renaming !== entry.name && onOpen(entry)}
+                                    onClick={() => renaming?.name !== entry.name && onOpen(entry)}
+                                    onKeyDown={event => event.target === event.currentTarget && event.key === 'Enter' && renaming?.name !== entry.name && onOpen(entry)}
                                     className="group/file grid h-9 cursor-pointer grid-cols-[minmax(0,1fr)_5rem_4rem_2rem] items-center gap-x-3 rounded-md px-2 text-sm outline-none transition-colors hover:bg-accent/60 focus-visible:bg-accent/60 max-sm:grid-cols-[minmax(0,1fr)_2rem]"
                                 >
                                     <span className="flex min-w-0 items-center gap-2.5">
                                         <Glyph className="size-4 shrink-0 text-muted-foreground" />
-                                        {renaming === entry.name ? (
+                                        {renaming?.name === entry.name ? (
                                             <RenameField
-                                                name={entry.name}
+                                                name={renaming.name}
+                                                directory={renaming.type === 'dir'}
                                                 onSubmit={next => {
                                                     setRenaming(null)
-                                                    onRename?.(entry.name, next)
+                                                    onRename?.(renaming.name, next, renaming)
                                                 }}
                                                 onCancel={() => setRenaming(null)}
                                             />
@@ -190,17 +191,18 @@ export function FileList({ title, entries, onOpen, onRename, canRename, onDelete
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent align="end" onClick={event => event.stopPropagation()}
                                             onCloseAutoFocus={event => {
-                                                if (renameAfterClose.current !== entry.name) return
+                                                const selected = renameAfterClose.current
+                                                if (selected?.name !== entry.name) return
                                                 event.preventDefault()
                                                 renameAfterClose.current = null
-                                                setRenaming(entry.name)
+                                                setRenaming(selected)
                                             }}>
                                             {downloadAllowed && (
                                                 <DropdownMenuItem onSelect={() => onDownload?.(entry.name, entry)}>
                                                     <DownloadIcon /> {downloadLabel}
                                                 </DropdownMenuItem>
                                             )}
-                                            {renameAllowed && <DropdownMenuItem onSelect={() => { renameAfterClose.current = entry.name }}>
+                                            {renameAllowed && <DropdownMenuItem onSelect={() => { renameAfterClose.current = entry }}>
                                                 <PencilIcon /> Rename
                                             </DropdownMenuItem>}
                                             {onDelete && (!canDelete || canDelete(entry)) && <><DropdownMenuSeparator />

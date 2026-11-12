@@ -1,5 +1,6 @@
 'use client'
 
+import type { FileEntry } from '@/app/api/_actions/workspace-file.actions'
 import type { BrainSelection } from '@/components/brain/selection'
 import { useBrainTranslations } from '@/components/brain/brain-translations'
 import { BrainTopBar, type BrainCrumb } from '@/components/brain/BrainTopBar'
@@ -9,7 +10,7 @@ import { DesktopSharedImportResults } from '@/components/desktop/shared-files/De
 import { useDesktopSharedDelete } from '@/components/desktop/shared-files/useDesktopSharedDelete'
 import { useDesktopSharedSave } from '@/components/desktop/shared-files/useDesktopSharedSave'
 import { FileList } from '@/components/files/FileList'
-import { renameDesktopSharedFile, type DesktopSharedEntry, type DesktopSharedImportResult } from '@/lib/desktop/shared-workspace-files'
+import { renameDesktopSharedEntry, type DesktopSharedEntry, type DesktopSharedImportResult } from '@/lib/desktop/shared-workspace-files'
 import type { UploadEntry } from '@/lib/files/upload'
 import { FolderIcon } from '@/lib/icons'
 import { useEffect, useRef, useState } from 'react'
@@ -46,26 +47,34 @@ export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResu
     const { deleting, remove } = useDesktopSharedDelete(workspaceId, path)
     const { available: canSaveLocally, saving, savedName, save } = useDesktopSharedSave(workspaceId, path)
     const pending = useRef<AbortController | null>(null)
-    const scope = useRef(path)
-    scope.current = path
+    const scope = useRef({ path, workspaceId })
+    scope.current = { path, workspaceId }
     const [renaming, setRenaming] = useState(false)
     useEffect(() => {
         const unsubscribe = subscribeDraftShutdown(() => pending.current?.abort())
         return () => { pending.current?.abort(); unsubscribe() }
     }, [])
-    useEffect(() => { pending.current?.abort(); setRenaming(false) }, [path])
-    const rename = async (name: string, next: string) => {
-        if (pending.current || importing || deleting || saving || isDesktopQuitting() || !files.entriesOf(path)?.some(entry => entry.name === name && entry.type !== 'dir')) return
+    useEffect(() => { pending.current?.abort(); setRenaming(false) }, [path, workspaceId])
+    const rename = async (entry: FileEntry, next: string) => {
+        if (!workspaceId || !entry.deleteRevision || pending.current || importing || deleting || saving || isDesktopQuitting()) return
         const controller = new AbortController()
         pending.current = controller
         setRenaming(true)
         const release = holdDraftAdmission()
-        const active = () => !controller.signal.aborted && scope.current === path && !isDesktopQuitting()
+        const active = () => !controller.signal.aborted && scope.current.path === path
+            && scope.current.workspaceId === workspaceId && !isDesktopQuitting()
+        const source = joinPath(path, entry.name)
         try {
-            await renameDesktopSharedFile(joinPath(path, name), next, controller.signal)
-            if (active()) await files.refresh(path)
-        } catch {
-            if (active()) toast.error('The rename was not confirmed. Refresh this folder before retrying.')
+            const renamed = await renameDesktopSharedEntry(workspaceId, source, next, entry.deleteRevision, controller.signal)
+            if (active()) {
+                if (entry.type === 'dir' && renamed.path !== source) {
+                    files.forget?.(source)
+                    if (files.expanded.has(source)) expand(renamed.path)
+                }
+                await files.refresh(path)
+            }
+        } catch (error) {
+            if (active()) toast.error(error instanceof Error ? error.message : 'The rename was not confirmed. Refresh this folder before retrying.')
         } finally {
             if (pending.current === controller) pending.current = null
             if (active()) setRenaming(false)
@@ -85,11 +94,12 @@ export function DesktopBrainFolder({ path, files, onSelect, onUpload, importResu
             {importing && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">Importing files…</p>}
             {savedName && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">Saved {savedName}</p>}
             <FileList
+                key={`${workspaceId}:${path}`}
                 title={path.split('/').filter(Boolean).pop() ?? rootLabel}
                 entries={files.entriesOf(path)}
                 onOpen={entry => onSelect({ kind: entry.type === 'dir' ? 'folder' : 'file', path: joinPath(path, entry.name) })}
-                onRename={(name, next) => void rename(name, next)}
-                canRename={entry => entry.type !== 'dir' && !importing && !renaming && !deleting && !saving}
+                onRename={(_name, next, entry) => void rename(entry, next)}
+                canRename={entry => !!workspaceId && !!entry.deleteRevision && !importing && !renaming && !deleting && !saving}
                 canDownload={entry => canSaveLocally && entry.type === 'file' && !!entry.deleteRevision && !importing && !renaming && !deleting && !saving}
                 onDownload={(name, entry) => { if (!pending.current) void save(joinPath(path, name), entry.deleteRevision) }}
                 downloadLabel="Save As"

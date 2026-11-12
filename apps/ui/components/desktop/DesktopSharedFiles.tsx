@@ -4,7 +4,7 @@ import { BrainChromeContext, BrainTopBar, type BrainCrumb } from '@/components/b
 import { FileList } from '@/components/files/FileList'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { importDesktopSharedFiles, listDesktopSharedFolder, renameDesktopSharedFile, type DesktopSharedEntry, type DesktopSharedImportResult } from '@/lib/desktop/shared-workspace-files'
+import { importDesktopSharedFiles, listDesktopSharedFolder, renameDesktopSharedEntry, type DesktopSharedEntry, type DesktopSharedImportResult } from '@/lib/desktop/shared-workspace-files'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { UploadEntry } from '@/lib/files/upload'
 import { FolderIcon } from '@/lib/icons'
@@ -17,7 +17,7 @@ import { toast } from 'sonner'
 import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 
 // The workspace shared folder. Same FileList, breadcrumb, and text preview as the hosted
-// shared Files view. Rename is limited to ordinary files in the current folder.
+// shared Files view. Renames stay within the selected folder.
 // Optional FileList actions keep the original layout without advertising unavailable mutations.
 
 const ROOT = 'Files'
@@ -43,10 +43,11 @@ function SharedFolder({ path, onOpen, workspaceId }: { path: string; onOpen: (pa
     const [truncated, setTruncated] = useState(false)
     const [failed, setFailed] = useState<string | null>(null)
     const [uploading, setUploading] = useState(false)
+    const [renaming, setRenaming] = useState(false)
     const [results, setResults] = useState<DesktopSharedImportResult[]>([])
     const [attempt, setAttempt] = useState(0)
-    const current = useRef({ mounted: true, path })
-    current.current.path = path
+    const current = useRef({ mounted: true, path, workspaceId })
+    current.current = { ...current.current, path, workspaceId }
     const importing = useRef<AbortController | null>(null)
     const originalFiles = useRef(new WeakMap<DesktopSharedImportResult, File>())
 
@@ -73,7 +74,7 @@ function SharedFolder({ path, onOpen, workspaceId }: { path: string; onOpen: (pa
                 setFailed(messageOf(error, 'The shared folder could not be listed.'))
             })
         return () => controller.abort()
-    }, [path, attempt])
+    }, [path, workspaceId, attempt])
 
     const upload = async (picked: UploadEntry[]) => {
         if (saving || deleting || importing.current || !current.current.mounted || isDesktopQuitting()) return
@@ -156,47 +157,50 @@ function SharedFolder({ path, onOpen, workspaceId }: { path: string; onOpen: (pa
         }
     }
 
-    const rename = async (name: string, next: string) => {
-        if (saving || deleting || importing.current || !current.current.mounted || isDesktopQuitting()) return
+    const rename = async (name: string, next: string, revision?: string) => {
+        if (!workspaceId || !revision || saving || deleting || importing.current || !current.current.mounted || isDesktopQuitting()) return
         const controller = new AbortController()
         importing.current = controller
         const release = holdDraftAdmission()
-        setUploading(true)
-        const active = () => current.current.mounted && current.current.path === path && !controller.signal.aborted && !isDesktopQuitting()
+        setRenaming(true)
+        const active = () => current.current.mounted && current.current.path === path && current.current.workspaceId === workspaceId
+            && !controller.signal.aborted && !isDesktopQuitting()
         try {
-            await renameDesktopSharedFile(joinPath(path, name), next, controller.signal)
+            await renameDesktopSharedEntry(workspaceId, joinPath(path, name), next, revision, controller.signal)
             if (active()) setAttempt(value => value + 1)
         } catch (error) {
             if (active()) toast.error(messageOf(error, 'The rename was not confirmed. Refresh Shared files before retrying.'))
         } finally {
             if (importing.current === controller) importing.current = null
-            if (current.current.mounted) setUploading(false)
+            if (current.current.mounted) setRenaming(false)
             release()
         }
     }
 
+    const busy = uploading || renaming || deleting || saving
     return (
         <div className="flex min-h-0 flex-1 flex-col">
             <BrainTopBar crumbs={folderCrumbs(path, next => onOpen(next, true))} status={truncated ? 'Showing the first 512 entries' : undefined} />
-            <DesktopSharedImportResults results={results} disabled={uploading || deleting || saving} onRetry={result => void retry(result)} onOpen={path => onOpen(path, false)} />
+            <DesktopSharedImportResults results={results} disabled={busy} onRetry={result => void retry(result)} onOpen={path => onOpen(path, false)} />
             {uploading && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">Importing files…</p>}
             {savedName && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">Saved {savedName}</p>}
             {failed ? <div className="space-y-2 px-6 py-6"><p role="alert" className="text-sm text-destructive">{failed}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>Retry</Button></div> : <FileList
+                key={path}
                 title={path.split('/').filter(Boolean).pop() ?? ROOT}
                 entries={entries}
                 onOpen={entry => onOpen(joinPath(path, entry.name), entry.type === 'dir')}
                 emptyDescription="Nothing here yet. Import text, images, audio, video, or PDFs for this workspace."
-                canRename={entry => entry.type === 'file' && !uploading && !deleting && !saving}
-                onRename={(name, next) => void rename(name, next)}
-                canDownload={entry => canSaveLocally && entry.type === 'file' && !!entry.deleteRevision && !uploading && !deleting && !saving}
+                canRename={entry => !!workspaceId && !!entry.deleteRevision && !busy}
+                onRename={(name, next, entry) => void rename(name, next, entry.deleteRevision)}
+                canDownload={entry => canSaveLocally && entry.type === 'file' && !!entry.deleteRevision && !busy}
                 onDownload={(name, entry) => { if (!importing.current) void save(joinPath(path, name), entry.deleteRevision) }}
                 downloadLabel="Save As"
-                canDelete={entry => !!workspaceId && !!entry.deleteRevision && !uploading && !deleting && !saving}
+                canDelete={entry => !!workspaceId && !!entry.deleteRevision && !busy}
                 onDelete={async (name, entry) => {
                     if (!importing.current && await remove(joinPath(path, name), entry.deleteRevision)) setAttempt(value => value + 1)
                 }}
                 deleteScope="workspace"
-                uploadDisabled={uploading || deleting || saving || !entries}
+                uploadDisabled={busy || !entries}
                 onUpload={picked => void upload(picked)}
             />}
         </div>

@@ -11,7 +11,7 @@ import {
     importSharedText,
     listSharedDirectory,
     readSharedEditorText,
-    renameSharedFile,
+    renameSharedEntry,
     replaceSharedText,
     resolveEngineSharedDirectory,
     sharedFileRevision,
@@ -76,10 +76,12 @@ export async function importDesktopSharedOrdinaryFile(runtime: DesktopRuntime, f
     catch (error) { rethrowDesktopSharedFileError(error) }
 }
 
-export async function renameDesktopSharedFile(runtime: DesktopRuntime, path: string, name: string, signal?: AbortSignal): Promise<SharedImportResult> {
+export async function renameDesktopSharedEntry(runtime: DesktopRuntime, path: string, name: string, signal: AbortSignal, selection?: { workspaceId: number; revision: string }): Promise<SharedImportResult> {
+    const beforeCommit = sharedWorkspaceAdmission(runtime, selection?.workspaceId ?? runtime.workspaceId, signal)
     try {
-        return await renameSharedFile(await desktopSharedDirectory(runtime, signal), path, name, {
-            signal, beforeCommit: () => assertDesktopWorkspaceAdmission(runtime),
+        await beforeCommit()
+        return await renameSharedEntry(await desktopSharedDirectory(runtime, signal), path, name, {
+            signal, beforeCommit, revision: selection?.revision,
         })
     } catch (error) { rethrowDesktopSharedFileError(error) }
 }

@@ -51,11 +51,17 @@ export async function importDesktopSharedFiles(folder: string, files: readonly F
     return (await parse<{ results: DesktopSharedImportResult[] }>(response)).results
 }
 
-export async function renameDesktopSharedFile(path: string, name: string, signal?: AbortSignal): Promise<{ path: string; name: string }> {
-    return parse(await fetch(BASE, {
+export async function renameDesktopSharedEntry(workspaceId: number, path: string, name: string, revision: string, signal: AbortSignal): Promise<{ path: string; name: string }> {
+    const result = await parse<{ path: string; name: string; workspaceId: number }>(await fetch(BASE, {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ path, name }), signal: deadline(signal),
+        body: JSON.stringify({ workspaceId, path, name, revision }), signal: deadline(signal),
     }))
+    const parent = path.slice(0, path.lastIndexOf('/') + 1)
+    if (result?.workspaceId !== workspaceId || typeof result.name !== 'string'
+        || result.name.normalize('NFC') !== name.normalize('NFC') || result.path !== parent + result.name) {
+        throw new Error('The rename could not be confirmed. Refresh Shared files before trying again.')
+    }
+    return result
 }
 
 export async function deleteDesktopSharedEntry(workspaceId: number, path: string, revision: string, signal: AbortSignal) {

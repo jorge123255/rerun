@@ -9,7 +9,7 @@ import { setDesktopWorkspaceFrozen } from '@/lib/desktop/server/workspace-admiss
 vi.mock('server-only', () => ({}))
 
 import { GET as readShared } from './read/route'
-import { DELETE, GET, POST, PUT } from './route'
+import { DELETE, GET, PATCH, POST, PUT } from './route'
 
 const env = { ...process.env }
 const origin = 'http://127.0.0.1:3189'
@@ -149,6 +149,31 @@ const deleteRevision = async (folder: string, name: string): Promise<string> => 
 }
 const deleteShared = (path: string, revision: string, workspaceId = 1, headers = request('').headers) =>
     DELETE(new Request(request('').url, { method: 'DELETE', headers, body: JSON.stringify({ workspaceId, path, revision }) }))
+
+test('renames a listed folder in the active workspace and preserves the old file-only request', async () => {
+    expect((await POST(request('', 'POST', form('report.txt', 'folder bytes', 'handoff/nested')))).status).toBe(201)
+    const input = { workspaceId: 1, path: 'handoff', name: 'archive', revision: await deleteRevision('', 'handoff') }
+    const renameEntry = (body: object, headers = request('').headers) => PATCH(new Request(request('').url, {
+        method: 'PATCH', headers, body: JSON.stringify(body),
+    }))
+    const anonymous = request('').headers
+    anonymous.delete('cookie')
+    expect((await renameEntry(input, anonymous)).status).toBe(401)
+    expect((await renameEntry({ ...input, workspaceId: 2 })).status).toBe(409)
+    expect((await renameEntry({ ...input, revision: 'f'.repeat(64) })).status).toBe(409)
+    expect((await renameEntry({ path: input.path, name: input.name })).status).toBe(400)
+    const runtime = await readDesktopRuntime()
+    setDesktopWorkspaceFrozen(runtime, true)
+    try { expect((await renameEntry(input)).status).toBe(409) }
+    finally { setDesktopWorkspaceFrozen(runtime, false) }
+    const response = await renameEntry(input)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ workspaceId: 1, path: 'archive', name: 'archive' })
+    expect(await (await readShared(request('/read?path=archive/nested/report.txt'))).json()).toMatchObject({ content: 'folder bytes' })
+    const legacy = await renameEntry({ path: 'archive/nested/report.txt', name: 'receipt.txt' })
+    expect(legacy.status).toBe(200)
+    expect(await legacy.json()).toEqual({ path: 'archive/nested/receipt.txt', name: 'receipt.txt' })
+})
 
 test('deletes the exact preview and a listed folder under active workspace authority', async () => {
     expect((await POST(request('', 'POST', form('note.txt', 'old', 'handoff')))).status).toBe(201)

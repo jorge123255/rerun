@@ -2,14 +2,16 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { FileList } from '@/components/files/FileList'
 import { DesktopSharedFiles } from '../DesktopSharedFiles'
 
 const api = vi.hoisted(() => ({ list: vi.fn(), read: vi.fn(), upload: vi.fn(), rename: vi.fn(), remove: vi.fn(), error: vi.fn() }))
-vi.mock('@/lib/desktop/shared-workspace-files', () => ({ listDesktopSharedFolder: api.list, readDesktopSharedPreview: api.read, importDesktopSharedFiles: api.upload, renameDesktopSharedFile: api.rename, deleteDesktopSharedEntry: api.remove }))
+vi.mock('@/lib/desktop/shared-workspace-files', () => ({ listDesktopSharedFolder: api.list, readDesktopSharedPreview: api.read, importDesktopSharedFiles: api.upload, renameDesktopSharedEntry: api.rename, deleteDesktopSharedEntry: api.remove }))
 vi.mock('sonner', () => ({ toast: { error: api.error } }))
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 let root: Root | undefined
+const revision = 'a'.repeat(64)
 const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
 const button = (name: string) => [...document.querySelectorAll<HTMLElement>('[role="button"] span.truncate,button')].find(node => node.textContent?.trim() === name || node.getAttribute('aria-label') === name)
 async function click(name: string) { await act(async () => { button(name)!.click() }); await flush() }
@@ -44,19 +46,19 @@ async function mount(names = ['brief.md', 'taken.md']) {
         path,
         entries: path === ''
             ? [{ name: 'docs', type: 'dir', size: 0, modified: '' }]
-            : names.map(name => ({ name, type: 'file', size: 8, modified: '' })),
+            : names.map(name => ({ name, type: 'file', size: 8, modified: '', deleteRevision: revision })),
         truncated: false,
     }))
     await act(async () => {
         root = createRoot(document.body.appendChild(document.createElement('div')))
-        root!.render(<DesktopSharedFiles />)
+        root!.render(<DesktopSharedFiles workspaceId={7} />)
     })
     await click('Shared files')
     expect(button('Actions for docs')).toBeUndefined()
     await click('docs')
 }
 
-async function rename(name: string, next: string) {
+async function startRename(name: string) {
     await act(async () => {
         const trigger = button(`Actions for ${name}`)!
         trigger.focus()
@@ -69,24 +71,67 @@ async function rename(name: string, next: string) {
     await flush()
     const field = document.querySelector<HTMLInputElement>('input[aria-label="New name"]')!
     expect(document.activeElement).toBe(field)
-    expect([field.selectionStart, field.selectionEnd]).toEqual([0, name.lastIndexOf('.')])
+    return field
+}
+
+async function submitRename(field: HTMLInputElement, next: string) {
     await change(field, next)
     await act(async () => { field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })) })
     await flush()
 }
 
+async function rename(name: string, next: string, end = name.lastIndexOf('.')) {
+    const field = await startRename(name)
+    expect([field.selectionStart, field.selectionEnd]).toEqual([0, end])
+    await submitRename(field, next)
+}
+
+test('submits the entry chosen in the menu even if a refreshed listing replaces it while editing', async () => {
+    const selected = { name: 'Release', type: 'dir' as const, size: 0, modified: '', deleteRevision: revision }
+    const onRename = vi.fn()
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    const render = (entry: typeof selected) => act(async () => {
+        root!.render(<FileList title="Files" entries={[entry]} onOpen={() => {}} onUpload={() => {}} onRename={onRename} />)
+    })
+    await render(selected)
+    const field = await startRename(selected.name)
+    await render({ ...selected, deleteRevision: 'b'.repeat(64) })
+    await submitRename(field, 'Archive')
+    expect(onRename).toHaveBeenCalledExactlyOnceWith('Release', 'Archive', selected)
+})
+
 test('renames a file inline and refreshes its exact folder', async () => {
     const names = ['brief.md', 'taken.md']
-    api.rename.mockImplementation(async (path: string, name: string) => {
+    api.rename.mockImplementation(async (_workspace: number, _path: string, name: string) => {
         names[0] = name
         return { path: `docs/${name}`, name }
     })
     await mount(names)
     await rename('brief.md', '  plan.md  ')
-    expect(api.rename).toHaveBeenCalledWith('docs/brief.md', 'plan.md', expect.any(AbortSignal))
+    expect(api.rename).toHaveBeenCalledWith(7, 'docs/brief.md', 'plan.md', revision, expect.any(AbortSignal))
     expect(api.list.mock.calls.filter(([path]) => path === 'docs').length).toBeGreaterThanOrEqual(2)
     expect(button('plan.md')).toBeDefined()
     expect(button('brief.md')).toBeUndefined()
+})
+
+test('renames a folder inline and selects its whole name even when it contains a dot', async () => {
+    let name = 'release.v1'
+    api.list.mockImplementation(async (path: string) => ({
+        path, entries: path === '' ? [{ name, type: 'dir', size: 0, modified: '', deleteRevision: revision }] : [], truncated: false,
+    }))
+    api.rename.mockImplementation(async (_workspace: number, _path: string, next: string) => {
+        name = next
+        return { path: next, name: next }
+    })
+    await act(async () => {
+        root = createRoot(document.body.appendChild(document.createElement('div')))
+        root.render(<DesktopSharedFiles workspaceId={7} />)
+    })
+    await click('Shared files')
+    await rename('release.v1', 'Archive', 'release.v1'.length)
+    expect(api.rename).toHaveBeenCalledExactlyOnceWith(7, 'release.v1', 'Archive', revision, expect.any(AbortSignal))
+    expect(button('Archive')).toBeDefined()
+    expect(button('release.v1')).toBeUndefined()
 })
 
 test('keeps both names and reports a collision without refreshing away the source', async () => {

@@ -152,7 +152,7 @@ test('holds the shared native publication lease after recovery and before the ed
         await edit
     }
     expect(await edit).toMatchObject({ status: 'saved', committed: true })
-    expect(await workspaceFiles.renameSharedFile(shared, path, 'publication-renamed.txt')).toMatchObject({ name: 'publication-renamed.txt' })
+    expect(await workspaceFiles.renameSharedEntry(shared, path, 'publication-renamed.txt')).toMatchObject({ name: 'publication-renamed.txt' })
     expect(await readFile(join(shared, 'publication-renamed.txt'), 'utf8')).toBe('keep the updated file\n')
 })
 
@@ -163,7 +163,7 @@ test('refuses to edit an inode renamed between the recovery import and final pub
     const importText = workspaceFiles.importSharedText
     const recovery = vi.spyOn(workspaceFiles, 'importSharedText').mockImplementationOnce(async (...args) => {
         const result = await importText(...args)
-        await workspaceFiles.renameSharedFile(shared, path, renamed)
+        await workspaceFiles.renameSharedEntry(shared, path, renamed)
         return result
     })
     try {
