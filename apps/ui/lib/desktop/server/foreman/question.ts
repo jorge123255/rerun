@@ -1,7 +1,7 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { DESKTOP_FOREMAN_TURN_TEXT_LIMIT, foremanQuestionGuardSchema, HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions, type DesktopForemanChatRef } from '@rerun/contracts'
+import { DESKTOP_FOREMAN_TURN_TEXT_LIMIT, foremanQuestionGuardSchema, foremanRequestIdentityInput, HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions, type DesktopForemanChatRef } from '@rerun/contracts'
 import { request } from '@/lib/engine/client'
 import { desktopPendingApprovalSchema, type DesktopApprovalAnswer } from '../../approvals'
 import { desktopPendingQuestionSchema, type DesktopQuestionAnswer } from '../../questions'
@@ -25,8 +25,7 @@ export async function readPendingForemanRequests(runtime: DesktopRuntime, owner:
     const { question, approval } = await request(engineOf(runtime), `/desktop/foreman/question?sessionId=${encodeURIComponent(owner.sessionId)}`,
         { cache: 'no-store', signal: signal ? AbortSignal.any([signal, timeout]) : timeout }, value => resultSchema.parse(value))
     function identity(guard: z.infer<typeof foremanQuestionGuardSchema>, kind?: 'approval') {
-        const id = createHash('sha256').update(JSON.stringify([owner.chat.workspaceId, owner.chat.chatId, owner.sessionId,
-            guard.runId, guard.sourceMessageId, guard.toolCallId, guard.digest, ...(kind ? [kind] : [])])).digest('hex')
+        const id = createHash('sha256').update(foremanRequestIdentityInput(owner.chat, owner.sessionId, guard, kind)).digest('hex')
         return { id, messageId: guard.sourceMessageId, toolCallId: guard.toolCallId }
     }
     return {
@@ -61,7 +60,7 @@ export function foremanApprovalText(approval: NonNullable<Pending['approval']>, 
     return text
 }
 
-export function foremanQuestionText(question: NonNullable<Pending['question']>, answer: DesktopQuestionAnswer) {
+export function foremanQuestionText(question: NonNullable<Pending['question']>, answer: DesktopQuestionAnswer, files: readonly string[][] = []) {
     if (question.view.id !== answer.questionId) throw new DesktopHttpError(409, 'This Foreman question has changed. Reopen it before answering.')
     if (answer.action === 'cancel') return HITL_CANCELLED.question
     const questions = question.view.questions
@@ -69,7 +68,7 @@ export function foremanQuestionText(question: NonNullable<Pending['question']>, 
     if (questions.length !== answers.length || questions.some((item, index) => !item.multiple && answers[index].length > 1)) {
         throw new DesktopHttpError(400, 'Answer or skip each question, and choose only one answer where requested.')
     }
-    const text = serializeAnswers(questions.map((item, index) => ({ question: item.question, answers: answers[index] })))
+    const text = serializeAnswers(questions.map((item, index) => ({ question: item.question, answers: answers[index], attachments: files[index] })), { attachmentsAreNames: true })
     if (text.length > 20_000) throw new DesktopHttpError(400, 'Shorten the answers before sending them.')
     return text
 }

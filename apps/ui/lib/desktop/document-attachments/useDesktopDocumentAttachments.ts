@@ -1,16 +1,16 @@
 'use client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { type DesktopDocumentAttachment, type DesktopDocumentScope, type DesktopDocumentSelection, type DesktopDocumentSendSelection } from '@rerun/contracts'
+import { documentScopeKey, type DesktopDocumentAttachment, type DesktopDocumentScope, type DesktopDocumentSelection, type DesktopDocumentSendSelection } from '@rerun/contracts'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
 import { holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { admitDesktopDocuments, cancelDesktopDocumentUpload, consumeDesktopDocuments, convertDesktopDocument, discardDesktopDocument, detachDesktopDocument, listDesktopDocuments } from './client'
-import { canRetainDocuments, documentPlaceholder, documentScopeKey, forgetRetainedDocument, retainedDocument, retainedDocuments, retainDocument, saveRetainedDocument, subscribeRetainedDocuments } from './retained'
+import { canRetainDocuments, documentPlaceholder, forgetRetainedDocument, retainedDocument, retainedDocuments, retainDocument, saveRetainedDocument, subscribeRetainedDocuments } from './retained'
 import { planDesktopDocumentAdd, summarizeDesktopDocumentAddError, type DesktopDocumentAddResult } from './plan-document-add'
 
 export type { DesktopDocumentAddOutcome, DesktopDocumentAddResult, DesktopDocumentAddRejectReason } from './plan-document-add'
 
-export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, enabled = true, load = true }: DesktopDocumentScope & { enabled?: boolean; load?: boolean }) {
-    const scope = useMemo(() => ({ agentId, tabUid, ...(sessionId ? { sessionId } : {}) }), [agentId, tabUid, sessionId])
+export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, questionId, enabled = true, load = true }: DesktopDocumentScope & { enabled?: boolean; load?: boolean }) {
+    const scope = useMemo(() => ({ agentId, tabUid, ...(sessionId ? { sessionId } : {}), ...(questionId ? { questionId } : {}) }), [agentId, tabUid, sessionId, questionId])
     const scopeKey = documentScopeKey(scope), latest = useRef(scopeKey); latest.current = scopeKey
     const [attachments, setAttachments] = useState<DesktopDocumentAttachment[]>([]), rows = useRef(attachments); rows.current = attachments
     const [error, setError] = useState<string | null>(null), [loaded, setLoaded] = useState(false), [pending, setPending] = useState<Set<string>>(new Set())

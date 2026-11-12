@@ -1,7 +1,8 @@
+import { createHash } from 'node:crypto'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
-import { DESKTOP_FOREMAN_TURN_MAX_BYTES, FOREMAN_AGENT_ID, desktopCoworkerMentionFieldsOf, desktopForemanTurnSchema, foremanAlternateRequestSchema, foremanAlternateRunActionSchema, foremanDigestSchema, foremanDocumentScope, foremanQuestionGuardSchema, foremanReplyTargetSchema } from '@rerun/contracts'
+import { DESKTOP_FOREMAN_TURN_MAX_BYTES, FOREMAN_AGENT_ID, desktopCoworkerMentionFieldsOf, documentScopeKey, desktopForemanTurnSchema, foremanAlternateRequestSchema, foremanAlternateRunActionSchema, foremanDigestSchema, foremanDocumentScope, foremanQuestionGuardSchema, foremanRequestIdentityInput, foremanReplyTargetSchema } from '@rerun/contracts'
 import { withAgentLock } from '../../agents/lock.js'
 import { getAgent } from '../../agents/registry.js'
 import { resolveRunModel } from '../../agents/availability.js'
@@ -137,16 +138,17 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
                 if (model.connection?.id !== override.connectionId || model.model !== override.model) throw new HttpError(409, 'The selected Foreman model changed.')
                 assertDesktopProvider(model.provider, model.connection?.id)
                 const selection = body.documents
+                const questionId = body.question && createHash('sha256').update(foremanRequestIdentityInput(body.binding, body.sessionId, body.question)).digest('hex')
+                const scope = foremanDocumentScope(body.binding, body.sessionId, questionId)
+                const owned = (candidate: typeof scope) => documentScopeKey(candidate) === documentScopeKey(scope)
+                if (selection && (!owned(selection.scope) || (questionId ? selection.modelChoice
+                    : selection.modelChoice?.connectionId !== override.connectionId || selection.modelChoice.model !== override.model))) {
+                    throw new HttpError(409, 'The Foreman attachment selection changed.')
+                }
                 const documents = selection && await bridge.documents(exact, signal)
-                if (selection) {
-                    const scope = foremanDocumentScope(body.binding, body.sessionId)
-                    const owned = (candidate: typeof scope) => candidate.agentId === scope.agentId
-                        && candidate.tabUid === scope.tabUid && candidate.sessionId === scope.sessionId
-                    if (!owned(selection.scope) || selection.modelChoice?.connectionId !== override.connectionId || selection.modelChoice.model !== override.model
-                        || !documents || documents.length !== selection.attachmentIds.length || documents.some(({ reference }, index) =>
-                            reference.attachmentId !== selection.attachmentIds[index] || !owned(reference.scope))) {
-                        throw new HttpError(409, 'The Foreman attachment selection changed.')
-                    }
+                if (selection && (!documents || documents.length !== selection.attachmentIds.length || documents.some(({ reference }, index) =>
+                    reference.attachmentId !== selection.attachmentIds[index] || !owned(reference.scope)))) {
+                    throw new HttpError(409, 'The Foreman attachment selection changed.')
                 }
                 const images = (documents ?? []).flatMap(item => 'dataBase64' in item
                     ? [{ ...('renderedImage' in item ? item.renderedImage : item.reference), dataBase64: item.dataBase64 }] : [])

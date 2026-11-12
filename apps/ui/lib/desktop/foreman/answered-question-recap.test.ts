@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { serializeAnswers } from '@rerun/contracts'
+import { foremanDocumentScope, serializeAnswers, type DesktopDocumentReference } from '@rerun/contracts'
 import {
     answeredQuestionRecapsForMessage,
     projectAnsweredQuestionRecaps,
@@ -75,4 +75,21 @@ describe('answered Foreman question recap', () => {
         expect(answeredQuestionRecapsForMessage(recaps, 'engine-question-message')).toHaveLength(1)
         expect(answeredQuestionRecapsForMessage(recaps, 'engine-answer-message')).toEqual([])
     })
+})
+
+it('reopens a file-only answer under the correct question and requires the retained file identity', () => {
+    const scope = foremanDocumentScope({ chatId: 'fmc_recaps0001', workspaceId: '1' }, crypto.randomUUID(), turn.answerIntent.questionId)
+    const reference: DesktopDocumentReference = { attachmentId: crypto.randomUUID(), scope, name: 'brief.txt',
+        kind: 'text', mimeType: 'text/plain', sha256: 'f'.repeat(64), byteLength: 12 }
+    const answerFileNames = [[reference.name], []]
+    const answers = [[], ['Ship it']]
+    const text = serializeAnswers(questions.map((item, index) => ({ question: item.question, answers: answers[index]!,
+        attachments: answerFileNames[index] })), { attachmentsAreNames: true })
+    const saved = { ...turn, text, answerFileNames, answerIntent: { ...turn.answerIntent, answers,
+        documents: { scope, admissionId: crypto.randomUUID(), attachmentIds: [reference.attachmentId] } } }
+    const answer = { ...answerRow, parts: [{ type: 'text', text }], metadata: { documents: [reference] } }
+    expect(projectAnsweredQuestionRecaps([saved], [assistant(), answer])[0]?.questions[0]).toMatchObject({ answers: [], attachments: ['brief.txt'] })
+    expect(projectAnsweredQuestionRecaps([saved], [assistant(), { ...answer, metadata: { documents: [] } }])).toEqual([])
+    const wrongQuestion = { ...reference, scope: { ...scope, questionId: 'a'.repeat(64) } }
+    expect(projectAnsweredQuestionRecaps([saved], [assistant(), { ...answer, metadata: { documents: [wrongQuestion] } }])).toEqual([])
 })

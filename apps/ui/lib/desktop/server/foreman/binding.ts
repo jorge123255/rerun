@@ -1,7 +1,7 @@
 import { readAnsweredQuestionRecaps } from './answered-question-recap'
 import 'server-only'
 import { createHash } from 'node:crypto'
-import { COMPANY_BRIEF_MODEL_PROVIDERS, FOREMAN_AGENT_ID, desktopCoworkerMentionFieldsOf, foremanDocumentScope, type CompanyBriefModelRef, type DesktopForemanBinding, type DesktopForemanChatRef, type DesktopForemanLiveEvent, type DesktopForemanModelRef } from '@rerun/contracts'
+import { COMPANY_BRIEF_MODEL_PROVIDERS, FOREMAN_AGENT_ID, desktopCoworkerMentionFieldsOf, documentScopeKey, foremanDocumentScope, questionDocumentIndex, type CompanyBriefModelRef, type DesktopForemanBinding, type DesktopForemanChatRef, type DesktopForemanLiveEvent, type DesktopForemanModelRef } from '@rerun/contracts'
 import { EngineRequestError, cancelRun, getRun, getSessionMessages } from '@/lib/engine/client'
 import { publicDesktopHistory, transformEngineMessages } from '@/lib/chat/engine-history'
 import { usableConnection } from '../../chat-model'
@@ -36,6 +36,7 @@ import { foremanAlternateSnapshot } from '../foreman-alternates/snapshot'
 import { foremanTranscriptRevision } from '../../../../../engine/src/desktop/foreman/transcript-revision.ts'
 import { desktopForemanContext } from '../../foreman/context'
 import { consumeDesktopDocumentAdmission, resolveDesktopDocumentAdmission } from '../document-attachments/binding'
+import { desktopDocumentStore } from '../document-attachments/store'
 import { listDesktopCoworkerCallTargets } from '../coworker-calls/authority'
 import { initializeDesktopCoworkerCalls, listDesktopForemanCallSources } from '../coworker-calls/db'
 import { revalidateDesktopCoworkerMentions } from '@/components/desktop/mentions/coworker-mention-model'
@@ -205,15 +206,21 @@ async function createBinding(runtime: DesktopRuntime) {
         }
         if (response.body) void response.body.pipeTo(new WritableStream({ write() {} })).catch(() => {})
         await db.execute({ sql: "UPDATE desktop_foreman_turns SET status='admitted',error=NULL WHERE request_id=?", args: [turn.binding.runId] })
-        if (turn.documents) await consumeDesktopDocumentAdmission(runtime, turn.documents, AbortSignal.timeout(10_000))
+        if (turn.documents) {
+            // The engine has accepted this exact answer. The pending question may already be
+            // gone, while its immutable attachment receipt is still needed by chat history.
+            if (turn.question) await desktopDocumentStore(db, 'foreman').consume(turn.documents.scope, turn.documents.admissionId).catch(() => {})
+            else await consumeDesktopDocumentAdmission(runtime, turn.documents, AbortSignal.timeout(10_000))
+        }
         return { runId: turn.binding.runId }
     }
 
     async function send(chat: DesktopForemanChatRef, requestId: string, text: string, requested?: DesktopForemanModelRef, guard?: VoiceGuard,
         resolution?: DesktopQuestionAnswer | DesktopApprovalAnswer, starter?: { input: DesktopLocalStarterDecision; signal: AbortSignal }, fields?: ForemanSendFields) {
-        const { documents, coworkerMentions } = fields ?? {}
+        const { documents: chatDocuments, coworkerMentions } = fields ?? {}
         const decision = resolution && 'approvalId' in resolution ? resolution : undefined
         const answer = resolution && 'questionId' in resolution ? resolution : undefined
+        const documents = answer?.action === 'answer' ? answer.documents : chatDocuments
         if (chat.workspaceId !== workspaceId) throw new DesktopHttpError(404, 'Conversation not found.')
         await assertDesktopWorkspaceAdmission(runtime)
         return withForemanChatWrite(db, async () => {
@@ -230,7 +237,7 @@ async function createBinding(runtime: DesktopRuntime) {
             }
             const fingerprint = createHash('sha256').update(JSON.stringify(starter
                 ? [chat, text, requested ?? null, 'starter', starter.input.offerId]
-                : [chat, resolution ?? text, requested ?? null, ...(documents ? [documents] : []),
+                : [chat, resolution ?? text, requested ?? null, ...(chatDocuments ? [chatDocuments] : []),
                     ...(coworkerMentions?.length ? [['coworkerMentions', coworkerMentions]] : [])])).digest('hex')
             const previous = await foremanTurn(db, requestId)
             if (previous) {
@@ -284,15 +291,33 @@ async function createBinding(runtime: DesktopRuntime) {
                 const checked = revalidateDesktopCoworkerMentions(text, coworkerMentions, roster, false)
                 if (!checked.ok) throw new DesktopHttpError(400, checked.error)
             }
+            let answerFileNames: string[][] | undefined
             if (documents) {
-                const scope = foremanDocumentScope(chat, owner.sessionId)
-                if (resolution || starter || guard || documents.scope.agentId !== scope.agentId || documents.scope.tabUid !== scope.tabUid
-                    || documents.scope.sessionId !== scope.sessionId || documents.modelChoice?.connectionId !== model.connectionId
-                    || documents.modelChoice?.model !== model.model) throw new DesktopHttpError(409, 'These attachments do not match this conversation and model.')
+                const questionId = answer?.action === 'answer' ? answer.questionId : undefined
+                const scope = foremanDocumentScope(chat, owner.sessionId, questionId)
+                const modelMatches = questionId ? !documents.modelChoice
+                    : documents.modelChoice?.connectionId === model.connectionId && documents.modelChoice.model === model.model
+                if (decision || starter || guard || documentScopeKey(documents.scope) !== documentScopeKey(scope) || !modelMatches) {
+                    throw new DesktopHttpError(409, 'These attachments do not match this conversation and model.')
+                }
+                if (question && answer) {
+                    const files: string[][] = question.view.questions.map(() => [])
+                    const store = desktopDocumentStore(db, 'foreman')
+                    for (const id of documents.attachmentIds) {
+                        const record = await store.read(scope, id)
+                        const group = record && files[questionDocumentIndex(record.attachment.position)]
+                        if (!record || !group) throw new DesktopHttpError(409, 'A file is no longer assigned to this question.')
+                        group.push(record.attachment.name)
+                    }
+                    text = foremanQuestionText(question, answer, files)
+                    answerFileNames = files
+                }
                 const admission = await resolveDesktopDocumentAdmission(runtime, FOREMAN_AGENT_ID, documents, AbortSignal.timeout(20_000))
                 if (admission.references.some(item => item.kind === 'image')
                     && usableConnection((await readDesktopProviders(runtime)).connections, model)?.provider !== 'codex') {
-                    throw new DesktopHttpError(400, 'Image attachments need a ChatGPT / Codex model. Choose one before sending.')
+                    throw new DesktopHttpError(400, questionId
+                        ? 'This question’s model cannot receive images. Remove the image or attach a text document.'
+                        : 'Image attachments need a ChatGPT / Codex model. Choose one before sending.')
                 }
             }
             const { view, companyProfile } = await intakeContext(chat, requestId, text)
@@ -306,6 +331,7 @@ async function createBinding(runtime: DesktopRuntime) {
                 'When the user asks to design or add coworkers, propose their jobs with show_plan. Nothing is created until they confirm the card. Never treat chat text as approval.'].filter(Boolean).join('\n\n')
             const turn: ForemanTurn = { binding: { ...chat, runId: requestId, model }, sessionId: owner.sessionId, text, brief: { instructions, tools: [] },
                 ...(answer && question && { question: question.guard, answerIntent: answer }),
+                ...(answerFileNames && { answerFileNames }),
                 ...(decision && approval && { approval: approval.guard, approvalIntent: decision }), ...(starter && { starterOfferId: starter.input.offerId }),
                 ...(documents && { documents }), ...desktopCoworkerMentionFieldsOf(coworkerMentions) }
             await checkVoice(guard)

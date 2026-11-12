@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, expect, test, vi } from 'vitest'
-import { randomUUID } from 'node:crypto'
-import { foremanDocumentScope } from '@rerun/contracts'
+import { createHash, randomUUID } from 'node:crypto'
+import { foremanDocumentScope, foremanRequestIdentityInput } from '@rerun/contracts'
 const question = vi.hoisted(() => ({ read: vi.fn(), approval: vi.fn() }))
 vi.mock('./question.js', () => ({ readForemanQuestion: question.read, readForemanApproval: question.approval, foremanApprovalEnabled: async () => true }))
 const state = vi.hoisted(() => ({ replay: false, session: null as null | { id: string; agentId: string; source: string; status: string; originAgentId: null; originSessionId: null }, run: null as null | { id: string; agentId: string; sessionId: string }, reserve: vi.fn(async () => ({ id: 'queued-user' })), model: vi.fn(async () => ({ connection: { id: 'conn' }, provider: 'codex', model: 'terra' })), claim: vi.fn(() => null), release: vi.fn() }))
@@ -123,4 +123,33 @@ test('claims the exact completed approval and refuses a stale, revoked or unguar
     expect(state.reserve).toHaveBeenCalledExactlyOnceWith('foreman', expect.objectContaining({
         foreman: expect.objectContaining({ approval: guard }),
     }), undefined, undefined, undefined, false, undefined)
+})
+
+test('admits answer files only for the question derived from the exact producing run', async () => {
+    const guard = { runId: randomUUID(), sourceMessageId: 'saved-message', toolCallId: 'ask-call', digest: 'a'.repeat(64) }
+    state.session = { id: body.sessionId, agentId: 'foreman', source: 'dashboard', status: 'open', originAgentId: null, originSessionId: null }
+    question.read.mockResolvedValue({ guard, questions: [{ question: 'Send the notes?', options: [] }] })
+    const questionId = createHash('sha256').update(foremanRequestIdentityInput(body.binding, body.sessionId, guard)).digest('hex')
+    const scope = foremanDocumentScope(body.binding, body.sessionId, questionId)
+    const reference = { scope, attachmentId: randomUUID(), name: 'notes.txt', kind: 'text' as const,
+        mimeType: 'text/plain', sha256: 'f'.repeat(64), byteLength: 12 }
+    const documents = { scope, admissionId: randomUUID(), attachmentIds: [reference.attachmentId] }
+    const turn = { ...body, question: guard, documents }
+    const port = bridge(), app = createDesktopForemanRoutes(() => port)
+
+    expect((await app.request('/chat', request({ ...body, documents }))).status).toBe(409)
+    expect((await app.request('/chat', request({ ...turn, documents: { ...documents, scope: { ...scope, questionId: 'd'.repeat(64) } } }))).status).toBe(409)
+    expect((await app.request('/chat', request({ ...turn, documents: { ...documents, modelChoice: body.binding.model } }))).status).toBe(409)
+    expect(port.documents).not.toHaveBeenCalled()
+    expect(state.reserve).not.toHaveBeenCalled()
+
+    vi.mocked(port.documents).mockResolvedValueOnce([{ reference: { ...reference, scope: foremanDocumentScope(body.binding, body.sessionId) }, text: 'Wrong scope' }])
+    expect((await app.request('/chat', request(turn))).status).toBe(409)
+    expect(state.reserve).not.toHaveBeenCalled()
+
+    const resolved = [{ reference, text: 'Verified notes' }]
+    vi.mocked(port.documents).mockResolvedValue(resolved)
+    expect((await app.request('/chat', request(turn))).status).toBe(200)
+    expect(state.reserve).toHaveBeenCalledExactlyOnceWith('foreman', expect.objectContaining({ documents,
+        foreman: expect.objectContaining({ question: guard }) }), undefined, undefined, undefined, false, resolved)
 })

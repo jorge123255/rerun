@@ -35,7 +35,7 @@ async function request(agentId: string, init: RequestInit, query?: URLSearchPara
 }
 function owned(scope: DesktopDocumentScope, value: unknown, id?: string, alias = false): DesktopDocumentAttachment {
     const a = desktopDocumentAttachmentSchema.parse(value)
-    if (a.scope.agentId !== scope.agentId || a.scope.tabUid !== scope.tabUid || a.scope.sessionId !== scope.sessionId && !(alias && scope.sessionId !== undefined && a.scope.sessionId === undefined) || id && a.attachmentId !== id) throw new Error('This attachment belongs to another conversation.')
+    if (a.scope.agentId !== scope.agentId || a.scope.tabUid !== scope.tabUid || a.scope.questionId !== scope.questionId || a.scope.sessionId !== scope.sessionId && !(alias && scope.sessionId !== undefined && a.scope.sessionId === undefined) || id && a.attachmentId !== id) throw new Error('This attachment belongs to another conversation.')
     return a
 }
 const post = (scope: DesktopDocumentScope, body: object, signal?: AbortSignal) => request(scope.agentId, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...scope, ...body }), signal })
@@ -49,7 +49,7 @@ export async function uploadDesktopDocument(scope: DesktopDocumentScope, id: str
     return owned(scope, result.attachment, id)
 }
 export async function listDesktopDocuments(scope: DesktopDocumentScope, signal?: AbortSignal) {
-    const query = new URLSearchParams({ tabUid: scope.tabUid, ...(scope.sessionId ? { sessionId: scope.sessionId } : {}) })
+    const query = new URLSearchParams({ tabUid: scope.tabUid, ...(scope.sessionId ? { sessionId: scope.sessionId } : {}), ...(scope.questionId ? { questionId: scope.questionId } : {}) })
     return z.object({ attachments: z.array(desktopDocumentAttachmentSchema).max(10) }).parse(await request(scope.agentId, { signal }, query)).attachments.map(a => owned(scope, a, undefined, true))
 }
 export async function convertDesktopDocument(scope: DesktopDocumentScope, attachmentId: string, expectedRevision: string, signal?: AbortSignal) {
@@ -62,7 +62,7 @@ export async function admitDesktopDocuments(scope: DesktopDocumentScope, selecti
 export async function consumeDesktopDocuments(scope: DesktopDocumentScope, admissionId: string, signal?: AbortSignal) { await post(scope, { operation: 'consume', admissionId }, signal) }
 export async function cancelDesktopDocumentUpload(scope: DesktopDocumentScope, attachmentId: string, signal?: AbortSignal) { await post(scope, { operation: 'cancel-upload', attachmentId }, signal) }
 export function desktopDocumentReadUrl(attachment: DesktopDocumentReference | DesktopDocumentAttachment, view: 'read' | 'preview' | 'download' = 'read', page?: number, scale?: number) {
-    const query = new URLSearchParams({ tabUid: attachment.scope.tabUid, ...(attachment.scope.sessionId ? { sessionId: attachment.scope.sessionId } : {}), attachmentId: attachment.attachmentId, sha256: attachment.sha256, view, ...(page ? { page: String(page) } : {}), ...(scale ? { scale: String(scale) } : {}) })
+    const query = new URLSearchParams({ tabUid: attachment.scope.tabUid, ...(attachment.scope.sessionId ? { sessionId: attachment.scope.sessionId } : {}), ...(attachment.scope.questionId ? { questionId: attachment.scope.questionId } : {}), attachmentId: attachment.attachmentId, sha256: attachment.sha256, view, ...(page ? { page: String(page) } : {}), ...(scale ? { scale: String(scale) } : {}) })
     return `${endpoint(attachment.scope.agentId)}?${query}`
 }
 export async function fetchDesktopDocument(attachment: DesktopDocumentReference | DesktopDocumentAttachment, signal: AbortSignal, view: 'read' | 'preview' | 'download' = 'preview', page?: number, scale?: number) {

@@ -45,7 +45,7 @@ export function desktopDocumentAttachmentsApi(service: DesktopDocumentAttachment
                 const search = new URL(request.url).searchParams
                 if ([...search.keys()].some(key => search.getAll(key).length > 1)) throw new DesktopHttpError(400, 'Duplicate document query fields.')
                 const query = readQuery.parse(Object.fromEntries(search))
-                const scope = { agentId, tabUid: query.tabUid, ...(query.sessionId ? { sessionId: query.sessionId } : {}) }
+                const scope = { agentId, tabUid: query.tabUid, ...(query.sessionId ? { sessionId: query.sessionId } : {}), ...(query.questionId ? { questionId: query.questionId } : {}) }
                 if (!query.attachmentId) {
                     if (query.view || query.sha256 || query.page || query.scale) throw new DesktopHttpError(400, 'Choose an attachment.')
                     return Response.json({ attachments: await service.list(scope, signal) }, { headers })
@@ -66,7 +66,7 @@ export function desktopDocumentAttachmentsApi(service: DesktopDocumentAttachment
             if (request.method !== 'POST') return Response.json({ error: 'Method unavailable.' }, { status: 405, headers })
             const body = desktopDocumentRequestSchema.parse(await readJson(request, signal))
             if (body.agentId !== agentId) throw new DesktopHttpError(409, 'These attachments belong to another coworker.')
-            const scope = { agentId, tabUid: body.tabUid, ...(body.sessionId ? { sessionId: body.sessionId } : {}) }
+            const scope = { agentId, tabUid: body.tabUid, ...(body.sessionId ? { sessionId: body.sessionId } : {}), ...(body.questionId ? { questionId: body.questionId } : {}) }
             switch (body.operation) {
                 case 'upload': {
                     const { operation: _operation, audioBase64, ...input } = body

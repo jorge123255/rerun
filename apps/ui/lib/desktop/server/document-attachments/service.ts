@@ -1,6 +1,6 @@
 import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
-import { desktopDocumentScopeSchema, desktopDocumentSelectionSchema, desktopDocumentRevisionActionSchema, desktopDocumentUploadSchema, DESKTOP_DOCUMENT_IMAGE_MAX_FILES, DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES, DESKTOP_DOCUMENT_TEXT_MAX_CHARS, DESKTOP_DOCUMENT_INPUT_MAX_BYTES, type DesktopDocumentAdmission, type DesktopDocumentAttachment, type DesktopDocumentConversion, type DesktopDocumentReference, type DesktopDocumentScope, type DesktopDocumentSelection } from '@rerun/contracts'
+import { documentScopeKey as scopeKey, desktopDocumentScopeSchema, desktopDocumentSelectionSchema, desktopDocumentRevisionActionSchema, desktopDocumentUploadSchema, DESKTOP_DOCUMENT_IMAGE_MAX_FILES, DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES, DESKTOP_DOCUMENT_TEXT_MAX_CHARS, DESKTOP_DOCUMENT_INPUT_MAX_BYTES, type DesktopDocumentAdmission, type DesktopDocumentAttachment, type DesktopDocumentConversion, type DesktopDocumentReference, type DesktopDocumentScope, type DesktopDocumentSelection } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { inspectComposerImageSource } from '../composer-image-formats'
 import { questionDocumentId } from '../../question-documents'
@@ -12,7 +12,6 @@ const uploadSchema = desktopDocumentUploadSchema.omit({ audioBase64: true })
 type Upload = typeof uploadSchema._input
 type Revision = typeof desktopDocumentRevisionActionSchema._input
 const digest = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex')
-const scopeKey = (scope: DesktopDocumentScope) => JSON.stringify([scope.agentId, scope.tabUid, scope.sessionId ?? null])
 export function createDesktopDocumentAttachmentService(authorities: DesktopDocumentAuthorities) {
     const { store, blobs } = authorities
     const pending = new Map<string, Promise<void>>()

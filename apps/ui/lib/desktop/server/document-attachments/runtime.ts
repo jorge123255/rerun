@@ -28,7 +28,7 @@ export async function createDesktopDocumentRuntime(runtime: DesktopRuntime, db: 
     const unavailable = () => new DesktopHttpError(409, 'This attachment conversation is no longer available.')
     async function baseOwner(scope: DesktopDocumentScope, signal: AbortSignal, mutable = true) {
         desktopDocumentScopeSchema.parse(scope); current(signal)
-        if (scope.agentId === FOREMAN_AGENT_ID) throw unavailable()
+        if (scope.agentId === FOREMAN_AGENT_ID || scope.questionId) throw unavailable()
         const local = await findDesktopAgent(db, scope.agentId)
         // The authenticated runtime opens this database from its own data root.
         // Inside that database the coworker row is workspace 1. The external
@@ -65,11 +65,21 @@ export async function createDesktopDocumentRuntime(runtime: DesktopRuntime, db: 
         } else if (tab.id !== null && !await firstSession(scope, tab.id)) throw unavailable()
         current(signal)
     }
-    async function foremanOwner(scope: DesktopDocumentScope, signal: AbortSignal) {
+    async function foremanOwner(scope: DesktopDocumentScope, signal: AbortSignal, historyId?: string) {
         current(signal)
         if (scope.agentId !== FOREMAN_AGENT_ID || !scope.sessionId) throw unavailable()
         const owner = await ownedForemanChat(db, { workspaceId: String(runtime.workspaceId), chatId: scope.tabUid })
         if (owner.sessionId !== scope.sessionId) throw unavailable()
+        if (scope.questionId) {
+            const stored = historyId ? await store.read(scope, historyId) : null
+            if (!stored?.attachment.admitted) {
+                assertDesktopWorkspaceAdmission(runtime)
+                const { readPendingForemanRequests } = await import('../foreman/question')
+                const { question } = await readPendingForemanRequests(runtime, owner, signal)
+                if (question?.view.id !== scope.questionId) throw unavailable()
+                assertDesktopWorkspaceAdmission(runtime)
+            }
+        }
         current(signal)
     }
     return createDesktopDocumentAttachmentService({
@@ -85,7 +95,7 @@ export async function createDesktopDocumentRuntime(runtime: DesktopRuntime, db: 
             return scope.sessionId && await firstSession(scope, scope.sessionId) ? [scope, { agentId: scope.agentId, tabUid: scope.tabUid }] : [scope]
         },
         readOwner: async (scope, id, signal) => {
-            if (kind === 'foreman') return foremanOwner(scope, signal)
+            if (kind === 'foreman') return foremanOwner(scope, signal, id)
             await baseOwner(scope, signal, false)
             const record = await store.read(scope, id)
             if (!record || record.deletion) throw unavailable()

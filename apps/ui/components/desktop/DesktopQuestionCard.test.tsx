@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import { questionDocumentTabUid } from '@/lib/desktop/question-documents'
-import type { DesktopDocumentAttachment } from '@rerun/contracts'
+import { foremanDocumentScope, type DesktopDocumentAttachment } from '@rerun/contracts'
 import { loadMessages } from '@rerun/i18n/messages'
 import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
 import { DesktopLocale } from './DesktopLocale'
@@ -64,9 +64,11 @@ test('uses the original option form and submits an authoritative answer only onc
     expect(document.querySelector('input[type="file"]')).toBeNull()
 })
 
-test.each(['text', 'image'] as const)('restores a %s attachment and submits a file-only answer in the exact conversation', async kind => {
-    const documentOwner = { agentId: 'coworker', sessionId: 'saved-chat' }
-    const scope = { ...documentOwner, tabUid: questionDocumentTabUid(question.id) }
+test.each([
+    ['text', false], ['image', false], ['text', true], ['image', true],
+] as const)('restores a %s attachment and submits a file-only answer (Chief of Staff: %s)', async (kind, foreman) => {
+    const scope = foreman ? foremanDocumentScope({ workspaceId: '1', chatId: 'fmc_filefixture' }, 'saved-chat', question.id)
+        : { agentId: 'coworker', tabUid: questionDocumentTabUid(question.id), sessionId: 'saved-chat' }
     const content = 'Résumé <script>do not execute</script>'
     const bytes = new TextEncoder().encode(content)
     const sha256 = Buffer.from(await crypto.subtle.digest('SHA-256', bytes)).toString('hex')
@@ -77,14 +79,14 @@ test.each(['text', 'image'] as const)('restores a %s attachment and submits a fi
     }
     const admit = vi.fn()
     vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
-        const endpoint = '/api/desktop/coworkers/coworker/document-attachments'
+        const endpoint = foreman ? '/api/desktop/foreman/document-attachments' : '/api/desktop/coworkers/coworker/document-attachments'
         if (init.method === 'POST') {
             expect(url).toBe(endpoint)
             const payload = JSON.parse(String(init.body))
             admit(payload)
             return Response.json({ allowed: true, admissionId: payload.admissionId, references: [], inputs: [] })
         }
-        const list = `${endpoint}?${new URLSearchParams({ tabUid: scope.tabUid, sessionId: scope.sessionId })}`
+        const list = `${endpoint}?${new URLSearchParams({ tabUid: scope.tabUid, sessionId: scope.sessionId!, ...('questionId' in scope && scope.questionId ? { questionId: scope.questionId } : {}) })}`
         if (url !== list) {
             expect(url).toBe(`${list}&${new URLSearchParams({ attachmentId: saved.attachmentId, sha256, view: 'read' })}`)
             return new Response(bytes, { headers: { 'content-type': 'text/plain', 'x-rerun-document-sha256': sha256 } })
@@ -95,7 +97,7 @@ test.each(['text', 'image'] as const)('restores a %s attachment and submits a fi
     const root = mount()
     await act(async () => {
         root.render(<DesktopQuestionCard question={{ ...question, questions: [{ question: 'Which notes?', options: [] }] }}
-            documentOwner={documentOwner} onAnswer={onAnswer} />)
+            documentScope={scope} onAnswer={onAnswer} />)
     })
     expect(document.querySelector('[data-hitl="attach"]')).not.toBeNull()
     expect(document.body.textContent).toContain(saved.name)

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { desktopQuestionInput, serializeAnswers, stripBridgePrefix, type QuestionItem } from '@rerun/contracts'
+import { DESKTOP_DOCUMENT_MAX_FILES, desktopDocumentSendSelectionSchema, desktopQuestionInput, documentScopeKey, serializeAnswers, stripBridgePrefix, type DesktopDocumentReference, type QuestionItem } from '@rerun/contracts'
 
 /** A saved answer recap exposes labels and the exact selection, never the request tokens,
  * guard digest, run identity or question hash used to prove the association. */
@@ -8,6 +8,7 @@ export type DesktopAnsweredQuestion = {
     options: string[]
     multiple: boolean
     answers: string[]
+    attachments?: string[]
 }
 
 export type DesktopAnsweredQuestionRecap = {
@@ -18,7 +19,7 @@ export type DesktopAnsweredQuestionRecap = {
     questions: DesktopAnsweredQuestion[]
 }
 
-export type RecapHistoryMessage = { id: string; role: 'user' | 'assistant'; parts: readonly unknown[] }
+export type RecapHistoryMessage = { id: string; role: 'user' | 'assistant'; parts: readonly unknown[]; metadata?: { documents?: readonly DesktopDocumentReference[] } }
 
 const guardSchema = z.object({
     runId: z.string().min(1).max(256),
@@ -32,12 +33,16 @@ const answerIntentSchema = z.object({
     requestId: z.string().uuid(),
     questionId: z.string().regex(/^[a-f0-9]{64}$/),
     answers: z.array(z.array(z.string().max(20_000)).max(101)).min(1).max(32),
+    documents: desktopDocumentSendSelectionSchema.optional(),
 }).strict()
+
+const fileNames = z.array(z.string().min(1).max(255)).max(DESKTOP_DOCUMENT_MAX_FILES)
 
 const answerTurnSchema = z.object({
     text: z.string().min(1).max(20_000),
     question: guardSchema,
     answerIntent: answerIntentSchema,
+    answerFileNames: z.array(fileNames).max(32).optional(),
 }).passthrough()
 
 const answeredRecapSchema = z.object({
@@ -49,6 +54,7 @@ const answeredRecapSchema = z.object({
         options: z.array(z.string().max(500)).max(100),
         multiple: z.boolean(),
         answers: z.array(z.string().max(20_000)).max(101),
+        attachments: fileNames.optional(),
     }).strict()).min(1).max(32),
 }).strict()
 
@@ -99,7 +105,17 @@ function project(turn: z.infer<typeof answerTurnSchema>, messages: readonly Reca
     const answers = turn.answerIntent.answers.map(values => values.map(value => value.trim()).filter(Boolean))
     const questions = answerQuestions(input.questions, answers)
     if (!questions) return null
-    const expected = serializeAnswers(input.questions.map((item, index) => ({ question: item.question, answers: answers[index]! })))
+    const { documents } = turn.answerIntent
+    const fileGroups = turn.answerFileNames
+    if (documents) {
+        const refs = next.metadata?.documents ?? []
+        if (!fileGroups || fileGroups.length !== questions.length || documents.scope.questionId !== turn.answerIntent.questionId
+            || refs.length !== documents.attachmentIds.length || refs.some((ref, index) => ref.attachmentId !== documents.attachmentIds[index]
+                || documentScopeKey(ref.scope) !== documentScopeKey(documents.scope))
+            || JSON.stringify(fileGroups.flat().sort()) !== JSON.stringify(refs.map(ref => ref.name).sort())) return null
+        for (const [index, files] of fileGroups.entries()) if (files.length) questions[index]!.attachments = files
+    } else if (fileGroups) return null
+    const expected = serializeAnswers(questions, { attachmentsAreNames: true })
     if (expected !== turn.text) return null
     return {
         key: JSON.stringify([turn.question.sourceMessageId, turn.question.toolCallId]),

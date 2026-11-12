@@ -107,6 +107,7 @@ import { HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions, desktopAt
 import { desktopQuestionViewSchema, type DesktopPendingQuestion, type DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import { DesktopToolInstallPending } from './tool-install/DesktopToolInstallPending'
 import { DesktopQuestionCard } from './DesktopQuestionCard'
+import { questionDocumentTabUid } from '@/lib/desktop/question-documents'
 import { desktopApprovalViewSchema, type DesktopPendingApproval, type DesktopApprovalAnswer } from '@/lib/desktop/approvals'
 import { DesktopApprovalCard } from './DesktopApprovalCard'
 import { desktopQuickRepliesOf } from '@/lib/desktop/quick-replies'
@@ -1493,7 +1494,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                 {setup.view?.skipped && <DesktopSetupSkippedBanner agentId={agent.id} canStart={modelReady} onStartBlocked={onOpenModelSettings} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
                 {question && !webhookOwns('question', question.id) && <DesktopQuestionCard key={question.id} question={question}
                     voiceTarget={!cardOpen && !detailPanel && !chatsOpen && sessionId ? { sessionId } : undefined}
-                    documentOwner={sessionId ? { agentId: agent.id, sessionId } : undefined}
+                    documentScope={sessionId ? { agentId: agent.id, sessionId, tabUid: questionDocumentTabUid(question.id) } : undefined}
                     disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onAnswer={answerQuestion} />}
                 {approval && !webhookOwns('approval', approval.id) && <DesktopApprovalCard key={approval.id} approval={approval} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onDecide={decideApproval} />}
                 {documentPreview && <DesktopDocumentLightbox {...documentPreview} onIndexChange={index => setDocumentPreview(value => value ? { ...value, index } : null)} onClose={() => setDocumentPreview(null)} />}

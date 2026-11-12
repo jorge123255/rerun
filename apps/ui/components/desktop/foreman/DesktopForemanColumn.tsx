@@ -299,6 +299,7 @@ export function DesktopForemanColumn({
                         question={foreman.restored && !streaming && pendingRequest ? <>
                             {question && onAnswerQuestion && <DesktopQuestionCard question={question} disabled={hidden || !!foreman.blocked}
                                 voiceTarget={ui.open && !onRoutines && !alternates.open ? { chat } : undefined}
+                                documentScope={sessionId ? foremanDocumentScope(chat, sessionId, question.id) : undefined}
                                 onAnswer={onAnswerQuestion} />}
                             {approval && onDecideApproval && <DesktopApprovalCard approval={approval} disabled={hidden || !!foreman.blocked} onDecide={onDecideApproval} />}
                         </> : null}

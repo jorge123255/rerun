@@ -1,11 +1,10 @@
 'use client'
 import { holdDraftAdmission } from '@/lib/desktop/draft-writes'
-import { desktopDocumentKindForName, type DesktopDocumentAttachment, type DesktopDocumentScope } from '@rerun/contracts'
+import { desktopDocumentKindForName, documentScopeKey, type DesktopDocumentAttachment, type DesktopDocumentScope } from '@rerun/contracts'
 import { uploadDesktopDocument } from './client'
 
 export type RetainedDocument = { scope: DesktopDocumentScope; id: string; file: File; position: number; attachment: DesktopDocumentAttachment | null; error: string | null; work: Promise<DesktopDocumentAttachment | null> | null; release: () => void }
 const retained = new Map<string, RetainedDocument>(), listeners = new Set<(record: RetainedDocument) => void>()
-export const documentScopeKey = (scope: DesktopDocumentScope) => JSON.stringify([scope.agentId, scope.tabUid, scope.sessionId ?? null])
 export const retainedDocuments = (scope: DesktopDocumentScope) => [...retained.values()].filter(item => documentScopeKey(item.scope) === documentScopeKey(scope))
 export const retainedDocument = (id: string) => retained.get(id)
 export function forgetRetainedDocument(id: string) { const record = retained.get(id); if (record) { retained.delete(id); record.release() } }

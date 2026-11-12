@@ -30,6 +30,7 @@ export type ForemanTurn = ForemanSendFields & {
     brief: ForemanBrief
     question?: DesktopForemanQuestionGuard
     answerIntent?: DesktopQuestionAnswer
+    answerFileNames?: string[][]
     approval?: DesktopForemanQuestionGuard
     approvalIntent?: DesktopApprovalAnswer
     starterOfferId?: string

@@ -184,17 +184,23 @@ it('retries an unconfirmed send by its saved request ID, clears the old error, a
     expect(document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')?.value).toBe('The next draft')
 })
 
-it('offers dictation on a visible Chief of Staff question and hides it when leaving the conversation', async () => {
+it('offers the paperclip and dictation on a saved Chief of Staff question', async () => {
     root = createRoot(document.body.appendChild(document.createElement('div')))
     const question = { id: 'a'.repeat(64), messageId: 'saved-question', toolCallId: 'question-call',
         questions: [{ question: 'Which time?', options: ['Morning', 'Afternoon'] }] }
     const answer = vi.fn(async () => {})
+    const fetcher = vi.fn(async () => Response.json({ attachments: [] }))
+    vi.stubGlobal('fetch', fetcher)
+    const sessionId = crypto.randomUUID()
     const render = (hidden = false) => act(async () => root!.render(
-        <DesktopForemanColumn chat={chat} ports={ports} live={null} messages={[]} agentNameOf={id => id}
+        <DesktopForemanColumn chat={chat} ports={ports} live={null} messages={[]} agentNameOf={id => id} sessionId={sessionId}
             controlledOpen hidden={hidden} onClose={() => {}} question={question} onAnswerQuestion={answer} />))
     const record = () => document.querySelector('[data-hitl="record"]')
     await render()
     expect(record()?.getAttribute('aria-label')).toBe('Answer with your voice')
+    expect(document.querySelector('[data-hitl="attach"]')).not.toBeNull()
+    const query = new URLSearchParams({ tabUid: chat.chatId, sessionId, questionId: question.id })
+    expect(fetcher).toHaveBeenCalledWith(`/api/desktop/foreman/document-attachments?${query}`, expect.anything())
     await render(true)
     expect(record()).toBeNull()
     await render()

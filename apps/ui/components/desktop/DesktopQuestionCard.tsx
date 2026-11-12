@@ -2,20 +2,21 @@
 
 import { QuestionForm, type QuestionAttachments } from '@rerun/ui/chat'
 import { useEffect, useRef, useState } from 'react'
+import type { DesktopDocumentScope } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 import { useDesktopLocale } from './DesktopLocale'
 import { useDesktopQuestionVoice, type DesktopQuestionVoiceTarget } from './voice/useDesktopQuestionVoice'
 import { DesktopDocumentChips } from './document-attachments/DesktopDocumentChips'
 import { DESKTOP_IMAGE_UPLOAD_ACCEPT } from '@/lib/desktop/composer-image'
 import { useDesktopDocumentAttachments } from '@/lib/desktop/document-attachments/useDesktopDocumentAttachments'
-import { QUESTION_DOCUMENT_POSITIONS, questionDocumentIndex, questionDocumentTabUid } from '@/lib/desktop/question-documents'
+import { QUESTION_DOCUMENT_POSITIONS, questionDocumentIndex } from '@/lib/desktop/question-documents'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer, DesktopQuestionPayload } from '@/lib/desktop/questions'
 
 export type DesktopQuestionCardProps = {
     question: DesktopPendingQuestion
     disabled?: boolean
     voiceTarget?: DesktopQuestionVoiceTarget
-    documentOwner?: { agentId: string; sessionId: string }
+    documentScope?: DesktopDocumentScope
     onAnswer: (payload: DesktopQuestionAnswer) => Promise<void>
 }
 
@@ -155,8 +156,8 @@ function QuestionCard({ question, disabled, voiceTarget, onAnswer, files }: Desk
     </div>
 }
 
-function QuestionWithDocuments(props: DesktopQuestionCardProps & { documentOwner: NonNullable<DesktopQuestionCardProps['documentOwner']> }) {
-    const files = useDesktopDocumentAttachments({ ...props.documentOwner, tabUid: questionDocumentTabUid(props.question.id),
+function QuestionWithDocuments(props: DesktopQuestionCardProps & { documentScope: DesktopDocumentScope }) {
+    const files = useDesktopDocumentAttachments({ ...props.documentScope,
         enabled: !props.disabled && !props.question.attempt })
     return <QuestionCard {...props} files={files} />
 }
@@ -164,7 +165,7 @@ function QuestionWithDocuments(props: DesktopQuestionCardProps & { documentOwner
 export function DesktopQuestionCard(props: DesktopQuestionCardProps) {
     // Scope local drafts and request IDs to the authoritative question, even if a parent reuses
     // this component when a different coworker or conversation becomes active.
-    return props.documentOwner
-        ? <QuestionWithDocuments key={props.question.id} {...props} documentOwner={props.documentOwner} />
+    return props.documentScope
+        ? <QuestionWithDocuments key={props.question.id} {...props} documentScope={props.documentScope} />
         : <QuestionCard key={props.question.id} {...props} />
 }

@@ -62,8 +62,13 @@ export type DesktopForemanBinding = z.infer<typeof foremanBindingSchema>
 export const foremanChatRefSchema = z.strictObject({ workspaceId: foremanWorkspaceIdSchema, chatId: foremanChatIdSchema })
 export type DesktopForemanChatRef = z.infer<typeof foremanChatRefSchema>
 
-export function foremanDocumentScope(chat: DesktopForemanChatRef, sessionId: string): DesktopDocumentScope {
-    return { agentId: FOREMAN_AGENT_ID, tabUid: chat.chatId, sessionId }
+export function foremanDocumentScope(chat: DesktopForemanChatRef, sessionId: string, questionId?: string): DesktopDocumentScope {
+    return { agentId: FOREMAN_AGENT_ID, tabUid: chat.chatId, sessionId, ...(questionId && { questionId }) }
+}
+
+/** Canonical input for the server's existing opaque request id. */
+export function foremanRequestIdentityInput(chat: DesktopForemanChatRef, sessionId: string, guard: DesktopForemanQuestionGuard, kind?: 'approval'): string {
+    return JSON.stringify([chat.workspaceId, chat.chatId, sessionId, guard.runId, guard.sourceMessageId, guard.toolCallId, guard.digest, ...(kind ? [kind] : [])])
 }
 
 export const desktopForemanTurnSchema = z.strictObject({
@@ -75,7 +80,7 @@ export const desktopForemanTurnSchema = z.strictObject({
     documents: desktopDocumentSendSelectionSchema.optional(),
     coworkerMentions: desktopCoworkerMentionsSchema.optional(),
 }).refine(turn => Boolean(turn.text.trim() || turn.documents) && !(turn.question && turn.approval)
-    && !((turn.question || turn.approval) && (turn.documents || turn.coworkerMentions?.length)))
+    && !(turn.approval && turn.documents) && !((turn.question || turn.approval) && turn.coworkerMentions?.length))
     .refine(validDesktopCoworkerMentionFields, 'Selected coworker mentions do not match the message.')
 
 // Engine and app server only. Renderer requests continue to use their saved message ID.

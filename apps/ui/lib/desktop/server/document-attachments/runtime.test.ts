@@ -8,10 +8,12 @@ import { foremanDocumentScope, type DesktopDocumentScope } from '@rerun/contract
 import type { DesktopRuntime } from '../runtime'
 vi.mock('server-only', () => ({}))
 import { createDesktopDocumentRuntime } from './runtime'
+import * as foremanQuestions from '../foreman/question'
+import { desktopDocumentStore, desktopDocumentTables } from './store'
 import { DESKTOP_FOREMAN_CHAT_SCHEMA, ensureForemanChat } from '../foreman/chat-store'
 import { setDesktopWorkspaceFrozen } from '../workspace-admission'
 const cleanup: Array<() => void> = []
-afterEach(() => { cleanup.splice(0).forEach(close => close()) })
+afterEach(() => { vi.restoreAllMocks(); cleanup.splice(0).forEach(close => close()) })
 async function fixture(workspaceId = 1) {
     const directory = mkdtempSync(join(tmpdir(), 'rerun-doc-runtime-'))
     const url = `file:${join(directory, 'app.db')}`
@@ -102,5 +104,57 @@ it('keeps Chief of Staff attachments scoped to the managed conversation and avai
         expect((await restored.read(scope, attachment.attachmentId, attachment.sha256, f.signal)).bytes).toEqual(bytes)
         const foreign = await createDesktopDocumentRuntime({ ...f.runtime, workspaceId: 3 }, reopened, undefined, 'foreman')
         await expect(foreign.read(scope, attachment.attachmentId, attachment.sha256, f.signal)).rejects.toThrow()
+    } finally { reopened.close() }
+})
+
+it('separates question uploads from the composer and retains only admitted history after the question closes', async () => {
+    const f = await fixture()
+    await f.db.executeMultiple(DESKTOP_FOREMAN_CHAT_SCHEMA)
+    const { chat, sessionId } = await ensureForemanChat(f.db, '1')
+    const composer = foremanDocumentScope(chat, sessionId), scope = foremanDocumentScope(chat, sessionId, 'a'.repeat(64))
+    const readPending = vi.spyOn(foremanQuestions, 'readPendingForemanRequests').mockResolvedValue({
+        question: { guard: { runId: randomUUID(), sourceMessageId: 'source', toolCallId: 'tool', digest: 'd'.repeat(64) },
+            view: { id: scope.questionId!, messageId: 'source', toolCallId: 'tool', questions: [{ question: 'Send the notes?', options: [] }] } },
+        approval: null,
+    })
+    const service = await createDesktopDocumentRuntime(f.runtime, f.db, undefined, 'foreman')
+    const bytes = new TextEncoder().encode('Question attachment fixture')
+    const upload = () => service.upload(scope, { ...scope, attachmentId: randomUUID(), name: 'notes.txt',
+        mimeType: 'text/plain', position: 0 }, bytes, f.signal)
+    const accepted = await upload()
+    const draft = await upload()
+    expect(await service.list(composer, f.signal)).toEqual([])
+    await expect(service.list({ ...scope, questionId: 'b'.repeat(64) }, f.signal)).rejects.toThrow()
+    const selected = { admissionId: randomUUID(), attachmentIds: [accepted.attachmentId] }
+    expect((await service.admission(scope, selected, f.signal)).references[0]?.scope).toEqual(scope)
+    readPending.mockResolvedValue({ question: null, approval: null })
+    await desktopDocumentStore(f.db, 'foreman').consume(scope, selected.admissionId)
+    await expect(service.list(scope, f.signal)).rejects.toThrow()
+    await expect(service.read(scope, draft.attachmentId, draft.sha256, f.signal)).rejects.toThrow()
+    expect((await service.read(scope, accepted.attachmentId, accepted.sha256, f.signal)).bytes).toEqual(bytes)
+    await expect(service.read(composer, accepted.attachmentId, accepted.sha256, f.signal)).rejects.toThrow()
+})
+
+it('adds question scoping to existing attachment databases without changing prior receipts', async () => {
+    const f = await fixture()
+    await f.db.executeMultiple(DESKTOP_FOREMAN_CHAT_SCHEMA)
+    const { chat, sessionId } = await ensureForemanChat(f.db, '1')
+    const scope = foremanDocumentScope(chat, sessionId)
+    const service = await createDesktopDocumentRuntime(f.runtime, f.db, undefined, 'foreman')
+    const bytes = new TextEncoder().encode('Existing composer attachment')
+    const file = await service.upload(scope, { ...scope, attachmentId: randomUUID(), name: 'existing.txt',
+        mimeType: 'text/plain', position: 0 }, bytes, f.signal)
+    const selected = { admissionId: randomUUID(), attachmentIds: [file.attachmentId] }
+    const before = await service.admission(scope, selected, f.signal)
+    for (const owner of ['foreman', 'coworker'] as const) {
+        const { attachments, admissions, cancellations } = desktopDocumentTables(owner)
+        for (const table of [attachments, admissions, cancellations]) await f.db.execute(`ALTER TABLE ${table} DROP COLUMN question_id`)
+    }
+    const reopened = createClient({ url: f.url })
+    try {
+        const restored = await createDesktopDocumentRuntime(f.runtime, reopened, undefined, 'foreman')
+        expect(await restored.admission(scope, selected, f.signal)).toEqual(before)
+        expect((await restored.read(scope, file.attachmentId, file.sha256, f.signal)).bytes).toEqual(bytes)
+        expect((await reopened.execute('PRAGMA foreign_key_check')).rows).toEqual([])
     } finally { reopened.close() }
 })

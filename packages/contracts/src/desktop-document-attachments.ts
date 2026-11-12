@@ -14,8 +14,19 @@ export const desktopDocumentScopeSchema = z.object({
     agentId: z.string().min(1).max(200),
     tabUid: z.string().min(1).max(128),
     sessionId: z.string().min(1).max(200).optional(),
+    questionId: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict()
 export type DesktopDocumentScope = z.infer<typeof desktopDocumentScopeSchema>
+
+export function documentScopeKey(scope: DesktopDocumentScope): string {
+    // Keep fingerprints for existing conversation selections and coworker questions.
+    return JSON.stringify([scope.agentId, scope.tabUid, scope.sessionId ?? null, ...(scope.questionId ? [scope.questionId] : [])])
+}
+
+export const QUESTION_DOCUMENT_POSITIONS = 1_000
+export function questionDocumentIndex(position: number): number {
+    return Math.floor(position / QUESTION_DOCUMENT_POSITIONS)
+}
 
 export const desktopDocumentKindSchema = z.enum(['pdf', 'audio', 'video', 'binary', 'text', 'image'])
 export type DesktopDocumentKind = z.infer<typeof desktopDocumentKindSchema>

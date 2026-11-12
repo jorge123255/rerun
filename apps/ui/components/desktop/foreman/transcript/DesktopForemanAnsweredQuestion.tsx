@@ -10,7 +10,9 @@ export function DesktopForemanAnsweredQuestion({ recaps }: { recaps: readonly De
         {recaps.map(recap => <div key={recap.key} className="min-w-0 rounded-lg border border-border bg-muted/20 px-3 py-2 text-sm">
             {recap.questions.map((item, index) => <div key={`${recap.key}:${index}`} className={index > 0 ? 'mt-2 min-w-0' : 'min-w-0'}>
                 <p className="whitespace-pre-wrap break-words text-xs text-muted-foreground">{item.question}</p>
-                <p className="whitespace-pre-wrap break-words text-foreground">{item.answers.length ? item.answers.join(', ') : 'Skipped'}</p>
+                {(item.answers.length > 0 || !item.attachments?.length) &&
+                    <p className="whitespace-pre-wrap break-words text-foreground">{item.answers.length ? item.answers.join(', ') : 'Skipped'}</p>}
+                {!!item.attachments?.length && <p className="break-words text-xs text-foreground">{item.attachments.join(', ')}</p>}
             </div>)}
         </div>)}
     </div>
