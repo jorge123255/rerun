@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import type { ComponentProps } from 'react'
+import type { RunModelField } from '@/components/agent/RunModelField'
 import type { DesktopWorkspaceRoutinesClient } from '@/lib/desktop/workspace-routines/client'
 import type { DesktopWorkspaceRoutine } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
 import { loadMessages } from '@rerun/i18n/messages'
@@ -11,12 +13,37 @@ import { DesktopWorkspaceRoutines } from './DesktopWorkspaceRoutines'
 
 vi.mock('@rerun/ui/iso-grid', () => ({ AgentBuddy: () => null }))
 vi.mock('../../DesktopTaskNotifyField', () => ({ DesktopTaskNotifyField: () => null }))
+vi.mock('@/components/agent/RunModelField', () => ({
+    RunModelField: ({ value, onChange, availableGroups, disabled, labels }: ComponentProps<typeof RunModelField>) => (
+        <div data-routine-model={value.model} data-routine-connection={value.connectionId}>
+            {availableGroups.map(group => group.models.map(model => (
+                <button key={group.connectionId + model.id} disabled={disabled} onClick={() => onChange({ connectionId: group.connectionId, model: model.id })}>
+                    {group.label} {model.label}
+                </button>
+            )))}
+            <button disabled={disabled} onClick={() => onChange({ connectionId: null, model: null })}>{labels?.coworkerDefault}</button>
+        </div>
+    ),
+}))
 const roots: Root[] = []
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url !== '/api/desktop/agents/agent-a/model') throw new Error(`Unexpected request ${url}`)
+        return Response.json({
+            catalog: ['A', 'B'].map(name => ({
+                connectionId: 'conn-' + name.toLowerCase(), name, provider: 'openai', models: [{ id: 'gpt-exact', label: 'Exact' }],
+            })),
+            workspace: null, coworker: null, conversation: null,
+            effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: '', available: false },
+        })
+    }))
+})
 afterEach(async () => {
     await act(async () => { for (const root of roots.splice(0)) root.unmount() })
     document.body.innerHTML = ''
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
 })
 const routine: DesktopWorkspaceRoutine = {
     agentId: 'agent-a', slug: 'daily', name: 'Daily', description: '', body: 'Do work', cron: '0 8 * * *', runAt: null, timezone: 'UTC', enabled: true, revision: 'v1', frequency: 'Every day at 8:00 AM', nextRunAt: null, runningSince: null, setupPending: false,
@@ -125,13 +152,45 @@ test('Keep my draft adopts the new reviewed revision without replacing text', as
     const input = document.querySelector<HTMLInputElement>('input[aria-label="Name"]')!
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'My draft')
     await act(async () => input.dispatchEvent(new Event('input', { bubbles: true })))
-    api.list = vi.fn(async () => ({ routines: [{ ...routine, revision: 'v2', name: 'Changed outside' }], canRename: true }))
+    api.list = vi.fn<DesktopWorkspaceRoutinesClient['list']>(async () => ({
+        routines: [{ ...routine, revision: 'v2', name: 'Changed outside', connectionId: 'conn-b', provider: 'openai', model: 'gpt-exact' }],
+        canRename: true,
+    }))
     await act(async () => root.render(<DesktopWorkspaceRoutines client={api} agentNameOf={() => 'Ada'} onOpenChat={vi.fn()} docked refreshKey={2} />))
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)) })
-    await click('Keep my draft'); await click('Save changes')
+    await click('Keep my draft')
+    expect(document.querySelector('[data-routine-connection="conn-b"]')).toBeTruthy()
+    await click('Save changes')
     expect(api.mutate).toHaveBeenCalledWith(expect.objectContaining({ action: 'edit', expectedRevision: 'v2', input: expect.objectContaining({ name: 'My draft' }) }))
+    expect(vi.mocked(api.mutate).mock.calls[0][0]).not.toHaveProperty('input.modelOverride')
 })
 
+test('selects by connection when two models share an ID and requires saving before running', async () => {
+    const api = client([{ ...routine, connectionId: 'conn-a', provider: 'openai', model: 'gpt-exact' }])
+    await mount(api)
+    await click('Daily options'); await click('Edit')
+    expect(document.querySelector('[data-routine-connection="conn-a"]')).toBeTruthy()
+    await click('B Exact')
+    await click('Run now')
+    expect(api.mutate).not.toHaveBeenCalled()
+    await click('Save changes')
+    expect(vi.mocked(api.mutate).mock.calls[0][0]).toHaveProperty('input.modelOverride', { connectionId: 'conn-b', provider: 'openai', model: 'gpt-exact' })
+})
+
+test('preserves an unavailable model on unrelated saves and allows explicitly clearing it', async () => {
+    const unavailable = { ...routine, connectionId: 'removed', provider: 'openai', model: 'old-model' } as const
+    const api = client([unavailable])
+    api.mutate = vi.fn(async () => ({ routine: unavailable }))
+    await mount(api)
+    await click('Daily options'); await click('Edit')
+    expect(document.body.textContent).toContain('The saved model is unavailable')
+    await click('Save changes')
+    expect(vi.mocked(api.mutate).mock.calls[0][0]).not.toHaveProperty('input.modelOverride')
+    await click('Daily options'); await click('Edit')
+    await click('Coworker default')
+    await click('Save changes')
+    expect(vi.mocked(api.mutate).mock.calls[1][0]).toHaveProperty('input.modelOverride', null)
+})
 
 test('French editing and running keep the reviewed revision, raw schedule and exact result chat', async () => {
     const api = client()

@@ -27,7 +27,11 @@ export async function desktopWorkspaceRoutinesAuthority(runtime: DesktopRuntime)
         const rows = await engineRequest(engine, `/desktop/workspace-routines/${encodeURIComponent(o.engineAgentId)}`, { method: 'GET', signal, cache: 'no-store' }, value => z.object({ schedules: z.array(z.object({}).passthrough()) }).parse(value).schedules)
         signal?.throwIfAborted()
         if ((await owner(id)).engineAgentId !== o.engineAgentId) throw new DesktopHttpError(409, 'Coworker changed')
-        return rows.map(row => desktopScheduleRecordSchema.parse({ agentId: o.id, slug: row.slug, name: row.name, description: row.description, body: row.body, cron: row.cron, runAt: row.runAt, timezone: row.timezone ?? 'UTC', enabled: row.enabled, revision: row.revision, lastRunAt: row.lastRunAt }))
+        return rows.map(row => desktopScheduleRecordSchema.parse({
+            agentId: o.id, slug: row.slug, name: row.name, description: row.description, body: row.body, cron: row.cron,
+            runAt: row.runAt, timezone: row.timezone ?? 'UTC', enabled: row.enabled, revision: row.revision, lastRunAt: row.lastRunAt,
+            connectionId: row.connectionId, provider: row.provider, model: row.model,
+        }))
     }
     const read: DesktopWorkspaceRoutinesAuthority = {
         async listOwners(signal) {

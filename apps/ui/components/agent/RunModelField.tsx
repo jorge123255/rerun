@@ -58,9 +58,16 @@ type RunModelFieldProps = {
     // What the agent's own model resolves to today, so the default entry is not a blind choice.
     agentModel?: string | null
     disabled?: boolean
+    labels?: {
+        label: string
+        placeholder: string
+        coworkerDefault: string
+        coworkerDefaultWithModel: (model: string) => string
+        current: string
+    }
 }
 
-export function RunModelField({ id, value, onChange, availableGroups, helperText, agentModel, disabled }: RunModelFieldProps) {
+export function RunModelField({ id, value, onChange, availableGroups, helperText, agentModel, disabled, labels }: RunModelFieldProps) {
     // Keep a pair that is no longer available (connection deleted, model switched off) selectable,
     // so the routine stays editable instead of silently losing it.
     const orphan = useMemo(
@@ -68,7 +75,9 @@ export function RunModelField({ id, value, onChange, availableGroups, helperText
         [availableGroups, value]
     )
 
-    const agentDefaultLabel = agentModel ? `Coworker default · ${modelLabel(agentModel)}` : 'Coworker default'
+    const agentDefaultLabel = agentModel
+        ? labels?.coworkerDefaultWithModel(modelLabel(agentModel)) ?? `Coworker default · ${modelLabel(agentModel)}`
+        : labels?.coworkerDefault ?? 'Coworker default'
     // Spelled out rather than mirrored from the picked item: a tier's item is a two-line row.
     const triggerLabel = value.model ? modelName(value.connectionId ?? '', value.model) : agentDefaultLabel
 
@@ -80,10 +89,10 @@ export function RunModelField({ id, value, onChange, availableGroups, helperText
     }
 
     return (
-        <Field label="Model" htmlFor={id} helperText={helperText}>
+        <Field label={labels?.label ?? 'Model'} htmlFor={id} helperText={helperText}>
             <Select value={encode(value)} onValueChange={pick} disabled={disabled}>
                 <SelectTrigger id={id} className="h-8 w-full text-sm">
-                    <SelectValue placeholder="Select a model">{triggerLabel}</SelectValue>
+                    <SelectValue placeholder={labels?.placeholder ?? 'Select a model'}>{triggerLabel}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                     <SelectGroup>
@@ -104,7 +113,7 @@ export function RunModelField({ id, value, onChange, availableGroups, helperText
                     ))}
                     {orphan && (
                         <SelectGroup>
-                            <SelectLabel>Current</SelectLabel>
+                            <SelectLabel>{labels?.current ?? 'Current'}</SelectLabel>
                             <SelectItem value={encode(orphan)}>{modelLabel(orphan.model)}</SelectItem>
                         </SelectGroup>
                     )}

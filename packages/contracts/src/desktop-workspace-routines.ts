@@ -1,7 +1,10 @@
 import { z } from 'zod'
+import { providerSchema } from './agent.js'
 
 const id = z.string().min(1).max(160)
 const revision = z.string().min(1).max(256)
+const modelId = z.string().trim().min(1).max(256)
+const modelOverride = z.object({ connectionId: modelId, provider: providerSchema, model: modelId }).strict()
 
 export const desktopWorkspaceRoutineChatSchema = z.object({
     agentId: id,
@@ -23,6 +26,9 @@ export const desktopScheduleRecordSchema = z.object({
     runAt: z.string().nullable(),
     timezone: z.string().min(1).max(100),
     enabled: z.boolean(),
+    connectionId: z.string().nullable().optional(),
+    provider: providerSchema.nullable().optional(),
+    model: z.string().nullable().optional(),
     revision: revision,
     lastRunAt: z.string().nullable().optional(),
 }).strict()
@@ -77,6 +83,7 @@ export const desktopScheduleEditInputSchema = z.object({
     runAt: z.string().datetime({ offset: true }).nullable(),
     timezone: z.string().min(1).max(100),
     enabled: z.boolean(),
+    modelOverride: modelOverride.nullable().optional(),
 }).strict().superRefine((value, context) => {
     if (Boolean(value.cron) === Boolean(value.runAt)) context.addIssue({ code: 'custom', message: 'Choose either a recurring cron or a one-shot time.' })
 })
