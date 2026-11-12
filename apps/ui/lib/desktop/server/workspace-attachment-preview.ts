@@ -11,9 +11,11 @@ import { findDesktopAgent, findDesktopSession } from './store'
 export function workspaceAttachmentPreviewResponse(path: string, content: string): Response {
     const name = path.split('/').pop()!.replaceAll('\\', '_')
     const filename = encodeURIComponent(name).replace(/['()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
-    return new Response(content, { headers: {
+    const bytes = new TextEncoder().encode(content)
+    return new Response(bytes, { headers: {
         'cache-control': 'no-store',
         'content-type': 'text/plain; charset=utf-8',
+        'content-length': String(bytes.byteLength),
         'content-disposition': `attachment; filename*=UTF-8''${filename}`,
         'content-security-policy': "default-src 'none'; sandbox",
         'x-content-type-options': 'nosniff',

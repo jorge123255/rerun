@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { attachmentDisplayName } from '@/lib/chat/attachments-marker'
 import { rawUrlResolver, type RawUrlFor } from '@/lib/files/raw-url'
 import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from '@/lib/icons'
-import { useCallback } from 'react'
+import { useCallback, type ReactNode } from 'react'
 
 export type ReadChatFile = (path: string) => Promise<{ content: string; truncated: boolean }>
 
@@ -38,31 +38,46 @@ export function AttachmentLightbox({ agentId, paths, names, index, rawUrlFor, re
     const { content, loading, error } = useFileContent({ path, name, read })
 
     return (
+        <AttachmentLightboxFrame name={name} index={index} count={paths.length} onIndexChange={onIndexChange} onClose={onClose}
+            download={<Button size="icon-sm" variant="ghost" asChild title="Download" aria-label="Download">
+                <a href={rawUrl} download={name}><DownloadIcon className="size-4" /></a>
+            </Button>}>
+            {error ? <p className="p-3 text-xs text-destructive">{error}</p> : <FilePreview fileName={name} content={content} rawUrl={rawUrl} loading={loading} />}
+        </AttachmentLightboxFrame>
+    )
+}
+
+export function AttachmentLightboxFrame({ name, index, count, download, children, onIndexChange, onClose }: {
+    name: string
+    index: number
+    count: number
+    download: ReactNode
+    children: ReactNode
+    onIndexChange: (index: number) => void
+    onClose: () => void
+}) {
+    return (
         <Dialog open onOpenChange={open => !open && onClose()}>
             <DialogContent aria-describedby={undefined} className="flex h-[80vh] flex-col gap-0 p-0 sm:max-w-4xl">
                 <div className="flex shrink-0 items-center gap-2 border-b border-border py-2 pl-4 pr-12">
                     <DialogTitle className="min-w-0 flex-1 truncate text-left font-mono text-xs font-normal text-muted-foreground">{name}</DialogTitle>
-                    {paths.length > 1 && (
+                    {count > 1 && (
                         <>
                             <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                                {index + 1} / {paths.length}
+                                {index + 1} / {count}
                             </span>
-                            <Button size="icon-sm" variant="ghost" onClick={() => onIndexChange((index - 1 + paths.length) % paths.length)} aria-label="Previous attachment">
+                            <Button size="icon-sm" variant="ghost" onClick={() => onIndexChange((index - 1 + count) % count)} aria-label="Previous attachment">
                                 <ChevronLeftIcon className="size-4" />
                             </Button>
-                            <Button size="icon-sm" variant="ghost" onClick={() => onIndexChange((index + 1) % paths.length)} aria-label="Next attachment">
+                            <Button size="icon-sm" variant="ghost" onClick={() => onIndexChange((index + 1) % count)} aria-label="Next attachment">
                                 <ChevronRightIcon className="size-4" />
                             </Button>
                         </>
                     )}
-                    <Button size="icon-sm" variant="ghost" asChild title="Download" aria-label="Download">
-                        <a href={rawUrl} download={name}>
-                            <DownloadIcon className="size-4" />
-                        </a>
-                    </Button>
+                    {download}
                 </div>
                 <div className="min-h-0 flex-1 overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0">
-                    {error ? <p className="p-3 text-xs text-destructive">{error}</p> : <FilePreview fileName={name} content={content} rawUrl={rawUrl} loading={loading} />}
+                    {children}
                 </div>
             </DialogContent>
         </Dialog>
