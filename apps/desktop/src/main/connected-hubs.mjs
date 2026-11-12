@@ -487,6 +487,11 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             return (await connect(origin, { remember: false })).ok
         },
         ownsWindow: window => !!entryFor(window),
+        focusWindow(window) {
+            if (!available() || !entryFor(window)) return false
+            show(window)
+            return true
+        },
         languageScopeOf: window => entryFor(window)?.origin ?? null,
         scopeOf: window => available() ? connected(window)?.scope : null,
         duplicateWindow(window) {

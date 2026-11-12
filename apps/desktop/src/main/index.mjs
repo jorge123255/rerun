@@ -55,6 +55,7 @@ let activeSession
 let activeWorkspaceId
 let connectedHubs
 let pendingHubLink
+let reopeningHub
 let transitioning = false
 let quitting = false
 let quittingNow = false
@@ -124,12 +125,31 @@ function reportStartupError(error) {
             retryLabel: t('startup.restartToRetry') })
     } else publishBootStatus({ state: 'error', message: 'Desktop setup failed. Check that this app has a complete bundled runtime and access to secure storage.' })
 }
+function revealWindow(candidate) {
+    if (!candidate || candidate.isDestroyed()) return
+    if (candidate.isMinimized()) candidate.restore()
+    candidate.show()
+    candidate.focus()
+}
 function showMainWindow() {
     showWindowOnReady = true
-    if (!window || window.isDestroyed()) return
-    if (window.isMinimized()) window.restore()
-    window.show()
-    window.focus()
+    revealWindow(window)
+}
+function reopenRememberedHub() {
+    reopeningHub ??= connectedHubs.reopenRemembered().catch(() => false).finally(() => { reopeningHub = null })
+    return reopeningHub
+}
+function showWorkspaceWindow() {
+    if (quitting) return
+    for (const candidate of [BrowserWindow.getFocusedWindow(), lastWorkspaceWindow]) {
+        if (connectedHubs?.focusWindow(candidate)) return
+        if (boardContext(candidate)) { revealWindow(candidate); return }
+    }
+    if (connectedHubs && bootStatus.state === 'choose' && !openingLocalWorkspace && !supervisor) {
+        void reopenRememberedHub().then(opened => {
+            if (!opened && !quitting) showMainWindow()
+        })
+    } else showMainWindow()
 }
 function publishMacUnread() {
     if (process.platform !== 'darwin') return
@@ -235,8 +255,8 @@ else {
         if (connectedHubs) void connectedHubs.openLink(link).catch(() => {})
         else if (link.kind === 'open') pendingHubLink = link
     })
-    app.on('second-instance', showMainWindow)
-    app.on('activate', showMainWindow)
+    app.on('second-instance', showWorkspaceWindow)
+    app.on('activate', showWorkspaceWindow)
     app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
     app.on('before-quit', event => {
         if (quittingNow) return
@@ -314,8 +334,9 @@ async function launch() {
             setUnread: count => { hubUnread = count; publishMacUnread() }, desktopSettings, changeDesktopSettings,
             setLanguage: (scope, locale) => shellLanguage.set(scope, locale), language: scope => shellLanguage.forScope(scope) })
         app.on('browser-window-focus', (_event, candidate) => {
-            if (boards.get(candidate) || connectedHubs.ownsWindow(candidate)) {
-                lastWorkspaceWindow = candidate
+            const hub = connectedHubs.ownsWindow(candidate)
+            if (boards.get(candidate) || hub) {
+                if (hub || boardContext(candidate)) lastWorkspaceWindow = candidate
                 shellLanguage.select(connectedHubs.languageScopeOf(candidate) ?? 'local')
             }
         })
@@ -359,7 +380,7 @@ async function launch() {
         })
         refreshApplicationMenu()
         try {
-            menuBar = createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow: showMainWindow, locale: shellLanguage.locale, updates: macUpdates,
+            menuBar = createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow: showWorkspaceWindow, locale: shellLanguage.locale, updates: macUpdates,
                 quickAsk: { enabled: () => shortcutPreference.state().enabled, open: toggleQuickAsk } })
             showWindowOnReady = !menuBar.startedAtLogin
         } catch {
@@ -562,7 +583,7 @@ async function launch() {
     }
     await window.loadFile(startup)
     if (existingLocal) await startLocalWorkspace()
-    else if (openRememberedHub) await connectedHubs.reopenRemembered()
+    else if (openRememberedHub) await reopenRememberedHub()
 }
 
 async function startLocalWorkspace() {
