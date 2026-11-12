@@ -32,8 +32,8 @@ it('passes actual identity/Box without automatic actions and keeps sibling draft
     expect(props.authority.onRenamed).not.toHaveBeenCalled()
     const textarea = host!.querySelector('textarea')!
     textarea.setSelectionRange(3, 8)
-    await act(async () => captured.onOpenAcceptedPanel?.('memories'))
-    expect(props.onOpenAcceptedPanel).toHaveBeenCalledWith('memories')
+    await act(async () => captured.onOpenAcceptedPanel?.('settings'))
+    expect(props.onOpenAcceptedPanel).toHaveBeenCalledWith('settings')
     await act(async () => root!.render(render(false)))
     expect(host!.querySelector('textarea')).toBe(textarea)
     expect(textarea.value).toBe('Unsent **Markdown**')

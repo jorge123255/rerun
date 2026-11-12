@@ -1,8 +1,10 @@
 'use client'
 
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
 import { memoriesListSchema, desktopSemanticIndexStatusSchema, desktopSemanticRecallResultSchema, type DesktopSemanticIndexStatus, type DesktopSemanticRecallResult } from '@rerun/contracts'
 import { MemoryRow } from '@/components/agent/MemoryRow'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { useFileUnloadGuard } from '@/components/files/useFileUnloadGuard'
 import { ClearMemoriesDialog } from '@/components/dialogs/ClearMemoriesDialog'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
@@ -14,7 +16,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { BrainIcon, PlusIcon, SearchIcon, Trash2Icon, XIcon } from '@/lib/icons'
 import type { EngineMemory } from '@/lib/engine/types'
 import type { DesktopAgentView } from './DesktopApp'
-import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
+import { desktopFileDraftHost, holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { useDesktopDialogControl, useDesktopPanelCloseGuard, type DesktopDialogControl, type RegisterDesktopPanelCloseGuard } from '@/lib/desktop/use-dialog-control'
 
 type Result<T> = T | { error: string }
 type Load<T> = { revision: number; result: Result<T> }
@@ -22,7 +25,11 @@ type RecallRequest = { query: string }
 type SavedMemories = { memories: EngineMemory[] }
 type Draft = { content: string; kind: string; tags: string }
 
-function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
+export function DesktopCoworkerMemoriesBody({ agent, registerCloseGuard, inDialog = false }: {
+    agent: DesktopAgentView
+    registerCloseGuard: RegisterDesktopPanelCloseGuard
+    inDialog?: boolean
+}) {
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/memories`
     const semanticUrl = `/api/desktop/coworkers/${encodeURIComponent(agent.id)}/semantic-memory`
     const [saved, setSaved] = useState<Load<SavedMemories> | null>(null)
@@ -32,12 +39,23 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
     const [recallRequest, setRecallRequest] = useState<RecallRequest | null>(null)
     const [draft, setDraft] = useState<Draft | null>(null)
     const submission = useRef<{ payload: string; id: string } | null>(null)
+    const writingNow = useRef(false)
     const [writing, setWriting] = useState(false)
+    const [pendingClose, setPendingClose] = useState<(() => void) | null>(null)
     const [error, setError] = useState('')
     const [confirmClear, setConfirmClear] = useState(false)
     const [savedIndex, setSavedIndex] = useState<{ revision: number; status: DesktopSemanticIndexStatus } | null>(null)
     const [indexBusy, setIndexBusy] = useState(false)
     const maintenance = useRef<AbortController | null>(null)
+
+    const unsaved = !!(draft?.content.trim() || draft?.kind.trim() || draft?.tags.trim())
+    useFileUnloadGuard(unsaved, desktopFileDraftHost())
+    const guardClose = useCallback((close: () => void) => {
+        if (writingNow.current) return
+        if (unsaved) setPendingClose(() => close)
+        else close()
+    }, [unsaved])
+    useLayoutEffect(() => registerCloseGuard(guardClose), [registerCloseGuard, guardClose])
 
     const recalling = recallRequest !== null
     const activeQuery = recallRequest?.query ?? ''
@@ -124,10 +142,13 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
     }
 
     async function changeMemory(target: string, options: RequestInit, message: string) {
+        if (writingNow.current || isDesktopQuitting()) return false
+        writingNow.current = true
+        const release = holdDraftAdmission()
         setWriting(true)
         setError('')
         try {
-            const response = await fetch(target, options)
+            const response = await fetch(target, { ...options, signal: AbortSignal.timeout(20_000) })
             // A prior single-note delete may already have succeeded before its response reached
             // this window; a missing coworker on a clear-all is a genuine failure instead.
             if (!response.ok && !(options.method === 'DELETE' && target !== url && response.status === 404)) {
@@ -140,13 +161,15 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
             setError(cause instanceof Error && cause.name !== 'TypeError' ? cause.message : message)
             return false
         } finally {
+            writingNow.current = false
             setWriting(false)
+            release()
         }
     }
 
     async function create(event: FormEvent) {
         event.preventDefault()
-        if (writing || !draft?.content.trim()) return
+        if (writingNow.current || isDesktopQuitting() || !draft?.content.trim()) return
         const tags = draft.tags.split(',').map(tag => tag.trim()).filter(Boolean)
         const note = { content: draft.content.trim(), kind: draft.kind.trim() || undefined, tags: tags.length ? tags : undefined }
         const payload = JSON.stringify(note)
@@ -168,14 +191,8 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
         else refresh()
     }
 
-    return <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-xl" showCloseButton={!writing}
-        onEscapeKeyDown={event => { if (writing) event.preventDefault() }}
-        onInteractOutside={event => { if (writing) event.preventDefault() }}>
-        <DialogHeader>
-            <DialogTitle>Memories</DialogTitle>
-            <DialogDescription>Saved memories for {agent.name}.</DialogDescription>
-        </DialogHeader>
-        <fieldset disabled={writing} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    const content = <>
+        <fieldset disabled={writing} aria-busy={writing || undefined} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <PanelListHeader className="flex-col items-stretch gap-2 px-0 pt-0">
                 <form role="search" aria-label="Search coworker memories" className="flex flex-wrap items-center gap-2"
                     onSubmit={event => { event.preventDefault(); search(query) }}>
@@ -230,16 +247,34 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
         </fieldset>
         <DialogFooter>
             {result && <Button type="button" variant="outline" disabled={writing} onClick={refresh}>{'error' in result ? 'Retry' : 'Refresh'}</Button>}
-            <DialogClose asChild><Button type="button" disabled={writing}>Done</Button></DialogClose>
+            {inDialog && <DialogClose asChild><Button type="button" disabled={writing}>Done</Button></DialogClose>}
         </DialogFooter>
         <ClearMemoriesDialog open={confirmClear} onOpenChange={setConfirmClear} onConfirm={clearAll} />
+        {pendingClose && <ConfirmDialog open onOpenChange={open => { if (!open) setPendingClose(null) }}
+            title="Discard this memory draft?" description="The new memory has not been saved."
+            confirmLabel="Discard draft" cancelLabel="Keep editing"
+            onConfirm={() => { setPendingClose(null); pendingClose() }} />}
+    </>
+    if (!inDialog) return content
+    return <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-xl" showCloseButton={!writing}
+        onEscapeKeyDown={event => { if (writingNow.current) event.preventDefault() }}
+        onInteractOutside={event => { if (writingNow.current) event.preventDefault() }}>
+        <DialogHeader>
+            <DialogTitle>Memories</DialogTitle>
+            <DialogDescription>Saved memories for {agent.name}.</DialogDescription>
+        </DialogHeader>
+        {content}
     </DialogContent>
 }
 
 export function DesktopCoworkerMemories({ agent, dialogControl }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl }) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
-    return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
+    const { register, requestClose } = useDesktopPanelCloseGuard()
+    return <Dialog open={open} onOpenChange={next => {
+        if (next) setOpen(true)
+        else requestClose(() => setOpen(false))
+    }} asSheet={false}>
         <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Memories</Button></DialogTrigger>
-        {open && <MemoryPanel key={agent.id} agent={agent} />}
+        {open && <DesktopCoworkerMemoriesBody key={agent.id} agent={agent} registerCloseGuard={register} inDialog />}
     </Dialog>
 }

@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
+import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -629,4 +630,51 @@ test('a new recall does not report the previous query’s backend outcome while 
         expect(dialog()?.textContent).toContain('Could not search memories.')
         expect(dialog()?.textContent).not.toContain('Earlier lookup fell back to keywords.')
     } finally { await act(async () => root.unmount()) }
+})
+
+test('quit waits for an admitted memory write and an Escape cannot close its dialog', async () => {
+    const root = mount()
+    const write = Promise.withResolvers<Response>()
+    let rows: ReturnType<typeof note>[] = []
+    let writes = 0
+    stubMemoryFetch(async (_url, init) => {
+        if (init.method !== 'POST') return Response.json({ memories: rows })
+        writes++
+        return write.promise
+    })
+    let drain: Promise<boolean> | undefined
+    try {
+        await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
+        await click('Memories')
+        await click('Add memory')
+        await enter('desktop-memory-content', 'Memory being saved')
+        await click('Save memory')
+        expect(writes).toBe(1)
+        const current = dialog()
+        await act(async () => {
+            current!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+        })
+        expect(dialog()).toBe(current)
+        expect((document.getElementById('desktop-memory-content') as HTMLTextAreaElement).value).toBe('Memory being saved')
+
+        let settled = false
+        await act(async () => {
+            drain = flushDesktopDrafts()
+            void drain.then(() => { settled = true })
+        })
+        expect(settled).toBe(false)
+        rows = [note('saved', 'Memory being saved')]
+        await act(async () => {
+            write.resolve(Response.json({ id: 'saved' }, { status: 201 }))
+            await drain
+        })
+        expect(settled).toBe(true)
+        expect(dialog()?.textContent).toContain('Memory being saved')
+        expect(document.getElementById('desktop-memory-content')).toBeNull()
+    } finally {
+        write.resolve(Response.json({ id: 'saved' }, { status: 201 }))
+        await drain
+        cancelDraftShutdown()
+        await act(async () => { root.unmount() })
+    }
 })

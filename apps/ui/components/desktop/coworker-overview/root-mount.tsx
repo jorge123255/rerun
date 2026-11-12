@@ -1,5 +1,6 @@
 'use client'
 
+import { DesktopCoworkerMemoriesBody } from '@/components/desktop/DesktopCoworkerMemories'
 import { DesktopCoworkerFilesBody } from '@/components/desktop/DesktopCoworkerFiles'
 import { DesktopCoworkerDataBody } from '@/components/desktop/DesktopCoworkerData'
 import { DesktopRunHistoryBody } from '@/components/desktop/DesktopRunHistory'
@@ -103,6 +104,9 @@ function overviewTab(tab: DesktopOverviewTab, props: DesktopCoworkerOverviewRoot
         const open = props.onOpenSession
         return <DesktopCoworkerTriggers agentId={props.agent.id} ingressAvailable={false} onOpenSession={chat => { if (props.agent.id === props.identity.agentId && chat.sessionId) open(chat.sessionId, chat.title) }} />
     }
+    if (tab === 'memories') return <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
+        <DesktopCoworkerMemoriesBody key={props.agent.id} agent={props.agent} registerCloseGuard={register} />
+    </div>
     if (tab === 'files') return <div className="flex min-h-0 flex-1 flex-col p-3">
         <DesktopCoworkerFilesBody key={props.agent.id} agent={props.agent} registerCloseGuard={register} />
     </div>

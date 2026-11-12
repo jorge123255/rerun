@@ -73,10 +73,10 @@ export function shownDesktopOverviewTab(tab: DesktopOverviewTab, visibility: Des
 export const DESKTOP_OVERVIEW_MANAGE_REASON = 'Only an admin or a manager of this Box can change this'
 export const DESKTOP_OVERVIEW_PUBLISHED_UNAVAILABLE = 'Published is not available on this Mac. Nothing was opened.'
 
-export const DESKTOP_OVERVIEW_IN_PLACE_TABS = ['services', 'mcp', 'skills', 'scheduled', 'triggers', 'monitoring', 'logs', 'data', 'files', 'setup'] as const
+export const DESKTOP_OVERVIEW_IN_PLACE_TABS = ['services', 'mcp', 'skills', 'scheduled', 'triggers', 'monitoring', 'logs', 'data', 'files', 'memories', 'setup'] as const
 export type DesktopOverviewInPlaceTab = (typeof DESKTOP_OVERVIEW_IN_PLACE_TABS)[number]
 
-export const DESKTOP_OVERVIEW_ACCEPTED_PANEL_TABS = ['memories', 'settings', 'tools'] as const
+export const DESKTOP_OVERVIEW_ACCEPTED_PANEL_TABS = ['settings', 'tools'] as const
 export type DesktopOverviewAcceptedPanelTab = (typeof DESKTOP_OVERVIEW_ACCEPTED_PANEL_TABS)[number]
 
 export function desktopOverviewServicesDot(servicesNeedConfig: boolean | null) {
