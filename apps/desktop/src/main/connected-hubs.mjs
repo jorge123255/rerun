@@ -134,6 +134,11 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     }
     function show(window) {
         if (!window || window.isDestroyed()) return
+        const entry = entryFor(window)
+        if (entry?.hideAfterFullscreen) {
+            window.removeListener('leave-full-screen', entry.hideAfterFullscreen)
+            entry.hideAfterFullscreen = null
+        }
         if (window.isMinimized()) window.restore()
         window.show()
         window.focus()
@@ -221,9 +226,11 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             show(existing.window)
             return true
         }
+        const primary = !bounds
         const window = new BrowserWindow({ ...(placement?.bounds ?? bounds), minWidth: 720, minHeight: 520, show: false,
             title: 'Rerun', backgroundColor: '#101214', titleBarStyle: 'hidden', trafficLightPosition: { x: 12, y: 8 },
-            webPreferences: preferences(desktopSession) })
+            // Keep the connected board's activity and unread updates running while it is hidden.
+            webPreferences: { ...preferences(desktopSession), backgroundThrottling: !primary } })
         const contents = window.webContents
         usedSessions.add(desktopSession)
         downloads.track(desktopSession)
@@ -304,6 +311,20 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         for (const event of ['focus', 'blur', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'show', 'hide', 'minimize', 'restore']) {
             window.on(event, () => { if (connected(window)) contents.send('hub:window-state', stateOf(window)) })
         }
+        if (primary) window.on('close', event => {
+            if (!available()) return
+            event.preventDefault()
+            payments.close(entry)
+            quickAsk.reset(entry)
+            closeFind(window)
+            if (window.isFullScreen()) {
+                if (!entry.hideAfterFullscreen) {
+                    entry.hideAfterFullscreen = () => { entry.hideAfterFullscreen = null; window.hide() }
+                    window.once('leave-full-screen', entry.hideAfterFullscreen)
+                    window.setFullScreen(false)
+                }
+            } else window.hide()
+        })
         contents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
             if (!mainFrame || inPlace) return
             payments.close(entry)
