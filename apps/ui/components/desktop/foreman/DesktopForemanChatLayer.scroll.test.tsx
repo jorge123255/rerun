@@ -155,7 +155,11 @@ it('groups consecutive live read steps between reply paragraphs and clears them 
         { tool: 'agent_files_list', offset: 17, status: 'error' },
     ] } })
     expect(host.querySelectorAll('[data-foreman-live-steps]')).toHaveLength(1)
-    expect(host.textContent).toMatch(/Before the tools.*Running Search Docs.*After the tools/s)
+    const text = host.textContent ?? ''
+    const running = text.indexOf('Running Search Docs')
+    expect(text).toContain('Before the tools.')
+    expect(running).toBeGreaterThan(text.indexOf('Before the tools.'))
+    expect(text.indexOf('After the tools.')).toBeGreaterThan(running)
     expect(host.querySelector('[role="status"]')).toBeNull()
     const disclosure = group()?.querySelector<HTMLButtonElement>('button[aria-expanded]')
     expect(disclosure?.getAttribute('aria-label')).toBe('2 steps, 1 failed')
