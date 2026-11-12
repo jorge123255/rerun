@@ -59,10 +59,21 @@ afterEach(async () => {
     document.body.innerHTML = ''
 })
 
-test('keeps the read preview and offers rename only for files without exposing Delete', async () => {
+test('keeps the read preview and gates file and folder actions on the active workspace and listing', async () => {
+    const revision = 'a'.repeat(64)
+    api.list.mockImplementation(async (path: string) => ({
+        path, truncated: false, entries: path ? [entry('nested.txt')] : [
+            { ...entry('docs', 'dir'), deleteRevision: revision }, { ...entry('note.txt'), deleteRevision: revision }, entry('unconfirmed.txt'),
+        ],
+    }))
     await open()
     expect(button('Actions for docs')).toBeUndefined()
-    const actions = button('Actions for note.txt')
+    expect(button('Actions for note.txt')).toBeUndefined()
+    await act(async () => { root!.render(<DesktopSharedFiles workspaceId={7} />) })
+    await flush()
+    expect(button('Actions for unconfirmed.txt')).toBeUndefined()
+    expect(button('Actions for note.txt')).toBeDefined()
+    const actions = button('Actions for docs')
     expect(actions).toBeDefined()
     await act(async () => {
         actions!.focus()
@@ -70,7 +81,7 @@ test('keeps the read preview and offers rename only for files without exposing D
     })
     await flush()
     const menu = document.querySelector('[role="menu"]')
-    expect([...menu!.querySelectorAll('[role="menuitem"]')].map(item => item.textContent?.trim())).toEqual(['Rename'])
+    expect([...menu!.querySelectorAll('[role="menuitem"]')].map(item => item.textContent?.trim())).toEqual(['Rename', 'Delete'])
     await act(async () => { menu!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
     await flush()
     await row('note.txt')
