@@ -13,6 +13,19 @@ if (bootstrap?.audience === 'picker') {
         savedOrigin: () => ipcRenderer.invoke('hub:saved-origin'),
         connect: address => ipcRenderer.invoke('hub:connect', address),
     })
+} else if (bootstrap?.audience === 'hub-quick-ask') {
+    contextBridge.exposeInMainWorld('rerunShell', {
+        apiVersion: bootstrap.apiVersion,
+        version: bootstrap.version,
+        platform: bootstrap.platform,
+        channel: bootstrap.channel,
+        capabilities: ['quickAsk'],
+        quickAsk: {
+            shortcut: bootstrap.shortcut,
+            close: () => { void ipcRenderer.invoke('hub:quick-ask-close').catch(() => {}) },
+            sent: path => { void ipcRenderer.invoke('hub:quick-ask-sent', path).catch(() => {}) },
+        },
+    })
 } else if (bootstrap?.audience === 'hub') {
     contextBridge.exposeInMainWorld('rerunShell', {
         apiVersion: bootstrap.apiVersion,
@@ -41,6 +54,10 @@ if (bootstrap?.audience === 'picker') {
             onClick: callback => subscribe('hub:notification-click', callback),
         },
         badge: { set: count => { void ipcRenderer.invoke('hub:badge', count).catch(() => {}) } },
+        settings: {
+            get: () => ipcRenderer.invoke('hub:settings'),
+            set: patch => ipcRenderer.invoke('hub:set-settings', { quickAsk: patch?.quickAsk, openAtLogin: patch?.openAtLogin }),
+        },
         server: { openPicker: () => { void ipcRenderer.invoke('hub:open-picker').catch(() => {}) } },
     })
 }

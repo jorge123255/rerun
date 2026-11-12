@@ -31,6 +31,10 @@ export function sameHub(url, origin) {
     } catch { return false }
 }
 
+export function isHubPath(path) {
+    return typeof path === 'string' && /^\/(?![\/\\])[\x21-\x7e]{0,1999}$/.test(path) && !path.includes('\\')
+}
+
 export async function readHubJson(response) {
     const reader = response.body?.getReader()
     if (!reader) return null
@@ -90,7 +94,7 @@ export function parseHubLink(input) {
         }
         if (url.host === 'open' && (url.pathname === '' || url.pathname === '/')) {
             const path = url.searchParams.get('path') ?? ''
-            if (url.searchParams.size === 1 && /^\/(?![\/\\])[\x21-\x7e]{0,1999}$/.test(path) && !path.includes('\\')) return { kind: 'open', path }
+            if (url.searchParams.size === 1 && isHubPath(path)) return { kind: 'open', path }
         }
     } catch {}
     return null

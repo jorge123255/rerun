@@ -15,7 +15,7 @@ import { createRemoteMachineIpc } from './remote-machines/ipc.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
 import { createDesktopFileSaves, safeDisplayedImageError } from './result-files.mjs'
 import { installMacApplicationMenu } from './application-menu.mjs'
-import { createMacMenuBar } from './mac-menu-bar.mjs'
+import { createMacMenuBar, macLoginItemSettings, setMacOpenAtLogin } from './mac-menu-bar.mjs'
 import { attachDesktopContextMenu, externalDesktopLink } from './window-context-menu.mjs'
 import { createWindowFind } from './window-find.mjs'
 import { createQuickAskWindow } from './quick-ask-window.mjs'
@@ -32,6 +32,7 @@ let storageSetupError
 let window
 let menuBar
 let shortcutPreference
+let lastQuickAskWindow
 let showWindowOnReady = true
 let supervisor
 let runtime
@@ -93,6 +94,23 @@ function publishMacUnread() {
 function setMacUnread(count) {
     localUnread = count
     publishMacUnread()
+}
+function toggleQuickAsk() {
+    const focused = BrowserWindow.getFocusedWindow() ?? lastQuickAskWindow
+    if (connectedHubs?.toggleQuickAsk(focused)) quickAsk.reset()
+    else quickAsk.toggle()
+}
+function desktopSettings() {
+    return { quickAsk: shortcutPreference.state().enabled, closeToTray: true, openAtLogin: macLoginItemSettings(app)?.openAtLogin === true }
+}
+async function changeDesktopSettings(patch, assertCurrent) {
+    if (typeof patch?.quickAsk === 'boolean') {
+        try { await shortcutPreference.change(patch.quickAsk, assertCurrent) }
+        catch { assertCurrent(); return desktopSettings() }
+    }
+    assertCurrent()
+    setMacOpenAtLogin(app, patch?.openAtLogin)
+    return desktopSettings()
 }
 function openExternal(href) {
     const url = externalDesktopLink(href)
@@ -223,15 +241,18 @@ function resumeBoard(board) {
 async function launch() {
     if (storageSetupError) throw storageSetupError
     if (mac) {
-        connectedHubs = createConnectedHubs({ app, BrowserWindow, Notification, ipcMain, session, shell, dialog, dataRoot,
+        shortcutPreference = await loadQuickAskShortcut({ dataRoot, globalShortcut, open: toggleQuickAsk })
+        connectedHubs = createConnectedHubs({ app, BrowserWindow, Notification, ipcMain, session, shell, dialog, screen, dataRoot,
             available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate),
-            setUnread: count => { hubUnread = count; publishMacUnread() } })
+            setUnread: count => { hubUnread = count; publishMacUnread() }, desktopSettings, changeDesktopSettings })
+        app.on('browser-window-focus', (_event, candidate) => {
+            if (boards.get(candidate) || connectedHubs.scopeOf(candidate)) lastQuickAskWindow = candidate
+        })
         if (pendingHubLink) {
             const link = pendingHubLink
             pendingHubLink = null
             void connectedHubs.openLink(link).catch(() => {})
         }
-        shortcutPreference = await loadQuickAskShortcut({ dataRoot, globalShortcut, open: () => quickAsk.toggle() })
         app.once('will-quit', shortcutPreference.unregister)
         installMacApplicationMenu({
             Menu, appName: app.name, isDesktopPage,
@@ -244,13 +265,13 @@ async function launch() {
                 const focused = BrowserWindow.getFocusedWindow()
                 windowFind.open(connectedHubs.scopeOf(focused) ? focused : focusedBoard())
             },
-            openQuickAsk: () => quickAsk.toggle(),
+            openQuickAsk: toggleQuickAsk,
             openNewWindow: () => { void openAdditionalBoard().catch(() => {}) },
             openHubPicker: connectedHubs.openPicker,
         })
         try {
             menuBar = createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow: showMainWindow,
-                quickAsk: { enabled: () => shortcutPreference.state().enabled, open: () => quickAsk.toggle() } })
+                quickAsk: { enabled: () => shortcutPreference.state().enabled, open: toggleQuickAsk } })
             showWindowOnReady = !menuBar.startedAtLogin
         } catch {
             console.warn('Could not start the Rerun menu-bar item.')

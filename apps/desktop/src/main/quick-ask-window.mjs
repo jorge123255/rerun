@@ -7,6 +7,26 @@ const preload = fileURLToPath(new URL('./quick-ask-preload.cjs', import.meta.url
 const width = 640
 const height = 180
 
+export function quickAskWindowOptions(webPreferences) {
+    return {
+        width, height, show: false, frame: false, resizable: false, minimizable: false, maximizable: false,
+        fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, transparent: true, hasShadow: true,
+        backgroundColor: '#00000000', vibrancy: 'popover', visualEffectState: 'active',
+        webPreferences: { ...webPreferences, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true },
+    }
+}
+
+export function focusQuickAsk({ app, screen, window }) {
+    const work = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
+    const actualWidth = Math.min(width, work.width)
+    window.setBounds({ x: Math.round(work.x + (work.width - actualWidth) / 2),
+        y: Math.round(work.y + work.height / 4), width: actualWidth, height })
+    app.focus({ steal: true })
+    window.show()
+    window.focus()
+    window.webContents.focus()
+}
+
 export function createQuickAskWindow({ app, BrowserWindow, screen, boardScope, showBoard }) {
     let surface, ready, pending
     const sameScope = (left, right) => !!left && !!right && left.epoch === right.epoch && left.contents === right.contents
@@ -34,15 +54,8 @@ export function createQuickAskWindow({ app, BrowserWindow, screen, boardScope, s
     }
     function reveal(entry) {
         if (!active(entry) || !entry.requested || !entry.loaded) return
-        const work = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
-        const actualWidth = Math.min(width, work.width)
-        entry.window.setBounds({ x: Math.round(work.x + (work.width - actualWidth) / 2),
-            y: Math.round(work.y + work.height / 4), width: actualWidth, height })
         entry.shownAt = Date.now()
-        app.focus({ steal: true })
-        entry.window.show()
-        entry.window.focus()
-        entry.window.webContents.focus()
+        focusQuickAsk({ app, screen, window: entry.window })
         entry.window.webContents.send('desktop:quick-ask-focus')
     }
 
@@ -56,13 +69,7 @@ export function createQuickAskWindow({ app, BrowserWindow, screen, boardScope, s
                 return
             }
             reset()
-            const window = new BrowserWindow({
-                width, height, show: false, frame: false, resizable: false, minimizable: false, maximizable: false,
-                fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, transparent: true, hasShadow: true,
-                backgroundColor: '#00000000', vibrancy: 'popover', visualEffectState: 'active',
-                webPreferences: { preload, partition: 'rerun-desktop-quick-ask', sandbox: true, contextIsolation: true,
-                    nodeIntegration: false, webSecurity: true },
-            })
+            const window = new BrowserWindow(quickAskWindowOptions({ preload, partition: 'rerun-desktop-quick-ask' }))
             const entry = { window, scope, requested: true, loaded: false, shownAt: 0, attempt: null }
             surface = entry
             window.setAlwaysOnTop(true, 'floating')

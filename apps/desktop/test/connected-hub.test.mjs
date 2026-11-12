@@ -128,4 +128,12 @@ test('the hub preload exposes only its approved audience and drops the privilege
     assert.equal(await native.exposed.rerunShell.notifications.show(notice), false)
     native.exposed.rerunShell.badge.set(2)
     assert.deepEqual(native.requests, [['hub:notify', notice], ['hub:badge', 2]])
+    const quickAsk = bootstrap({ audience: 'hub-quick-ask', shortcut: 'CommandOrControl+Shift+Space' })
+    const composer = quickAsk.exposed.rerunShell
+    assert.deepEqual(Array.from(composer.capabilities), ['quickAsk'])
+    assert.equal(composer.settings, undefined)
+    assert.equal(composer.auth, undefined)
+    composer.quickAsk.sent('/board')
+    composer.quickAsk.close()
+    assert.deepEqual(quickAsk.requests, [['hub:quick-ask-sent', '/board'], ['hub:quick-ask-close']])
 })

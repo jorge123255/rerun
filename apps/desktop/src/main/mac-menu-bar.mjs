@@ -9,13 +9,21 @@ const labels = {
     de: { open: name => `${name} öffnen`, waiting: count => `${count} ${count === 1 ? 'wartet' : 'warten'} auf dich`, login: 'Bei der Anmeldung öffnen', quit: name => `${name} beenden` },
 }
 
+export function macLoginItemSettings(app) {
+    if (!app.isPackaged) return null
+    try { return app.getLoginItemSettings() } catch { return null }
+}
+
+export function setMacOpenAtLogin(app, openAtLogin) {
+    if (typeof openAtLogin !== 'boolean' || !macLoginItemSettings(app)) return
+    try { app.setLoginItemSettings({ openAtLogin }) }
+    catch { /* The OS setting remains authoritative if the change is refused. */ }
+}
+
 export function createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow, quickAsk }) {
     const language = app.getLocale().toLowerCase().split('-')[0]
     const copy = Object.hasOwn(labels, language) ? labels[language] : labels.en
-    const loginSettings = () => {
-        if (!app.isPackaged) return null
-        try { return app.getLoginItemSettings() } catch { return null }
-    }
+    const loginSettings = () => macLoginItemSettings(app)
     const image = nativeImage.createEmpty()
     for (const [scaleFactor, suffix] of [[1, ''], [2, '@2x']]) {
         const path = fileURLToPath(new URL(`./tray/trayTemplate${suffix}.png`, import.meta.url))
@@ -41,9 +49,7 @@ export function createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow, qui
                 id: 'rerun-tray-login', label: copy.login, type: 'checkbox',
                 enabled: login !== null, checked: login?.openAtLogin === true,
                 click: item => {
-                    if (!loginSettings()) return
-                    try { app.setLoginItemSettings({ openAtLogin: item.checked === true }) }
-                    catch { /* The OS setting remains authoritative if the change is refused. */ }
+                    setMacOpenAtLogin(app, item.checked === true)
                     refresh()
                 },
             },

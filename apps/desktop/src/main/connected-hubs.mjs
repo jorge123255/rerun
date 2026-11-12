@@ -4,22 +4,32 @@ import { randomUUID } from 'node:crypto'
 import { checkHub, hubPartition, HUB_API_VERSION, normalizeHubOrigin, sameHub } from './connected-hub-policy.mjs'
 import { createHubAuth } from './connected-hub-auth.mjs'
 import { createHubDownloads } from './connected-hub-downloads.mjs'
+import { createConnectedHubQuickAsk } from './connected-hub-quick-ask.mjs'
 import { atomicPrivateJSON, readJSON } from './workspaces/paths.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
 import { createNativeNotifications, hubNotificationPayload } from './notifications.mjs'
+import { QUICK_ASK_SHORTCUT } from './quick-ask-window.mjs'
 import { externalDesktopLink } from './window-context-menu.mjs'
 
 const pickerPage = new URL('./connected-hub.html', import.meta.url)
 const preload = fileURLToPath(new URL('./connected-hub-preload.cjs', import.meta.url))
-const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads', 'notifications', 'badge']
+const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads', 'notifications', 'badge', 'settings']
 
-export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain, session, shell, dialog, dataRoot, available, openFind, closeFind, setUnread }) {
+export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain, session, shell, dialog, screen, dataRoot,
+    available, openFind, closeFind, setUnread, desktopSettings, changeDesktopSettings }) {
     const file = resolve(dataRoot, 'connected-hub.json')
     const windows = new Map()
     const childWindows = new Map()
     const usedSessions = new Set()
     const version = app.getVersion()
+    const shellIdentity = { apiVersion: HUB_API_VERSION, version, platform: 'mac', channel: 'dev' }
     const notices = createNativeNotifications({ Notification })
+    const quickAsk = createConnectedHubQuickAsk({ app, BrowserWindow, screen, preload,
+        current: entry => available() && connected(entry.window) === entry,
+        showOwner: entry => show(entry.window),
+        onUnavailable: entry => { void dialog.showMessageBox(entry.window, { type: 'warning', title: 'Quick Ask',
+            message: 'Quick Ask could not open on this Rerun server.', buttons: ['OK'] }).catch(() => {}) },
+    })
     let picker = null, connecting = null
 
     function connected(window) {
@@ -197,10 +207,11 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
         }
         contents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
             if (!mainFrame || inPlace) return
+            quickAsk.reset(entry)
             entry.scope = randomUUID()
             closeFind(window)
         })
-        contents.on('render-process-gone', () => invalidateNative(entry))
+        contents.on('render-process-gone', () => { quickAsk.reset(entry); invalidateNative(entry) })
         contents.on('will-prevent-unload', event => {
             const result = dialog.showMessageBoxSync(window, { type: 'warning', title: 'Leave this Rerun page?',
                 message: 'Some changes might not have been saved.', buttons: ['Stay', 'Leave'], defaultId: 0, cancelId: 0 })
@@ -209,6 +220,7 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
         })
         window.once('closed', () => {
             closeFind(window)
+            quickAsk.reset(entry)
             invalidateNative(entry)
             windows.delete(contents)
             for (const child of childWindows.values()) {
@@ -264,12 +276,18 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
 
     ipcMain.on('hub:bootstrap', event => {
         if (localSender(event)) { event.returnValue = { audience: 'picker' }; return }
+        if (quickAsk.sender(event)) {
+            event.returnValue = { audience: 'hub-quick-ask', ...shellIdentity, shortcut: QUICK_ASK_SHORTCUT }
+            return
+        }
         const entry = hubSender(event)
         if (!entry || !available()) { event.returnValue = null; return }
         invalidateNative(entry)
         entry.native = { frame: event.senderFrame, id: randomUUID(), unread: 0 }
-        event.returnValue = { audience: 'hub', apiVersion: HUB_API_VERSION, version, platform: 'mac', channel: 'dev', capabilities }
+        event.returnValue = { audience: 'hub', ...shellIdentity, capabilities }
     })
+    ipcMain.handle('hub:quick-ask-close', event => quickAsk.close(quickAsk.sender(event)))
+    ipcMain.handle('hub:quick-ask-sent', (event, path) => quickAsk.sent(quickAsk.sender(event), path))
     ipcMain.handle('hub:saved-origin', event => localSender(event) ? savedOrigin() : null)
     ipcMain.handle('hub:connect', (event, address) => localSender(event) ? connect(address, '/', picker) : { ok: false, reason: 'invalid' })
     for (const [channel, action] of [
@@ -280,6 +298,15 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
         ['hub:find', entry => openFind(entry.window)],
         ['hub:open-link', (_entry, url) => external(url)],
         ['hub:show-download', (entry, id) => downloads.show(entry, id)],
+        ['hub:settings', () => desktopSettings()],
+        ['hub:set-settings', (entry, value, frame) => {
+            const native = entry.native
+            const assertCurrent = () => {
+                if (native?.frame !== frame || !currentNative(entry, native)) throw new Error('The connected Rerun page changed')
+            }
+            assertCurrent()
+            return changeDesktopSettings(value, assertCurrent)
+        }],
         ['hub:notify', (entry, value, frame) => notify(entry, value, frame)],
         ['hub:badge', (entry, count, frame) => {
             if (entry.native?.frame !== frame || !Number.isSafeInteger(count) || count < 0) return
@@ -300,6 +327,8 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
     return {
         openPicker,
         scopeOf: window => available() ? connected(window)?.scope : null,
+        toggleQuickAsk: window => quickAsk.toggle(window, connected(window)),
+        resetQuickAsk: () => quickAsk.reset(),
         async openLink(link) {
             if (!available()) return
             if (link.kind === 'auth') {
@@ -313,6 +342,7 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
         },
         async closeAll() {
             connecting?.abort()
+            quickAsk.reset()
             for (const entry of [...windows.values()]) {
                 if (entry.window.isDestroyed()) continue
                 const closed = await new Promise(done => {
