@@ -22,6 +22,7 @@ import { DesktopRunHistory } from './DesktopRunHistory'
 
 type Props = {
     agent: DesktopAgentView
+    workspaceId?: number | null
     sessions: DesktopSessionView[]
     pendingChatSummaries?: ReadonlyMap<string, string>
     initialLayout: DesktopTabLayout | null
@@ -55,7 +56,7 @@ function initialTabs(agentId: string, layout: DesktopTabLayout | null, sessions:
     return id && session ? openSessionTab(pinned, id, session.title) : pinned
 }
 
-export function DesktopChatTabs({ agent, sessions, pendingChatSummaries, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, refreshThreads, reload, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: Props) {
+export function DesktopChatTabs({ agent, workspaceId, sessions, pendingChatSummaries, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, refreshThreads, reload, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: Props) {
     const { t } = useDesktopLocale()
     const [layout, setLayout] = useState(() => initialTabs(agent.id, initialLayout, sessions, requested))
     const [rejectedRequest, setRejectedRequest] = useState<DesktopChatRequest | null>(() => {
@@ -359,7 +360,7 @@ export function DesktopChatTabs({ agent, sessions, pendingChatSummaries, initial
             const visible = !rejectedRequest && active.uid === tab.uid
             if (!visible && !visited.includes(tab.uid)) return null
             return <div key={tab.uid} data-desktop-tab-active={visible} hidden={!visible} className={visible ? 'flex h-full min-h-0 flex-col' : 'hidden'}>
-                <DesktopConversation overview={overview} agent={agent} sessionId={tab.id} sessions={sessions} pendingChatSummaries={pendingChatSummaries} tabUid={tab.uid} active={selected && visible}
+                <DesktopConversation overview={overview} agent={agent} workspaceId={workspaceId} sessionId={tab.id} sessions={sessions} pendingChatSummaries={pendingChatSummaries} tabUid={tab.uid} active={selected && visible}
                     requestedPanel={selected && visible ? requestedPanel : null} onPanelRequestHandled={onPanelRequestHandled}
                     tabStrip={visible ? strip : false} onTabActivity={report} initialDraft={drafts[tab.uid]} onStartFork={startFork} onFinishFork={finishFork}
                     onSelectSession={(id, title) => {

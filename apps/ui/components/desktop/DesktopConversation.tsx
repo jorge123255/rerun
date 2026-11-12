@@ -201,8 +201,9 @@ function scheduledRunOf(message: UIMessage) {
     return parseScheduledRun(prompt)
 }
 
-export function DesktopConversation({ agent, sessionId, sessions, pendingChatSummaries, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, onHistoryVisibility, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: {
+export function DesktopConversation({ agent, workspaceId, sessionId, sessions, pendingChatSummaries, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, onHistoryVisibility, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: {
     agent: DesktopAgentView
+    workspaceId?: number | null
     sessionId: string | null
     sessions: DesktopSessionView[]
     pendingChatSummaries?: ReadonlyMap<string, string>
@@ -1408,8 +1409,13 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                         if(hitl?.kind==='service')return withTimeline(<DesktopServiceRequestReceipt entries={hitl.entries} />)
                         if (triggerPayload) return withTimeline(<DesktopWebhookRunBlock agentId={agent.id} onOpenWorkspaceFile={onOpenWorkspaceFile} payload={triggerPayload} />)
                         if (scheduledRun) return withTimeline(<DesktopScheduledRunBlock agentId={agent.id} onOpenWorkspaceFile={onOpenWorkspaceFile} run={scheduledRun} />)
-                        const bubble = (
-                                <MessageContent className={cn(message.role === 'user' ? [USER_BUBBLE_SHAPE, USER_BUBBLE_INK, 'whitespace-pre-wrap wrap-anywhere'] : 'overflow-visible')}>
+                        const voiceContext = { workspaceId, sessionId, tabUid, messageId: message.id,
+                            active: active && ready && !cardOpen && !detailPanel && !chatsOpen && !draft.quitting }
+                        const textParts = message.parts.filter(part => part.type === 'text')
+                        const voicePart = message.role === 'user' && textParts.length === 1 ? textParts[0] : undefined
+                        const renderBubble = (voicePlayer?: ReactNode) => {
+                            const content = (
+                                <MessageContent data-ink={voicePlayer ? true : undefined} className={cn(message.role === 'user' ? [USER_BUBBLE_SHAPE, USER_BUBBLE_INK, 'whitespace-pre-wrap wrap-anywhere'] : 'overflow-visible')}>
                                     {message.role === 'user' && (() => {
                                         const selections = messageAttachmentPaths(message.metadata)
                                         const paths = selections.filter((item): item is string => typeof item === 'string')
@@ -1423,7 +1429,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                                             : undefined} /></div>}
                                             {images.length > 0 && <MessageAttachments paths={images.map(item => item.path)} rawUrlFor={path => images.find(item => item.path === path)?.url ?? ''} />}</>
                                     })()}
-                                    {message.role === 'assistant'
+                                    {voicePlayer ?? (message.role === 'assistant'
                                         ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} createdAt={createdAt} streaming={(status === 'streaming' || serviceStreaming) && messageIndex === transcript.length - 1}
                                             onOpenWorkspaceFile={onOpenWorkspaceFile}
                                             toolInstall={sessionId ? { sessionId, active: active && ready, disabled: draft.quitting || inactive || generating || stopping } : undefined}
@@ -1442,19 +1448,25 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                                                 ? <DesktopWorkspaceMessage agentId={agent.id} onOpenWorkspaceFile={onOpenWorkspaceFile}
                                                     composer metadata={message.metadata}>{part.text}</DesktopWorkspaceMessage>
                                                 : <DesktopSelectedMentionText text={part.text} metadata={message.metadata} linkify={false} />
-                                            return <DesktopVoiceHistoryMessage key={index} agentId={agent.id} text={part.text}>
-                                                {message.role === 'user' && part.text ? <ExpandableMessageBody forceExpanded={finding}
-                                                    showMore={t('showMore')} showLess={t('showLess')}>{text}</ExpandableMessageBody> : text}
-                                            </DesktopVoiceHistoryMessage>
-                                        })}
+                                            const body = message.role === 'user' && part.text ? <ExpandableMessageBody forceExpanded={finding}
+                                                showMore={t('showMore')} showLess={t('showLess')}>{text}</ExpandableMessageBody> : text
+                                            return message.role === 'user' && !voicePart
+                                                ? <DesktopVoiceHistoryMessage key={index} agentId={agent.id} text={part.text} context={voiceContext}>{body}</DesktopVoiceHistoryMessage>
+                                                : <Fragment key={index}>{body}</Fragment>
+                                        }))}
                                 </MessageContent>
-                        )
+                            )
+                            return message.role === 'user'
+                                ? <MessageTimeTooltip createdAt={createdAt} locale={locale} side="left">{content}</MessageTimeTooltip>
+                                : content
+                        }
+                        const bubble = voicePart
+                            ? <DesktopVoiceHistoryMessage agentId={agent.id} text={voicePart.text} context={voiceContext} renderPlayer={renderBubble}>{renderBubble()}</DesktopVoiceHistoryMessage>
+                            : renderBubble()
                         return withTimeline(
                             <div className={cn('flex min-w-0 items-end', message.role === 'user' && 'justify-end gap-2')}>
                                 <Message from={message.role} className="min-w-0">
-                                    {message.role === 'user'
-                                        ? <MessageTimeTooltip createdAt={createdAt} locale={locale} side="left">{bubble}</MessageTimeTooltip>
-                                        : bubble}
+                                    {bubble}
                                 </Message>
                                 {message.role === 'user' && <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"><UserRoundIcon className="size-4" /></span>}
                             </div>

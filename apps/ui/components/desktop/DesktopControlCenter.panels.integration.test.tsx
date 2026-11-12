@@ -3,6 +3,8 @@
 import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { act, type ReactNode } from 'react'
 import type { UIMessage } from 'ai'
+import { appendVoiceMarker, buildVoiceMarker } from '@rerun/contracts'
+import { desktopVoiceAudioReference } from '@/lib/desktop/voice/voice'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
@@ -136,6 +138,7 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false, r
     const messageReads: string[] = []
     const fileReads: { agentId: string; route: string; path: string }[] = []
     const contentWrites: string[] = []
+    const voiceAudioReads: string[] = []
     const managementWrites: { agentId: string; method: string; body: unknown }[] = []
     const sessions = (agentId: string) => layouts.get(agentId)!.tabs.map(tab => ({
         id: tab.id!, agentId, title: tab.title, createdAt: date, updatedAt: date,
@@ -231,6 +234,10 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false, r
                 if (route === 'settings') return Response.json({ soul: `${agent.name} private instructions`, verbosity: 'normal', soulEditable: true, workspaceReadEnabled: false, suggestedReplies: false, memoryEnabled: false, autoMemory: false, selfImprovementEnabled: true })
             }
         }
+        if (url.pathname === `/api/desktop/coworkers/${reviewer.id}/voice` && method === 'GET' && url.searchParams.get('view') === 'audio') {
+            voiceAudioReads.push(url.pathname + url.search)
+            return new Response(Uint8Array.from([1, 2, 3]), { headers: { 'content-type': 'audio/webm' } })
+        }
         if (url.pathname.endsWith('/queue') && method === 'GET') return Response.json({ queued: null })
         if (url.pathname.endsWith('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
         if (url.pathname.endsWith('/messages')) {
@@ -247,7 +254,7 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false, r
         throw new Error(`Unexpected request: ${method} ${raw}`)
     }))
     return {
-        panelReads, messageReads, fileReads, contentWrites, managementWrites, layouts, answer,
+        panelReads, messageReads, fileReads, contentWrites, voiceAudioReads, managementWrites, layouts, answer,
         async mount(language?: DesktopLanguage) {
             const container = document.createElement('div')
             document.body.append(container)
@@ -479,6 +486,78 @@ test('reopens saved coworker Markdown from the board and keeps prompt dialogs an
     await act(async () => guideButton.click())
     const restoredGuide = await until(() => panelDialog('Reviewer install guide'))
     await verifyFile(restoredGuide)
+})
+
+test('reopens a saved coworker recording from the board and copies only the current transcript', async () => {
+    const transcript = 'Café 👋  世界\nKeep the spacing.'
+    const firstUrl = desktopVoiceAudioReference({ agentId: reviewer.id, tabUid: 'original-blank-tab' }, '11111111-1111-4111-8111-111111111111')
+    const secondUrl = desktopVoiceAudioReference({ agentId: reviewer.id, tabUid: 'original-saved-tab', sessionId: reviewer.id + '-second' }, '22222222-2222-4222-8222-222222222222')
+    const app = fixture(undefined, true, undefined, sessionId => [
+        { id: 'engine-voice-' + sessionId, role: 'user', parts: [{ type: 'text', text: appendVoiceMarker(transcript,
+            buildVoiceMarker({ src: sessionId.endsWith('-first') ? firstUrl : secondUrl, durationMs: 1200, levels: [0, 1] })) }] },
+    ])
+    vi.stubGlobal('navigator', Object.assign(Object.create(navigator), { userActivation: { isActive: true } }))
+    const setData = vi.fn()
+    const previousCopy = Object.getOwnPropertyDescriptor(document, 'execCommand')
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: vi.fn(() => {
+        const event = new Event('copy', { cancelable: true })
+        Object.defineProperty(event, 'clipboardData', { value: { setData } })
+        document.dispatchEvent(event)
+        return event.defaultPrevented
+    }) })
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(function (this: HTMLMediaElement) {
+        this.dispatchEvent(new Event('play'))
+        return Promise.resolve()
+    })
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(function (this: HTMLMediaElement) {
+        this.dispatchEvent(new Event('pause'))
+    })
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:recording')
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const activeChat = (container: HTMLElement) => container.querySelector<HTMLElement>('[data-desktop-tab-active="true"]')!
+    try {
+        const mounted = await app.mount()
+        await openBoardChat(mounted.container)
+        const first = activeChat(mounted.container)
+        await until(() => first.querySelector('[aria-label="Play voice message"]'))
+        expect(app.voiceAudioReads).toEqual([])
+        await click('Transcript', first)
+        const copy = [...first.querySelectorAll('button')].find(button => button.textContent === 'Copy transcript')!
+        const ink = first.querySelector('[aria-label="Play voice message"]')?.closest('[data-ink]')
+        expect(ink?.contains(copy)).toBe(false)
+        expect(first.querySelector('[aria-hidden="false"] p')?.textContent).toBe(transcript)
+        expect(first.querySelector('[data-heard]')).toBeNull()
+        await act(async () => copy.click())
+        expect(setData).toHaveBeenCalledExactlyOnceWith('text/plain', transcript)
+        expect(app.voiceAudioReads).toEqual([])
+        await click('Play voice message', first)
+        expect(play).toHaveBeenCalledOnce()
+        expect(app.voiceAudioReads).toEqual([firstUrl])
+        pause.mockClear()
+
+        await click('Reviewer second chat', mounted.container)
+        await until(() => activeChat(mounted.container).querySelector('[aria-label="Play voice message"]'))
+        expect(pause).toHaveBeenCalled()
+        expect(revoke).toHaveBeenCalledWith('blob:recording')
+        expect(copy.disabled).toBe(true)
+        await act(async () => copy.click())
+        expect(setData).toHaveBeenCalledOnce()
+        expect(activeChat(mounted.container).textContent).not.toContain('Copied!')
+
+        await mounted.unmount()
+        const restored = await app.mount()
+        await openBoardChat(restored.container)
+        await click('Reviewer first chat', restored.container)
+        const reopened = activeChat(restored.container)
+        await until(() => reopened.querySelector('[aria-label="Play voice message"]'))
+        await click('Transcript', reopened)
+        await click('Copy transcript', reopened)
+        expect(setData.mock.calls).toEqual([['text/plain', transcript], ['text/plain', transcript]])
+        expect(app.voiceAudioReads).toEqual([firstUrl])
+    } finally {
+        if (previousCopy) Object.defineProperty(document, 'execCommand', previousCopy)
+        else Reflect.deleteProperty(document, 'execCommand')
+    }
 })
 
 test('only the selected chat opens a coworker dialog and both distinct drafts restore across App remount', async () => {

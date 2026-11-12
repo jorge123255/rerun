@@ -103,12 +103,15 @@ export function useDesktopVoicePlayback({ srcUrl, blob, ownerKey }: {
             audio.pause()
             return
         }
+        const token = generation.current
         if (!audio.src) {
             const url = await load()
-            if (!url) return
+            if (!url || generation.current !== token || audioRef.current !== audio) return
             audio.src = url
         }
-        await audio.play().catch(() => setError('This audio can’t be played.'))
+        await audio.play().catch(() => {
+            if (generation.current === token) setError('This audio can’t be played.')
+        })
     }, [load, playing])
 
     const seek = useCallback((event: React.MouseEvent<HTMLButtonElement>, durationMs: number) => {

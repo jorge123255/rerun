@@ -48,3 +48,27 @@ it('refuses a remote or different-owner history reference', async () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toContain('unavailable')
     expect(fetcher).not.toHaveBeenCalled()
 })
+
+it('cancels an in-flight playback read when the chat becomes inactive', async () => {
+    let complete!: (response: Response) => void
+    const pending = new Promise<Response>(resolve => { complete = resolve })
+    const fetcher = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => pending)
+    vi.stubGlobal('fetch', fetcher)
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
+    const createUrl = vi.spyOn(URL, 'createObjectURL')
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    const src = desktopVoiceAudioReference(scope, attemptId)
+    const render = (active: boolean) => act(async () => root!.render(<DesktopVoiceMessageBubble
+        scope={scope} src={src} durationMs={1200} peaks={[]} transcript="Saved transcript" active={active} />))
+    await render(true)
+    const player = document.querySelector<HTMLButtonElement>('button[aria-label="Play voice message"]')!
+    await act(async () => player.click())
+    const signal = fetcher.mock.calls[0][1]?.signal
+    expect(signal?.aborted).toBe(false)
+    await render(false)
+    expect(signal?.aborted).toBe(true)
+    await act(async () => complete(new Response(Uint8Array.from([1, 2, 3]), { headers: { 'content-type': 'audio/webm' } })))
+    expect(player.disabled).toBe(true)
+    expect(createUrl).not.toHaveBeenCalled()
+    expect(play).not.toHaveBeenCalled()
+})

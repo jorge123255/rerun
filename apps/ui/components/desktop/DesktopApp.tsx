@@ -799,7 +799,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                     closePanel()
                                 }
                             }}>
-                            <CoworkerChat attention={boardActivity.attention} onOpenCoworkerChat={openCoworkerChat} key={selectedAgent.id} agent={overview ? { ...selectedAgent, spaceId: overviewBox } : selectedAgent} overview={overview} requested={requestedSession} selected={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
+                            <CoworkerChat workspaceId={runtimeWorkspaceId} attention={boardActivity.attention} onOpenCoworkerChat={openCoworkerChat} key={selectedAgent.id} agent={overview ? { ...selectedAgent, spaceId: overviewBox } : selectedAgent} overview={overview} requested={requestedSession} selected={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
                                 requestedPanel={requestedPanel?.agentId === selectedAgent.id ? requestedPanel : null} onPanelRequestHandled={panelRequestHandled}
                                 onVisibleSession={reportVisibleSession}
                                 onClosePanel={closePanel} modelLabel={modelLabel} connections={providers.connections} onOpenModelSettings={openSettings} />
@@ -910,8 +910,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     )
 }
 
-function CoworkerChat({ agent, attention, overview, requested, requestedPanel, onPanelRequestHandled, selected, modelLabel, connections, onOpenModelSettings, onOpenCoworkerChat, onClosePanel, onVisibleSession }: {
+function CoworkerChat({ agent, workspaceId, attention, overview, requested, requestedPanel, onPanelRequestHandled, selected, modelLabel, connections, onOpenModelSettings, onOpenCoworkerChat, onClosePanel, onVisibleSession }: {
     agent: DesktopAgentView
+    workspaceId: number | null
     attention: DesktopAttention
     overview?: DesktopConversationOverviewAuthority
     requested: DesktopChatRequest | null
@@ -1006,7 +1007,7 @@ function CoworkerChat({ agent, attention, overview, requested, requestedPanel, o
                 <p role="status" className="text-sm text-muted-foreground">{t('openingCoworkerChat', { name: agent.name })}</p>
             </div>
         </div>}
-        {!bootstrap || !sessions ? dismiss : <DesktopChatTabs onOpenCoworkerChat={onOpenCoworkerChat}
+        {!bootstrap || !sessions ? dismiss : <DesktopChatTabs workspaceId={workspaceId} onOpenCoworkerChat={onOpenCoworkerChat}
             agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} pendingChatSummaries={pendingChatSummaries} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
             refreshSessions={readSessions} refreshThreads={refreshThreads} reload={reload} modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}
