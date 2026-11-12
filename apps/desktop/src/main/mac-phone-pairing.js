@@ -2,6 +2,10 @@ const enable = document.getElementById('enable-access')
 const network = document.getElementById('network')
 const createOffer = document.getElementById('create-offer')
 const offer = document.getElementById('offer')
+const code = document.getElementById('pairing-code')
+const qr = document.getElementById('pairing-qr')
+const qrInstructions = document.getElementById('qr-instructions')
+const manual = document.getElementById('manual-offer')
 const origin = document.getElementById('origin')
 const error = document.getElementById('error')
 const pending = document.getElementById('pending')
@@ -12,6 +16,7 @@ let displayedOffer = null
 let renderedDevices = null
 let renderedNetworks = null
 let updating = false
+let creatingOffer = false
 
 function showError(text) {
     error.hidden = !text
@@ -48,7 +53,8 @@ async function refresh() {
         || status.origin !== displayedOffer.origin
         || Date.parse(displayedOffer.expiresAt) <= Date.now())) {
         displayedOffer = null
-        offer.hidden = true
+        code.hidden = true
+        qr.removeAttribute('src')
         offer.textContent = ''
     }
     origin.hidden = !status.origin && !status.lanBindingEnabled
@@ -109,14 +115,22 @@ enable.addEventListener('change', () => {
 network.addEventListener('change', () => {
     void updateSetting(() => window.desktopApp.phonePairing.setNetwork(network.value || null)).catch(() => showError('Phone pairing is unavailable.'))
 })
-createOffer.addEventListener('click', () => {
-    void window.desktopApp.phonePairing.createOffer().then(value => {
-        displayedOffer = value
-        offer.hidden = false
-        offer.textContent = JSON.stringify(value, null, 2)
+createOffer.addEventListener('click', async () => {
+    if (creatingOffer) return
+    creatingOffer = createOffer.disabled = true
+    try {
+        const result = await window.desktopApp.phonePairing.createOffer()
+        displayedOffer = result.offer
+        qr.hidden = qrInstructions.hidden = !result.qr
+        if (result.qr) qr.src = result.qr
+        else qr.removeAttribute('src')
+        manual.open = !result.qr
+        offer.textContent = JSON.stringify(result.offer, null, 2)
         showError('')
-        return refresh()
-    }).catch(() => showError('A pairing offer could not be created for the workspace this Mac is running.'))
+        await refresh()
+        code.hidden = displayedOffer !== result.offer
+    } catch { showError('A pairing offer could not be created for the workspace this Mac is running.') }
+    finally { creatingOffer = createOffer.disabled = false }
 })
 async function poll() {
     try { await refresh() }

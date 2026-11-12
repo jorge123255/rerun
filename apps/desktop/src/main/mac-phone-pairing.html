@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; base-uri 'none'; form-action 'none'">
   <link rel="stylesheet" href="mac-phone-pairing.css">
   <title>Connect iPhone</title>
 </head>
@@ -26,7 +26,14 @@
     <div class="actions">
       <button id="create-offer" hidden>Create pairing offer</button>
     </div>
-    <pre id="offer" hidden></pre>
+    <section id="pairing-code" hidden>
+      <img id="pairing-qr" alt="Mac pairing QR code" hidden>
+      <p id="qr-instructions" class="footnote" hidden>In Rerun on your iPhone, choose Connect to This Mac, then Scan QR code.</p>
+      <details id="manual-offer">
+        <summary>Show code for manual pairing</summary>
+        <pre id="offer"></pre>
+      </details>
+    </section>
     <section id="pending" hidden>
       <h2>Waiting for approval</h2>
       <ul id="pending-list"></ul>

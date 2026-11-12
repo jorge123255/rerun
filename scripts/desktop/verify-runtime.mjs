@@ -63,6 +63,7 @@ for (const [name, path] of [
     ['Codex code mode host', join(dirname(resolved.codexPath), 'codex-code-mode-host')],
     ['Claude', resolved.claudePath],
     ['File helper', resolved.renameHelperPath],
+    ['Pairing QR helper', join(root, 'runtime/helpers/rerun-pairing-qr')],
     ['PDF renderer', resolved.pdfHelperPath],
     ['PDF text helper', resolved.pdfTextHelperPath],
 ]) {

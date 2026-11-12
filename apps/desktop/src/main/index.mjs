@@ -28,10 +28,12 @@ import { hubConnectionError } from './connected-hub-messages.mjs'
 import { parseHubLink, registerHubProtocol } from './connected-hub-policy.mjs'
 import { configureStartupProfile, hasLocalWorkspace } from './startup-workspace.mjs'
 import { createMacPhonePairingService } from './mac-phone-pairing/index.mjs'
+import { pairingQrImage } from './mac-phone-pairing/qr.mjs'
 import { createPhonePairingWindow } from './mac-phone-pairing-window.mjs'
 
 const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, Notification, safeStorage, screen, shell, session, Tray, WebContentsView } = electron
 const directory = fileURLToPath(new URL('.', import.meta.url))
+const resources = app.isPackaged ? process.resourcesPath : resolve(directory, '../../resources')
 const startup = resolve(directory, 'startup.html')
 const mac = process.platform === 'darwin'
 let dataRoot
@@ -510,7 +512,12 @@ async function launch() {
     ipcMain.handle('desktop:phone-pairing-status', event => trustedPhonePairing(event, true).status())
     ipcMain.handle('desktop:phone-pairing-enable', (event, enabled) => trustedPhonePairing(event).setPhoneAccessEnabled(enabled === true))
     ipcMain.handle('desktop:phone-pairing-network', (event, address) => trustedPhonePairing(event).setLanAddress(address))
-    ipcMain.handle('desktop:phone-pairing-offer', event => trustedPhonePairing(event).createOffer())
+    ipcMain.handle('desktop:phone-pairing-offer', async event => {
+        const offer = await trustedPhonePairing(event).createOffer()
+        const qr = await pairingQrImage(resources, offer)
+        trustedPhonePairing(event)
+        return { offer, qr }
+    })
     ipcMain.handle('desktop:phone-pairing-approve', (event, deviceId) => trustedPhonePairing(event).approveDevice(deviceId))
     ipcMain.handle('desktop:phone-pairing-send-permission', (event, deviceId, enabled) => trustedPhonePairing(event).setSendMessages(deviceId, enabled === true))
     ipcMain.handle('desktop:phone-pairing-revoke', (event, deviceId) => trustedPhonePairing(event).revokeDevice(deviceId))
@@ -607,7 +614,6 @@ async function startLocalWorkspace() {
 }
 
 async function initializeLocalWorkspace(identity) {
-    const resources = app.isPackaged ? process.resourcesPath : resolve(directory, '../../resources')
     const bundle = await loadBundle(resources)
     if (quitting) return
     if (process.platform === 'darwin') app.setAboutPanelOptions({ version: bundle.buildId })

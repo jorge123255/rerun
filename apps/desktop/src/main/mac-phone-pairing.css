@@ -9,6 +9,9 @@ h2 { font-size: 15px; margin: 8px 0 0; }
 .toggle { display: flex; gap: 8px; align-items: center; }
 .actions { display: flex; gap: 8px; }
 button { min-height: 32px; padding: 0 12px; }
+#pairing-code:not([hidden]) { display: grid; gap: 8px; }
+#pairing-qr { width: 256px; height: 256px; padding: 16px; background: white; image-rendering: pixelated; }
+summary { cursor: pointer; font-size: 13px; }
 pre { white-space: pre-wrap; word-break: break-all; background: color-mix(in srgb, CanvasText 8%, Canvas); padding: 12px; border-radius: 8px; }
 ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
 li { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
