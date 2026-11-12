@@ -76,7 +76,7 @@ test('folds a saved long message, keeps its attachment outside the fold and reve
         const viewport = body.parentElement!
         expect(viewport.style.maxHeight).toBe('384px')
         expect(body.textContent).toBe(long)
-        expect(body.querySelector('span span')?.textContent).toBe('@Ada')
+        expect([...body.querySelectorAll('span.text-violet-700')].map(mention => mention.textContent)).toEqual(['@Ada'])
         expect(body.closest('.is-user')?.textContent).toContain('brief.txt')
         expect(body.textContent).not.toContain('brief.txt')
         expect(link()?.getAttribute('href')).toBe(url)
