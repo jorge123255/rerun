@@ -7,7 +7,7 @@ import { runInNewContext } from 'node:vm'
 import { createWindowFind } from '../src/main/window-find.mjs'
 
 test('page Find accepts only its sandboxed frame and discards stale requests and scopes', async () => {
-    let scope = 'workspace-renderer', lastRequest = 0, currentView, inset = 28
+    let scope = 'workspace-renderer', lastRequest = 0, currentView, fullscreen = false, visible = true
     const positions = []
     const calls = []
     const contents = Object.assign(new EventEmitter(), {
@@ -19,6 +19,8 @@ test('page Find accepts only its sandboxed frame and discards stale requests and
     const window = Object.assign(new EventEmitter(), {
         isDestroyed: () => false,
         focus: () => calls.push('focus-window'),
+        isFullScreen: () => fullscreen,
+        isVisible: () => visible,
         webContents: contents,
         getContentSize: () => [900, 600],
         contentView: { addChildView: view => assert.equal(view, currentView), removeChildView: view => assert.equal(view, currentView) },
@@ -40,14 +42,18 @@ test('page Find accepts only its sandboxed frame and discards stale requests and
         setBackgroundColor() {}
         setBounds(bounds) { positions.push(bounds) }
     }
-    const find = createWindowFind({ WebContentsView: View, scopeOf: owner => owner === window ? scope : null, topInset: () => inset })
+    const find = createWindowFind({ WebContentsView: View, scopeOf: owner => owner === window ? scope : null, topInset: () => fullscreen ? 0 : 28 })
     find.open(window)
     await Promise.resolve()
     assert.deepEqual(positions, [{ x: 508, y: 40, width: 380, height: 52 }])
-    inset = 0
+    fullscreen = true
+    window.emit('hide')
+    assert.equal(contents.listenerCount('found-in-page'), 1)
     window.emit('enter-full-screen')
     assert.deepEqual(positions.at(-1), { x: 508, y: 12, width: 380, height: 52 })
-    inset = 28
+    fullscreen = false
+    window.emit('hide')
+    assert.equal(contents.listenerCount('found-in-page'), 1)
     window.emit('leave-full-screen')
     assert.deepEqual(positions.at(-1), { x: 508, y: 40, width: 380, height: 52 })
     const sender = currentView.webContents
@@ -72,6 +78,7 @@ test('page Find accepts only its sandboxed frame and discards stale requests and
     scope = 'another-renderer'
     find.search(event, { text: 'stale' })
     assert.equal(lastRequest, 2)
+    visible = false
     window.emit('hide')
     assert.equal(contents.listenerCount('found-in-page'), 0)
     assert.equal(window.listenerCount('enter-full-screen'), 0)

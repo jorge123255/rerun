@@ -14,10 +14,10 @@ export function createWindowFind({ WebContentsView, scopeOf, topInset }) {
         if (!current || current.window !== window) return
         const entry = current
         current = null
-        const { view, contents, layout, report, hide } = entry
+        const { view, contents, layout, settledFullscreen, report, hide } = entry
         window.off('resize', layout)
-        window.off('enter-full-screen', layout)
-        window.off('leave-full-screen', layout)
+        window.off('enter-full-screen', settledFullscreen)
+        window.off('leave-full-screen', settledFullscreen)
         window.off('hide', hide)
         if (!contents.isDestroyed()) {
             contents.off('found-in-page', report)
@@ -56,14 +56,23 @@ export function createWindowFind({ WebContentsView, scopeOf, topInset }) {
                 if (!active(entry) || !result.finalUpdate || entry.requestId === null || result.requestId !== entry.requestId) return
                 view.webContents.send('desktop:find-result', { active: result.activeMatchOrdinal, total: result.matches })
             }
-            const hide = () => close(window)
-            const entry = { window, view, scope, contents, layout, report, hide, text: '', requestId: null }
+            let fullscreen = window.isFullScreen()
+            const settledFullscreen = () => {
+                fullscreen = window.isFullScreen()
+                layout()
+            }
+            const hide = () => {
+                // macOS briefly emits hide on a still-visible window moving into or out of its full-screen Space.
+                if (window.isVisible() && window.isFullScreen() !== fullscreen) return
+                close(window)
+            }
+            const entry = { window, view, scope, contents, layout, settledFullscreen, report, hide, text: '', requestId: null }
             current = entry
             window.contentView.addChildView(view)
             layout()
             window.on('resize', layout)
-            window.on('enter-full-screen', layout)
-            window.on('leave-full-screen', layout)
+            window.on('enter-full-screen', settledFullscreen)
+            window.on('leave-full-screen', settledFullscreen)
             window.on('hide', hide)
             contents.on('found-in-page', report)
             for (const event of ['will-navigate', 'will-redirect', 'will-attach-webview'])
