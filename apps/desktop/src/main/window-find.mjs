@@ -21,11 +21,12 @@ export function createWindowFind({ WebContentsView, scopeOf }) {
             contents.off('found-in-page', report)
             contents.stopFindInPage(focus ? 'keepSelection' : 'clearSelection')
         }
-        if (!window.isDestroyed()) {
-            window.contentView.removeChildView(view)
-            if (focus && !contents.isDestroyed()) contents.focus()
-        }
+        if (!window.isDestroyed()) window.contentView.removeChildView(view)
         if (!view.webContents.isDestroyed()) view.webContents.close()
+        if (focus && !window.isDestroyed() && !contents.isDestroyed()) {
+            window.focus()
+            contents.focus()
+        }
     }
 
     return {

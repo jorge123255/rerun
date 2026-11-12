@@ -17,6 +17,7 @@ test('page Find accepts only its sandboxed frame and discards stale requests and
     })
     const window = Object.assign(new EventEmitter(), {
         isDestroyed: () => false,
+        focus: () => calls.push('focus-window'),
         webContents: contents,
         getContentSize: () => [900, 600],
         contentView: { addChildView: view => assert.equal(view, currentView), removeChildView: view => assert.equal(view, currentView) },
@@ -66,6 +67,11 @@ test('page Find accepts only its sandboxed frame and discards stale requests and
     window.emit('hide')
     assert.equal(contents.listenerCount('found-in-page'), 0)
     assert.deepEqual(calls.slice(-2), ['clearSelection', 'close-bar'])
+    find.open(window)
+    await Promise.resolve()
+    const newSender = currentView.webContents
+    find.dismiss({ sender: newSender, senderFrame: newSender.mainFrame })
+    assert.deepEqual(calls.slice(-4), ['keepSelection', 'close-bar', 'focus-window', 'focus-board'])
 })
 
 test('the Find field handles Return and Shift-Return directly after focusing', async () => {
