@@ -178,7 +178,7 @@ export function DesktopAssistantReply({ message, streaming, createdAt, onRegener
     const engineAgentId = agent?.id === agentId ? agent?.engineAgentId : undefined
     const workspaceLinks = useMemo<MessageResponseProps['remarkPlugins']>(() => engineAgentId ? [
         ...Object.values(defaultRemarkPlugins),
-        [remarkAgentWorkspaceLinks, { linkPath: href => desktopWorkspaceFilePath(href, engineAgentId) }],
+        [remarkAgentWorkspaceLinks, { linkPath: (href: string | undefined) => desktopWorkspaceFilePath(href, engineAgentId) }],
     ] : undefined, [engineAgentId])
     const compactions = desktopCompactionSteps(message.parts, streaming)
     const blocks: ReactNode[] = []
