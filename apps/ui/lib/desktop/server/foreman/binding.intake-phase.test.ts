@@ -317,6 +317,39 @@ describe('production Foreman intake phase and model brief', () => {
         expect((await app.state()).question).toBeNull()
     })
 
+    it('keeps a batch of decisions tied to its producing run across a lost response and database reopen', async () => {
+        const guard = { runId: randomUUID(), sourceMessageId: 'approval-message', toolCallId: 'review-actions', digest: 'a'.repeat(64) }
+        const app = await desktopForeman(runtime)
+        const sourceModel = { ...model, model: 'workspace-fixture' }
+        await app.send(chat, guard.runId, 'Review two synthetic actions', sourceModel)
+        sent = []
+        const approvals = [{ action: 'Open the sample' }, { action: 'Archive the sample' }]
+        vi.mocked(request).mockImplementation(async (_engine, _path, _init, parse) => parse({ question: null, approval: { guard, approvals } }))
+        const approval = (await app.state()).approval!
+        expect(approval.approvals).toEqual(approvals)
+        const decisions = [{ decision: 'approved' }, { decision: 'declined', note: 'Keep this one' }] as const
+        const input = { approvalId: approval.id, requestId: randomUUID(), decisions: [...decisions] }
+        await expect(app.send(chat, randomUUID(), 'Bypass the card')).rejects.toMatchObject({ status: 409 })
+        await expect(app.decideApproval(chat, { ...input, approvalId: 'b'.repeat(64) })).rejects.toMatchObject({ status: 409 })
+        await expect(app.decideApproval(chat, { ...input, decisions: [decisions[0]] })).rejects.toMatchObject({ status: 400 })
+        expect(sent).toHaveLength(0)
+
+        vi.mocked(fetch).mockRejectedValueOnce(new Error('Lost approval response'))
+        await expect(app.decideApproval(chat, input)).rejects.toThrow('Lost approval response')
+        state.db.close()
+        state.db = open()
+        const reopened = await desktopForeman({ ...runtime, launchNonce: randomUUID() })
+        expect((await reopened.state()).approval?.attempt).toEqual({ requestId: input.requestId, decisions })
+        await expect(reopened.decideApproval(chat, { ...input, requestId: randomUUID() })).rejects.toMatchObject({ status: 409 })
+        await expect(reopened.decideApproval(chat, { ...input, decisions: [decisions[0], decisions[0]] })).rejects.toMatchObject({ status: 409 })
+        await expect(reopened.decideApproval(chat, input)).resolves.toEqual({ runId: input.requestId })
+        expect(sent).toEqual([expect.objectContaining({ approval: guard, replayOnly: true, text: expect.stringContaining('Keep this one') })])
+        expect(sent[0]?.binding.model).toEqual(sourceModel)
+        expect(sent[0]).not.toHaveProperty('approvalIntent')
+        vi.mocked(request).mockImplementation(async (_engine, _path, _init, parse) => parse({ question: null, approval: null }))
+        expect((await reopened.state()).approval).toBeNull()
+    })
+
     it('first exact pending intake sends the plan brief before model admission and returns plan after acknowledgement', async () => {
         const app = await desktopForeman(runtime)
         const intake = createDesktopForemanIntakeBinding(runtime, app)

@@ -33,7 +33,7 @@ function foremanConfig(choice: ForemanChoice): AgentConfig {
 }
 
 type ModelPin = Pick<AgentConfig, 'connectionId' | 'provider' | 'model'>
-type ForemanChoice = { model: ModelPin; grants: { foremanAgentFilesRead: boolean; foremanAgentFilesWrite: boolean; delegate?: boolean; callAgent?: boolean } }
+type ForemanChoice = { model: ModelPin; grants: { foremanAgentFilesRead: boolean; foremanAgentFilesWrite: boolean; delegate?: boolean; callAgent?: boolean; requestApproval?: boolean } }
 
 // Preserve only the user's model and explicit desktop permissions; program-owned
 // identity, instructions and every other capability are still rebuilt from code.
@@ -45,6 +45,7 @@ async function currentChoice(): Promise<ForemanChoice> {
             foremanAgentFilesWrite: tools.desktopToolGrants?.foremanAgentFilesWrite === true,
             ...(tools.desktopToolGrants?.delegate === true && { delegate: true }),
             ...(tools.desktopToolGrants?.callAgent === true && { callAgent: true }),
+            ...(tools.desktopToolGrants?.requestApproval === true && { requestApproval: true }),
         } }
     } catch {
         return { model: { connectionId: null, provider: null, model: null }, grants: { foremanAgentFilesRead: false, foremanAgentFilesWrite: false } }

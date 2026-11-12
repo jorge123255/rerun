@@ -161,7 +161,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const pendingSend = state.ui.snapshot?.pendingSend
     return <>
     {voiceModel && <ForemanVoiceOwner target={{ chat: state.chat, model: voiceModel }}
-        active={!props.hidden && !state.view.live && !state.question && !intakeOpen && !pendingStarter && !modelSaving} engage={() => {}}
+        active={!props.hidden && !state.view.live && !state.question && !state.approval && !intakeOpen && !pendingStarter && !modelSaving} engage={() => {}}
         accepted={() => { void client.refresh() }} onSlot={setVoice} onSettings={props.onOpenTranscriptionSettings} />}
     {!intakeOpen && <DesktopCompanyResearch chat={state.chat} active={!!props.controlledOpen && !props.hidden} refreshKey={JSON.stringify(state.view)} />}
     <DesktopForemanColumn
@@ -173,13 +173,14 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         controlledOpen={props.controlledOpen} hidden={props.hidden} centerOpen={props.centerOpen} onOpenChange={props.onOpenChange} onLayout={props.onLayout}
         dockFeed={dockFeed} voiceSlot={voiceModel ? voice?.slot : undefined} sendDisabled={modelSaving} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)} retrySnapshot={state.retrySnapshot}
         question={state.question} onAnswerQuestion={client.answerQuestion}
+        approval={state.approval} onDecideApproval={client.decideApproval}
         starter={state.starter} onStarterAnswer={client.answerStarter} intakeFinished={intake.finished}
         streaming={!!state.view.live} orbState={state.view.live ? 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
-        headerActions={<><DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} />{error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}</>}
+        headerActions={<><DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} onApprovalPermissionChanged={() => { void client.refresh().catch(() => {}) }} />{error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}</>}
         composerTrailing={props.composerTrailing ?? (!props.hidden && props.controlledOpen !== false && view && <div className="flex min-w-0 items-center">
             <DesktopForemanModelPill view={view} saving={modelSaving} onSettings={props.onOpenModelSettings}
-                disabled={!!state.view.live || !!state.question || !!state.ui.snapshot?.pendingSend || !!voice?.busy}
+                disabled={!!state.view.live || !!state.question || !!state.approval || !!state.ui.snapshot?.pendingSend || !!voice?.busy}
                 onPick={async model => {
                     setModelSaving(true)
                     try { await client.setModel(state.model, model) } finally { setModelSaving(false) }

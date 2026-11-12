@@ -18,7 +18,7 @@ import { mergeRunStream } from '../../runtime/run-stream-merge.js'
 import { resumeStreamResponse, toResumableStreamResponse } from '../../runtime/stream.js'
 import { assertDesktopProvider, desktopApp } from '../policy.js'
 import { readDesktopForemanBinding } from './binding.js'
-import { readForemanQuestion } from './question.js'
+import { foremanApprovalEnabled, readForemanApproval, readForemanQuestion } from './question.js'
 import type { createDesktopForemanBridge } from './bridge.js'
 import { createForemanFilePermissionRoutes } from '../foreman-agent-files/permissions.js'
 import { runForemanAlternate } from './alternate-run.js'
@@ -28,7 +28,7 @@ function isOwnedForemanSession(session: NonNullable<Awaited<ReturnType<typeof ge
     return session.agentId === FOREMAN_AGENT_ID && session.source === 'dashboard'
         && session.status === 'open' && !session.originAgentId && !session.originSessionId
 }
-function sameQuestion(left: z.infer<typeof foremanQuestionGuardSchema>, right: z.infer<typeof foremanQuestionGuardSchema>) {
+function sameRequest(left: z.infer<typeof foremanQuestionGuardSchema>, right: z.infer<typeof foremanQuestionGuardSchema>) {
     return left.runId === right.runId && left.sourceMessageId === right.sourceMessageId
         && left.toolCallId === right.toolCallId && left.digest === right.digest
 }
@@ -45,7 +45,8 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
             const session = await getSession(FOREMAN_AGENT_ID, sessionId.data)
             if (!session) return c.json({ question: null })
             if (!isOwnedForemanSession(session)) throw new HttpError(409, 'Foreman conversation ownership changed.')
-            return c.json({ question: await readForemanQuestion(session.id) })
+            const [question, approval] = await Promise.all([readForemanQuestion(session.id), readForemanApproval(session.id)])
+            return c.json({ question, approval }, 200, { 'cache-control': 'no-store' })
         } catch (error) {
             return c.json({ error: 'The Foreman question could not be read.' }, error instanceof HttpError && error.status === 409 ? 409 : 503)
         }
@@ -113,7 +114,7 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
             if (Buffer.byteLength(raw) > DESKTOP_FOREMAN_TURN_MAX_BYTES) throw new HttpError(413, 'Foreman message exceeds limit.')
             const body = desktopForemanChatSchema.parse(JSON.parse(raw)), signal = c.req.raw.signal
             const mentionFields = desktopCoworkerMentionFieldsOf(body.coworkerMentions)
-            const turn = { runId: body.binding.runId, sessionId: body.sessionId, message: body.text, documents: body.documents, ...mentionFields, foreman: { binding: body.binding, brief: body.brief, ...(body.question && { question: body.question }) } }
+            const turn = { runId: body.binding.runId, sessionId: body.sessionId, message: body.text, documents: body.documents, ...mentionFields, foreman: { binding: body.binding, brief: body.brief, ...(body.question && { question: body.question }), ...(body.approval && { approval: body.approval }) } }
             return await withAgentLock(FOREMAN_AGENT_ID, async () => {
                 signal.throwIfAborted()
                 const replay = await getDesktopQueuedTurn(FOREMAN_AGENT_ID, turn)
@@ -159,8 +160,12 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
                 if (holder) throw new HttpError(409, 'The Foreman is already replying in this conversation.')
                 try {
                     const question = session ? await readForemanQuestion(session.id) : null
-                    if (body.question ? !question || !sameQuestion(body.question, question.guard) : question) {
+                    if (body.question ? !question || !sameRequest(body.question, question.guard) : question) {
                         throw new HttpError(409, body.question ? 'This Foreman question has changed.' : 'Answer or dismiss the Foreman question before sending another message.')
+                    }
+                    const approval = session ? await readForemanApproval(session.id) : null
+                    if (body.approval ? !approval || !sameRequest(body.approval, approval.guard) : approval) {
+                        throw new HttpError(409, body.approval ? 'This Foreman approval has changed.' : 'Decide the Foreman approval before sending another message.')
                     }
                     signal.throwIfAborted()
                     assertDesktopRunAdmission()
@@ -172,6 +177,8 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
                             signal.throwIfAborted()
                             assertDesktopRunAdmission()
                             if (readBinding() !== bridge) throw new HttpError(409, 'Foreman app launch changed.')
+                            if (body.approval && !await foremanApprovalEnabled()) throw new HttpError(409, 'The Foreman approval permission was turned off.')
+                            signal.throwIfAborted()
                             const result = await runAgent(view, turn.sessionId, turn.message, override, writer, turn.runId,
                                 { source: 'chat', queuedUser, desktopDocuments: documents, ...mentionFields }); mergeRunStream(writer, result, { provider: model.provider, model: model.model }) }
                         catch (error) { await cancelRun(FOREMAN_AGENT_ID, turn.runId); releaseSession(turn.runId); throw error }

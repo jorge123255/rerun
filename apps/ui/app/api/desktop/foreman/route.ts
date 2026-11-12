@@ -1,3 +1,4 @@
+import { desktopApprovalAnswerSchema } from '@/lib/desktop/approvals'
 import { desktopQuestionAnswerSchema } from '@/lib/desktop/questions'
 import { desktopForemanSavedUiSchema } from '@/lib/desktop/foreman-client/ui-schema'
 import { ForemanRefusal } from '@/lib/desktop/server/foreman/authority'
@@ -20,6 +21,7 @@ const inputSchema = z.discriminatedUnion('action', [
     }).refine(input => Boolean(input.text || input.documents)).refine(validDesktopCoworkerMentionFields),
     z.strictObject({ action: z.literal('model'), chat: foremanChatRefSchema, expected: foremanModelRefSchema.nullable(), model: foremanModelRefSchema.nullable() }),
     z.strictObject({ action: z.literal('answer'), chat: foremanChatRefSchema, input: desktopQuestionAnswerSchema }),
+    z.strictObject({ action: z.literal('approval'), chat: foremanChatRefSchema, input: desktopApprovalAnswerSchema }),
     z.strictObject({ action: z.literal('starter'), chat: foremanChatRefSchema, input: localStarterDecisionSchema }),
     z.strictObject({ action: z.literal('stop'), chat: foremanChatRefSchema }),
     z.strictObject({ action: z.literal('decision'), input: foremanDecisionInputSchema }),
@@ -47,6 +49,7 @@ export async function POST(request: Request) {
             if (input.action === 'send') return Response.json(await app.send(input.chat, input.requestId, input.text, input.modelChoice,
                 { documents: input.documents, coworkerMentions: input.coworkerMentions }))
             if (input.action === 'model') return Response.json(await app.setModel(input.chat, input.expected, input.model))
+            if (input.action === 'approval') return Response.json(await app.decideApproval(input.chat, input.input))
             if (input.action === 'answer') return Response.json(await app.answerQuestion(input.chat, input.input))
             if (input.action === 'starter') {
                 return Response.json(await app.answerStarter(input.chat, input.input, AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])),

@@ -26,7 +26,8 @@ import { ForemanRefusal } from './authority'
 import { desktopForemanIntakePhase, readDesktopForemanIntakeProfile } from './intake-profile'
 import { foremanIntakeMessage } from './intake'
 import { hideDesktopForemanIntakeKickoff } from './intake-history'
-import { foremanQuestionText, readPendingForemanQuestion } from './question'
+import type { DesktopApprovalAnswer } from '../../approvals'
+import { foremanApprovalText, foremanQuestionText, readPendingForemanRequests } from './question'
 import type { DesktopQuestionAnswer } from '../../questions'
 import { createDesktopLocalStarterDecisions, type DesktopLocalStarterDecision } from '../foreman-starter/local-decision'
 import { createDesktopLocalStarterOffers } from '../foreman-starter/local-offer'
@@ -173,11 +174,11 @@ async function createBinding(runtime: DesktopRuntime) {
                 throw new DesktopHttpError(409, 'Wait for the Chief of Staff’s current message to settle.')
             }
         }
-        const [view, question, starter] = await Promise.all([
-            core.readView(chat), readPendingForemanQuestion(runtime, owner), starterDecisions.view(chat, true),
+        const [view, { question, approval }, starter] = await Promise.all([
+            core.readView(chat), readPendingForemanRequests(runtime, owner), starterDecisions.view(chat, true),
         ])
         if (view.live || view.blocked || view.build?.state === 'reserved' || view.build?.state === 'running'
-            || view.build?.setup.state === 'pending' || view.discovery?.status === 'running' || question || (starter && !starter.decision?.settled)) {
+            || view.build?.setup.state === 'pending' || view.discovery?.status === 'running' || question || approval || (starter && !starter.decision?.settled)) {
             throw new DesktopHttpError(409, conflict)
         }
         assertDesktopWorkspaceAdmission(runtime)
@@ -207,14 +208,16 @@ async function createBinding(runtime: DesktopRuntime) {
         if (turn.documents) await consumeDesktopDocumentAdmission(runtime, turn.documents, AbortSignal.timeout(10_000))
         return { runId: turn.binding.runId }
     }
-    async function savedQuestionAttempt(chat: DesktopForemanChatRef) {
+    async function lastSavedTurn(chat: DesktopForemanChatRef) {
         const row = (await db.execute({ sql: 'SELECT body FROM desktop_foreman_turns WHERE chat_id=? ORDER BY rowid DESC LIMIT 1', args: [chat.chatId] })).rows[0]
-        return row ? (JSON.parse(String(row.body)) as ForemanTurn).answerIntent : undefined
+        return row ? JSON.parse(String(row.body)) as ForemanTurn : undefined
     }
 
     async function send(chat: DesktopForemanChatRef, requestId: string, text: string, requested?: DesktopForemanModelRef, guard?: VoiceGuard,
-        answer?: DesktopQuestionAnswer, starter?: { input: DesktopLocalStarterDecision; signal: AbortSignal }, fields?: ForemanSendFields) {
+        resolution?: DesktopQuestionAnswer | DesktopApprovalAnswer, starter?: { input: DesktopLocalStarterDecision; signal: AbortSignal }, fields?: ForemanSendFields) {
         const { documents, coworkerMentions } = fields ?? {}
+        const decision = resolution && 'approvalId' in resolution ? resolution : undefined
+        const answer = resolution && 'questionId' in resolution ? resolution : undefined
         if (chat.workspaceId !== workspaceId) throw new DesktopHttpError(404, 'Conversation not found.')
         await assertDesktopWorkspaceAdmission(runtime)
         return withForemanChatWrite(db, async () => {
@@ -231,7 +234,7 @@ async function createBinding(runtime: DesktopRuntime) {
             }
             const fingerprint = createHash('sha256').update(JSON.stringify(starter
                 ? [chat, text, requested ?? null, 'starter', starter.input.offerId]
-                : [chat, answer ?? text, requested ?? null, ...(documents ? [documents] : []),
+                : [chat, resolution ?? text, requested ?? null, ...(documents ? [documents] : []),
                     ...(coworkerMentions?.length ? [['coworkerMentions', coworkerMentions]] : [])])).digest('hex')
             const previous = await foremanTurn(db, requestId)
             if (previous) {
@@ -249,10 +252,10 @@ async function createBinding(runtime: DesktopRuntime) {
                 if (result.state === 'unknown' || result.state === 'present' && result.run.status === 'running') throw new DesktopHttpError(409, 'Wait for the Foreman’s current message to settle.')
                 await db.execute({ sql: "UPDATE desktop_foreman_turns SET status=? WHERE request_id=?", args: [result.state === 'present' ? 'finished' : 'failed', id] })
             }
-            const question = await readPendingForemanQuestion(runtime, owner)
+            const { question, approval } = await readPendingForemanRequests(runtime, owner)
             if (answer) {
                 if (!question) throw new DesktopHttpError(409, 'This Foreman question is no longer waiting for an answer.')
-                const attempted = await savedQuestionAttempt(chat)
+                const attempted = (await lastSavedTurn(chat))?.answerIntent
                 if (attempted?.questionId === answer.questionId && attempted.requestId !== requestId) {
                     throw new DesktopHttpError(409, 'An answer is already saved for this question. Retry that answer.')
                 }
@@ -260,10 +263,22 @@ async function createBinding(runtime: DesktopRuntime) {
             } else if (question) {
                 throw new DesktopHttpError(409, 'Answer or dismiss the Foreman question before sending another message.')
             }
-            // A question continues the exact producing run even when the workspace default changed.
-            const source = answer && question ? await foremanTurn(db, question.guard.runId) : null
+            if (decision) {
+                if (!approval) throw new DesktopHttpError(409, 'This Foreman approval is no longer waiting for decisions.')
+                const attempted = (await lastSavedTurn(chat))?.approvalIntent
+                if (attempted?.approvalId === decision.approvalId && attempted.requestId !== requestId) {
+                    throw new DesktopHttpError(409, 'Decisions are already saved for this approval. Retry those decisions.')
+                }
+                text = foremanApprovalText(approval, decision)
+            } else if (approval) {
+                throw new DesktopHttpError(409, 'Decide the Foreman approval before sending another message.')
+            }
+            // A decision continues the producing run even when the workspace default changed.
+            const sourceRunId = decision ? approval?.guard.runId : answer ? question?.guard.runId : undefined
+            const source = sourceRunId ? await foremanTurn(db, sourceRunId) : null
             const original = source?.body.sessionId === owner.sessionId && source.body.binding.chatId === chat.chatId
                 && source.body.binding.workspaceId === chat.workspaceId ? source.body.binding.model : null
+            if (decision && !original) throw new DesktopHttpError(409, 'The run that requested these decisions could not be confirmed.')
             let model = original ?? requested ?? owner.model
             if (!model) { const fallback = await desktopModel(runtime); model = { connectionId: fallback.connection.id, model: fallback.model } }
             if (!await modelAvailable(model)) throw new ForemanRefusal('model_unavailable', 'Choose a connected model in Settings.')
@@ -275,7 +290,7 @@ async function createBinding(runtime: DesktopRuntime) {
             }
             if (documents) {
                 const scope = foremanDocumentScope(chat, owner.sessionId)
-                if (answer || starter || guard || documents.scope.agentId !== scope.agentId || documents.scope.tabUid !== scope.tabUid
+                if (resolution || starter || guard || documents.scope.agentId !== scope.agentId || documents.scope.tabUid !== scope.tabUid
                     || documents.scope.sessionId !== scope.sessionId || documents.modelChoice?.connectionId !== model.connectionId
                     || documents.modelChoice?.model !== model.model) throw new DesktopHttpError(409, 'These attachments do not match this conversation and model.')
                 const admission = await resolveDesktopDocumentAdmission(runtime, FOREMAN_AGENT_ID, documents, AbortSignal.timeout(20_000))
@@ -294,7 +309,8 @@ async function createBinding(runtime: DesktopRuntime) {
                 'Questions about Rerun itself must use search_docs and link the retrieved passage; do not guess features, prices or limits. Empty or unavailable documentation stays unavailable.',
                 'When the user asks to design or add coworkers, propose their jobs with show_plan. Nothing is created until they confirm the card. Never treat chat text as approval.'].filter(Boolean).join('\n\n')
             const turn: ForemanTurn = { binding: { ...chat, runId: requestId, model }, sessionId: owner.sessionId, text, brief: { instructions, tools: [] },
-                ...(answer && question && { question: question.guard, answerIntent: answer }), ...(starter && { starterOfferId: starter.input.offerId }),
+                ...(answer && question && { question: question.guard, answerIntent: answer }),
+                ...(decision && approval && { approval: approval.guard, approvalIntent: decision }), ...(starter && { starterOfferId: starter.input.offerId }),
                 ...(documents && { documents }), ...desktopCoworkerMentionFieldsOf(coworkerMentions) }
             await checkVoice(guard)
             starter?.signal.throwIfAborted()
@@ -332,6 +348,7 @@ async function createBinding(runtime: DesktopRuntime) {
                 return { model }
             })
         },
+        decideApproval: (chat: DesktopForemanChatRef, input: DesktopApprovalAnswer) => send(chat, input.requestId, '', undefined, undefined, input),
         answerQuestion: (chat: DesktopForemanChatRef, answer: DesktopQuestionAnswer) => send(chat, answer.requestId, '', undefined, undefined, answer),
         async answerStarter(chat: DesktopForemanChatRef, input: DesktopLocalStarterDecision, signal: AbortSignal) {
             if (input.choice.kind === 'text') {
@@ -368,9 +385,13 @@ async function createBinding(runtime: DesktopRuntime) {
                 throw error
             })
             const view = await core.readView(owner.chat)
-            const pending = view.live ? null : await readPendingForemanQuestion(runtime, owner)
-            const saved = pending ? await savedQuestionAttempt(owner.chat) : undefined
-            const attempt = saved?.questionId === pending?.view.id && saved
+            const { question: pending, approval: pendingApproval } = view.live ? { question: null, approval: null } : await readPendingForemanRequests(runtime, owner)
+            const approvalSource = pendingApproval && await foremanTurn(db, pendingApproval.guard.runId)
+            const approval = approvalSource?.body.sessionId === owner.sessionId && approvalSource.body.binding.chatId === owner.chat.chatId
+                && approvalSource.body.binding.workspaceId === owner.chat.workspaceId ? pendingApproval : null
+            const saved = pending || approval ? await lastSavedTurn(owner.chat) : undefined
+            const attempt = saved?.answerIntent?.questionId === pending?.view.id && saved?.answerIntent
+            const approvalAttempt = saved?.approvalIntent?.approvalId === approval?.view.id && saved?.approvalIntent
             const history = await hideDesktopForemanIntakeKickoff(runtime, db, owner, publicDesktopHistory(transformEngineMessages(messages)))
             const [answeredQuestions, context] = await Promise.all([
                 readAnsweredQuestionRecaps(db, owner.chat.chatId, history),
@@ -390,6 +411,9 @@ async function createBinding(runtime: DesktopRuntime) {
                 ? (await listDesktopForemanCallSources(db, owner.chat.chatId, owner.sessionId)).filter(row => knownRuns.has(row.runId))
                 : []
             return { ...owner, view, messages: history, retrySnapshot, answeredQuestions, context, runSources, callSources, starter: await starterDecisions.view(owner.chat),
+                approval: approval ? { ...approval.view, ...(approvalAttempt && {
+                    attempt: { requestId: approvalAttempt.requestId, decisions: approvalAttempt.decisions },
+                }) } : null,
                 question: pending ? { ...pending.view, ...(attempt && { attempt: attempt.action === 'cancel'
                     ? { action: 'cancel' as const, requestId: attempt.requestId }
                     : { action: 'answer' as const, requestId: attempt.requestId, answers: attempt.answers } }) } : null }

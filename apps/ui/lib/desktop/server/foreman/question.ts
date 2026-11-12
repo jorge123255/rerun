@@ -1,8 +1,9 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { foremanQuestionGuardSchema, HITL_CANCELLED, serializeAnswers } from '@rerun/contracts'
+import { foremanQuestionGuardSchema, HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions } from '@rerun/contracts'
 import { request } from '@/lib/engine/client'
+import { desktopPendingApprovalSchema, type DesktopApprovalAnswer } from '../../approvals'
 import { desktopPendingQuestionSchema, type DesktopQuestionAnswer } from '../../questions'
 import { DesktopHttpError } from '../auth'
 import type { DesktopRuntime } from '../runtime'
@@ -12,19 +13,36 @@ import type { ForemanChat } from './chat-store'
 const resultSchema = z.object({ question: z.object({
     guard: foremanQuestionGuardSchema,
     questions: desktopPendingQuestionSchema.shape.questions,
-}).nullable() })
+}).nullable(), approval: z.object({
+    guard: foremanQuestionGuardSchema,
+    approvals: desktopPendingApprovalSchema.shape.approvals,
+}).nullable().optional() })
 
-export async function readPendingForemanQuestion(runtime: DesktopRuntime, owner: ForemanChat) {
-    const { question } = await request(engineOf(runtime), `/desktop/foreman/question?sessionId=${encodeURIComponent(owner.sessionId)}`,
+export async function readPendingForemanRequests(runtime: DesktopRuntime, owner: ForemanChat) {
+    const { question, approval } = await request(engineOf(runtime), `/desktop/foreman/question?sessionId=${encodeURIComponent(owner.sessionId)}`,
         { cache: 'no-store', signal: AbortSignal.timeout(10_000) }, value => resultSchema.parse(value))
-    if (!question) return null
-    const { guard } = question
-    const id = createHash('sha256').update(JSON.stringify([owner.chat.workspaceId, owner.chat.chatId, owner.sessionId,
-        guard.runId, guard.sourceMessageId, guard.toolCallId, guard.digest])).digest('hex')
-    return { guard, view: { id, messageId: guard.sourceMessageId, toolCallId: guard.toolCallId, questions: question.questions } }
+    function identity(guard: z.infer<typeof foremanQuestionGuardSchema>, kind?: 'approval') {
+        const id = createHash('sha256').update(JSON.stringify([owner.chat.workspaceId, owner.chat.chatId, owner.sessionId,
+            guard.runId, guard.sourceMessageId, guard.toolCallId, guard.digest, ...(kind ? [kind] : [])])).digest('hex')
+        return { id, messageId: guard.sourceMessageId, toolCallId: guard.toolCallId }
+    }
+    return {
+        question: question ? { guard: question.guard, view: { ...identity(question.guard), questions: question.questions } } : null,
+        approval: approval ? { guard: approval.guard, view: { ...identity(approval.guard, 'approval'), approvals: approval.approvals } } : null,
+    }
 }
 
-export function foremanQuestionText(question: NonNullable<Awaited<ReturnType<typeof readPendingForemanQuestion>>>, answer: DesktopQuestionAnswer) {
+type Pending = Awaited<ReturnType<typeof readPendingForemanRequests>>
+
+export function foremanApprovalText(approval: NonNullable<Pending['approval']>, answer: DesktopApprovalAnswer) {
+    if (approval.view.id !== answer.approvalId) throw new DesktopHttpError(409, 'This Foreman approval has changed. Reopen it before deciding.')
+    if (approval.view.approvals.length !== answer.decisions.length) throw new DesktopHttpError(400, 'Approve or decline each action in this form.')
+    const text = serializeApprovalDecisions(approval.view.approvals.map((item, index) => ({ ...item, ...answer.decisions[index] })))
+    if (text.length > 20_000) throw new DesktopHttpError(400, 'Shorten the decisions before sending them.')
+    return text
+}
+
+export function foremanQuestionText(question: NonNullable<Pending['question']>, answer: DesktopQuestionAnswer) {
     if (question.view.id !== answer.questionId) throw new DesktopHttpError(409, 'This Foreman question has changed. Reopen it before answering.')
     if (answer.action === 'cancel') return HITL_CANCELLED.question
     const questions = question.view.questions

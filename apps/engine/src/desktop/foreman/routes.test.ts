@@ -1,8 +1,8 @@
 import { beforeEach, afterEach, expect, test, vi } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { foremanDocumentScope } from '@rerun/contracts'
-const question = vi.hoisted(() => ({ read: vi.fn() }))
-vi.mock('./question.js', () => ({ readForemanQuestion: question.read }))
+const question = vi.hoisted(() => ({ read: vi.fn(), approval: vi.fn() }))
+vi.mock('./question.js', () => ({ readForemanQuestion: question.read, readForemanApproval: question.approval, foremanApprovalEnabled: async () => true }))
 const state = vi.hoisted(() => ({ replay: false, session: null as null | { id: string; agentId: string; source: string; status: string; originAgentId: null; originSessionId: null }, run: null as null | { id: string; agentId: string; sessionId: string }, reserve: vi.fn(async () => ({ id: 'queued-user' })), model: vi.fn(async () => ({ connection: { id: 'conn' }, provider: 'codex', model: 'terra' })), claim: vi.fn(() => null), release: vi.fn() }))
 vi.mock('../../agents/lock.js', () => ({ withAgentLock: async (_id: string, work: () => Promise<unknown>) => work() }))
 vi.mock('../../agents/registry.js', () => ({ getAgent: async () => ({ id: 'foreman', config: { kind: 'foreman', enabled: true } }) }))
@@ -20,7 +20,7 @@ import type { createDesktopForemanBridge } from './bridge.js'
 const body = { binding: { workspaceId: '1', chatId: 'fmc_chat-0001', runId: '00000000-0000-4000-8000-000000000001', model: { connectionId: 'conn', model: 'terra' } }, sessionId: '00000000-0000-4000-8000-000000000002', text: 'Plan a team.', brief: { instructions: 'Propose, never approve.', tools: [] } }
 const request = (input: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
 const bridge = () => ({ admit: vi.fn(async () => {}), documents: vi.fn(), binding: vi.fn(), request: vi.fn(), close: vi.fn() }) as ReturnType<typeof createDesktopForemanBridge>
-beforeEach(() => { state.replay = false; state.session = null; state.run = null; vi.clearAllMocks(); question.read.mockResolvedValue(null) })
+beforeEach(() => { state.replay = false; state.session = null; state.run = null; vi.clearAllMocks(); question.read.mockResolvedValue(null); question.approval.mockResolvedValue(null) })
 afterEach(() => vi.restoreAllMocks())
 test('replay miss creates no session, model resolution, admission or provider work', async () => {
     const port = bridge(), app = createDesktopForemanRoutes(() => port)
@@ -103,4 +103,24 @@ test('a replayed answer reads its existing receipt without looking for a second 
     expect(response.status).toBe(204)
     expect(question.read).not.toHaveBeenCalled()
     expect(state.reserve).not.toHaveBeenCalled()
+})
+
+test('claims the exact completed approval and refuses a stale, revoked or unguarded reply', async () => {
+    const guard = { runId: randomUUID(), sourceMessageId: 'saved-approval', toolCallId: 'approval-call', digest: 'a'.repeat(64) }
+    state.session = { id: body.sessionId, agentId: 'foreman', source: 'dashboard', status: 'open', originAgentId: null, originSessionId: null }
+    question.approval.mockImplementation(async () => {
+        expect(state.claim).toHaveBeenCalledWith(body.sessionId, body.binding.runId)
+        return { guard, approvals: [{ action: 'Publish the fixture summary' }] }
+    })
+    const port = bridge(), app = createDesktopForemanRoutes(() => port)
+    expect((await app.request('/chat', request(body))).status).toBe(409)
+    expect((await app.request('/chat', request({ ...body, approval: { ...guard, digest: 'b'.repeat(64) } }))).status).toBe(409)
+    expect((await app.request('/chat', request({ ...body, approval: guard, question: guard }))).status).toBe(400)
+    question.approval.mockResolvedValueOnce(null)
+    expect((await app.request('/chat', request({ ...body, approval: guard }))).status).toBe(409)
+    expect(state.reserve).not.toHaveBeenCalled()
+    expect((await app.request('/chat', request({ ...body, approval: guard }))).status).toBe(200)
+    expect(state.reserve).toHaveBeenCalledExactlyOnceWith('foreman', expect.objectContaining({
+        foreman: expect.objectContaining({ approval: guard }),
+    }), undefined, undefined, undefined, false, undefined)
 })

@@ -70,9 +70,11 @@ export const desktopForemanTurnSchema = z.strictObject({
     text: z.string().max(20_000),
     brief: foremanBriefSchema.extend({ instructions: z.string().min(1).max(12_000), tools: z.array(z.never()).max(0), hubToken: z.never().optional() }).strict(),
     question: foremanQuestionGuardSchema.optional(),
+    approval: foremanQuestionGuardSchema.optional(),
     documents: desktopDocumentSendSelectionSchema.optional(),
     coworkerMentions: desktopCoworkerMentionsSchema.optional(),
-}).refine(turn => Boolean(turn.text.trim() || turn.documents) && !(turn.question && (turn.documents || turn.coworkerMentions?.length)))
+}).refine(turn => Boolean(turn.text.trim() || turn.documents) && !(turn.question && turn.approval)
+    && !((turn.question || turn.approval) && (turn.documents || turn.coworkerMentions?.length)))
     .refine(validDesktopCoworkerMentionFields, 'Selected coworker mentions do not match the message.')
 
 // Engine and app server only. Renderer requests continue to use their saved message ID.

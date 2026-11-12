@@ -17,9 +17,9 @@ vi.mock('./dock', () => ({
 }))
 vi.mock('@rerun/ui/primitives/use-is-mobile', () => ({ useIsMobile: () => false }))
 vi.mock('./DesktopForemanHeader', () => ({ DesktopForemanHeader: (props: HeaderProps) => <button onClick={() => props.onTabChange('routines')}>Routines tab</button> }))
-vi.mock('./DesktopForemanComposer', () => ({ DesktopForemanComposer: (props: ComposerProps) => <div><textarea data-desktop-foreman-composer aria-label="Message the Foreman" />{props.trailing}{props.controls}</div> }))
-vi.mock('./DesktopForemanChatLayer', () => ({ DesktopForemanChatLayer: ({ children, renderChildWork }: ComponentProps<typeof import('./DesktopForemanChatLayer').DesktopForemanChatLayer>) =>
-    <div>Chat{renderChildWork?.(new Map())}{children}</div> }))
+vi.mock('./DesktopForemanComposer', () => ({ DesktopForemanComposer: (props: ComposerProps) => <div><textarea data-desktop-foreman-composer aria-label="Message the Foreman" disabled={props.disabled} />{props.trailing}{props.controls}</div> }))
+vi.mock('./DesktopForemanChatLayer', () => ({ DesktopForemanChatLayer: ({ children, renderChildWork, question }: ComponentProps<typeof import('./DesktopForemanChatLayer').DesktopForemanChatLayer>) =>
+    <div>Chat{renderChildWork?.(new Map())}{question}{children}</div> }))
 vi.mock('./routines/DesktopWorkspaceRoutines', () => ({ DesktopWorkspaceRoutines: () => <div>Routines content</div> }))
 vi.mock('./plan/DesktopPlanBoardPreview', () => ({ DesktopPlanBoardPreview: () => null }))
 import { DesktopForemanColumn } from './DesktopForemanColumn'
@@ -139,4 +139,18 @@ it('reads a call that settles between polls, stops detached work, and opens its 
     expect(ports.conversation.stop).not.toHaveBeenCalled()
     await click('Open chat')
     expect(open).toHaveBeenCalledExactlyOnceWith({ agentId: dispatched.targetAgentId, sessionId: dispatched.targetSessionId })
+})
+
+it('renders the saved action card and sends only the decision for its exact request', async () => {
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    const approval = { id: 'a'.repeat(64), messageId: 'saved-approval', toolCallId: 'review-call',
+        approvals: [{ action: 'Open the synthetic report' }] }
+    const decide = vi.fn(async () => {})
+    await act(async () => root!.render(<DesktopForemanColumn chat={chat} ports={ports} live={null} messages={[]} agentNameOf={id => id}
+        controlledOpen onClose={() => {}} approval={approval} onDecideApproval={decide} />))
+    expect(document.body.textContent).toContain('Open the synthetic report')
+    expect(document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')?.disabled).toBe(true)
+    await click('Approve')
+    expect(decide).toHaveBeenCalledExactlyOnceWith({ approvalId: approval.id, requestId: expect.any(String), decisions: [{ decision: 'approved' }] })
+    expect(ports.conversation.sendMessage).not.toHaveBeenCalled()
 })

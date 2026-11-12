@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES, DESKTOP_FOREMAN_TURN_MAX_BYTES, desktopResolvedDocumentsSchema, foremanBindingSchema, foremanModelRefSchema, type DesktopCoworkerMentionFields, type DesktopDocumentSendSelection, type DesktopForemanChatRef, type CompanyBriefModelRef, type DesktopForemanBinding, type DesktopForemanQuestionGuard, type ForemanAlternateRequest, type ForemanBrief } from '@rerun/contracts'
 export type ForemanRuntime = { workspaceId?: number | string; launchNonce: string; app: { origin: string }; engine: { apiKey: string } }
 export type ForemanIdentity = { engineAgentId: 'foreman'; sessionId: string; runId: string }
-export type ForemanTurn = DesktopCoworkerMentionFields & { binding: DesktopForemanBinding; sessionId: string; text: string; brief: ForemanBrief; question?: DesktopForemanQuestionGuard; documents?: DesktopDocumentSendSelection }
+export type ForemanTurn = DesktopCoworkerMentionFields & { binding: DesktopForemanBinding; sessionId: string; text: string; brief: ForemanBrief; question?: DesktopForemanQuestionGuard; approval?: DesktopForemanQuestionGuard; documents?: DesktopDocumentSendSelection }
 export type ForemanBridgeBody =
     | { action: 'brief_model'; chat: DesktopForemanChatRef; model: CompanyBriefModelRef }
     | { action: 'binding'; identity: ForemanIdentity }

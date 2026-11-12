@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { DesktopForemanChatRef } from '@rerun/contracts'
-import { FileTextIcon, PencilIcon, WorkflowIcon, MessageSquareIcon } from 'lucide-react'
+import { FileTextIcon, PencilIcon, WorkflowIcon, MessageSquareIcon, ShieldCheckIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { SETTINGS_CARD, SettingsSection, SwitchRow } from '@/components/notifications/settings/SettingsSection'
@@ -11,7 +11,7 @@ import { DesktopCoworkerCallTargets } from '../coworker-calls/DesktopCoworkerCal
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 
 const URL_PATH = '/api/desktop/foreman/file-permissions'
-export function DesktopForemanFilePermissions({ chat, disabled = false }: { chat: DesktopForemanChatRef; disabled?: boolean }) {
+export function DesktopForemanFilePermissions({ chat, disabled = false, onApprovalPermissionChanged }: { chat: DesktopForemanChatRef; disabled?: boolean; onApprovalPermissionChanged?: () => void }) {
     const [open, setOpen] = useState(false)
     const [snapshot, setSnapshot] = useState<ForemanFilePermissionSnapshot | null>(null)
     const [busy, setBusy] = useState(false)
@@ -46,7 +46,10 @@ export function DesktopForemanFilePermissions({ chat, disabled = false }: { chat
             if (!response.ok) throw new Error('Unacknowledged change')
             const value = foremanFilePermissionSnapshotSchema.parse(await response.json())
             if (value.workspaceId !== before.workspaceId || value.launchNonce !== before.launchNonce || value.grants[id] !== enabled) throw new Error('Permission identity changed')
-            if (own === live.current && own.current && !isDesktopQuitting()) setSnapshot(value)
+            if (own === live.current && own.current && !isDesktopQuitting()) {
+                setSnapshot(value)
+                if (id === 'requestApproval') onApprovalPermissionChanged?.()
+            }
         } catch {
             if (own === live.current && own.current) { setSnapshot(null); setError('The change was not acknowledged. Refresh to inspect the saved permissions before choosing again.') }
         } finally { if (own === live.current && own.current) setBusy(false) }
@@ -67,6 +70,9 @@ export function DesktopForemanFilePermissions({ chat, disabled = false }: { chat
                 {snapshot.grants.callAgent !== undefined && <SettingsSection title="Coworker calls"><div className={SETTINGS_CARD}>
                     <SwitchRow icon={MessageSquareIcon} label="Call coworkers" description="Open a separate chat with a coworker you allow below." checked={snapshot.grants.callAgent} disabled={busy || disabled} onChange={enabled => { void change('callAgent', enabled) }} />
                     {snapshot.grants.callAgent && <DesktopCoworkerCallTargets foreman={{ ...chat, launchNonce: snapshot.launchNonce }} />}
+                </div></SettingsSection>}
+                {snapshot.grants.requestApproval !== undefined && <SettingsSection title="Action approvals"><div className={SETTINGS_CARD}>
+                    <SwitchRow icon={ShieldCheckIcon} label="Request action approval" description="Ask you to approve or decline proposed actions in chat." checked={snapshot.grants.requestApproval} disabled={busy || disabled} onChange={enabled => { void change('requestApproval', enabled) }} />
                 </div></SettingsSection>}</>}
             <p className="text-xs text-muted-foreground">New permissions apply from the Chief of Staff’s next reply. Turning a permission off blocks later calls.</p>
         </DialogContent>

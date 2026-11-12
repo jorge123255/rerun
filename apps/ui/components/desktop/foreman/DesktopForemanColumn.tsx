@@ -25,6 +25,8 @@ import { DesktopForemanIntakeCard, DesktopForemanIntakeHeader } from './intake'
 import { DesktopStarterPack } from './starter-pack'
 import { DesktopStarterOfferCard } from './starter-pack/DesktopStarterOfferCard'
 import type { DesktopLocalStarterDecision, DesktopStarterView } from '@/lib/desktop/foreman-client/starter'
+import { DesktopApprovalCard } from '@/components/desktop/DesktopApprovalCard'
+import type { DesktopApprovalAnswer, DesktopPendingApproval } from '@/lib/desktop/approvals'
 import { DesktopQuestionCard } from '@/components/desktop/DesktopQuestionCard'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import type { DesktopTemplateIdentity } from '@/components/desktop/templates/types'
@@ -65,6 +67,8 @@ export type DesktopForemanColumnProps = {
     imageModel?: boolean
     retrySnapshot?: string
     streaming?: boolean
+    approval?: DesktopPendingApproval | null
+    onDecideApproval?: (answer: DesktopApprovalAnswer) => Promise<void>
     question?: DesktopPendingQuestion | null
     onAnswerQuestion?: (answer: DesktopQuestionAnswer) => Promise<void>
     agentNameOf: (agentId: string) => string
@@ -112,7 +116,7 @@ export function DesktopForemanColumn({
     imageModel,
     retrySnapshot,
     streaming,
-    question, onAnswerQuestion,
+    approval, onDecideApproval, question, onAnswerQuestion,
     agentNameOf,
     orbState = 'idle',
     headerActions,
@@ -135,7 +139,8 @@ export function DesktopForemanColumn({
     const onRoutines = ui.tab === 'routines'
     const [sendingDocuments, setSendingDocuments] = useState(false)
     const attachmentComposer = !!sessionId && !intake && !pendingStarter && !!intakeFinished && ui.open && !onRoutines
-    const editAttachments = attachmentComposer && !hidden && !question && !streaming && !sendingDocuments
+    const pendingRequest = !!(question || approval)
+    const editAttachments = attachmentComposer && !hidden && !pendingRequest && !streaming && !sendingDocuments
         && !pendingSend && !foreman.blocked && !sendDisabled && ui.decision.status !== 'pending' && foreman.restored
     const documents = useDesktopDocumentAttachments({ ...foremanDocumentScope(chat, sessionId ?? ''), load: attachmentComposer, enabled: editAttachments })
     const mentions = useDesktopMentionAutocomplete({
@@ -145,7 +150,7 @@ export function DesktopForemanColumn({
     })
     const alternates = useDesktopForemanAlternates({
         chat, snapshot: retrySnapshot, active: !!retrySnapshot && ui.open && !hidden && !onRoutines && !intake && foreman.restored,
-        eligible: !!retrySnapshot && !streaming && !question && !pendingStarter && !foreman.blocked && ui.decision.status !== 'pending',
+        eligible: !!retrySnapshot && !streaming && !pendingRequest && !pendingStarter && !foreman.blocked && ui.decision.status !== 'pending',
     })
     const { close: closeAlternates, open: alternatesOpen } = alternates
     const runByCall = useMemo(() => new Map(callSources?.map(source => [source.callId, source.runId])), [callSources])
@@ -255,8 +260,10 @@ export function DesktopForemanColumn({
                         attachmentsActive={ui.open && !hidden && !onRoutines && !alternates.open}
                         streaming={streaming}
                         restored={foreman.restored}
-                        question={foreman.restored && !streaming && question && onAnswerQuestion
-                            ? <DesktopQuestionCard question={question} disabled={hidden || !!foreman.blocked} onAnswer={onAnswerQuestion} /> : null}
+                        question={foreman.restored && !streaming && pendingRequest ? <>
+                            {question && onAnswerQuestion && <DesktopQuestionCard question={question} disabled={hidden || !!foreman.blocked} onAnswer={onAnswerQuestion} />}
+                            {approval && onDecideApproval && <DesktopApprovalCard approval={approval} disabled={hidden || !!foreman.blocked} onDecide={onDecideApproval} />}
+                        </> : null}
                         emptyWelcome={!starterPack && !pendingStarter}
                         planSnapshot={foreman.planSnapshot}
                         decisionStatus={ui.decision}
@@ -277,7 +284,7 @@ export function DesktopForemanColumn({
                         onOpenBox={spaceId => foreman.navigate({ kind: 'open_box', spaceId })}
                         answerFeedback={{ ratingOf: answerFeedback.ratingOf, onRate: answerFeedback.rate, disabled: hidden }}
                         replyRetry={retrySnapshot ? { review: id => void alternates.reviewReply(id),
-                            disabled: !!streaming || !!question || pendingStarter || !!foreman.blocked || alternates.busy || ui.decision.status === 'pending' } : undefined}
+                            disabled: !!streaming || pendingRequest || pendingStarter || !!foreman.blocked || alternates.busy || ui.decision.status === 'pending' } : undefined}
                         renderChildWork={sessionId && ui.open && !hidden && !onRoutines && !alternates.open && foreman.restored
                             ? slots => <Fragment key={`${chat.workspaceId}:${chat.chatId}`}>
                                 <DesktopDelegationMount scope="foreman" sessionId={chat.chatId}
@@ -326,7 +333,7 @@ export function DesktopForemanColumn({
                         onDraftChange={foreman.setDraft}
                         busy={!!streaming}
                         sendDisabled={sendDisabled || attachmentComposer && (sendingDocuments || !pendingSend && (!documents.loaded || documents.busy > 0))}
-                        disabled={!!question || !foreman.restored || !!foreman.blocked || ui.decision.status === 'pending'
+                        disabled={pendingRequest || !foreman.restored || !!foreman.blocked || ui.decision.status === 'pending'
                             || pendingStarter && (!onStarterAnswer || starterBusy || !!starter?.decision)
                             || Boolean(intake && (!intake.restored || intake.submitting || intake.quitting || intake.conflicted))}
                         onSend={send}

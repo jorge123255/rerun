@@ -44,3 +44,14 @@ test('Foreman delegation requires an explicit current opt-in independent of file
     expect(disabled.status).toBe(200)
     expect(f.config().tools.desktopToolGrants?.delegate).toBe(false)
 })
+
+test('action approval requests default off and change only with explicit fresh permission state', async () => {
+    const f = fixture()
+    const body = { ...context, workspaceId: '1', expectedGrants: off, id: 'requestApproval', enabled: true }
+    expect(await (await f.app.request('/file-permissions')).json()).toMatchObject({ grants: { ...off, requestApproval: false } })
+    expect((await f.app.request('/file-permissions', patch(body))).status).toBe(409)
+    expect((await f.app.request('/file-permissions', patch({ ...body, expectedGrants: { ...off, requestApproval: false } }))).status).toBe(200)
+    expect(f.config().tools.desktopToolGrants).toEqual({ requestApproval: true })
+    expect((await f.app.request('/file-permissions', patch({ ...body, enabled: false, expectedGrants: { ...off, requestApproval: true } }))).status).toBe(200)
+    expect(f.config().tools.desktopToolGrants).toEqual({ requestApproval: false })
+})

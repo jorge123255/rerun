@@ -9,6 +9,7 @@ import {
 } from '@rerun/contracts'
 import { answeredQuestionRecapsForMessage, desktopAnsweredQuestionRecapSchema } from '@/lib/desktop/foreman/answered-question-recap'
 import { foremanHistoryParts } from '@/components/desktop/foreman/transcript/parts'
+import { desktopPendingApprovalSchema, type DesktopApprovalAnswer } from '@/lib/desktop/approvals'
 import { desktopPendingQuestionSchema, type DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import { holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { fromContractBuild } from './build-progress'
@@ -27,6 +28,7 @@ const stateSchema = z.strictObject({
     chat: foremanChatRefSchema, sessionId: z.string().min(1).max(128), model: foremanModelRefSchema.nullable(),
     view: foremanConversationViewSchema,
     question: desktopPendingQuestionSchema.nullable().optional(),
+    approval: desktopPendingApprovalSchema.nullable().optional(),
     starter: desktopStarterViewSchema.nullable().optional(),
     answeredQuestions: z.array(desktopAnsweredQuestionRecapSchema).max(2048).optional(),
     retrySnapshot: foremanDigestSchema.optional(),
@@ -174,7 +176,7 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
                 const { prepareDocuments, coworkerMentions } = messageOptions ?? {}
                 const mentions = desktopCoworkerMentionFieldsOf(checkedDesktopCoworkerMentions(text, coworkerMentions))
                 owned(chat); signal?.throwIfAborted()
-                if (isDesktopQuitting() || sending || state.question || state.starter && !state.starter.decision?.settled) return false
+                if (isDesktopQuitting() || sending || state.question || state.approval || state.starter && !state.starter.decision?.settled) return false
                 sending = true
                 let reserved = false, dispatched = false
                 try {
@@ -282,12 +284,23 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
             if (result.runId !== input.requestId) throw new Error('Foreman acknowledged a different answer.')
         } finally { sending = false; changed() }
     }
+    async function decideApproval(input: DesktopApprovalAnswer) {
+        owned(chat)
+        if (closed || isDesktopQuitting() || sending || state.view.live || state.approval?.id !== input.approvalId) {
+            throw new Error('This Foreman approval cannot be decided right now.')
+        }
+        sending = true
+        try {
+            const result = z.strictObject({ runId: z.uuid() }).parse(await act({ action: 'approval', chat, input }))
+            if (result.runId !== input.requestId) throw new Error('Foreman acknowledged different decisions.')
+        } finally { sending = false; changed() }
+    }
     async function answerStarter(raw: DesktopLocalStarterDecision) {
         const input = localStarterDecisionSchema.parse(raw)
         if (input.choice.kind === 'cards') input.choice.chosen.sort()
         const matches = (offer: DesktopForemanClientState['starter']) =>
             offer?.offerId === input.offerId && offer.intakeRequestId === input.intakeRequestId && offer.digest === input.digest
-        if (closed || isDesktopQuitting() || sending || state.view.live || state.question || !matches(state.starter)) {
+        if (closed || isDesktopQuitting() || sending || state.view.live || state.question || state.approval || !matches(state.starter)) {
             throw new Error('This starter offer cannot be answered right now.')
         }
         sending = true
@@ -304,7 +317,7 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
     }
     async function setModel(expected: DesktopForemanModelRef | null, model: DesktopForemanModelRef | null) {
         owned(chat)
-        if (isDesktopQuitting() || sending || pendingSend || state.view.live || state.question) {
+        if (isDesktopQuitting() || sending || pendingSend || state.view.live || state.question || state.approval) {
             throw new Error('Resolve the current Chief of Staff work before changing the model.')
         }
         sending = true
@@ -316,5 +329,5 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
             publish({ ...state, model: saved.model })
         } finally { sending = false; release(); changed() }
     }
-    return { answerQuestion, answerStarter, setModel, ports, refresh, acceptEvent, close: () => { closed = true; for (const request of requests) request.abort(); requests.clear(); discoveryListeners.clear() } }
+    return { answerQuestion, decideApproval, answerStarter, setModel, ports, refresh, acceptEvent, close: () => { closed = true; for (const request of requests) request.abort(); requests.clear(); discoveryListeners.clear() } }
 }

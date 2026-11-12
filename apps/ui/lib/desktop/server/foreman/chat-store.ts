@@ -4,6 +4,7 @@ import type { Client } from '@libsql/client'
 import type { DesktopDocumentSendSelection, DesktopForemanChatRef, DesktopForemanModelRef, DesktopForemanQuestionGuard, ForemanBrief } from '@rerun/contracts'
 import { desktopCoworkerMentionFieldsOf, type DesktopCoworkerMentionFields } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
+import type { DesktopApprovalAnswer } from '../../approvals'
 import type { DesktopQuestionAnswer } from '../../questions'
 import type { DesktopRuntime } from '../runtime'
 import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
@@ -29,10 +30,12 @@ export type ForemanTurn = ForemanSendFields & {
     brief: ForemanBrief
     question?: DesktopForemanQuestionGuard
     answerIntent?: DesktopQuestionAnswer
+    approval?: DesktopForemanQuestionGuard
+    approvalIntent?: DesktopApprovalAnswer
     starterOfferId?: string
 }
-export function foremanTurnWire({ binding, sessionId, text, brief, question, documents, coworkerMentions }: ForemanTurn) {
-    return { binding, sessionId, text, brief, ...(question && { question }), ...(documents && { documents }), ...desktopCoworkerMentionFieldsOf(coworkerMentions) }
+export function foremanTurnWire({ binding, sessionId, text, brief, question, approval, documents, coworkerMentions }: ForemanTurn) {
+    return { binding, sessionId, text, brief, ...(question && { question }), ...(approval && { approval }), ...(documents && { documents }), ...desktopCoworkerMentionFieldsOf(coworkerMentions) }
 }
 const LOCKS = Symbol.for('rerun.desktop.foreman.chat-locks.v1')
 const locks = () => ((globalThis as unknown as Record<symbol, WeakMap<Client, Promise<unknown>>>)[LOCKS] ??= new WeakMap())
