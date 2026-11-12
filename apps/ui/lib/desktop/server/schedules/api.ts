@@ -21,6 +21,8 @@ const input=z.object({name:z.string().trim().min(1).max(120),description:z.strin
     ctx.addIssue({code:'custom',message:'Choose a connected provider and model, or follow the coworker default'})
 })
 const scheduleSlug = z.string().regex(/^[a-zA-Z0-9_-]{1,160}$/)
+const runIdentity = z.object({ sessionId: z.string(), runId: z.string() })
+const reviewedRunResult = z.object({ result: z.object({ run: runIdentity }) })
 export type DesktopScheduleInput=z.infer<typeof input>
 export type ScheduleAccess=(engineAgentId:string)=>Promise<void>
 export const SCHEDULE_BODY_TIMEOUT_MS=10_000
@@ -141,19 +143,25 @@ export function desktopSchedulesApi(db:Client,authorize:ScheduleAccess) {
                 else if(request.method==='POST' && slug && body.action==='run') {
                     const requestId=z.string().uuid().parse(body.requestId)
                     const expectedRevision = desktopScheduleRevisionSchema.optional().parse(body.expectedRevision)
-                    const response = await fetch(`${engine.baseUrl}/agents/${encodeURIComponent(owner.engineAgentId)}/schedules/${encodeURIComponent(slug)}/run`, {
+                    const ownerPath = encodeURIComponent(owner.engineAgentId)
+                    const route = expectedRevision ? `/desktop/workspace-routines/${ownerPath}`
+                        : `/agents/${ownerPath}/schedules/${encodeURIComponent(slug)}/run`
+                    const response = await fetch(`${engine.baseUrl}${route}`, {
                         method: 'POST', redirect: 'error', signal: AbortSignal.any([request.signal, AbortSignal.timeout(120000)]),
                         headers: {
                             Authorization: `Bearer ${engine.apiKey}`,
-                            'x-desktop-schedule-request-id': requestId,
-                            ...(expectedRevision && { 'x-desktop-schedule-revision': expectedRevision }),
+                            ...(expectedRevision ? { 'Content-Type': 'application/json' } : { 'x-desktop-schedule-request-id': requestId }),
                         },
+                        body: expectedRevision ? JSON.stringify({ operation: 'mutate', input: { action: 'run', agentId, slug, expectedRevision, requestId } }) : undefined,
                     })
                     if (!response.ok) {
-                        const message = response.status === 412 ? 'This routine changed. Refresh it before running.' : 'Task could not start'
+                        const message = expectedRevision && response.status === 409
+                            ? 'This routine or its setup changed. Refresh it before running.'
+                            : 'Task could not start'
                         throw new DesktopHttpError(response.status, message)
                     }
-                    const ids=z.object({sessionId:z.string(),runId:z.string()}).parse(await response.json())
+                    const payload = await response.json()
+                    const ids = expectedRevision ? reviewedRunResult.parse(payload).result.run : runIdentity.parse(payload)
                     result = await adoptDesktopScheduledSession(db, engine, {
                         agentId, engineAgentId: owner.engineAgentId, engineSessionId: ids.sessionId, runId: ids.runId, scheduleSlug: slug,
                     }, { signal: request.signal, authorize: () => authorize(owner.engineAgentId) })

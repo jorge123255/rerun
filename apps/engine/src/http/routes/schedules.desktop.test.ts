@@ -136,32 +136,27 @@ test('rechecks the schedules grant inside the deletion lock', async () => {
 })
 
 const manualId = '00000000-0000-4000-8000-000000000004'
-const testRun = (revision: string) => app.request('/agents/owner/schedules/daily/run', {
-    method: 'POST', headers: { 'x-desktop-schedule-request-id': manualId, 'x-desktop-schedule-revision': revision },
+const testRun = () => app.request('/agents/owner/schedules/daily/run', {
+    method: 'POST', headers: { 'x-desktop-schedule-request-id': manualId },
 })
 
-test('desktop lists the revision shared with workspace routines and checks it before starting a run', async () => {
+test('desktop lists the revision shared with workspace routines', async () => {
+    const hosted = await app.request('/agents/owner/schedules')
+    expect(await hosted.json()).toEqual({ schedules: [daily] })
     state.desktop = true
     const revision = desktopScheduleDefinitionRevision(daily)
     const list = await app.request('/agents/owner/schedules')
     expect(await list.json()).toEqual({ schedules: [{ ...daily, revision }] })
-    expect((await testRun('a'.repeat(64))).status).toBe(412)
-    expect((await testRun('invalid')).status).toBe(400)
-    expect(state.fire).not.toHaveBeenCalled()
-    state.fire.mockResolvedValueOnce({ runId: 'exact-run', sessionId: 'exact-chat' })
-    expect((await testRun(revision)).status).toBe(202)
-    expect(state.fire).toHaveBeenCalledExactlyOnceWith('owner', daily, { markFired: false, ignoreBudgetLatch: true, manualId })
 })
 
 test('a reviewed paused schedule can run once after setup but stays gated during setup', async () => {
     state.desktop = true
     const paused = { ...daily, enabled: false }
-    const revision = desktopScheduleDefinitionRevision(paused)
     state.read.mockResolvedValue(paused)
     state.getAgent.mockResolvedValueOnce({ config: { setup: { required: true, completedAt: null } }, install: 'Complete setup first.' })
-    expect((await testRun(revision)).status).toBe(409)
+    expect((await testRun()).status).toBe(409)
     expect(state.fire).not.toHaveBeenCalled()
     state.fire.mockResolvedValueOnce({ runId: 'paused-run', sessionId: 'paused-chat' })
-    expect((await testRun(revision)).status).toBe(202)
+    expect((await testRun()).status).toBe(202)
     expect(state.fire).toHaveBeenCalledExactlyOnceWith('owner', paused, { markFired: false, ignoreBudgetLatch: true, manualId })
 })

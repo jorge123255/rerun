@@ -121,10 +121,6 @@ scheduleRoutes.post('/:slug/run', async c => {
     await authorize(agentId)
     if (!scheduleExists(agentId, slug)) return c.json({ error: 'schedule not found' }, 404)
     const schedule = await readSchedule(agentId, slug)
-    const expected = reviewedRevision(c.req.header('x-desktop-schedule-revision'))
-    if (expected !== undefined && expected !== desktopScheduleDefinitionRevision(schedule)) {
-        throw new HttpError(412, 'This routine changed. Refresh it before running.')
-    }
     // A schedule still paused for the install would start in a fresh session carrying the install
     // prompt and tools, and run a second install beside the real one. Skipping the setup switches
     // the schedules on, which lifts this.

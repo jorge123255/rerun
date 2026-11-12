@@ -20,7 +20,7 @@ export function scheduleRead<T>(work: Promise<T>, signal?: AbortSignal): Promise
 
 type ScheduleAdoption = { agentId: string; engineAgentId: string } & (
     | { engineSessionId: string; runId?: string | null; scheduleSlug?: never }
-    | { engineSessionId?: never; runId: string; scheduleSlug: string }
+    | { engineSessionId?: string; runId: string; scheduleSlug: string }
 )
 
 /** Both callback adoption and manual/history adoption use this exact ownership boundary. */

@@ -41,6 +41,15 @@ it('replays one run identity but permits a later explicit run under a new reques
     expect((await call({ ...original, requestId: '00000000-0000-4000-8000-000000000002' })).ok).toBe(true)
     expect(state.runs).toBe(2)
 })
+it('replays a completed request only for its original reviewed revision', async () => {
+    const original = { action: 'run', agentId: 'local-a', slug: 'daily', expectedRevision: revision(), requestId: id }
+    expect((await call(original)).status).toBe(200)
+    state.schedule.body = 'A different prompt'
+    expect((await call({ ...original, expectedRevision: revision() })).status).toBe(409)
+    const replay = await call(original)
+    expect(await replay.json()).toMatchObject({ result: { run: { runId: 'run-1', sessionId: 'session-1' } } })
+    expect(state.runs).toBe(1)
+})
 it('retains exact run/session identity in the receipt and refuses an old incomplete receipt without launching again', async () => {
     const original = { action: 'run', agentId: 'local-a', slug: 'daily', expectedRevision: revision(), requestId: id }
     const first = await call(original)

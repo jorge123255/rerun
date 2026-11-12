@@ -106,7 +106,7 @@ test('keeps the reviewed Test Run request on its exact owner, routine and revisi
     const requestId = '00000000-0000-4000-8000-000000000004'
     const saved = { agentId: 'local-owner', engineAgentId: 'engine-owner', sessionId: 'local-session', engineSessionId: 'engine-session',
         tabUid: 'schedule:local-session', title: 'Daily', runId: 'exact' }
-    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ sessionId: saved.engineSessionId, runId: saved.runId }, { status: 202 }))
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ result: { run: { sessionId: saved.engineSessionId, runId: saved.runId } } }))
     vi.mocked(adoptDesktopScheduledSession).mockResolvedValueOnce(saved)
     try {
         const response = await handle(new Request('http://localhost/schedules', {
@@ -114,8 +114,9 @@ test('keeps the reviewed Test Run request on its exact owner, routine and revisi
         }))
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual(saved)
-        expect(fetch).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1/agents/engine-owner/schedules/daily/run', expect.objectContaining({
-            method: 'POST', redirect: 'error', headers: expect.objectContaining({ 'x-desktop-schedule-request-id': requestId, 'x-desktop-schedule-revision': expectedRevision }),
+        expect(fetch).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1/desktop/workspace-routines/engine-owner', expect.objectContaining({
+            method: 'POST', redirect: 'error',
+            body: JSON.stringify({ operation: 'mutate', input: { action: 'run', agentId: 'local-owner', slug: 'daily', expectedRevision, requestId } }),
         }))
         expect(adoptDesktopScheduledSession).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
             agentId: 'local-owner', engineAgentId: 'engine-owner', engineSessionId: 'engine-session', runId: 'exact', scheduleSlug: 'daily',
