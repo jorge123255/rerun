@@ -1,14 +1,20 @@
 import { fileURLToPath } from 'node:url'
+import { shellCopy } from './shell-language.mjs'
 
 const page = new URL('./find.html', import.meta.url)
 const preload = fileURLToPath(new URL('./find-preload.cjs', import.meta.url))
 const width = 380, height = 52, margin = 12
 
-export function createWindowFind({ WebContentsView, scopeOf, topInset }) {
+export function createWindowFind({ WebContentsView, scopeOf, topInset, language = () => 'en' }) {
     let current
     const active = entry => current === entry && !entry.view.webContents.isDestroyed() && scopeOf(entry.window) === entry.scope
     const trusted = event => current && active(current) && event.sender === current.view.webContents
         && event.senderFrame === current.view.webContents.mainFrame && event.senderFrame.url === page.href
+
+    function focus(entry) {
+        entry.view.webContents.focus()
+        entry.view.webContents.send('desktop:find-focus', shellCopy(language(entry.window), 'find'))
+    }
 
     function close(window, focus = false) {
         if (!current || current.window !== window) return
@@ -36,8 +42,7 @@ export function createWindowFind({ WebContentsView, scopeOf, topInset }) {
             const scope = scopeOf(window)
             if (!scope) return
             if (current?.window === window && active(current)) {
-                current.view.webContents.focus()
-                current.view.webContents.send('desktop:find-focus')
+                focus(current)
                 return
             }
             if (current) close(current.window)
@@ -80,10 +85,7 @@ export function createWindowFind({ WebContentsView, scopeOf, topInset }) {
             view.webContents.once('render-process-gone', () => { if (current === entry) close(window) })
             view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
             void view.webContents.loadFile(fileURLToPath(page)).then(() => {
-                if (active(entry)) {
-                    view.webContents.focus()
-                    view.webContents.send('desktop:find-focus')
-                }
+                if (active(entry)) focus(entry)
                 else if (current === entry) close(window)
             }).catch(() => { if (current === entry) close(window) })
         },

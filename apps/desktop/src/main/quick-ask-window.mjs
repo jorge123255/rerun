@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { shellCopy } from './shell-language.mjs'
 
 export const QUICK_ASK_SHORTCUT = 'CommandOrControl+Shift+Space'
 const page = new URL('./quick-ask.html', import.meta.url)
@@ -27,7 +28,7 @@ export function focusQuickAsk({ app, screen, window }) {
     window.webContents.focus()
 }
 
-export function createQuickAskWindow({ app, BrowserWindow, screen, boardScope, showBoard }) {
+export function createQuickAskWindow({ app, BrowserWindow, screen, boardScope, showBoard, language = () => 'en' }) {
     let surface, ready, pending
     const sameScope = (left, right) => !!left && !!right && left.epoch === right.epoch && left.contents === right.contents
     const active = entry => !!entry && entry === surface && sameScope(entry.scope, boardScope())
@@ -56,7 +57,7 @@ export function createQuickAskWindow({ app, BrowserWindow, screen, boardScope, s
         if (!active(entry) || !entry.requested || !entry.loaded) return
         entry.shownAt = Date.now()
         focusQuickAsk({ app, screen, window: entry.window })
-        entry.window.webContents.send('desktop:quick-ask-focus')
+        entry.window.webContents.send('desktop:quick-ask-focus', shellCopy(language(), 'quickAsk'))
     }
 
     return {

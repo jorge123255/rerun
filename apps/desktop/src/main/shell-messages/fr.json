@@ -77,5 +77,21 @@
         "detail": "Un coworker travaille encore ou un fichier a des modifications non enregistrées.",
         "leave": "Quitter",
         "stay": "Rester"
+    },
+    "find": {
+        "placeholder": "Rechercher dans la page",
+        "matches": "{active} sur {total}",
+        "noMatches": "Aucun résultat",
+        "previous": "Résultat précédent",
+        "next": "Résultat suivant",
+        "close": "Fermer"
+    },
+    "quickAsk": {
+        "placeholder": "Demandez à votre Chief of Staff…",
+        "hint": "Entrée pour envoyer, Échap pour fermer",
+        "send": "Envoyer",
+        "title": "Question rapide",
+        "opening": "Ouverture de la conversation…",
+        "unavailable": "Impossible d’ouvrir la conversation. Réessayez quand l’espace de travail est prêt."
     }
 }

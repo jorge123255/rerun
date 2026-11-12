@@ -77,5 +77,21 @@
         "detail": "A coworker is still working or a file has unsaved changes.",
         "leave": "Leave",
         "stay": "Stay"
+    },
+    "find": {
+        "placeholder": "Find in page",
+        "matches": "{active} of {total}",
+        "noMatches": "No results",
+        "previous": "Previous match",
+        "next": "Next match",
+        "close": "Close"
+    },
+    "quickAsk": {
+        "placeholder": "Ask your Chief of Staff…",
+        "hint": "Enter to send, Esc to close",
+        "send": "Send",
+        "title": "Quick Ask",
+        "opening": "Opening your conversation…",
+        "unavailable": "Could not open a conversation. Try again when the workspace is ready."
     }
 }

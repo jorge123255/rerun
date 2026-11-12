@@ -4,5 +4,5 @@ contextBridge.exposeInMainWorld('desktopFind', {
     search: (text, forward, step) => ipcRenderer.send('desktop:find-query', { text, forward, step }),
     close: () => ipcRenderer.send('desktop:find-close'),
     onResult: callback => { ipcRenderer.on('desktop:find-result', (_event, result) => callback(result)) },
-    onFocus: callback => { ipcRenderer.on('desktop:find-focus', () => callback()) },
+    onFocus: callback => { ipcRenderer.on('desktop:find-focus', (_event, copy) => callback(copy)) },
 })

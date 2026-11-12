@@ -77,5 +77,21 @@
         "detail": "Ein Coworker arbeitet noch oder eine Datei hat ungesicherte Änderungen.",
         "leave": "Verlassen",
         "stay": "Bleiben"
+    },
+    "find": {
+        "placeholder": "Auf der Seite suchen",
+        "matches": "{active} von {total}",
+        "noMatches": "Keine Treffer",
+        "previous": "Vorheriger Treffer",
+        "next": "Nächster Treffer",
+        "close": "Schließen"
+    },
+    "quickAsk": {
+        "placeholder": "Frag deinen Chief of Staff…",
+        "hint": "Enter zum Senden, Esc zum Schließen",
+        "send": "Senden",
+        "title": "Schnellfrage",
+        "opening": "Unterhaltung wird geöffnet…",
+        "unavailable": "Die Unterhaltung konnte nicht geöffnet werden. Versuche es erneut, sobald der Arbeitsbereich bereit ist."
     }
 }

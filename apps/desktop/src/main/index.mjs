@@ -57,10 +57,12 @@ let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const boards = createBoardWindows({ startupUrl: pathToFileURL(startup).href, isDesktopPage })
 const changingBoards = new Set()
-const quickAsk = createQuickAskWindow({ app, BrowserWindow, screen, showBoard: showMainWindow, boardScope: () =>
+const quickAsk = createQuickAskWindow({ app, BrowserWindow, screen, showBoard: showMainWindow,
+    language: () => shellLanguage?.forScope('local'), boardScope: () =>
     boardContext(window) ? { epoch: boards.get(window).epoch, contents: window.webContents } : null,
 })
 const windowFind = createWindowFind({ WebContentsView, scopeOf: candidate => boardContext(candidate)?.rendererEpoch ?? connectedHubs?.scopeOf(candidate),
+    language: candidate => shellLanguage?.forScope(connectedHubs?.languageScopeOf(candidate) ?? 'local'),
     topInset: candidate => mac && !candidate.isFullScreen() ? 28 : 0,
 })
 function boardContext(candidate) {

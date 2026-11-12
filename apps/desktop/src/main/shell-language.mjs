@@ -23,6 +23,11 @@ export function shellText(locale) {
     }
 }
 
+export function shellCopy(value, section) {
+    const locale = shellLocale(value) ?? 'en'
+    return { ...en[section], ...messages[locale][section], locale }
+}
+
 export async function loadShellLanguage({ dataRoot, systemLanguages, currentScope, onChange }) {
     const file = join(dataRoot, 'shell-language.json')
     const saved = await readJSON(file).catch(() => null)

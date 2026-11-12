@@ -2,11 +2,31 @@ const form = document.querySelector('form')
 const prompt = document.getElementById('prompt')
 const status = document.getElementById('status')
 const send = document.querySelector('button')
-const hint = status.textContent
+let copy = {
+    hint: status.textContent,
+    opening: 'Opening your conversation…',
+    unavailable: 'Could not open a conversation. Try again when the workspace is ready.',
+}
+let statusKey = 'hint'
+function renderStatus(key = statusKey) {
+    statusKey = key
+    status.textContent = copy[key]
+}
 let sending = false
 
 function update() { send.disabled = sending || !prompt.value.trim() }
-window.desktopQuickAsk.onFocus(() => prompt.focus())
+window.desktopQuickAsk.onFocus(value => {
+    if (value) {
+        copy = value
+        document.documentElement.lang = copy.locale
+        document.title = copy.title
+        prompt.placeholder = copy.placeholder
+        prompt.setAttribute('aria-label', copy.placeholder)
+        send.textContent = copy.send
+        renderStatus()
+    }
+    prompt.focus()
+})
 prompt.addEventListener('input', update)
 document.addEventListener('keydown', event => {
     if (event.isComposing) return
@@ -22,13 +42,13 @@ form.addEventListener('submit', async event => {
     sending = true
     prompt.readOnly = true
     update()
-    status.textContent = 'Opening your conversation…'
+    renderStatus('opening')
     try {
         if (!await window.desktopQuickAsk.send(prompt.value)) throw new Error('Conversation unavailable')
         prompt.value = ''
-        status.textContent = hint
+        renderStatus('hint')
     } catch {
-        status.textContent = 'Could not open a conversation. Try again when the workspace is ready.'
+        renderStatus('unavailable')
     } finally {
         sending = false
         prompt.readOnly = false

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { runInNewContext } from 'node:vm'
+import { shellCopy } from '../src/main/shell-language.mjs'
 import { createWindowFind } from '../src/main/window-find.mjs'
 
 test('page Find accepts only its sandboxed frame and discards stale requests and scopes', async () => {
@@ -42,7 +43,7 @@ test('page Find accepts only its sandboxed frame and discards stale requests and
         setBackgroundColor() {}
         setBounds(bounds) { positions.push(bounds) }
     }
-    const find = createWindowFind({ WebContentsView: View, scopeOf: owner => owner === window ? scope : null, topInset: () => fullscreen ? 0 : 28 })
+    const find = createWindowFind({ WebContentsView: View, scopeOf: owner => owner === window ? scope : null, topInset: () => fullscreen ? 0 : 28, language: () => 'fr' })
     find.open(window)
     await Promise.resolve()
     assert.deepEqual(positions, [{ x: 508, y: 40, width: 380, height: 52 }])
@@ -58,7 +59,7 @@ test('page Find accepts only its sandboxed frame and discards stale requests and
     assert.deepEqual(positions.at(-1), { x: 508, y: 40, width: 380, height: 52 })
     const sender = currentView.webContents
     const event = { sender, senderFrame: sender.mainFrame }
-    assert.deepEqual(calls.splice(0), [['desktop:find-focus']])
+    assert.deepEqual(calls.splice(0), [['desktop:find-focus', shellCopy('fr','find')]])
     find.search({ sender, senderFrame: {} }, { text: 'foreign' })
     find.search(event, { text: 'x'.repeat(501) })
     assert.deepEqual(calls, [])

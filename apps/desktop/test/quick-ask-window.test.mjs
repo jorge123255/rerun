@@ -2,10 +2,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { pathToFileURL } from 'node:url'
+import { shellCopy } from '../src/main/shell-language.mjs'
 import { createQuickAskWindow } from '../src/main/quick-ask-window.mjs'
 
 test('Quick Ask is isolated and keeps one prompt identity through refusal and retry', async () => {
-    let popup, shown = 0
+    let popup, shown = 0, language = 'fr'
+    const copies = []
     class Window extends EventEmitter {
         constructor({ webPreferences }) {
             super()
@@ -14,7 +16,7 @@ test('Quick Ask is isolated and keeps one prompt identity through refusal and re
             })
             popup = this
             this.webContents = Object.assign(new EventEmitter(), {
-                mainFrame: {}, focus() {}, send() {}, setWindowOpenHandler: handler => assert.deepEqual(handler(), { action: 'deny' }),
+                mainFrame: {}, focus() {}, send(channel, value) { assert.equal(channel, 'desktop:quick-ask-focus'); copies.push(value) }, setWindowOpenHandler: handler => assert.deepEqual(handler(), { action: 'deny' }),
             })
         }
         setAlwaysOnTop() {}
@@ -33,7 +35,7 @@ test('Quick Ask is isolated and keeps one prompt identity through refusal and re
     const sender = { sender: board, senderFrame: frame }
     let epoch = 'first'
     const quickAsk = createQuickAskWindow({ app: { focus() {} }, BrowserWindow: Window, showBoard: () => { shown++ },
-        boardScope: () => ({ epoch, contents: board }),
+        boardScope: () => ({ epoch, contents: board }), language: () => language,
         screen: { getCursorScreenPoint() {}, getDisplayNearestPoint: () => ({ workArea: { x: 0, y: 0, width: 900, height: 600 } }) } })
     quickAsk.toggle()
     assert.equal(popup, undefined)
@@ -41,6 +43,7 @@ test('Quick Ask is isolated and keeps one prompt identity through refusal and re
     quickAsk.toggle()
     await Promise.resolve()
     assert.equal(popup.visible, true)
+    assert.deepEqual(copies, [shellCopy('fr','quickAsk')])
     const event = { sender: popup.webContents, senderFrame: popup.webContents.mainFrame }
     assert.equal(await quickAsk.send({ ...event, senderFrame: {} }, 'Foreign frame'), false)
     assert.equal(await quickAsk.send(event, 'x'.repeat(4001)), false)
@@ -57,7 +60,9 @@ test('Quick Ask is isolated and keeps one prompt identity through refusal and re
     assert.equal(await second, true)
     assert.equal(shown, 1)
     assert.equal(popup.visible, false)
+    language = 'de'
     quickAsk.toggle()
+    assert.deepEqual(copies.at(-1), shellCopy('de','quickAsk'))
     const stale = quickAsk.send(event, 'Unacknowledged prompt')
     epoch = 'second'
     quickAsk.invalidate()

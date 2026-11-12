@@ -77,5 +77,21 @@
         "detail": "Um coworker ainda está trabalhando ou um arquivo tem alterações não salvas.",
         "leave": "Sair",
         "stay": "Ficar"
+    },
+    "find": {
+        "placeholder": "Buscar na página",
+        "matches": "{active} de {total}",
+        "noMatches": "Nenhum resultado",
+        "previous": "Resultado anterior",
+        "next": "Próximo resultado",
+        "close": "Fechar"
+    },
+    "quickAsk": {
+        "placeholder": "Pergunte ao seu Chief of Staff…",
+        "hint": "Enter para enviar, Esc para fechar",
+        "send": "Enviar",
+        "title": "Pergunta rápida",
+        "opening": "Abrindo a conversa…",
+        "unavailable": "Não foi possível abrir a conversa. Tente novamente quando o espaço de trabalho estiver pronto."
     }
 }
