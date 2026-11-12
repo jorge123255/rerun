@@ -17,7 +17,11 @@ function fixture() {
             send: (...args) => messages.push(args),
         })
         let destroyed = false
-        const window = { webContents: contents, isDestroyed: () => destroyed, loadURL: async address => { navigations.push(address) } }
+        contents.reload = () => {
+            navigations.push(contents.mainFrame.url)
+            contents.emit('did-finish-load')
+        }
+        const window = { webContents: contents, isDestroyed: () => destroyed }
         const entry = registry.register(window, { primary })
         entry.runtime = runtime
         return {
@@ -123,4 +127,18 @@ test('Stay resumes the old board and stale discard approval cannot reload a new 
     }), false)
     assert.equal(resumed, 1)
     assert.deepEqual(target.navigations, [])
+})
+
+test('a reload blocked by the original document releases its draft freeze', async () => {
+    const { registry, create } = fixture()
+    const target = create()
+    target.entry.contents.reload = () => target.entry.contents.emit('will-prevent-unload')
+    target.entry.drafts.register('target-board')
+    let resumed = false
+    const reloaded = registry.reload(target.entry, runtime, () => assert.fail('already saved'), () => { resumed = true })
+    const [, request] = target.messages[0]
+    target.entry.drafts.acknowledge({ ...request, saved: true })
+    assert.equal(await reloaded, false)
+    assert.equal(resumed, true)
+    assert.equal(target.entry.contents.listenerCount('did-finish-load'), 0)
 })

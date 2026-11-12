@@ -11,6 +11,27 @@ export function cascadeWindowBounds(window, screen) {
     }
 }
 
+function reloadDocument(contents) {
+    return new Promise(resolve => {
+        const finish = result => {
+            clearTimeout(timeout)
+            contents.removeListener('did-finish-load', loaded)
+            contents.removeListener('did-fail-load', failed)
+            for (const event of interruptions) contents.removeListener(event, interrupted)
+            resolve(result)
+        }
+        const loaded = () => finish(true)
+        const failed = (_event, _code, _reason, _url, mainFrame) => { if (mainFrame) finish(false) }
+        const interrupted = () => finish(false)
+        const interruptions = ['will-prevent-unload', 'render-process-gone', 'destroyed']
+        const timeout = setTimeout(interrupted, 15000)
+        contents.once('did-finish-load', loaded)
+        contents.on('did-fail-load', failed)
+        for (const event of interruptions) contents.once(event, interrupted)
+        try { contents.reload() } catch { interrupted() }
+    })
+}
+
 export function createBoardWindows({ startupUrl, isDesktopPage }) {
     const entries = new Map()
     const live = entry => entry && !entry.window.isDestroyed() && !entry.contents.isDestroyed()
@@ -50,12 +71,8 @@ export function createBoardWindows({ startupUrl, isDesktopPage }) {
         const address = frame.url
         const current = () => ready(entry, runtime) && entry.epoch === epoch
             && contents.mainFrame === frame && frame.url === address
-        try {
-            if (await approveDesktopDraftDrain(() => flush(entry, runtime, true), confirmDiscard, current)) {
-                await entry.window.loadURL(address)
-                return true
-            }
-        } catch { /* A failed navigation must release the original renderer if it still owns the window. */ }
+        if (await approveDesktopDraftDrain(() => flush(entry, runtime, true), confirmDiscard, current)
+            && await reloadDocument(contents)) return true
         if (ready(entry, runtime) && entry.epoch === epoch) resume()
         return false
     }
