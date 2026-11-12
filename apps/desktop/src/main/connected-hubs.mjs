@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { checkHub, hubPartition, hubWindowAddress, HUB_API_VERSION, normalizeHubOrigin, parseHubWorkspaceId, sameHub } from './connected-hub-policy.mjs'
 import { cascadeWindowBounds } from './board-windows.mjs'
+import { restoreWindowZoom } from './window-placement.mjs'
 import { createHubAuth } from './connected-hub-auth.mjs'
 import { createHubDownloads, isHubDownload } from './connected-hub-downloads.mjs'
 import { createConnectedHubQuickAsk } from './connected-hub-quick-ask.mjs'
@@ -19,7 +20,7 @@ const offlinePage = new URL('./connected-hub-offline.html', import.meta.url)
 const preload = fileURLToPath(new URL('./connected-hub-preload.cjs', import.meta.url))
 const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads', 'notifications', 'badge', 'settings', 'oauth']
 
-export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot,
+export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
     available, openFind, closeFind, setUnread, desktopSettings, changeDesktopSettings }) {
     const file = resolve(dataRoot, 'connected-hub.json')
     const windows = new Map()
@@ -199,6 +200,8 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         signal.throwIfAborted()
         const address = new URL(path ?? '/', origin)
         if (!sameHub(address, origin)) return false
+        const placement = bounds ? null : await windowPlacements.restore(origin)
+        signal.throwIfAborted()
         const existing = !bounds && [...windows.values()].find(entry => entry.origin === origin && !entry.window.isDestroyed())
         if (existing) {
             const target = path === null ? existing.recovery.target() : address.href
@@ -211,7 +214,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             show(existing.window)
             return true
         }
-        const window = new BrowserWindow({ width: 1220, height: 820, ...bounds, minWidth: 720, minHeight: 520, show: false,
+        const window = new BrowserWindow({ ...(placement?.bounds ?? bounds), minWidth: 720, minHeight: 520, show: false,
             title: 'Rerun', backgroundColor: '#101214', titleBarStyle: 'hidden', trafficLightPosition: { x: 12, y: 8 },
             webPreferences: preferences(desktopSession) })
         const contents = window.webContents
@@ -318,6 +321,11 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             const opened = offline ? await entry.recovery.showOffline(address.href, 'offline') : await entry.recovery.navigate(address.href)
             signal.throwIfAborted()
             if (!opened) throw new Error('Server left its origin')
+            if (placement) {
+                restoreWindowZoom(window, placement.maximized)
+                const capture = windowPlacements.track(origin, window)
+                window.on('close', () => { capture(); void windowPlacements.flush() })
+            }
             show(window)
             return true
         } catch { abort(); return false }

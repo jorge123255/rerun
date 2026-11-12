@@ -21,6 +21,7 @@ import { createWindowFind } from './window-find.mjs'
 import { createQuickAskWindow } from './quick-ask-window.mjs'
 import { loadQuickAskShortcut } from './quick-ask-shortcut.mjs'
 import { cascadeWindowBounds, createBoardWindows } from './board-windows.mjs'
+import { captureWindowPlacement, createWindowPlacements, restoreWindowZoom } from './window-placement.mjs'
 import { createConnectedHubs } from './connected-hubs.mjs'
 import { parseHubLink, registerHubProtocol } from './connected-hub-policy.mjs'
 
@@ -28,11 +29,14 @@ const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
 const mac = process.platform === 'darwin'
 const dataRoot = resolve(app.getPath('appData'), 'Rerun Desktop Preview')
+const windowPlacements = mac ? createWindowPlacements({ dataRoot, screen }) : null
+const boardPlacement = 'local-board'
 let storageSetupError
 let window
 let menuBar
 let shortcutPreference
 let lastWorkspaceWindow
+let saveBoardPlacement
 let showWindowOnReady = true
 let supervisor
 let runtime
@@ -197,6 +201,8 @@ else {
                 await shortcutPreference?.flush()
                 await remoteMachines?.close()
                 await supervisor?.stop()
+                saveBoardPlacement?.()
+                await windowPlacements?.flush()
             },
             quit: () => { clickHandoff.stop(); quittingNow = true; app.quit() },
             cancelled: resumeAfterCancelledQuit,
@@ -243,7 +249,7 @@ async function launch() {
     if (mac) {
         if (app.isPackaged && !registerHubProtocol(app)) console.warn('Could not register Rerun development links with macOS.')
         shortcutPreference = await loadQuickAskShortcut({ dataRoot, globalShortcut, open: toggleQuickAsk })
-        connectedHubs = createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot,
+        connectedHubs = createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
             available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate),
             setUnread: count => { hubUnread = count; publishMacUnread() }, desktopSettings, changeDesktopSettings })
         app.on('browser-window-focus', (_event, candidate) => {
@@ -488,11 +494,17 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
     desktopSession.setPermissionRequestHandler(microphone.request)
     desktopSession.setPermissionCheckHandler(microphone.check)
     const old = window
-    const bounds = old && !old.isDestroyed() ? old.getBounds() : null
+    const placement = mac
+        ? (old && captureWindowPlacement(old)) || await windowPlacements.restore(boardPlacement)
+        : { bounds: old && !old.isDestroyed() ? old.getBounds() : null }
     if (old && !old.isDestroyed()) old.destroy()
     desktopNotifications.close()
     desktopNotifications = createNotices()
-    window = createBoardWindow(desktopSession, bounds, true).window
+    window = createBoardWindow(desktopSession, placement.bounds, true).window
+    if (windowPlacements) {
+        restoreWindowZoom(window, placement.maximized)
+        saveBoardPlacement = windowPlacements.track(boardPlacement, window)
+    }
     activeSession = desktopSession
     activeWorkspaceId = workspaceId
     if (load) await window.loadFile(startup)
