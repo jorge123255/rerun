@@ -35,6 +35,7 @@ import { MessageFeedbackDialog } from '@/components/chat/MessageFeedbackDialog'
 import { useDesktopReplyFeedback } from '@/lib/desktop/reply-feedback'
 import { DesktopComputerPanel } from './computer-panel/DesktopComputerPanel'
 import { DesktopSelectedMentionText } from './mentions/DesktopSelectedMentionText'
+import { DesktopWorkspaceMessage } from './DesktopWorkspaceMessage'
 import { DesktopAssistantReply } from './DesktopAssistantReply'
 import { DesktopVoiceComposer } from './voice/DesktopVoiceComposer'
 import { DesktopVoiceHistoryMessage } from './voice/DesktopVoiceHistoryMessage'
@@ -1397,17 +1398,16 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                         </Fragment>
                         const scheduledRun = scheduledRunOf(message)
                         const triggerPayload = message.role === 'user' ? parseTriggerPayload(message.parts.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n')) : null
-                        // Reuse Rerun's routine divider and prompt dialog. No hosted file-link
-                        // navigation: the desktop Files panel owns this coworker's documents.
+                        const onOpenWorkspaceFile = active ? openWorkspaceFile : undefined
                         const install = message.role==='user' ? parseInstallMessage(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
-                        if(install)return withTimeline(<AgentInstallBlock agentId={agent.id} agentName={agent.name} guide={install.guide} installing={setup.view?.completedAt == null} />)
+                        if(install)return withTimeline(<AgentInstallBlock agentId={agent.id} agentName={agent.name} onOpenWorkspaceFile={onOpenWorkspaceFile} guide={install.guide} installing={setup.view?.completedAt == null} />)
                         const hitl = message.role === 'user' ? parseHitlReply(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
                         const secretReceipt = message.role === 'user' ? parseDesktopSecretReceiptSummary(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
                         if (secretReceipt) return withTimeline(<DesktopSecretSummaryReceipt entries={secretReceipt} />)
                         if (hitl?.kind === 'mcp' || hitl?.kind === 'cancelled' && hitl.of === 'mcp') return withTimeline(<DesktopMcpSignInSummary name={hitl.kind === 'mcp' ? hitl.name : undefined} />)
                         if(hitl?.kind==='service')return withTimeline(<DesktopServiceRequestReceipt entries={hitl.entries} />)
-                        if (triggerPayload) return withTimeline(<DesktopWebhookRunBlock agentId={agent.id} payload={triggerPayload} />)
-                        if (scheduledRun) return withTimeline(<DesktopScheduledRunBlock run={scheduledRun} />)
+                        if (triggerPayload) return withTimeline(<DesktopWebhookRunBlock agentId={agent.id} onOpenWorkspaceFile={onOpenWorkspaceFile} payload={triggerPayload} />)
+                        if (scheduledRun) return withTimeline(<DesktopScheduledRunBlock agentId={agent.id} onOpenWorkspaceFile={onOpenWorkspaceFile} run={scheduledRun} />)
                         const bubble = (
                                 <MessageContent className={cn(message.role === 'user' ? [USER_BUBBLE_SHAPE, USER_BUBBLE_INK, 'whitespace-pre-wrap wrap-anywhere'] : 'overflow-visible')}>
                                     {message.role === 'user' && (() => {
@@ -1425,7 +1425,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                                     })()}
                                     {message.role === 'assistant'
                                         ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} createdAt={createdAt} streaming={(status === 'streaming' || serviceStreaming) && messageIndex === transcript.length - 1}
-                                            onOpenWorkspaceFile={active ? openWorkspaceFile : undefined}
+                                            onOpenWorkspaceFile={onOpenWorkspaceFile}
                                             toolInstall={sessionId ? { sessionId, active: active && ready, disabled: draft.quitting || inactive || generating || stopping } : undefined}
                                             childRuns={sessionId ? { sessionId, active, onOpenTarget: onOpenCoworkerChat } : undefined}
                                             skillProposals={{ rows: skillProposals.proposals, pinnedIds: skillProposals.pinnedIds, pendingId: skillProposals.pendingId,
@@ -1438,7 +1438,10 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                                             onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />
                                         : message.parts.map((part, index) => {
                                             if (part.type !== 'text') return null
-                                            const text = <DesktopSelectedMentionText text={part.text} metadata={message.metadata} linkify={message.role === 'user'} />
+                                            const text = message.role === 'user'
+                                                ? <DesktopWorkspaceMessage agentId={agent.id} onOpenWorkspaceFile={onOpenWorkspaceFile}
+                                                    composer metadata={message.metadata}>{part.text}</DesktopWorkspaceMessage>
+                                                : <DesktopSelectedMentionText text={part.text} metadata={message.metadata} linkify={false} />
                                             return <DesktopVoiceHistoryMessage key={index} agentId={agent.id} text={part.text}>
                                                 {message.role === 'user' && part.text ? <ExpandableMessageBody forceExpanded={finding}
                                                     showMore={t('showMore')} showLess={t('showLess')}>{text}</ExpandableMessageBody> : text}

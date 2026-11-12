@@ -2,6 +2,7 @@
 // Authored without execution. Root owns all test runs and native acceptance.
 import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { act, type ReactNode } from 'react'
+import type { UIMessage } from 'ai'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
@@ -116,7 +117,7 @@ async function dismissPanel(title: string) {
     await until(() => !panelDialog(title))
 }
 
-function fixture(runStatus?: () => Promise<Response>, productionBoard = false, reply?: (sessionId: string) => string) {
+function fixture(runStatus?: () => Promise<Response>, productionBoard = false, reply?: (sessionId: string) => string, history?: (sessionId: string) => UIMessage[]) {
     const boxId = '05699308-9d0d-412b-b3e5-69ef56bd2a0e'
     const board: DesktopBoardState = { revision: 1, spaces: [{ id: boxId, name: 'Review Box', col_start: 0, row_start: 0, col_end: 11, row_end: 7 }],
         placements: coworkers.map((agent, index) => ({ agentId: agent.id, spaceId: boxId, col: index * 3, row: 0 })) }
@@ -235,7 +236,7 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false, r
         if (url.pathname.endsWith('/messages')) {
             messageReads.push(url.pathname)
             const id = decodeURIComponent(url.pathname.split('/')[4])
-            return Response.json({ messages: [{ id: `${id}-answer`, role: 'assistant', parts: [{ type: 'text', text: reply?.(id) ?? answer(id) }] }] })
+            return Response.json({ messages: history?.(id) ?? [{ id: `${id}-answer`, role: 'assistant', parts: [{ type: 'text', text: reply?.(id) ?? answer(id) }] }] })
         }
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
@@ -401,6 +402,83 @@ test('opens a saved workspace link in the owning Files panel and preserves the c
     await act(async () => restored.click())
     await until(() => panelDialog('Files')?.querySelector('[data-testid="file-preview"]'))
     expect(panelDialog('Files')?.textContent).toContain('# Reviewer private file')
+})
+
+test('reopens saved coworker Markdown from the board and keeps prompt dialogs and drafts intact', async () => {
+    const link = '/data/agents/engine-reviewer/workspace/Reports/Q4%20notes.md'
+    const content = (name: string) => `**${name}**\n\n[Open notes](${link})\n\n![Quarterly chart](Reports/chart.png)`
+    const user = '@ada then @ada\n\nhttps://example.org/a/release\n\n' + content('Saved user message')
+    const webhookPrompt = content('Webhook instructions') + '\n<trigger_payload trigger="synthetic" method="POST" content-type="application/json" bytes="11">\n{"ok":true}\n</trigger_payload>'
+    const message = (id: string, text: string, metadata?: unknown): UIMessage =>
+        ({ id, role: 'user', parts: [{ type: 'text', text }], metadata })
+    const app = fixture(undefined, true, undefined, () => [
+        message('saved-user', user, { coworkerMentions: [{ targetId: auditor.id, token: '@ada', start: 10, end: 14 }] }),
+        message('saved-install', `<agent_install agent="Reviewer">\n${content('Install instructions')}\n</agent_install>`),
+        message('saved-routine', `<scheduled_run schedule="daily" name="Daily QA">\n${content('Routine instructions')}\n</scheduled_run>`),
+        message('saved-webhook', webhookPrompt),
+    ])
+    const mount = await app.mount()
+    const input = await openBoardChat(mount.container)
+    await enter(input, 'Keep this draft')
+    const saved = await until(() => mount.container.querySelector('img[alt="Quarterly chart"]'))
+    const messageBody = saved.closest('[data-chat-find-message]')!
+    expect(messageBody.textContent).toContain('Saved user message')
+    expect(messageBody.textContent).toContain('@ada then @ada')
+    expect([...messageBody.querySelectorAll('span')].filter(span => span.textContent === '@ada')).toHaveLength(1)
+    expect(messageBody.querySelector('[data-chat-find-url="https://example.org/a/release"]')?.textContent).toBe('example.org/…/release')
+
+    const verifyFile = async (surface: ParentNode) => {
+        const image = surface.querySelector('img[alt="Quarterly chart"]')
+        expect(image?.getAttribute('src')).toBe(`/api/desktop/agents/${reviewer.id}/files/image?path=Reports%2Fchart.png&animation=1`)
+        const opener = [...surface.querySelectorAll('button')].find(button => button.textContent === 'Open notes')!
+        expect(opener).toBeDefined()
+        await act(async () => opener.click())
+        const files = await until(() => panelDialog('Files'))
+        await until(() => files.querySelector('[data-testid="file-preview"]'))
+        expect(files.textContent).toContain('# Reviewer private file')
+        await click('Done', files)
+        await until(() => !panelDialog('Files'))
+        await until(() => document.activeElement === opener)
+    }
+    await verifyFile(messageBody)
+    await click('View guide', mount.container)
+    const guide = await until(() => panelDialog('Reviewer install guide'))
+    await verifyFile(guide)
+    await click('Close', guide)
+    await until(() => !panelDialog('Reviewer install guide'))
+
+    const openPrompt = async (divider: string, title: string) => {
+        const promptButton = [...mount.container.querySelectorAll('button')].find(button =>
+            button.textContent === 'View prompt' && button.parentElement?.textContent?.includes(divider))!
+        expect(promptButton).toBeDefined()
+        await act(async () => promptButton.click())
+        return until(() => panelDialog(title))
+    }
+    const routine = await openPrompt('Daily QA', 'Daily QA prompt')
+    await verifyFile(routine)
+    await click('Close', routine)
+    await until(() => !panelDialog('Daily QA prompt'))
+    const webhook = await openPrompt('synthetic', 'synthetic prompt')
+    await verifyFile(webhook)
+    expect(webhook.textContent).not.toContain('{"ok":true}')
+    await click('Close', webhook)
+    await until(() => !panelDialog('synthetic prompt'))
+    await click('View payload', mount.container)
+    const payload = await until(() => panelDialog('synthetic payload'))
+    expect(payload.textContent).toContain('"ok"')
+    expect(payload.querySelector('img')).toBeNull()
+    await click('Close', payload)
+    expect(input.value).toBe('Keep this draft')
+    expect(app.fileReads.filter(read => read.route === 'files/read')).toHaveLength(4)
+    expect(app.fileReads.every(read => read.agentId === reviewer.id)).toBe(true)
+
+    await mount.unmount()
+    const restored = await app.mount()
+    await openBoardChat(restored.container)
+    const guideButton = await until(() => [...restored.container.querySelectorAll('button')].find(button => button.textContent === 'View guide'))
+    await act(async () => guideButton.click())
+    const restoredGuide = await until(() => panelDialog('Reviewer install guide'))
+    await verifyFile(restoredGuide)
 })
 
 test('only the selected chat opens a coworker dialog and both distinct drafts restore across App remount', async () => {
