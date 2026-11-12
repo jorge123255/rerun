@@ -24,7 +24,7 @@ const preload = fileURLToPath(new URL('./connected-hub-preload.cjs', import.meta
 const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads', 'notifications', 'badge', 'settings', 'oauth', 'locale']
 
 export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
-    available, openFind, closeFind, setUnread, desktopSettings, changeDesktopSettings, setLanguage, language }) {
+    updates, canRestartForUpdate, available, openFind, closeFind, setUnread, desktopSettings, changeDesktopSettings, setLanguage, language }) {
     const file = resolve(dataRoot, 'connected-hub.json')
     const windows = new Map()
     const childWindows = new Map()
@@ -119,6 +119,10 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     function currentNative(entry, native) {
         return available() && entry.native === native && connected(entry.window) === entry
             && entry.contents.mainFrame === native.frame
+    }
+    function updateState(state) {
+        // The connected server needs the display state, never native diagnostics or feed details.
+        return state.status === 'error' ? { status: 'error', message: 'The update check failed.' } : state
     }
     async function notify(entry, value, frame) {
         const payload = hubNotificationPayload(value)
@@ -450,7 +454,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         if (!entry || !available()) { event.returnValue = null; return }
         invalidateNative(entry)
         entry.native = { frame: event.senderFrame, id: randomUUID(), unread: 0, workspaceId: null }
-        event.returnValue = { audience: 'hub', ...shellIdentity, capabilities }
+        event.returnValue = { audience: 'hub', ...shellIdentity, capabilities: updates?.enabled() ? [...capabilities, 'update'] : capabilities }
     })
     ipcMain.handle('hub:quick-ask-close', event => quickAsk.close(quickAsk.sender(event)))
     ipcMain.handle('hub:quick-ask-sent', (event, path) => quickAsk.sent(quickAsk.sender(event), path))
@@ -510,8 +514,32 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         if (!entry || !available()) throw new Error('Untrusted Rerun hub request')
         return action(entry, value, event.senderFrame, registrationId)
     })
+    function updateSender(event) {
+        const entry = hubSender(event)
+        return updates?.enabled() && entry?.native && entry.native.frame === event.senderFrame
+            && currentNative(entry, entry.native) ? entry : null
+    }
+    ipcMain.handle('hub:update-state', event => updateSender(event) ? updateState(updates.state()) : null)
+    ipcMain.handle('hub:update-check', async event => {
+        if (updateSender(event)) await updates.checkForUpdates(false)
+    })
+    ipcMain.handle('hub:update-install', event => {
+        const entry = updateSender(event)
+        if (!entry || !entry.window.isFocused() || !entry.window.isVisible()) return false
+        const native = entry.native
+        return updates.offerInstall({ parent: entry.window,
+            isCurrent: () => currentNative(entry, native) && entry.window.isVisible() && canRestartForUpdate() })
+    })
 
     return {
+        publishUpdate(state) {
+            if (!updates?.enabled()) return
+            const value = updateState(state)
+            for (const entry of windows.values()) {
+                if (!entry.native || !currentNative(entry, entry.native)) continue
+                try { entry.native.frame.send('hub:update-state', value) } catch { /* A renderer can close before delivery. */ }
+            }
+        },
         openPicker,
         openCloud: () => connect(RERUN_CLOUD_ORIGIN),
         async reopenRemembered() {

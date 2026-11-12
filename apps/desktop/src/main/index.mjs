@@ -332,6 +332,7 @@ async function launch() {
             systemLanguages: [...app.getPreferredSystemLanguages(), app.getLocale()], currentScope: currentLanguageScope,
             onChange: () => { refreshApplicationMenu(); menuBar?.refresh() } })
         connectedHubs = createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
+            updates: macUpdates, canRestartForUpdate: () => !transitioning && !changingBoards.size,
             available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate),
             setUnread: count => { hubUnread = count; publishMacUnread() }, desktopSettings, changeDesktopSettings,
             setLanguage: (scope, locale) => shellLanguage.set(scope, locale), language: scope => shellLanguage.forScope(scope) })
@@ -393,6 +394,7 @@ async function launch() {
                 refreshApplicationMenu()
                 try { menuBar?.refresh() } catch { /* The menu bar is optional. */ }
                 const state = macUpdates.state()
+                connectedHubs.publishUpdate(state)
                 for (const board of boards.list()) {
                     try { if (boards.ready(board, runtime)) board.contents.send('desktop:update-state', state) } catch {}
                 }

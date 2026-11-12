@@ -161,6 +161,19 @@ test('the hub preload exposes only its approved audience and drops the privilege
     assert.equal(await native.exposed.rerunShell.notifications.show(notice), false)
     native.exposed.rerunShell.badge.set(2)
     assert.deepEqual(native.requests, [['hub:notify', notice], ['hub:badge', 2, '7']])
+    assert.equal(native.exposed.rerunShell.update, undefined)
+    const updating = bootstrap({ audience: 'hub', capabilities: ['update'] })
+    const updater = updating.exposed.rerunShell.update
+    const states = []
+    const stop = updater.onState((...args) => states.push(args))
+    updating.listeners.get('hub:update-state')({ sender: 'privileged' }, { status: 'ready', version: '2.0.0' })
+    assert.deepEqual(states, [[{ status: 'ready', version: '2.0.0' }]])
+    await updater.getState()
+    updater.check('https://foreign.test')
+    updater.install('https://foreign.test')
+    assert.deepEqual(updating.requests, [['hub:update-state'], ['hub:update-check'], ['hub:update-install']])
+    stop()
+    assert.equal(updating.listeners.size, 0)
     const quickAsk = bootstrap({ audience: 'hub-quick-ask', shortcut: 'CommandOrControl+Shift+Space' })
     const composer = quickAsk.exposed.rerunShell
     assert.deepEqual(Array.from(composer.capabilities), ['quickAsk'])

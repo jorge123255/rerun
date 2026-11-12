@@ -296,9 +296,38 @@ test('a configured team cannot open a feed without the running bundle signature'
     const updates = verifiedUpdater({ autoUpdater, app: {}, release: productionRelease(),
         verifySignature: (_app, requirement) => { calls.push(requirement); return false } })
     assert.equal(updates.start({ scheduleChecks: true }).reason, 'signature')
+    assert.equal(updates.enabled(), false)
     await updates.checkForUpdates(false)
     assert.deepEqual(autoUpdater.calls, [])
     assert.deepEqual(calls, [{ teamId: TEAM, bundleId: 'build.rerun.desktop', production: true }])
+})
+
+test('native restart confirmation is single-flight and rejects a stale originating window', async () => {
+    const autoUpdater = fakeAutoUpdater()
+    let finish, parentSeen, quits = 0
+    const updates = verifiedUpdater({ autoUpdater, app: { quit() { quits++ } }, release: productionRelease(),
+        dialog: { showMessageBox: parent => { parentSeen = parent; return new Promise(resolve => { finish = resolve }) } } })
+    assert.equal(updates.enabled(), false)
+    updates.start()
+    assert.equal(updates.enabled(), true)
+    assert.equal(await updates.offerInstall(), false)
+    autoUpdater.emit('update-downloaded', {}, '', '2.0.0')
+    const parent = {}
+    let current = true
+    const pending = updates.offerInstall({ parent, isCurrent: () => current })
+    assert.equal(parentSeen, parent)
+    assert.equal(await updates.offerInstall(), false)
+    current = false
+    finish({ response: 0 })
+    assert.equal(await pending, false)
+    assert.equal(quits, 0)
+    const cancelled = updates.offerInstall({ parent })
+    finish({ response: 1 })
+    assert.equal(await cancelled, false)
+    const confirmed = updates.offerInstall({ parent })
+    finish({ response: 0 })
+    assert.equal(await confirmed, true)
+    assert.equal(quits, 1)
 })
 
 test('macOS verifies the running app bundle against Apple, its team and Developer ID', () => {

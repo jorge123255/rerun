@@ -49,6 +49,7 @@ export function createMacUpdater({ autoUpdater, app, dialog, release, production
     let installing = false
     let interactive = false
     let reported = false
+    let prompting = false
     let decision = disabled('unstarted')
 
     const t = (key, values) => text()('updates.' + key, values)
@@ -68,9 +69,8 @@ export function createMacUpdater({ autoUpdater, app, dialog, release, production
         return text || 'The update check failed.'
     }
 
-    async function showDialog(options) {
+    async function showDialog(options, parent = getWindow?.()) {
         if (typeof dialog?.showMessageBox !== 'function') return { response: options.cancelId ?? 0 }
-        const parent = getWindow?.()
         try {
             if (parent && parent.isDestroyed?.() !== true) return await dialog.showMessageBox(parent, options)
             return await dialog.showMessageBox(options)
@@ -193,16 +193,19 @@ export function createMacUpdater({ autoUpdater, app, dialog, release, production
         return copyState(state)
     }
 
-    async function offerInstall() {
-        const version = state.version
-        const { response } = await showDialog({
-            type: 'info',
-            message: version ? t('readyToInstall', { version }) : t('ready'),
-            detail: t('readyDetail'),
-            buttons: [t('restartNow'), t('later')], defaultId: 0, cancelId: 1, noLink: true,
-        })
-        if (response === 0) return requestRestart()
-        return false
+    async function offerInstall({ parent, isCurrent = () => true } = {}) {
+        if (!decision.enabled || state.status !== 'ready' || prompting || !isCurrent()) return false
+        prompting = true
+        try {
+            const version = state.version
+            const { response } = await showDialog({
+                type: 'info',
+                message: version ? t('readyToInstall', { version }) : t('ready'),
+                detail: t('readyDetail'),
+                buttons: [t('restartNow'), t('later')], defaultId: 0, cancelId: 1, noLink: true,
+            }, parent)
+            return response === 0 && isCurrent() && requestRestart()
+        } finally { prompting = false }
     }
 
     function requestRestart() {
@@ -234,10 +237,12 @@ export function createMacUpdater({ autoUpdater, app, dialog, release, production
 
     const api = {
         start,
+        enabled: () => decision.enabled,
         state: () => copyState(state),
         menuItem,
         checkForUpdates,
         checkFromMenu: () => state.status === 'ready' ? offerInstall() : checkForUpdates(true),
+        offerInstall,
         requestRestart,
         commitInstall,
     }

@@ -66,6 +66,12 @@ if (bootstrap?.audience === 'picker') {
         platform: bootstrap.platform,
         channel: bootstrap.channel,
         capabilities: bootstrap.capabilities,
+        ...(bootstrap.capabilities.includes('update') ? { update: {
+            getState: () => ipcRenderer.invoke('hub:update-state').then(state => state ?? { status: 'idle' }),
+            onState: callback => subscribe('hub:update-state', callback),
+            check: () => { void ipcRenderer.invoke('hub:update-check').catch(() => {}) },
+            install: () => { void ipcRenderer.invoke('hub:update-install').catch(() => {}) },
+        } } : {}),
         auth: {
             startBrowserSignIn: options => ipcRenderer.invoke('hub:auth-start', { provider: options?.provider }),
             submitCode: code => ipcRenderer.invoke('hub:auth-code', code),
