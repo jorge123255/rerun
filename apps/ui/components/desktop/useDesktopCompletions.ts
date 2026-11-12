@@ -52,7 +52,7 @@ function canAcknowledgeVisibleConversation() {
         && !document.body.closest('[inert]') && !document.activeElement?.closest('[inert]')
 }
 
-export function useDesktopCompletions(active = true, agentIds?: readonly string[], visibleSessionId?: string | null, observeWhileClosed = false): DesktopCompletionsController {
+export function useDesktopCompletions(active = true, agentIds?: readonly string[], visibleSessionId?: string | null, observeWhileClosed = false, whileHidden = false): DesktopCompletionsController {
     const scope = agentIds ? JSON.stringify([...new Set(agentIds)].sort()) : '*'
     const lifecycle = JSON.stringify([active, scope, visibleSessionId ?? null])
     const identity = useRef({ lifecycle, generation: 0 })
@@ -72,7 +72,7 @@ export function useDesktopCompletions(active = true, agentIds?: readonly string[
     const allowed = useMemo(() => agentIds ? new Set(agentIds) : null, [scope])
 
     const read = useCallback(async (older = false, reset = false) => {
-        if (!current() || !enabled || inFlight.current || document.visibilityState === 'hidden' || isDesktopQuitting()) return
+        if (!current() || !enabled || inFlight.current || (!whileHidden && document.visibilityState === 'hidden') || isDesktopQuitting()) return
         const snapshot = stateRef.current.scope === scope ? stateRef.current : { ...empty(), scope, pages: 0 }
         if (older && (!active || !snapshot.nextCursor || snapshot.windowFull)) return
         const controller = new AbortController()
@@ -105,7 +105,7 @@ export function useDesktopCompletions(active = true, agentIds?: readonly string[
         } finally {
             if (inFlight.current === controller) inFlight.current = null
         }
-    }, [active, allowed, current, enabled, scope])
+    }, [active, allowed, current, enabled, scope, whileHidden])
 
     const postSeen = useCallback(async (completionIds: string[]) => {
         if (!current() || isDesktopQuitting()) return
@@ -138,12 +138,14 @@ export function useDesktopCompletions(active = true, agentIds?: readonly string[
         void read()
         const interval = setInterval(() => { void read() }, DESKTOP_COMPLETIONS_POLL_MS)
         const onVisibility = () => {
-            if (document.visibilityState === 'hidden') { inFlight.current?.abort(); inFlight.current = null }
+            if (document.visibilityState === 'hidden') {
+                if (!whileHidden) { inFlight.current?.abort(); inFlight.current = null }
+            }
             else void read()
         }
         document.addEventListener('visibilitychange', onVisibility)
         return () => { clearInterval(interval); document.removeEventListener('visibilitychange', onVisibility); inFlight.current?.abort(); inFlight.current = null }
-    }, [enabled, generation, read, scope])
+    }, [enabled, generation, read, scope, whileHidden])
 
     const items = useMemo(() => state.scope !== scope ? [] : state.items.flatMap(item => {
         const completionIds = item.completionIds.filter(id => !seen.current.has(id))

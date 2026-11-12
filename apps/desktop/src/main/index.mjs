@@ -211,6 +211,15 @@ async function launch() {
         if (!scope || !isDesktopPage(event.senderFrame.url)) return { status: 'unavailable' }
         return desktopNotifications.notify(value, scope)
     })
+    ipcMain.on('desktop:inbox-badge', (event, value) => {
+        try {
+            trusted(event)
+            const scope = runtimeScope()
+            if (!scope || !isDesktopPage(event.senderFrame.url) || value?.workspaceId !== scope.workspaceId
+                || value.launchNonce !== scope.launchNonce || !Number.isSafeInteger(value.count) || value.count < 0) return
+            if (process.platform === 'darwin') app.setBadgeCount(Math.min(value.count, 9999))
+        } catch { /* A stale or untrusted renderer cannot update the Dock. */ }
+    })
     ipcMain.handle('desktop:save-draining-draft', (event, value) => {
         trusted(event)
         const signal = draftQuit.signalFor(value)
@@ -339,6 +348,7 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
     rendererEpoch = randomUUID()
     const invalidateRenderer = () => {
         if (window?.webContents !== contents) return
+        if (process.platform === 'darwin') app.setBadgeCount(0)
         rendererEpoch = randomUUID()
         clickReady = null
         draftQuit.reset()

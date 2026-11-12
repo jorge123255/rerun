@@ -764,7 +764,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
                 {runtimeWorkspaceId != null ? <FxBoardCameraBoundary workspaceId={runtimeWorkspaceId} currentWorkspace={() => runtimeWorkspaceId} persistence={cameraPersistence} bindFlush={flush => { cameraFlush.current = flush }}>{camera => (
                 <DesktopBoard activitySnapshot={boardActivity} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} recenterSignal={recenterSignal}
-                    workspaceId={runtimeWorkspaceId} onOpenNotificationSettings={openNotifications}
+                    workspaceId={runtimeWorkspaceId} launchNonce={initialData.runtimeLaunchNonce} onOpenNotificationSettings={openNotifications}
                     cameraMountKey={camera.mountKey} initialCamera={camera.initialCamera} onCameraChange={camera.onCameraChange}
                     newBoxSignal={newBoxSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
                     board={boardState.board} onBoardCommand={initialData.board ? boardState.command : undefined}

@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import type { DesktopCompletionItem } from '@/lib/desktop/completed-actions'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import type { DesktopPendingInboxItem } from '@/lib/desktop/pending-inbox'
+import { desktopInboxBadge } from '@/lib/desktop/notification-bridge'
 import { AlertCircleIcon, BellIcon, CheckCheckIcon, InboxIcon, Loader2Icon, RefreshCcwIcon, TriangleAlertIcon, XIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
@@ -43,6 +44,8 @@ export type DesktopActionsInboxProps = {
      */
     visibleSessionId?: string | null
     workspaceId?: number | null
+    launchNonce?: string
+    hidden?: boolean
     onOpenNotificationSettings?: (agentId: string) => void
     /** Controlled open state. Without it the inbox manages its own fold. */
     open?: boolean
@@ -217,10 +220,13 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
  * decline; marking pending read is explicit and never answers; a Done row is additionally
  * acknowledged with the exact completion IDs it displayed.
  */
-export function DesktopActionsInbox({ agents, onOpenConversation, visibleSessionId, workspaceId, onOpenNotificationSettings, open: openProp, onOpenChange, className }: DesktopActionsInboxProps) {
+export function DesktopActionsInbox({ agents, onOpenConversation, visibleSessionId, workspaceId, launchNonce, hidden = false, onOpenNotificationSettings, open: openProp, onOpenChange, className }: DesktopActionsInboxProps) {
     const { language, t } = useDesktopLocale()
     const [internalOpen, setInternalOpen] = useState(false)
-    const open = openProp ?? internalOpen
+    const open = !hidden && (openProp ?? internalOpen)
+    if (hidden && internalOpen) setInternalOpen(false)
+    const setInboxBadge = workspaceId && launchNonce ? desktopInboxBadge() : undefined
+    const whileHidden = typeof setInboxBadge === 'function'
     const [rowMenuOpen, setRowMenuOpen] = useState(false)
     const { ruleOf, ready: prefsReady, loading: prefsLoading, changeCoworkerRule } = useDesktopNotificationPrefs(open && !!workspaceId && !!onOpenNotificationSettings)
     const change = useCallback(
@@ -237,7 +243,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
             rule={ruleOf(item.agentId)} ready={prefsReady && !prefsLoading} changeRule={changeCoworkerRule} onOpenChange={setRowMenuOpen}
             onOpenSettings={() => { change(false); onOpenNotificationSettings(item.agentId) }} />
         : undefined
-    const pendingInbox = useDesktopPendingInbox(open, agents?.map(agent => agent.id), true)
+    const pendingInbox = useDesktopPendingInbox(open, agents?.map(agent => agent.id), true, whileHidden)
     const { status, items: received, unavailableAgentIds: unavailable, retry, readError: pendingReadError, markRead, markAllRead: markPendingAllRead } = pendingInbox
     const roster = useMemo(() => agents ? new Map(agents.map(agent => [agent.id, agent])) : null, [agents])
     const items = useMemo(() => received.flatMap(item => {
@@ -248,7 +254,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
     const unavailableAgentIds = unavailable.filter(id => !roster || roster.has(id))
     // Finished runs: a separate bounded read that marks itself read through the explicit mutation.
     // Root's visible conversation applies the original read-on-visible semantics.
-    const completions = useDesktopCompletions(open, agents?.map(agent => agent.id), visibleSessionId, true)
+    const completions = useDesktopCompletions(open, agents?.map(agent => agent.id), visibleSessionId, true, whileHidden)
     const doneItems = useMemo(() => completions.items.flatMap(item => {
         if (!roster) return [item]
         const agent = roster.get(item.agentId)
@@ -364,6 +370,12 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
     const anyFailed = failed || doneFailed || completions.readError
     const anyPartial = partial || doneUnavailable.length > 0
     const hasMore = !!completions.nextCursor || completions.windowFull
+    const badgeCount = items.length + doneCount
+    useEffect(() => {
+        // An unavailable read is not evidence that the last unread item went away.
+        if (!setInboxBadge || !workspaceId || !launchNonce || checking || (badgeCount === 0 && (anyFailed || anyPartial))) return
+        setInboxBadge({ workspaceId, launchNonce, count: badgeCount })
+    }, [setInboxBadge, workspaceId, launchNonce, checking, badgeCount, anyFailed, anyPartial])
     const pendingLabel = t('actions.pendingCount', { count: items.length })
     const doneLabel = t('actions.doneCount', { count: doneCount })
     const lower = (label: string) => label.toLocaleLowerCase(desktopLocaleTag(language.locale))
@@ -376,6 +388,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
         : lower(hasMore ? t('actions.more') : t('actions.empty'))
     const pillLabel = t('actions.pill', { title: t('actions.title'), summary })
 
+    if (hidden) return null
     return (
         <div ref={rootRef} className={cn('relative flex flex-col items-start', className)}>
             {open && (

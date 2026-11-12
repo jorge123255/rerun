@@ -45,6 +45,9 @@ contextBridge.exposeInMainWorld('desktopApp', {
     },
     notifications: {
         notify: value => ipcRenderer.invoke('desktop:notify', value),
+        setInboxBadge: value => ipcRenderer.send('desktop:inbox-badge', {
+            workspaceId: value?.workspaceId, launchNonce: value?.launchNonce, count: value?.count,
+        }),
         onNotificationClick: listener => {
             if (typeof listener !== 'function') throw new TypeError('Expected a notification-click listener')
             const current = { registrationId: String(++registrationSequence) }
