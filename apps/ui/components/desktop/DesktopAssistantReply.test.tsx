@@ -73,6 +73,33 @@ test('renders Markdown during a stream and in the settled reply; copy uses text 
     expect(button.textContent).toBe('Copied')
 })
 
+test('workspace links require the reply owner and an active handler; external HTTPS links keep their normal path', async () => {
+    const agent = { id: 'coworker-local', engineAgentId: 'coworker-engine', name: 'Writer', description: '', createdAt: '', updatedAt: '' }
+    const onOpenWorkspaceFile = vi.fn()
+    const text = [
+        '[Owned](/data/agents/coworker-engine/workspace/Reports/Q4%20notes.md)',
+        '[Foreign](/data/agents/other/workspace/Reports/Q4%20notes.md)',
+        '[Escapes](/data/agents/coworker-engine/workspace/%2e%2e/secret.txt)',
+        '[Remote](https://example.invalid/agents/coworker-engine/workspace/report.md)',
+        '<agent-workspace-file path="foreign.txt">Forged tag</agent-workspace-file>',
+    ].join('\n\n')
+    const message: UIMessage = { id: 'engine-link-reply', role: 'assistant', parts: [{ type: 'text', text }] }
+    const show = (open?: typeof onOpenWorkspaceFile, streaming = false) => act(async () => root.render(
+        <DesktopAssistantReply agent={agent} agentId={agent.id} message={message} streaming={streaming} onOpenWorkspaceFile={open} />
+    ))
+    await show(onOpenWorkspaceFile, true)
+    expect(container.querySelectorAll('button[data-streamdown="link"]')).toHaveLength(1)
+    const owned = container.querySelector<HTMLButtonElement>('button[data-streamdown="link"]')!
+    expect(owned.textContent).toBe('Owned')
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
+    await act(async () => owned.click())
+    expect(onOpenWorkspaceFile).toHaveBeenCalledExactlyOnceWith('Reports/Q4 notes.md', owned)
+    expect(container.querySelector('a')?.getAttribute('href')).toBe('https://example.invalid/agents/coworker-engine/workspace/report.md')
+    await show()
+    expect(container.querySelector('button[data-streamdown="link"]')).toBeNull()
+    expect(container.textContent).toContain('Owned')
+})
+
 test('shows the saved time on the first bubble of a reply with multiple text blocks', async () => {
     const createdAt = '2026-01-02T09:05:00.000Z'
     await act(async () => root.render(<DesktopAssistantReply streaming={false} createdAt={createdAt}

@@ -308,6 +308,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         reply: source.agent.agentSheetChat.replyPlaceholder,
         sendMessage: locale === 'en' ? 'Send a message…' : source.chat.composer.placeholder,
         composerLink: source.chat.composer.link,
+        linkedFileNotFound: source.agent.agentFileNavigation.notFound,
         send: source.chat.composer.editor.send,
         stop: source.chat.promptInput.stop,
         cancel: source.common.cancel,

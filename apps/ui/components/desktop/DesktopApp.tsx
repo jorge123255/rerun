@@ -67,7 +67,7 @@ import type { DesktopChatRequest } from '@/lib/desktop/chat-request'
 import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
 import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-request'
 
-export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string; position?: GridPosition | null; spaceId?: string; enabled?: boolean }
+export type DesktopAgentView = { id: string; engineAgentId?: string; name: string; description: string; createdAt: string; updatedAt: string; position?: GridPosition | null; spaceId?: string; enabled?: boolean }
 export type DesktopSessionView = {
     id: string; agentId: string; title: string; createdAt: string; updatedAt: string
     kind?: 'general' | 'thread'; firstMessage?: string | null

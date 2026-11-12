@@ -2,10 +2,12 @@
 
 import { getToolName, isToolUIPart, type UIMessage } from 'ai'
 import { desktopSourceParts, QUICK_REPLIES_TOOL, stripBridgePrefix, skillProposalIdOf, isPinnable, type MessageFeedbackRating } from '@rerun/contracts'
-import { useMemo, type ReactNode } from 'react'
-import type { Components, CustomRendererProps, PluginConfig } from 'streamdown'
+import { createContext, useContext, useMemo, type ReactNode } from 'react'
+import { defaultRemarkPlugins, type Components, type CustomRendererProps, type PluginConfig } from 'streamdown'
 import { toast } from 'sonner'
-import { MessageAction, MessageResponse } from '@/components/ai-elements/message'
+import { MessageAction, MessageResponse, type MessageResponseProps } from '@/components/ai-elements/message'
+import { AGENT_WORKSPACE_FILE_PATH_ATTRIBUTE, AGENT_WORKSPACE_FILE_TAG, remarkAgentWorkspaceLinks } from '@/lib/files/workspace-link'
+import { desktopWorkspaceFilePath } from '@/lib/desktop/workspace-file-link'
 import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ai-elements/sources'
 import { DRAFT_LANGUAGE, DraftBlock } from '@/components/chat/DraftBlock'
 import { MessageTimeTooltip } from '@/components/chat/MessageTimeTooltip'
@@ -42,7 +44,20 @@ import { DesktopCoworkerCalls } from './coworker-calls/DesktopCoworkerCalls'
 import { DesktopDelegationMount } from './delegation/DesktopDelegationMount'
 import type { DesktopCoworkerCallOpenTarget } from '@/lib/desktop/coworker-calls-client'
 
+type OpenWorkspaceFile = (path: string, opener: HTMLElement) => void
+const WorkspaceFileContext = createContext<OpenWorkspaceFile | undefined>(undefined)
+const workspaceFileTags = { [AGENT_WORKSPACE_FILE_TAG]: [AGENT_WORKSPACE_FILE_PATH_ATTRIBUTE] }
+
+function WorkspaceFileLink({ path, children }: { path?: string; children?: ReactNode; node?: unknown }) {
+    const open = useContext(WorkspaceFileContext)
+    if (!path || !open) return <span>{children}</span>
+    return <button type="button" data-streamdown="link" title={`Open ${path}`}
+        className="wrap-anywhere appearance-none text-left font-medium text-primary underline"
+        onClick={event => open(path, event.currentTarget)}>{children}</button>
+}
+
 const desktopComponents: Components = {
+    [AGENT_WORKSPACE_FILE_TAG]: WorkspaceFileLink,
     a: ({ href, children }) => {
         // Links on the Mac open through the shell's HTTPS-only external navigation policy.
         const url = href && URL.canParse(href) ? new URL(href) : null
@@ -83,15 +98,21 @@ function DesktopDraftBlock(props: CustomRendererProps) {
 
 const answerPlugins: PluginConfig = { renderers: [{ language: DRAFT_LANGUAGE, component: DesktopDraftBlock }] }
 
-function replyMarkdown(text: string, streaming = false, plugins: PluginConfig = noPlugins) {
+function replyMarkdown(text: string, streaming = false, plugins: PluginConfig = noPlugins, remarkPlugins?: MessageResponseProps['remarkPlugins']) {
     return <MessageResponse components={desktopComponents} plugins={plugins} rehypePlugins={noRehypePlugins}
+        remarkPlugins={remarkPlugins} allowedTags={remarkPlugins ? workspaceFileTags : undefined}
         controls={false} skipHtml mode={streaming ? 'streaming' : 'static'} isAnimating={streaming}
         className="min-w-0 wrap-anywhere [&_pre]:overflow-x-auto">
         {text}
     </MessageResponse>
 }
 
-function DesktopAnswerBubbles({ text, streaming, createdAt }: { text: string; streaming: boolean; createdAt?: string }) {
+function DesktopAnswerBubbles({ text, streaming, createdAt, workspaceLinks }: {
+    text: string
+    streaming: boolean
+    createdAt?: string
+    workspaceLinks?: MessageResponseProps['remarkPlugins']
+}) {
     const { language } = useDesktopLocale()
     const locale = desktopLocaleTag(language.locale)
     const bubbles = useMemo(() => splitIntoBubbles(text), [text])
@@ -99,7 +120,7 @@ function DesktopAnswerBubbles({ text, streaming, createdAt }: { text: string; st
         {bubbles.map(({ frame, markdown }, index) => (
             <MessageTimeTooltip key={index} createdAt={index === 0 ? createdAt : undefined} locale={locale} side="right">
                 <div data-bubble-frame={frame} className={cn('min-w-0', frame === 'bare' ? 'w-full' : 'max-w-[88%]', frame === 'bubble' && [AGENT_BUBBLE_SURFACE, 'px-3.5 py-2'])}>
-                    {replyMarkdown(markdown, streaming && index === bubbles.length - 1, answerPlugins)}
+                    {replyMarkdown(markdown, streaming && index === bubbles.length - 1, answerPlugins, workspaceLinks)}
                 </div>
             </MessageTimeTooltip>
         ))}
@@ -136,7 +157,7 @@ function FeedbackThumb({ rating, current, onRate }: { rating: MessageFeedbackRat
     )
 }
 
-export function DesktopAssistantReply({ message, streaming, createdAt, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies, agentId, agent, skillProposals, childRuns, toolInstall }: {
+export function DesktopAssistantReply({ message, streaming, createdAt, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies, agentId, agent, skillProposals, childRuns, toolInstall, onOpenWorkspaceFile }: {
     message: UIMessage
     streaming: boolean
     createdAt?: string
@@ -150,9 +171,15 @@ export function DesktopAssistantReply({ message, streaming, createdAt, onRegener
     agent?: DesktopAgentView
     childRuns?: { sessionId: string; active: boolean; onOpenTarget?: (target: DesktopCoworkerCallOpenTarget) => Promise<void> }
     toolInstall?: { sessionId: string; active: boolean; disabled?: boolean }
+    onOpenWorkspaceFile?: OpenWorkspaceFile
     skillProposals?: { rows: ReadonlyMap<string, EngineSkillProposal>; pinnedIds: ReadonlySet<string>; pendingId: string | null; onDecide?: (id: string, decision: 'accept' | 'dismiss') => void; onOpenSkill?: (slug: string) => void }
 }) {
     const { copied, copy } = useCopy(copyFailed, copyReplyText)
+    const engineAgentId = agent?.id === agentId ? agent?.engineAgentId : undefined
+    const workspaceLinks = useMemo<MessageResponseProps['remarkPlugins']>(() => engineAgentId ? [
+        ...Object.values(defaultRemarkPlugins),
+        [remarkAgentWorkspaceLinks, { linkPath: href => desktopWorkspaceFilePath(href, engineAgentId) }],
+    ] : undefined, [engineAgentId])
     const compactions = desktopCompactionSteps(message.parts, streaming)
     const blocks: ReactNode[] = []
     let text = '', paragraph = ''
@@ -164,7 +191,7 @@ export function DesktopAssistantReply({ message, streaming, createdAt, onRegener
             paragraph += part.text
             // A table or fenced block can span consecutive text parts from the model.
             if (message.parts[index + 1]?.type !== 'text') {
-                blocks.push(<DesktopAnswerBubbles key={index} text={paragraph} streaming={live} createdAt={replyTime} />)
+                blocks.push(<DesktopAnswerBubbles key={index} text={paragraph} streaming={live} createdAt={replyTime} workspaceLinks={workspaceLinks} />)
                 if (paragraph.trim()) replyTime = undefined
                 paragraph = ''
             }
@@ -244,7 +271,7 @@ export function DesktopAssistantReply({ message, streaming, createdAt, onRegener
             blocks.push(<ReasoningStep key={index} text={part.text} isStreaming={live} renderText={replyMarkdown} />)
         }
     }
-    return <>
+    return <WorkspaceFileContext.Provider value={onOpenWorkspaceFile}>
         {blocks}
         <DesktopReplySources parts={message.parts} />
         {quickReplies && <DesktopQuickReplies message={message} {...quickReplies} />}
@@ -262,5 +289,5 @@ export function DesktopAssistantReply({ message, streaming, createdAt, onRegener
                 <FeedbackThumb rating="down" current={feedbackRating} onRate={onRate} />
             </div>}
         </div>}
-    </>
+    </WorkspaceFileContext.Provider>
 }

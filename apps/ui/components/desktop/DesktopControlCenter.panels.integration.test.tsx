@@ -43,8 +43,8 @@ vi.mock('motion/react', async original => {
 
 const date = '2026-11-04T12:00:00.000Z'
 const providers = { connections: [], default: null }
-const reviewer = { id: 'bca843a7-f2c6-461a-9b56-e8b77888fac1', name: 'Reviewer', description: 'Reviews', enabled: true, createdAt: date, updatedAt: date }
-const auditor = { id: 'cbf9f65e-24bc-4563-9b8f-459c874b9064', name: 'Auditor', description: 'Audits', enabled: true, createdAt: date, updatedAt: date }
+const reviewer = { id: 'bca843a7-f2c6-461a-9b56-e8b77888fac1', engineAgentId: 'engine-reviewer', name: 'Reviewer', description: 'Reviews', enabled: true, createdAt: date, updatedAt: date }
+const auditor = { id: 'cbf9f65e-24bc-4563-9b8f-459c874b9064', engineAgentId: 'engine-auditor', name: 'Auditor', description: 'Audits', enabled: true, createdAt: date, updatedAt: date }
 const coworkers = [reviewer, auditor]
 const roots = new Set<ReturnType<typeof createRoot>>()
 const unexpected: string[] = []
@@ -116,7 +116,7 @@ async function dismissPanel(title: string) {
     await until(() => !panelDialog(title))
 }
 
-function fixture(runStatus?: () => Promise<Response>, productionBoard = false) {
+function fixture(runStatus?: () => Promise<Response>, productionBoard = false, reply?: (sessionId: string) => string) {
     const boxId = '05699308-9d0d-412b-b3e5-69ef56bd2a0e'
     const board: DesktopBoardState = { revision: 1, spaces: [{ id: boxId, name: 'Review Box', col_start: 0, row_start: 0, col_end: 11, row_end: 7 }],
         placements: coworkers.map((agent, index) => ({ agentId: agent.id, spaceId: boxId, col: index * 3, row: 0 })) }
@@ -133,6 +133,7 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false) {
     for (const agent of coworkers) drafts.seedTabs(agent.id, layouts.get(agent.id)!.tabs)
     const panelReads: string[] = []
     const messageReads: string[] = []
+    const fileReads: { agentId: string; route: string; path: string }[] = []
     const contentWrites: string[] = []
     const managementWrites: { agentId: string; method: string; body: unknown }[] = []
     const sessions = (agentId: string) => layouts.get(agentId)!.tabs.map(tab => ({
@@ -211,8 +212,12 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false) {
                 if (route === 'skills') return Response.json({ skills: [] })
                 if (route === 'skills/proposals') return Response.json({ availability: 'complete', proposals: [] })
                 if (route === 'runs') return Response.json({ runs: [{ id: `${agentId}-run`, status: 'done', startedAt: date, finishedAt: date, stepCount: 1, provider: 'mac-chatgpt', model: `${agent.name} model`, inputTokens: null, outputTokens: null, totalTokens: 42, cachedInputTokens: null, reasoningTokens: null, costMicros: null }] })
-                if (route === 'files') return Response.json({ path: '', entries: [{ name: 'notes.md', type: 'file', size: 32, modifiedAt: date }] })
-                if (route === 'files/read') return Response.json({ path: 'notes.md', content: `# ${agent.name} private file`, size: 32, truncated: false })
+                if (route === 'files' || route === 'files/read') {
+                    const path = url.searchParams.get('path') ?? ''
+                    fileReads.push({ agentId, route, path })
+                    if (route === 'files') return Response.json({ path, entries: [{ name: path === 'Reports' ? 'Q4 notes.md' : 'notes.md', type: 'file', size: 32, modifiedAt: date }] })
+                    return Response.json({ path, content: `# ${agent.name} private file`, size: 32, truncated: false })
+                }
                 if (route === 'memories') return Response.json({ memories: [{ id: `${agentId}-note`, content: `${agent.name} private memory`, kind: 'fact', tags: [], createdAt: date, strength: 1, status: 'active' }] })
                 if (route === 'tools') return Response.json({ rerun: [{ id: 'workspaceRead', label: `${agent.name} file access`, description: 'Read own workspace files', tools: ['fs_read'], enabled: false, available: true }], codex: [] })
                 if (route === 'monitoring') return Response.json({ agentId, range: url.searchParams.get('range'), runs: [], errorRate: [], runsByStatus: [], runsByModel: [], totalTokens: null, cost: null, avgDuration: [], toolCalls: [], toolErrors: [] })
@@ -224,7 +229,7 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false) {
         if (url.pathname.endsWith('/messages')) {
             messageReads.push(url.pathname)
             const id = decodeURIComponent(url.pathname.split('/')[4])
-            return Response.json({ messages: [{ id: `${id}-answer`, role: 'assistant', parts: [{ type: 'text', text: answer(id) }] }] })
+            return Response.json({ messages: [{ id: `${id}-answer`, role: 'assistant', parts: [{ type: 'text', text: reply?.(id) ?? answer(id) }] }] })
         }
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
@@ -235,7 +240,7 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false) {
         throw new Error(`Unexpected request: ${method} ${raw}`)
     }))
     return {
-        panelReads, messageReads, contentWrites, managementWrites, layouts, answer,
+        panelReads, messageReads, fileReads, contentWrites, managementWrites, layouts, answer,
         async mount(language?: DesktopLanguage) {
             const container = document.createElement('div')
             document.body.append(container)
@@ -339,6 +344,51 @@ test('a contextual action launched from the board binds to the chosen coworker, 
         `/api/desktop/agents/${auditor.id}/files/read`, `/api/desktop/agents/${reviewer.id}/files/read`,
     ])
     expect(app.contentWrites).toEqual([])
+})
+
+test('opens a saved workspace link in the owning Files panel and preserves the chat and draft', async () => {
+    const prefix = '/data/agents/engine-reviewer/workspace/Reports/'
+    const app = fixture(undefined, true, () => [
+        `[Q4 review notes](${prefix}Q4%20notes.md)`,
+        `[Missing report](${prefix}missing.md)`,
+        '[Foreign report](/data/agents/engine-auditor/workspace/Reports/Q4%20notes.md)',
+    ].join('\n\n'))
+    const mounted = await app.mount()
+    const input = await openBoardChat(mounted.container)
+    await enter(input, 'Draft stays in chat')
+    const link = await until(() => mounted.container.querySelector<HTMLButtonElement>('button[title="Open Reports/Q4 notes.md"]'))
+    expect(mounted.container.querySelector('[title="Open Reports/Q4 notes.md"]')?.textContent).toBe('Q4 review notes')
+    expect([...mounted.container.querySelectorAll('button[data-streamdown="link"]')].some(button => button.textContent === 'Foreign report')).toBe(false)
+    expect(app.fileReads).toEqual([])
+
+    await act(async () => link.click())
+    const dialog = await until(() => panelDialog('Files'))
+    await until(() => dialog.querySelector('[data-testid="file-preview"]'))
+    expect(dialog.textContent).toContain('# Reviewer private file')
+    expect(input.value).toBe('Draft stays in chat')
+    expect(app.fileReads.slice(0, 2)).toEqual([
+        { agentId: reviewer.id, route: 'files', path: 'Reports' },
+        { agentId: reviewer.id, route: 'files/read', path: 'Reports/Q4 notes.md' },
+    ])
+    await click('Done', dialog)
+    await until(() => document.activeElement === link)
+    expect(composer()).toBe(input)
+
+    await click('Missing report', mounted.container)
+    const missing = await until(() => panelDialog('Files'))
+    await until(() => missing.querySelector('[role="alert"]'))
+    expect(missing.textContent).toContain('File not found. Reports/missing.md')
+    expect(missing.querySelector('[data-testid="file-preview"]')).toBeNull()
+    expect(app.fileReads.some(read => read.path === 'Reports/missing.md' || read.agentId !== reviewer.id)).toBe(false)
+    await click('Done', missing)
+    await until(() => !panelDialog('Files'))
+    await mounted.unmount()
+    const reopened = await app.mount()
+    await openBoardChat(reopened.container)
+    const restored = await until(() => reopened.container.querySelector<HTMLButtonElement>('button[title="Open Reports/Q4 notes.md"]'))
+    await act(async () => restored.click())
+    await until(() => panelDialog('Files')?.querySelector('[data-testid="file-preview"]'))
+    expect(panelDialog('Files')?.textContent).toContain('# Reviewer private file')
 })
 
 test('only the selected chat opens a coworker dialog and both distinct drafts restore across App remount', async () => {

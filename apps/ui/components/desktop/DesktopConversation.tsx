@@ -263,6 +263,8 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
     }, [tabUid, onHistoryVisibility])
     const [detailPanel, setDetailPanel] = useState<Exclude<DesktopCoworkerPanel, 'chat'> | null>(null)
     const [focusedSkill, setFocusedSkill] = useState<string | null>(null)
+    const [focusedFile, setFocusedFile] = useState<string | null>(null)
+    const fileLinkOpener = useRef<HTMLElement | null>(null)
     const [panelNotice, setPanelNotice] = useState('')
     const handledPanel = useRef<DesktopCoworkerPanelRequest | null>(null)
     const conversationRoot = useRef<HTMLDivElement>(null)
@@ -282,9 +284,23 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
             setPanelFocus(null)
             setPanelNotice('')
             if (panel === 'skills') setFocusedSkill(null)
+            if (panel === 'files') setFocusedFile(null)
             setDetailPanel(open ? panel : null)
         },
     })
+    const openWorkspaceFile = (path: string, opener: HTMLElement) => {
+        if (!active || cardOpen || detailPanel || chatsOpen || isDesktopQuitting()) return
+        dialogControl('files').onOpenChange(true)
+        fileLinkOpener.current = opener
+        setFocusedFile(path)
+    }
+    const restoreWorkspaceFileFocus = (event: Event) => {
+        const opener = fileLinkOpener.current
+        fileLinkOpener.current = null
+        if (!opener) return
+        event.preventDefault()
+        if (active && !isDesktopQuitting() && opener.isConnected && !opener.closest('[hidden],[inert]')) opener.focus({ preventScroll: true })
+    }
     const draftKey = JSON.stringify([agent.id, sessionId])
     const initialPaths = draftPaths(initialDraft)
     const [inputs, setInputs] = useState<ReadonlyMap<string, string>>(() => new Map(initialDraft ? [[draftKey, initialDraft.text]] : []))
@@ -644,6 +660,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
         }
         setPanelFocus(null)
         if (requestedPanel.panel === 'skills') setFocusedSkill(null)
+        if (requestedPanel.panel === 'files') setFocusedFile(null)
         setDetailPanel(requestedPanel.panel)
     }, [requestedPanel, active, agent.id, sessionId, busy, engineRunning.id, generating, onPanelRequestHandled])
     useEffect(() => {
@@ -1305,7 +1322,8 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                     <DesktopCoworkerNotificationControl agentId={agent.id} name={agent.name} />
                     <DesktopCoworkerSetup agent={agent} dialogControl={dialogControl('setup')} />
-                    <DesktopCoworkerFiles agent={agent} dialogControl={dialogControl('files')} />
+                    <DesktopCoworkerFiles agent={agent} dialogControl={dialogControl('files')} initialFilePath={focusedFile}
+                        onCloseAutoFocus={restoreWorkspaceFileFocus} />
                     <DesktopCoworkerData agent={agent} dialogControl={dialogControl('data')} />
                     <DesktopCoworkerRoutines agent={agent} dialogControl={dialogControl('scheduled')} onOpenChat={onSelectSession} />
                     <DesktopBoundTriggersPanel agent={agent} dialogControl={dialogControl('triggers')} onOpenChat={onSelectSession} />
@@ -1386,6 +1404,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                                     })()}
                                     {message.role === 'assistant'
                                         ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} createdAt={createdAt} streaming={(status === 'streaming' || serviceStreaming) && messageIndex === transcript.length - 1}
+                                            onOpenWorkspaceFile={active ? openWorkspaceFile : undefined}
                                             toolInstall={sessionId ? { sessionId, active: active && ready, disabled: draft.quitting || inactive || generating || stopping } : undefined}
                                             childRuns={sessionId ? { sessionId, active, onOpenTarget: onOpenCoworkerChat } : undefined}
                                             skillProposals={{ rows: skillProposals.proposals, pinnedIds: skillProposals.pinnedIds, pendingId: skillProposals.pendingId,

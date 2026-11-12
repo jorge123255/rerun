@@ -26,6 +26,7 @@ import { Badge } from '@rerun/ui/primitives'
 import type { DesktopAgentView } from './DesktopApp'
 import { desktopFileDraftHost, holdDraftAdmission } from '@/lib/desktop/draft-writes'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
+import { useDesktopLocale } from './DesktopLocale'
 
 type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string; exportVersion?: string }
 type OpenFile = { path: string; name: string; identity?: string; exportVersion?: string }
@@ -78,7 +79,13 @@ async function errorOf(response: Response, fallback: string) {
 }
 
 /** Port of AgentPanelFiles: breadcrumb navigation, sibling files, text/media/PDF previews, and a single .txt/.md import, scoped to one coworker. */
-function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; registerCloseGuard: (guard: CloseGuard | null) => void }) {
+function FilesPanel({ agent, initialFilePath, registerCloseGuard }: {
+    agent: DesktopAgentView
+    initialFilePath?: string | null
+    registerCloseGuard: (guard: CloseGuard | null) => void
+}) {
+    const { t } = useDesktopLocale()
+    const focusFile = useRef(initialFilePath)
     const base = `/api/desktop/agents/${encodeURIComponent(agent.id)}/files`
     const [error, setError] = useState('')
     const [preview, setPreview] = useState<Preview | null>(null)
@@ -115,7 +122,10 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         return ((await response.json()) as { entries: Entry[] }).entries
     }, [base])
 
-    const { currentPath, entries, loading, busy, showHidden, navigate, enter, goUp, goHome, setShowHidden, reload, refreshCurrent } = useFileNavigation<Entry>({ list })
+    const { currentPath, entries, loading, busy, showHidden, navigate, enter, goUp, goHome, setShowHidden, reload, refreshCurrent } = useFileNavigation<Entry>({
+        list, initialPath: initialFilePath ? folderOf(initialFilePath) : '',
+        initialShowHidden: initialFilePath?.split('/').some(part => part.startsWith('.')),
+    })
     const [editingPath, setEditingPath] = useState<string | null>(null)
 
     useEffect(() => {
@@ -225,6 +235,15 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
             setImage(null); setAudio(null); setVideo(null); setPdf(null); setPreview({ path, loading: true })
         }
     }, [currentPath, entries])
+    useEffect(() => {
+        const path = focusFile.current
+        if (!path || loading || busy || folderOf(path) !== currentPath) return
+        focusFile.current = null
+        if (error) return
+        const name = nameOf(path)
+        if (entries.some(entry => entry.name === name && entry.type === 'file')) openListed(name)
+        else setNotice({ ok: false, folder: currentPath, text: `${t('linkedFileNotFound')}. ${path}` })
+    }, [busy, currentPath, entries, error, loading, openListed, t])
     const openPathname = image?.path ?? audio?.path ?? video?.path ?? pdf?.path ?? preview?.path
     const openEntry = openPathname && folderOf(openPathname) === currentPath
         ? entries.find(entry => entry.type !== 'dir' && entry.name === nameOf(openPathname))
@@ -615,7 +634,12 @@ function FileEditor({ base, path, content, hash, identity, initialConflict = nul
     </Dialog>
 }
 
-export function DesktopCoworkerFiles({ agent, dialogControl }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl }) {
+export function DesktopCoworkerFiles({ agent, dialogControl, initialFilePath, onCloseAutoFocus }: {
+    agent: DesktopAgentView
+    dialogControl?: DesktopDialogControl
+    initialFilePath?: string | null
+    onCloseAutoFocus?: (event: Event) => void
+}) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     const closeGuard = useRef<CloseGuard | null>(null)
     const registerCloseGuard = useCallback((guard: CloseGuard | null) => { closeGuard.current = guard }, [])
@@ -625,7 +649,7 @@ export function DesktopCoworkerFiles({ agent, dialogControl }: { agent: DesktopA
     }
     return <Dialog open={open} onOpenChange={changeOpen} asSheet={false}>
         <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Files</Button></DialogTrigger>
-        {open && <DialogContent className="flex h-[75dvh] flex-col sm:max-w-2xl" onEscapeKeyDown={event => {
+        {open && <DialogContent className="flex h-[75dvh] flex-col sm:max-w-2xl" onCloseAutoFocus={onCloseAutoFocus} onEscapeKeyDown={event => {
             // Radix handles Escape at document capture before the field can stop propagation.
             // Let the inline field cancel its name edit without dismissing the Files dialog.
             if (event.target instanceof HTMLElement && event.target.hasAttribute('data-desktop-file-rename')) event.preventDefault()
@@ -634,7 +658,7 @@ export function DesktopCoworkerFiles({ agent, dialogControl }: { agent: DesktopA
                 <DialogTitle>Files</DialogTitle>
                 <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import a .txt or .md file. Preview supported images and PDFs, or play audio and video already in the folder.</DialogDescription>
             </DialogHeader>
-            <FilesPanel key={agent.id} agent={agent} registerCloseGuard={registerCloseGuard} />
+            <FilesPanel key={agent.id} agent={agent} initialFilePath={initialFilePath} registerCloseGuard={registerCloseGuard} />
             <DialogFooter><DialogClose asChild><Button type="button">Done</Button></DialogClose></DialogFooter>
         </DialogContent>}
     </Dialog>
