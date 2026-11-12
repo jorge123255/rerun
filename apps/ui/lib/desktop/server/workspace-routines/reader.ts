@@ -5,7 +5,7 @@ import { byNextRun, type DesktopScheduledRun, type DesktopScheduleRecord, type D
 export type DesktopWorkspaceRoutinesAuthority = {
     listOwners: (signal?: AbortSignal) => Promise<readonly DesktopWorkspaceRoutineOwner[]>
     listSchedules: (owner: DesktopWorkspaceRoutineOwner, signal?: AbortSignal) => Promise<readonly DesktopScheduleRecord[]>
-    listRuns: (owner: DesktopWorkspaceRoutineOwner, signal?: AbortSignal) => Promise<readonly DesktopScheduledRun[]>
+    listLatestRuns: (owner: DesktopWorkspaceRoutineOwner, signal?: AbortSignal) => Promise<readonly DesktopScheduledRun[]>
     adopt: (owner: DesktopWorkspaceRoutineOwner, run: DesktopScheduledRun, signal?: AbortSignal) => Promise<DesktopWorkspaceRoutineChat>
     canRename: (signal?: AbortSignal) => Promise<boolean>
 }
@@ -16,10 +16,10 @@ export function createDesktopWorkspaceRoutinesReader(authority: DesktopWorkspace
             const now = new Date()
             const owners = await authority.listOwners(signal)
             const perOwner = await Promise.allSettled(owners.filter(owner => owner.enabled).map(async owner => {
-                const [schedules, runs] = await Promise.all([authority.listSchedules(owner, signal), authority.listRuns(owner, signal)])
+                const [schedules, runs] = await Promise.all([authority.listSchedules(owner, signal), authority.listLatestRuns(owner, signal)])
                 return Promise.all(schedules.map(async schedule => {
-                    const history = runs.filter(run => run.triggerSource === 'schedule' && run.triggerSlug === schedule.slug)
-                        .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+                    const history = runs.filter(run => run.agentId === owner.agentId && run.triggerSource === 'schedule' && run.triggerSlug === schedule.slug)
+                        .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id))
                     const last = history[0]
                     const running = history.find(run => run.status === 'running')
                     const routine: DesktopWorkspaceRoutine = {

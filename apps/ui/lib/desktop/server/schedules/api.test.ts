@@ -2,7 +2,7 @@ import type { Client } from '@libsql/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 const engine = vi.hoisted(() => ({
-    createSchedule: vi.fn(), updateSchedule: vi.fn(), deleteSchedule: vi.fn(), listSchedules: vi.fn(), listRuns: vi.fn(),
+    createSchedule: vi.fn(), updateSchedule: vi.fn(), deleteSchedule: vi.fn(), listSchedules: vi.fn(), listRuns: vi.fn(), listLatestScheduleRuns: vi.fn(),
     getAgent: vi.fn(async () => ({ id: 'engine-owner' })),
 }))
 vi.mock('server-only', () => ({}))
@@ -33,12 +33,24 @@ async function enterBody(read: ReturnType<typeof vi.fn>) {
 beforeEach(() => { vi.useFakeTimers(); vi.clearAllMocks() })
 afterEach(() => { vi.useRealTimers() })
 
-test.each([0, 99, 100])('distinguishes a new routine from a truncated run history of %i entries', async count => {
-    engine.listSchedules.mockResolvedValueOnce([{ slug: 'task', ...valid.input }])
-    engine.listRuns.mockResolvedValueOnce(Array.from({ length: count }, () => ({ triggerSource: 'chat', triggerSlug: null })))
-    const response = await handle(new Request('http://localhost/api/desktop/coworkers/local-owner/schedules'))
+test('adopts the exact latest routine result and distinguishes a new routine with no runs', async () => {
+    const run = { id: 'saved', agentId: 'engine-owner', triggerSlug: 'daily', triggerSource: 'schedule', status: 'done', startedAt: '2026-01-01' }
+    engine.listSchedules.mockResolvedValueOnce([{ ...valid.input, slug: 'daily' }, { ...valid.input, slug: 'new' }])
+    engine.listLatestScheduleRuns.mockResolvedValueOnce([{ ...run, id: 'foreign', agentId: 'other' }, run])
+    const chat = { agentId: 'local-owner', engineAgentId: 'engine-owner', sessionId: 'local-saved', engineSessionId: 'engine-saved',
+        tabUid: 'schedule:local-saved', title: 'Daily', runId: 'saved' }
+    vi.mocked(adoptDesktopScheduledSession).mockResolvedValueOnce(chat)
+    const request = new Request('http://localhost/api/desktop/coworkers/local-owner/schedules')
+    const response = await handle(request)
     expect(response.status).toBe(200)
-    expect((await response.json())[0]).toMatchObject({ lastResult: null, lastResultUnknown: count >= 100 })
+    expect(await response.json()).toMatchObject([
+        { slug: 'daily', lastResult: { status: 'done', runId: run.id, chat } }, { slug: 'new', lastResult: null },
+    ])
+    expect(engine.listRuns).not.toHaveBeenCalled()
+    expect(engine.listLatestScheduleRuns).toHaveBeenCalledWith(expect.anything(), 'engine-owner', request.signal)
+    expect(adoptDesktopScheduledSession).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.anything(), {
+        agentId: 'local-owner', engineAgentId: 'engine-owner', scheduleSlug: 'daily', runId: 'saved',
+    }, { signal: request.signal })
 })
 
 test('lists only the selected coworker’s scheduled runs and does not adopt while reading', async () => {

@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { request as engineRequest, EngineRequestError, getAgent, listRuns } from '@/lib/engine/client'
+import { request as engineRequest, EngineRequestError, getAgent, listLatestScheduleRuns } from '@/lib/engine/client'
 import { desktopScheduleRecordSchema, desktopWorkspaceRoutineChatSchema, type DesktopWorkspaceRoutineMutation, type DesktopWorkspaceRoutineMutationResult } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
 import { openDesktopDatabase } from '../database'
 import { findDesktopAgent, listDesktopAgents } from '../store'
@@ -43,8 +43,17 @@ export async function desktopWorkspaceRoutinesAuthority(runtime: DesktopRuntime)
             return settled.flatMap(value => value.status === 'fulfilled' ? [value.value] : [])
         },
         listSchedules: (owner, signal) => records(owner.agentId, signal),
-        async listRuns(owner, signal) { return (await listRuns(engine, owner.engineAgentId, { limit: 100 }, { signal })).map(run => ({ id: run.id, agentId: owner.agentId, sessionId: run.sessionId, triggerSource: run.triggerSource ?? 'chat', triggerSlug: run.triggerSlug ?? null, status: run.status, startedAt: run.startedAt })) },
-        adopt: async (owner, run, signal) => routineChat(await adoptDesktopScheduledSession(db, engine, { agentId: owner.agentId, engineAgentId: owner.engineAgentId, engineSessionId: run.sessionId, runId: run.id }, { signal })),
+        async listLatestRuns(owner, signal) {
+            return (await listLatestScheduleRuns(engine, owner.engineAgentId, signal))
+                .filter(run => run.agentId === owner.engineAgentId)
+                .map(run => ({ ...run, agentId: owner.agentId }))
+        },
+        adopt: async (owner, run, signal) => {
+            if (run.triggerSlug === null) throw new DesktopHttpError(409, 'The routine result has no schedule identity.')
+            return routineChat(await adoptDesktopScheduledSession(db, engine, {
+                agentId: owner.agentId, engineAgentId: owner.engineAgentId, scheduleSlug: run.triggerSlug, runId: run.id,
+            }, { signal }))
+        },
         canRename: async () => true,
     }
     async function command(input: DesktopWorkspaceRoutineMutation, operation: 'read' | 'mutate', signal?: AbortSignal) {

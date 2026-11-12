@@ -6,7 +6,7 @@ import { authenticateDesktopRequest, DesktopHttpError } from '../auth'
 import { engineOf } from '../settings'
 import { desktopProvider } from '../../settings'
 import { findDesktopAgent } from '../store'
-import { createSchedule,updateSchedule,deleteSchedule,listSchedules,listRuns,getAgent } from '@/lib/engine/client'
+import { createSchedule,updateSchedule,deleteSchedule,listSchedules,listRuns,listLatestScheduleRuns,getAgent } from '@/lib/engine/client'
 import { nextRunAt } from '@/lib/schedules/cron'
 import { adoptDesktopScheduledSession } from './adoption'
 
@@ -88,11 +88,18 @@ export function desktopSchedulesApi(db:Client,authorize:ScheduleAccess) {
                     result = runs.filter(run => run.agentId === owner.engineAgentId && run.triggerSource === 'schedule' && run.triggerSlug === slug)
                         .map(({ id, status, startedAt }) => ({ id, status, startedAt }))
                 } else {
-                    const [schedules,runs]=await Promise.all([listSchedules(engine,owner.engineAgentId),listRuns(engine,owner.engineAgentId,{limit:100})])
+                    const [schedules, runs] = await Promise.all([
+                        listSchedules(engine, owner.engineAgentId, { signal: request.signal }),
+                        listLatestScheduleRuns(engine, owner.engineAgentId, request.signal),
+                    ])
+                    await authorize(owner.engineAgentId)
+                    request.signal.throwIfAborted()
                     result=await Promise.all(schedules.map(async schedule=>{
-                        const last=runs.find(run=>run.triggerSource==='schedule' && run.triggerSlug===schedule.slug)
-                        const chat=last ? await adoptDesktopScheduledSession(db,engine,{agentId,engineAgentId:owner.engineAgentId,engineSessionId:last.sessionId,runId:last.id}) : null
-                        return {...schedule,nextRunAt:nextRunAt(schedule,new Date()),lastResult:last ? {status:last.status,runId:last.id,chat} : null,lastResultUnknown:!last && runs.length >= 100}
+                        const last = runs.find(run => run.agentId === owner.engineAgentId && run.triggerSource === 'schedule' && run.triggerSlug === schedule.slug)
+                        const chat = last ? await adoptDesktopScheduledSession(db, engine, {
+                            agentId, engineAgentId: owner.engineAgentId, scheduleSlug: schedule.slug, runId: last.id,
+                        }, { signal: request.signal }) : null
+                        return { ...schedule, nextRunAt: nextRunAt(schedule, new Date()), lastResult: last ? { status: last.status, runId: last.id, chat } : null }
                     }))
                 }
             } else {

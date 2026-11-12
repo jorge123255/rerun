@@ -30,7 +30,7 @@ vi.mock('@/lib/desktop/server/schedules-binding', () => ({ authorizeDesktopSched
 vi.mock('@/lib/engine/client', () => ({
     EngineRequestError: class extends Error {},
     getAgent: async (_engine: unknown, id: string) => { expect(id).toBe('engine-copy'); return { config: { enabled: true, setup: { required: false } } } },
-    listRuns: async (_engine: unknown, id: string) => { expect(id).toBe('engine-copy'); return state.runs },
+    listLatestScheduleRuns: async (_engine: unknown, id: string) => { expect(id).toBe('engine-copy'); return state.runs },
     getSession: async (_engine: unknown, id: string, sessionId: string) => { expect(id).toBe('engine-copy'); expect(sessionId).toBe('engine-result-session'); return { id: sessionId, agentId: id, source: 'schedule', title: 'Copy result NOTICE27', createdAt: '2026-11-06T08:00:00.000Z' } },
     getRun: async (_engine: unknown, id: string, runId: string) => { expect(id).toBe('engine-copy'); return state.runs.find(run => run.id === runId) },
     request: async <T,>(_engine: unknown, path: string, init: RequestInit, parse: (body: unknown) => T) => {

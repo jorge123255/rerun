@@ -29,7 +29,7 @@ import { DesktopScheduleToolNotice } from '../schedule-tools/DesktopScheduleTool
 import { DesktopTaskNotifyField } from '../DesktopTaskNotifyField'
 
 type Chat={agentId:string;sessionId:string;engineSessionId:string;tabUid:string;title:string;runId:string|null}
-type Task=EngineSchedule & {nextRunAt:string|null;lastResultUnknown?:boolean;lastResult:{status:string;runId:string;chat:Chat}|null}
+type Task=EngineSchedule & {nextRunAt:string|null;lastResult:{status:string;runId:string;chat:Chat}|null}
 const scheduleRuns = z.array(engineRunSchema.pick({ id: true, status: true, startedAt: true }))
 class ScheduleRequestError extends Error {}
 
@@ -80,7 +80,7 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
             {error && tasks!==null && tasks.length>0 && <p className="px-3 text-xs text-muted-foreground">Showing previously loaded tasks.</p>}
             {!loading && !error && tasks?.length===0 ? <EmptyState icon={CalendarClockIcon} title="No scheduled tasks yet" description="Add a task for this local coworker to run while the app is open."/> : tasks && tasks.length>0 ?
             <PanelScroller><PanelList>{tasks.map(task=><div key={task.slug}><PanelRow onClick={()=>navigate(task)} title={task.name} description={scheduleSummary(task)} meta={!task.enabled ? <Badge size="xs" tone="neutral" glow={false}>paused</Badge> : undefined}
-                footer={<span>Next run: {task.nextRunAt ? new Date(task.nextRunAt).toLocaleString() : '—'} · Last result: {task.lastResult?.status ?? (task.lastResultUnknown ? 'Unavailable — history not established' : 'Not run yet')}</span>}/>
+                footer={<span>Next run: {task.nextRunAt ? new Date(task.nextRunAt).toLocaleString() : '—'} · Last result: {task.lastResult?.status ?? 'Not run yet'}</span>}/>
                 {task.lastResult?.chat && <Button size="sm" variant="ghost" onClick={()=>onOpenSession(task.lastResult!.chat)}>Open result chat</Button>}</div>)}</PanelList></PanelScroller> : null}
             <p className="p-3 text-xs text-muted-foreground">Tasks run while Rerun is open. After sleep or reopening, one due occurrence runs. Refresh to see the latest result.</p><Button size="sm" variant="ghost" disabled={loading} onClick={()=>void load()}>Refresh</Button>
         </div>}</PanelSteps>

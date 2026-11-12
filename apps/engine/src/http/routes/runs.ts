@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { FOREMAN_AGENT_ID } from '@rerun/contracts'
 import { listRunCompletions } from '../../db/completed-runs.js'
-import { aggregateUsageByDay, getRun, listRunsByAgent } from '../../db/repos/runs.js'
+import { aggregateUsageByDay, getRun, listRunsByAgent, listLatestScheduleRuns } from '../../db/repos/runs.js'
 import { listRunSteps, listToolCalls } from '../../db/repos/telemetry.js'
 import { collectAssistantText } from '../../db/repos/messages.js'
 import { resumeStreamResponse } from '../../runtime/stream.js'
@@ -10,6 +10,7 @@ import { cancelOwnedRun } from '../../runtime/cancel-run.js'
 import { desktopApp } from '../../desktop/policy.js'
 import { abortSubRun } from '../../tools/builtin/sub-run-watch.js'
 import { getDesktopForemanQueuedUserMessageId } from '../../db/repos/desktop-queued-turns.js'
+import { listSchedules } from '../../schedules/loader.js'
 
 const USAGE_RANGE_MS: Record<string, number> = {
     '24h': 24 * 60 * 60 * 1000,
@@ -71,6 +72,12 @@ runRoutes.get('/', async c => {
         return c.json({ error: 'Invalid schedule slug' }, 400)
     }
     return c.json({ runs: await listRunsByAgent(agentId, { limit, sessionId, status, scheduleSlug }) })
+})
+
+runRoutes.get('/latest-scheduled', async c => {
+    const agentId = c.req.param('id')!
+    const schedules = await listSchedules(agentId)
+    return c.json({ runs: await listLatestScheduleRuns(agentId, schedules.map(schedule => schedule.slug)) })
 })
 
 // The desktop completion store reads through this bounded route: terminal identity and time order

@@ -6,6 +6,7 @@ import {
     type BoxDefaultUpdate,
     ENGINE_CAPABILITY_DESKTOP,
     desktopStatusSchema,
+    desktopScheduledRunSchema,
     desktopThreadMetadataListSchema,
     takeoverResultSchema,
     type DesktopApp,
@@ -856,6 +857,11 @@ export async function requestEngineUpdate(conn: EngineConnection, force = false,
 // --- Runs (execution history) ---
 
 export type RunFilter = { limit?: number; sessionId?: string; status?: EngineRun['status']; scheduleSlug?: string }
+
+export async function listLatestScheduleRuns(conn: EngineConnection, agentId: string, signal?: AbortSignal) {
+    return request(conn, `/agents/${encodeURIComponent(agentId)}/runs/latest-scheduled`, { method: 'GET', signal },
+        data => z.object({ runs: z.array(desktopScheduledRunSchema) }).parse(data).runs)
+}
 
 // An engine that predates a filter ignores it and returns its most recent runs, so
 // callers keep filtering what comes back.

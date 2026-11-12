@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, or, sql } from 'drizzle-orm'
 import type { ContextOccupancy } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
 import { runs, type RunRow } from '../schema.js'
@@ -59,6 +59,39 @@ export async function listRunsByAgent(agentId: string, { limit = 50, sessionId, 
         .where(and(...conditions))
         .orderBy(desc(runs.startedAt))
         .limit(limit)
+}
+
+/** One latest result and, when different, one active run per requested routine. */
+export async function listLatestScheduleRuns(agentId: string, slugs: readonly string[]) {
+    if (slugs.length === 0) return []
+    const { db } = await getSystemDb(agentId)
+    const newest = sql`${runs.startedAt} desc, ${runs.id} desc`
+    const ranked = db.select({
+        id: runs.id,
+        agentId: runs.agentId,
+        sessionId: runs.sessionId,
+        triggerSource: runs.triggerSource,
+        triggerSlug: runs.triggerSlug,
+        status: runs.status,
+        startedAt: runs.startedAt,
+        latest: sql<number>`row_number() over (partition by ${runs.triggerSlug} order by ${newest})`.as('latest'),
+        byStatus: sql<number>`row_number() over (partition by ${runs.triggerSlug}, ${runs.status} order by ${newest})`.as('by_status'),
+    }).from(runs).where(and(
+        eq(runs.agentId, agentId),
+        eq(runs.triggerSource, 'schedule'),
+        sql`${runs.triggerSlug} in (select value from json_each(${JSON.stringify(slugs)}))`,
+    )).as('ranked')
+    return db.select({
+        id: ranked.id,
+        agentId: ranked.agentId,
+        sessionId: ranked.sessionId,
+        triggerSource: ranked.triggerSource,
+        triggerSlug: ranked.triggerSlug,
+        status: ranked.status,
+        startedAt: ranked.startedAt,
+    }).from(ranked)
+        .where(or(eq(ranked.latest, 1), and(eq(ranked.status, 'running'), eq(ranked.byStatus, 1))))
+        .orderBy(desc(ranked.startedAt), desc(ranked.id))
 }
 
 export async function startRun(agentId: string, sessionId: string, id: string = newId()): Promise<RunRow> {

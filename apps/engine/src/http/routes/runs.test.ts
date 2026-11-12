@@ -43,6 +43,7 @@ const { insertRunStep, insertToolCall } = await import('../../db/repos/telemetry
 const { getSystemDb } = await import('../../db/systemDb.js')
 const { registerRunAbort, unregisterRunAbort, activeRunCount, claimSession, releaseSession, setRunCancel, sessionClaim } = await import('../../runtime/run-control.js')
 const { registerRun } = await import('../../runtime/stream.js')
+const { writeSchedule } = await import('../../schedules/loader.js')
 const { registerSubRunStop } = await import('../../tools/builtin/sub-run-watch.js')
 
 const id = 'runsagent'
@@ -194,6 +195,31 @@ describe('GET /agents/:id/runs', () => {
         expect(await listed('?schedule=daily&limit=2')).toEqual(['daily-newer', 'daily-older'])
         expect(await listed('?schedule=weekly')).toEqual(['weekly'])
         expect((await app.request(`/agents/${listAgent}/runs?schedule=..`)).status).toBe(400)
+    })
+
+    it('returns the latest and active runs for configured schedules despite newer unrelated chats', async () => {
+        for (const name of ['Daily', 'Weekly', 'Never run']) {
+            await writeSchedule(listAgent, { name, body: 'Fixture', cron: '0 8 * * *', enabled: false })
+        }
+        const { client } = await getSystemDb(listAgent)
+        await client.batch([
+            ['daily-active', listAgent, 'schedule', 'daily', '2024-01-01', 'running'],
+            ['daily-tied-z', listAgent, 'schedule', 'daily', '2024-01-03', 'done'],
+            ['daily-tied-a', listAgent, 'schedule', 'daily', '2024-01-03', 'error'],
+            ['weekly-active', listAgent, 'schedule', 'weekly', '2024-01-04', 'running'],
+            ['removed', listAgent, 'schedule', 'removed', '2024-01-05', 'done'],
+            ['foreign-active', 'other-agent', 'schedule', 'daily', '2024-01-06', 'running'],
+        ].map(args => ({
+            sql: "INSERT INTO runs (id, agent_id, trigger_source, trigger_slug, started_at, status, session_id) VALUES (?, ?, ?, ?, ?, ?, 'fixture-session')",
+            args,
+        })))
+        expect(await listed('?limit=100')).not.toContain('daily-tied-z')
+        const response = await app.request(`/agents/${listAgent}/runs/latest-scheduled`)
+        expect(response.status).toBe(200)
+        const { runs } = await response.json() as { runs: Array<{ id: string; status: string }> }
+        expect(runs.map(({ id, status }) => [id, status])).toEqual([
+            ['weekly-active', 'running'], ['daily-tied-z', 'done'], ['daily-active', 'running'],
+        ])
     })
 })
 

@@ -18,7 +18,7 @@ const task = (slug: string, extra: Record<string, unknown> = {}) => ({
     slug, name: `Saved ${slug}`, description: '', body: 'Return a short report.', enabled: true,
     cron: '0 8 * * *', runAt: null, timezone: 'America/Chicago', nextRunAt: null,
     connectionId: null, provider: null, model: null,
-    lastResult: null, lastResultUnknown: false, ...extra,
+    lastResult: null, ...extra,
 })
 const modelView = {
     catalog: [{ connectionId: 'conn-b', name: 'OpenAI B', provider: 'openai', models: [{ id: 'gpt-exact', label: 'Exact model' }] }],
