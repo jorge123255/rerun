@@ -1,12 +1,13 @@
 import { fileURLToPath } from 'node:url'
+import { shellLocale, shellText } from './shell-language.mjs'
 import { QUICK_ASK_SHORTCUT } from './quick-ask-window.mjs'
 
-const labels = {
-    en: { open: name => `Open ${name}`, waiting: count => `${count} waiting for you`, login: 'Open at Login', quit: name => `Quit ${name}` },
-    fr: { open: name => `Ouvrir ${name}`, waiting: count => `${count} en attente de vous`, login: 'Ouvrir à la connexion', quit: name => `Quitter ${name}` },
-    es: { open: name => `Abrir ${name}`, waiting: count => `${count} ${count === 1 ? 'te espera' : 'te esperan'}`, login: 'Abrir al iniciar sesión', quit: name => `Salir de ${name}` },
-    pt: { open: name => `Abrir o ${name}`, waiting: count => `${count} esperando por você`, login: 'Abrir ao iniciar sessão', quit: name => `Sair do ${name}` },
-    de: { open: name => `${name} öffnen`, waiting: count => `${count} ${count === 1 ? 'wartet' : 'warten'} auf dich`, login: 'Bei der Anmeldung öffnen', quit: name => `${name} beenden` },
+const waitingLabels = {
+    en: count => `${count} waiting for you`,
+    fr: count => `${count} en attente de vous`,
+    es: count => `${count} ${count === 1 ? 'te espera' : 'te esperan'}`,
+    pt: count => `${count} esperando por você`,
+    de: count => `${count} ${count === 1 ? 'wartet' : 'warten'} auf dich`,
 }
 
 export function macLoginItemSettings(app) {
@@ -20,9 +21,7 @@ export function setMacOpenAtLogin(app, openAtLogin) {
     catch { /* The OS setting remains authoritative if the change is refused. */ }
 }
 
-export function createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow, quickAsk }) {
-    const language = app.getLocale().toLowerCase().split('-')[0]
-    const copy = Object.hasOwn(labels, language) ? labels[language] : labels.en
+export function createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow, quickAsk, locale = () => app.getLocale() }) {
     const loginSettings = () => macLoginItemSettings(app)
     const image = nativeImage.createEmpty()
     for (const [scaleFactor, suffix] of [[1, ''], [2, '@2x']]) {
@@ -37,16 +36,18 @@ export function createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow, qui
     const startedAtLogin = loginSettings()?.wasOpenedAtLogin === true
     const tray = new Tray(image)
     function refresh() {
-        const waiting = unread > 0 ? copy.waiting(unread) : null
+        const language = shellLocale(locale()) ?? 'en'
+        const t = shellText(language)
+        const waiting = unread > 0 ? waitingLabels[language](unread) : null
         const login = loginSettings()
         const menu = Menu.buildFromTemplate([
-            { id: 'rerun-tray-open', label: copy.open(app.name), click: openWindow },
-            ...(quickAsk ? [{ id: 'rerun-tray-quick-ask', label: 'Quick Ask…', accelerator: QUICK_ASK_SHORTCUT,
+            { id: 'rerun-tray-open', label: t('tray.open', { name: app.name }), click: openWindow },
+            ...(quickAsk ? [{ id: 'rerun-tray-quick-ask', label: t('tray.quickAsk'), accelerator: QUICK_ASK_SHORTCUT,
                 registerAccelerator: false, enabled: quickAsk.enabled(), click: () => { if (quickAsk.enabled()) quickAsk.open() } }] : []),
             ...(waiting ? [{ id: 'rerun-tray-unread', label: waiting, enabled: false }] : []),
             { type: 'separator' },
             {
-                id: 'rerun-tray-login', label: copy.login, type: 'checkbox',
+                id: 'rerun-tray-login', label: t('tray.openAtLogin'), type: 'checkbox',
                 enabled: login !== null, checked: login?.openAtLogin === true,
                 click: item => {
                     setMacOpenAtLogin(app, item.checked === true)
@@ -54,7 +55,7 @@ export function createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow, qui
                 },
             },
             { type: 'separator' },
-            { id: 'rerun-tray-quit', label: copy.quit(app.name), click: () => app.quit() },
+            { id: 'rerun-tray-quit', label: t('menu.app.quit', { name: app.name }), click: () => app.quit() },
         ])
         menu.on('menu-will-show', () => {
             const settings = loginSettings()
@@ -70,7 +71,7 @@ export function createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow, qui
     try { refresh() } catch (error) { tray.destroy(); throw error }
     app.once('will-quit', () => tray.destroy())
     return {
-        startedAtLogin,
+        startedAtLogin, refresh,
         setUnread(count) {
             if (count === unread) return
             unread = count

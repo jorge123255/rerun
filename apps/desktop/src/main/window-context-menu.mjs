@@ -7,7 +7,7 @@ export function externalDesktopLink(href) {
     } catch { return null }
 }
 
-// Use the Mac's menu language, like the menu-bar item. Native edit commands stay bound to
+// Use the window’s current language. Native edit commands stay bound to
 // the contents that opened the menu, even if another window takes focus before selection.
 const labels = {
     en: ['Cut', 'Copy', 'Paste', 'Select All', 'Add to Dictionary', 'Open Link', 'Copy Link', 'Copy Image', 'Save Image'],
@@ -20,13 +20,13 @@ const labels = {
 export function attachDesktopContextMenu({ window, Menu, clipboard, openExternal, locale, currentScope,
     saveImage, canSaveImage = displayedImageTarget, reportFailure }) {
     const contents = window.webContents
-    const language = locale.toLowerCase().split('-')[0]
-    const [cut, copy, paste, selectAll, dictionary, openLink, copyLink, copyImage, saveImageLabel] =
-        Object.hasOwn(labels, language) ? labels[language] : labels.en
     let request = 0
     contents.on('context-menu', (_event, params) => {
         const scope = currentScope()
         if (!scope || params.frame !== contents.mainFrame || params.pageURL !== contents.mainFrame.url) return
+        const language = (typeof locale === 'function' ? locale() : locale).toLowerCase().split('-')[0]
+        const [cut, copy, paste, selectAll, dictionary, openLink, copyLink, copyImage, saveImageLabel] =
+            Object.hasOwn(labels, language) ? labels[language] : labels.en
         const id = ++request
         const frame = params.frame
         const active = () => id === request && scope === currentScope() && frame === contents.mainFrame && params.pageURL === frame.url

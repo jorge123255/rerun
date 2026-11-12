@@ -15,6 +15,7 @@ import { createRemoteMachineIpc } from './remote-machines/ipc.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
 import { createDesktopFileSaves, safeDisplayedImageError } from './result-files.mjs'
 import { installMacApplicationMenu } from './application-menu.mjs'
+import { loadShellLanguage } from './shell-language.mjs'
 import { createMacMenuBar, macLoginItemSettings, setMacOpenAtLogin } from './mac-menu-bar.mjs'
 import { attachDesktopContextMenu, externalDesktopLink } from './window-context-menu.mjs'
 import { createWindowFind } from './window-find.mjs'
@@ -34,6 +35,7 @@ const boardPlacement = 'local-board'
 let storageSetupError
 let window
 let menuBar
+let shellLanguage
 let shortcutPreference
 let lastWorkspaceWindow
 let saveBoardPlacement
@@ -203,6 +205,7 @@ else {
                 await supervisor?.stop()
                 saveBoardPlacement?.()
                 await windowPlacements?.flush()
+                await shellLanguage?.flush()
             },
             quit: () => { clickHandoff.stop(); quittingNow = true; app.quit() },
             cancelled: resumeAfterCancelledQuit,
@@ -249,11 +252,23 @@ async function launch() {
     if (mac) {
         if (app.isPackaged && !registerHubProtocol(app)) console.warn('Could not register Rerun development links with macOS.')
         shortcutPreference = await loadQuickAskShortcut({ dataRoot, globalShortcut, open: toggleQuickAsk })
+        const currentLanguageScope = () => {
+            const focused = BrowserWindow.getFocusedWindow()
+            if (boards.get(focused)) return 'local'
+            return connectedHubs?.languageScopeOf(focused) ?? connectedHubs?.languageScopeOf(lastWorkspaceWindow) ?? 'local'
+        }
+        shellLanguage = await loadShellLanguage({ dataRoot,
+            systemLanguages: [...app.getPreferredSystemLanguages(), app.getLocale()], currentScope: currentLanguageScope,
+            onChange: () => { refreshApplicationMenu(); menuBar?.refresh() } })
         connectedHubs = createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
             available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate),
-            setUnread: count => { hubUnread = count; publishMacUnread() }, desktopSettings, changeDesktopSettings })
+            setUnread: count => { hubUnread = count; publishMacUnread() }, desktopSettings, changeDesktopSettings,
+            setLanguage: (scope, locale) => shellLanguage.set(scope, locale), language: scope => shellLanguage.forScope(scope) })
         app.on('browser-window-focus', (_event, candidate) => {
-            if (boards.get(candidate) || connectedHubs.ownsWindow(candidate)) lastWorkspaceWindow = candidate
+            if (boards.get(candidate) || connectedHubs.ownsWindow(candidate)) {
+                lastWorkspaceWindow = candidate
+                shellLanguage.select(connectedHubs.languageScopeOf(candidate) ?? 'local')
+            }
         })
         if (pendingHubLink) {
             const link = pendingHubLink
@@ -261,8 +276,8 @@ async function launch() {
             void connectedHubs.openLink(link).catch(() => {})
         }
         app.once('will-quit', shortcutPreference.unregister)
-        installMacApplicationMenu({
-            Menu, appName: app.name, isDesktopPage,
+        const refreshApplicationMenu = () => installMacApplicationMenu({
+            Menu, appName: app.name, isDesktopPage, locale: shellLanguage.locale(),
             settingsWindow: () => {
                 const candidate = focusedBoard()
                 return boardContext(candidate) && boards.get(candidate).drafts.ready ? candidate : null
@@ -286,8 +301,9 @@ async function launch() {
             },
             devTools: !app.isPackaged,
         })
+        refreshApplicationMenu()
         try {
-            menuBar = createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow: showMainWindow,
+            menuBar = createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow: showMainWindow, locale: shellLanguage.locale,
                 quickAsk: { enabled: () => shortcutPreference.state().enabled, open: toggleQuickAsk } })
             showWindowOnReady = !menuBar.startedAtLogin
         } catch {
@@ -302,6 +318,12 @@ async function launch() {
         })
         ipcMain.on('desktop:find-query', (event, input) => windowFind.search(event, input))
         ipcMain.on('desktop:find-close', event => windowFind.dismiss(event))
+        ipcMain.on('desktop:language', (event, value) => {
+            try {
+                const board = trusted(event)
+                if (boardContext(board.window)) shellLanguage.set('local', value)
+            } catch { /* Ignore untrusted frames. */ }
+        })
         ipcMain.handle('desktop:mac-fullscreen', event => trusted(event).window.isFullScreen())
         const assertBoard = event => {
             trusted(event)
@@ -550,7 +572,7 @@ function createBoardWindow(desktopSession, bounds, primary = false) {
         boardWindow.on('leave-full-screen', reportFullscreen)
     }
     if (mac) attachDesktopContextMenu({
-        window: boardWindow, Menu, clipboard, openExternal, locale: app.getLocale(),
+        window: boardWindow, Menu, clipboard, openExternal, locale: () => shellLanguage.forScope('local'),
         currentScope: () => boardContext(boardWindow)?.rendererEpoch ?? null,
         saveImage: (pageURL, srcURL) => filesFor(boardWindow).saveDisplayedImage(pageURL, srcURL),
         reportFailure: error => reportImageSaveFailure(boardWindow, error),

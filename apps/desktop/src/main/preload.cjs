@@ -23,6 +23,9 @@ ipcRenderer.on('desktop:before-quit', (_event, value) => {
 contextBridge.exposeInMainWorld('desktopApp', {
     ...(process.platform === 'darwin' ? {
         openFind: () => ipcRenderer.send('desktop:find-open'),
+        setLanguage: locale => {
+            if (typeof locale === 'string' && locale.length <= 5) ipcRenderer.send('desktop:language', locale)
+        },
         quickAskSettings: {
             read: () => ipcRenderer.invoke('desktop:quick-ask-settings'),
             set: enabled => ipcRenderer.invoke('desktop:quick-ask-set-shortcut', enabled),

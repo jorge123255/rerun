@@ -18,10 +18,10 @@ import { attachDesktopContextMenu, externalDesktopLink } from './window-context-
 const pickerPage = new URL('./connected-hub.html', import.meta.url)
 const offlinePage = new URL('./connected-hub-offline.html', import.meta.url)
 const preload = fileURLToPath(new URL('./connected-hub-preload.cjs', import.meta.url))
-const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads', 'notifications', 'badge', 'settings', 'oauth']
+const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads', 'notifications', 'badge', 'settings', 'oauth', 'locale']
 
 export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
-    available, openFind, closeFind, setUnread, desktopSettings, changeDesktopSettings }) {
+    available, openFind, closeFind, setUnread, desktopSettings, changeDesktopSettings, setLanguage, language }) {
     const file = resolve(dataRoot, 'connected-hub.json')
     const windows = new Map()
     const childWindows = new Map()
@@ -238,7 +238,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         })
         windows.set(contents, entry)
         attachDesktopContextMenu({
-            window, Menu, clipboard, openExternal: external, locale: app.getLocale(),
+            window, Menu, clipboard, openExternal: external, locale: () => language(origin),
             currentScope: () => available() && connected(window) === entry ? entry.scope : null,
             canSaveImage: (_page, source) => isHubDownload([source], origin),
             saveImage: (_page, source) => contents.downloadURL(source),
@@ -422,6 +422,9 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         ['hub:oauth-cancel', (entry, registrationId, frame) => serviceSignIn.cancel(entry, registrationId, frame)],
         ['hub:show-download', (entry, id) => downloads.show(entry, id)],
         ['hub:settings', () => desktopSettings()],
+        ['hub:locale', (entry, value, frame) => {
+            if (entry.native?.frame === frame && currentNative(entry, entry.native)) setLanguage(entry.origin, value)
+        }],
         ['hub:set-settings', (entry, value, frame) => {
             const native = entry.native
             const assertCurrent = () => {
@@ -452,6 +455,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     return {
         openPicker,
         ownsWindow: window => !!entryFor(window),
+        languageScopeOf: window => entryFor(window)?.origin ?? null,
         scopeOf: window => available() ? connected(window)?.scope : null,
         duplicateWindow(window) {
             const entry = entryFor(window)

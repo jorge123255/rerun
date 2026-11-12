@@ -25,6 +25,8 @@ export function DesktopLocale({ initial, children }: { initial: DesktopLanguage;
     useEffect(() => {
         const original = document.documentElement.lang
         document.documentElement.lang = tag
+        const native = (window as Window & { desktopApp?: { setLanguage?: (locale: string) => void } }).desktopApp
+        native?.setLanguage?.(tag)
         return () => { document.documentElement.lang = original }
     }, [tag])
     return (

@@ -1,0 +1,54 @@
+{
+    "menu": {
+        "app": {
+            "about": "Über {name}",
+            "hide": "{name} ausblenden",
+            "hideOthers": "Andere ausblenden",
+            "showAll": "Alle einblenden",
+            "quit": "{name} beenden",
+            "settings": "Einstellungen…"
+        },
+        "file": {
+            "title": "Ablage",
+            "closeWindow": "Fenster schließen",
+            "newWindow": "Neues Fenster",
+            "connect": "Mit Rerun verbinden…"
+        },
+        "edit": {
+            "title": "Bearbeiten",
+            "undo": "Widerrufen",
+            "redo": "Wiederholen",
+            "cut": "Ausschneiden",
+            "copy": "Kopieren",
+            "paste": "Einsetzen",
+            "pasteAndMatchStyle": "Einsetzen und Stil anpassen",
+            "delete": "Löschen",
+            "selectAll": "Alles auswählen",
+            "find": "Suchen…"
+        },
+        "view": {
+            "title": "Darstellung",
+            "reload": "Neu laden",
+            "toggleDevTools": "Entwicklertools",
+            "actualSize": "Originalgröße",
+            "zoomIn": "Vergrößern",
+            "zoomOut": "Verkleinern",
+            "toggleFullScreen": "Vollbild"
+        },
+        "window": {
+            "title": "Fenster",
+            "minimize": "Im Dock ablegen",
+            "zoom": "Zoomen",
+            "front": "Alle nach vorne bringen"
+        },
+        "help": {
+            "title": "Hilfe",
+            "docs": "Dokumentation"
+        }
+    },
+    "tray": {
+        "open": "{name} öffnen",
+        "quickAsk": "Schnellfrage",
+        "openAtLogin": "Bei der Anmeldung öffnen"
+    }
+}

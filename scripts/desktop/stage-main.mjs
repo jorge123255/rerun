@@ -6,6 +6,7 @@ import { sourceStamp, writeStamp } from './provenance.mjs'
 const required = [
     'index.js', 'index.mjs', 'preload.cjs', 'before-quit.mjs', 'startup.html',
     'startup.css', 'startup.js', 'runtime.mjs', 'supervisor.mjs', 'ui-host.mjs', 'notifications.mjs', 'application-menu.mjs',
+    'shell-language.mjs', ...['de', 'en', 'es', 'fr', 'pt'].map(locale => `shell-messages/${locale}.json`),
     'mac-menu-bar.mjs', 'tray/trayTemplate.png', 'tray/trayTemplate@2x.png',
     'window-context-menu.mjs', 'displayed-image.mjs', 'board-windows.mjs',
     'connected-hub-policy.mjs', 'connected-hub-auth.mjs', 'connected-hubs.mjs', 'connected-hub-downloads.mjs',

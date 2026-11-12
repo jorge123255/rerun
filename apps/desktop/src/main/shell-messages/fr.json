@@ -1,0 +1,54 @@
+{
+    "menu": {
+        "app": {
+            "about": "À propos de {name}",
+            "hide": "Masquer {name}",
+            "hideOthers": "Masquer les autres",
+            "showAll": "Tout afficher",
+            "quit": "Quitter {name}",
+            "settings": "Réglages…"
+        },
+        "file": {
+            "title": "Fichier",
+            "closeWindow": "Fermer la fenêtre",
+            "newWindow": "Nouvelle fenêtre",
+            "connect": "Se connecter à Rerun…"
+        },
+        "edit": {
+            "title": "Édition",
+            "undo": "Annuler",
+            "redo": "Rétablir",
+            "cut": "Couper",
+            "copy": "Copier",
+            "paste": "Coller",
+            "pasteAndMatchStyle": "Coller et adapter le style",
+            "delete": "Supprimer",
+            "selectAll": "Tout sélectionner",
+            "find": "Rechercher…"
+        },
+        "view": {
+            "title": "Présentation",
+            "reload": "Recharger",
+            "toggleDevTools": "Outils de développement",
+            "actualSize": "Taille réelle",
+            "zoomIn": "Zoom avant",
+            "zoomOut": "Zoom arrière",
+            "toggleFullScreen": "Plein écran"
+        },
+        "window": {
+            "title": "Fenêtre",
+            "minimize": "Réduire",
+            "zoom": "Zoom",
+            "front": "Tout ramener au premier plan"
+        },
+        "help": {
+            "title": "Aide",
+            "docs": "Documentation"
+        }
+    },
+    "tray": {
+        "open": "Ouvrir {name}",
+        "quickAsk": "Question rapide",
+        "openAtLogin": "Ouvrir à la connexion"
+    }
+}

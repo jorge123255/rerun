@@ -88,6 +88,11 @@ if (bootstrap?.audience === 'picker') {
             try { workspace = sessionStorage.getItem('rerun:tab-workspace') } catch {}
             void ipcRenderer.invoke('hub:badge', count, workspace).catch(() => {})
         } },
+        locale: {
+            set: locale => {
+                if (typeof locale === 'string' && locale.length <= 5) void ipcRenderer.invoke('hub:locale', locale).catch(() => {})
+            },
+        },
         settings: {
             get: () => ipcRenderer.invoke('hub:settings'),
             set: patch => ipcRenderer.invoke('hub:set-settings', { quickAsk: patch?.quickAsk, openAtLogin: patch?.openAtLogin }),
