@@ -1,5 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
+import { desktopScheduleRevisionSchema } from '@rerun/contracts'
 import { Cron } from 'croner'
 import type { Client } from '@libsql/client'
 import { authenticateDesktopRequest, DesktopHttpError } from '../auth'
@@ -94,12 +95,14 @@ export function desktopSchedulesApi(db:Client,authorize:ScheduleAccess) {
                     ])
                     await authorize(owner.engineAgentId)
                     request.signal.throwIfAborted()
+                    const setup = detail.config.setup
+                    const setupPending = setup?.required === true && setup.completedAt === null && detail.install.trim().length > 0
                     result=await Promise.all(schedules.map(async schedule=>{
                         const last = runs.find(run => run.agentId === owner.engineAgentId && run.triggerSource === 'schedule' && run.triggerSlug === schedule.slug)
                         const chat = last ? await adoptDesktopScheduledSession(db, engine, {
                             agentId, engineAgentId: owner.engineAgentId, scheduleSlug: schedule.slug, runId: last.id,
                         }, { signal: request.signal }) : null
-                        return { ...schedule, nextRunAt: nextRunAt(schedule, new Date()), lastResult: last ? { status: last.status, runId: last.id, chat } : null }
+                        return { ...schedule, setupPending, nextRunAt: nextRunAt(schedule, new Date()), lastResult: last ? { status: last.status, runId: last.id, chat } : null }
                     }))
                 }
             } else {
@@ -116,7 +119,7 @@ export function desktopSchedulesApi(db:Client,authorize:ScheduleAccess) {
                     if (body.expectedRevision === undefined) {
                         await deleteSchedule(engine, owner.engineAgentId, slug)
                     } else {
-                        const expectedRevision = z.string().regex(/^[a-f0-9]{64}$/).parse(body.expectedRevision)
+                        const expectedRevision = desktopScheduleRevisionSchema.parse(body.expectedRevision)
                         try {
                             await deleteSchedule(engine, owner.engineAgentId, slug, { expectedRevision, signal: request.signal })
                         } catch (error) {
@@ -137,10 +140,23 @@ export function desktopSchedulesApi(db:Client,authorize:ScheduleAccess) {
                 }
                 else if(request.method==='POST' && slug && body.action==='run') {
                     const requestId=z.string().uuid().parse(body.requestId)
-                    const response=await fetch(`${engine.baseUrl}/agents/${encodeURIComponent(owner.engineAgentId)}/schedules/${encodeURIComponent(slug)}/run`,{method:'POST',headers:{Authorization:`Bearer ${engine.apiKey}`,'x-desktop-schedule-request-id':requestId},signal:AbortSignal.any([request.signal,AbortSignal.timeout(120000)])})
-                    if(!response.ok)throw new DesktopHttpError(response.status,'Task could not start')
+                    const expectedRevision = desktopScheduleRevisionSchema.optional().parse(body.expectedRevision)
+                    const response = await fetch(`${engine.baseUrl}/agents/${encodeURIComponent(owner.engineAgentId)}/schedules/${encodeURIComponent(slug)}/run`, {
+                        method: 'POST', redirect: 'error', signal: AbortSignal.any([request.signal, AbortSignal.timeout(120000)]),
+                        headers: {
+                            Authorization: `Bearer ${engine.apiKey}`,
+                            'x-desktop-schedule-request-id': requestId,
+                            ...(expectedRevision && { 'x-desktop-schedule-revision': expectedRevision }),
+                        },
+                    })
+                    if (!response.ok) {
+                        const message = response.status === 412 ? 'This routine changed. Refresh it before running.' : 'Task could not start'
+                        throw new DesktopHttpError(response.status, message)
+                    }
                     const ids=z.object({sessionId:z.string(),runId:z.string()}).parse(await response.json())
-                    result=await adoptDesktopScheduledSession(db,engine,{agentId,engineAgentId:owner.engineAgentId,engineSessionId:ids.sessionId,runId:ids.runId})
+                    result = await adoptDesktopScheduledSession(db, engine, {
+                        agentId, engineAgentId: owner.engineAgentId, engineSessionId: ids.sessionId, runId: ids.runId, scheduleSlug: slug,
+                    }, { signal: request.signal, authorize: () => authorize(owner.engineAgentId) })
                 } else throw new DesktopHttpError(400,'Invalid schedule action')
             }
             return Response.json(result,{headers:{'Cache-Control':'no-store'}})

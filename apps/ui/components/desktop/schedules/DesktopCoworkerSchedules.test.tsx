@@ -14,11 +14,12 @@ import { DesktopCoworkerSchedules } from './DesktopCoworkerSchedules'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const grantMessage = 'Enable Schedules in this coworker’s Capabilities to use routines'
+const revision = 'a'.repeat(64)
 const task = (slug: string, extra: Record<string, unknown> = {}) => ({
     slug, name: `Saved ${slug}`, description: '', body: 'Return a short report.', enabled: true,
     cron: '0 8 * * *', runAt: null, timezone: 'America/Chicago', nextRunAt: null,
     connectionId: null, provider: null, model: null,
-    lastResult: null, ...extra,
+    lastResult: null, revision, setupPending: false, ...extra,
 })
 const modelView = {
     catalog: [{ connectionId: 'conn-b', name: 'OpenAI B', provider: 'openai', models: [{ id: 'gpt-exact', label: 'Exact model' }] }],
@@ -174,6 +175,41 @@ async function setControlValue(selector: string, value: string) {
     Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(control, value)
     await act(async () => { control.dispatchEvent(new Event('input', { bubbles: true })) })
 }
+
+test('Test Run uses the reviewed revision for a paused routine after setup', async () => {
+    const onOpenSession = vi.fn()
+    const chat = { agentId: 'alice', sessionId: 'saved', engineSessionId: 'engine-saved', tabUid: 'schedule:saved', title: 'Daily report', runId: 'run-a' }
+    const requests: unknown[] = []
+    respond = async (url, init) => {
+        if (url.endsWith('/model')) return Response.json(modelView)
+        if (init?.method === 'POST') {
+            requests.push(JSON.parse(String(init.body)))
+            return Response.json(chat)
+        }
+        return Response.json([task('daily', { enabled: false })])
+    }
+    await act(async () => { root.render(<DesktopCoworkerSchedules agentId="alice" onOpenSession={onOpenSession} />) })
+    await act(async () => { row('Saved daily').click() })
+    expect(button('Test Run').disabled).toBe(false)
+    await act(async () => { button('Test Run').click() })
+    expect(requests).toEqual([{ action: 'run', slug: 'daily', requestId: expect.any(String), expectedRevision: revision }])
+    expect(onOpenSession).toHaveBeenCalledExactlyOnceWith(chat)
+})
+
+test('Test Run waits for setup on a paused routine and for an edited model to be saved', async () => {
+    exactModelResponses([task('setup', { enabled: false, setupPending: true }), task('ready')])
+    await render()
+    await act(async () => { row('Saved setup').click() })
+    expect(button('Test Run').disabled).toBe(true)
+    expect(container.textContent).toContain('Test Run unlocks once the setup is finished.')
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click() })
+    await act(async () => { row('Saved ready').click() })
+    expect(button('Test Run').disabled).toBe(false)
+    await act(async () => { button('Use exact model').click() })
+    expect(button('Test Run').disabled).toBe(true)
+    await act(async () => { button('Use coworker default').click() })
+    expect(button('Test Run').disabled).toBe(false)
+})
 
 test('an exact catalog selection is saved with its connection provider and model', async () => {
     exactModelResponses()

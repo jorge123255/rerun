@@ -4,28 +4,37 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import type { DesktopScheduleDefinition, DesktopScheduleFilePort } from '../../desktop/schedule-tools/types.js'
 const state = vi.hoisted(() => ({
     desktop: false, update: vi.fn(), authorize: vi.fn(), describe: vi.fn(), fire: vi.fn(), legacyDelete: vi.fn(),
+    read: vi.fn(), list: vi.fn(), getAgent: vi.fn(),
     files: null as DesktopScheduleFilePort | null,
 }))
 vi.mock('../../desktop/policy.js', () => ({ desktopApp: () => state.desktop }))
 vi.mock('../../desktop/schedule-binding.js', () => ({ authorizeDesktopSchedule: state.authorize }))
 vi.mock('../../desktop/schedule-description.js', async importOriginal => ({ ...await importOriginal<typeof import('../../desktop/schedule-description.js')>(), describeDesktopSchedule: state.describe }))
 vi.mock('../../schedules/loader.js', () => ({
-    scheduleExists: () => true, readSchedule: async () => ({ slug: 'daily', cron: '0 9 * * *', runAt: null }), updateScheduleAt: state.update,
-    deleteSchedule: state.legacyDelete, listSchedules: vi.fn(), writeSchedule: vi.fn(),
+    scheduleExists: () => true, readSchedule: state.read, updateScheduleAt: state.update,
+    deleteSchedule: state.legacyDelete, listSchedules: state.list, writeSchedule: vi.fn(),
 }))
 vi.mock('../../desktop/schedule-tools/files.js', async original => ({
     ...await original<typeof import('../../desktop/schedule-tools/files.js')>(),
     desktopScheduleFiles: () => state.files,
 }))
 vi.mock('../../runtime/scheduler.js', () => ({ fireSchedule: state.fire }))
-vi.mock('../../agents/registry.js', () => ({ getAgent: vi.fn() }))
+vi.mock('../../agents/registry.js', () => ({ getAgent: state.getAgent }))
 import { scheduleRoutes } from './schedules.js'
 import { memoryScheduleFiles } from '../../desktop/schedule-tools/files.js'
 import { desktopScheduleDefinitionRevision } from '../../desktop/schedule-tools/revision.js'
 const app = new Hono().route('/agents/:id/schedules', scheduleRoutes)
 app.onError((error, c) => error instanceof HttpError ? c.json({ error: error.message }, error.status as 403) : c.text('Internal error', 500))
 const patch = (body: unknown) => app.request('/agents/owner/schedules/daily', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-beforeEach(() => { vi.clearAllMocks(); state.desktop = false; state.update.mockImplementation(async (_owner, _slug, body) => body); state.authorize.mockResolvedValue(undefined) })
+beforeEach(() => {
+    vi.clearAllMocks()
+    state.desktop = false
+    state.update.mockImplementation(async (_owner, _slug, body) => body)
+    state.authorize.mockResolvedValue(undefined)
+    state.read.mockResolvedValue(daily)
+    state.list.mockResolvedValue([daily])
+    state.getAgent.mockResolvedValue({ config: { setup: { required: false, completedAt: null } }, install: '' })
+})
 test('preserves original hosted merged timing while desktop requires exactly one timing', async () => {
     expect((await patch({ runAt: '2030-01-01T09:00:00.000Z' })).status).toBe(200)
     expect(state.authorize).not.toHaveBeenCalled()
@@ -124,4 +133,35 @@ test('rechecks the schedules grant inside the deletion lock', async () => {
     state.authorize.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new HttpError(403, 'Schedules disabled'))
     expect((await remove(daily)).status).toBe(403)
     expect(await files.read('owner', daily.slug)).toEqual(daily)
+})
+
+const manualId = '00000000-0000-4000-8000-000000000004'
+const testRun = (revision: string) => app.request('/agents/owner/schedules/daily/run', {
+    method: 'POST', headers: { 'x-desktop-schedule-request-id': manualId, 'x-desktop-schedule-revision': revision },
+})
+
+test('desktop lists the revision shared with workspace routines and checks it before starting a run', async () => {
+    state.desktop = true
+    const revision = desktopScheduleDefinitionRevision(daily)
+    const list = await app.request('/agents/owner/schedules')
+    expect(await list.json()).toEqual({ schedules: [{ ...daily, revision }] })
+    expect((await testRun('a'.repeat(64))).status).toBe(412)
+    expect((await testRun('invalid')).status).toBe(400)
+    expect(state.fire).not.toHaveBeenCalled()
+    state.fire.mockResolvedValueOnce({ runId: 'exact-run', sessionId: 'exact-chat' })
+    expect((await testRun(revision)).status).toBe(202)
+    expect(state.fire).toHaveBeenCalledExactlyOnceWith('owner', daily, { markFired: false, ignoreBudgetLatch: true, manualId })
+})
+
+test('a reviewed paused schedule can run once after setup but stays gated during setup', async () => {
+    state.desktop = true
+    const paused = { ...daily, enabled: false }
+    const revision = desktopScheduleDefinitionRevision(paused)
+    state.read.mockResolvedValue(paused)
+    state.getAgent.mockResolvedValueOnce({ config: { setup: { required: true, completedAt: null } }, install: 'Complete setup first.' })
+    expect((await testRun(revision)).status).toBe(409)
+    expect(state.fire).not.toHaveBeenCalled()
+    state.fire.mockResolvedValueOnce({ runId: 'paused-run', sessionId: 'paused-chat' })
+    expect((await testRun(revision)).status).toBe(202)
+    expect(state.fire).toHaveBeenCalledExactlyOnceWith('owner', paused, { markFired: false, ignoreBudgetLatch: true, manualId })
 })

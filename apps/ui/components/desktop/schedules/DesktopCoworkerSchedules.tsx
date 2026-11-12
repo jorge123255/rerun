@@ -28,9 +28,10 @@ import type { DesktopScheduleInput } from '@/lib/desktop/server/schedules/api'
 import { useDesktopScheduleToolNotices } from '@/lib/desktop/use-schedule-tool-notices'
 import { DesktopScheduleToolNotice } from '../schedule-tools/DesktopScheduleToolNotice'
 import { DesktopTaskNotifyField } from '../DesktopTaskNotifyField'
+import { useDesktopLocale } from '../DesktopLocale'
 
 type Chat = DesktopWorkspaceRoutineChat
-type Task=EngineSchedule & {nextRunAt:string|null;lastResult:{status:string;runId:string;chat:Chat}|null}
+type Task=EngineSchedule & {setupPending:boolean;nextRunAt:string|null;lastResult:{status:string;runId:string;chat:Chat}|null}
 export function DesktopCoworkerSchedules(props:{agentId:string;onOpenSession:(chat:Chat)=>void}) {return <Schedules key={props.agentId} {...props}/>}
 function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:Chat)=>void}) {
     const [tasks,setTasks]=useState<Task[]|null>(null),[editing,setEditing]=useState<Task|'new'|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true)
@@ -59,8 +60,8 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
     return <PanelSteps stepKey={editing ? 'editor' : 'list'} depth={editing ? 1 : 0}>{editing ?
         <ScheduleEditor stale={externalChange} key={editing==='new'?'new':editing.slug} agentId={agentId} task={editing==='new'?undefined:editing} onBack={()=>navigate(null)} onOpenSession={onOpenSession}
             onSave={input=>change('PUT',{slug:editing==='new'?undefined:editing.slug,input})}
-            onDelete={editing==='new'?undefined:()=>change('DELETE',{slug:editing.slug})}
-            onRun={editing==='new'?undefined:async requestId=>{const own=epoch.current;const chat=await request('POST',{slug:editing.slug,action:'run',requestId});if(alive.current && own===epoch.current){onOpenSession(chat);await load()}}}/> :
+            onDelete={editing==='new'?undefined:()=>change('DELETE',{slug:editing.slug,expectedRevision:editing.revision})}
+            onRun={editing==='new'?undefined:async requestId=>{const own=epoch.current;const chat=await request('POST',{slug:editing.slug,action:'run',requestId,expectedRevision:editing.revision});if(alive.current && own===epoch.current){onOpenSession(chat);await load()}}}/> :
         <div className="flex flex-col h-full">{notice && <div className="px-3 pt-2 text-xs"><DesktopScheduleToolNotice outcome="committed" text={`The coworker changed routine ${notice.slug}. The list is refreshed.`}/></div>}{tasks!==null && !loading && !error ? <PanelListHeader count={tasks.length} noun="scheduled task">{newButton}</PanelListHeader> : <PanelListHeader>{newButton}</PanelListHeader>}
             {error && <p role="alert" className="p-3 text-xs text-destructive">{error}</p>}
             {loading && !error && <FxSchedulesLoading />}
@@ -73,6 +74,7 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
         </div>}</PanelSteps>
 }
 function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,onOpenSession,stale=false}:{stale?:boolean;agentId:string;task?:Task;onBack:()=>void;onSave:(input:DesktopScheduleInput)=>Promise<void>;onDelete?:()=>Promise<void>;onRun?:(requestId:string)=>Promise<void>;onOpenSession:(chat:Chat)=>void}) {
+    const { t } = useDesktopLocale()
     const [name,setName]=useState(task?.name ?? ''),[description,setDescription]=useState(task?.description ?? ''),[body,setBody]=useState(task?.body ?? '')
     const [mode,setMode]=useState<'cron'|'runAt'>(task?.runAt ? 'runAt' : 'cron'),[cron,setCron]=useState(task?.cron ?? '0 8 * * *'),[runAt,setRunAt]=useState(task?.runAt ?? '')
     const [timezone,setTimezone]=useState(task?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone),[enabled,setEnabled]=useState(task?.enabled ?? true),[busy,setBusy]=useState(false),[error,setError]=useState('')
@@ -98,6 +100,8 @@ function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,onOpenSession
     const unavailablePin=!!pick.model&&!!modelView&&!availableGroups.some(group=>group.connectionId===pick.connectionId&&group.models.some(model=>model.id===pick.model))
     const unverifiedPin=!!pick.model&&!modelView
     const incompletePin=!!pick.model&&(!pick.connectionId||!provider)
+    const waitingForSetup = task?.setupPending === true && !task.enabled
+    const modelChanged = Boolean(task && (pick.connectionId !== task.connectionId || pick.model !== task.model || provider !== task.provider))
     async function perform(action:()=>Promise<void>){if(stale || pending.current)return;pending.current=true;setBusy(true);setError('');try{await action()}catch(e){if(alive.current)setError(e instanceof Error?e.message:'Task request failed')}finally{pending.current=false;if(alive.current)setBusy(false)}}
     if (historyOpen && task) return <DesktopScheduleHistory agentId={agentId} slug={task.slug} title={task.name} onBack={() => setHistoryOpen(false)} onOpenChat={onOpenSession} />
     return <PanelEditorShell><PanelEditorHeader title={task?'Edit task':'New task'} onBack={busy?undefined:()=>{if(!pending.current)onBack()}}>
@@ -111,16 +115,18 @@ function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,onOpenSession
         {mode==='cron'?<Field label="Cron expression"><Input aria-label="Cron expression" value={cron} onChange={e=>setCron(e.target.value)} disabled={busy}/></Field>:<Field label="Run at (ISO timestamp with timezone)"><Input aria-label="Run at (ISO timestamp with timezone)" value={runAt} onChange={e=>setRunAt(e.target.value)} placeholder="2026-12-01T08:00:00-06:00" disabled={busy}/></Field>}
         <Field label="Timezone"><TimezoneCombobox value={timezone} onChange={setTimezone}/></Field>
         <p className="text-xs text-muted-foreground">Raw cron and ISO time remain available when schedule parsing is unavailable.</p>
-        <RunModelField id="routine-model" value={pick} onChange={setPick} availableGroups={availableGroups} agentModel={modelView?.coworker?.model ?? modelView?.effective.model} disabled={busy} helperText="The exact model this task runs under, or follow the coworker default."/>
+        <RunModelField id="routine-model" value={pick} onChange={setPick} availableGroups={availableGroups} agentModel={modelView?.coworker?.model ?? modelView?.effective.model} disabled={busy} helperText={t('routines.modelHelper')}/>
         {modelError && <p className="text-xs text-destructive">{modelError}</p>}
         {unavailablePin && <p className="text-xs text-muted-foreground">This saved model is no longer offered. Test Run is unavailable; choose another model or Coworker default. Saving does not replace it automatically.</p>}
         <Field orientation="row" label="Enabled"><Switch checked={enabled} disabled={busy} onCheckedChange={setEnabled}/></Field>
         {task?.slug && <DesktopTaskNotifyField agentId={agentId} source="schedule" slug={task.slug} disabled={busy}/>}
         <MarkdownTextarea label="Task prompt" dialogTitle="Edit the task prompt" value={body} onChange={setBody} disabled={busy}/>
+        {waitingForSetup && <p className="text-xs text-muted-foreground">{t('routines.editor.setupPendingStart')}</p>}
+        {task && !task.revision && <p className="text-xs text-muted-foreground">{t('routines.loadFailed')}</p>}
         {task?.lastResult?.chat && <p className="text-xs">Last result: {task.lastResult.status}</p>}
     </PanelEditorBody><PanelEditorFooter>
-        {onDelete && <PanelDeleteButton label="Delete task" busy={busy} disabled={busy || stale} onClick={()=>perform(onDelete)} confirmDescription="The task stops firing and its schedule is removed. Runs it already produced are kept."/>}
-        {onRun && <Button size="sm" variant="outline" title="Run now" disabled={busy || stale || !task?.enabled || unavailablePin || unverifiedPin || incompletePin} onClick={()=>perform(async()=>{manual.current ??=crypto.randomUUID();await onRun(manual.current);manual.current=null})}>Test Run</Button>}
+        {onDelete && <PanelDeleteButton label="Delete task" busy={busy} disabled={busy || stale || !task?.revision} onClick={()=>perform(onDelete)} confirmDescription="The task stops firing and its schedule is removed. Runs it already produced are kept."/>}
+        {onRun && <Button size="sm" variant="outline" title="Run now" disabled={busy || stale || !task?.revision || waitingForSetup || modelChanged || unavailablePin || unverifiedPin || incompletePin} onClick={()=>perform(async()=>{manual.current ??=crypto.randomUUID();await onRun(manual.current);manual.current=null})}>Test Run</Button>}
         <Button size="sm" disabled={busy || stale || !name.trim() || !body.trim() || incompletePin} onClick={()=>perform(()=>onSave({name,description,body,enabled,timezone,cron:mode==='cron'?cron:null,runAt:mode==='runAt'?new Date(runAt).toISOString():null,connectionId:pick.connectionId,provider,model:pick.model}))}>{task?'Save changes':'Create task'}</Button>
     </PanelEditorFooter></PanelEditorShell>
 }

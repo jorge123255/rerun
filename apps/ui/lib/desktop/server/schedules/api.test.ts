@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 const engine = vi.hoisted(() => ({
     createSchedule: vi.fn(), updateSchedule: vi.fn(), deleteSchedule: vi.fn(), listSchedules: vi.fn(), listRuns: vi.fn(), listLatestScheduleRuns: vi.fn(),
-    getAgent: vi.fn(async () => ({ id: 'engine-owner' })),
+    getAgent: vi.fn(async () => ({ id: 'engine-owner', config: { setup: { required: false, completedAt: null as string | null } }, install: '' })),
 }))
 vi.mock('server-only', () => ({}))
 vi.mock('../auth', async original => ({ ...await original<typeof import('../auth')>(), authenticateDesktopRequest: vi.fn(async () => ({})) }))
@@ -99,6 +99,28 @@ test('passes the reviewed deletion revision and abort signal to the owned engine
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ deleted: 'daily' })
     expect(engine.deleteSchedule).toHaveBeenCalledExactlyOnceWith(expect.anything(), 'engine-owner', 'daily', { expectedRevision, signal: request.signal })
+})
+
+test('keeps the reviewed Test Run request on its exact owner, routine and revision', async () => {
+    const expectedRevision = 'a'.repeat(64)
+    const requestId = '00000000-0000-4000-8000-000000000004'
+    const saved = { agentId: 'local-owner', engineAgentId: 'engine-owner', sessionId: 'local-session', engineSessionId: 'engine-session',
+        tabUid: 'schedule:local-session', title: 'Daily', runId: 'exact' }
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ sessionId: saved.engineSessionId, runId: saved.runId }, { status: 202 }))
+    vi.mocked(adoptDesktopScheduledSession).mockResolvedValueOnce(saved)
+    try {
+        const response = await handle(new Request('http://localhost/schedules', {
+            method: 'POST', body: JSON.stringify({ action: 'run', slug: 'daily', requestId, expectedRevision }),
+        }))
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual(saved)
+        expect(fetch).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1/agents/engine-owner/schedules/daily/run', expect.objectContaining({
+            method: 'POST', redirect: 'error', headers: expect.objectContaining({ 'x-desktop-schedule-request-id': requestId, 'x-desktop-schedule-revision': expectedRevision }),
+        }))
+        expect(adoptDesktopScheduledSession).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+            agentId: 'local-owner', engineAgentId: 'engine-owner', engineSessionId: 'engine-session', runId: 'exact', scheduleSlug: 'daily',
+        }, { signal: expect.any(AbortSignal), authorize: expect.any(Function) })
+    } finally { fetch.mockRestore() }
 })
 
 test.each(['abort', 'deadline'] as const)('a stalled schedule body settles after %s even if cancellation never settles', async reason => {
