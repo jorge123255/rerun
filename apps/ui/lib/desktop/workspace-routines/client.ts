@@ -1,6 +1,6 @@
 'use client'
 
-import { desktopWorkspaceRoutineMutationSchema, desktopWorkspaceRoutineMutationResultSchema, desktopWorkspaceRoutinesViewSchema, type DesktopWorkspaceRoutineMutation, type DesktopWorkspaceRoutineMutationResult, type DesktopWorkspaceRoutinesView } from '../../../../../packages/contracts/src/desktop-workspace-routines'
+import { desktopWorkspaceRoutineMutationSchema, desktopWorkspaceRoutineMutationResultSchema, desktopWorkspaceRoutinesViewSchema, type DesktopWorkspaceRoutineMutation, type DesktopWorkspaceRoutineMutationResult, type DesktopWorkspaceRoutinesView } from '@rerun/contracts'
 
 const url = '/api/desktop/workspace/routines'
 

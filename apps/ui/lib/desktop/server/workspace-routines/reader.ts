@@ -1,6 +1,6 @@
 import 'server-only'
 import { nextRunAt, routineFrequency } from '@/lib/schedules/cron'
-import { byNextRun, type DesktopScheduledRun, type DesktopScheduleRecord, type DesktopWorkspaceRoutine, type DesktopWorkspaceRoutineChat, type DesktopWorkspaceRoutineOwner, type DesktopWorkspaceRoutinesView } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
+import { byNextRun, type DesktopScheduledRun, type DesktopScheduleRecord, type DesktopWorkspaceRoutine, type DesktopWorkspaceRoutineChat, type DesktopWorkspaceRoutineOwner, type DesktopWorkspaceRoutinesView } from '@rerun/contracts'
 
 export type DesktopWorkspaceRoutinesAuthority = {
     listOwners: (signal?: AbortSignal) => Promise<readonly DesktopWorkspaceRoutineOwner[]>

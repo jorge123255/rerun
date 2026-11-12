@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest'
 import { desktopWorkspaceRoutineFingerprint, createDesktopWorkspaceRoutinesMutator, type DesktopWorkspaceRoutinesMutationAuthority } from './mutations'
-import type { DesktopScheduleRecord } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
+import type { DesktopScheduleRecord } from '@rerun/contracts'
 
 const current: DesktopScheduleRecord = { agentId: 'agent-a', slug: 'daily', name: 'Daily', description: '', body: 'Work', cron: '0 8 * * *', runAt: null, timezone: 'UTC', enabled: true, revision: 'v1', lastRunAt: null }
 const chat = { agentId: 'agent-a', sessionId: 'chat-a', engineSessionId: 'engine-chat-a', tabUid: 'schedule:chat-a', title: 'Daily', runId: 'run-a' }

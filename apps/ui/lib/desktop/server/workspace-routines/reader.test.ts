@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest'
 import { createDesktopWorkspaceRoutinesReader, type DesktopWorkspaceRoutinesAuthority } from './reader'
-import type { DesktopScheduleRecord } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
+import type { DesktopScheduleRecord } from '@rerun/contracts'
 
 const schedule = (agentId: string, slug: string, patch: Partial<DesktopScheduleRecord> = {}) => ({
     agentId, slug, name: slug, description: '', body: 'Do work', cron: '0 8 * * *', runAt: null, timezone: 'UTC', enabled: true, revision: `${agentId}-${slug}-v1`, lastRunAt: null, ...patch,

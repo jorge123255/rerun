@@ -1,5 +1,5 @@
 import 'server-only'
-import { desktopWorkspaceRoutineMutationSchema, desktopWorkspaceRoutinesViewSchema } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
+import { desktopWorkspaceRoutineMutationSchema, desktopWorkspaceRoutinesViewSchema } from '@rerun/contracts'
 import { boundedText } from '../mcp/remote'
 import { DesktopHttpError } from '../auth'
 import type { DesktopWorkspaceRoutinesAuthority } from './reader'

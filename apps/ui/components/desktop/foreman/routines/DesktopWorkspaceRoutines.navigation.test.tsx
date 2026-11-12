@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { desktopWorkspaceRoutineFingerprint } from '@/lib/desktop/server/workspace-routines/mutations'
-import { desktopWorkspaceRoutinesViewSchema } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
+import { desktopWorkspaceRoutinesViewSchema } from '@rerun/contracts'
 
 type SavedRun = { id: string; agentId: string; sessionId: string; triggerSource: string; triggerSlug: string; status: string; startedAt: string }
 const state = vi.hoisted(() => ({ db: null as unknown as Client, runs: [] as SavedRun[], receipt: null as null | { fingerprint: string; result: unknown }, launches: 0 }))

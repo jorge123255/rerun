@@ -1,7 +1,7 @@
 import 'server-only'
 import { z } from 'zod'
 import { request as engineRequest, EngineRequestError, getAgent, listLatestScheduleRuns } from '@/lib/engine/client'
-import { desktopScheduleRecordSchema, desktopWorkspaceRoutineChatSchema, type DesktopWorkspaceRoutineMutation, type DesktopWorkspaceRoutineMutationResult } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
+import { desktopScheduleRecordSchema, desktopWorkspaceRoutineChatSchema, type DesktopWorkspaceRoutineMutation, type DesktopWorkspaceRoutineMutationResult } from '@rerun/contracts'
 import { openDesktopDatabase } from '../database'
 import { findDesktopAgent, listDesktopAgents } from '../store'
 import { engineOf } from '../settings'
