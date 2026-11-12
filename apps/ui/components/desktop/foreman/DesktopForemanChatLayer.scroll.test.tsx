@@ -13,6 +13,10 @@ vi.mock('./docs/DesktopForemanDocsTool', () => ({ DesktopForemanDocsTool: () => 
 vi.mock('./plan/DesktopPlanCard', () => ({ DesktopPlanCard: () => null }))
 vi.mock('./DesktopForemanBuildProgress', () => ({ DesktopForemanBuildProgress: () => null }))
 vi.mock('./DesktopForemanNextSteps', () => ({ DesktopForemanNextSteps: () => null }))
+vi.mock('@rerun/ui/foreman', async importOriginal => ({
+    ...await importOriginal<typeof import('@rerun/ui/foreman')>(),
+    Orb: ({ state }: { state: string }) => <span data-test-orb={state} />,
+}))
 vi.mock('motion/react', async () => {
     const { forwardRef } = await import('react')
     return {
@@ -39,7 +43,7 @@ class GeometryObserver {
 const saved = Array.from({ length: 12 }, (_, index) => ({ id: `saved-${index}`, role: index % 2 ? 'assistant' as const : 'user' as const, text: `Saved message ${index}` }))
 const defaults: Props = {
     messages: saved, restored: true, planSnapshot: null, decisionStatus: { status: 'idle' },
-    build: null, nextSteps: [], leadState: { status: 'idle' }, live: false,
+    build: null, nextSteps: [], leadState: { status: 'idle' },
     onConfirmPlan() {}, onAskChanges() {}, onStartLead() {}, onOpenCreated() {},
 }
 
@@ -102,6 +106,21 @@ afterEach(async () => {
     if (root) await act(async () => root!.unmount())
     root = undefined; document.body.innerHTML = ''
     vi.useRealTimers(); vi.unstubAllGlobals()
+})
+
+it('uses the Chief of Staff orb and announces the current activity only in the open chat', async () => {
+    const activity = () => host.querySelector('[role="status"]')?.textContent
+    await render({ streaming: true })
+    expect(host.querySelector('[data-test-orb="thinking"]')).not.toBeNull()
+    expect(activity()).toMatch(/^Thinking/)
+    await render({ streaming: true, writing: true })
+    expect(host.querySelector('[data-test-orb="speaking"]')).not.toBeNull()
+    expect(activity()).toMatch(/^Writing/)
+    await render({ streaming: true, writing: true, active: false })
+    expect(activity()).toBeUndefined()
+    await render({ writing: true })
+    expect(activity()).toBeUndefined()
+    expect(host.textContent).toContain('Saved message 11')
 })
 
 it('places saved work after its own prompt even when two prompts have the same text', async () => {

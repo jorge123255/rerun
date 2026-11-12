@@ -1,6 +1,8 @@
 'use client'
 
 import { CompactionStep } from '@/components/chat/CompactionBlock'
+import { ChatActivityPresentation } from '@/components/chat/ChatActivityPresentation'
+import { LOADER_ORB_SIZE, Orb } from '@rerun/ui/foreman'
 import type { DesktopCompactionReceipt } from '@rerun/contracts'
 import { useDesktopLocale } from '../DesktopLocale'
 
@@ -71,9 +73,10 @@ function ForemanTranscriptFind({ transcript, hidden, onClose }: {
 
 export function DesktopForemanChatLayer({
     messages,
-    attachmentsActive = true,
+    active = true,
     findScope, findHidden, onCloseFind,
     streaming,
+    writing,
     restored,
     question,
     emptyWelcome,
@@ -101,11 +104,12 @@ export function DesktopForemanChatLayer({
     className,
 }: {
     messages: DesktopForemanMessage[]
-    attachmentsActive?: boolean
+    active?: boolean
     findScope?: string
     findHidden?: boolean
     onCloseFind?: () => void
     streaming?: boolean
+    writing?: boolean
     restored: boolean
     question?: ReactNode
     emptyWelcome?: boolean
@@ -114,7 +118,6 @@ export function DesktopForemanChatLayer({
     build: DesktopForemanBuildProgressView | null
     nextSteps: DesktopForemanNextStep[]
     leadState: DesktopLeadSetupState
-    live: boolean
     error?: string | null
     runNotice?: ReactNode
     onConfirmPlan: () => void
@@ -172,7 +175,7 @@ export function DesktopForemanChatLayer({
                         {restored && message.role === 'user' && message.savedDecision ? (
                             <div data-chat-find-message className="contents">
                                 <DesktopSavedDecisionReceipt decision={message.savedDecision} documents={message.documents ?? []}
-                                    onOpenDocument={attachmentsActive ? (index, trigger) => setPreview({ messageId: message.id, index, trigger }) : undefined} />
+                                    onOpenDocument={active ? (index, trigger) => setPreview({ messageId: message.id, index, trigger }) : undefined} />
                             </div>
                         ) : <div
                             className={cn(
@@ -234,7 +237,12 @@ export function DesktopForemanChatLayer({
                             />
                         </motion.div>
                     )}
-                    {streaming && <p className="text-xs text-muted-foreground">{t('foreman.working')}</p>}
+                    {active && restored && streaming && (
+                        <ChatActivityPresentation activity={writing ? t('chatActivity.writing') : null}
+                            labels={[t('chatActivity.thinking'), t('chatActivity.processing'), t('chatActivity.crafting')]}
+                            indicator={<Orb size={LOADER_ORB_SIZE} state={writing ? 'speaking' : 'thinking'} facing="right" className="shrink-0" />}
+                            announce />
+                    )}
                     {error && (
                         <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
                             {error}
@@ -246,7 +254,7 @@ export function DesktopForemanChatLayer({
                 </ConversationContent>
                 <ConversationScrollButton />
             </Conversation>
-            {attachmentsActive && preview && previewDocuments && <DesktopDocumentLightbox attachments={previewDocuments} index={preview.index}
+            {active && preview && previewDocuments && <DesktopDocumentLightbox attachments={previewDocuments} index={preview.index}
                 onIndexChange={index => setPreview({ ...preview, index })} onClose={() => setPreview(null)} returnFocus={() => preview.trigger.focus()} />}
         </div>
     )

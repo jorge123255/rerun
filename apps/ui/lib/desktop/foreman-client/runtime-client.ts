@@ -29,6 +29,7 @@ export { desktopForemanSavedUiSchema } from './ui-schema'
 const stateSchema = z.strictObject({
     chat: foremanChatRefSchema, sessionId: z.string().min(1).max(128), model: foremanModelRefSchema.nullable(),
     view: foremanConversationViewSchema,
+    writing: z.boolean().optional(),
     question: desktopPendingQuestionSchema.nullable().optional(),
     approval: desktopPendingApprovalSchema.nullable().optional(),
     starter: desktopStarterViewSchema.nullable().optional(),

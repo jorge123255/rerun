@@ -292,7 +292,7 @@ export function DesktopForemanColumn({
                     </> : <>
                     <DesktopForemanChatLayer
                         messages={messages}
-                        attachmentsActive={ui.open && !hidden && !onRoutines && !alternates.open}
+                        active={ui.open && !hidden && !onRoutines && !alternates.open}
                         findScope={findEnabled && ui.open && foreman.restored && !onRoutines && !alternates.open
                             ? JSON.stringify([chat.workspaceId, chat.chatId]) : undefined}
                         findHidden={hidden}
@@ -312,7 +312,7 @@ export function DesktopForemanColumn({
                         build={foreman.build}
                         nextSteps={foreman.nextSteps}
                         leadState={foreman.leadState}
-                        live={foreman.live}
+                        writing={orbState === 'speaking'}
                         error={(starterError?.offerId === starter?.offerId ? starterError?.message : null) || alternates.error || foreman.error || (foreman.blocked ? `Blocked: ${foreman.blocked.replaceAll('_', ' ')}` : null)}
                         runNotice={runNotice}
                         onConfirmPlan={foreman.confirmPlan}

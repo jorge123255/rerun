@@ -100,6 +100,42 @@ describe('production Foreman intake phase and model brief', () => {
     })
     afterEach(async () => { state.db.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); await rm(directory, { recursive: true, force: true }) })
 
+    it('reports writing only for the active owned turn and does not publish stream contents', async () => {
+        const app = await desktopForeman(runtime)
+        const id = randomUUID()
+        let stream!: ReadableStreamDefaultController<Uint8Array>
+        const body = new ReadableStream<Uint8Array>({ start(controller) { stream = controller } })
+        const push = (chunk: object) => stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`))
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(body, {
+            headers: { 'x-run-id': id, 'x-session-id': 'original-session', 'content-type': 'text/event-stream' },
+        })))
+        const run = { id, agentId: 'foreman', sessionId: 'original-session', status: 'running' } as Awaited<ReturnType<typeof getRun>>
+        vi.mocked(getRun).mockResolvedValue(run)
+        try {
+            await app.send(chat, id, 'Review this fixture')
+            expect((await app.state()).writing).toBe(false)
+            push({ type: 'start', messageId: randomUUID() })
+            push({ type: 'text-delta', id: 'foreign', delta: 'Do not accept this reply' })
+            await new Promise(resolve => setImmediate(resolve))
+            expect((await app.state()).writing).toBe(false)
+            push({ type: 'start', messageId: id })
+            push({ type: 'text-start', id: 'answer' })
+            push({ type: 'text-delta', id: 'answer', delta: 'fixture-private-unverified-chunk' })
+            await vi.waitFor(async () => expect((await app.state()).writing).toBe(true))
+            expect(JSON.stringify(await app.state())).not.toContain('fixture-private-unverified-chunk')
+            vi.mocked(getRun).mockResolvedValue({ ...run, sessionId: 'foreign-session' })
+            expect((await app.state()).writing).toBe(false)
+            vi.mocked(getRun).mockResolvedValue(run)
+            push({ type: 'text-end', id: 'answer' })
+            await vi.waitFor(async () => expect((await app.state()).writing).toBe(false))
+            push({ type: 'text-start', id: 'answer-2' })
+            push({ type: 'text-delta', id: 'answer-2', delta: 'Continuing' })
+            await vi.waitFor(async () => expect((await app.state()).writing).toBe(true))
+            vi.mocked(getRun).mockResolvedValue({ ...run, status: 'done', finishedAt: timestamp })
+            expect((await app.state()).writing).toBe(false)
+        } finally { stream.close() }
+    })
+
     it('reads the context of an exact completed Foreman run and refuses foreign or unrecorded usage', async () => {
         const app = await desktopForeman(runtime)
         const id = randomUUID()

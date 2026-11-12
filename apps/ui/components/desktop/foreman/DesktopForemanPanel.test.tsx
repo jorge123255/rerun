@@ -95,6 +95,28 @@ it('pauses parked Foreman SSE and polling before Quit, drains its admitted draft
     expect(server.ui.snapshot).toMatchObject({ draft: snapshot.draft })
 })
 
+it('uses writing activity only while the server reports an active turn', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal('EventSource', Source)
+    const chat = { workspaceId: '1', chatId: 'fmc_abcdefgh' }
+    const live = { runId: randomUUID(), model: { connectionId: 'connection', model: 'model' } }
+    const server = { chat, sessionId: 'session', model: null, messages: [], writing: false,
+        view: { contractVersion: 1, chat, phase: 'plan', live: live as typeof live | null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
+        ui: { revision: 0, snapshot: null } }
+    vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>(async () => Response.json(server)))
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopForemanPanel onClose={vi.fn()} onOpenCoworker={vi.fn()} onOpenCalledChat={vi.fn()} onOpenBox={vi.fn()} agentNameOf={id => id} />))
+    expect(column.orbState).toBe('thinking')
+    server.writing = true
+    await act(async () => vi.advanceTimersByTimeAsync(1500))
+    expect(column.orbState).toBe('speaking')
+    server.view.live = null
+    await act(async () => vi.advanceTimersByTimeAsync(1500))
+    expect(column.orbState).toBe('idle')
+    expect(column.streaming).toBe(false)
+})
+
 it('shows the saved connection failure with a Settings action and clears it when a newer run settles', async () => {
     vi.useFakeTimers()
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)

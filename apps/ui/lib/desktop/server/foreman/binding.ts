@@ -1,5 +1,6 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
+import { parseJsonEventStream, uiMessageChunkSchema } from 'ai'
 import { COMPANY_BRIEF_MODEL_PROVIDERS, FOREMAN_AGENT_ID, desktopCoworkerMentionFieldsOf, documentScopeKey, foremanDocumentScope, questionDocumentIndex, type CompanyBriefModelRef, type DesktopForemanBinding, type DesktopForemanChatRef, type DesktopForemanLiveEvent, type DesktopForemanModelRef } from '@rerun/contracts'
 import { EngineRequestError, cancelRun, getRun, getSessionMessages } from '@/lib/engine/client'
 import { publicDesktopHistory, transformEngineMessages } from '@/lib/chat/engine-history'
@@ -66,6 +67,7 @@ async function createBinding(runtime: DesktopRuntime) {
     const starterDecisions = createDesktopLocalStarterDecisions(runtime, db)
     const starterOffers = createDesktopLocalStarterOffers(runtime, db)
     const subscribers = new Set<Subscriber>()
+    let replyActivity: { binding: DesktopForemanBinding; writingPart: string | null } | undefined
     type VoiceGuard = { signal: AbortSignal; assertCurrent(): Promise<void> }
     const voiceLifetime = new AbortController()
     async function checkVoice(guard?: VoiceGuard) {
@@ -208,7 +210,33 @@ async function createBinding(runtime: DesktopRuntime) {
             await response.body?.cancel().catch(() => {})
             throw new DesktopHttpError(503, 'The Foreman returned a different conversation.')
         }
-        if (response.body) void response.body.pipeTo(new WritableStream({ write() {} })).catch(() => {})
+        if (response.body && replyActivity?.binding.runId !== turn.binding.runId) {
+            const activity = { binding: turn.binding, writingPart: null as string | null }
+            replyActivity = activity
+            let started = false
+            // The original engine response is already drained here. Keep only the active
+            // text part identity so no stream contents become part of the public state.
+            void parseJsonEventStream({ stream: response.body, schema: uiMessageChunkSchema }).pipeTo(new WritableStream({
+                write(result) {
+                    if (!result.success) return
+                    const chunk = result.value
+                    if (chunk.type === 'start') {
+                        started = chunk.messageId === turn.binding.runId
+                        activity.writingPart = null
+                    } else if (started && chunk.type === 'text-delta' && chunk.delta.trim()) {
+                        activity.writingPart = chunk.id
+                    } else if (chunk.type === 'text-end' && chunk.id === activity.writingPart
+                        || chunk.type === 'reasoning-start' || chunk.type === 'tool-input-start'
+                        || chunk.type === 'finish-step' || chunk.type === 'finish' || chunk.type === 'abort' || chunk.type === 'error') {
+                        activity.writingPart = null
+                    }
+                },
+            })).catch(() => {}).finally(() => {
+                if (replyActivity === activity) replyActivity = undefined
+            })
+        } else if (response.body) {
+            void response.body.pipeTo(new WritableStream({ write() {} })).catch(() => {})
+        }
         await db.execute({ sql: "UPDATE desktop_foreman_turns SET status='admitted',error=NULL WHERE request_id=?", args: [turn.binding.runId] })
         if (turn.documents) {
             // The engine has accepted this exact answer. The pending question may already be
@@ -433,7 +461,11 @@ async function createBinding(runtime: DesktopRuntime) {
             const callSources = knownRuns.size
                 ? (await listDesktopForemanCallSources(db, owner.chat.chatId, owner.sessionId)).filter(row => knownRuns.has(row.runId))
                 : []
-            return { ...owner, view, messages: projected, retrySnapshot,
+            const activity = replyActivity
+            const writing = !!(activity?.writingPart && view.live?.runId === activity.binding.runId
+                && owner.chat.chatId === activity.binding.chatId && owner.chat.workspaceId === activity.binding.workspaceId
+                && view.live.model.connectionId === activity.binding.model.connectionId && view.live.model.model === activity.binding.model.model)
+            return { ...owner, view, messages: projected, retrySnapshot, writing,
                 context: history.some(message => message.role === 'assistant') ? settled?.context ?? null : null,
                 runFailure: pending || approval ? null : settled?.runFailure ?? null,
                 runSources, callSources, starter: await starterDecisions.view(owner.chat),
