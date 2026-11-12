@@ -35,7 +35,8 @@ import { RotateCwIcon } from '@/lib/icons'
 import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopForemanAlternateReview, DesktopForemanAlternates } from './DesktopForemanAlternates'
 import { useDesktopForemanAlternates } from './useDesktopForemanAlternates'
-import { FOREMAN_AGENT_ID, foremanDocumentScope, type DesktopCoworkerCallTarget, type DesktopCoworkerMention } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, foremanDocumentScope, trimDesktopCoworkerMentions, type DesktopCoworkerCallTarget, type DesktopCoworkerMention } from '@rerun/contracts'
+import type { DesktopForemanPersistedUi } from '@/lib/desktop/foreman-client/persistence'
 import type { MentionSkill } from '@/components/chat/MentionAutocomplete'
 import { useDesktopMentionAutocomplete } from '../mentions/useDesktopMentionAutocomplete'
 import { useDesktopDocumentAttachments } from '@/lib/desktop/document-attachments/useDesktopDocumentAttachments'
@@ -62,8 +63,8 @@ export type DesktopForemanColumnProps = {
     onOpenCalledChat?: (target: DesktopCoworkerCallOpenTarget) => Promise<void>
     callSources?: readonly { callId: string; runId: string }[]
     sessionId?: string
-    pendingSend?: boolean
-    retryAttachedMessage?: boolean
+    pendingSend?: DesktopForemanPersistedUi['pendingSend']
+    onRetryPendingSend?: (requestId: string) => Promise<boolean>
     imageModel?: boolean
     retrySnapshot?: string
     streaming?: boolean
@@ -112,7 +113,7 @@ export function DesktopForemanColumn({
     callSources,
     sessionId,
     pendingSend,
-    retryAttachedMessage,
+    onRetryPendingSend,
     imageModel,
     retrySnapshot,
     streaming,
@@ -133,13 +134,18 @@ export function DesktopForemanColumn({
         if (openOnMount && foreman.restored && !opened.current) { opened.current = true; foreman.setOpen(true) }
     }, [openOnMount, foreman.restored, foreman.setOpen])
     const { ui } = foreman
-    const composerScope = useRef({ chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft })
-    composerScope.current = { chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft }
+    const composerScope = useRef({ chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft, mentions: ui.draftCoworkerMentions })
+    composerScope.current = { chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft, mentions: ui.draftCoworkerMentions }
     const pendingStarter = !!starter && !starter.decision?.settled
     const onRoutines = ui.tab === 'routines'
     const [sendingDocuments, setSendingDocuments] = useState(false)
+    const [retryingSend, setRetryingSend] = useState(false)
+    const retryInFlight = useRef(false)
+    const [retrySendError, setRetrySendError] = useState<{ requestId: string; text: string } | null>(null)
     const attachmentComposer = !!sessionId && !intake && !pendingStarter && !!intakeFinished && ui.open && !onRoutines
     const pendingRequest = !!(question || approval)
+    const retryDisabled = hidden || streaming || pendingRequest || pendingStarter || !!intake || sendDisabled
+        || !foreman.restored || !!foreman.blocked || ui.decision.status === 'pending'
     const editAttachments = attachmentComposer && !hidden && !pendingRequest && !streaming && !sendingDocuments
         && !pendingSend && !foreman.blocked && !sendDisabled && ui.decision.status !== 'pending' && foreman.restored
     const documents = useDesktopDocumentAttachments({ ...foremanDocumentScope(chat, sessionId ?? ''), load: attachmentComposer, enabled: editAttachments })
@@ -191,6 +197,30 @@ export function DesktopForemanColumn({
             const current = composerScope.current
             if (confirmed && current.chatId === scope.chatId && current.workspaceId === scope.workspaceId && current.draft === scope.draft) foreman.setDraft('')
         })
+    }
+    async function retrySend() {
+        if (!pendingSend || !onRetryPendingSend || retryDisabled || retryInFlight.current) return
+        const scope = composerScope.current
+        retryInFlight.current = true
+        setRetryingSend(true)
+        setRetrySendError(null)
+        try {
+            if (!await onRetryPendingSend(pendingSend.requestId)) throw new Error(t('foreman.pendingSend.failed'))
+            const current = composerScope.current
+            const original = trimDesktopCoworkerMentions(scope.draft, scope.mentions)
+            if (current.chatId === scope.chatId && current.workspaceId === scope.workspaceId
+                && current.draft === scope.draft && current.mentions === scope.mentions
+                && scope.draft.trim() === pendingSend.text
+                && JSON.stringify(original.coworkerMentions ?? []) === JSON.stringify(pendingSend.coworkerMentions ?? [])) {
+                foreman.setDraft('')
+            }
+            if (pendingSend.documents) await documents.refresh().catch(() => {})
+        } catch (error) {
+            setRetrySendError({ requestId: pendingSend.requestId, text: error instanceof Error ? error.message : t('foreman.pendingSend.failed') })
+        } finally {
+            retryInFlight.current = false
+            setRetryingSend(false)
+        }
     }
     const triggerRef = useRef<HTMLElement | null>(null)
     const mobile = useMediaQuery('(max-width: 767px)')
@@ -316,6 +346,12 @@ export function DesktopForemanColumn({
                             onAnswer={choice => { void answerStarter(choice) }} onStop={() => { void foreman.stop() }} />}
                     </DesktopForemanChatLayer>
                     </>}
+                    {pendingSend && onRetryPendingSend && <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-xs">
+                        <p className="min-w-0 flex-1" role="status">{t('foreman.pendingSend.unconfirmed')}</p>
+                        <Button type="button" size="sm" variant="outline" disabled={retryDisabled || retryingSend}
+                            loading={retryingSend} onClick={() => void retrySend()}>{t('foreman.pendingSend.retry')}</Button>
+                        {retrySendError?.requestId === pendingSend.requestId && <p className="basis-full text-destructive" role="alert">{retrySendError.text}</p>}
+                    </div>}
                     <DesktopForemanComposer
                         mentions={editAttachments && !alternates.open ? mentions : undefined}
                         trailing={intake || pendingStarter ? undefined : composerTrailing}
@@ -325,14 +361,14 @@ export function DesktopForemanColumn({
                         </>}
                         attachments={attachmentComposer && (documents.attachments.length > 0 || documents.error)
                             ? <DesktopDocumentAttachmentControls controller={documents} disabled={!editAttachments} /> : undefined}
-                        hasAttachments={attachmentComposer && (documents.attachments.length > 0 || retryAttachedMessage)}
+                        hasAttachments={attachmentComposer && documents.attachments.length > 0}
                         onFiles={editAttachments && documents.loaded ? documents.add : undefined}
                         placeholder={intake || pendingStarter ? t('foreman.ownEntryPlaceholder') : undefined}
                         maxLength={intake || pendingStarter ? 4000 : undefined}
                         draft={ui.draft}
                         onDraftChange={foreman.setDraft}
                         busy={!!streaming}
-                        sendDisabled={sendDisabled || attachmentComposer && (sendingDocuments || !pendingSend && (!documents.loaded || documents.busy > 0))}
+                        sendDisabled={sendDisabled || !!pendingSend || retryingSend || attachmentComposer && (sendingDocuments || !documents.loaded || documents.busy > 0)}
                         disabled={pendingRequest || !foreman.restored || !!foreman.blocked || ui.decision.status === 'pending'
                             || pendingStarter && (!onStarterAnswer || starterBusy || !!starter?.decision)
                             || Boolean(intake && (!intake.restored || intake.submitting || intake.quitting || intake.conflicted))}

@@ -79,10 +79,19 @@ const alternateCopy = {
         status: { prepared: 'Bereit zum Start.', uncertain: 'Die Vorbereitung ist noch nicht bestätigt.', running: 'Antwort wird entworfen…', error: 'Der Versuch ist fehlgeschlagen.', cancelled: 'Versuch gestoppt.' } },
 } satisfies Record<Locale, { title: string; original: string; entry: string; check: string; loading: string; confirm: string; status: Record<'prepared' | 'uncertain' | 'running' | 'error' | 'cancelled', string> }>
 
+const pendingSendCopy = {
+    en: { unconfirmed: 'The previous message is unconfirmed. Retry it to continue.', retry: 'Retry previous message', failed: 'Could not confirm the previous message.' },
+    fr: { unconfirmed: 'L’envoi du message précédent n’est pas confirmé. Réessayez pour continuer.', retry: 'Réessayer le message précédent', failed: 'Impossible de confirmer l’envoi du message précédent.' },
+    es: { unconfirmed: 'El envío del mensaje anterior no está confirmado. Reinténtalo para continuar.', retry: 'Reintentar el mensaje anterior', failed: 'No se pudo confirmar el envío del mensaje anterior.' },
+    pt: { unconfirmed: 'O envio da mensagem anterior não foi confirmado. Tente novamente para continuar.', retry: 'Reenviar a mensagem anterior', failed: 'Não foi possível confirmar o envio da mensagem anterior.' },
+    de: { unconfirmed: 'Das Senden der vorherigen Nachricht ist unbestätigt. Versuche es erneut, um fortzufahren.', retry: 'Vorherige Nachricht erneut senden', failed: 'Das Senden der vorherigen Nachricht konnte nicht bestätigt werden.' },
+} satisfies Record<Locale, { unconfirmed: string; retry: string; failed: string }>
+
 export function desktopForemanMessages(locale: Locale, source: Source) {
     const { welcome, plan, dock } = source.foreman
     return {
         ...mac[locale],
+        pendingSend: pendingSendCopy[locale],
         ask: source.kit.foreman.orbLabel,
         placeholder: `${source.foreman.pill.ask}…`,
         ownEntryPlaceholder: source.foreman.ownEntryPlaceholder,

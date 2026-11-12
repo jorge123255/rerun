@@ -48,13 +48,17 @@ it('persists immutable send identity before execution and recovers the same requ
     await expect(first.ports.conversation.sendMessage('hello')).rejects.toThrow('lost acknowledgement')
     const request = server.ui.snapshot?.pendingSend
     expect(request).toBeTruthy(); first.close()
-    const restarted = connect(await readDesktopForemanState())
+    server.ui.snapshot!.draft = 'My next draft'
+    server.ui.revision++
+    const restarted = connect(await readDesktopForemanState(), { connectionId: 'later', model: 'different' })
     await expect(restarted.ports.conversation.sendMessage('different')).rejects.toThrow('previous message')
-    expect(await restarted.ports.conversation.sendMessage('hello')).toBe(true)
+    expect(await restarted.retryPendingMessage(randomUUID())).toBe(false)
+    expect(await restarted.retryPendingMessage(request!.requestId)).toBe(true)
     const sends = bodies.filter(body => body.action === 'send')
     expect(sends).toHaveLength(2); expect(sends.map(body => body.requestId)).toEqual([request!.requestId, request!.requestId])
     expect(sends.every(body => JSON.stringify(body.modelChoice) === JSON.stringify(model))).toBe(true)
     expect(server.ui.snapshot?.pendingSend).toBeUndefined()
+    expect(server.ui.snapshot?.draft).toBe('My next draft')
 })
 it('recovers a file-only send from the composer without preparing or uploading the attachment again', async () => {
     const transport = vi.mocked(fetch).getMockImplementation()!
@@ -76,9 +80,29 @@ it('recovers a file-only send from the composer without preparing or uploading t
     client.close()
     const restored = connect(await readDesktopForemanState())
     await expect(restored.ports.conversation.sendMessage('')).rejects.toThrow('Retry the attached message')
-    expect(await restored.ports.conversation.sendMessage('', undefined, { prepareDocuments: prepare })).toBe(true)
+    expect(await restored.retryPendingMessage(requestId!)).toBe(true)
     expect(prepare).toHaveBeenCalledExactlyOnceWith(model)
     expect(bodies.find(body => body.action === 'send')).toMatchObject({ requestId, text: '', modelChoice: model, documents })
+    expect(server.ui.snapshot?.pendingSend).toBeUndefined()
+})
+
+it('keeps the exact send recoverable if clearing its acknowledged reservation fails', async () => {
+    const transport = vi.mocked(fetch).getMockImplementation()!
+    let refused = false
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : null
+        if (body?.action === 'ui' && !body.snapshot.pendingSend && server.ui.snapshot?.pendingSend && !refused) {
+            refused = true
+            throw new Error('confirmation could not be saved')
+        }
+        return transport(url, init)
+    })
+    const client = connect(server, model)
+    await expect(client.ports.conversation.sendMessage('hello')).rejects.toThrow('confirmation could not be saved')
+    const saved = server.ui.snapshot?.pendingSend
+    expect(saved).toBeDefined()
+    expect(await client.retryPendingMessage(saved!.requestId)).toBe(true)
+    expect(bodies.filter(body => body.action === 'send').map(body => body.requestId)).toEqual([saved!.requestId, saved!.requestId])
     expect(server.ui.snapshot?.pendingSend).toBeUndefined()
 })
 it('restores the selected coworker ID after a lost acknowledgment and refuses a same-name replacement', async () => {
