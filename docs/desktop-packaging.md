@@ -33,6 +33,20 @@ from an interrupted install on the next run. A kernel lock allows only one insta
 For agents reviewing code in separate worktrees, run `pnpm desktop:stage` for runtime QA.
 Use `pnpm desktop:package` when you need a separate signed preview.
 
+To run the staged app beside the installed preview on the same Mac, use a
+separate development profile:
+
+```bash
+pnpm desktop:stage
+profile="$(mktemp -d "${TMPDIR:-/tmp}/rerun-desktop-development.XXXXXX")"
+RERUN_DESKTOP_USER_DATA="$profile" pnpm --filter @rerun/desktop exec electron .
+```
+
+Use the same profile path after quitting to check persistence. The directory
+must already exist and be outside the installed preview's profile. This launch
+uses the development app name for Keychain storage. Packaged apps use the
+installed preview profile.
+
 ## Mac App Store sandbox testing
 
 Use an Apple Development identity and a Mac development provisioning profile

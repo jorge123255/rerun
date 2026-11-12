@@ -1,7 +1,6 @@
 import * as electron from 'electron'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { mkdirSync } from 'node:fs'
 import { createWorkspaceCoordinator, seedLegacyCatalog, getWorkspace } from './workspaces/index.mjs'
 import { DesktopSecureStorageError, loadBundle, loadIdentityFromSafeStorage, workspaceIdentity } from './runtime.mjs'
 import { RuntimeSupervisor } from './supervisor.mjs'
@@ -27,14 +26,14 @@ import { captureWindowPlacement, createWindowPlacements, restoreWindowZoom } fro
 import { createConnectedHubs } from './connected-hubs.mjs'
 import { hubConnectionError } from './connected-hub-messages.mjs'
 import { parseHubLink, registerHubProtocol } from './connected-hub-policy.mjs'
-import { hasLocalWorkspace } from './startup-workspace.mjs'
+import { configureStartupProfile, hasLocalWorkspace } from './startup-workspace.mjs'
 
 const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, Notification, safeStorage, screen, shell, session, Tray, WebContentsView } = electron
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
 const mac = process.platform === 'darwin'
-const dataRoot = resolve(app.getPath('appData'), 'Rerun Desktop Preview')
-const windowPlacements = mac ? createWindowPlacements({ dataRoot, screen }) : null
+let dataRoot
+let windowPlacements
 const boardPlacement = 'local-board'
 let storageSetupError
 let window
@@ -195,15 +194,16 @@ const macUpdates = mac && !process.mas ? createMacUpdater({
     onState: () => refreshUpdateSurfaces(),
 }) : null
 
-if (!app.requestSingleInstanceLock()) app.quit()
+try {
+    dataRoot = configureStartupProfile(app)
+    windowPlacements = mac ? createWindowPlacements({ dataRoot, screen }) : null
+} catch (error) { storageSetupError = error }
+
+if (storageSetupError) {
+    dialog.showErrorBox('Rerun could not start', 'Check that Rerun can open its data folder and try again.')
+    app.exit(1)
+} else if (!app.requestSingleInstanceLock()) app.quit()
 else {
-    try {
-        // Chromium chooses its network storage before ready. A later userData
-        // override creates partition folders but may leave cookies memory-only.
-        mkdirSync(dataRoot, { recursive: true, mode: 0o700 })
-        app.setPath('userData', dataRoot)
-        app.setPath('sessionData', dataRoot)
-    } catch (error) { storageSetupError = error }
     if (mac) app.on('open-url', (event, address) => {
         const link = parseHubLink(address)
         if (!link) return
@@ -270,7 +270,6 @@ function resumeBoard(board) {
 }
 
 async function launch() {
-    if (storageSetupError) throw storageSetupError
     const openRememberedHub = !pendingHubLink
     if (mac) {
         if (app.isPackaged && !registerHubProtocol(app)) console.warn('Could not register Rerun development links with macOS.')

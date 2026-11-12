@@ -1,10 +1,49 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
-import { hasLocalWorkspace } from '../src/main/startup-workspace.mjs'
+import { configureStartupProfile, hasLocalWorkspace } from '../src/main/startup-workspace.mjs'
+
+test('a development profile uses separate storage and packaged builds keep the installed profile', async t => {
+    const root = await mkdtemp(join(tmpdir(), 'rerun-startup-profile-'))
+    t.after(() => rm(root, { recursive: true, force: true }))
+    const appData = join(root, 'Application Support')
+    const development = join(root, 'development')
+    await mkdir(appData)
+    await mkdir(development)
+    const operations = []
+    const app = {
+        isPackaged: false, getPath: () => appData,
+        setPath: (name, value) => operations.push([name, value]),
+        setName: name => operations.push(['name', name]),
+    }
+    const canonical = await realpath(development)
+    assert.equal(configureStartupProfile(app, development), canonical)
+    assert.deepEqual(operations.splice(0), [
+        ['name', 'Rerun Desktop Development'], ['userData', canonical], ['sessionData', canonical],
+    ])
+    assert.deepEqual(await readdir(appData), [])
+
+    app.isPackaged = true
+    const installed = join(appData, 'Rerun Desktop Preview')
+    assert.equal(configureStartupProfile(app, development), installed)
+    assert.deepEqual(operations.splice(0), [['userData', installed], ['sessionData', installed]])
+
+    app.isPackaged = false
+    const alias = join(root, 'alias')
+    const inside = join(installed, 'inside')
+    await symlink(installed, alias)
+    await mkdir(inside)
+    for (const path of [appData, installed, alias, inside]) {
+        assert.throws(() => configureStartupProfile(app, path), /separate from the installed preview/)
+    }
+    for (const path of ['relative', '', join(root, 'missing')]) {
+        assert.throws(() => configureStartupProfile(app, path), /existing absolute directory/)
+    }
+    assert.deepEqual(operations, [])
+})
 
 test('remembering a server does not turn a fresh profile into a local workspace', async t => {
     const root = await mkdtemp(join(tmpdir(), 'rerun-startup-'))
