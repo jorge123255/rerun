@@ -14,7 +14,7 @@ export function verifyMacUpdateSignature(app, { teamId, bundleId, production }, 
         if (!isAbsolute(exe) || basename(macOS) !== 'MacOS' || basename(contents) !== 'Contents' || !bundle.endsWith('.app')) return false
         let requirement = `anchor apple generic and identifier "${bundleId}" and certificate leaf[subject.OU] = "${teamId}"`
         if (production) requirement += ' and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
-        return run('/usr/bin/codesign', ['--verify', '--strict', '--test-requirement', requirement, bundle],
+        return run('/usr/bin/codesign', ['--verify', '--strict', '--test-requirement', `=${requirement}`, bundle],
             { timeout: 15000, stdio: 'ignore' }).status === 0
     } catch { return false }
 }

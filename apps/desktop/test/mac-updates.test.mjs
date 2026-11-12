@@ -309,7 +309,7 @@ test('macOS verifies the running app bundle against Apple, its team and Develope
     const [cmd, argv] = commands[0]
     assert.equal(cmd, '/usr/bin/codesign')
     assert.deepEqual(argv.slice(0, 3), ['--verify', '--strict', '--test-requirement'])
-    assert.match(argv[3], /anchor apple generic and identifier "build\.rerun\.desktop"/)
+    assert.match(argv[3], /^=anchor apple generic and identifier "build\.rerun\.desktop"/)
     assert.match(argv[3], /certificate leaf\[subject\.OU\] = "ABCDE12345"/)
     assert.match(argv[3], /1\.2\.840\.113635\.100\.6\.1\.13/)
     assert.equal(argv[4], '/tmp/Rerun QA.app')
