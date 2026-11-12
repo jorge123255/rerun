@@ -103,7 +103,8 @@
         "runLocally": "Ejecutar en este Mac",
         "connectServer": "Conectar a un servidor",
         "keychainPrompt": "Si macOS solicita acceso al llavero, elige Permitir para abrir tu espacio de trabajo local.",
-        "keychainBlocked": "Rerun no pudo acceder al almacenamiento seguro. Desbloquea tu llavero de inicio de sesión, vuelve a intentarlo y permite el acceso si macOS lo solicita."
+        "keychainBlocked": "Rerun no pudo acceder al almacenamiento seguro. Desbloquea tu llavero de inicio de sesión, reinicia Rerun y permite el acceso si macOS lo solicita.",
+        "restartToRetry": "Reiniciar Rerun"
     },
     "updates": {
         "upToDate": "Estás al día",

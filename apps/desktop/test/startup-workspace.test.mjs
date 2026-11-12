@@ -116,12 +116,17 @@ test('the startup screen routes each choice separately and keeps the latest stat
     assert.equal(elements.get('message').textContent, 'Preparing local runtime…')
 
     const { local, ...connectedChoices } = choices.choices
-    notify({ state: 'error', message: 'Keychain is unavailable.', choices: connectedChoices })
+    notify({ state: 'keychain', message: 'Waiting for Keychain access.', choices: connectedChoices })
+    assert.equal(elements.get('run-locally').hidden, true)
+    assert.equal(elements.get('connect-server').hidden, false)
+    assert.equal(elements.get('retry').hidden, true)
+    notify({ state: 'error', message: 'Keychain is unavailable.', choices: connectedChoices, retryLabel: 'Restart Rerun' })
     assert.equal(elements.get('message').textContent, 'Keychain is unavailable.')
     assert.equal(elements.get('run-locally').hidden, true)
     assert.equal(cloud.hidden, false)
     assert.equal(elements.get('connect-server').hidden, false)
     assert.equal(elements.get('retry').hidden, false)
+    assert.equal(elements.get('retry').textContent, 'Restart Rerun')
     elements.get('retry').click()
     elements.get('connect-server').click()
     assert.deepEqual(calls.slice(-2), ['retry', 'server'])

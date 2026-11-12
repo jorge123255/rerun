@@ -103,7 +103,8 @@
         "runLocally": "Executar neste Mac",
         "connectServer": "Conectar a um servidor",
         "keychainPrompt": "Se o macOS pedir acesso às Chaves, escolha Permitir para abrir seu workspace local.",
-        "keychainBlocked": "O Rerun não conseguiu acessar o armazenamento seguro. Desbloqueie suas Chaves de início de sessão, tente novamente e permita o acesso se o macOS solicitar."
+        "keychainBlocked": "O Rerun não conseguiu acessar o armazenamento seguro. Desbloqueie suas Chaves de início de sessão, reinicie o Rerun e permita o acesso se o macOS solicitar.",
+        "restartToRetry": "Reiniciar o Rerun"
     },
     "updates": {
         "upToDate": "Você está atualizado",

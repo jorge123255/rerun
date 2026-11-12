@@ -103,7 +103,8 @@
         "runLocally": "Run on This Mac",
         "connectServer": "Connect to a Server",
         "keychainPrompt": "If macOS asks for Keychain access, choose Allow to open your local workspace.",
-        "keychainBlocked": "Rerun couldn’t access secure storage. Unlock your login Keychain, then choose Try again and allow access if macOS asks."
+        "keychainBlocked": "Rerun couldn’t access secure storage. Unlock your login Keychain, then restart Rerun and allow access if macOS asks.",
+        "restartToRetry": "Restart Rerun"
     },
     "updates": {
         "upToDate": "You’re up to date",

@@ -1,5 +1,6 @@
 const message = document.getElementById('message')
 const retry = document.getElementById('retry')
+const defaultRetryLabel = retry.textContent
 const runLocally = document.getElementById('run-locally')
 const signInCloud = document.getElementById('sign-in-cloud')
 const cloudError = document.getElementById('cloud-error')
@@ -14,10 +15,11 @@ if (window.desktopApp.onMacFullscreen) {
 function update(status) {
     message.textContent = status.message || (status.state === 'ready' ? 'Opening your workspace…' : 'Preparing your local workspace…')
     retry.hidden = status.state !== 'error'
+    retry.textContent = status.retryLabel ?? defaultRetryLabel
     choices = status.choices ?? null
     runLocally.hidden = !choices?.local
     signInCloud.hidden = connectServer.hidden = !choices
-    localFootnote.hidden = status.state === 'choose'
+    localFootnote.hidden = !!choices
     if (choices) {
         runLocally.textContent = choices.local ?? ''
         signInCloud.textContent = signInCloud.disabled ? choices.connecting : choices.cloud

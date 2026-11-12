@@ -59,7 +59,7 @@ let transitioning = false
 let quitting = false
 let quittingNow = false
 let phonePairing
-let openingLocalWorkspace = false
+let openingLocalWorkspace
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const boards = createBoardWindows({ startupUrl: pathToFileURL(startup).href, isDesktopPage })
@@ -101,16 +101,28 @@ function startupChoices(includeLocal = true) {
         connecting: t('server.connecting'), unreachable: t('server.unreachable'),
     }
 }
-function publishBootStatus(state, message, choices) {
-    bootStatus = { state, message, ...(choices ? { choices } : {}) }
+function publishBootStatus(status) {
+    bootStatus = status
     if (window && !window.isDestroyed()) window.webContents.send('desktop:status', bootStatus)
+}
+function workspaceChoiceStatus() {
+    const t = shellText(shellLanguage?.forScope('local'))
+    return { state: 'choose', message: t('startup.chooseWorkspace'), choices: startupChoices() }
+}
+function leaveLocalUnlock() {
+    if (bootStatus.state !== 'keychain') return
+    openingLocalWorkspace?.abort()
+    openingLocalWorkspace = null
+    publishBootStatus(workspaceChoiceStatus())
 }
 function reportStartupError(error) {
     const secureStorageBlocked = mac && error instanceof DesktopSecureStorageError
-    const message = secureStorageBlocked ? shellText(shellLanguage?.forScope('local'))('startup.keychainBlocked')
-        : 'Desktop setup failed. Check that this app has a complete bundled runtime and access to secure storage.'
     if (supervisor) supervisor.publish('error', 'Workspace state could not be verified. Restore the workspace state before retrying.')
-    else publishBootStatus('error', message, secureStorageBlocked ? startupChoices(false) : undefined)
+    else if (secureStorageBlocked) {
+        const t = shellText(shellLanguage?.forScope('local'))
+        publishBootStatus({ state: 'error', message: t('startup.keychainBlocked'), choices: startupChoices(false),
+            retryLabel: t('startup.restartToRetry') })
+    } else publishBootStatus({ state: 'error', message: 'Desktop setup failed. Check that this app has a complete bundled runtime and access to secure storage.' })
 }
 function showMainWindow() {
     showWindowOnReady = true
@@ -237,6 +249,7 @@ else {
             flush: () => boards.flushAll(runtime),
             confirmDiscard: () => confirmDiscard(focusedBoard(), 'Quit'),
             stop: async () => {
+                openingLocalWorkspace?.abort()
                 await connectedHubs?.closeAll()
                 await shortcutPreference?.flush()
                 await remoteMachines?.close()
@@ -333,7 +346,7 @@ async function launch() {
                 if (connectedHubs.duplicateWindow(focused)) return
                 void openAdditionalBoard().catch(() => {})
             },
-            openHubPicker: connectedHubs.openPicker,
+            openHubPicker: () => { leaveLocalUnlock(); connectedHubs.openPicker() },
             openPhonePairing: () => phonePairingWindow.open(),
             reloadWindow: (_item, candidate) => {
                 const last = lastWorkspaceWindow && !lastWorkspaceWindow.isDestroyed() ? lastWorkspaceWindow : window
@@ -375,12 +388,14 @@ async function launch() {
         ipcMain.handle('desktop:startup-local', event => onStartupPage(event) && bootStatus.state === 'choose' && startLocalWorkspace())
         ipcMain.handle('desktop:startup-cloud', async event => {
             if (!canConnectToServer(event)) return { ok: false }
+            leaveLocalUnlock()
             const locale = shellLanguage.forScope('local')
             const result = await connectedHubs.openCloud()
             return result.ok ? result : { ...result, message: hubConnectionError(locale, result) }
         })
         ipcMain.handle('desktop:startup-connect', event => {
             if (!canConnectToServer(event)) return false
+            leaveLocalUnlock()
             connectedHubs.openPicker()
             return true
         })
@@ -428,7 +443,8 @@ async function launch() {
         trustedPrimary(event)
         if (event.senderFrame.url !== pathToFileURL(startup).href || transitioning || quitting || changingBoards.size) return false
         if (!supervisor) {
-            if (bootStatus.state === 'error' && bootStatus.choices) return startLocalWorkspace()
+            if (bootStatus.state !== 'error') return false
+            // Electron caches the asynchronous encryptor for this process, including a refused Keychain key.
             app.relaunch()
             app.quit()
             return true
@@ -540,10 +556,7 @@ async function launch() {
     const existingLocal = !mac || await hasLocalWorkspace(dataRoot)
     if (mac) {
         const t = shellText(shellLanguage.forScope('local'))
-        bootStatus = existingLocal ? { state: 'starting', message: t('startup.keychainPrompt') } : {
-            state: 'choose', message: t('startup.chooseWorkspace'),
-            choices: startupChoices(),
-        }
+        bootStatus = existingLocal ? { state: 'starting', message: t('startup.keychainPrompt') } : workspaceChoiceStatus()
     }
     await window.loadFile(startup)
     if (existingLocal) await startLocalWorkspace()
@@ -552,23 +565,25 @@ async function launch() {
 
 async function startLocalWorkspace() {
     if (quitting || openingLocalWorkspace || supervisor) return false
-    openingLocalWorkspace = true
+    const attempt = new AbortController()
+    openingLocalWorkspace = attempt
     try {
-        if (mac) publishBootStatus('starting', shellText(shellLanguage.forScope('local'))('startup.keychainPrompt'))
-        await initializeLocalWorkspace()
+        if (mac) publishBootStatus({ state: 'keychain', message: shellText(shellLanguage.forScope('local'))('startup.keychainPrompt'),
+            choices: startupChoices(false) })
+        const identity = await loadIdentityFromSafeStorage(dataRoot, safeStorage, { signal: attempt.signal })
+        if (attempt.signal.aborted || quitting) return false
+        publishBootStatus({ state: 'starting', message: 'Preparing local runtime…' })
+        await initializeLocalWorkspace(identity)
         return true
     } catch (error) {
-        if (!quitting) reportStartupError(error)
+        if (!attempt.signal.aborted && !quitting) reportStartupError(error)
         return false
     } finally {
-        openingLocalWorkspace = false
+        if (openingLocalWorkspace === attempt) openingLocalWorkspace = null
     }
 }
 
-async function initializeLocalWorkspace() {
-    const identity = await loadIdentityFromSafeStorage(dataRoot, safeStorage)
-    if (quitting) return
-    publishBootStatus('starting', 'Preparing local runtime…')
+async function initializeLocalWorkspace(identity) {
     const resources = app.isPackaged ? process.resourcesPath : resolve(directory, '../../resources')
     const bundle = await loadBundle(resources)
     if (quitting) return

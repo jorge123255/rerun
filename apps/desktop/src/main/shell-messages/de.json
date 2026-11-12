@@ -103,7 +103,8 @@
         "runLocally": "Auf diesem Mac ausführen",
         "connectServer": "Mit einem Server verbinden",
         "keychainPrompt": "Wenn macOS nach dem Schlüsselbundzugriff fragt, wähle Erlauben, um deinen lokalen Workspace zu öffnen.",
-        "keychainBlocked": "Rerun konnte nicht auf den sicheren Speicher zugreifen. Entsperre deinen Anmeldeschlüsselbund, versuche es erneut und erlaube den Zugriff, wenn macOS danach fragt."
+        "keychainBlocked": "Rerun konnte nicht auf den sicheren Speicher zugreifen. Entsperre deinen Anmeldeschlüsselbund, starte Rerun neu und erlaube den Zugriff, wenn macOS danach fragt.",
+        "restartToRetry": "Rerun neu starten"
     },
     "updates": {
         "upToDate": "Alles auf dem neuesten Stand",

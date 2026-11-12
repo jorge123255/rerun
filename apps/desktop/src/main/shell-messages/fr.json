@@ -103,7 +103,8 @@
         "runLocally": "Exécuter sur ce Mac",
         "connectServer": "Se connecter à un serveur",
         "keychainPrompt": "Si macOS demande l’accès au trousseau, choisissez Autoriser pour ouvrir votre workspace local.",
-        "keychainBlocked": "Rerun n’a pas pu accéder au stockage sécurisé. Déverrouillez votre trousseau de session, réessayez et autorisez l’accès si macOS le demande."
+        "keychainBlocked": "Rerun n’a pas pu accéder au stockage sécurisé. Déverrouillez votre trousseau de session, redémarrez Rerun et autorisez l’accès si macOS le demande.",
+        "restartToRetry": "Redémarrer Rerun"
     },
     "updates": {
         "upToDate": "Vous êtes à jour",

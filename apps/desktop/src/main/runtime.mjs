@@ -47,18 +47,23 @@ export async function atomicPrivateJSON(path, value) {
     await chmod(path, 0o600)
 }
 
-export async function loadIdentity(root, cipher) {
+export async function loadIdentity(root, cipher, { signal } = {}) {
+    signal?.throwIfAborted()
     await mkdir(root, { recursive: true, mode: 0o700 })
     const path = resolve(root, 'identity.encrypted')
     let bytes
     try { bytes = await readFile(path) } catch (error) { if (error.code !== 'ENOENT') throw error }
     if (bytes) {
-        const identity = JSON.parse(cipher.decrypt(bytes))
+        const decrypted = await cipher.decrypt(bytes)
+        signal?.throwIfAborted()
+        const identity = JSON.parse(decrypted)
         if (identity.version !== 1 || typeof identity.installId !== 'string' || !/^[a-f0-9]{64}$/.test(identity.engineApiKey) || !/^[a-f0-9]{64}$/.test(identity.encryptionKey)) throw new Error('Invalid encrypted desktop identity')
         return identity
     }
     const identity = { version: 1, installId: randomUUID(), engineApiKey: randomBytes(32).toString('hex'), encryptionKey: randomBytes(32).toString('hex') }
-    await writeFile(path, cipher.encrypt(JSON.stringify(identity)), { flag: 'wx', mode: 0o600 })
+    const encrypted = await cipher.encrypt(JSON.stringify(identity))
+    signal?.throwIfAborted()
+    await writeFile(path, encrypted, { flag: 'wx', mode: 0o600 })
     return identity
 }
 
@@ -68,16 +73,23 @@ export class DesktopSecureStorageError extends Error {
     }
 }
 
-export async function loadIdentityFromSafeStorage(root, safeStorage) {
-    function useSecureStorage(operation) {
-        try { return operation() }
+export async function loadIdentityFromSafeStorage(root, safeStorage, { signal, platform = process.platform } = {}) {
+    async function useSecureStorage(operation) {
+        signal?.throwIfAborted()
+        try { return await operation() }
         catch (cause) { throw new DesktopSecureStorageError(cause) }
     }
-    if (!useSecureStorage(() => safeStorage.isEncryptionAvailable())) throw new DesktopSecureStorageError()
+    // On macOS Electron retrieves the Keychain key on a worker thread. Its async
+    // API reads the same ciphertext as its sync API and throws when it has no key.
+    if (platform === 'darwin') return loadIdentity(root, {
+        encrypt: value => useSecureStorage(() => safeStorage.encryptStringAsync(value)),
+        decrypt: bytes => useSecureStorage(async () => (await safeStorage.decryptStringAsync(bytes)).result),
+    }, { signal })
+    if (!await useSecureStorage(() => safeStorage.isEncryptionAvailable())) throw new DesktopSecureStorageError()
     return loadIdentity(root, {
         encrypt: value => useSecureStorage(() => safeStorage.encryptString(value)),
         decrypt: value => useSecureStorage(() => safeStorage.decryptString(value)),
-    })
+    }, { signal })
 }
 
 export function workspaceIdentity(identity, workspaceId) {
