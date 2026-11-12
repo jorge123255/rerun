@@ -6,6 +6,7 @@ import { cascadeWindowBounds } from './board-windows.mjs'
 import { hubConnectionError, hubOfflineCopy, hubPickerCopy, hubRecoveryView } from './connected-hub-messages.mjs'
 import { shellText } from './shell-language.mjs'
 import { restoreWindowZoom } from './window-placement.mjs'
+import { hideWorkspaceWindow, revealWorkspaceWindow as show } from './window-visibility.mjs'
 import { createHubAuth } from './connected-hub-auth.mjs'
 import { createHubDownloads, isHubDownload } from './connected-hub-downloads.mjs'
 import { createConnectedHubQuickAsk } from './connected-hub-quick-ask.mjs'
@@ -135,17 +136,6 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             native.frame.send('hub:notification-click', id)
         }, native)
         return result.status === 'accepted' && currentNative(entry, native)
-    }
-    function show(window) {
-        if (!window || window.isDestroyed()) return
-        const entry = entryFor(window)
-        if (entry?.hideAfterFullscreen) {
-            window.removeListener('leave-full-screen', entry.hideAfterFullscreen)
-            entry.hideAfterFullscreen = null
-        }
-        if (window.isMinimized()) window.restore()
-        window.show()
-        window.focus()
     }
     async function savedOrigin() {
         const value = await readJSON(file).catch(() => null)
@@ -322,13 +312,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             payments.close(entry)
             quickAsk.reset(entry)
             closeFind(window)
-            if (window.isFullScreen()) {
-                if (!entry.hideAfterFullscreen) {
-                    entry.hideAfterFullscreen = () => { entry.hideAfterFullscreen = null; window.hide() }
-                    window.once('leave-full-screen', entry.hideAfterFullscreen)
-                    window.setFullScreen(false)
-                }
-            } else window.hide()
+            hideWorkspaceWindow(window)
         })
         contents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
             if (!mainFrame || inPlace) return

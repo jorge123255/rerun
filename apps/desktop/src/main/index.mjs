@@ -23,6 +23,7 @@ import { createQuickAskWindow } from './quick-ask-window.mjs'
 import { loadQuickAskShortcut } from './quick-ask-shortcut.mjs'
 import { cascadeWindowBounds, createBoardWindows } from './board-windows.mjs'
 import { captureWindowPlacement, createWindowPlacements, restoreWindowZoom } from './window-placement.mjs'
+import { hideWorkspaceWindow, revealWorkspaceWindow } from './window-visibility.mjs'
 import { createConnectedHubs } from './connected-hubs.mjs'
 import { hubConnectionError } from './connected-hub-messages.mjs'
 import { parseHubLink, registerHubProtocol } from './connected-hub-policy.mjs'
@@ -129,15 +130,9 @@ function reportStartupError(error) {
             retryLabel: t('startup.restartToRetry') })
     } else publishBootStatus({ state: 'error', message: 'Desktop setup failed. Check that this app has a complete bundled runtime and access to secure storage.' })
 }
-function revealWindow(candidate) {
-    if (!candidate || candidate.isDestroyed()) return
-    if (candidate.isMinimized()) candidate.restore()
-    candidate.show()
-    candidate.focus()
-}
 function showMainWindow() {
     showWindowOnReady = true
-    revealWindow(window)
+    revealWorkspaceWindow(window)
 }
 function reopenRememberedHub() {
     reopeningHub ??= connectedHubs.reopenRemembered().catch(() => false).finally(() => { reopeningHub = null })
@@ -147,7 +142,7 @@ function showWorkspaceWindow() {
     if (quitting) return
     for (const candidate of [BrowserWindow.getFocusedWindow(), lastWorkspaceWindow]) {
         if (connectedHubs?.focusWindow(candidate)) return
-        if (boardContext(candidate)) { revealWindow(candidate); return }
+        if (boardContext(candidate)) { revealWorkspaceWindow(candidate); return }
     }
     if (connectedHubs && bootStatus.state === 'choose' && !openingLocalWorkspace && !supervisor) {
         void reopenRememberedHub().then(opened => {
@@ -204,7 +199,7 @@ async function confirmDiscard(candidate, action) {
         buttons: ['Stay', action + ' without saving'], defaultId: 0, cancelId: 0, noLink: true,
     }
     const parent = candidate && !candidate.isDestroyed() ? candidate : null
-    if (parent) { parent.show(); parent.focus() }
+    revealWorkspaceWindow(parent)
     const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
     return result.response === 1
 }
@@ -747,7 +742,7 @@ function createBoardWindow(desktopSession, bounds, primary = false) {
         if (quitting || transitioning || changingBoards.has(boardWindow)) { event.preventDefault(); return }
         if (!mac) return
         event.preventDefault()
-        if (primary) boardWindow.hide()
+        if (primary) hideWorkspaceWindow(boardWindow)
         else void closeAdditionalBoard(board)
     })
     const { contents } = board

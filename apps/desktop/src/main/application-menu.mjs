@@ -1,5 +1,6 @@
 import { QUICK_ASK_SHORTCUT } from './quick-ask-window.mjs'
 import { shellText } from './shell-language.mjs'
+import { revealWorkspaceWindow } from './window-visibility.mjs'
 
 export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDesktopPage, openDocumentation, openFind, openQuickAsk, openNewWindow, openLocalWorkspace, openHubPicker, openPhonePairing, reloadWindow, devTools, locale, checkForUpdates, updateItem }) {
     const t = shellText(locale)
@@ -21,9 +22,7 @@ export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDes
                     if (!window || window.isDestroyed()) return
                     const frame = window.webContents.mainFrame
                     if (!frame || !isDesktopPage(frame.url)) return
-                    if (window.isMinimized()) window.restore()
-                    window.show()
-                    window.focus()
+                    revealWorkspaceWindow(window)
                     frame.send('desktop:open-settings')
                 },
             },
