@@ -1,9 +1,10 @@
 import type { Locale } from '@rerun/i18n'
 import type agent from '@rerun/i18n/messages/en/agent.json'
+import type builder from '@rerun/i18n/messages/en/builder.json'
 import type dialogs from '@rerun/i18n/messages/en/dialogs.json'
 import type common from '@rerun/i18n/messages/en/common.json'
 
-type Source = { agent: typeof agent; dialogs: typeof dialogs; common: typeof common }
+type Source = { agent: typeof agent; builder: typeof builder; dialogs: typeof dialogs; common: typeof common }
 
 const mac = {
     en: {
@@ -202,6 +203,7 @@ export function desktopCoworkerMessages(locale: Locale, source: Source) {
     return {
         ...mac[locale],
         destinations: source.agent.agentCard.destinations,
+        boardSettings: source.builder.contextMenu.settings,
         views: source.agent.agentView.views,
         tabs: source.agent.agentView.tabs,
         deleteCard: source.agent.agentCard.delete,

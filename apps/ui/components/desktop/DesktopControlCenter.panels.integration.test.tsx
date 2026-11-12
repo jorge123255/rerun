@@ -388,6 +388,46 @@ test('only the selected chat opens a coworker dialog and both distinct drafts re
 })
 
 
+test('board tile Settings opens the exact coworker and keeps the active thread and draft across remount', async () => {
+    const app = fixture()
+    const mounted = await app.mount()
+    const first = await openBoardChat(mounted.container)
+    await click('Reviewer second chat', mounted.container)
+    const second = await until(() => { const input = composer(); return input && input !== first ? input : null })
+    await enter(second, 'Keep this draft while editing a coworker')
+
+    const openSettings = async (container: HTMLElement, name: string) => {
+        const tile = await until(() => container.querySelector<HTMLElement>(`[aria-label="Open chat with ${name}"]`))
+        await act(async () => {
+            tile.focus()
+            tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+        })
+        const action = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent?.trim() === 'Settings')
+        expect(action).toBeDefined()
+        await act(async () => action!.click())
+        const dialog = await until(() => panelDialog('Edit coworker'))
+        await until(() => dialog.textContent?.includes('Reply length'))
+        expect(dialog.textContent).toContain(name)
+    }
+
+    await openSettings(mounted.container, 'Auditor')
+    await dismissPanel('Edit coworker')
+    await openSettings(mounted.container, 'Reviewer')
+    await dismissPanel('Edit coworker')
+    expect(composer()?.value).toBe('Keep this draft while editing a coworker')
+    expect(composer()?.closest('[data-desktop-tab-active]')?.textContent).toContain(app.answer(`${reviewer.id}-second`))
+    expect(app.panelReads.filter(path => path.endsWith('/settings'))).toEqual([
+        `/api/desktop/agents/${auditor.id}/settings`, `/api/desktop/agents/${reviewer.id}/settings`,
+    ])
+
+    await mounted.unmount()
+    const reopened = await app.mount()
+    await openSettings(reopened.container, 'Reviewer')
+    await dismissPanel('Edit coworker')
+    await until(() => composer()?.value === 'Keep this draft while editing a coworker')
+    expect(app.contentWrites).toEqual([])
+})
+
 test('restored live status must resolve before Settings opens and rejection cannot reopen it later', async () => {
     let resolveStatus!: (value: Response) => void
     const status = new Promise<Response>(resolve => { resolveStatus = resolve })

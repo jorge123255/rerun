@@ -17,6 +17,7 @@ import { createTranslator } from 'use-intl/core'
 import account from '@rerun/i18n/messages/en/account.json'
 import agent from '@rerun/i18n/messages/en/agent.json'
 import brain from '@rerun/i18n/messages/en/brain.json'
+import builder from '@rerun/i18n/messages/en/builder.json'
 import changelog from '@rerun/i18n/messages/en/changelog.json'
 import chat from '@rerun/i18n/messages/en/chat.json'
 import common from '@rerun/i18n/messages/en/common.json'
@@ -29,7 +30,7 @@ import notifications from '@rerun/i18n/messages/en/notifications.json'
 import mobileSettings from '@rerun/i18n/messages/en/mobileSettings.json'
 import workspace from '@rerun/i18n/messages/en/workspace.json'
 
-const englishSource = { account, agent, brain, changelog, chat, common, connections, data, dialogs, foreman, kit, layout, mobileSettings, notifications, workspace }
+const englishSource = { account, agent, brain, builder, changelog, chat, common, connections, data, dialogs, foreman, kit, layout, mobileSettings, notifications, workspace }
 type DesktopMessageSource = typeof englishSource
 
 const desktopChangelogCopy = {

@@ -36,7 +36,7 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, workspaceId, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
+export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, workspaceId, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onOpenSettings, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
     activitySnapshot?: BoardActivitySnapshot
     agents: DesktopAgentView[]
     workspaceName: string
@@ -52,6 +52,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     focusRequest?: { tileId: string; nonce: number; insetRight: number } | null
     boxFocusRequest?: { spaceId: string; nonce: number } | null
     onOpen: (id: string) => void
+    onOpenSettings?: (id: string) => void
     onRename?: (id: string, name: string) => Promise<void>
     onShare?: (agent: DesktopAgentView) => void
     onDuplicate?: (sourceId: string, requestId: string, position: GridPosition, spaceId?: string) => Promise<'created' | 'occupied'>
@@ -358,7 +359,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
             onPointerDownCapture={() => { resizeCanceled.current = false }} onPointerCancelCapture={() => { resizeCanceled.current = true }}
             onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented && placement) { event.preventDefault(); cancelCopy() } }}>
             <h1 className="sr-only">{t('board')}</h1>
-            <DesktopBoardMenu agents={agents} onOpen={openCoworker} onRename={onRename} onShare={onShare} onDuplicate={onDuplicate ? beginCopy : undefined}
+            <DesktopBoardMenu agents={agents} onOpen={openCoworker} onOpenSettings={onOpenSettings} onRename={onRename} onShare={onShare} onDuplicate={onDuplicate ? beginCopy : undefined}
                 onSetEnabled={onSetEnabled} onDelete={onDelete} disabled={!!placement || gridBlocked}
                 spaces={board} onRenameSpace={onBoardCommand ? spaceId => openBoxDialog({ kind: 'rename', spaceId }) : undefined}
                 onDeleteSpace={onBoardCommand ? spaceId => openBoxDialog({ kind: 'delete', spaceId }) : undefined}

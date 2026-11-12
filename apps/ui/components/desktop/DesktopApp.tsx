@@ -311,9 +311,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const selectedAgent = agents.find(agent => agent.id === selectedAgentId) ?? null
     const currentAgents = useRef(agents)
     currentAgents.current = agents
-    const modalOrActionActive = workspaceDialogActive || templatesActive || settings || workspaceSettings || shortcutsOpen || helpOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || !!busy || placingCopy || quitting || themeSaving || boardInteraction || boardState.saving || creationNavigationBlocked
-    const changelog = useDesktopChangelog(initialData.runtimeLaunchNonce, !modalOrActionActive && !controlCenterOpen && !panelOpen)
-    const controlCenterDisabled = modalOrActionActive || changelog.open
+    const modalOrActionActive = workspaceDialogActive || templatesActive || settings || workspaceSettings || shortcutsOpen || helpOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || !!busy || placingCopy || quitting || themeSaving || boardState.saving || creationNavigationBlocked
+    const changelog = useDesktopChangelog(initialData.runtimeLaunchNonce, !modalOrActionActive && !boardInteraction && !controlCenterOpen && !panelOpen)
+    const coworkerPanelBlocked = modalOrActionActive || changelog.open
+    const controlCenterDisabled = coworkerPanelBlocked || boardInteraction
 
     useEffect(() => {
         const openFromShortcut = () => {
@@ -568,12 +569,14 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 insetRight: window.matchMedia('(min-width: 768px)').matches ? loadSidePanelWidth(window.innerWidth) + SIDE_PANEL_GAP : 0 }))
     }
 
-    function openCoworkerPanel(agentId: string, panel: DesktopCoworkerPanel) {
-        if (creationAdmission.current.blocked || controlCenterDisabled || isDesktopQuitting() || deletedAgents.current.has(agentId)
+    function openCoworkerPanel(agentId: string, panel: DesktopCoworkerPanel, source: 'control-center' | 'board-menu' = 'control-center') {
+        if (creationAdmission.current.blocked || coworkerPanelBlocked || (source === 'board-menu' ? controlCenterOpen : boardInteraction)
+            || isDesktopQuitting() || deletedAgents.current.has(agentId)
             || !currentAgents.current.some(agent => agent.id === agentId)) return
         selectCoworker(agentId)
         setRequestedPanel({ agentId, panel, nonce: ++panelRequestNonce.current })
     }
+    const openBoardCoworkerSettings = (agentId: string) => openCoworkerPanel(agentId, 'settings', 'board-menu')
 
     const askForeman = useCallback(async (chat: DesktopForemanCommand['chat'], text: string, signal: AbortSignal) => {
         signal.throwIfAborted()
@@ -745,6 +748,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     onBoardInteractionChange={setBoardInteraction}
                     visibleSessionId={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetLeft={panelOpen ? 0 : foremanLeftTrack} panelInsetRight={panelOpen ? panelInsetRight : foremanRightTrack} onOpen={selectCoworker}
+                    onOpenSettings={openBoardCoworkerSettings}
                     onRename={renameCoworker} onShare={agent => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting() && currentAgents.current.some(current => current.id === agent.id)) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) } }} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
                 )}</FxBoardCameraBoundary> : <DesktopBoard activitySnapshot={boardActivity} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} recenterSignal={recenterSignal}
@@ -758,6 +762,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     onBoardInteractionChange={setBoardInteraction}
                     visibleSessionId={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetLeft={panelOpen ? 0 : foremanLeftTrack} panelInsetRight={panelOpen ? panelInsetRight : foremanRightTrack} onOpen={selectCoworker}
+                    onOpenSettings={openBoardCoworkerSettings}
                     onRename={renameCoworker} onShare={agent => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting() && currentAgents.current.some(current => current.id === agent.id)) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) } }} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />}
                 {runtimeWorkspaceId !== null && initialData.runtimeLaunchNonce && <div className="absolute bottom-4 left-4 z-30"
