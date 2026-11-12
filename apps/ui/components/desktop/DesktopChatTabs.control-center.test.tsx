@@ -189,7 +189,7 @@ test('a stale selection preserves a live reply and both mounted drafts until a v
             await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
         }
         expect(app.active()?.textContent).toContain('Still replying')
-        expect(app.active()?.textContent).toContain('Writer is working')
+        expect(app.active()?.querySelector('[data-chat-find-ignore] [role="status"]')?.textContent).toBe('Writing...')
         await type(sourceComposer, 'Newer source draft while it replies')
         await click('Other')
         const otherComposer = app.active()!.querySelector('textarea')!
