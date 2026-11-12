@@ -1317,7 +1317,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
                     {renderRunHistory?.(dialogControl('logs'))}
                     <Button type="button" variant="ghost" size="sm" disabled={inactive} onClick={() => setScreenOpen('manual')}>Browser</Button>
                     <DesktopCoworkerMonitoring agent={agent} dialogControl={dialogControl('monitoring')} />
-                    <DesktopCoworkerSettings agent={agent} disabled={generating || !!sessionId && engineRunning.id !== sessionId} dialogControl={dialogControl('settings')} />
+                    <DesktopCoworkerSettings agent={agent} authority={overview} disabled={generating || !!sessionId && engineRunning.id !== sessionId} dialogControl={dialogControl('settings')} />
                 </div>
                 </div>
             </section>

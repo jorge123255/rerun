@@ -121,6 +121,7 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false) {
     const board: DesktopBoardState = { revision: 1, spaces: [{ id: boxId, name: 'Review Box', col_start: 0, row_start: 0, col_end: 11, row_end: 7 }],
         placements: coworkers.map((agent, index) => ({ agentId: agent.id, spaceId: boxId, col: index * 3, row: 0 })) }
     let gettingStartedDismissed = false
+    let roster = coworkers
     const drafts = createDesktopDraftFixture()
     const recent = createDesktopRecentFixture()
     const layouts = new Map<string, DesktopTabLayout>(coworkers.map(agent => [agent.id, {
@@ -133,6 +134,7 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false) {
     const panelReads: string[] = []
     const messageReads: string[] = []
     const contentWrites: string[] = []
+    const managementWrites: { agentId: string; method: string; body: unknown }[] = []
     const sessions = (agentId: string) => layouts.get(agentId)!.tabs.map(tab => ({
         id: tab.id!, agentId, title: tab.title, createdAt: date, updatedAt: date,
     }))
@@ -157,6 +159,21 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false) {
             return Response.json(desktopGettingStartedResponse(2, gettingStartedDismissed, { coworkers: 2, connectedProviders: 0, modelChats: 0, schedules: 0 }))
         }
         if (url.pathname === '/api/desktop/settings' && method === 'GET') return Response.json(providers)
+        if (productionBoard && url.pathname === '/api/desktop/agents' && method === 'GET') return Response.json({ agents: roster })
+        const managementOwner = roster.find(agent => url.pathname === `/api/desktop/agents/${agent.id}`)
+        if (productionBoard && managementOwner && (method === 'PATCH' || method === 'DELETE')) {
+            const body = JSON.parse(String(init?.body))
+            managementWrites.push({ agentId: managementOwner.id, method, body })
+            if (method === 'PATCH') {
+                const agent = { ...managementOwner, name: body.name }
+                roster = roster.map(item => item.id === agent.id ? agent : item)
+                return Response.json({ agent })
+            }
+            if (body.confirmationName !== managementOwner.name) return Response.json({ error: 'Name does not match.' }, { status: 400 })
+            roster = roster.filter(item => item.id !== managementOwner.id)
+            board.placements = board.placements.filter(item => item.agentId !== managementOwner.id)
+            return Response.json({ deletedAgentId: managementOwner.id })
+        }
         if (url.pathname === '/api/desktop/board-activity') return Response.json({ agents: Object.fromEntries(coworkers.map(agent => [agent.id, 'idle'])) })
         if (url.pathname === '/api/desktop/completions') return Response.json({ items: [], unavailableAgentIds: [], enabledAt: date, checkedAt: date, nextCursor: null })
         if (url.pathname === '/api/desktop/pending-inbox') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: date })
@@ -218,14 +235,14 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false) {
         throw new Error(`Unexpected request: ${method} ${raw}`)
     }))
     return {
-        panelReads, messageReads, contentWrites, layouts, answer,
+        panelReads, messageReads, contentWrites, managementWrites, layouts, answer,
         async mount(language?: DesktopLanguage) {
             const container = document.createElement('div')
             document.body.append(container)
             const root = createRoot(container)
             roots.add(root)
             const initialData: DesktopBootstrap = { ...providers, theme: 'dark', profile: { id: 1, displayName: 'Local' },
-                workspace: { id: 1, name: 'Panel studio' }, ...(productionBoard ? { runtimeWorkspaceId: 2, runtimeLaunchNonce: 'test-board-launch', board } : {}), agents: coworkers, recentCoworkers: recent.snapshot() }
+                workspace: { id: 1, name: 'Panel studio' }, ...(productionBoard ? { runtimeWorkspaceId: 2, runtimeLaunchNonce: 'test-board-launch', board } : {}), agents: roster, recentCoworkers: recent.snapshot() }
             const app = <DesktopApp initialData={initialData} />
             await act(async () => { root.render(language ? <DesktopLocale initial={language}>{app}</DesktopLocale> : app) })
             return { container, async unmount() {
@@ -426,6 +443,54 @@ test('board tile Settings opens the exact coworker and keeps the active thread a
     await dismissPanel('Edit coworker')
     await until(() => composer()?.value === 'Keep this draft while editing a coworker')
     expect(app.contentWrites).toEqual([])
+})
+
+test('board coworker Settings pins notifications, preserves edits during rename, and deletes only the confirmed coworker', async () => {
+    const app = fixture(undefined, true)
+    const mounted = await app.mount()
+    const chatDraft = await openBoardChat(mounted.container)
+    await enter(chatDraft, 'Keep this chat draft during rename')
+    await openCoworkerPage('Reviewer')
+    await chooseOpenRow('Settings')
+    const settings = await until(() => panelDialog('Edit coworker'))
+    const instructions = await until(() => settings.querySelector<HTMLTextAreaElement>('textarea'))
+    await enter(instructions, 'Unsaved instructions')
+
+    await click('Notifications', settings)
+    const notifications = await until(() => panelDialog('Notifications'))
+    await until(() => notifications.querySelector('button[aria-label="Notifications for Reviewer"]'))
+    expect(notifications.querySelector('button[aria-label="Notifications for Auditor"]')).toBeNull()
+    await click('Close', notifications)
+    await until(() => !panelDialog('Notifications'))
+    expect(instructions.value).toBe('Unsaved instructions')
+
+    await click('Rename', settings)
+    const rename = await until(() => panelDialog('Rename coworker'))
+    await enter(rename.querySelector('input')!, 'Analyst')
+    await click('Rename', rename)
+    await until(() => !panelDialog('Rename coworker'))
+    expect(settings.textContent).toContain('Analyst')
+    expect(instructions.value).toBe('Unsaved instructions')
+    expect(chatDraft.value).toBe('Keep this chat draft during rename')
+    expect(mounted.container.querySelector('[aria-label="Open chat with Analyst"]')).not.toBeNull()
+    expect(app.contentWrites).toEqual([])
+
+    await click('Delete', settings)
+    const confirm = await until(() => document.querySelector<HTMLElement>('[role="alertdialog"]'))
+    const name = confirm.querySelector('input')!
+    const remove = [...confirm.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Delete')!
+    await enter(name, 'Auditor')
+    expect(remove.disabled).toBe(true)
+    expect(app.managementWrites).toEqual([{ agentId: reviewer.id, method: 'PATCH', body: { name: 'Analyst' } }])
+    await enter(name, 'Analyst')
+    await click('Delete', confirm)
+    await until(() => !mounted.container.querySelector('[aria-label="Open chat with Analyst"]'))
+    expect(panelDialog('Edit coworker')).toBeUndefined()
+    expect(mounted.container.querySelector('[aria-label="Open chat with Auditor"]')).not.toBeNull()
+    expect(app.managementWrites).toEqual([
+        { agentId: reviewer.id, method: 'PATCH', body: { name: 'Analyst' } },
+        { agentId: reviewer.id, method: 'DELETE', body: { confirmationName: 'Analyst' } },
+    ])
 })
 
 test('restored live status must resolve before Settings opens and rejection cannot reopen it later', async () => {

@@ -465,6 +465,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             identity: { ownerId: String(initialData.profile.id), workspaceId: runtimeWorkspaceId, agentId: selectedAgent.id },
             boxes: boardState.board.spaces,
             canManage: !controlCenterDisabled,
+            onRename: async (source, name) => {
+                if (!currentOverview(source)) throw new Error('This coworker is no longer active.')
+                await renameCoworker(source.agentId, name)
+            },
             onRenamed: (source, name) => {
                 if (currentOverview(source)) setAgents(agents => agents.map(agent => agent.id === source.agentId ? { ...agent, name } : agent))
             },

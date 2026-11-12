@@ -7,7 +7,9 @@ import { DesktopCoworkerOverviewRootMount, type DesktopCoworkerOverviewRootMount
 
 export type DesktopConversationOverviewAuthority = Pick<DesktopCoworkerOverviewRootMountProps,
     'identity' | 'boxes' | 'canManage' | 'onRenamed' | 'onShare' | 'onDelete' | 'installAuthor' |
-    'servicesNeedConfig' | 'computerEnabled' | 'computer' | 'onOpenComputer'>
+    'servicesNeedConfig' | 'computerEnabled' | 'computer' | 'onOpenComputer'> & {
+    onRename?: (identity: DesktopCoworkerOverviewRootMountProps['identity'], name: string) => Promise<void>
+}
 
 type Props = {
     authority: DesktopConversationOverviewAuthority
