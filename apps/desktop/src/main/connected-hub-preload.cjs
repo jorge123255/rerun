@@ -32,6 +32,10 @@ if (bootstrap?.audience === 'picker') {
         },
         find: { open: () => { void ipcRenderer.invoke('hub:find').catch(() => {}) } },
         links: { openExternal: url => ipcRenderer.invoke('hub:open-link', url) },
+        downloads: {
+            onEvent: callback => subscribe('hub:download', callback),
+            show: id => { void ipcRenderer.invoke('hub:show-download', id).catch(() => {}) },
+        },
         server: { openPicker: () => { void ipcRenderer.invoke('hub:open-picker').catch(() => {}) } },
     })
 }

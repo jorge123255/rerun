@@ -3,13 +3,14 @@ import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { checkHub, hubPartition, HUB_API_VERSION, normalizeHubOrigin, sameHub } from './connected-hub-policy.mjs'
 import { createHubAuth } from './connected-hub-auth.mjs'
+import { createHubDownloads } from './connected-hub-downloads.mjs'
 import { atomicPrivateJSON, readJSON } from './workspaces/paths.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
 import { externalDesktopLink } from './window-context-menu.mjs'
 
 const pickerPage = new URL('./connected-hub.html', import.meta.url)
 const preload = fileURLToPath(new URL('./connected-hub-preload.cjs', import.meta.url))
-const capabilities = ['auth', 'window', 'find', 'links', 'server']
+const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads']
 
 export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shell, dialog, dataRoot, available, openFind, closeFind }) {
     const file = resolve(dataRoot, 'connected-hub.json')
@@ -23,6 +24,12 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
         const entry = windows.get(window.webContents)
         return entry && sameHub(entry.contents.mainFrame?.url, entry.origin) ? entry : null
     }
+    const downloads = createHubDownloads({ app, shell,
+        ownerOf: contents => available() ? connected(windows.get(contents)?.window) : null,
+        notify: (entry, value) => {
+            if (connected(entry.window) === entry) entry.contents.send('hub:download', value)
+        },
+    })
     const localSender = event => picker && !picker.isDestroyed() && event.sender === picker.webContents
         && event.senderFrame && event.senderFrame === picker.webContents.mainFrame && event.senderFrame.url === pickerPage.href
     function hubSender(event) {
@@ -88,6 +95,7 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
             webPreferences: preferences(desktopSession) })
         const contents = window.webContents
         usedSessions.add(desktopSession)
+        downloads.track(desktopSession)
         const userAgent = contents.getUserAgent().replace(/ Electron\/\S+/, '') + ` RerunDesktop/${version} (mac; dev)`
         contents.setUserAgent(userAgent)
         const auth = createHubAuth({ origin, openBrowser: url => shell.openExternal(url), fetcher: (url, init) =>
@@ -198,6 +206,7 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
         }],
         ['hub:find', entry => openFind(entry.window)],
         ['hub:open-link', (_entry, url) => external(url)],
+        ['hub:show-download', (entry, id) => downloads.show(entry, id)],
         ['hub:open-picker', () => openPicker()],
         ['hub:auth-start', (entry, options) => entry.auth.start(options?.provider)],
         ['hub:auth-code', (entry, code) => redeem(entry, code)],
@@ -234,6 +243,7 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
                 if (!closed) throw new Error('A connected Rerun window is still open')
             }
             if (picker && !picker.isDestroyed()) picker.destroy()
+            downloads.cancelAll()
             // Chromium batches writes. Persist session cookies even if the last hub
             // was closed just before quitting the local app.
             await Promise.all([...usedSessions].map(value => value.cookies.flushStore()))
