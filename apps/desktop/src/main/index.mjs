@@ -22,6 +22,7 @@ import { createWindowFind } from './window-find.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
+const mac = process.platform === 'darwin'
 let window
 let menuBar
 let showWindowOnReady = true
@@ -42,7 +43,9 @@ const profile = 'persist:rerun-desktop-local'
 const draftQuit = new BeforeQuitDrafts()
 const windowFind = createWindowFind({ WebContentsView, scopeOf: candidate => !quitting && !transitioning
     && candidate && candidate === window && !candidate.isDestroyed() && runtimeScope()
-    && isDesktopPage(candidate.webContents.mainFrame?.url) ? rendererEpoch : null })
+    && isDesktopPage(candidate.webContents.mainFrame?.url) ? rendererEpoch : null,
+    topInset: candidate => mac && !candidate.isFullScreen() ? 28 : 0,
+})
 const { saveResultFile, saveCoworkerFile, saveSharedFile } = createDesktopFileSaves({ dialog, context: () => {
     if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
     return { runtime, window }
@@ -193,12 +196,13 @@ async function launch() {
     app.setPath('userData', dataRoot)
     await prepareWorkspaceWindow(1, false)
     ipcMain.handle('desktop:status', event => { trusted(event); return supervisor?.status ?? bootStatus })
-    if (process.platform === 'darwin') {
+    if (mac) {
         ipcMain.on('desktop:find-open', event => {
             try { trusted(event); windowFind.open(window) } catch { /* Ignore untrusted frames. */ }
         })
         ipcMain.on('desktop:find-query', (event, input) => windowFind.search(event, input))
         ipcMain.on('desktop:find-close', event => windowFind.dismiss(event))
+        ipcMain.handle('desktop:mac-fullscreen', event => { trusted(event); return window.isFullScreen() })
     }
     ipcMain.handle('desktop:retry', async event => {
         trusted(event)
@@ -375,6 +379,7 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
     window = new BrowserWindow({
         ...(bounds || { width: 1220, height: 820 }), minWidth: 720, minHeight: 520, show: false,
         title: 'Rerun Desktop Preview', backgroundColor: '#101214',
+        ...(mac ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 12, y: 8 } } : {}),
         webPreferences: { preload: resolve(directory, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, partition },
     })
     const boardWindow = window
@@ -384,6 +389,19 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
         if (!quittingNow && process.platform === 'darwin') { event.preventDefault(); window.hide() }
     })
     const contents = window.webContents
+    if (mac) {
+        // The authenticated board draws its strip on first paint. This marker only affects layout.
+        contents.setUserAgent(contents.getUserAgent() + ' RerunLocalDesktopMac/1')
+        const reportFullscreen = () => {
+            if (window !== boardWindow || contents.isDestroyed()) return
+            const frame = contents.mainFrame
+            if (frame?.url === pathToFileURL(startup).href || isDesktopPage(frame?.url)) {
+                frame.send('desktop:mac-fullscreen-changed', boardWindow.isFullScreen())
+            }
+        }
+        boardWindow.on('enter-full-screen', reportFullscreen)
+        boardWindow.on('leave-full-screen', reportFullscreen)
+    }
     if (process.platform === 'darwin') attachDesktopContextMenu({
         window: boardWindow, Menu, clipboard, openExternal, locale: app.getLocale(),
         currentScope: () => !quitting && !transitioning && window === boardWindow && !boardWindow.isDestroyed()

@@ -529,3 +529,48 @@ html [data-sonner-toaster] [data-sonner-toast][data-styled='true']:has([data-clo
   background-color: #fbbf24;
   color: #201a00;
 }
+
+/* The native window buttons sit over this themed strip. Its layout is limited to the Mac board. */
+html:has([data-desktop-titlebar]:not([hidden])) {
+  --desktop-titlebar-height: 28px;
+}
+
+html:has([data-desktop-titlebar]:not([hidden])) body {
+  padding-top: var(--desktop-titlebar-height);
+}
+
+html:has([data-desktop-titlebar]:not([hidden])) :is(.h-dvh, .h-screen) {
+  height: calc(100dvh - var(--desktop-titlebar-height));
+}
+
+html:has([data-desktop-titlebar]:not([hidden])) :is(.min-h-dvh, .min-h-screen) {
+  min-height: calc(100dvh - var(--desktop-titlebar-height));
+}
+
+html:has([data-desktop-titlebar]:not([hidden])) :is([data-slot='dialog-content'], [data-slot='alert-dialog-content']) {
+  margin-top: calc(var(--desktop-titlebar-height) / 2);
+}
+
+html:has([data-desktop-titlebar]:not([hidden])) [data-slot='sheet-content']:is([data-side='left'], [data-side='right']) {
+  top: var(--desktop-titlebar-height);
+  height: calc(100% - var(--desktop-titlebar-height));
+}
+
+html:has([data-desktop-titlebar]:not([hidden])) [data-slot='sheet-content'][data-side='top'] {
+  top: var(--desktop-titlebar-height);
+}
+
+[data-desktop-titlebar]:not([hidden]) {
+  position: fixed;
+  inset: 0 0 auto;
+  height: var(--desktop-titlebar-height);
+  background: var(--frame);
+  -webkit-app-region: drag;
+  app-region: drag;
+  user-select: none;
+}
+
+html:has([data-desktop-titlebar]) :is([data-radix-popper-content-wrapper], [role='dialog'], [role='menu'], [role='listbox'], [data-sonner-toaster]) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}

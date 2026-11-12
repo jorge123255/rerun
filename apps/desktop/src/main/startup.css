@@ -1,6 +1,8 @@
 :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #101214; color: #f4f4f0; }
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 40px 24px; }
+#mac-titlebar { position: fixed; inset: 0 0 auto; height: 28px; -webkit-app-region: drag; app-region: drag; user-select: none; }
+body:has(#mac-titlebar:not([hidden])) { padding-top: 68px; }
 main { width: min(100%, 520px); }
 .mark { width: 58px; height: 58px; border-radius: 18px; background: #c6e581; color: #172116; display: grid; place-items: center; font-size: 38px; margin-bottom: 36px; }
 .eyebrow { color: #b5ce8a; font-size: 11px; letter-spacing: .2em; font-weight: 600; }

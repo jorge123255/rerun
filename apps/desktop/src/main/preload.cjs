@@ -21,7 +21,27 @@ ipcRenderer.on('desktop:before-quit', (_event, value) => {
 })
 
 contextBridge.exposeInMainWorld('desktopApp', {
-    ...(process.platform === 'darwin' ? { openFind: () => ipcRenderer.send('desktop:find-open') } : {}),
+    ...(process.platform === 'darwin' ? {
+        openFind: () => ipcRenderer.send('desktop:find-open'),
+        onMacFullscreen: listener => {
+            if (typeof listener !== 'function') throw new TypeError('Expected a full-screen listener')
+            let current = true, received = false
+            const channel = 'desktop:mac-fullscreen-changed'
+            const update = (_event, fullscreen) => {
+                if (!current || typeof fullscreen !== 'boolean') return
+                received = true
+                listener(fullscreen)
+            }
+            ipcRenderer.on(channel, update)
+            void ipcRenderer.invoke('desktop:mac-fullscreen').then(fullscreen => {
+                if (!received) update(null, fullscreen)
+            }, () => {})
+            return () => {
+                current = false
+                ipcRenderer.removeListener(channel, update)
+            }
+        },
+    } : {}),
     workspaces: {
         list: () => ipcRenderer.invoke('desktop:workspaces-list'),
         create: input => ipcRenderer.invoke('desktop:workspaces-create', input),

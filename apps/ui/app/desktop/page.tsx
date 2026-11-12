@@ -2,6 +2,7 @@ import { headers } from 'next/headers'
 import { notFound } from 'next/navigation'
 import { DesktopApp } from '@/components/desktop/DesktopApp'
 import { DesktopLocale } from '@/components/desktop/DesktopLocale'
+import { DesktopMacTitleBar } from '@/components/desktop/DesktopMacTitleBar'
 import { readDesktopLanguage } from '@/lib/desktop/server/language'
 import { authenticateDesktopRequest, DesktopHttpError } from '@/lib/desktop/server/auth'
 import { readDesktopRuntime } from '@/lib/desktop/server/runtime'
@@ -17,6 +18,7 @@ async function readPageData() {
         return await Promise.all([
             readDesktopWorkspace(runtime),
             readDesktopLanguage(runtime, requestHeaders.get('accept-language')),
+            /(?:^| )RerunLocalDesktopMac\/1$/.test(requestHeaders.get('user-agent') ?? ''),
         ])
     } catch (error) {
         if (error instanceof DesktopHttpError) notFound()
@@ -25,6 +27,6 @@ async function readPageData() {
 }
 
 export default async function DesktopPage() {
-    const [bootstrap, language] = await readPageData()
-    return <DesktopLocale initial={language}><DesktopApp initialData={bootstrap} /></DesktopLocale>
+    const [bootstrap, language, mac] = await readPageData()
+    return <>{mac && <DesktopMacTitleBar />}<DesktopLocale initial={language}><DesktopApp initialData={bootstrap} /></DesktopLocale></>
 }

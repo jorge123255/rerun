@@ -4,7 +4,7 @@ const page = new URL('./find.html', import.meta.url)
 const preload = fileURLToPath(new URL('./find-preload.cjs', import.meta.url))
 const width = 380, height = 52, margin = 12
 
-export function createWindowFind({ WebContentsView, scopeOf }) {
+export function createWindowFind({ WebContentsView, scopeOf, topInset }) {
     let current
     const active = entry => current === entry && !entry.view.webContents.isDestroyed() && scopeOf(entry.window) === entry.scope
     const trusted = event => current && active(current) && event.sender === current.view.webContents
@@ -16,6 +16,8 @@ export function createWindowFind({ WebContentsView, scopeOf }) {
         current = null
         const { view, contents, layout, report, hide } = entry
         window.off('resize', layout)
+        window.off('enter-full-screen', layout)
+        window.off('leave-full-screen', layout)
         window.off('hide', hide)
         if (!contents.isDestroyed()) {
             contents.off('found-in-page', report)
@@ -48,7 +50,7 @@ export function createWindowFind({ WebContentsView, scopeOf }) {
             const layout = () => {
                 const [available] = window.getContentSize()
                 const actual = Math.min(width, Math.max(0, available - margin * 2))
-                view.setBounds({ x: available - actual - margin, y: margin, width: actual, height })
+                view.setBounds({ x: available - actual - margin, y: topInset(window) + margin, width: actual, height })
             }
             const report = (_event, result) => {
                 if (!active(entry) || !result.finalUpdate || entry.requestId === null || result.requestId !== entry.requestId) return
@@ -60,6 +62,8 @@ export function createWindowFind({ WebContentsView, scopeOf }) {
             window.contentView.addChildView(view)
             layout()
             window.on('resize', layout)
+            window.on('enter-full-screen', layout)
+            window.on('leave-full-screen', layout)
             window.on('hide', hide)
             contents.on('found-in-page', report)
             for (const event of ['will-navigate', 'will-redirect', 'will-attach-webview'])

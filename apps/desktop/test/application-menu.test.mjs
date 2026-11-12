@@ -75,3 +75,33 @@ test('the preload forwards the Settings signal without exposing its IPC event', 
     ipcRenderer.emit('desktop:open-settings')
     assert.deepEqual(calls, [[]])
 })
+
+test('the Mac full-screen subscription reports booleans and never overwrites a newer event', async () => {
+    const ipcRenderer = new EventEmitter()
+    const source = await readFile(new URL('../src/main/preload.cjs', import.meta.url), 'utf8')
+    let desktopApp, resolveInitial
+    ipcRenderer.invoke = channel => {
+        assert.equal(channel, 'desktop:mac-fullscreen')
+        return new Promise(resolve => { resolveInitial = resolve })
+    }
+    const contextBridge = { exposeInMainWorld: (_name, api) => { desktopApp = api } }
+    runInNewContext(source, { process: { platform: 'darwin' }, require: () => ({ contextBridge, ipcRenderer }) })
+    const channel = 'desktop:mac-fullscreen-changed'
+    const calls = []
+    const subscribe = () => desktopApp.onMacFullscreen((...args) => calls.push(args))
+    const unsubscribe = subscribe()
+    ipcRenderer.emit(channel, { sender: 'privileged' }, true)
+    ipcRenderer.emit(channel, {}, 'not a boolean')
+    resolveInitial(false)
+    await Promise.resolve()
+    assert.deepEqual(calls, [[true]])
+    unsubscribe()
+    ipcRenderer.emit(channel, {}, false)
+    assert.deepEqual(calls, [[true]])
+    const stop = subscribe()
+    resolveInitial(false)
+    await Promise.resolve()
+    assert.deepEqual(calls, [[true], [false]])
+    stop()
+    assert.equal(ipcRenderer.listenerCount(channel), 0)
+})

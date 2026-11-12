@@ -7,7 +7,8 @@ import { runInNewContext } from 'node:vm'
 import { createWindowFind } from '../src/main/window-find.mjs'
 
 test('page Find accepts only its sandboxed frame and discards stale requests and scopes', async () => {
-    let scope = 'workspace-renderer', lastRequest = 0, currentView
+    let scope = 'workspace-renderer', lastRequest = 0, currentView, inset = 28
+    const positions = []
     const calls = []
     const contents = Object.assign(new EventEmitter(), {
         isDestroyed: () => false,
@@ -37,11 +38,18 @@ test('page Find accepts only its sandboxed frame and discards stale requests and
             })
         }
         setBackgroundColor() {}
-        setBounds(bounds) { assert.deepEqual(bounds, { x: 508, y: 12, width: 380, height: 52 }) }
+        setBounds(bounds) { positions.push(bounds) }
     }
-    const find = createWindowFind({ WebContentsView: View, scopeOf: owner => owner === window ? scope : null })
+    const find = createWindowFind({ WebContentsView: View, scopeOf: owner => owner === window ? scope : null, topInset: () => inset })
     find.open(window)
     await Promise.resolve()
+    assert.deepEqual(positions, [{ x: 508, y: 40, width: 380, height: 52 }])
+    inset = 0
+    window.emit('enter-full-screen')
+    assert.deepEqual(positions.at(-1), { x: 508, y: 12, width: 380, height: 52 })
+    inset = 28
+    window.emit('leave-full-screen')
+    assert.deepEqual(positions.at(-1), { x: 508, y: 40, width: 380, height: 52 })
     const sender = currentView.webContents
     const event = { sender, senderFrame: sender.mainFrame }
     assert.deepEqual(calls.splice(0), [['desktop:find-focus']])
@@ -66,6 +74,8 @@ test('page Find accepts only its sandboxed frame and discards stale requests and
     assert.equal(lastRequest, 2)
     window.emit('hide')
     assert.equal(contents.listenerCount('found-in-page'), 0)
+    assert.equal(window.listenerCount('enter-full-screen'), 0)
+    assert.equal(window.listenerCount('leave-full-screen'), 0)
     assert.deepEqual(calls.slice(-2), ['clearSelection', 'close-bar'])
     find.open(window)
     await Promise.resolve()
