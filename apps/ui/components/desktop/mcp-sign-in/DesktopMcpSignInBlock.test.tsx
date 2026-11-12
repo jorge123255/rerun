@@ -4,6 +4,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { DesktopMcpSignInOAuthView, DesktopMcpSignInView } from '../../../../../packages/contracts/src/desktop-mcp-sign-in'
 import { DesktopMcpSignInBlock } from './DesktopMcpSignInBlock'
+import { DesktopLocale, useDesktopLocale } from '../DesktopLocale'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages, englishDesktopLanguage, type DesktopLanguage } from '@/lib/desktop/locale'
 import type { McpDeviceMethodReview } from '@/lib/desktop/mcp-device-review'
 
 vi.mock('@rerun/ui', () => ({ BorderBeam: () => null }))
@@ -30,6 +33,35 @@ async function mount(view = request, onAccepted = vi.fn(), initialOAuth?: Deskto
 }
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent?.trim() === label)!
 const click = async (label: string) => { await act(async () => { button(label).click() }) }
+
+test('uses upstream French browser copy and preserves the interrupted attempt when the language changes', async () => {
+    const source = await loadMessages('fr')
+    const language: DesktopLanguage = { locale: 'fr', preference: 'fr', messages: desktopMessages('fr', source) }
+    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ action: 'cancel', request: { attemptId: 'interrupted-attempt' } })
+        return response({ request: { ...request, revision: 'after-cancel' }, oauth: { state: 'idle', deviceAvailable: true } })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const view = { ...request, status: 'connecting' as const, activeAttemptId: 'interrupted-attempt' }
+    function ChangeLanguage() {
+        const { setLanguage } = useDesktopLocale()
+        return <button onClick={() => setLanguage(language)}>French</button>
+    }
+    const root = createRoot(document.body.appendChild(document.createElement('div'))); roots.push(root)
+    await act(async () => root.render(<DesktopLocale initial={englishDesktopLanguage}>
+        <ChangeLanguage />
+        <DesktopMcpSignInBlock sessionId="chat" request={view} initialOAuth={{ state: 'error', message: 'Provider diagnostic' }} />
+    </DesktopLocale>))
+    expect(button('Cancel')).toBeDefined()
+    await click('French')
+    expect(document.body.textContent).toContain(source.chat.mcpSignIn.title.replace('{name}', 'Linear'))
+    expect(document.body.textContent).toContain('Provider diagnostic')
+    expect(fetcher).not.toHaveBeenCalled()
+    await click(source.chat.actions.cancel)
+    expect(button(source.chat.actions.connect)).toBeDefined()
+    expect(button('Utiliser un code d’appareil')).toBeDefined()
+    expect(fetcher).toHaveBeenCalledTimes(1)
+})
 
 test('Connect opens only the adapter-returned HTTPS link and Cancel leaves the request unresolved', async () => {
     const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {

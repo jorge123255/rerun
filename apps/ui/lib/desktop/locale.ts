@@ -12,6 +12,7 @@ import { desktopRunHistoryCopy } from './i18n/run-history-messages'
 import { desktopControlCenterDetails } from './i18n/control-center-messages'
 import { desktopBrainCopy } from './i18n/brain-messages'
 import { desktopSharedFilesCopy } from './i18n/shared-files-messages'
+import { desktopMcpSignInCopy } from './i18n/mcp-sign-in-messages'
 import dialogs from '@rerun/i18n/messages/en/dialogs.json'
 import type { Locale } from '@rerun/i18n'
 import { createTranslator } from 'use-intl/core'
@@ -30,11 +31,12 @@ import kit from '@rerun/i18n/messages/en/kit.json'
 import layout from '@rerun/i18n/messages/en/layout.json'
 import notifications from '@rerun/i18n/messages/en/notifications.json'
 import mobileSettings from '@rerun/i18n/messages/en/mobileSettings.json'
+import services from '@rerun/i18n/messages/en/services.json'
 import subRuns from '@rerun/i18n/messages/en/subRuns.json'
 import workspace from '@rerun/i18n/messages/en/workspace.json'
 import ui from '@rerun/i18n/messages/en/ui.json'
 
-const englishSource = { account, agent, brain, builder, changelog, chat, common, connections, data, dialogs, files, foreman, kit, layout, mobileSettings, notifications, subRuns, workspace, ui }
+const englishSource = { account, agent, brain, builder, changelog, chat, common, connections, data, dialogs, files, foreman, kit, layout, mobileSettings, notifications, services, subRuns, workspace, ui }
 type DesktopMessageSource = typeof englishSource
 
 const desktopChangelogCopy = {
@@ -220,6 +222,21 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         files: source.files,
         fileUpload: source.ui.upload,
         sharedFiles: desktopSharedFilesCopy[locale],
+        mcpSignIn: {
+            ...desktopMcpSignInCopy[locale],
+            title: source.chat.mcpSignIn.title,
+            custom: source.chat.mcpServer.custom,
+            customWithHost: source.chat.mcpServer.customWithHost,
+            connect: source.chat.actions.connect,
+            continue: source.chat.actions.continue,
+            notNow: source.chat.actions.notNow,
+            cancel: source.chat.actions.cancel,
+            waiting: source.services.connect.waiting,
+            connected: source.chat.receipt.status.connected,
+            skipped: source.chat.receipt.dismissed.mcp,
+            needsAuth: source.services.customMcp.status.needsAuth,
+            unreachable: source.services.customMcp.status.unreachable,
+        },
         localProfile: { ...localProfileCopy[locale], title: source.account.tabs.profile.label, fields: source.account.profile },
         brainDesktop: desktopBrainCopy[locale],
         sharedData: {

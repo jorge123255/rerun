@@ -5,17 +5,20 @@ import { Button } from '@/components/ui/button'
 import type { DesktopMcpSignInSource } from '../../../../../packages/contracts/src/desktop-mcp-sign-in'
 import type { McpDeviceAttemptView, McpDeviceAuthorization, McpDeviceMethodReview, McpDeviceReviewDecision } from '@/lib/desktop/mcp-device-review'
 import { DesktopMcpDeviceMethodReview } from './DesktopMcpDeviceMethodReview'
+import { useDesktopLocale } from '../DesktopLocale'
+import type { DesktopMessages } from '@/lib/desktop/locale'
 
 export function DesktopMcpDeviceSignIn({ source, onBack, onConnected }: {
     source: DesktopMcpSignInSource
     onBack(): void
     onConnected(): void
 }) {
+    const { t } = useDesktopLocale()
     const [review, setReview] = useState<McpDeviceMethodReview | null>(null)
     const [authorization, setAuthorization] = useState<McpDeviceAuthorization | null>(null)
     const [busy, setBusy] = useState(false)
     const [deciding, setDeciding] = useState(false)
-    const [notice, setNotice] = useState('')
+    const [notice, setNotice] = useState<keyof DesktopMessages['mcpSignIn']['device']['notices'] | null>(null)
     const [terminal, setTerminal] = useState(false)
     const controller = useRef<AbortController | null>(null)
     const decisionInFlight = useRef(false)
@@ -27,7 +30,7 @@ export function DesktopMcpDeviceSignIn({ source, onBack, onConnected }: {
         const timer = setTimeout(() => {
             setAuthorization(null)
             setTerminal(true)
-            setNotice(authorization ? 'The verification code expired.' : 'Device approval expired.')
+            setNotice(authorization ? 'codeExpired' : 'approvalExpired')
         }, Math.max(1, expiresAt - Date.now()))
         return () => clearTimeout(timer)
     }, [authorization, review])
@@ -52,9 +55,9 @@ export function DesktopMcpDeviceSignIn({ source, onBack, onConnected }: {
         if (controller.current || decisionInFlight.current) return
         const pending = new AbortController()
         controller.current = pending
-        setBusy(true); setNotice('')
+        setBusy(true); setNotice(null)
         try { await work(pending.signal) }
-        catch { if (!pending.signal.aborted) setNotice('Device sign-in is unavailable. Retry or reload this conversation.') }
+        catch { if (!pending.signal.aborted) setNotice('retry') }
         finally { if (!pending.signal.aborted) { controller.current = null; setBusy(false) } }
     }
     async function loadReview(signal: AbortSignal) {
@@ -98,24 +101,24 @@ export function DesktopMcpDeviceSignIn({ source, onBack, onConnected }: {
         delete requestIds.current[operation]
         if (attempt.state === 'connected') { setAuthorization(null); onConnected(); return }
         showCode(attempt.authorization, review)
-        if (attempt.state === 'pending') setNotice('Still waiting for authorization in your browser.')
+        if (attempt.state === 'pending') setNotice('pending')
         if (attempt.state !== 'waiting' && attempt.state !== 'pending') {
             setTerminal(true)
-            setNotice(attempt.state === 'unknown' ? 'The provider response could not be confirmed. Stop this attempt to return to sign-in.' : 'Device authorization is unavailable or has expired.')
+            setNotice(attempt.state === 'unknown' ? 'unknown' : 'unavailable')
         }
     }
 
     return <div className="space-y-3">
-        {!review && <Button size="sm" variant="outline" disabled={busy} onClick={() => { void run(loadReview) }}>Review device sign-in</Button>}
+        {!review && <Button size="sm" variant="outline" disabled={busy} onClick={() => { void run(loadReview) }}>{t('mcpSignIn.device.review')}</Button>}
         {review && <DesktopMcpDeviceMethodReview review={review} active={!busy} onDecide={decide} />}
         {review?.state === 'approved' && !terminal && <>
             {authorization ? <div className="space-y-2">
-                <p className="text-sm">Enter this code in your browser <code className="ml-1 select-all font-semibold">{authorization.userCode}</code></p>
-                <a href={authorization.verificationUri} target="_blank" rel="noreferrer" className="block break-words text-sm underline underline-offset-2">Open verification page</a>
-                <Button size="sm" disabled={busy || deciding} onClick={() => { void run(signal => operate('check', signal)) }}>Check authorization</Button>
-            </div> : <Button size="sm" disabled={busy || deciding} onClick={() => { void run(signal => operate('start', signal)) }}>Start device sign-in</Button>}
+                <p className="text-sm">{t('mcpSignIn.device.enterCode')} <code className="ml-1 select-all font-semibold">{authorization.userCode}</code></p>
+                <a href={authorization.verificationUri} target="_blank" rel="noreferrer" className="block break-words text-sm underline underline-offset-2">{t('mcpSignIn.device.verificationPage')}</a>
+                <Button size="sm" disabled={busy || deciding} onClick={() => { void run(signal => operate('check', signal)) }}>{t('mcpSignIn.device.checkAuthorization')}</Button>
+            </div> : <Button size="sm" disabled={busy || deciding} onClick={() => { void run(signal => operate('start', signal)) }}>{t('mcpSignIn.device.start')}</Button>}
         </>}
-        {notice && <p role="status" className="text-xs text-muted-foreground">{notice}</p>}
-        {(!review || review.state !== 'approved') && <Button size="sm" variant="ghost" disabled={busy || deciding} onClick={onBack}>Back to sign-in</Button>}
+        {notice && <p role="status" className="text-xs text-muted-foreground">{t(`mcpSignIn.device.notices.${notice}`)}</p>}
+        {(!review || review.state !== 'approved') && <Button size="sm" variant="ghost" disabled={busy || deciding} onClick={onBack}>{t('mcpSignIn.device.back')}</Button>}
     </div>
 }
