@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url'
+import { QUICK_ASK_SHORTCUT } from './quick-ask-window.mjs'
 
 const labels = {
     en: { open: name => `Open ${name}`, waiting: count => `${count} waiting for you`, login: 'Open at Login', quit: name => `Quit ${name}` },
@@ -8,7 +9,7 @@ const labels = {
     de: { open: name => `${name} öffnen`, waiting: count => `${count} ${count === 1 ? 'wartet' : 'warten'} auf dich`, login: 'Bei der Anmeldung öffnen', quit: name => `${name} beenden` },
 }
 
-export function createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow }) {
+export function createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow, quickAsk }) {
     const language = app.getLocale().toLowerCase().split('-')[0]
     const copy = Object.hasOwn(labels, language) ? labels[language] : labels.en
     const loginSettings = () => {
@@ -32,6 +33,8 @@ export function createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow }) {
         const login = loginSettings()
         const menu = Menu.buildFromTemplate([
             { id: 'rerun-tray-open', label: copy.open(app.name), click: openWindow },
+            ...(quickAsk ? [{ id: 'rerun-tray-quick-ask', label: 'Quick Ask…', accelerator: QUICK_ASK_SHORTCUT,
+                registerAccelerator: false, enabled: quickAsk.enabled(), click: () => { if (quickAsk.enabled()) quickAsk.open() } }] : []),
             ...(waiting ? [{ id: 'rerun-tray-unread', label: waiting, enabled: false }] : []),
             { type: 'separator' },
             {
@@ -52,6 +55,7 @@ export function createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow }) {
             const item = menu.getMenuItemById('rerun-tray-login')
             item.enabled = settings !== null
             if (settings) item.checked = settings.openAtLogin === true
+            if (quickAsk) menu.getMenuItemById('rerun-tray-quick-ask').enabled = quickAsk.enabled()
         })
         tray.setContextMenu(menu)
         tray.setToolTip(waiting ? `${app.name} · ${waiting}` : app.name)

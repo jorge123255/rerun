@@ -19,13 +19,15 @@ import { installMacApplicationMenu } from './application-menu.mjs'
 import { createMacMenuBar } from './mac-menu-bar.mjs'
 import { attachDesktopContextMenu, externalDesktopLink } from './window-context-menu.mjs'
 import { createWindowFind } from './window-find.mjs'
-import { createQuickAskWindow, QUICK_ASK_SHORTCUT } from './quick-ask-window.mjs'
+import { createQuickAskWindow } from './quick-ask-window.mjs'
+import { loadQuickAskShortcut } from './quick-ask-shortcut.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
 const mac = process.platform === 'darwin'
 let window
 let menuBar
+let shortcutPreference
 let showWindowOnReady = true
 let supervisor
 let runtime
@@ -53,7 +55,7 @@ const windowFind = createWindowFind({ WebContentsView, scopeOf: candidate => !qu
 })
 const { saveResultFile, saveCoworkerFile, saveSharedFile, saveDisplayedImage } = createDesktopFileSaves({ dialog, context: () => {
     if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
-    return { runtime, window }
+    return { runtime, window, rendererEpoch }
 } })
 const templateFiles = createDesktopTemplateFiles({ dialog, context: () => {
     if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
@@ -150,7 +152,7 @@ else {
                 const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
                 return result.response === 1
             },
-            stop: async () => { await remoteMachines?.close(); await supervisor?.stop() },
+            stop: async () => { await shortcutPreference?.flush(); await remoteMachines?.close(); await supervisor?.stop() },
             quit: () => { clickHandoff.stop(); quittingNow = true; app.quit() },
             cancelled: resumeAfterCancelledQuit,
         }).catch(() => { if (!quittingNow) resumeAfterCancelledQuit() })
@@ -188,7 +190,12 @@ function resumeAfterCancelledQuit() {
 }
 
 async function launch() {
-    if (process.platform === 'darwin') {
+    const dataRoot = resolve(app.getPath('appData'), 'Rerun Desktop Preview')
+    await mkdir(dataRoot, { recursive: true, mode: 0o700 })
+    app.setPath('userData', dataRoot)
+    if (mac) {
+        shortcutPreference = await loadQuickAskShortcut({ dataRoot, globalShortcut, open: () => quickAsk.toggle() })
+        app.once('will-quit', shortcutPreference.unregister)
         installMacApplicationMenu({
             Menu, appName: app.name, isDesktopPage,
             settingsWindow: () => !quitting && !transitioning && runtimeScope() && draftQuit.ready ? window : null,
@@ -196,18 +203,14 @@ async function launch() {
             openFind: () => windowFind.open(window),
             openQuickAsk: () => quickAsk.toggle(),
         })
-        if (globalShortcut.register(QUICK_ASK_SHORTCUT, () => quickAsk.toggle()))
-            app.once('will-quit', () => globalShortcut.unregister(QUICK_ASK_SHORTCUT))
         try {
-            menuBar = createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow: showMainWindow })
+            menuBar = createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow: showMainWindow,
+                quickAsk: { enabled: () => shortcutPreference.state().enabled, open: () => quickAsk.toggle() } })
             showWindowOnReady = !menuBar.startedAtLogin
         } catch {
             console.warn('Could not start the Rerun menu-bar item.')
         }
     }
-    const dataRoot = resolve(app.getPath('appData'), 'Rerun Desktop Preview')
-    await mkdir(dataRoot, { recursive: true, mode: 0o700 })
-    app.setPath('userData', dataRoot)
     await prepareWorkspaceWindow(1, false)
     ipcMain.handle('desktop:status', event => { trusted(event); return supervisor?.status ?? bootStatus })
     if (mac) {
@@ -217,6 +220,15 @@ async function launch() {
         ipcMain.on('desktop:find-query', (event, input) => windowFind.search(event, input))
         ipcMain.on('desktop:find-close', event => windowFind.dismiss(event))
         ipcMain.handle('desktop:mac-fullscreen', event => { trusted(event); return window.isFullScreen() })
+        const assertBoard = event => {
+            trusted(event)
+            if (quitting || transitioning || !runtimeScope() || !isDesktopPage(event.senderFrame.url)) throw new Error('The workspace is unavailable')
+        }
+        ipcMain.handle('desktop:quick-ask-settings', event => { assertBoard(event); return shortcutPreference.state() })
+        ipcMain.handle('desktop:quick-ask-set-shortcut', (event, enabled) => {
+            assertBoard(event)
+            return shortcutPreference.change(enabled, () => assertBoard(event))
+        })
         ipcMain.handle('desktop:quick-ask-send', (event, text) => quickAsk.send(event, text))
         ipcMain.on('desktop:quick-ask-close', event => quickAsk.close(event))
         for (const [channel, action] of [

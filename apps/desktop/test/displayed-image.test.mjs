@@ -5,7 +5,7 @@ import { displayedImageTarget, verifiedImageKind } from '../src/main/displayed-i
 const page = 'http://127.0.0.1:51329/desktop'
 const target = src => displayedImageTarget(page, src)
 
-test('board image routes keep the displayed raster path and drop preview-only parameters', () => {
+test('board image routes keep the displayed raster path and its available version evidence', () => {
     assert.deepEqual(target('http://127.0.0.1:51329/api/desktop/agents/local-owner/files/image?path=reports%2Fchart+one.png&animation=1&workspaceOwner=engine-owner'), {
         kind: 'coworker', agentId: 'local-owner', path: 'reports/chart one.png', name: 'chart one.png', raster: 'png',
     })
@@ -13,7 +13,7 @@ test('board image routes keep the displayed raster path and drop preview-only pa
         kind: 'shared', path: 'reports/team.png', name: 'team.png', raster: 'png',
     })
     assert.deepEqual(target('http://127.0.0.1:51329/api/desktop/agents/alice/files/image?path=photo.jpg&identity=12%3A34&revision=2026-01-02T03%3A04%3A05.000Z'), {
-        kind: 'coworker', agentId: 'alice', path: 'photo.jpg', name: 'photo.jpg', raster: 'jpeg', identity: '12:34',
+        kind: 'coworker', agentId: 'alice', path: 'photo.jpg', name: 'photo.jpg', raster: 'jpeg', identity: '12:34', revision: '2026-01-02T03:04:05.000Z',
     })
     assert.equal(target('http://127.0.0.1:51329/api/desktop/agents/alice/files/image?path=shot.jpeg').raster, 'jpeg')
     assert.equal(target('http://127.0.0.1:51329/api/desktop/agents/alice/files/image?path=shot.gif').raster, 'gif')

@@ -173,18 +173,18 @@ const imageRuntime = () => ({ ...loopback, workspaceId: 7 })
 
 function jsonResponse(value, status = 200) {
     const body = Buffer.from(JSON.stringify(value))
-    return new Response(body, { status, headers: { 'content-type': 'application/json', 'content-length': String(body.byteLength) } })
+    return new Response(body, { status, headers: { 'content-type': 'application/json' } })
 }
 
 test('Save Image writes the version-checked original bytes and does not refetch the preview URL', async () => {
     const root = await mkdtemp(join(tmpdir(), 'rerun-save-image-'))
     try {
         const filePath = join(root, 'chart one.png')
-        const window = {}
+        const window = {}, runtime = imageRuntime()
         let canceled = true
         const requests = []
         const { saveDisplayedImage } = createDesktopFileSaves({
-            context: () => ({ runtime: imageRuntime(), window }),
+            context: () => ({ runtime, window }),
             dialog: { showSaveDialog: async (_window, options) => {
                 assert.equal(options.title, 'Save Image')
                 assert.equal(options.defaultPath, 'chart one.png')
@@ -221,19 +221,24 @@ test('Save Image uses the listed export version for a thumbnail, not its revisio
     try {
         const filePath = join(root, 'photo.jpg')
         const jpeg = Uint8Array.of(0xff, 0xd8, 0xff, 0xe0, 1, 2)
+        const runtime = imageRuntime(), window = {}
+        let modifiedAt = '2026-01-02T03:04:06.000Z'
         const src = 'http://127.0.0.1:3100/api/desktop/agents/alice/files/image?path=photo.jpg&identity=12%3A34&revision=2026-01-02T03%3A04%3A05.000Z'
         const { saveDisplayedImage } = createDesktopFileSaves({
-            context: () => ({ runtime: imageRuntime(), window: {} }),
+            context: () => ({ runtime, window }),
             dialog: { showSaveDialog: async () => ({ canceled: false, filePath }) },
             fetchFile: async url => {
                 if (url.pathname.endsWith('/files')) {
                     assert.equal(url.searchParams.get('path'), '')
-                    return jsonResponse({ path: '', entries: [{ name: 'photo.jpg', type: 'file', exportVersion: imageVersion, identity: '12:34' }] })
+                    return jsonResponse({ path: '', entries: [{ name: 'photo.jpg', type: 'file', exportVersion: imageVersion, identity: '12:34', modifiedAt }] })
                 }
                 assert.deepEqual(Object.fromEntries(url.searchParams), { path: 'photo.jpg', version: imageVersion })
                 return originalResponse(jpeg)
             },
         })
+        await assert.rejects(saveDisplayedImage(imagePage, src), /image changed/)
+        await assert.rejects(readFile(filePath), { code: 'ENOENT' })
+        modifiedAt = '2026-01-02T03:04:05.000Z'
         assert.equal(await saveDisplayedImage(imagePage, src), true)
         assert.deepEqual(new Uint8Array(await readFile(filePath)), jpeg)
     } finally { await rm(root, { recursive: true, force: true }) }
@@ -245,11 +250,12 @@ test('Save Image refuses a changed thumbnail identity, a mismatched format, and 
         const filePath = join(root, 'photo.png')
         await writeFile(filePath, 'existing')
         const src = 'http://127.0.0.1:3100/api/desktop/agents/alice/files/image?path=photo.png&identity=12%3A34'
+        const runtime = imageRuntime(), window = {}
         let listing = { path: '', entries: [{ name: 'photo.png', type: 'file', exportVersion: imageVersion, identity: '9:9' }] }
         let download = () => originalResponse(Uint8Array.of(0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1))
         let downloads = 0
         const { saveDisplayedImage } = createDesktopFileSaves({
-            context: () => ({ runtime: imageRuntime(), window: {} }),
+            context: () => ({ runtime, window }),
             dialog: { showSaveDialog: async () => ({ canceled: false, filePath }) },
             fetchFile: async url => {
                 if (url.pathname.endsWith('/download')) { downloads++; return download() }
@@ -269,7 +275,7 @@ test('Save Image refuses a changed thumbnail identity, a mismatched format, and 
         assert.equal(await readFile(filePath, 'utf8'), 'existing')
         const dialogs = []
         const refused = createDesktopFileSaves({
-            context: () => ({ runtime: imageRuntime(), window: {} }),
+            context: () => ({ runtime, window }),
             dialog: { showSaveDialog: async () => { dialogs.push(true); return { canceled: true } } },
             fetchFile: () => assert.fail('an unsavable image cannot be read'),
         }).saveDisplayedImage
@@ -282,15 +288,16 @@ test('Save Image refuses a changed thumbnail identity, a mismatched format, and 
     } finally { await rm(root, { recursive: true, force: true }) }
 })
 
-test('Save Image leaves an existing file untouched when the workspace changes during the picker', async () => {
+test('Save Image leaves an existing file untouched when the board reloads during the picker', async () => {
     const root = await mkdtemp(join(tmpdir(), 'rerun-save-image-'))
     try {
         const filePath = join(root, 'team.png')
         await writeFile(filePath, 'existing')
-        let runtime = imageRuntime()
+        const runtime = imageRuntime(), window = {}
+        let rendererEpoch = 'original'
         const { saveDisplayedImage } = createDesktopFileSaves({
-            context: () => ({ runtime, window: {} }),
-            dialog: { showSaveDialog: async () => { runtime = imageRuntime(); return { canceled: false, filePath } } },
+            context: () => ({ runtime, window, rendererEpoch }),
+            dialog: { showSaveDialog: async () => { rendererEpoch = 'reloaded'; return { canceled: false, filePath } } },
             fetchFile: () => assert.fail('a stale picker cannot fetch'),
         })
         await assert.rejects(saveDisplayedImage(imagePage, 'http://127.0.0.1:3100/api/desktop/shared-files/media?path=team.png'), /workspace changed/)
@@ -302,10 +309,11 @@ test('Shared Save Image binds the current workspace version after the picker con
     const root = await mkdtemp(join(tmpdir(), 'rerun-save-image-'))
     try {
         const filePath = join(root, 'team.png')
+        const runtime = imageRuntime(), window = {}
         let canceled = true
         let requests = 0
         const { saveDisplayedImage } = createDesktopFileSaves({
-            context: () => ({ runtime: imageRuntime(), window: {} }),
+            context: () => ({ runtime, window }),
             dialog: { showSaveDialog: async (_window, options) => {
                 assert.equal(options.defaultPath, 'team.png')
                 return { canceled, filePath }

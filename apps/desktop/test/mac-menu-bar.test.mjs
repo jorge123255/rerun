@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { createMacMenuBar } from '../src/main/mac-menu-bar.mjs'
 
-function fixture({ packaged = false, locale = 'en-US', openedAtLogin = false } = {}) {
+function fixture({ packaged = false, locale = 'en-US', openedAtLogin = false, quickAsk } = {}) {
     const app = new EventEmitter()
     const calls = []
     let settings = { openAtLogin: false, wasOpenedAtLogin: openedAtLogin }
@@ -36,7 +36,7 @@ function fixture({ packaged = false, locale = 'en-US', openedAtLogin = false } =
         },
     }
     const bar = createMacMenuBar({
-        app, Menu, Tray, openWindow: () => calls.push('open'),
+        app, Menu, Tray, openWindow: () => calls.push('open'), quickAsk,
         nativeImage: { createEmpty: () => image, createFromPath: path => ({ isEmpty: () => false, toPNG: () => readFileSync(path) }) },
     })
     return { app, bar, calls, tray, item: id => tray.menu.getMenuItemById('rerun-tray-' + id) }
@@ -61,6 +61,19 @@ test('the menu-bar icon shows the unread total, opens the board and quits throug
     item('quit').click()
     app.emit('will-quit')
     assert.deepEqual(calls, [1, 2, 'open', 'quit', 'destroy'])
+})
+
+test('the menu-bar Quick Ask entry tracks the saved shortcut preference', () => {
+    let enabled = true, opened = 0
+    const { item, tray } = fixture({ quickAsk: { enabled: () => enabled, open: () => { opened++ } } })
+    assert.equal(item('quick-ask').enabled, true)
+    assert.equal(item('quick-ask').registerAccelerator, false)
+    item('quick-ask').click()
+    enabled = false
+    tray.menu.emit('menu-will-show')
+    assert.equal(item('quick-ask').enabled, false)
+    item('quick-ask').click()
+    assert.equal(opened, 1)
 })
 
 test('Open at Login is an explicit packaged action and reads back the OS setting', () => {

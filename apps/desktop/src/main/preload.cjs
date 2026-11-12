@@ -23,6 +23,10 @@ ipcRenderer.on('desktop:before-quit', (_event, value) => {
 contextBridge.exposeInMainWorld('desktopApp', {
     ...(process.platform === 'darwin' ? {
         openFind: () => ipcRenderer.send('desktop:find-open'),
+        quickAskSettings: {
+            read: () => ipcRenderer.invoke('desktop:quick-ask-settings'),
+            set: enabled => ipcRenderer.invoke('desktop:quick-ask-set-shortcut', enabled),
+        },
         onQuickAsk: listener => {
             if (typeof listener !== 'function') throw new TypeError('Expected a Quick Ask listener')
             const registrationId = String(++registrationSequence)

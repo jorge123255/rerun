@@ -20,7 +20,7 @@ function imagePath(path, maxParts) {
     if (parts.length > maxParts || parts.some(part => !validName(part))) return null
     const name = parts.at(-1)
     const extension = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : ''
-    const raster = RASTER[extension]
+    const raster = Object.hasOwn(RASTER, extension) ? RASTER[extension] : null
     return raster ? { path, name, raster } : null
 }
 
@@ -61,7 +61,8 @@ export function displayedImageTarget(pageURL, srcURL) {
     if (params.revision !== undefined && (params.revision.length > 64 || /[\p{Cc}]/u.test(params.revision))) return null
     const file = imagePath(params.path, 64)
     if (!file) return null
-    return { kind: 'coworker', agentId: match[1], ...file, ...(params.identity !== undefined && { identity: params.identity }) }
+    return { kind: 'coworker', agentId: match[1], ...file, ...(params.identity !== undefined && { identity: params.identity }),
+        ...(params.revision !== undefined && { revision: params.revision }) }
 }
 
 function sharedTarget(src) {
@@ -76,6 +77,7 @@ function sharedTarget(src) {
 export function sameDisplayedImage(left, right) {
     return !!left && !!right && left.kind === right.kind && left.agentId === right.agentId
         && left.path === right.path && left.name === right.name && left.raster === right.raster && left.identity === right.identity
+        && left.revision === right.revision
 }
 
 /** Kind implied by the file bytes, not by the filename. */

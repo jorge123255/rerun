@@ -25,6 +25,7 @@ import { DesktopCustomProviderPage } from './connections/custom/DesktopCustomPro
 import { ApiConnectionsPanel } from './connections/api/ApiConnectionsPanel'
 import { createApiConnectionsClient } from '@/lib/desktop/api-connections/client'
 import { desktopApiConnectionUiRoutes } from '@/lib/desktop/api-connections/routes'
+import { DesktopQuickAskSettings } from './DesktopQuickAskSettings'
 
 type Props = {
     initialTab?: 'AI providers' | 'Tool services' | 'Workspace' | 'Notifications' | 'Shortcuts'
@@ -213,10 +214,10 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                         </form>
                         <div className="flex items-center justify-between rounded-xl border p-4"><strong>{t('appearance')}</strong><ThemeToggle onPreferenceChange={theme => void save({ action: 'appearance', theme }, 'Appearance saved.')} /></div>
                     </>}
-                    {tab === 'Shortcuts' && <dl className="grid grid-cols-[1fr_auto] gap-3 rounded-xl border p-4 text-sm">
+                    {tab === 'Shortcuts' && <><DesktopQuickAskSettings /><dl className="grid grid-cols-[1fr_auto] gap-3 rounded-xl border p-4 text-sm">
                         <dt>Open Settings</dt><dd>⌘ ,</dd><dt>Send a chat message</dt><dd>Return</dd><dt>New line in chat</dt><dd>Shift Return</dd>
                         <dt>Open a focused coworker</dt><dd>Return or Space</dd>
-                    </dl>}
+                    </dl></>}
                     {tab === 'Notifications' && <DesktopNotificationSettings />}
                     {tab === 'Tool services' && <DesktopAuxiliarySettings />}
                 </fieldset>

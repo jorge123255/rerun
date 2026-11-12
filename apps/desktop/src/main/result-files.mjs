@@ -102,31 +102,31 @@ async function fetchImageListing(fetchFile, original, pathname, params, check) {
         if (response.status === 404) throw new Error('This image was not found.')
         if (response.status === 409) throw new Error('This image changed. Open it again before saving.')
         const length = response.headers.get('content-length')
-        const size = length !== null && /^\d+$/.test(length) ? Number(length) : NaN
+        const size = length === null ? null : /^\d+$/.test(length) ? Number(length) : NaN
         const mime = (response.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase()
-        if (!response.ok || mime !== 'application/json' || !Number.isSafeInteger(size) || size < 2 || size > LISTING_MAX_BYTES || !response.body) {
+        if (!response.ok || mime !== 'application/json' || !response.body
+            || size !== null && (!Number.isSafeInteger(size) || size < 2 || size > LISTING_MAX_BYTES)) {
             throw new Error('Could not read this image.')
         }
         const reader = response.body.getReader()
-        let bytes
+        const chunks = []
+        let received = 0
         try {
             check()
-            bytes = new Uint8Array(size)
-            let offset = 0
             for (;;) {
                 const { done, value } = await reader.read().catch(() => { throw new Error('Could not read this image.') })
                 check()
                 if (done) break
-                if (value.byteLength > size - offset) throw new Error('Could not read this image.')
-                bytes.set(value, offset)
-                offset += value.byteLength
+                received += value.byteLength
+                if (received > (size ?? LISTING_MAX_BYTES)) throw new Error('Could not read this image.')
+                chunks.push(value)
             }
-            if (offset !== size) throw new Error('Could not read this image.')
+            if (size !== null && received !== size) throw new Error('Could not read this image.')
         } finally {
             await reader.cancel().catch(() => {})
             reader.releaseLock()
         }
-        try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) }
+        try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, received))) }
         catch { throw new Error('Could not read this image.') }
     } catch (error) {
         await response.body?.cancel().catch(() => {})
@@ -142,7 +142,8 @@ function listedVersion(listing, parent, target) {
     if (matches.length !== 1) throw new Error(matches.length === 0 ? 'This image was not found.' : 'Could not read this image.')
     const version = target.kind === 'shared' ? matches[0].deleteRevision : matches[0].exportVersion
     if (typeof version !== 'string' || !VERSION.test(version)) throw new Error('This image can’t be saved.')
-    if (target.identity !== undefined && target.kind === 'coworker' && matches[0].identity !== target.identity) {
+    if (target.kind === 'coworker' && (target.identity !== undefined && matches[0].identity !== target.identity
+        || target.revision !== undefined && matches[0].modifiedAt !== target.revision)) {
         throw new Error('This image changed. Open it again before saving.')
     }
     return version
@@ -178,7 +179,8 @@ export function createDesktopFileSaves({ dialog, context, fetchFile = fetch }) {
             const check = () => {
                 const current = context()
                 if (!original?.runtime || (workspaceId !== undefined && original.runtime.workspaceId !== workspaceId)
-                    || current?.runtime !== original.runtime || current?.window !== original.window) throw new Error('The workspace changed. Open the file again.')
+                    || current?.runtime !== original.runtime || current?.window !== original.window
+                    || current?.rendererEpoch !== original.rendererEpoch) throw new Error('The workspace changed. Open the file again.')
             }
             check()
             const picked = await dialog.showSaveDialog(original.window, { title, defaultPath: name })
