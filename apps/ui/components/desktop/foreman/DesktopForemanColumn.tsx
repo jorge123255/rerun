@@ -87,6 +87,7 @@ export type DesktopForemanColumnProps = {
     controlledOpen?: boolean
     hidden?: boolean
     centerOpen?: boolean
+    findEnabled?: boolean
     dockFeed?: ExactDockFeed | null
     voiceSlot?: ReactNode
     intake?: DesktopForemanIntakeController
@@ -122,7 +123,7 @@ export function DesktopForemanColumn({
     orbState = 'idle',
     headerActions,
     renderBoardOverlay,
-    className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, controlledOpen, hidden, centerOpen, dockFeed, voiceSlot, intake, intakeFinished, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
+    className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, controlledOpen, hidden, centerOpen, findEnabled, dockFeed, voiceSlot, intake, intakeFinished, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
     const { t } = useDesktopLocale()
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
@@ -289,6 +290,10 @@ export function DesktopForemanColumn({
                     <DesktopForemanChatLayer
                         messages={messages}
                         attachmentsActive={ui.open && !hidden && !onRoutines && !alternates.open}
+                        findScope={findEnabled && ui.open && foreman.restored && !onRoutines && !alternates.open
+                            ? JSON.stringify([chat.workspaceId, chat.chatId]) : undefined}
+                        findHidden={hidden}
+                        onCloseFind={() => column.current?.querySelector<HTMLTextAreaElement>('textarea[data-desktop-foreman-composer]:not([disabled])')?.focus({ preventScroll: true })}
                         streaming={streaming}
                         restored={foreman.restored}
                         question={foreman.restored && !streaming && pendingRequest ? <>

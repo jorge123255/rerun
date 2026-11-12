@@ -1,8 +1,9 @@
 // @vitest-environment happy-dom
-import { act, type ComponentProps, type ReactNode } from 'react'
+import { act, useState, type ComponentProps, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { createPortal } from 'react-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { useDesktopControlCenterKeys } from '@/lib/desktop/control-center'
 import { DesktopForemanChatLayer } from './DesktopForemanChatLayer'
 
 // Keep the real Conversation and use-stick-to-bottom implementation. Only the unrelated
@@ -170,4 +171,60 @@ it('keeps a reader in older history until they choose the original return-to-lat
     expect(view.scroll.scrollTop).toBeGreaterThanOrEqual(view.bottom() - 2)
     await view.resize(2000); await settle()
     expect(view.scroll.scrollTop).toBeGreaterThanOrEqual(view.bottom() - 2)
+})
+
+it('routes Mac Find to the active Chief of Staff transcript and resets it when the chat changes', async () => {
+    const userAgent = vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Macintosh')
+    const messages: Props['messages'] = [
+        { id: 'prompt', role: 'user', text: 'Status marker in my prompt' },
+        { id: 'reply', role: 'assistant', text: 'Status marker in the reply', history: [
+            { key: 'reply-text', kind: 'text', text: 'Status **marker** in the reply' },
+            { key: 'reason', kind: 'reasoning', text: 'Status marker in reasoning' },
+        ] },
+    ]
+    function Harness({ scope }: { scope?: string }) {
+        const [centerOpen, setOpen] = useState(false)
+        useDesktopControlCenterKeys({ open: centerOpen, setOpen, conversationOpen: false })
+        return <>
+            {centerOpen && <div role="dialog">Control Center</div>}
+            <aside>Status marker on the board</aside>
+            <div inert={centerOpen}>
+                <DesktopForemanChatLayer {...defaults} messages={messages} findScope={scope} findHidden={centerOpen}
+                    question={<button type="button">Status marker on a question</button>}
+                    onCloseFind={() => host.querySelector('textarea')?.focus()} />
+                <textarea aria-label="Chief of Staff composer" />
+            </div>
+        </>
+    }
+    const mount = (scope?: string) => act(async () => root!.render(<Harness scope={scope} />))
+    const find = () => act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', metaKey: true, cancelable: true })))
+    const input = () => host.querySelector<HTMLInputElement>('input[aria-label="Find in conversation"]')
+    try {
+        await mount('chat-one')
+        await find()
+        expect(host.querySelector('[role="dialog"]')?.textContent).toBe('Control Center')
+        expect(input()).toBeNull()
+        await find()
+        expect(host.querySelector('[role="dialog"]')).toBeNull()
+        expect(document.activeElement).toBe(input())
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input(), 'status marker')
+            input()!.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+        expect(host.querySelector('[role="status"]')?.textContent).toBe('1 of 2')
+        await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Close find"]')!.click())
+        expect(input()).toBeNull()
+        expect(document.activeElement).toBe(host.querySelector('textarea'))
+        await find()
+        await find()
+        expect(input()).not.toBeNull()
+        await mount('chat-two')
+        expect(input()).toBeNull()
+        await mount()
+        await find()
+        await find()
+        expect(input()).toBeNull()
+    } finally {
+        userAgent.mockRestore()
+    }
 })

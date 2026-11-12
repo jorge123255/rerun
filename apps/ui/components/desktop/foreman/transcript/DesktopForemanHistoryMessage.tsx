@@ -45,7 +45,7 @@ export function DesktopForemanHistoryMessage({ history }: { history: readonly Fo
     return <div className="flex min-w-0 max-w-full flex-col gap-2 break-words">
         {history.map(part => {
             switch (part.kind) {
-                case 'text': return <SavedMarkdown key={part.key} text={part.text} />
+                case 'text': return <div key={part.key} data-chat-find-message className="contents"><SavedMarkdown text={part.text} /></div>
                 case 'reasoning': return <details key={part.key} className="text-xs text-muted-foreground"><summary>Thinking</summary><SavedMarkdown text={part.text} /></details>
                 case 'link': return <SavedSource key={part.key} url={part.url} title={part.title} />
                 case 'docs': return <Sources key={part.key} defaultOpen className="min-w-0 max-w-full">

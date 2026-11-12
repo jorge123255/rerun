@@ -41,6 +41,7 @@ export type DesktopForemanPanelProps = {
     controlledOpen?: boolean
     hidden?: boolean
     centerOpen?: boolean
+    findEnabled?: boolean
     onOpenChange?: (open: boolean) => void
     onOpenTranscriptionSettings?: () => void
     onLayout?: (layout: { scope: string; open: boolean; placement: ForemanPlacement; dragging: boolean; mobile: boolean }) => void
@@ -170,7 +171,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         callSources={state.callSources}
         sessionId={state.sessionId} pendingSend={pendingSend} onRetryPendingSend={client.retryPendingMessage}
         imageModel={providers?.connections.some(connection => connection.id === voiceModel?.connectionId && connection.provider === 'codex')}
-        controlledOpen={props.controlledOpen} hidden={props.hidden} centerOpen={props.centerOpen} onOpenChange={props.onOpenChange} onLayout={props.onLayout}
+        controlledOpen={props.controlledOpen} hidden={props.hidden} centerOpen={props.centerOpen} findEnabled={props.findEnabled} onOpenChange={props.onOpenChange} onLayout={props.onLayout}
         dockFeed={dockFeed} voiceSlot={voiceModel ? voice?.slot : undefined} sendDisabled={modelSaving} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)} retrySnapshot={state.retrySnapshot}
         question={state.question} onAnswerQuestion={client.answerQuestion}
         approval={state.approval} onDecideApproval={client.decideApproval}

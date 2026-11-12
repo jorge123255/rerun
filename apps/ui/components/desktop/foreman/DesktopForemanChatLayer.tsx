@@ -9,8 +9,9 @@ import { DesktopForemanHistoryMessage } from './transcript/DesktopForemanHistory
 import { DesktopForemanAnswerActions } from './DesktopForemanAnswerActions'
 
 import { AnimatePresence, motion } from 'motion/react'
-import { Fragment, useCallback, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Button } from '@/components/ui/button'
+import { DesktopConversationFind } from '../DesktopConversationFind'
 import { DesktopDocumentLightbox } from '../document-attachments/DesktopDocumentLightbox'
 import { Conversation, ConversationContent, ConversationScrollButton } from '@/components/ai-elements/conversation'
 import { cn } from '@/lib/utils'
@@ -48,9 +49,27 @@ function RunCardsSlot({ runId, register }: { runId: string; register: (runId: st
     return <div className="flex min-w-0 flex-col gap-3 empty:hidden" ref={ref} />
 }
 
+function ForemanTranscriptFind({ transcript, hidden, onClose }: {
+    transcript: RefObject<HTMLDivElement | null>
+    hidden?: boolean
+    onClose?: () => void
+}) {
+    const [open, setOpen] = useState(false)
+    useEffect(() => {
+        const find = () => setOpen(true)
+        window.addEventListener('rerun-desktop-conversation-find', find)
+        return () => window.removeEventListener('rerun-desktop-conversation-find', find)
+    }, [])
+    return <DesktopConversationFind open={open && !hidden} transcript={transcript} onOpenChange={next => {
+        setOpen(next)
+        if (!next) onClose?.()
+    }} />
+}
+
 export function DesktopForemanChatLayer({
     messages,
     attachmentsActive = true,
+    findScope, findHidden, onCloseFind,
     streaming,
     restored,
     question,
@@ -79,6 +98,9 @@ export function DesktopForemanChatLayer({
 }: {
     messages: DesktopForemanMessage[]
     attachmentsActive?: boolean
+    findScope?: string
+    findHidden?: boolean
+    onCloseFind?: () => void
     streaming?: boolean
     restored: boolean
     question?: ReactNode
@@ -108,6 +130,7 @@ export function DesktopForemanChatLayer({
     className?: string
 }) {
     const { t } = useDesktopLocale()
+    const transcript = useRef<HTMLDivElement>(null)
     const [preview, setPreview] = useState<{ messageId: string; index: number; trigger: HTMLButtonElement } | null>(null)
     const [runSlots, setRunSlots] = useState<ReadonlyMap<string, HTMLDivElement>>(() => new Map())
     const register = useCallback((runId: string, node: HTMLDivElement | null) => {
@@ -131,6 +154,7 @@ export function DesktopForemanChatLayer({
             {/* Match ForemanChatLayer: resize follows the latest message until the reader scrolls up. */}
             <Conversation className="min-h-0" aria-label={t('foreman.conversation')}>
                 <ConversationContent scrollClassName="overflow-y-auto" className="mx-auto w-full max-w-xl justify-end gap-4 px-3 pb-5 pt-24 md:min-h-full">
+                    {findScope && <ForemanTranscriptFind key={findScope} transcript={transcript} hidden={findHidden} onClose={onCloseFind} />}
                     {!restored && empty && (
                         <div aria-hidden className="flex flex-col gap-4">
                             <div className="h-3.5 w-1/2 animate-pulse rounded bg-muted" />
@@ -138,7 +162,7 @@ export function DesktopForemanChatLayer({
                             <div className="h-3.5 w-2/3 animate-pulse rounded bg-muted" />
                         </div>
                     )}
-                    {messages.map(message => (
+                    <div ref={transcript} className="contents">{messages.map(message => (
                         <Fragment key={message.id}>
                         <div
                             className={cn(
@@ -152,7 +176,7 @@ export function DesktopForemanChatLayer({
                             </div>}
                             {restored && message.history ? <>
                                 {message.role === 'user' && message.coworkerMentions?.length
-                                    ? <div className="whitespace-pre-wrap wrap-anywhere"><DesktopSelectedMentionText text={message.text} metadata={message} /></div>
+                                    ? <div data-chat-find-message className="whitespace-pre-wrap wrap-anywhere"><DesktopSelectedMentionText text={message.text} metadata={message} /></div>
                                     : <DesktopForemanHistoryMessage history={message.history} />}
                                 <DesktopForemanAnsweredQuestion recaps={message.answeredQuestions ?? []} />
                                 {message.role === 'assistant' && message.text.trim() && answerFeedback && (
@@ -165,14 +189,14 @@ export function DesktopForemanChatLayer({
                                     />
                                 )}
                             </> : <>
-                                {message.text}
+                                <div data-chat-find-message className="contents">{message.text}</div>
                                 {message.docs?.map((part, index) => <DesktopForemanDocsTool key={index} part={part as import('ai').ToolUIPart} restored={restored} />)}
                             </>}
                         </div>
                         {renderChildWork && restored && message.role === 'user' && message.sourceRunId &&
                             <RunCardsSlot runId={message.sourceRunId} register={register} />}
                         </Fragment>
-                    ))}
+                    ))}</div>
                     {question}
                     {plan.view && plan.revisionId && (
                         <DesktopPlanCard
