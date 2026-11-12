@@ -68,6 +68,8 @@
         "busy": "Hay otra conexión en curso. Vuelve a intentarlo en breve."
     },
     "offline": {
+        "crashedTitle": "Rerun se cerró inesperadamente",
+        "crashedBody": "Reintenta para volver a abrir este espacio de trabajo.",
         "title": "No se puede conectar con Rerun",
         "body": "Revisa tu conexión. La app vuelve a conectarse a {host} sola.",
         "unavailable": "{host} no responde en este momento. La app lo vuelve a intentar sola.",

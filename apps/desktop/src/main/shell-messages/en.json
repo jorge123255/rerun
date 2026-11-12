@@ -68,6 +68,8 @@
         "busy": "Another connection is in progress. Try again shortly."
     },
     "offline": {
+        "crashedTitle": "Rerun closed unexpectedly",
+        "crashedBody": "Try again to reopen this workspace.",
         "title": "Can’t reach Rerun",
         "body": "Check your connection. The app reconnects to {host} on its own.",
         "unavailable": "{host} is not answering right now. The app tries again on its own.",

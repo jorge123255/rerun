@@ -6,7 +6,7 @@ import { createHubRecovery } from '../src/main/connected-hub-recovery.mjs'
 const origin = 'https://hub.example.test'
 const offlinePage = new URL('file:///staged/connected-hub-offline.html')
 
-function fixture(check = async () => ({ ok: true })) {
+function fixture(check = async () => ({ ok: true }), now) {
     const contents = Object.assign(new EventEmitter(), { mainFrame: { url: origin + '/' } })
     const loads = []
     let code = 200, destroyed = false, invalidations = 0
@@ -19,7 +19,7 @@ function fixture(check = async () => ({ ok: true })) {
             contents.emit('did-navigate', {}, url, url === offlinePage.href ? 200 : code)
         },
     })
-    const hub = createHubRecovery({ window, origin, offlinePage, available: () => true, check, invalidate: () => invalidations++ })
+    const hub = createHubRecovery({ window, origin, offlinePage, available: () => true, check, invalidate: () => invalidations++, now })
     return { hub, loads, contents, invalidations: () => invalidations, setCode: value => { code = value },
         close() { destroyed = true; window.emit('closed') } }
 }
@@ -39,6 +39,32 @@ test('503 and a main-frame connection failure keep the exact route for same-hub 
     assert(f.hub.onOfflinePage())
     assert.equal(f.hub.state().reason, 'offline')
     assert.equal(f.invalidations(), 2)
+})
+
+test('a renderer crash reopens the last committed route and a repeated crash requires explicit retry', async () => {
+    let now = 0
+    const { hub, contents, loads, invalidations, close } = fixture(undefined, () => now)
+    const route = origin + '/board?workspace=7#coworker'
+    contents.emit('did-navigate-in-page', {}, route, true)
+    contents.emit('render-process-gone', {}, { reason: 'clean-exit' })
+    assert.deepEqual(loads, [])
+    contents.emit('render-process-gone', {}, { reason: 'crashed' })
+    assert.deepEqual(loads, [route])
+    assert.equal(hub.state(), null)
+    now += 5000
+    contents.emit('render-process-gone', {}, { reason: 'oom' })
+    assert.deepEqual(loads, [route, offlinePage.href])
+    assert.equal(hub.state().reason, 'renderer-crashed')
+    assert.equal(hub.onOfflinePage(), true)
+    assert.equal(await hub.retry(), null)
+    assert.deepEqual(loads, [route, offlinePage.href, route])
+    now += 60_000
+    contents.emit('render-process-gone', {}, { reason: 'killed' })
+    assert.equal(loads.at(-1), route)
+    assert.equal(invalidations(), 4)
+    close()
+    contents.emit('render-process-gone', {}, { reason: 'crashed' })
+    assert.equal(loads.length, 4)
 })
 
 test('downloads, foreign destinations, and subframe failures cannot switch the hub to recovery', async () => {

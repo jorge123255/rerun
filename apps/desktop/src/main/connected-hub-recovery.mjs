@@ -1,6 +1,8 @@
 import { sameHub } from './connected-hub-policy.mjs'
 
-export function createHubRecovery({ window, origin, offlinePage, available, check, invalidate }) {
+const crashRecoveryInterval = 60_000
+
+export function createHubRecovery({ window, origin, offlinePage, available, check, invalidate, now = () => performance.now() }) {
     const contents = window.webContents
     const host = new URL(origin).host
     let target = origin + '/'
@@ -8,6 +10,7 @@ export function createHubRecovery({ window, origin, offlinePage, available, chec
     let rendering = null
     let retry = null
     let closed = false
+    let lastCrash = -Infinity
 
     const alive = () => available() && !closed && !window.isDestroyed()
     const state = () => issue && { host, ...issue }
@@ -48,6 +51,23 @@ export function createHubRecovery({ window, origin, offlinePage, available, chec
     })
     contents.on('did-navigate-in-page', (_event, address, mainFrame) => {
         if (mainFrame && !issue && sameHub(address, origin)) target = address
+    })
+    contents.on('render-process-gone', (_event, details) => {
+        if (!alive()) return
+        if (details.reason === 'clean-exit') { invalidate(); return }
+        const at = now()
+        const repeated = at - lastCrash < crashRecoveryInterval
+        lastCrash = at
+        if (repeated) {
+            if (!issue) void showOffline(target, 'renderer-crashed')
+            else invalidate()
+            return
+        }
+        invalidate()
+        // Recreate the recovery page if that was what the renderer was showing.
+        // Otherwise reload the last committed same-server route in the existing session.
+        if (issue) void window.loadURL(offlinePage.href).catch(() => {})
+        else void load(target)
     })
     window.once('closed', () => {
         closed = true

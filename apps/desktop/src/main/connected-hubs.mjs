@@ -247,6 +247,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             check: signal => checkHub(origin, version, desktopSession.fetch.bind(desktopSession),
                 AbortSignal.any([signal, AbortSignal.timeout(5000)])),
             invalidate: () => {
+                payments.close(entry)
                 entry.scope = randomUUID()
                 auth.cancel()
                 quickAsk.reset(entry)
@@ -337,7 +338,6 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             closeFind(window)
         })
         contents.on('did-navigate-in-page', (_event, _url, mainFrame) => { if (mainFrame) payments.close(entry) })
-        contents.on('render-process-gone', () => { payments.close(entry); quickAsk.reset(entry); invalidateNative(entry) })
         contents.on('will-prevent-unload', event => {
             const t = shellText(language(entry.origin))
             const result = dialog.showMessageBoxSync(window, { type: 'warning', message: t('unload.message'),

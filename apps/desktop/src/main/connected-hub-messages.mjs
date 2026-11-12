@@ -41,6 +41,7 @@ export function hubRecoveryView(locale, issue) {
     if (!issue) return null
     const t = shellText(locale)
     const { reason, host, minimum } = issue
+    if (reason === 'renderer-crashed') return { reason, title: t('offline.crashedTitle'), message: t('offline.crashedBody') }
     const title = t(reason === 'too-old' ? 'offline.incompatibleTitle' : 'offline.title')
     const message = reason === 'unavailable' || reason === 'offline'
         ? t(reason === 'unavailable' ? 'offline.unavailable' : 'offline.body', { host })
