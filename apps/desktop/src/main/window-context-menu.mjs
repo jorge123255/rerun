@@ -1,3 +1,5 @@
+import { displayedImageTarget, sameDisplayedImage } from './displayed-image.mjs'
+
 export function externalDesktopLink(href) {
     try {
         const url = new URL(href)
@@ -8,17 +10,17 @@ export function externalDesktopLink(href) {
 // Use the Mac's menu language, like the menu-bar item. Native edit commands stay bound to
 // the contents that opened the menu, even if another window takes focus before selection.
 const labels = {
-    en: ['Cut', 'Copy', 'Paste', 'Select All', 'Add to Dictionary', 'Open Link', 'Copy Link', 'Copy Image'],
-    fr: ['Couper', 'Copier', 'Coller', 'Tout sélectionner', 'Ajouter au dictionnaire', 'Ouvrir le lien', 'Copier le lien', 'Copier l’image'],
-    es: ['Cortar', 'Copiar', 'Pegar', 'Seleccionar todo', 'Añadir al diccionario', 'Abrir enlace', 'Copiar enlace', 'Copiar imagen'],
-    pt: ['Recortar', 'Copiar', 'Colar', 'Selecionar tudo', 'Adicionar ao dicionário', 'Abrir link', 'Copiar link', 'Copiar imagem'],
-    de: ['Ausschneiden', 'Kopieren', 'Einfügen', 'Alles auswählen', 'Zum Wörterbuch hinzufügen', 'Link öffnen', 'Link kopieren', 'Bild kopieren'],
+    en: ['Cut', 'Copy', 'Paste', 'Select All', 'Add to Dictionary', 'Open Link', 'Copy Link', 'Copy Image', 'Save Image'],
+    fr: ['Couper', 'Copier', 'Coller', 'Tout sélectionner', 'Ajouter au dictionnaire', 'Ouvrir le lien', 'Copier le lien', 'Copier l’image', 'Enregistrer l’image'],
+    es: ['Cortar', 'Copiar', 'Pegar', 'Seleccionar todo', 'Añadir al diccionario', 'Abrir enlace', 'Copiar enlace', 'Copiar imagen', 'Guardar imagen'],
+    pt: ['Recortar', 'Copiar', 'Colar', 'Selecionar tudo', 'Adicionar ao dicionário', 'Abrir link', 'Copiar link', 'Copiar imagem', 'Salvar imagem'],
+    de: ['Ausschneiden', 'Kopieren', 'Einfügen', 'Alles auswählen', 'Zum Wörterbuch hinzufügen', 'Link öffnen', 'Link kopieren', 'Bild kopieren', 'Bild sichern'],
 }
 
-export function attachDesktopContextMenu({ window, Menu, clipboard, openExternal, locale, currentScope }) {
+export function attachDesktopContextMenu({ window, Menu, clipboard, openExternal, locale, currentScope, saveImage, reportFailure }) {
     const contents = window.webContents
     const language = locale.toLowerCase().split('-')[0]
-    const [cut, copy, paste, selectAll, dictionary, openLink, copyLink, copyImage] =
+    const [cut, copy, paste, selectAll, dictionary, openLink, copyLink, copyImage, saveImageLabel] =
         Object.hasOwn(labels, language) ? labels[language] : labels.en
     let request = 0
     contents.on('context-menu', (_event, params) => {
@@ -45,9 +47,18 @@ export function attachDesktopContextMenu({ window, Menu, clipboard, openExternal
             item('open-link', openLink, () => openExternal(link)),
             item('copy-link', copyLink, () => clipboard.writeText(link)),
         ])
-        if (params.mediaType === 'image' && params.hasImageContents && !protectedField) groups.push([
-            item('copy-image', copyImage, () => contents.copyImageAt(params.x, params.y)),
-        ])
+        if (params.mediaType === 'image' && params.hasImageContents && !protectedField) {
+            const image = [item('copy-image', copyImage, () => contents.copyImageAt(params.x, params.y))]
+            // Save only an image this board frame actually painted, and only through the Mac save flow.
+            const target = typeof saveImage === 'function' ? displayedImageTarget(params.pageURL, params.srcURL) : null
+            if (target) image.push(item('save-image', saveImageLabel, () => {
+                if (!sameDisplayedImage(target, displayedImageTarget(params.pageURL, params.srcURL))) return
+                void Promise.resolve(saveImage(params.pageURL, params.srcURL)).catch(error => {
+                    if (typeof reportFailure === 'function') reportFailure(error)
+                })
+            }))
+            groups.push(image)
+        }
         if (params.isEditable) groups.push([
             item('cut', cut, () => contents.cut(), !protectedField && flags.canCut),
             item('copy', copy, () => contents.copy(), !protectedField && flags.canCopy),

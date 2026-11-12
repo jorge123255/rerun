@@ -14,7 +14,7 @@ import { createDesktopCoworkerShareFiles } from './coworker-share-files.mjs'
 import { createNativeRemoteMachines } from './remote-machines/binding.mjs'
 import { createRemoteMachineIpc } from './remote-machines/ipc.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
-import { createDesktopFileSaves } from './result-files.mjs'
+import { createDesktopFileSaves, safeDisplayedImageError } from './result-files.mjs'
 import { installMacApplicationMenu } from './application-menu.mjs'
 import { createMacMenuBar } from './mac-menu-bar.mjs'
 import { attachDesktopContextMenu, externalDesktopLink } from './window-context-menu.mjs'
@@ -51,7 +51,7 @@ const windowFind = createWindowFind({ WebContentsView, scopeOf: candidate => !qu
     && isDesktopPage(candidate.webContents.mainFrame?.url) ? rendererEpoch : null,
     topInset: candidate => mac && !candidate.isFullScreen() ? 28 : 0,
 })
-const { saveResultFile, saveCoworkerFile, saveSharedFile } = createDesktopFileSaves({ dialog, context: () => {
+const { saveResultFile, saveCoworkerFile, saveSharedFile, saveDisplayedImage } = createDesktopFileSaves({ dialog, context: () => {
     if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
     return { runtime, window }
 } })
@@ -89,6 +89,11 @@ function setMacUnread(count) {
 function openExternal(href) {
     const url = externalDesktopLink(href)
     if (url) void shell.openExternal(url).catch(() => {})
+}
+function reportImageSaveFailure(error) {
+    const options = { type: 'warning', title: 'Save Image', message: safeDisplayedImageError(error), buttons: ['OK'], defaultId: 0, noLink: true }
+    const parent = window && !window.isDestroyed() ? window : null
+    void (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options)).catch(() => {})
 }
 function runtimeScope() {
     const current = supervisor?.runtime
@@ -426,6 +431,8 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
         window: boardWindow, Menu, clipboard, openExternal, locale: app.getLocale(),
         currentScope: () => !quitting && !transitioning && window === boardWindow && !boardWindow.isDestroyed()
             && runtimeScope() && isDesktopPage(contents.mainFrame?.url) ? rendererEpoch : null,
+        saveImage: (pageURL, srcURL) => saveDisplayedImage(pageURL, srcURL),
+        reportFailure: reportImageSaveFailure,
     })
     rendererEpoch = randomUUID()
     const invalidateRenderer = () => {
