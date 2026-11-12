@@ -4,8 +4,10 @@ import { stageArguments } from './provenance.mjs'
 import { previewSigningArguments } from './signing.mjs'
 import { requestedSubscriptionRunners } from './subscription-runners.mjs'
 import { macTarget } from './mac-target.mjs'
+import { prepareMasDevelopment, verifyMasDevelopment } from './mas-development.mjs'
 
 const { arch, appDirectory } = macTarget()
+const masDevelopment = flag('--mas-dev')
 
 if (requestedSubscriptionRunners() && !flag('--stage-only')) {
     throw new Error('The optional subscription runner assets are available only for local staging.')
@@ -14,6 +16,10 @@ if (requestedSubscriptionRunners() && !flag('--stage-only')) {
 const outputFlag = process.argv.indexOf('--output-dir')
 const outputDir = outputFlag === -1 ? undefined : process.argv[outputFlag + 1]
 if (outputFlag !== -1 && !isAbsolute(outputDir ?? '')) throw new Error('--output-dir requires an absolute build directory.')
+if (masDevelopment && (flag('--stage-only') || flag('--dmg') || !outputDir)) {
+    throw new Error('--mas-dev needs an absolute --output-dir and cannot be combined with --stage-only or --dmg.')
+}
+const masSigning = masDevelopment ? await prepareMasDevelopment() : null
 
 const scripts = file => join(repoRoot, 'scripts', 'desktop', file)
 const stage = async file => { console.log(`\n--- ${file}`); await run(process.execPath, [scripts(file), ...stageArguments()]) }
@@ -32,11 +38,14 @@ await stage('verify-runtime.mjs')
 if (flag('--stage-only')) {
     console.log('\nstaging complete (--stage-only)')
 } else {
-    const builderArgs = flag('--dmg') ? ['--mac', 'dmg', `--${arch}`] : ['--mac', `--${arch}`]
+    const target = masDevelopment ? ['mas-dev'] : flag('--dmg') ? ['dmg'] : []
+    const builderArgs = ['--mac', ...target, `--${arch}`]
     console.log(`\n--- electron-builder ${builderArgs.join(' ')}`)
-    const signingArgs = await previewSigningArguments()
+    const signingArgs = masSigning?.signingArgs ?? await previewSigningArguments()
     await run('npx', ['--yes', 'electron-builder@26.18.1', ...builderArgs, '--publish', 'never', '--config', 'electron-builder.yml', ...signingArgs, ...(outputDir ? [`-c.directories.output=${outputDir}`] : [])], { cwd: join(repoRoot, 'apps', 'desktop') })
-    const packagedApp = join(outputDir ?? join(repoRoot, 'apps', 'desktop', 'release'), appDirectory, 'Rerun Desktop Preview.app')
+    const directory = masDevelopment ? (arch === 'x64' ? 'mas-dev' : `mas-dev-${arch}`) : appDirectory
+    const packagedApp = join(outputDir ?? join(repoRoot, 'apps', 'desktop', 'release'), directory, 'Rerun Desktop Preview.app')
     await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', packagedApp])
+    if (masSigning) await verifyMasDevelopment(packagedApp, masSigning)
     console.log(`\npackage complete: ${outputDir ?? 'apps/desktop/release'}`)
 }

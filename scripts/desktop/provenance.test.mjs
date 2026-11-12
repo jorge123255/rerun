@@ -14,7 +14,10 @@ test('the actual package entry forces stages, skips stage-only packaging and dis
         const report = join(root, 'dispatched.jsonl')
         const stub = `import { appendFileSync } from 'node:fs'; export {existsSync} from 'node:fs'; export const sha256File=async()=>{throw new Error('Unexpected runner read')}; export const repoRoot='/synthetic'; export const flag=name=>process.argv.includes(name); export const buildId=async()=> 'synthetic'; export const output=async()=> ''; export async function run(command,args,options){appendFileSync(process.env.PROVENANCE_TEST_REPORT,JSON.stringify({command,args,options})+'\\n')}`
         const signing = `export async function previewSigningArguments(){return ['-c.mac.identity=offline-fixture']}`
-        const hook = `export async function load(url,context,next){if(url===${JSON.stringify(new URL('./lib.mjs', import.meta.url).href)})return {format:'module',shortCircuit:true,source:${JSON.stringify(stub)}};if(url===${JSON.stringify(new URL('./signing.mjs', import.meta.url).href)})return {format:'module',shortCircuit:true,source:${JSON.stringify(signing)}};return next(url,context)}`
+        const mas = `import {appendFileSync} from 'node:fs'; const record=(command,args)=>appendFileSync(process.env.PROVENANCE_TEST_REPORT,JSON.stringify({command,args})+'\\n'); export async function prepareMasDevelopment(){record('prepare-mas',[]);return {signingArgs:['-c.masDev.identity=offline-fixture']}} export async function verifyMasDevelopment(app){record('verify-mas',[app])}`
+        const modules = Object.fromEntries(Object.entries({ 'lib.mjs': stub, 'signing.mjs': signing, 'mas-development.mjs': mas })
+            .map(([file, source]) => [new URL(file, import.meta.url).href, source]))
+        const hook = `const modules=${JSON.stringify(modules)}; export async function load(url,context,next){if(Object.hasOwn(modules,url))return {format:'module',shortCircuit:true,source:modules[url]};return next(url,context)}`
         const loader = join(root, 'loader.mjs')
         await writeFile(loader, hook)
         execFileSync(process.execPath, ['--loader', loader, fileURLToPath(new URL('./package.mjs', import.meta.url)), '--stage-only', '--build'], { env: { ...process.env, PROVENANCE_TEST_REPORT: report }, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -33,7 +36,7 @@ test('the actual package entry forces stages, skips stage-only packaging and dis
         // discovery are intercepted: no builder, native probe or Keychain is run.
         for (const [arch, appDirectory] of [['arm64', 'mac-arm64'], ['x64', 'mac']]) {
             const architecture = 'data:text/javascript,' + encodeURIComponent(`Object.defineProperty(process,'arch',{value:${JSON.stringify(arch)}})`)
-            for (const input of [[], ['--dmg']]) {
+            for (const input of [[], ['--dmg'], ['--mas-dev']]) {
                 await writeFile(report, '')
                 const outputDir = join(root, 'artifacts')
                 execFileSync(process.execPath, ['--import', architecture, '--loader', loader, fileURLToPath(new URL('./package.mjs', import.meta.url)), ...input, '--output-dir', outputDir], {
@@ -42,12 +45,18 @@ test('the actual package entry forces stages, skips stage-only packaging and dis
                 })
                 const packaged = (await readFile(report, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
                 const builders = packaged.filter(call => call.command === 'npx')
-                const target = ['--mac', ...(input.length ? ['dmg'] : []), `--${arch}`]
+                const masDev = input.includes('--mas-dev')
+                const target = ['--mac', ...(masDev ? ['mas-dev'] : input.length ? ['dmg'] : []), `--${arch}`]
+                const identity = masDev ? '-c.masDev.identity=offline-fixture' : '-c.mac.identity=offline-fixture'
                 assert.equal(builders.length, 1)
-                assert.deepEqual(builders[0].args, ['--yes', 'electron-builder@26.18.1', ...target, '--publish', 'never', '--config', 'electron-builder.yml', '-c.mac.identity=offline-fixture', `-c.directories.output=${outputDir}`])
+                assert.deepEqual(builders[0].args, ['--yes', 'electron-builder@26.18.1', ...target, '--publish', 'never', '--config', 'electron-builder.yml', identity, `-c.directories.output=${outputDir}`])
                 assert.deepEqual(builders[0].options, { cwd: '/synthetic/apps/desktop' })
-                assert.deepEqual(packaged.filter(call => call.command === '/usr/bin/codesign').map(call => call.args.at(-1)),
-                    [join(outputDir, appDirectory, 'Rerun Desktop Preview.app')])
+                const destination = join(outputDir, masDev ? (arch === 'x64' ? 'mas-dev' : 'mas-dev-arm64') : appDirectory, 'Rerun Desktop Preview.app')
+                assert.deepEqual(packaged.filter(call => call.command === '/usr/bin/codesign').map(call => call.args.at(-1)), [destination])
+                if (masDev) {
+                    assert.equal(packaged[0].command, 'prepare-mas')
+                    assert.deepEqual(packaged.at(-1), { command: 'verify-mas', args: [destination] })
+                }
             }
         }
     } finally { await rm(root, { recursive: true, force: true }) }

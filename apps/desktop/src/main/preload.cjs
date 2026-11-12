@@ -50,7 +50,7 @@ contextBridge.exposeInMainWorld('desktopApp', {
                 ipcRenderer.send('desktop:quick-ask-unready', { registrationId })
             }
         },
-        updates: {
+        ...(!process.mas && { updates: {
             getState: () => ipcRenderer.invoke('desktop:update-state'),
             check: () => ipcRenderer.invoke('desktop:update-check'),
             install: () => ipcRenderer.invoke('desktop:update-install'),
@@ -60,7 +60,7 @@ contextBridge.exposeInMainWorld('desktopApp', {
                 ipcRenderer.on('desktop:update-state', handler)
                 return () => ipcRenderer.removeListener('desktop:update-state', handler)
             },
-        },
+        } }),
         onMacFullscreen: listener => {
             if (typeof listener !== 'function') throw new TypeError('Expected a full-screen listener')
             let current = true, received = false

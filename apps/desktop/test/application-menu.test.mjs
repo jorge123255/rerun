@@ -97,6 +97,18 @@ test('the preload forwards the Settings signal without exposing its IPC event', 
     assert.deepEqual(calls, [[]])
 })
 
+test('the Mac App Store preload leaves updates to the App Store', async () => {
+    const source = await readFile(new URL('../src/main/preload.cjs', import.meta.url), 'utf8')
+    for (const mas of [false, true]) {
+        let desktopApp
+        const contextBridge = { exposeInMainWorld: (_name, api) => { desktopApp = api } }
+        runInNewContext(source, { process: { platform: 'darwin', mas }, require: () => ({ contextBridge, ipcRenderer: new EventEmitter() }) })
+        assert.equal(typeof desktopApp.openLocalWorkspace, 'function')
+        assert.equal(typeof desktopApp.signInToCloud, 'function')
+        assert.equal(Boolean(desktopApp.updates), !mas)
+    }
+})
+
 test('the Mac full-screen subscription reports booleans and never overwrites a newer event', async () => {
     const ipcRenderer = new EventEmitter()
     const source = await readFile(new URL('../src/main/preload.cjs', import.meta.url), 'utf8')

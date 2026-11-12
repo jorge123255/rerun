@@ -1,4 +1,4 @@
-import { app, autoUpdater, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, Notification, safeStorage, screen, shell, session, Tray, WebContentsView } from 'electron'
+import * as electron from 'electron'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { mkdirSync } from 'node:fs'
@@ -29,6 +29,7 @@ import { hubConnectionError } from './connected-hub-messages.mjs'
 import { parseHubLink, registerHubProtocol } from './connected-hub-policy.mjs'
 import { hasLocalWorkspace } from './startup-workspace.mjs'
 
+const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, Notification, safeStorage, screen, shell, session, Tray, WebContentsView } = electron
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
 const mac = process.platform === 'darwin'
@@ -187,8 +188,8 @@ function createNotices() { return createDesktopNotifications({ Notification, onC
 } }) }
 
 let refreshUpdateSurfaces = () => {}
-const macUpdates = mac ? createMacUpdater({
-    autoUpdater, app, dialog, release: { ...BUILD_RELEASE, packaged: app.isPackaged },
+const macUpdates = mac && !process.mas ? createMacUpdater({
+    autoUpdater: electron.autoUpdater, app, dialog, release: { ...BUILD_RELEASE, packaged: app.isPackaged },
     getWindow: () => BrowserWindow.getFocusedWindow() ?? focusedBoard(),
     text: () => shellText(shellLanguage?.locale()),
     onState: () => refreshUpdateSurfaces(),
@@ -326,8 +327,8 @@ async function launch() {
                 if (!connectedHubs.reloadWindow(target)) void reloadBoard(target).catch(() => {})
             },
             devTools: !app.isPackaged,
-            checkForUpdates: () => { void macUpdates.checkFromMenu() },
-            updateItem: macUpdates.menuItem(),
+            checkForUpdates: macUpdates ? () => { void macUpdates.checkFromMenu() } : undefined,
+            updateItem: macUpdates?.menuItem(),
         })
         refreshApplicationMenu()
         try {
@@ -337,15 +338,17 @@ async function launch() {
         } catch {
             console.warn('Could not start the Rerun menu-bar item.')
         }
-        refreshUpdateSurfaces = () => {
-            refreshApplicationMenu()
-            try { menuBar?.refresh() } catch { /* The menu bar is optional. */ }
-            const state = macUpdates.state()
-            for (const board of boards.list()) {
-                try { if (boards.ready(board, runtime)) board.contents.send('desktop:update-state', state) } catch {}
+        if (macUpdates) {
+            refreshUpdateSurfaces = () => {
+                refreshApplicationMenu()
+                try { menuBar?.refresh() } catch { /* The menu bar is optional. */ }
+                const state = macUpdates.state()
+                for (const board of boards.list()) {
+                    try { if (boards.ready(board, runtime)) board.contents.send('desktop:update-state', state) } catch {}
+                }
             }
+            macUpdates.start({ scheduleChecks: true })
         }
-        macUpdates.start({ scheduleChecks: true })
     }
     await prepareWorkspaceWindow(1, false)
     ipcMain.handle('desktop:status', event => { trusted(event); return supervisor?.status ?? bootStatus })
@@ -382,12 +385,12 @@ async function launch() {
             trusted(event)
             if (quitting || transitioning || !runtimeScope() || !isDesktopPage(event.senderFrame.url)) throw new Error('The workspace is unavailable')
         }
-        ipcMain.handle('desktop:update-state', event => { assertBoard(event); return macUpdates.state() })
-        ipcMain.handle('desktop:update-check', event => { assertBoard(event); return macUpdates.checkForUpdates(false) })
+        ipcMain.handle('desktop:update-state', event => { assertBoard(event); return macUpdates?.state() ?? { status: 'idle' } })
+        ipcMain.handle('desktop:update-check', event => { assertBoard(event); return macUpdates?.checkForUpdates(false) ?? { status: 'idle' } })
         ipcMain.handle('desktop:update-install', event => {
             assertBoard(event)
             if (changingBoards.size) return false
-            return macUpdates.requestRestart()
+            return macUpdates?.requestRestart() ?? false
         })
         ipcMain.handle('desktop:quick-ask-settings', event => { assertBoard(event); return shortcutPreference.state() })
         ipcMain.handle('desktop:quick-ask-set-shortcut', (event, enabled) => {
