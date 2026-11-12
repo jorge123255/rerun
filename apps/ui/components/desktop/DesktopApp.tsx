@@ -28,6 +28,7 @@ import type { ForemanPlacement } from '@/lib/foreman-layout'
 import { DesktopForemanDock } from './foreman/DesktopForemanDock'
 import { DesktopForemanPanel, type DesktopForemanCommand } from './foreman/DesktopForemanPanel'
 import { flushDesktopForemanUiSaves } from '@/lib/desktop/foreman-client'
+import { createDesktopForemanConversation } from '@/lib/desktop/foreman-client/runtime-client'
 import { flushDesktopForemanIntakeWrites } from '@/lib/desktop/foreman-intake'
 import { flushDesktopBrainDrafts } from '@/lib/desktop/use-brain-page-draft'
 import { createDesktopBrainPagesActions } from '@/lib/desktop/brain-pages'
@@ -271,6 +272,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const foremanLeftTrack = foremanLayout?.open && !foremanLayout.dragging && !foremanLayout.mobile && foremanLayout.placement.mode === 'dock' && foremanLayout.placement.side === 'left' ? foremanLayout.placement.dockWidth : 0
     const foremanRightTrack = foremanLayout?.open && !foremanLayout.dragging && !foremanLayout.mobile && foremanLayout.placement.mode === 'dock' && foremanLayout.placement.side === 'right' ? foremanLayout.placement.dockWidth : 0
     const [foremanCommand, setForemanCommand] = useState<DesktopForemanCommand | null>(null)
+    const [foremanTarget, setForemanTarget] = useState<DesktopForemanCommand['chat'] | null>(null)
     const [visibleSession, setVisibleSession] = useState<{ agentId: string; sessionId: string | null } | null>(null)
     const reportVisibleSession = useCallback((agentId: string, sessionId: string | null) => {
         if (selectedAgentRef.current !== agentId) return
@@ -588,7 +590,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }
     const openBoardCoworkerSettings = (agentId: string) => openCoworkerPanel(agentId, 'settings', 'board-menu')
 
-    const askForeman = useCallback(async (chat: DesktopForemanCommand['chat'], text: string, signal: AbortSignal) => {
+    const askForeman = useCallback(async (chat: DesktopForemanCommand['chat'], text: string, signal: AbortSignal, requestId?: string) => {
         signal.throwIfAborted()
         if (creationAdmission.current.blocked || isDesktopQuitting()) throw new Error('The workspace is busy.')
         await new Promise<void>((resolve, reject) => {
@@ -602,8 +604,49 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             }
             const abort = () => settle(new Error('The Chief of Staff request was cancelled.'))
             signal.addEventListener('abort', abort, { once: true })
-            setForemanCommand({ id, chat, text, signal, settle }); engageForeman()
+            setForemanTarget(current => current && current.chatId !== chat.chatId ? chat : current)
+            setForemanCommand({ id, chat, text, requestId, signal, settle }); engageForeman()
         })
+    }, [engageForeman])
+
+    const openForemanConversation = useCallback(async (chat: DesktopForemanCommand['chat'] | null) => {
+        const workspace = workspaceDialogLease.current.workspaceId
+        const admitted = () => workspace !== null && workspaceDialogLease.current.workspaceId === workspace
+            && !workspaceDialogLease.current.active && !creationAdmission.current.blocked && !isDesktopQuitting()
+            && (!chat || chat.workspaceId === String(workspace))
+        if (!admitted() || !await flushDesktopForemanUiSaves() || !admitted()) throw new Error('Could not leave the current Chief of Staff conversation.')
+        foremanCommand?.settle(new Error('The Chief of Staff conversation changed.'))
+        setForemanTarget(current => current?.chatId === chat?.chatId ? current : chat)
+        engageForeman()
+    }, [engageForeman, foremanCommand])
+
+    const quickAskAdmission = useRef(false)
+    quickAskAdmission.current = !controlCenterDisabled
+    const quickAsk = useRef(async (_value: { requestId: string; prompt: string }) => false)
+    quickAsk.current = async ({ requestId, prompt }) => {
+        const workspace = workspaceDialogLease.current.workspaceId
+        const current = () => workspace !== null && workspaceDialogLease.current.workspaceId === workspace
+            && quickAskAdmission.current && !isDesktopQuitting()
+        if (!current()) return false
+        const chat = await createDesktopForemanConversation(String(workspace), requestId, AbortSignal.timeout(10_000), prompt)
+        if (!current()) return false
+        await openForemanConversation(chat)
+        if (!current()) return false
+        setRequestedPanel(null)
+        setPanelOpen(false)
+        setControlCenterOpen(false)
+        // The native window can close once this chat owns the saved prompt. If the
+        // provider refuses the run, the conversation exposes the usual exact retry.
+        void askForeman(chat, '', AbortSignal.timeout(45_000), requestId).catch(error => {
+            if (current()) toast.error(error instanceof Error ? error.message : 'Could not ask your Chief of Staff.')
+        })
+        return true
+    }
+    useEffect(() => {
+        const bridge = (window as Window & { desktopApp?: {
+            onQuickAsk?: (listener: (value: { requestId: string; prompt: string }) => Promise<boolean>) => () => void
+        } }).desktopApp
+        return bridge?.onQuickAsk?.(value => quickAsk.current(value))
     }, [])
 
     async function openCoworkerChat(target: { agentId: string; sessionId: string }) {
@@ -806,7 +849,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 {!controlCenterDisabled && !controlCenterOpen && !panelOpen && !foremanEngaged && <DesktopForemanDock open={foremanOpen} onToggle={engageForeman} />}
                 {foremanEngaged && <div className="pointer-events-none absolute inset-2 z-40 grid min-h-0" style={{ gridTemplateColumns: `${foremanLeftTrack}px minmax(0,1fr) ${foremanRightTrack}px` }}>
 
-                    <DesktopForemanPanel controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout} mentionTargets={foremanMentionTargets}
+                    <DesktopForemanPanel key={foremanTarget?.chatId ?? 'home'} target={foremanTarget}
+                        onSelectConversation={runtimeWorkspaceId !== null ? openForemanConversation : undefined}
+                        controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout} mentionTargets={foremanMentionTargets}
                         hidden={controlCenterDisabled || controlCenterOpen || panelOpen || settings || workspaceSettings || profileOpen || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
                         findEnabled={foremanOpen && !panelOpen && !controlCenterDisabled}
                         centerOpen={controlCenterOpen} onOpenTranscriptionSettings={() => openSettingsAt('Tool services')} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('The Chief of Staff chat was closed.')); setForemanOpen(false) }}

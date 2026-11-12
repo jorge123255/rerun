@@ -9,6 +9,7 @@ const required = [
     'mac-menu-bar.mjs', 'tray/trayTemplate.png', 'tray/trayTemplate@2x.png',
     'window-context-menu.mjs',
     'window-find.mjs', 'find-preload.cjs', 'find.html', 'find.js', 'find.css',
+    'quick-ask-window.mjs', 'quick-ask-preload.cjs', 'quick-ask.html', 'quick-ask.js', 'quick-ask.css',
 ]
 
 const src = join(desktopDir, 'src', 'main')

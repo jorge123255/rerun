@@ -31,7 +31,12 @@ const inputSchema = z.discriminatedUnion('action', [
 ])
 export async function GET(request: Request) {
     return desktopRoute(request, async runtime => {
-        const app = await desktopForeman(runtime), state = await app.state()
+        const params = new URL(request.url).searchParams
+        const scope = params.has('workspaceId') || params.has('chatId')
+            ? foremanChatRefSchema.safeParse({ workspaceId: params.get('workspaceId'), chatId: params.get('chatId') })
+            : undefined
+        if (scope && !scope.success) throw new DesktopHttpError(400, 'Invalid Chief of Staff conversation.')
+        const app = await desktopForeman(runtime), state = await app.state(scope?.data)
         const row = (await app.db.execute({ sql: 'SELECT ui,ui_revision FROM desktop_foreman_chats WHERE chat_id=?', args: [state.chat.chatId] })).rows[0]!
         return Response.json({ ...state, ui: { snapshot: row.ui ? JSON.parse(String(row.ui)) : null, revision: Number(row.ui_revision) } }, { headers: { 'cache-control': 'no-store' } })
     })

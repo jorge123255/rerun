@@ -18,7 +18,7 @@ import { revisionToTrustedSnapshot } from './plan-view'
 import { createPlanDecisionRequestId } from './decision'
 import { sameForemanChat, type DesktopForemanChatRef } from './identity'
 import { flushDesktopForemanUiSaves, saveForemanUiIfMatching, type DesktopForemanActionPorts, type DesktopForemanMessageOptions } from './actions'
-import { DEFAULT_DESKTOP_FOREMAN_PLACEMENT, type DesktopForemanPersistedUi } from './persistence'
+import { emptyForemanUi, type DesktopForemanPersistedUi } from './persistence'
 
 import { desktopForemanSavedUiSchema } from './ui-schema'
 import { desktopStarterViewSchema, localStarterDecisionSchema, type DesktopLocalStarterDecision } from './starter'
@@ -30,6 +30,7 @@ export { desktopForemanSavedUiSchema } from './ui-schema'
 const stateSchema = z.strictObject({
     chat: foremanChatRefSchema, sessionId: z.string().min(1).max(128), model: foremanModelRefSchema.nullable(),
     view: foremanConversationViewSchema,
+    separateConversation: z.literal(true).optional(),
     writing: z.boolean().optional(),
     liveReply: desktopForemanLiveReplySchema.nullable().optional(),
     question: desktopPendingQuestionSchema.nullable().optional(),
@@ -71,9 +72,26 @@ async function json(response: Response): Promise<unknown> {
     }
     return body
 }
-export async function readDesktopForemanState(signal?: AbortSignal): Promise<DesktopForemanClientState> {
-    const response = await fetch('/api/desktop/foreman', { cache: 'no-store', signal })
-    return stateSchema.parse(await json(response))
+export async function readDesktopForemanState(signal?: AbortSignal, chat?: DesktopForemanChatRef): Promise<DesktopForemanClientState> {
+    const query = chat ? `?${new URLSearchParams(chat)}` : ''
+    const response = await fetch(`/api/desktop/foreman${query}`, { cache: 'no-store', signal })
+    const state = stateSchema.parse(await json(response))
+    if (chat && !sameForemanChat(chat, state.chat)) throw new Error('The Chief of Staff conversation changed.')
+    return state
+}
+const conversationsPath = '/api/desktop/foreman/conversations'
+const conversationSchema = z.strictObject({ chat: foremanChatRefSchema, title: z.string().max(80).nullable(), home: z.boolean() })
+export async function listDesktopForemanConversations(signal: AbortSignal) {
+    return z.strictObject({ conversations: z.array(conversationSchema) }).parse(await json(
+        await fetch(conversationsPath, { cache: 'no-store', signal }),
+    )).conversations
+}
+export async function createDesktopForemanConversation(workspaceId: string, requestId: string, signal: AbortSignal, prompt?: string) {
+    const result = z.strictObject({ chat: foremanChatRefSchema }).parse(await json(await fetch(conversationsPath, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspaceId, requestId, prompt }), signal,
+    })))
+    if (result.chat.workspaceId !== workspaceId || result.chat.chatId !== `fmc_${requestId}`) throw new Error('The Chief of Staff conversation changed.')
+    return result.chat
 }
 const post = async (input: unknown, signal?: AbortSignal) => json(await fetch('/api/desktop/foreman', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input), signal }))
 export function desktopForemanMessages(state: DesktopForemanClientState) {
@@ -111,9 +129,6 @@ export function desktopForemanMessages(state: DesktopForemanClientState) {
         }
     }).filter(message => message.history.length > 0 || message.documents?.length || message.savedDecision)
 }
-function emptyUi(chat: DesktopForemanChatRef): DesktopForemanPersistedUi {
-    return { ...chat, open: true, tab: 'assistant', draft: '', pendingPlanRevisionId: null, decision: { status: 'idle' }, build: null, discoveries: null, placement: DEFAULT_DESKTOP_FOREMAN_PLACEMENT }
-}
 export type DesktopForemanClientOptions = {
     onState: (state: DesktopForemanClientState) => void
     onError: (message: string) => void
@@ -125,7 +140,7 @@ export type DesktopForemanClientOptions = {
 /** One adapter per exact chat. Ordinary state reads never replay navigation or creation effects. */
 export function createDesktopForemanClient(initial: DesktopForemanClientState, options: DesktopForemanClientOptions) {
     let state = initial, revision = initial.ui.revision
-    let lastUi: DesktopForemanPersistedUi = initial.ui.snapshot ?? emptyUi(initial.chat)
+    let lastUi: DesktopForemanPersistedUi = initial.ui.snapshot ?? emptyForemanUi(initial.chat)
     let pendingSend = initial.ui.snapshot?.pendingSend
     let sending = false
     let modelGeneration = 0
@@ -135,6 +150,7 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
     const discoveryListeners = new Set<(event: Extract<DesktopForemanLiveEvent, { type: 'discovery' }>['event']) => void>()
     const seenNavigation = new Set<string>()
     const chat = { ...initial.chat }
+    const scope = initial.separateConversation ? chat : undefined
     const owned = (target: DesktopForemanChatRef) => { if (closed || !sameForemanChat(chat, target)) throw new Error('This Foreman chat is no longer open.') }
     const act = async (input: unknown, signal?: AbortSignal) => {
         owned(chat)
@@ -147,7 +163,7 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
         if (refreshing) return refreshing
         const generation = modelGeneration
         const controller = new AbortController(); requests.add(controller)
-        refreshing = readDesktopForemanState(AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)])).then(next => {
+        refreshing = readDesktopForemanState(AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]), scope).then(next => {
             const value = {
                 ...next,
                 model: generation === modelGeneration ? next.model : state.model,
@@ -235,9 +251,9 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
             if (!closed && !isDesktopQuitting() && state.ui.revision !== startingRevision) options.onState(state)
         }
     }
-    function retryPendingMessage(requestId: string) {
+    function retryPendingMessage(requestId: string, signal?: AbortSignal) {
         if (pendingSend?.requestId !== requestId) return Promise.resolve(false)
-        return sendMessage(pendingSend.text, undefined, { coworkerMentions: pendingSend.coworkerMentions }, requestId)
+        return sendMessage(pendingSend.text, signal, { coworkerMentions: pendingSend.coworkerMentions }, requestId)
     }
     const ports: DesktopForemanActionPorts = {
         plans: {
@@ -245,7 +261,7 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
             readConversationView: async target => { owned(target); return state.view },
         },
         persistence: {
-            load: async target => { owned(target); const next = await refresh(); revision = next.ui.revision; lastUi = next.ui.snapshot ?? emptyUi(chat); pendingSend = next.ui.snapshot?.pendingSend; return next.ui.snapshot },
+            load: async target => { owned(target); const next = await refresh(); revision = next.ui.revision; lastUi = next.ui.snapshot ?? emptyForemanUi(chat); pendingSend = next.ui.snapshot?.pendingSend; return next.ui.snapshot },
             save: async snapshot => {
                 // A save already admitted before the panel closes must finish its durable write.
                 if (!sameForemanChat(snapshot, chat)) throw new Error('Cannot save a different Foreman chat.')
@@ -261,7 +277,7 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
                 } catch (error) {
                     // A lost ACK may already have written exactly this snapshot. Recover only that
                     // fingerprint; never overwrite a newer server view or silently adopt its CAS.
-                    const next = await readDesktopForemanState(AbortSignal.timeout(15_000)).catch(() => null)
+                    const next = await readDesktopForemanState(AbortSignal.timeout(15_000), scope).catch(() => null)
                     if (next && sameForemanChat(chat, next.chat) && JSON.stringify(next.ui.snapshot) === JSON.stringify(value)) { acknowledge(next.ui.revision); return }
                     throw error
                 }

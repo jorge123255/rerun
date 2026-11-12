@@ -38,6 +38,10 @@ export const DEFAULT_DESKTOP_FOREMAN_PLACEMENT: DesktopForemanPlacement = {
     dockWidth: 420,
 }
 
+export function emptyForemanUi(chat: DesktopForemanChatRef): DesktopForemanPersistedUi {
+    return { ...chat, open: true, tab: 'assistant', draft: '', pendingPlanRevisionId: null, decision: { status: 'idle' }, build: null, discoveries: null, placement: DEFAULT_DESKTOP_FOREMAN_PLACEMENT }
+}
+
 export type DesktopForemanPersistence = {
     load(identity: DesktopForemanChatRef): Promise<DesktopForemanPersistedUi | null>
     save(snapshot: DesktopForemanPersistedUi): Promise<void>

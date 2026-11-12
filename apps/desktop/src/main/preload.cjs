@@ -23,6 +23,26 @@ ipcRenderer.on('desktop:before-quit', (_event, value) => {
 contextBridge.exposeInMainWorld('desktopApp', {
     ...(process.platform === 'darwin' ? {
         openFind: () => ipcRenderer.send('desktop:find-open'),
+        onQuickAsk: listener => {
+            if (typeof listener !== 'function') throw new TypeError('Expected a Quick Ask listener')
+            const registrationId = String(++registrationSequence)
+            let active = true
+            const handler = (_event, value) => {
+                if (!active || value?.registrationId !== registrationId) return
+                const acknowledge = accepted => {
+                    if (active) ipcRenderer.send('desktop:quick-ask-ack', { registrationId, requestId: value.requestId, accepted: accepted === true })
+                }
+                void Promise.resolve().then(() => listener({ prompt: value.prompt, requestId: value.requestId }))
+                    .then(acknowledge, () => acknowledge(false))
+            }
+            ipcRenderer.on('desktop:quick-ask-deliver', handler)
+            ipcRenderer.send('desktop:quick-ask-ready', { registrationId })
+            return () => {
+                active = false
+                ipcRenderer.removeListener('desktop:quick-ask-deliver', handler)
+                ipcRenderer.send('desktop:quick-ask-unready', { registrationId })
+            }
+        },
         onMacFullscreen: listener => {
             if (typeof listener !== 'function') throw new TypeError('Expected a full-screen listener')
             let current = true, received = false

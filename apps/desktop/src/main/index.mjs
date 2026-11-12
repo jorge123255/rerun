@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, safeStorage, shell, session, Tray, WebContentsView } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, Notification, safeStorage, screen, shell, session, Tray, WebContentsView } from 'electron'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { mkdir } from 'node:fs/promises'
@@ -19,6 +19,7 @@ import { installMacApplicationMenu } from './application-menu.mjs'
 import { createMacMenuBar } from './mac-menu-bar.mjs'
 import { attachDesktopContextMenu, externalDesktopLink } from './window-context-menu.mjs'
 import { createWindowFind } from './window-find.mjs'
+import { createQuickAskWindow, QUICK_ASK_SHORTCUT } from './quick-ask-window.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
@@ -41,6 +42,10 @@ let quittingNow = false
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const draftQuit = new BeforeQuitDrafts()
+const quickAsk = createQuickAskWindow({ app, BrowserWindow, screen, showBoard: showMainWindow, boardScope: () =>
+    !quitting && !transitioning && runtimeScope() && window && !window.isDestroyed() && isDesktopPage(window.webContents.mainFrame?.url)
+        ? { epoch: rendererEpoch, contents: window.webContents } : null,
+})
 const windowFind = createWindowFind({ WebContentsView, scopeOf: candidate => !quitting && !transitioning
     && candidate && candidate === window && !candidate.isDestroyed() && runtimeScope()
     && isDesktopPage(candidate.webContents.mainFrame?.url) ? rendererEpoch : null,
@@ -122,6 +127,7 @@ else {
         if (quitting || transitioning) return
         quitting = true
         windowFind.close(window)
+        quickAsk.reset()
         void completeDesktopQuit({
             flush: () => {
                 if (!window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url) || !draftQuit.ready) return true
@@ -183,7 +189,10 @@ async function launch() {
             settingsWindow: () => !quitting && !transitioning && runtimeScope() && draftQuit.ready ? window : null,
             openDocumentation: () => openExternal('https://docs.rerun.build'),
             openFind: () => windowFind.open(window),
+            openQuickAsk: () => quickAsk.toggle(),
         })
+        if (globalShortcut.register(QUICK_ASK_SHORTCUT, () => quickAsk.toggle()))
+            app.once('will-quit', () => globalShortcut.unregister(QUICK_ASK_SHORTCUT))
         try {
             menuBar = createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow: showMainWindow })
             showWindowOnReady = !menuBar.startedAtLogin
@@ -203,6 +212,17 @@ async function launch() {
         ipcMain.on('desktop:find-query', (event, input) => windowFind.search(event, input))
         ipcMain.on('desktop:find-close', event => windowFind.dismiss(event))
         ipcMain.handle('desktop:mac-fullscreen', event => { trusted(event); return window.isFullScreen() })
+        ipcMain.handle('desktop:quick-ask-send', (event, text) => quickAsk.send(event, text))
+        ipcMain.on('desktop:quick-ask-close', event => quickAsk.close(event))
+        for (const [channel, action] of [
+            ['desktop:quick-ask-ready', (event, value) => quickAsk.register(event, value, rendererEpoch)],
+            ['desktop:quick-ask-unready', quickAsk.unregister],
+            ['desktop:quick-ask-ack', quickAsk.acknowledge],
+        ]) {
+            ipcMain.on(channel, (event, value) => {
+                try { trusted(event); if (isDesktopPage(event.senderFrame.url)) action(event, value) } catch {}
+            })
+        }
     }
     ipcMain.handle('desktop:retry', async event => {
         trusted(event)
@@ -411,6 +431,7 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
     const invalidateRenderer = () => {
         windowFind.close(boardWindow)
         if (window?.webContents !== contents) return
+        quickAsk.invalidate()
         setMacUnread(0)
         rendererEpoch = randomUUID()
         clickReady = null
@@ -464,6 +485,7 @@ async function startWorkspace() {
 async function runWorkspaceTransition(operation) {
     if (transitioning) return { ok: false, code: 'busy', message: 'A workspace change is already in progress.' }
     transitioning = true
+    quickAsk.reset()
     const previous = supervisor.runtime
     try {
         const result = await operation()

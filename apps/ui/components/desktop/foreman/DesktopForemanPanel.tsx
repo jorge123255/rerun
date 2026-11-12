@@ -24,9 +24,12 @@ import { DesktopForemanFilePermissions } from './DesktopForemanFilePermissions'
 import { buildDesktopModelView } from '@/lib/desktop/chat-model'
 import { DesktopForemanModelPill, type DesktopForemanModelPillHandle } from './DesktopForemanModelPill'
 import { DesktopForemanContext } from './DesktopForemanContext'
+import { DesktopForemanConversations } from './DesktopForemanConversations'
 
-export type DesktopForemanCommand = { id: string; chat: DesktopForemanChatRef; text: string; signal: AbortSignal; settle: (error?: Error) => void }
+export type DesktopForemanCommand = { id: string; chat: DesktopForemanChatRef; text: string; requestId?: string; signal: AbortSignal; settle: (error?: Error) => void }
 export type DesktopForemanPanelProps = {
+    target?: DesktopForemanChatRef | null
+    onSelectConversation?: (chat: DesktopForemanChatRef | null) => Promise<void>
     mentionTargets?: DesktopCoworkerCallTarget[]
     command?: DesktopForemanCommand | null
     onOpenCoworker: (target: { agentId: string; sessionId?: string }) => void | Promise<void>
@@ -62,11 +65,11 @@ export function DesktopForemanPanel(props: DesktopForemanPanelProps) {
         void (async () => {
             await flushDesktopForemanUiSaves() // Wait for admitted writes; opening also allows a failed save to recover.
             if (controller.signal.aborted) return
-            const next = await readDesktopForemanState(AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]))
+            const next = await readDesktopForemanState(AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]), props.target ?? undefined)
             if (!controller.signal.aborted) { setInitial(next); setError(null) }
         })().catch(error => { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'Could not open the Chief of Staff chat.') })
         return () => controller.abort()
-    }, [retry])
+    }, [retry, props.target])
     useEffect(() => { if (error && props.command) props.command.settle(new Error(error)) }, [error, props.command])
     if (initial) return <ConnectedForeman key={`${initial.chat.workspaceId}:${initial.chat.chatId}`} {...props} initial={initial} />
     return <section className={props.className} aria-label={t('foreman.name')}><div className="flex min-h-40 flex-col items-start gap-3 rounded-3xl border bg-background p-5"><p role={error ? 'alert' : 'status'}>{error ?? t('foreman.opening')}</p>{error && <Button size="sm" onClick={() => setRetry(value => value + 1)}>{t('creation.tryAgain')}</Button>}<Button size="sm" variant="ghost" onClick={props.onClose}>{t('foreman.close')}</Button></div></section>
@@ -75,8 +78,8 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const { t } = useDesktopLocale()
     const [state, setState] = useState(initial)
     const intakePorts = useMemo(() => createDesktopForemanIntakeClient(), [])
-    const intake = useDesktopForemanIntake({ chat: initial.chat, ports: intakePorts, active: !!props.controlledOpen && !props.hidden })
-    const intakeEligible = initial.messages.length === 0 || intake.hasSavedProgress
+    const intake = useDesktopForemanIntake({ chat: initial.chat, ports: intakePorts, active: !!props.controlledOpen && !props.hidden && !initial.separateConversation })
+    const intakeEligible = !initial.separateConversation && (initial.messages.length === 0 || intake.hasSavedProgress)
     const intakeOpen = intakeEligible && !intake.finished
     const pendingStarter = !!state.starter && !state.starter.decision?.settled
     const projectFeed = useMemo(() => createClientDockFeed(initial.chat), [initial.chat.workspaceId, initial.chat.chatId])
@@ -164,13 +167,21 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         void (async () => {
             signal.throwIfAborted()
             if (command.chat.chatId !== initial.chat.chatId || command.chat.workspaceId !== initial.chat.workspaceId) throw new Error('The Chief of Staff conversation changed.')
-            if (intakeOpen && command.text.trim()) throw new Error('Finish the company questions before asking your Chief of Staff to plan your team.')
-            if (command.text.trim() && !await client.ports.conversation.sendMessage(command.text.trim(), signal)) throw new Error('Your Chief of Staff did not accept this message.')
+            if (intakeOpen && (command.text.trim() || command.requestId)) throw new Error('Finish the company questions before asking your Chief of Staff to plan your team.')
+            if (command.requestId) {
+                // Quick Ask already reserved this exact send on disk. A repeated handoff
+                // may open its conversation again and can never mint another run.
+                if (initial.ui.snapshot?.pendingSend?.requestId === command.requestId && !await client.retryPendingMessage(command.requestId, signal)) {
+                    throw new Error('Your Chief of Staff did not accept this message.')
+                }
+            } else if (command.text.trim() && !await client.ports.conversation.sendMessage(command.text.trim(), signal)) {
+                throw new Error('Your Chief of Staff did not accept this message.')
+            }
             if (!command.text.trim()) signal.throwIfAborted()
             setFocusRequest(command.id)
             command.settle()
         })().catch(error => command.settle(error instanceof Error ? error : new Error('Could not ask your Chief of Staff.')))
-    }, [client, props.command, initial.chat.chatId, initial.chat.workspaceId, intakeOpen, intakeEligible, intake.restored])
+    }, [client, props.command, initial, intakeOpen, intakeEligible, intake.restored])
     const close = useCallback(() => { if (active.current) current.current.onClose() }, [])
     if (!client) return <div role="status" className={props.className}>{t('foreman.opening')}</div>
     const providers = props.providers
@@ -212,7 +223,11 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
             onOpenConnections={props.onOpenModelSettings} /> : null}
         streaming={!!state.view.live} liveReply={liveReply} orbState={state.view.live ? state.writing ? 'speaking' : 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
-        headerActions={<><DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} onApprovalPermissionChanged={() => { void client.refresh().catch(() => {}) }} />{error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}</>}
+        headerActions={<>
+            {props.onSelectConversation && <DesktopForemanConversations chat={state.chat} disabled={!!props.hidden} onSelect={props.onSelectConversation} />}
+            <DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} onApprovalPermissionChanged={() => { void client.refresh().catch(() => {}) }} />
+            {error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}
+        </>}
         composerTrailing={props.composerTrailing ?? (modelPickerView && <div className="flex min-w-0 items-center">
             <DesktopForemanModelPill ref={modelPicker} view={modelPickerView} connections={providers?.connections} saving={modelSaving}
                 onSettings={props.onOpenModelSettings} disabled={modelDisabled}
