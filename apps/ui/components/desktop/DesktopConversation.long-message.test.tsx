@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import type { UIMessage } from 'ai'
-import { act, useState } from 'react'
+import { act, useState, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, test, vi } from 'vitest'
 import { desktopAttachmentFieldsOf } from '@rerun/contracts'
@@ -9,6 +9,25 @@ import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { DesktopConversation } from './DesktopConversation'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+// Preserve the scroll controls while replacing animation cleanup that happy-dom cannot finish.
+vi.mock('motion/react', async original => {
+    const actual = await original<typeof import('motion/react')>()
+    const { createElement, forwardRef } = await import('react')
+    const plain = (tag: string) => forwardRef<HTMLElement, Record<string, unknown>>(({ children, ...props }, ref) =>
+        createElement(tag, { ...Object.fromEntries(Object.entries(props).filter(([name]) => !actual.isValidMotionProp(name))), ref }, children as ReactNode))
+    const elements = new Map<string, ReturnType<typeof plain>>()
+    const element = (tag: string) => {
+        if (!elements.has(tag)) elements.set(tag, plain(tag))
+        return elements.get(tag)!
+    }
+    return { ...actual, AnimatePresence: ({ children }: { children: ReactNode }) => <>{children}</>,
+        motion: new Proxy(actual.motion, { get(target, key, receiver) {
+            if (key === 'create') return (tag: unknown) => typeof tag === 'string' ? element(tag) : tag
+            return typeof key === 'string' && key !== 'then' ? element(key) : Reflect.get(target, key, receiver)
+        } }),
+    }
+})
 
 const agent = { id: 'reader', name: 'Reader', description: '', createdAt: '', updatedAt: '' }
 const marker = 'Find this line below the fold.'
