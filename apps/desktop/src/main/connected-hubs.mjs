@@ -6,18 +6,20 @@ import { createHubAuth } from './connected-hub-auth.mjs'
 import { createHubDownloads } from './connected-hub-downloads.mjs'
 import { atomicPrivateJSON, readJSON } from './workspaces/paths.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
+import { createNativeNotifications, hubNotificationPayload } from './notifications.mjs'
 import { externalDesktopLink } from './window-context-menu.mjs'
 
 const pickerPage = new URL('./connected-hub.html', import.meta.url)
 const preload = fileURLToPath(new URL('./connected-hub-preload.cjs', import.meta.url))
-const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads']
+const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads', 'notifications', 'badge']
 
-export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shell, dialog, dataRoot, available, openFind, closeFind }) {
+export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain, session, shell, dialog, dataRoot, available, openFind, closeFind, setUnread }) {
     const file = resolve(dataRoot, 'connected-hub.json')
     const windows = new Map()
     const childWindows = new Map()
     const usedSessions = new Set()
     const version = app.getVersion()
+    const notices = createNativeNotifications({ Notification })
     let picker = null, connecting = null
 
     function connected(window) {
@@ -51,6 +53,34 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
     function hubSender(event) {
         const entry = windows.get(event.sender)
         return connected(entry?.window) && event.senderFrame && event.senderFrame === entry.contents.mainFrame ? entry : null
+    }
+    function publishUnread() {
+        let count = 0
+        for (const { native } of windows.values()) count += native?.unread ?? 0
+        setUnread(count)
+    }
+    function invalidateNative(entry) {
+        const native = entry.native
+        entry.native = null
+        if (!native) return
+        notices.discard(native)
+        if (native.unread) publishUnread()
+    }
+    function currentNative(entry, native) {
+        return available() && entry.native === native && connected(entry.window) === entry
+            && entry.contents.mainFrame === native.frame
+    }
+    async function notify(entry, value, frame) {
+        const payload = hubNotificationPayload(value)
+        const native = entry.native
+        if (!payload || native?.frame !== frame) return false
+        const { id, ...options } = payload
+        const result = await notices.notify(JSON.stringify([native.id, id]), options, () => {
+            if (!currentNative(entry, native)) return
+            show(entry.window)
+            native.frame.send('hub:notification-click', id)
+        }, native)
+        return result.status === 'accepted' && currentNative(entry, native)
     }
     function show(window) {
         if (!window || window.isDestroyed()) return
@@ -170,6 +200,7 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
             entry.scope = randomUUID()
             closeFind(window)
         })
+        contents.on('render-process-gone', () => invalidateNative(entry))
         contents.on('will-prevent-unload', event => {
             const result = dialog.showMessageBoxSync(window, { type: 'warning', title: 'Leave this Rerun page?',
                 message: 'Some changes might not have been saved.', buttons: ['Stay', 'Leave'], defaultId: 0, cancelId: 0 })
@@ -178,6 +209,7 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
         })
         window.once('closed', () => {
             closeFind(window)
+            invalidateNative(entry)
             windows.delete(contents)
             for (const child of childWindows.values()) {
                 if (child.entry === entry && !child.window.isDestroyed()) child.window.destroy()
@@ -231,8 +263,12 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
     }
 
     ipcMain.on('hub:bootstrap', event => {
-        if (localSender(event)) event.returnValue = { audience: 'picker' }
-        else event.returnValue = hubSender(event) ? { audience: 'hub', apiVersion: HUB_API_VERSION, version, platform: 'mac', channel: 'dev', capabilities } : null
+        if (localSender(event)) { event.returnValue = { audience: 'picker' }; return }
+        const entry = hubSender(event)
+        if (!entry || !available()) { event.returnValue = null; return }
+        invalidateNative(entry)
+        entry.native = { frame: event.senderFrame, id: randomUUID(), unread: 0 }
+        event.returnValue = { audience: 'hub', apiVersion: HUB_API_VERSION, version, platform: 'mac', channel: 'dev', capabilities }
     })
     ipcMain.handle('hub:saved-origin', event => localSender(event) ? savedOrigin() : null)
     ipcMain.handle('hub:connect', (event, address) => localSender(event) ? connect(address, '/', picker) : { ok: false, reason: 'invalid' })
@@ -244,13 +280,21 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
         ['hub:find', entry => openFind(entry.window)],
         ['hub:open-link', (_entry, url) => external(url)],
         ['hub:show-download', (entry, id) => downloads.show(entry, id)],
+        ['hub:notify', (entry, value, frame) => notify(entry, value, frame)],
+        ['hub:badge', (entry, count, frame) => {
+            if (entry.native?.frame !== frame || !Number.isSafeInteger(count) || count < 0) return
+            const unread = Math.min(count, 9999)
+            if (entry.native.unread === unread) return
+            entry.native.unread = unread
+            publishUnread()
+        }],
         ['hub:open-picker', () => openPicker()],
         ['hub:auth-start', (entry, options) => entry.auth.start(options?.provider)],
         ['hub:auth-code', (entry, code) => redeem(entry, code)],
     ]) ipcMain.handle(channel, (event, value) => {
         const entry = hubSender(event)
         if (!entry || !available()) throw new Error('Untrusted Rerun hub request')
-        return action(entry, value)
+        return action(entry, value, event.senderFrame)
     })
 
     return {

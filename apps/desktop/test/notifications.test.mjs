@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { createDesktopNotifications, notificationPayload } from '../src/main/notifications.mjs'
+import { createDesktopNotifications, createNativeNotifications, hubNotificationPayload, notificationPayload } from '../src/main/notifications.mjs'
 const payload = {key:'event:1',kind:'done',agentId:'owner',sessionId:'chat',title:'Coworker',body:'Finished',groupId:'group'}
 function fixture(now = Date.now) {
     const notices = [], clicks = [], clickScopes = []
@@ -116,4 +116,28 @@ test('a notice keeps its submission scope and duplicate keys do not reuse a prev
     assert.deepEqual(await Promise.all([first,second]),[{status:'accepted'},{status:'accepted'}])
     assert.deepEqual(clickScopes,[firstScope,current])
     bridge.close()
+})
+
+test('hub notices accept bounded copy and an opaque click id only', () => {
+    const value = { id: 'notice:1', title: 'Finished', body: 'Result ready', silent: false, url: 'https://other.test' }
+    assert.deepEqual(hubNotificationPayload(value), { id: 'notice:1', title: 'Finished', body: 'Result ready', silent: false })
+    assert.equal(hubNotificationPayload({ ...value, body: 'x'.repeat(1001) }), null)
+    assert.equal(hubNotificationPayload({ ...value, id: 'id\0other' }), null)
+    assert.equal(hubNotificationPayload({ ...value, title: '' }), null)
+})
+
+test('discarding one hub document settles pending notices and leaves a different hub click intact', async () => {
+    const { notices, Notification } = fixture()
+    const native = createNativeNotifications({ Notification })
+    const firstHub = {}, secondHub = {}, clicks = []
+    const first = native.notify('first:shared-id', { title: 'First' }, () => clicks.push('first'), firstHub)
+    const second = native.notify('second:shared-id', { title: 'Second' }, () => clicks.push('second'), secondHub)
+    notices[1].emit('show')
+    native.discard(firstHub)
+    notices[0].emit('click')
+    notices[1].emit('click')
+    assert.deepEqual(await first, { status: 'unknown', diagnostic: 'closed-before-acceptance' })
+    assert.deepEqual(await second, { status: 'accepted' })
+    assert.deepEqual(clicks, ['second'])
+    native.close()
 })

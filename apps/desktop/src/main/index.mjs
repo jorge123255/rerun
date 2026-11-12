@@ -74,6 +74,8 @@ const remoteMachineIpc = createRemoteMachineIpc({ trusted: trustedPrimary, conte
 const clickHandoff = createNotificationClickHandoff()
 let clickReady = null
 let desktopNotifications = createNotices()
+let localUnread = 0
+let hubUnread = 0
 function showMainWindow() {
     showWindowOnReady = true
     if (!window || window.isDestroyed()) return
@@ -81,11 +83,16 @@ function showMainWindow() {
     window.show()
     window.focus()
 }
-function setMacUnread(count) {
+function publishMacUnread() {
     if (process.platform !== 'darwin') return
+    const count = Math.min(localUnread + hubUnread, 9999)
     app.setBadgeCount(count)
     try { menuBar?.setUnread(count) }
     catch { console.warn('Could not update the Rerun menu-bar item.') }
+}
+function setMacUnread(count) {
+    localUnread = count
+    publishMacUnread()
 }
 function openExternal(href) {
     const url = externalDesktopLink(href)
@@ -216,8 +223,9 @@ function resumeBoard(board) {
 async function launch() {
     if (storageSetupError) throw storageSetupError
     if (mac) {
-        connectedHubs = createConnectedHubs({ app, BrowserWindow, ipcMain, session, shell, dialog, dataRoot,
-            available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate) })
+        connectedHubs = createConnectedHubs({ app, BrowserWindow, Notification, ipcMain, session, shell, dialog, dataRoot,
+            available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate),
+            setUnread: count => { hubUnread = count; publishMacUnread() } })
         if (pendingHubLink) {
             const link = pendingHubLink
             pendingHubLink = null

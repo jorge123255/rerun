@@ -36,6 +36,11 @@ if (bootstrap?.audience === 'picker') {
             onEvent: callback => subscribe('hub:download', callback),
             show: id => { void ipcRenderer.invoke('hub:show-download', id).catch(() => {}) },
         },
+        notifications: {
+            show: notice => ipcRenderer.invoke('hub:notify', notice).catch(() => false),
+            onClick: callback => subscribe('hub:notification-click', callback),
+        },
+        badge: { set: count => { void ipcRenderer.invoke('hub:badge', count).catch(() => {}) } },
         server: { openPicker: () => { void ipcRenderer.invoke('hub:open-picker').catch(() => {}) } },
     })
 }

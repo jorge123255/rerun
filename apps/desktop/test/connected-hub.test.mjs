@@ -102,12 +102,12 @@ test('an expired or cancelled browser exchange cannot report sign-in, and paste 
 test('the hub preload exposes only its approved audience and drops the privileged event', async () => {
     const source = await readFile(new URL('../src/main/connected-hub-preload.cjs', import.meta.url), 'utf8')
     function bootstrap(value) {
-        const exposed = {}, listeners = new Map()
+        const exposed = {}, listeners = new Map(), requests = []
         const ipcRenderer = { sendSync: () => value, on: (channel, fn) => listeners.set(channel, fn),
-            removeListener: channel => listeners.delete(channel), invoke: async () => {} }
+            removeListener: channel => listeners.delete(channel), invoke: async (...args) => { requests.push(args); return false } }
         const contextBridge = { exposeInMainWorld: (name, api) => { exposed[name] = api } }
         runInNewContext(source, { require: () => ({ ipcRenderer, contextBridge }) })
-        return { exposed, listeners }
+        return { exposed, listeners, requests }
     }
     assert.deepEqual(Object.keys(bootstrap(null).exposed), [])
     assert.deepEqual(Object.keys(bootstrap({ audience: 'picker' }).exposed), ['rerunHubPicker'])
@@ -119,4 +119,13 @@ test('the hub preload exposes only its approved audience and drops the privilege
     assert.deepEqual(seen, [[{ status: 'signed-in' }]])
     unsubscribe()
     assert.equal(listeners.size, 0)
+    const native = bootstrap({ audience: 'hub', capabilities: ['notifications', 'badge'] })
+    const notice = { id: 'task:123', title: 'Finished' }
+    const clicks = []
+    native.exposed.rerunShell.notifications.onClick((...args) => clicks.push(args))
+    native.listeners.get('hub:notification-click')({ sender: 'privileged' }, notice.id)
+    assert.deepEqual(clicks, [[notice.id]])
+    assert.equal(await native.exposed.rerunShell.notifications.show(notice), false)
+    native.exposed.rerunShell.badge.set(2)
+    assert.deepEqual(native.requests, [['hub:notify', notice], ['hub:badge', 2]])
 })
