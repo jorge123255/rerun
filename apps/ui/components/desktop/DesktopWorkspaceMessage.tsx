@@ -38,7 +38,7 @@ function WorkspaceImage({ src, alt }: { src: string; alt: string }) {
 const components: Components = {
     [AGENT_WORKSPACE_FILE_TAG]: WorkspaceFileLink,
     [COMPOSER_LINK_TAG]: DesktopChatLinkLabel,
-    [COMPOSER_MENTION_TAG]: ({ children }: { children?: ReactNode }) => <span className={MENTION_TOKEN_CLASSES.agent}>{children}</span>,
+    [COMPOSER_MENTION_TAG]: ({ children }: { children?: ReactNode; node?: unknown }) => <span className={MENTION_TOKEN_CLASSES.agent}>{children}</span>,
     a: ({ href, children }) => safeDesktopChatLink(href)
         ? <a data-streamdown="link" href={href} target="_blank" rel="noopener noreferrer">{children}</a>
         : <span>{children}</span>,
