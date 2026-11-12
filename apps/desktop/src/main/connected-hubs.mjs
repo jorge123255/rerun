@@ -14,6 +14,7 @@ const capabilities = ['auth', 'window', 'find', 'links', 'server']
 export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shell, dialog, dataRoot, available, openFind, closeFind }) {
     const file = resolve(dataRoot, 'connected-hub.json')
     const windows = new Map()
+    const usedSessions = new Set()
     const version = app.getVersion()
     let picker = null, connecting = null
 
@@ -86,6 +87,7 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
             title: 'Rerun', backgroundColor: '#101214', titleBarStyle: 'hidden', trafficLightPosition: { x: 12, y: 8 },
             webPreferences: preferences(desktopSession) })
         const contents = window.webContents
+        usedSessions.add(desktopSession)
         const userAgent = contents.getUserAgent().replace(/ Electron\/\S+/, '') + ` RerunDesktop/${version} (mac; dev)`
         contents.setUserAgent(userAgent)
         const auth = createHubAuth({ origin, openBrowser: url => shell.openExternal(url), fetcher: (url, init) =>
@@ -232,6 +234,9 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
                 if (!closed) throw new Error('A connected Rerun window is still open')
             }
             if (picker && !picker.isDestroyed()) picker.destroy()
+            // Chromium batches writes. Persist session cookies even if the last hub
+            // was closed just before quitting the local app.
+            await Promise.all([...usedSessions].map(value => value.cookies.flushStore()))
         },
     }
 }

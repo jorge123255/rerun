@@ -171,7 +171,7 @@ else {
     app.whenReady().then(launch).catch(() => {
         bootStatus = { state: 'error', message: 'Desktop setup failed. Check that this app has a complete bundled runtime and access to Mac secure storage.' }
         if (supervisor) supervisor.publish('error', 'Workspace state could not be verified. Restore the workspace state before retrying.')
-        else window?.webContents.send('desktop:status', bootStatus)
+        else if (window && !window.isDestroyed()) window.webContents.send('desktop:status', bootStatus)
     })
 }
 
