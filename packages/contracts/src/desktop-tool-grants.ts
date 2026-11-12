@@ -44,7 +44,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('sharedFilesWrite', 'Edit shared files', 'Create and edit text and Markdown files in the workspace shared folder. Changes are visible to coworkers with shared-file access.', 'shared_write', 'shared_edit'),
     supported('guestShell', 'Run commands in isolated computer', 'Run shell programs in this coworker’s isolated Linux computer. Commands can change guest files, use its browser profile and network, and install software. This does not grant Mac file or host command access.', 'shell_exec', 'shell_inspect'),
     supported('webFetch', 'Read public web pages', 'Read public HTTP(S) text and HTML pages without cookies. A full copy can be saved when Edit workspace files is enabled.', 'web_fetch'),
-    supported('webSearch', 'Search public web', 'Search with the Brave Search key in Settings. Separate from native Codex search.', 'web_search'),
+    supported('webSearch', 'Search public web', 'Search with the Brave Search or Keirolabs key in Settings. Separate from native Codex search.', 'web_search'),
     supported('download', 'Download files', 'Download a public file into this coworker’s Files. The file is not executed or unpacked.', 'download'),
     supported('db', 'Private database', 'Read and change structured records in this coworker’s private database.', 'db_query', 'db_execute', 'db_schema'),
     supported('sharedDb', 'Shared database', 'Read and change workspace shared records.', 'shared_db_query', 'shared_db_execute', 'shared_db_schema'),
