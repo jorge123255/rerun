@@ -11,10 +11,12 @@ import { DesktopCoworkerServices } from '@/components/desktop/services/DesktopCo
 import { DesktopAgentPanelSetup } from '@/components/desktop/setup/DesktopAgentPanelSetup'
 import { DesktopAgentPanelSkills } from '@/components/desktop/skills/DesktopAgentPanelSkills'
 import { DesktopCoworkerTriggers } from '@/components/desktop/triggers/DesktopCoworkerTriggers'
+import { DesktopCoworkerSettingsBody } from '@/components/desktop/DesktopCoworkerSettings'
+import { DesktopCoworkerToolsBody } from '@/components/desktop/DesktopCoworkerTools'
 import type { DesktopAgentView } from '@/components/desktop/DesktopApp'
 import { decideDesktopOverviewWorkspaceSwitch, type DesktopOverviewFlush, type DesktopOverviewRunBoundary } from '@/lib/desktop/coworker-overview/workspace-switch'
 import type { DesktopOverviewIdentity } from '@/lib/desktop/coworker-overview/identity'
-import type { DesktopOverviewAcceptedPanelTab, DesktopOverviewTab } from '@/lib/desktop/coworker-overview/sections'
+import type { DesktopOverviewTab } from '@/lib/desktop/coworker-overview/sections'
 import type { DesktopPanelCloseControl, RegisterDesktopPanelCloseGuard } from '@/lib/desktop/use-dialog-control'
 import type { ReactNode } from 'react'
 import { DesktopCoworkerOverview } from './DesktopCoworkerOverview'
@@ -40,7 +42,7 @@ export type DesktopCoworkerOverviewRootMountProps = {
     focusSlug?: string | null
     onSkillFocusConsumed?: () => void
     onOpenSession?: (sessionId: string, title: string) => void
-    onOpenAcceptedPanel?: (tab: DesktopOverviewAcceptedPanelTab) => void
+    onRename?: (identity: DesktopOverviewIdentity, name: string) => Promise<void>
     closeControl?: DesktopPanelCloseControl
     onClose: () => void
     onShare?: () => void
@@ -74,7 +76,6 @@ export function DesktopCoworkerOverviewRootMount(props: DesktopCoworkerOverviewR
             onDelete={props.onDelete}
             onOpenComputer={props.onOpenComputer}
             onRenamed={props.onRenamed}
-            onOpenAcceptedPanel={props.onOpenAcceptedPanel}
             closeControl={props.closeControl}
             renderTab={(tab, register) => overviewTab(tab, props, register)}
         />
@@ -93,6 +94,14 @@ export function guardDesktopOverviewWorkspaceSwitch(input: {
 }
 
 function overviewTab(tab: DesktopOverviewTab, props: DesktopCoworkerOverviewRootMountProps, register: RegisterDesktopPanelCloseGuard): ReactNode {
+    const settingsDisabled = !!props.settingsDisabledReason || props.canManage !== true
+    if (tab === 'settings') return <div className="p-3">
+        <DesktopCoworkerSettingsBody key={props.agent.id} agent={props.agent} authority={props}
+            disabled={settingsDisabled} registerCloseGuard={register} />
+    </div>
+    if (tab === 'tools') return <div className="flex min-h-0 flex-1 flex-col p-3">
+        <DesktopCoworkerToolsBody key={props.agent.id} agent={props.agent} disabled={settingsDisabled} registerCloseGuard={register} />
+    </div>
     if (tab === 'services') return <DesktopCoworkerServices agentId={props.agent.id} />
     if (tab === 'mcp') return <DesktopCoworkerMcp agentId={props.agent.id} />
     if (tab === 'skills') return <DesktopAgentPanelSkills agentId={props.agent.id} focusSlug={props.focusSlug} onFocusConsumed={props.onSkillFocusConsumed} />

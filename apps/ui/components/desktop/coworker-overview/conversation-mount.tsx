@@ -7,9 +7,7 @@ import { DesktopCoworkerOverviewRootMount, type DesktopCoworkerOverviewRootMount
 
 export type DesktopConversationOverviewAuthority = Pick<DesktopCoworkerOverviewRootMountProps,
     'identity' | 'boxes' | 'canManage' | 'onRenamed' | 'onShare' | 'onDelete' | 'installAuthor' |
-    'servicesNeedConfig' | 'computerEnabled' | 'computer' | 'onOpenComputer'> & {
-    onRename?: (identity: DesktopCoworkerOverviewRootMountProps['identity'], name: string) => Promise<void>
-}
+    'servicesNeedConfig' | 'computerEnabled' | 'computer' | 'onOpenComputer' | 'onRename'>
 
 type Props = {
     authority: DesktopConversationOverviewAuthority
@@ -20,7 +18,6 @@ type Props = {
     closeControl?: DesktopCoworkerOverviewRootMountProps['closeControl']
     onClose(): void
     onOpenSession: NonNullable<DesktopCoworkerOverviewRootMountProps['onOpenSession']>
-    onOpenAcceptedPanel: NonNullable<DesktopCoworkerOverviewRootMountProps['onOpenAcceptedPanel']>
 }
 
 export function DesktopConversationOverview(props: Props) {
@@ -45,7 +42,13 @@ export function DesktopConversationOverview(props: Props) {
         onClose={() => { if (current()) latest.current.onClose() }}
         onRenamed={(source, name) => { if (current() && sameDesktopOverviewIdentity(source, identity)) latest.current.authority.onRenamed(source, name) }}
         onOpenSession={(id, title) => { if (current()) latest.current.onOpenSession(id, title) }}
-        onOpenAcceptedPanel={tab => { if (current()) latest.current.onOpenAcceptedPanel(tab) }}
+        onRename={props.authority.onRename ? async (source, name) => {
+            const rename = latest.current.authority.onRename
+            if (!current() || !sameDesktopOverviewIdentity(source, identity) || latest.current.authority.canManage !== true || !rename) {
+                throw new Error('This coworker’s owner is unavailable.')
+            }
+            await rename(source, name)
+        } : undefined}
         onShare={props.authority.onShare ? () => { if (current()) latest.current.authority.onShare?.() } : undefined}
         onDelete={props.authority.onDelete ? (source, name) => { if (current() && sameDesktopOverviewIdentity(source, identity)) return latest.current.authority.onDelete?.(source, name) } : undefined}
         onOpenComputer={props.authority.onOpenComputer ? () => { if (current()) latest.current.authority.onOpenComputer?.() } : undefined}

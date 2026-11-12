@@ -3,8 +3,10 @@
 import { useDesktopLocale } from './DesktopLocale'
 import type { desktopTranslator } from '@/lib/desktop/locale'
 import { VERBOSITY_LEVELS } from '@rerun/contracts'
-import { useEffect, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react'
 import { toast } from 'sonner'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { useFileUnloadGuard } from '@/components/files/useFileUnloadGuard'
 import { DeleteCoworkerConfirmation } from '@/components/dialogs/DeleteCoworkerConfirmation'
 import { RenameAgentDialog } from '@/components/dialogs/RenameAgentDialog'
 import { Button } from '@/components/ui/button'
@@ -16,7 +18,8 @@ import { Switch } from '@/components/ui/switch'
 import type { DesktopCoworkerSettings as Settings } from '@/lib/desktop/coworker-settings'
 import { FxSettingsLoading } from './fx-repairs/PanelLoadingSkeletons'
 import type { DesktopAgentView } from './DesktopApp'
-import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
+import { desktopFileDraftHost, holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { useDesktopDialogControl, useDesktopPanelCloseGuard, type DesktopDialogControl, type RegisterDesktopPanelCloseGuard } from '@/lib/desktop/use-dialog-control'
 import { DesktopNotificationsDialog } from './DesktopNotificationsDialog'
 import type { DesktopConversationOverviewAuthority } from './coworker-overview/conversation-mount'
 
@@ -101,28 +104,27 @@ async function requestSettings(url: string, init: RequestInit, fallback: string)
     return response.json()
 }
 
-export function DesktopCoworkerSettings({ agent, authority, disabled, dialogControl }: {
+export function DesktopCoworkerSettingsBody({ agent, authority, disabled, registerCloseGuard, onDone }: {
     agent: DesktopAgentView
     authority?: SettingsAuthority
     disabled: boolean
-    dialogControl?: DesktopDialogControl
+    registerCloseGuard: RegisterDesktopPanelCloseGuard
+    onDone?: () => void
 }) {
     const { t } = useDesktopLocale()
+    const fieldId = useId()
     const replyLengths = VERBOSITY_LEVELS.map(value => ({ value, label: t(`coworker.${value}`) }))
     const recallHelp = t('coworker.recallHelp')
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/settings`
-    const [open, setOpen] = useDesktopDialogControl(dialogControl)
     const [settings, setSettings] = useState<Settings | null>(null)
     const [draft, setDraft] = useState<Settings | null>(null)
     const [error, setError] = useState('')
+    const savingNow = useRef(false)
     const [saving, setSaving] = useState(false)
+    const [pendingClose, setPendingClose] = useState<(() => void) | null>(null)
     const [attempt, setAttempt] = useState(0)
 
     useEffect(() => {
-        if (!open) return
-        setSettings(null)
-        setDraft(null)
-        setError('')
         const controller = new AbortController()
         void requestSettings(url, { cache: 'no-store', signal: controller.signal }, t('coworker.loadFailed')).then(result => {
             if (!controller.signal.aborted) {
@@ -133,34 +135,35 @@ export function DesktopCoworkerSettings({ agent, authority, disabled, dialogCont
             if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : t('coworker.loadFailed'))
         })
         return () => controller.abort()
-    }, [open, url, attempt, t])
-
-    function changeOpen(next: boolean) {
-        if (saving) return
-        setOpen(next)
-        if (next) {
-            setSettings(null)
-            setDraft(null)
-            setError('')
-        }
-    }
+    }, [url, attempt, t])
 
     const instructionsChanged = settings?.soulEditable && draft?.soul.trim() !== settings.soul.trim()
     const lengthChanged = draft?.verbosity !== settings?.verbosity
     const suggestionsChanged = draft?.suggestedReplies !== settings?.suggestedReplies
     const memoryChanged = draft?.memoryEnabled !== settings?.memoryEnabled
     const learningChanged = draft?.autoMemory !== settings?.autoMemory
-    const canSave = !!draft && (lengthChanged || instructionsChanged || memoryChanged || learningChanged || suggestionsChanged) && (!instructionsChanged || !!draft.soul.trim())
+    const dirty = !!draft && (lengthChanged || instructionsChanged || memoryChanged || learningChanged || suggestionsChanged)
+    const canSave = !disabled && dirty && (!instructionsChanged || !!draft.soul.trim())
+    useFileUnloadGuard(dirty, desktopFileDraftHost())
+    const guardClose = useCallback((close: () => void) => {
+        if (savingNow.current) return
+        if (dirty) setPendingClose(() => close)
+        else close()
+    }, [dirty])
+    useLayoutEffect(() => registerCloseGuard(guardClose), [registerCloseGuard, guardClose])
+
     const learningAvailable = !!draft?.memoryEnabled && draft.selfImprovementEnabled
 
     async function save(event: FormEvent) {
         event.preventDefault()
-        if (!draft || !canSave || saving) return
+        if (!draft || !canSave || savingNow.current || isDesktopQuitting()) return
+        savingNow.current = true
+        const release = holdDraftAdmission()
         setSaving(true)
         setError('')
         try {
-            await requestSettings(url, {
-                method: 'PATCH',
+            const saved = await requestSettings(url, {
+                method: 'PATCH', signal: AbortSignal.timeout(20_000),
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({
                     ...(instructionsChanged && { soul: draft.soul }),
@@ -170,55 +173,90 @@ export function DesktopCoworkerSettings({ agent, authority, disabled, dialogCont
                     ...(suggestionsChanged && { suggestedReplies: draft.suggestedReplies }),
                 }),
             }, t('coworker.saveFailed'))
-            setOpen(false)
+            setSettings(saved)
+            setDraft(saved)
+            onDone?.()
             toast.success(t('coworker.saved'))
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : t('coworker.saveFailed'))
-        } finally { setSaving(false) }
+        } finally {
+            savingNow.current = false
+            setSaving(false)
+            release()
+        }
     }
 
-    return <Dialog open={open} onOpenChange={changeOpen} asSheet={false}>
+    const content = <>
+        <CoworkerManagement key={agent.id} agent={agent} authority={authority} disabled={disabled || saving}>
+            <form className="space-y-4" onSubmit={save}>
+                {settings && draft ? <fieldset disabled={saving || disabled} className="min-w-0 space-y-4">
+                    {settings.soulEditable ? <MarkdownTextarea label={t('coworker.instructions')} dialogTitle={t('coworker.instructionsEditor')} hideRequired
+                        className="min-h-36 font-mono text-xs" disabled={saving || disabled} value={draft.soul} onChange={soul => setDraft({ ...draft, soul })} required />
+                        : <p className="text-sm text-muted-foreground">{t('coworker.instructionsLocked')}</p>}
+                    <fieldset className="min-w-0 space-y-2">
+                        <legend className="text-sm font-medium">{t('coworker.replyLength')}</legend>
+                        <Segmented options={replyLengths} value={draft.verbosity} onChange={verbosity => setDraft({ ...draft, verbosity })} />
+                    </fieldset>
+                    <Field orientation="row" label={t('coworker.suggested')} htmlFor={fieldId + '-suggested'} helperText={t('coworker.suggestedHelp')}>
+                        <Switch id={fieldId + '-suggested'} checked={draft.suggestedReplies} onCheckedChange={suggestedReplies => setDraft({ ...draft, suggestedReplies })} />
+                    </Field>
+                    <fieldset className="min-w-0 space-y-3">
+                        <legend className="text-sm font-medium">{t('coworker.memory')}</legend>
+                        <Field orientation="row" label={t('coworker.recall')} htmlFor={fieldId + '-memory'} helperText={recallHelp}>
+                            <Switch id={fieldId + '-memory'} checked={draft.memoryEnabled} aria-description={recallHelp}
+                                onCheckedChange={memoryEnabled => setDraft({ ...draft, memoryEnabled })} />
+                        </Field>
+                        <Field orientation="row" label={t('coworker.learning')} htmlFor={fieldId + '-learning'} helperText={learningHelp(draft, t)}>
+                            <Switch id={fieldId + '-learning'} checked={learningAvailable && draft.autoMemory} disabled={!learningAvailable}
+                                aria-description={learningHelp(draft, t)} onCheckedChange={autoMemory => setDraft({ ...draft, autoMemory })} />
+                        </Field>
+                    </fieldset>
+                </fieldset> : !error && <FxSettingsLoading />}
+                {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+                <DialogFooter>
+                    {(onDone || dirty) && <Button type="button" variant="outline" disabled={saving} onClick={() => {
+                        if (onDone) onDone()
+                        else { setDraft(settings); setError('') }
+                    }}>{t('cancel')}</Button>}
+                    {error && !draft ? <Button type="button" onClick={() => { setError(''); setAttempt(n => n + 1) }}>{t('coworker.retry')}</Button>
+                        : <Button type="submit" disabled={!canSave || saving}>{t(saving ? 'coworker.saving' : 'coworker.save')}</Button>}
+                </DialogFooter>
+            </form>
+        </CoworkerManagement>
+        {pendingClose && <ConfirmDialog open onOpenChange={open => { if (!open) setPendingClose(null) }}
+            title={t('coworker.discardTitle')} description={t('coworker.discardDescription')}
+            confirmLabel={t('coworker.discard')} cancelLabel={t('coworker.keepEditing')}
+            onConfirm={() => { setPendingClose(null); pendingClose() }} />}
+    </>
+    if (!onDone) return content
+    return <DialogContent className="sm:max-w-xl" showCloseButton={!saving}
+        onEscapeKeyDown={event => { if (savingNow.current) event.preventDefault() }}
+        onInteractOutside={event => { if (savingNow.current) event.preventDefault() }}>
+        <DialogHeader>
+            <DialogTitle>{t('coworker.edit')}</DialogTitle>
+            <DialogDescription>{t('coworker.editDescription', { name: agent.name })}</DialogDescription>
+        </DialogHeader>
+        {content}
+    </DialogContent>
+}
+
+export function DesktopCoworkerSettings({ agent, authority, disabled, dialogControl }: {
+    agent: DesktopAgentView
+    authority?: SettingsAuthority
+    disabled: boolean
+    dialogControl?: DesktopDialogControl
+}) {
+    const { t } = useDesktopLocale()
+    const [open, setOpen] = useDesktopDialogControl(dialogControl)
+    const { register, requestClose } = useDesktopPanelCloseGuard()
+    return <Dialog open={open} onOpenChange={next => {
+        if (next) setOpen(true)
+        else requestClose(() => setOpen(false))
+    }} asSheet={false}>
         <DialogTrigger asChild>
             <Button type="button" variant="outline" size="sm" disabled={disabled}>{t('coworker.edit')}</Button>
         </DialogTrigger>
-        <DialogContent className="sm:max-w-xl" showCloseButton={!saving}>
-            <DialogHeader>
-                <DialogTitle>{t('coworker.edit')}</DialogTitle>
-                <DialogDescription>{t('coworker.editDescription', { name: agent.name })}</DialogDescription>
-            </DialogHeader>
-            <CoworkerManagement key={agent.id} agent={agent} authority={authority} disabled={disabled || saving}>
-                <form className="space-y-4" onSubmit={save}>
-                    {settings && draft ? <fieldset disabled={saving} className="min-w-0 space-y-4">
-                        {settings.soulEditable ? <MarkdownTextarea label={t('coworker.instructions')} dialogTitle={t('coworker.instructionsEditor')} hideRequired
-                            className="min-h-36 font-mono text-xs" value={draft.soul} onChange={soul => setDraft({ ...draft, soul })} required />
-                            : <p className="text-sm text-muted-foreground">{t('coworker.instructionsLocked')}</p>}
-                        <fieldset className="min-w-0 space-y-2">
-                            <legend className="text-sm font-medium">{t('coworker.replyLength')}</legend>
-                            <Segmented options={replyLengths} value={draft.verbosity} onChange={verbosity => setDraft({ ...draft, verbosity })} />
-                        </fieldset>
-                        <Field orientation="row" label={t('coworker.suggested')} htmlFor="coworker-suggested-replies" helperText={t('coworker.suggestedHelp')}>
-                            <Switch id="coworker-suggested-replies" checked={draft.suggestedReplies} onCheckedChange={suggestedReplies => setDraft({ ...draft, suggestedReplies })} />
-                        </Field>
-                        <fieldset className="min-w-0 space-y-3">
-                            <legend className="text-sm font-medium">{t('coworker.memory')}</legend>
-                            <Field orientation="row" label={t('coworker.recall')} htmlFor="coworker-memory-enabled" helperText={recallHelp}>
-                                <Switch id="coworker-memory-enabled" checked={draft.memoryEnabled} aria-description={recallHelp}
-                                    onCheckedChange={memoryEnabled => setDraft({ ...draft, memoryEnabled })} />
-                            </Field>
-                            <Field orientation="row" label={t('coworker.learning')} htmlFor="coworker-auto-memory" helperText={learningHelp(draft, t)}>
-                                <Switch id="coworker-auto-memory" checked={learningAvailable && draft.autoMemory} disabled={!learningAvailable}
-                                    aria-description={learningHelp(draft, t)} onCheckedChange={autoMemory => setDraft({ ...draft, autoMemory })} />
-                            </Field>
-                        </fieldset>
-                    </fieldset> : !error && <FxSettingsLoading />}
-                    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-                    <DialogFooter>
-                        <Button type="button" variant="outline" disabled={saving} onClick={() => changeOpen(false)}>{t('cancel')}</Button>
-                        {error && !draft ? <Button type="button" onClick={() => { setError(''); setAttempt(n => n + 1) }}>{t('coworker.retry')}</Button>
-                            : <Button type="submit" disabled={!canSave || saving}>{t(saving ? 'coworker.saving' : 'coworker.save')}</Button>}
-                    </DialogFooter>
-                </form>
-            </CoworkerManagement>
-        </DialogContent>
+        {open && <DesktopCoworkerSettingsBody key={agent.id} agent={agent} authority={authority} disabled={disabled}
+            registerCloseGuard={register} onDone={() => setOpen(false)} />}
     </Dialog>
 }

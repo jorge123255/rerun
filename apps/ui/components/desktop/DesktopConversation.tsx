@@ -1434,7 +1434,6 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                     authority={overview} agent={agent} active={active && !draft.quitting}
                     working={generating} settingsDisabledReason={generating || !!sessionId && engineRunning.id !== sessionId ? 'Wait for this coworker’s current run to finish.' : null}
                     closeControl={overviewCloseControl} onClose={dismissCard} onOpenSession={onSelectSession}
-                    onOpenAcceptedPanel={panel => dialogControl(panel).onOpenChange(true)}
                 />}
                 <div hidden={!!overview}>
                 <p className="text-sm text-muted-foreground">{agent.description || 'Local coworker'}</p>

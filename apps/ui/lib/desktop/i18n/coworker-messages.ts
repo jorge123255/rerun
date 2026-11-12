@@ -8,7 +8,10 @@ type Source = { agent: typeof agent; builder: typeof builder; dialogs: typeof di
 
 const mac = {
     en: {
-        openSection: 'Open {label}',
+        discardTitle: 'Discard settings changes?',
+        discardDescription: 'Your changes to this coworker’s settings have not been saved.',
+        discard: 'Discard changes',
+        keepEditing: 'Keep editing',
         edit: 'Edit coworker',
         editDescription: 'Set how {name} should respond in its conversations.',
         instructions: 'Instructions',
@@ -46,7 +49,10 @@ const mac = {
         renameFailed: 'Could not rename this coworker.',
     },
     fr: {
-        openSection: 'Ouvrir {label}',
+        discardTitle: 'Ignorer les modifications des paramètres ?',
+        discardDescription: 'Les modifications des paramètres de ce coworker n’ont pas été enregistrées.',
+        discard: 'Ignorer les modifications',
+        keepEditing: 'Continuer la modification',
         edit: 'Modifier le coworker',
         editDescription: 'Définissez comment {name} doit répondre dans ses conversations.',
         instructions: 'Instructions',
@@ -84,7 +90,10 @@ const mac = {
         renameFailed: 'Impossible de renommer ce coworker.',
     },
     es: {
-        openSection: 'Abrir {label}',
+        discardTitle: '¿Descartar los cambios de configuración?',
+        discardDescription: 'Los cambios en la configuración de este coworker no se han guardado.',
+        discard: 'Descartar cambios',
+        keepEditing: 'Seguir editando',
         edit: 'Editar coworker',
         editDescription: 'Define cómo debe responder {name} en sus conversaciones.',
         instructions: 'Instrucciones',
@@ -122,7 +131,10 @@ const mac = {
         renameFailed: 'No se pudo cambiar el nombre de este coworker.',
     },
     pt: {
-        openSection: 'Abrir {label}',
+        discardTitle: 'Descartar as alterações nas configurações?',
+        discardDescription: 'As alterações nas configurações deste coworker não foram salvas.',
+        discard: 'Descartar alterações',
+        keepEditing: 'Continuar editando',
         edit: 'Editar coworker',
         editDescription: 'Defina como {name} deve responder nas conversas.',
         instructions: 'Instruções',
@@ -160,7 +172,10 @@ const mac = {
         renameFailed: 'Não foi possível renomear este coworker.',
     },
     de: {
-        openSection: '{label} öffnen',
+        discardTitle: 'Änderungen an den Einstellungen verwerfen?',
+        discardDescription: 'Die Änderungen an den Einstellungen dieses Coworkers wurden nicht gespeichert.',
+        discard: 'Änderungen verwerfen',
+        keepEditing: 'Weiter bearbeiten',
         edit: 'Coworker bearbeiten',
         editDescription: 'Lege fest, wie {name} in Unterhaltungen antworten soll.',
         instructions: 'Anweisungen',

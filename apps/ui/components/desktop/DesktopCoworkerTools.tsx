@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Icon } from '@/components/ui/icon'
 import { PanelGrid, PanelScroller, PanelSection } from '@/components/ui/panel-list'
 import { PANEL_CARD } from '@/components/ui/panel-row'
@@ -15,7 +15,8 @@ import { getToolMeta } from '@/lib/tool-meta'
 import { ChevronDownIcon, FolderIcon, PencilIcon, TerminalIcon, GlobeIcon, WandSparklesIcon, WrenchIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { DesktopAgentView } from './DesktopApp'
-import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
+import { holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { useDesktopDialogControl, useDesktopPanelCloseGuard, type DesktopDialogControl, type RegisterDesktopPanelCloseGuard } from '@/lib/desktop/use-dialog-control'
 import { useDesktopLocale } from './DesktopLocale'
 
 async function requestTools(url: string, init: RequestInit): Promise<CoworkerTools> {
@@ -47,7 +48,7 @@ function CapabilityCard({ agentId, group, row, saving, toggle }: { agentId: stri
                 {row.unavailableReason && <p className="mt-1">{row.unavailableReason}</p>}
             </div>
         </div>
-        {group === 'rerun' && row.id === 'callAgent' && row.enabled && <DesktopCoworkerCallTargets key={agentId} agentId={agentId} />}
+        {group === 'rerun' && row.id === 'callAgent' && row.enabled && <DesktopCoworkerCallTargets key={agentId} agentId={agentId} disabled={saving} />}
     </div>
 }
 
@@ -104,11 +105,21 @@ function ToolSections({ agentId, tools, unavailable = false, saving, toggle }: {
     })
 }
 
-function ToolsPanel({ agent, saving, setSaving }: { agent: DesktopAgentView; saving: boolean; setSaving: (value: boolean) => void }) {
+export function DesktopCoworkerToolsBody({ agent, disabled = false, registerCloseGuard, onDone }: {
+    agent: DesktopAgentView
+    disabled?: boolean
+    registerCloseGuard: RegisterDesktopPanelCloseGuard
+    onDone?: () => void
+}) {
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/tools`
     const [tools, setTools] = useState<CoworkerTools | null>(null)
     const [error, setError] = useState('')
     const [attempt, setAttempt] = useState(0)
+    const [saving, setSaving] = useState(false)
+    const savingNow = useRef(false)
+    useLayoutEffect(() => registerCloseGuard(close => {
+        if (!savingNow.current) close()
+    }), [registerCloseGuard])
 
     useEffect(() => {
         const controller = new AbortController()
@@ -121,22 +132,30 @@ function ToolsPanel({ agent, saving, setSaving }: { agent: DesktopAgentView; sav
     }, [url, attempt])
 
     async function toggle(patch: CoworkerToolPatch) {
-        if (saving || !tools) return
+        if (disabled || savingNow.current || !tools || isDesktopQuitting()) return
+        savingNow.current = true
+        const release = holdDraftAdmission()
         setSaving(true)
         setError('')
         try {
             setTools(await requestTools(url, {
-                method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch),
+                method: 'PATCH', signal: AbortSignal.timeout(20_000), headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch),
             }))
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : 'Could not save this permission.')
-        } finally { setSaving(false) }
+        } finally {
+            savingNow.current = false
+            setSaving(false)
+            release()
+        }
     }
 
     const unavailableCount = tools ? [...tools.rerun, ...tools.codex].filter(row => !row.available && !row.enabled).length : 0
-    return <PanelScroller className="space-y-4 px-1">
-        {tools ? <>
-            <ToolSections agentId={agent.id} tools={tools} saving={saving} toggle={toggle} />
+    const description = <>Choose what {agent.name} can do. Tool results, including file contents, may be sent to the selected model.</>
+    const content = <PanelScroller className="space-y-4 px-1">
+        {!onDone && <p className="text-xs text-muted-foreground">{description}</p>}
+        {tools ? <fieldset disabled={saving || disabled} className="min-w-0 space-y-4">
+            <ToolSections agentId={agent.id} tools={tools} saving={saving || disabled} toggle={toggle} />
             {unavailableCount > 0 && <Collapsible>
                 <CollapsibleTrigger asChild>
                     <Button type="button" variant="ghost" className="group w-full justify-between">
@@ -145,27 +164,35 @@ function ToolsPanel({ agent, saving, setSaving }: { agent: DesktopAgentView; sav
                     </Button>
                 </CollapsibleTrigger>
                 <CollapsibleContent className="mt-2 space-y-4">
-                    <ToolSections agentId={agent.id} tools={tools} unavailable saving={saving} toggle={toggle} />
+                    <ToolSections agentId={agent.id} tools={tools} unavailable saving={saving || disabled} toggle={toggle} />
                 </CollapsibleContent>
             </Collapsible>}
-        </> : !error && <FxToolsLoading />}
+        </fieldset> : !error && <FxToolsLoading />}
         {error && <div role="alert" className="space-y-2 text-sm text-destructive">{error}
             {!tools && <Button type="button" variant="outline" size="sm" onClick={() => { setError(''); setAttempt(n => n + 1) }}>Retry</Button>}
         </div>}
     </PanelScroller>
+    if (!onDone) return content
+    return <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-2xl" showCloseButton={!saving}
+        onEscapeKeyDown={event => { if (savingNow.current) event.preventDefault() }}
+        onInteractOutside={event => { if (savingNow.current) event.preventDefault() }}>
+        <DialogHeader>
+            <DialogTitle>Tools</DialogTitle>
+            <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        {content}
+        <DialogFooter><Button type="button" disabled={saving} onClick={onDone}>Done</Button></DialogFooter>
+    </DialogContent>
 }
 
 export function DesktopCoworkerTools({ agent, dialogControl }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl }) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
-    const [saving, setSaving] = useState(false)
-    return <Dialog open={open} onOpenChange={next => { if (!saving) setOpen(next) }} asSheet={false}>
+    const { register, requestClose } = useDesktopPanelCloseGuard()
+    return <Dialog open={open} onOpenChange={next => {
+        if (next) setOpen(true)
+        else requestClose(() => setOpen(false))
+    }} asSheet={false}>
         <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Tools</Button></DialogTrigger>
-        {open && <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-2xl" showCloseButton={!saving}>
-            <DialogHeader><DialogTitle>Tools</DialogTitle>
-                <DialogDescription>Choose what {agent.name} can do. Tool results, including file contents, may be sent to the selected model.</DialogDescription>
-            </DialogHeader>
-            <ToolsPanel key={agent.id} agent={agent} saving={saving} setSaving={setSaving} />
-            <DialogFooter><DialogClose asChild><Button type="button" disabled={saving}>Done</Button></DialogClose></DialogFooter>
-        </DialogContent>}
+        {open && <DesktopCoworkerToolsBody key={agent.id} agent={agent} registerCloseGuard={register} onDone={() => setOpen(false)} />}
     </Dialog>
 }

@@ -73,20 +73,9 @@ export function shownDesktopOverviewTab(tab: DesktopOverviewTab, visibility: Des
 export const DESKTOP_OVERVIEW_MANAGE_REASON = 'Only an admin or a manager of this Box can change this'
 export const DESKTOP_OVERVIEW_PUBLISHED_UNAVAILABLE = 'Published is not available on this Mac. Nothing was opened.'
 
-export const DESKTOP_OVERVIEW_IN_PLACE_TABS = ['services', 'mcp', 'skills', 'scheduled', 'triggers', 'monitoring', 'logs', 'data', 'files', 'memories', 'setup'] as const
+export const DESKTOP_OVERVIEW_IN_PLACE_TABS = ['services', 'mcp', 'skills', 'scheduled', 'triggers', 'monitoring', 'logs', 'data', 'files', 'memories', 'settings', 'tools', 'setup'] as const
 export type DesktopOverviewInPlaceTab = (typeof DESKTOP_OVERVIEW_IN_PLACE_TABS)[number]
-
-export const DESKTOP_OVERVIEW_ACCEPTED_PANEL_TABS = ['settings', 'tools'] as const
-export type DesktopOverviewAcceptedPanelTab = (typeof DESKTOP_OVERVIEW_ACCEPTED_PANEL_TABS)[number]
 
 export function desktopOverviewServicesDot(servicesNeedConfig: boolean | null) {
     return servicesNeedConfig === true
-}
-
-export function isDesktopOverviewAcceptedPanel(tab: DesktopOverviewTab): tab is DesktopOverviewAcceptedPanelTab {
-    return (DESKTOP_OVERVIEW_ACCEPTED_PANEL_TABS as readonly string[]).includes(tab)
-}
-
-export function desktopOverviewAcceptedPanelMessage(tab: DesktopOverviewAcceptedPanelTab) {
-    return `${desktopOverviewTabLabel(tab)} stays in its accepted panel. This overview does not open a second copy.`
 }

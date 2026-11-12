@@ -16,8 +16,8 @@ let host: HTMLDivElement | undefined
 afterEach(async () => { await act(async () => root?.unmount()); host?.remove(); root = undefined })
 function fixture() {
     const identity = { ownerId: 'profile-current', workspaceId: 7, agentId: 'agent-a' }
-    const authority: DesktopConversationOverviewAuthority = { identity, boxes: [{ id: 'box-real', name: 'Actual Box' }], canManage: true, onRenamed: vi.fn() }
-    const props = { authority, agent: { id: 'agent-a', name: 'A', spaceId: 'box-real' } as DesktopCoworkerOverviewRootMountProps['agent'], active: true, working: false, settingsDisabledReason: null, onClose: vi.fn(), onOpenSession: vi.fn(), onOpenAcceptedPanel: vi.fn() }
+    const authority: DesktopConversationOverviewAuthority = { identity, boxes: [{ id: 'box-real', name: 'Actual Box' }], canManage: true, onRenamed: vi.fn(), onRename: vi.fn(async () => {}) }
+    const props = { authority, agent: { id: 'agent-a', name: 'A', spaceId: 'box-real' } as DesktopCoworkerOverviewRootMountProps['agent'], active: true, working: false, settingsDisabledReason: null, onClose: vi.fn(), onOpenSession: vi.fn() }
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
     return props
 }
@@ -32,8 +32,8 @@ it('passes actual identity/Box without automatic actions and keeps sibling draft
     expect(props.authority.onRenamed).not.toHaveBeenCalled()
     const textarea = host!.querySelector('textarea')!
     textarea.setSelectionRange(3, 8)
-    await act(async () => captured.onOpenAcceptedPanel?.('settings'))
-    expect(props.onOpenAcceptedPanel).toHaveBeenCalledWith('settings')
+    await act(async () => captured.onRename?.(props.authority.identity, 'New name'))
+    expect(props.authority.onRename).toHaveBeenCalledWith(props.authority.identity, 'New name')
     await act(async () => root!.render(render(false)))
     expect(host!.querySelector('textarea')).toBe(textarea)
     expect(textarea.value).toBe('Unsent **Markdown**')
@@ -54,8 +54,8 @@ it('refuses callbacks captured by an old owner, inactive tab or unmounted overla
     expect(props.onClose).not.toHaveBeenCalled()
     const last = captured
     await act(async () => root!.render(null))
-    last.onOpenAcceptedPanel?.('tools')
-    expect(props.onOpenAcceptedPanel).not.toHaveBeenCalled()
+    await expect(last.onRename?.(props.authority.identity, 'Late name')).rejects.toThrow('owner is unavailable')
+    expect(props.authority.onRename).not.toHaveBeenCalled()
 })
 
 it('refuses a mismatched coworker before mounting any panel', async () => {

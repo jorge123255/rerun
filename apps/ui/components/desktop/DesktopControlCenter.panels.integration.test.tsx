@@ -148,6 +148,9 @@ function fixture(runStatus?: (sessionId: string, method: 'GET' | 'POST') => Prom
     const contentWrites: string[] = []
     const voiceAudioReads: string[] = []
     const managementWrites: { agentId: string; method: string; body: unknown }[] = []
+    const settingsEdits = new Map<string, Record<string, unknown>>()
+    const workspaceRead = new Map<string, boolean>()
+
     const sessions = (agentId: string) => layouts.get(agentId)!.tabs.map(tab => ({
         id: tab.id!, agentId, title: tab.title, createdAt: date, updatedAt: date,
     }))
@@ -249,9 +252,23 @@ function fixture(runStatus?: (sessionId: string, method: 'GET' | 'POST') => Prom
                     return Response.json({ path, content: `# ${agent.name} private file`, size: 32, truncated: false })
                 }
                 if (route === 'memories') return Response.json({ memories: [{ id: `${agentId}-note`, content: `${agent.name} private memory`, kind: 'fact', tags: [], createdAt: date, strength: 1, status: 'active' }] })
-                if (route === 'tools') return Response.json({ rerun: [{ id: 'workspaceRead', label: `${agent.name} file access`, description: 'Read own workspace files', tools: ['fs_read'], enabled: false, available: true }], codex: [] })
+                if (route === 'tools') {
+                    if (productionBoard && method === 'PATCH') {
+                        const patch = JSON.parse(String(init?.body))
+                        expect(patch).toEqual({ group: 'rerun', id: 'workspaceRead', enabled: true })
+                        workspaceRead.set(agentId, patch.enabled)
+                    }
+                    return Response.json({ rerun: [{ id: 'workspaceRead', label: agent.name + ' file access', description: 'Read own workspace files', tools: ['fs_read'], enabled: workspaceRead.get(agentId) ?? false, available: true }], codex: [] })
+                }
                 if (route === 'monitoring') return Response.json({ agentId, range: url.searchParams.get('range'), runs: [], errorRate: [], runsByStatus: [], runsByModel: [], totalTokens: null, cost: null, avgDuration: [], toolCalls: [], toolErrors: [] })
-                if (route === 'settings') return Response.json({ soul: `${agent.name} private instructions`, verbosity: 'normal', soulEditable: true, workspaceReadEnabled: false, suggestedReplies: false, memoryEnabled: false, autoMemory: false, selfImprovementEnabled: true })
+                if (route === 'settings') {
+                    if (productionBoard && method === 'PATCH') {
+                        const patch = JSON.parse(String(init?.body))
+                        expect(patch).toEqual({ verbosity: 'concise' })
+                        settingsEdits.set(agentId, { ...settingsEdits.get(agentId), ...patch })
+                    }
+                    return Response.json({ soul: agent.name + ' private instructions', verbosity: 'normal', soulEditable: true, workspaceReadEnabled: false, suggestedReplies: false, memoryEnabled: false, autoMemory: false, selfImprovementEnabled: true, ...settingsEdits.get(agentId) })
+                }
             }
         }
         if (url.pathname === `/api/desktop/coworkers/${reviewer.id}/voice` && method === 'GET' && url.searchParams.get('view') === 'audio') {
@@ -1244,4 +1261,43 @@ test('the inline Knowledge and Control Center Memories forms have separate input
     expect([...inline.labels ?? []].map(label => label.textContent)).toEqual(['Content'])
     expect(inline.value).toBe('Draft in the side panel')
     expect(modal.value).toBe('')
+})
+
+test('edits General and Capabilities inline for the selected board coworker', async () => {
+    const app = fixture(undefined, true)
+    const mounted = await app.mount()
+    const input = await openBoardChat(mounted.container)
+    await enter(input, 'Draft beside Settings')
+    await click('Coworker card', mounted.container)
+    const details = await until(() => mounted.container.querySelector<HTMLElement>('section[aria-label="Coworker details"]:not([hidden])'))
+    await until(() => details.querySelector<HTMLButtonElement>('[data-overview-focus="settings"] button:not([disabled])'))
+    await click('Settings', details)
+    await until(() => details.textContent?.includes('Reply length'))
+    expect(panelDialog('Edit coworker')).toBeUndefined()
+    const tabs = details.querySelector<HTMLElement>('[data-overview-tabs]')!
+    await click('Concise', details)
+    await click('Capabilities', tabs)
+    const discard = await until(() => document.querySelector<HTMLElement>('[role="alertdialog"]'))
+    expect(discard.textContent).toContain('Discard settings changes?')
+    await click('Keep editing', discard)
+    expect(details.querySelector('[aria-label="Concise"]')?.getAttribute('aria-pressed')).toBe('true')
+    await click('Save changes', details)
+    await until(() => details.querySelector<HTMLButtonElement>('button[type="submit"][disabled]'))
+    await click('Capabilities', tabs)
+    await until(() => details.textContent?.includes('Reviewer file access'))
+    expect(panelDialog('Tools')).toBeUndefined()
+    const permission = details.querySelector<HTMLButtonElement>('[role="switch"]')!
+    expect(permission.getAttribute('aria-checked')).toBe('false')
+    await act(async () => { permission.click() })
+    expect(permission.getAttribute('aria-checked')).toBe('true')
+    await click('General', tabs)
+    await until(() => details.querySelector('[aria-label="Concise"][aria-pressed="true"]'))
+    await backToOverview(details, 'Reviewer')
+    await click('Close the card', details)
+    expect(composer()).toBe(input)
+    expect(input.value).toBe('Draft beside Settings')
+    expect(app.contentWrites).toEqual([
+        'PATCH /api/desktop/agents/' + reviewer.id + '/settings',
+        'PATCH /api/desktop/agents/' + reviewer.id + '/tools',
+    ])
 })

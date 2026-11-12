@@ -5,7 +5,7 @@ import { AgentViewExpander, measureCardOrigin, type CardOrigin } from '@/compone
 import { resolveDesktopOverviewBox } from '@/lib/desktop/coworker-overview/box'
 import { desktopOverviewIdentityKey, validDesktopOverviewIdentity, type DesktopOverviewIdentity } from '@/lib/desktop/coworker-overview/identity'
 import { closedDesktopOverview, openDesktopOverviewDestination, selectDesktopOverviewTab, type DesktopOverviewControl } from '@/lib/desktop/coworker-overview/navigation'
-import { desktopOverviewServicesDot, shownDesktopOverviewTab, type DesktopOverviewDestination, type DesktopOverviewAcceptedPanelTab, type DesktopOverviewTab, type DesktopOverviewVisibility } from '@/lib/desktop/coworker-overview/sections'
+import { desktopOverviewServicesDot, shownDesktopOverviewTab, type DesktopOverviewDestination, type DesktopOverviewTab, type DesktopOverviewVisibility } from '@/lib/desktop/coworker-overview/sections'
 import { useDesktopPanelCloseGuard, type DesktopPanelCloseControl, type RegisterDesktopPanelCloseGuard } from '@/lib/desktop/use-dialog-control'
 import { AnimatePresence } from 'motion/react'
 import { useEffect, useState, type ReactNode } from 'react'
@@ -17,7 +17,7 @@ const SHAPE: Record<DesktopOverviewDestination, CardDestinationShape> = {
     services: 'tile', skills: 'tile', memories: 'tile', scheduled: 'tile', files: 'row', data: 'row', monitoring: 'button', settings: 'button',
 }
 
-export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor = false, publishedAccess = false, canManage = null, phase = 'ready', error, servicesNeedConfig = null, needsMachineReason = null, settingsDisabledReason = null, computerEnabled = false, computer = { status: 'closed' }, working = false, mood = 'idle', loadingSlot, onClose, onShare, onDelete, onOpenComputer, onRenamed, onOpenAcceptedPanel, closeControl, renderTab }: {
+export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor = false, publishedAccess = false, canManage = null, phase = 'ready', error, servicesNeedConfig = null, needsMachineReason = null, settingsDisabledReason = null, computerEnabled = false, computer = { status: 'closed' }, working = false, mood = 'idle', loadingSlot, onClose, onShare, onDelete, onOpenComputer, onRenamed, closeControl, renderTab }: {
     identity: DesktopOverviewIdentity
     agent: { id: string; name: string; enabled?: boolean; spaceId?: string }
     boxes: readonly { id: string; name: string }[] | null
@@ -39,7 +39,6 @@ export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor 
     onDelete?: (identity: DesktopOverviewIdentity, confirmationName: string) => void | Promise<void>
     onOpenComputer?: () => void
     onRenamed: (identity: DesktopOverviewIdentity, name: string) => void
-    onOpenAcceptedPanel?: (tab: DesktopOverviewAcceptedPanelTab) => void
     closeControl?: DesktopPanelCloseControl
     renderTab?: (tab: DesktopOverviewTab, registerCloseGuard: RegisterDesktopPanelCloseGuard) => ReactNode
 }) {
@@ -76,7 +75,7 @@ export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor 
     const screen = tab && (
             <DesktopCoworkerOverviewScreen agentId={agent.id} name={agent.name} mood={enabled ? mood : 'asleep'} tab={tab} visibility={visibility} servicesNeedConfig={desktopOverviewServicesDot(servicesNeedConfig)} onTab={next => {
                 if (next !== tab) requestClose(() => setNavigation(current => current.tab ? selectDesktopOverviewTab(current.tab, next, visibility) : current))
-            }} onBack={() => requestClose(returnToCard)} onClose={() => requestClose(onClose)} onOpenAcceptedPanel={onOpenAcceptedPanel}>
+            }} onBack={() => requestClose(returnToCard)} onClose={() => requestClose(onClose)}>
             {renderTab?.(tab, register)}
         </DesktopCoworkerOverviewScreen>
     )
