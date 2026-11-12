@@ -1,11 +1,16 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
 import { hashText } from '@/lib/files/editable'
 import type { FileCodeMirrorProps } from '@/components/files/FileCodeMirror'
 import { DesktopConversation } from './DesktopConversation'
+
+vi.mock('@/components/agent/sheet/AgentViewExpander', async original => ({
+    ...await original<typeof import('@/components/agent/sheet/AgentViewExpander')>(),
+    AgentViewExpander: ({ children }: { children: ReactNode }) => children,
+}))
 
 // Exercise the actual modal and conflict controls without CodeMirror's browser layout engine.
 vi.mock('@/components/files/FileTextEditor', () => ({
@@ -301,4 +306,41 @@ test('native quit stays blocked until a coworker file edit is explicitly saved',
         expect(files.alice).toBe('keep me')
         await act(async () => { expect(await flushDesktopDrafts()).toBe(true) })
     } finally { act(cancelDraftShutdown); act(() => root.unmount()) }
+})
+
+test('the inline Files editor keeps its draft when the overview requests Back or Close', async () => {
+    const files = { alice: 'original' }
+    const { fetcher, puts } = disk(files)
+    vi.stubGlobal('fetch', fetcher)
+    const root = mount()
+    const agent = { ...coworker('alice'), spaceId: 'qa-box' }
+    try {
+        await act(async () => root.render(<DesktopConversation agent={agent} sessionId={null} sessions={[]}
+            onSelectSession={vi.fn()} onChatSession={vi.fn()} overview={{
+                identity: { workspaceId: 1, ownerId: '1', agentId: agent.id },
+                boxes: [{ id: 'qa-box', name: 'QA Box' }],
+                canManage: true,
+                onRenamed: vi.fn(),
+            }} />))
+        await click('Coworker card')
+        const filesTile = document.querySelector<HTMLButtonElement>('[data-overview-focus="files"] button')!
+        await act(async () => { filesTile.click() })
+        await flush()
+        await click('brief.md')
+        await click('Edit')
+        await type('unsaved inline edit')
+
+        await click('Back to the chat')
+        expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('Discard your changes?')
+        await click('Keep editing')
+        expect(document.querySelector<HTMLTextAreaElement>('[data-testid="file-editor"] textarea')?.value).toBe('unsaved inline edit')
+
+        await click('Close panel')
+        expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('Discard your changes?')
+        await click('Discard changes')
+        expect(document.querySelector('[data-testid="file-editor"]')).toBeNull()
+        expect(document.querySelector('[aria-label="Coworker details"]')?.hasAttribute('hidden')).toBe(true)
+        expect(puts).toEqual([])
+        expect(files.alice).toBe('original')
+    } finally { await act(async () => root.unmount()) }
 })

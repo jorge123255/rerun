@@ -25,7 +25,7 @@ import { applyEol, splitEol } from '@/lib/files/editable'
 import { Badge } from '@rerun/ui/primitives'
 import type { DesktopAgentView } from './DesktopApp'
 import { desktopFileDraftHost, holdDraftAdmission } from '@/lib/desktop/draft-writes'
-import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
+import { useDesktopDialogControl, useDesktopPanelCloseGuard, type DesktopDialogControl, type RegisterDesktopPanelCloseGuard } from '@/lib/desktop/use-dialog-control'
 import { useDesktopLocale } from './DesktopLocale'
 
 type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string; exportVersion?: string }
@@ -63,8 +63,6 @@ function RenameField({ name, onSubmit, onCancel }: { name: string; onSubmit: (ne
         }}
         className="h-7 px-2 text-sm" />
 }
-type CloseGuard = (close: () => void) => void
-
 function folderOf(path: string) {
     return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
 }
@@ -80,10 +78,10 @@ async function errorOf(response: Response, fallback: string) {
 }
 
 /** Port of AgentPanelFiles: breadcrumb navigation, sibling files, text/media/PDF previews, and a single .txt/.md import, scoped to one coworker. */
-function FilesPanel({ agent, initialFilePath, registerCloseGuard }: {
+export function DesktopCoworkerFilesBody({ agent, initialFilePath, registerCloseGuard }: {
     agent: DesktopAgentView
     initialFilePath?: string | null
-    registerCloseGuard: (guard: CloseGuard | null) => void
+    registerCloseGuard: RegisterDesktopPanelCloseGuard
 }) {
     const { t } = useDesktopLocale()
     const focusFile = useRef(initialFilePath)
@@ -109,8 +107,7 @@ function FilesPanel({ agent, initialFilePath, registerCloseGuard }: {
     const pending = renamePending || deletePending
     useEffect(() => {
         if (!pending) return
-        registerCloseGuard(() => {})
-        return () => registerCloseGuard(null)
+        return registerCloseGuard(() => {})
     }, [pending, registerCloseGuard])
 
     const list = useCallback(async (path: string, showHidden: boolean) => {
@@ -556,7 +553,7 @@ type SaveResponse = { path: string; hash: string; identity?: string; exportVersi
  * guards the draft, including the Files dialog behind this modal. Overwrite retries against the
  * version shown, so another change still produces a conflict.
  */
-function FileEditor({ base, path, content, hash, identity, initialConflict = null, registerCloseGuard, onClose, onSaved }: { base: string; path: string; content: string; hash: string; identity?: string; initialConflict?: FileConflict | null; registerCloseGuard: (guard: CloseGuard | null) => void; onClose: () => void; onSaved: (content: string, hash: string, identity?: string, exportVersion?: string) => void }) {
+function FileEditor({ base, path, content, hash, identity, initialConflict = null, registerCloseGuard, onClose, onSaved }: { base: string; path: string; content: string; hash: string; identity?: string; initialConflict?: FileConflict | null; registerCloseGuard: RegisterDesktopPanelCloseGuard; onClose: () => void; onSaved: (content: string, hash: string, identity?: string, exportVersion?: string) => void }) {
     const [opened, setOpened] = useState(() => ({ ...splitEol(content), hash, identity }))
     const [draft, setDraft] = useState(opened.text)
     const [saving, setSaving] = useState(false)
@@ -573,8 +570,7 @@ function FileEditor({ base, path, content, hash, identity, initialConflict = nul
     }, [dirty, saving, onClose])
 
     useEffect(() => {
-        registerCloseGuard(requestClose)
-        return () => registerCloseGuard(null)
+        return registerCloseGuard(requestClose)
     }, [registerCloseGuard, requestClose])
 
     const draftHost = desktopFileDraftHost()
@@ -664,11 +660,10 @@ export function DesktopCoworkerFiles({ agent, dialogControl, initialFilePath, on
     onCloseAutoFocus?: (event: Event) => void
 }) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
-    const closeGuard = useRef<CloseGuard | null>(null)
-    const registerCloseGuard = useCallback((guard: CloseGuard | null) => { closeGuard.current = guard }, [])
+    const { register, requestClose } = useDesktopPanelCloseGuard()
     const changeOpen = (next: boolean) => {
-        if (!next && closeGuard.current) closeGuard.current(() => setOpen(false))
-        else setOpen(next)
+        if (next) setOpen(true)
+        else requestClose(() => setOpen(false))
     }
     return <Dialog open={open} onOpenChange={changeOpen} asSheet={false}>
         <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Files</Button></DialogTrigger>
@@ -679,9 +674,9 @@ export function DesktopCoworkerFiles({ agent, dialogControl, initialFilePath, on
         }}>
             <DialogHeader>
                 <DialogTitle>Files</DialogTitle>
-                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import a .txt or .md file. Preview supported images and PDFs, or play audio and video already in the folder.</DialogDescription>
+                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import files and folders. Preview supported images and PDFs, or play audio and video already in the folder.</DialogDescription>
             </DialogHeader>
-            <FilesPanel key={agent.id} agent={agent} initialFilePath={initialFilePath} registerCloseGuard={registerCloseGuard} />
+            <DesktopCoworkerFilesBody key={agent.id} agent={agent} initialFilePath={initialFilePath} registerCloseGuard={register} />
             <DialogFooter><DialogClose asChild><Button type="button">Done</Button></DialogClose></DialogFooter>
         </DialogContent>}
     </Dialog>

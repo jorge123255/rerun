@@ -1,5 +1,6 @@
 'use client'
 
+import { DesktopCoworkerFilesBody } from '@/components/desktop/DesktopCoworkerFiles'
 import { DesktopCoworkerDataBody } from '@/components/desktop/DesktopCoworkerData'
 import { DesktopRunHistoryBody } from '@/components/desktop/DesktopRunHistory'
 import { DesktopCoworkerMonitoringBody } from '@/components/desktop/DesktopCoworkerMonitoringBody'
@@ -13,7 +14,8 @@ import type { DesktopAgentView } from '@/components/desktop/DesktopApp'
 import { decideDesktopOverviewWorkspaceSwitch, type DesktopOverviewFlush, type DesktopOverviewRunBoundary } from '@/lib/desktop/coworker-overview/workspace-switch'
 import type { DesktopOverviewIdentity } from '@/lib/desktop/coworker-overview/identity'
 import type { DesktopOverviewAcceptedPanelTab, DesktopOverviewTab } from '@/lib/desktop/coworker-overview/sections'
-import type { ReactNode } from 'react'
+import type { DesktopPanelCloseGuard, RegisterDesktopPanelCloseGuard } from '@/lib/desktop/use-dialog-control'
+import type { ReactNode, RefObject } from 'react'
 import { DesktopCoworkerOverview } from './DesktopCoworkerOverview'
 import type { DesktopOverviewComputer } from './DesktopCoworkerOverviewComputer'
 
@@ -38,6 +40,7 @@ export type DesktopCoworkerOverviewRootMountProps = {
     onSkillFocusConsumed?: () => void
     onOpenSession?: (sessionId: string, title: string) => void
     onOpenAcceptedPanel?: (tab: DesktopOverviewAcceptedPanelTab) => void
+    closeGuardRef?: RefObject<DesktopPanelCloseGuard | null>
     onClose: () => void
     onShare?: () => void
     onDelete?: (identity: DesktopOverviewIdentity, confirmationName: string) => void | Promise<void>
@@ -71,7 +74,8 @@ export function DesktopCoworkerOverviewRootMount(props: DesktopCoworkerOverviewR
             onOpenComputer={props.onOpenComputer}
             onRenamed={props.onRenamed}
             onOpenAcceptedPanel={props.onOpenAcceptedPanel}
-            renderTab={tab => overviewTab(tab, props)}
+            closeGuardRef={props.closeGuardRef}
+            renderTab={(tab, register) => overviewTab(tab, props, register)}
         />
     )
 }
@@ -87,7 +91,7 @@ export function guardDesktopOverviewWorkspaceSwitch(input: {
     return decideDesktopOverviewWorkspaceSwitch(input)
 }
 
-function overviewTab(tab: DesktopOverviewTab, props: DesktopCoworkerOverviewRootMountProps): ReactNode {
+function overviewTab(tab: DesktopOverviewTab, props: DesktopCoworkerOverviewRootMountProps, register: RegisterDesktopPanelCloseGuard): ReactNode {
     if (tab === 'services') return <DesktopCoworkerServices agentId={props.agent.id} />
     if (tab === 'mcp') return <DesktopCoworkerMcp agentId={props.agent.id} />
     if (tab === 'skills') return <DesktopAgentPanelSkills agentId={props.agent.id} focusSlug={props.focusSlug} onFocusConsumed={props.onSkillFocusConsumed} />
@@ -99,6 +103,9 @@ function overviewTab(tab: DesktopOverviewTab, props: DesktopCoworkerOverviewRoot
         const open = props.onOpenSession
         return <DesktopCoworkerTriggers agentId={props.agent.id} ingressAvailable={false} onOpenSession={chat => { if (props.agent.id === props.identity.agentId && chat.sessionId) open(chat.sessionId, chat.title) }} />
     }
+    if (tab === 'files') return <div className="flex min-h-0 flex-1 flex-col p-3">
+        <DesktopCoworkerFilesBody key={props.agent.id} agent={props.agent} registerCloseGuard={register} />
+    </div>
     if (tab === 'data') return <DesktopCoworkerDataBody key={props.agent.id} agentId={props.agent.id} />
     if (tab === 'logs') return <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
         <DesktopRunHistoryBody key={props.agent.id} agentId={props.agent.id} />

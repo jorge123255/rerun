@@ -87,6 +87,12 @@ async function click(label: string, scope: ParentNode = document) {
     expect(button, label).toBeDefined()
     await act(async () => { button!.click() })
 }
+async function backToOverview(scope: ParentNode, name: string) {
+    const back = [...scope.querySelectorAll<HTMLButtonElement>('button')]
+        .find(button => button.textContent?.trim() === name && !button.closest('[aria-hidden="true"]'))
+    expect(back, name).toBeDefined()
+    await act(async () => { back!.click() })
+}
 async function enter(input: HTMLInputElement | HTMLTextAreaElement, value: string) {
     const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
     await act(async () => {
@@ -1050,10 +1056,13 @@ test('opens the current Box overview from the board and restores the checklist d
     const details = await until(() => restarted.container.querySelector<HTMLElement>('section[aria-label="Coworker details"]:not([hidden])'))
     expect(details.textContent).toContain('Review Box')
     await click('Files', details)
-    await until(() => details.textContent?.includes('Open Files'))
-    await click('Open Files', details)
-    await until(() => panelDialog('Files')?.textContent?.includes('notes.md'))
-    await dismissPanel('Files')
+    await until(() => details.textContent?.includes('notes.md'))
+    expect(panelDialog('Files')).toBeUndefined()
+    await click('notes.md', details)
+    await until(() => details.querySelector('[data-testid="file-preview"]')?.textContent === '# Reviewer private file')
+    await backToOverview(details, 'Reviewer')
+    await until(() => !details.querySelector('[data-testid="file-preview"]'))
+    expect(document.activeElement?.getAttribute('data-overview-focus')).toBe('files')
     await click('Close panel', restarted.container.querySelector('section[aria-label="Coworker chat"] header')!)
     expect(restarted.container.querySelector(`[aria-label="${pill}"]`)).toBeNull()
 
@@ -1145,7 +1154,7 @@ test('opens inline Logs and Database for the selected board coworker while prese
     const logReads = app.panelReads.filter(path => path === listPath)
     await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
     expect(app.panelReads.filter(path => path === listPath)).toEqual(logReads)
-    await click('Reviewer', details)
+    await backToOverview(details, 'Reviewer')
     await click('Database', details)
     await until(() => details.textContent?.includes('Reviewer private row'))
     expect(details.querySelector('button[aria-pressed="true"]')?.textContent).toContain('Saved notes')
