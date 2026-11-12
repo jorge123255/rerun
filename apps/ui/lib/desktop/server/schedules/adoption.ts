@@ -18,15 +18,28 @@ export function scheduleRead<T>(work: Promise<T>, signal?: AbortSignal): Promise
     })
 }
 
+type ScheduleAdoption = { agentId: string; engineAgentId: string } & (
+    | { engineSessionId: string; runId?: string | null; scheduleSlug?: never }
+    | { engineSessionId?: never; runId: string; scheduleSlug: string }
+)
+
 /** Both callback adoption and manual/history adoption use this exact ownership boundary. */
-export async function adoptDesktopScheduledSession(db:Client,engine:EngineConnection,input:{agentId:string;engineAgentId:string;engineSessionId:string;runId?:string|null}, options: { signal?: AbortSignal } = {}) {
+export async function adoptDesktopScheduledSession(db:Client,engine:EngineConnection,input:ScheduleAdoption, options: { signal?: AbortSignal; authorize?: () => Promise<void> } = {}) {
     options.signal?.throwIfAborted()
-    const session=await scheduleRead(getSession(engine,input.engineAgentId,input.engineSessionId,options),options.signal)
-    if(!session || session.id!==input.engineSessionId || session.agentId!==input.engineAgentId || session.source!=='schedule')throw new DesktopHttpError(409,'Not an owned scheduled conversation')
+    let sessionId = input.engineSessionId
     if(input.runId) {
         const run=await scheduleRead(getRun(engine,input.engineAgentId,input.runId,options),options.signal)
-        if(run.id!==input.runId || run.agentId!==input.engineAgentId || run.sessionId!==session.id || run.triggerSource!=='schedule')throw new DesktopHttpError(409,'Run belongs to another conversation')
+        if (run.id !== input.runId || run.agentId !== input.engineAgentId || run.triggerSource !== 'schedule'
+            || (sessionId !== undefined && run.sessionId !== sessionId)
+            || (input.scheduleSlug !== undefined && run.triggerSlug !== input.scheduleSlug)) {
+            throw new DesktopHttpError(409, 'Run belongs to another scheduled task or conversation')
+        }
+        sessionId = run.sessionId
     }
+    if (!sessionId) throw new DesktopHttpError(409, 'Scheduled conversation is unavailable')
+    const session=await scheduleRead(getSession(engine,input.engineAgentId,sessionId,options),options.signal)
+    if(!session || session.id!==sessionId || session.agentId!==input.engineAgentId || session.source!=='schedule')throw new DesktopHttpError(409,'Not an owned scheduled conversation')
+    if (options.authorize) await scheduleRead(options.authorize(), options.signal)
     options.signal?.throwIfAborted()
     return scheduleRead(withRosterWrite(async()=>{
         options.signal?.throwIfAborted()

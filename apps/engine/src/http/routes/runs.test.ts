@@ -178,6 +178,23 @@ describe('GET /agents/:id/runs', () => {
         expect(await listed('?session=buried-session&status=done')).toEqual([])
         expect(await listed('?status=running')).toEqual(['buried'])
     })
+
+    it('filters scheduled runs by owner and slug before applying the limit', async () => {
+        const { client } = await getSystemDb(listAgent)
+        await client.batch([
+            ['daily-older', listAgent, 'schedule', 'daily', '2024-01-01'],
+            ['daily-newer', listAgent, 'schedule', 'daily', '2024-01-02'],
+            ['weekly', listAgent, 'schedule', 'weekly', '2024-01-03'],
+            ['webhook', listAgent, 'trigger', 'daily', '2024-01-04'],
+            ['foreign', 'other-agent', 'schedule', 'daily', '2024-01-05'],
+        ].map(args => ({
+            sql: "INSERT INTO runs (id, agent_id, trigger_source, trigger_slug, started_at, session_id, status) VALUES (?, ?, ?, ?, ?, 'fixture-session', 'done')",
+            args,
+        })))
+        expect(await listed('?schedule=daily&limit=2')).toEqual(['daily-newer', 'daily-older'])
+        expect(await listed('?schedule=weekly')).toEqual(['weekly'])
+        expect((await app.request(`/agents/${listAgent}/runs?schedule=..`)).status).toBe(400)
+    })
 })
 
 describe('GET /agents/:id/runs/:rid', () => {

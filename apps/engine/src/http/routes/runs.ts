@@ -66,7 +66,11 @@ runRoutes.get('/', async c => {
     const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 50
     const sessionId = c.req.query('session') || undefined
     const status = c.req.query('status') || undefined
-    return c.json({ runs: await listRunsByAgent(agentId, { limit, sessionId, status }) })
+    const scheduleSlug = c.req.query('schedule')
+    if (scheduleSlug !== undefined && !/^[a-zA-Z0-9_-]{1,160}$/.test(scheduleSlug)) {
+        return c.json({ error: 'Invalid schedule slug' }, 400)
+    }
+    return c.json({ runs: await listRunsByAgent(agentId, { limit, sessionId, status, scheduleSlug }) })
 })
 
 // The desktop completion store reads through this bounded route: terminal identity and time order

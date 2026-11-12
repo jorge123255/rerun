@@ -1,6 +1,8 @@
 'use client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { EngineSchedule } from '@/lib/engine/types'
+import { engineRunSchema, type EngineSchedule } from '@/lib/engine/types'
+import { z } from 'zod'
+import { RunStatusBadge } from '@rerun/ui/monitoring'
 import type { ConnectionGroup } from '@/lib/engine/model-groups'
 import { desktopModelViewSchema, type DesktopModelView } from '@/lib/desktop/chat-model'
 import { desktopProvider } from '@/lib/desktop/settings'
@@ -28,17 +30,27 @@ import { DesktopTaskNotifyField } from '../DesktopTaskNotifyField'
 
 type Chat={agentId:string;sessionId:string;engineSessionId:string;tabUid:string;title:string;runId:string|null}
 type Task=EngineSchedule & {nextRunAt:string|null;lastResultUnknown?:boolean;lastResult:{status:string;runId:string;chat:Chat}|null}
+const scheduleRuns = z.array(engineRunSchema.pick({ id: true, status: true, startedAt: true }))
 class ScheduleRequestError extends Error {}
+
+async function scheduleRequest(agentId: string, method: string, body?: unknown, query = '', signal?: AbortSignal) {
+    const response = await fetch(`/api/desktop/coworkers/${encodeURIComponent(agentId)}/schedules${query}`, {
+        method, cache: 'no-store', signal,
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+        body: body ? JSON.stringify(body) : undefined,
+    })
+    const result = await response.json()
+    if (!response.ok) throw new ScheduleRequestError(typeof result?.error === 'string' && result.error.trim().length > 0 && result.error.length <= 500 ? result.error : 'Task request failed')
+    return result
+}
+
 export function DesktopCoworkerSchedules(props:{agentId:string;onOpenSession:(chat:Chat)=>void}) {return <Schedules key={props.agentId} {...props}/>}
 function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:Chat)=>void}) {
     const [tasks,setTasks]=useState<Task[]|null>(null),[editing,setEditing]=useState<Task|'new'|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true)
     const [externalChange,setExternalChange]=useState(false)
     const alive=useRef(true),epoch=useRef(0),listEpoch=useRef(0)
     useEffect(()=>{alive.current=true;return()=>{alive.current=false;epoch.current++;listEpoch.current++}},[])
-    const request=useCallback(async(method:string,body?:unknown)=>{
-        const response=await fetch(`/api/desktop/coworkers/${encodeURIComponent(agentId)}/schedules`,{method,cache:'no-store',headers:body ? {'Content-Type':'application/json'} : {},body:body ? JSON.stringify(body) : undefined})
-        const result=await response.json();if(!response.ok)throw new ScheduleRequestError(typeof result?.error==='string' && result.error.trim().length>0 && result.error.length<=500 ? result.error : 'Task request failed');return result
-    },[agentId])
+    const request=useCallback((method:string,body?:unknown)=>scheduleRequest(agentId,method,body),[agentId])
     const load=useCallback(async()=>{
         const own=++listEpoch.current
         setLoading(true)
@@ -58,7 +70,7 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
     async function change(method:string,body:unknown){const own=epoch.current;listEpoch.current++;await request(method,body);if(alive.current && own===epoch.current){navigate(null);await load()}}
     const newButton=<Button size="sm" variant="outline" disabled={loading || Boolean(error) || tasks===null} onClick={()=>{if(!loading && !error && tasks!==null)navigate('new')}}><PlusIcon className="size-3.5 mr-1"/>New</Button>
     return <PanelSteps stepKey={editing ? 'editor' : 'list'} depth={editing ? 1 : 0}>{editing ?
-        <ScheduleEditor stale={externalChange} key={editing==='new'?'new':editing.slug} agentId={agentId} task={editing==='new'?undefined:editing} onBack={()=>navigate(null)}
+        <ScheduleEditor stale={externalChange} key={editing==='new'?'new':editing.slug} agentId={agentId} task={editing==='new'?undefined:editing} onBack={()=>navigate(null)} onOpenSession={onOpenSession}
             onSave={input=>change('PUT',{slug:editing==='new'?undefined:editing.slug,input})}
             onDelete={editing==='new'?undefined:()=>change('DELETE',{slug:editing.slug})}
             onRun={editing==='new'?undefined:async requestId=>{const own=epoch.current;const chat=await request('POST',{slug:editing.slug,action:'run',requestId});if(alive.current && own===epoch.current){onOpenSession(chat);await load()}}}/> :
@@ -73,13 +85,14 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
             <p className="p-3 text-xs text-muted-foreground">Tasks run while Rerun is open. After sleep or reopening, one due occurrence runs. Refresh to see the latest result.</p><Button size="sm" variant="ghost" disabled={loading} onClick={()=>void load()}>Refresh</Button>
         </div>}</PanelSteps>
 }
-function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,stale=false}:{stale?:boolean;agentId:string;task?:Task;onBack:()=>void;onSave:(input:DesktopScheduleInput)=>Promise<void>;onDelete?:()=>Promise<void>;onRun?:(requestId:string)=>Promise<void>}) {
+function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,onOpenSession,stale=false}:{stale?:boolean;agentId:string;task?:Task;onBack:()=>void;onSave:(input:DesktopScheduleInput)=>Promise<void>;onDelete?:()=>Promise<void>;onRun?:(requestId:string)=>Promise<void>;onOpenSession:(chat:Chat)=>void}) {
     const [name,setName]=useState(task?.name ?? ''),[description,setDescription]=useState(task?.description ?? ''),[body,setBody]=useState(task?.body ?? '')
     const [mode,setMode]=useState<'cron'|'runAt'>(task?.runAt ? 'runAt' : 'cron'),[cron,setCron]=useState(task?.cron ?? '0 8 * * *'),[runAt,setRunAt]=useState(task?.runAt ?? '')
     const [timezone,setTimezone]=useState(task?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone),[enabled,setEnabled]=useState(task?.enabled ?? true),[busy,setBusy]=useState(false),[error,setError]=useState('')
     const pending=useRef(false),alive=useRef(true),manual=useRef<string|null>(null)
     const [pick,setPick]=useState<RunModelPick>({connectionId:task?.connectionId ?? null,model:task?.model ?? null})
     const [modelView,setModelView]=useState<DesktopModelView|null>(null),[modelError,setModelError]=useState('')
+    const [historyOpen, setHistoryOpen] = useState(false)
     useEffect(()=>{alive.current=true;return()=>{alive.current=false}},[])
     useEffect(()=>{
         const controller=new AbortController()
@@ -99,7 +112,10 @@ function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,stale=false}:
     const unverifiedPin=!!pick.model&&!modelView
     const incompletePin=!!pick.model&&(!pick.connectionId||!provider)
     async function perform(action:()=>Promise<void>){if(stale || pending.current)return;pending.current=true;setBusy(true);setError('');try{await action()}catch(e){if(alive.current)setError(e instanceof Error?e.message:'Task request failed')}finally{pending.current=false;if(alive.current)setBusy(false)}}
-    return <PanelEditorShell><PanelEditorHeader title={task?'Edit task':'New task'} onBack={busy?undefined:()=>{if(!pending.current)onBack()}}/><PanelEditorBody>
+    if (historyOpen && task) return <ScheduleHistory agentId={agentId} task={task} onBack={() => setHistoryOpen(false)} onOpenSession={onOpenSession} />
+    return <PanelEditorShell><PanelEditorHeader title={task?'Edit task':'New task'} onBack={busy?undefined:()=>{if(!pending.current)onBack()}}>
+        {task && <Button size="sm" variant="ghost" disabled={busy} onClick={() => { if (!pending.current) setHistoryOpen(true) }}>History</Button>}
+    </PanelEditorHeader><PanelEditorBody>
         {stale && <p role="alert" className="text-xs text-destructive">This routine changed while you were editing. Your text is kept here. Go back and reopen the latest task before saving.</p>}
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
         <Field label="Name"><Input aria-label="Name" value={name} onChange={e=>setName(e.target.value)} maxLength={120} disabled={busy}/></Field><Field label="Description"><Input aria-label="Description" value={description} onChange={e=>setDescription(e.target.value)} disabled={busy}/></Field>
@@ -120,4 +136,55 @@ function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,stale=false}:
         {onRun && <Button size="sm" variant="outline" title="Run now" disabled={busy || stale || !task?.enabled || unavailablePin || unverifiedPin || incompletePin} onClick={()=>perform(async()=>{manual.current ??=crypto.randomUUID();await onRun(manual.current);manual.current=null})}>Test Run</Button>}
         <Button size="sm" disabled={busy || stale || !name.trim() || !body.trim() || incompletePin} onClick={()=>perform(()=>onSave({name,description,body,enabled,timezone,cron:mode==='cron'?cron:null,runAt:mode==='runAt'?new Date(runAt).toISOString():null,connectionId:pick.connectionId,provider,model:pick.model}))}>{task?'Save changes':'Create task'}</Button>
     </PanelEditorFooter></PanelEditorShell>
+}
+
+function ScheduleHistory({ agentId, task, onBack, onOpenSession }: { agentId: string; task: Task; onBack: () => void; onOpenSession: (chat: Chat) => void }) {
+    const [runs, setRuns] = useState<z.infer<typeof scheduleRuns> | null>(null)
+    const [error, setError] = useState('')
+    const [opening, setOpening] = useState<string | null>(null)
+    const activeOpen = useRef<AbortController | null>(null)
+    useEffect(() => {
+        const controller = new AbortController()
+        void scheduleRequest(agentId, 'GET', undefined, `?history=${encodeURIComponent(task.slug)}`, controller.signal)
+            .then(data => { if (!controller.signal.aborted) setRuns(scheduleRuns.parse(data)) })
+            .catch(error => {
+                if (!controller.signal.aborted) setError(error instanceof ScheduleRequestError ? error.message : 'Could not load task history')
+            })
+        return () => {
+            controller.abort()
+            activeOpen.current?.abort()
+        }
+    }, [agentId, task.slug])
+
+    async function openRun(runId: string) {
+        if (activeOpen.current) return
+        const controller = new AbortController()
+        activeOpen.current = controller
+        setOpening(runId)
+        setError('')
+        try {
+            const chat: Chat = await scheduleRequest(agentId, 'POST', { action: 'open-run', slug: task.slug, runId }, '', controller.signal)
+            if (!controller.signal.aborted) onOpenSession(chat)
+        } catch (error) {
+            if (!controller.signal.aborted) setError(error instanceof ScheduleRequestError ? error.message : 'Could not open result chat')
+        } finally {
+            activeOpen.current = null
+            if (!controller.signal.aborted) setOpening(null)
+        }
+    }
+
+    return <PanelEditorShell>
+        <PanelEditorHeader title={task.name} onBack={onBack} />
+        {error && <p role="alert" className="p-3 text-xs text-destructive">{error}</p>}
+        {runs === null && !error && <p role="status" className="p-3 text-xs text-muted-foreground">Loading task history…</p>}
+        {runs?.length === 0 && <EmptyState icon={CalendarClockIcon} title="No executions yet" />}
+        {runs && runs.length > 0 && <PanelScroller><PanelList>
+            {runs.map(run => <PanelRow key={run.id}
+                title={run.startedAt ? new Date(run.startedAt).toLocaleString() : 'Time not recorded'}
+                meta={<RunStatusBadge status={run.status} />}
+                actions={<Button size="sm" variant="ghost" loading={opening === run.id} disabled={opening !== null}
+                    onClick={() => void openRun(run.id)}>Open result chat</Button>}
+            />)}
+        </PanelList></PanelScroller>}
+    </PanelEditorShell>
 }

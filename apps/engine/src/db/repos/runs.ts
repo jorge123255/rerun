@@ -45,13 +45,14 @@ export async function getRun(agentId: string, id: string): Promise<RunRow | unde
     return rows[0]
 }
 
-export type RunFilter = { limit?: number; sessionId?: string; status?: string }
+export type RunFilter = { limit?: number; sessionId?: string; status?: string; scheduleSlug?: string }
 
-export async function listRunsByAgent(agentId: string, { limit = 50, sessionId, status }: RunFilter = {}): Promise<RunRow[]> {
+export async function listRunsByAgent(agentId: string, { limit = 50, sessionId, status, scheduleSlug }: RunFilter = {}): Promise<RunRow[]> {
     const { db } = await getSystemDb(agentId)
     const conditions = [eq(runs.agentId, agentId)]
     if (sessionId) conditions.push(eq(runs.sessionId, sessionId))
     if (status) conditions.push(eq(runs.status, status))
+    if (scheduleSlug) conditions.push(eq(runs.triggerSource, 'schedule'), eq(runs.triggerSlug, scheduleSlug))
     return db
         .select()
         .from(runs)

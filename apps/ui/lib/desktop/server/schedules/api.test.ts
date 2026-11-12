@@ -12,6 +12,8 @@ vi.mock('../store', () => ({ findDesktopAgent: vi.fn(async () => ({ id: 'local-o
 vi.mock('@/lib/engine/client', () => engine)
 vi.mock('./adoption', () => ({ adoptDesktopScheduledSession: vi.fn() }))
 import { desktopSchedulesApi, SCHEDULE_BODY_CLEANUP_MS, SCHEDULE_BODY_TIMEOUT_MS } from './api'
+import { DesktopHttpError } from '../auth'
+import { adoptDesktopScheduledSession } from './adoption'
 
 const valid = { input: { name: 'Task', body: 'Read notes', description: '', cron: null, runAt: '2030-01-01T12:00:00Z', timezone: 'UTC', enabled: true } }
 function deferred<T>() {
@@ -37,6 +39,43 @@ test.each([0, 99, 100])('distinguishes a new routine from a truncated run histor
     const response = await handle(new Request('http://localhost/api/desktop/coworkers/local-owner/schedules'))
     expect(response.status).toBe(200)
     expect((await response.json())[0]).toMatchObject({ lastResult: null, lastResultUnknown: count >= 100 })
+})
+
+test('lists only the selected coworker’s scheduled runs and does not adopt while reading', async () => {
+    const run = { id: 'daily-a', agentId: 'engine-owner', triggerSlug: 'daily', triggerSource: 'schedule', status: 'done', startedAt: '2026-11-01' }
+    engine.listRuns.mockResolvedValueOnce([run, { ...run, agentId: 'foreign' }, { ...run, triggerSource: 'trigger' }, { ...run, triggerSlug: 'weekly' }])
+    const request = new Request('http://localhost/schedules?history=daily')
+    const response = await handle(request)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual([{ id: run.id, status: run.status, startedAt: run.startedAt }])
+    expect(engine.listRuns).toHaveBeenCalledWith(expect.anything(), 'engine-owner', { scheduleSlug: 'daily' }, { signal: request.signal })
+    expect(adoptDesktopScheduledSession).not.toHaveBeenCalled()
+})
+
+test('discards history when the schedule grant is revoked during the engine read', async () => {
+    engine.listRuns.mockImplementationOnce(async () => {
+        authorize.mockRejectedValueOnce(new DesktopHttpError(403, 'Schedules disabled'))
+        return []
+    })
+    const response = await handle(new Request('http://localhost/schedules?history=daily'))
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({ error: 'Schedules disabled' })
+})
+
+test('opening a history row resolves the session from the exact run and schedule', async () => {
+    vi.mocked(adoptDesktopScheduledSession).mockResolvedValueOnce({
+        agentId: 'local-owner', engineAgentId: 'engine-owner', sessionId: 'local-session', engineSessionId: 'engine-session',
+        tabUid: 'schedule:local-session', title: 'Daily', runId: 'older',
+    })
+    const request = new Request('http://localhost/schedules', {
+        method: 'POST', body: JSON.stringify({ action: 'open-run', slug: 'daily', runId: 'older', engineSessionId: 'renderer-supplied' }),
+    })
+    const response = await handle(request)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ sessionId: 'local-session', runId: 'older' })
+    expect(adoptDesktopScheduledSession).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+        agentId: 'local-owner', engineAgentId: 'engine-owner', runId: 'older', scheduleSlug: 'daily',
+    }, { signal: request.signal, authorize: expect.any(Function) })
 })
 
 test.each(['abort', 'deadline'] as const)('a stalled schedule body settles after %s even if cancellation never settles', async reason => {

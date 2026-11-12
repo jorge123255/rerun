@@ -855,15 +855,16 @@ export async function requestEngineUpdate(conn: EngineConnection, force = false,
 
 // --- Runs (execution history) ---
 
-export type RunFilter = { limit?: number; sessionId?: string; status?: EngineRun['status'] }
+export type RunFilter = { limit?: number; sessionId?: string; status?: EngineRun['status']; scheduleSlug?: string }
 
-// An engine that predates `session` / `status` ignores them and returns its most recent runs, so
+// An engine that predates a filter ignores it and returns its most recent runs, so
 // callers keep filtering what comes back.
-export async function listRuns(conn: EngineConnection, agentId: string, { limit, sessionId, status }: RunFilter = {}, options: { signal?: AbortSignal } = {}): Promise<EngineRun[]> {
+export async function listRuns(conn: EngineConnection, agentId: string, { limit, sessionId, status, scheduleSlug }: RunFilter = {}, options: { signal?: AbortSignal } = {}): Promise<EngineRun[]> {
     const params = new URLSearchParams()
     if (limit) params.set('limit', String(limit))
     if (sessionId) params.set('session', sessionId)
     if (status) params.set('status', status)
+    if (scheduleSlug) params.set('schedule', scheduleSlug)
     const qs = params.size > 0 ? `?${params}` : ''
     return request(conn, `/agents/${encodeURIComponent(agentId)}/runs${qs}`, { method: 'GET', signal: options.signal }, d => engineRunsListSchema.parse(d).runs)
 }

@@ -19,6 +19,7 @@ const input=z.object({name:z.string().trim().min(1).max(120),description:z.strin
     if(fields.every(field=>field===null)||fields.every(field=>field!==null))return
     ctx.addIssue({code:'custom',message:'Choose a connected provider and model, or follow the coworker default'})
 })
+const scheduleSlug = z.string().regex(/^[a-zA-Z0-9_-]{1,160}$/)
 export type DesktopScheduleInput=z.infer<typeof input>
 export type ScheduleAccess=(engineAgentId:string)=>Promise<void>
 export const SCHEDULE_BODY_TIMEOUT_MS=10_000
@@ -78,23 +79,39 @@ export function desktopSchedulesApi(db:Client,authorize:ScheduleAccess) {
             if(detail.id!==owner.engineAgentId)throw new DesktopHttpError(409,'Coworker identity mismatch')
             let result:unknown
             if(request.method==='GET') {
-                const [schedules,runs]=await Promise.all([listSchedules(engine,owner.engineAgentId),listRuns(engine,owner.engineAgentId,{limit:100})])
-                result=await Promise.all(schedules.map(async schedule=>{
-                    const last=runs.find(run=>run.triggerSource==='schedule' && run.triggerSlug===schedule.slug)
-                    const chat=last ? await adoptDesktopScheduledSession(db,engine,{agentId,engineAgentId:owner.engineAgentId,engineSessionId:last.sessionId,runId:last.id}) : null
-                    return {...schedule,nextRunAt:nextRunAt(schedule,new Date()),lastResult:last ? {status:last.status,runId:last.id,chat} : null,lastResultUnknown:!last && runs.length >= 100}
-                }))
+                const history = new URL(request.url).searchParams.get('history')
+                if (history !== null) {
+                    const slug = scheduleSlug.parse(history)
+                    const runs = await listRuns(engine, owner.engineAgentId, { scheduleSlug: slug }, { signal: request.signal })
+                    await authorize(owner.engineAgentId)
+                    request.signal.throwIfAborted()
+                    result = runs.filter(run => run.agentId === owner.engineAgentId && run.triggerSource === 'schedule' && run.triggerSlug === slug)
+                        .map(({ id, status, startedAt }) => ({ id, status, startedAt }))
+                } else {
+                    const [schedules,runs]=await Promise.all([listSchedules(engine,owner.engineAgentId),listRuns(engine,owner.engineAgentId,{limit:100})])
+                    result=await Promise.all(schedules.map(async schedule=>{
+                        const last=runs.find(run=>run.triggerSource==='schedule' && run.triggerSlug===schedule.slug)
+                        const chat=last ? await adoptDesktopScheduledSession(db,engine,{agentId,engineAgentId:owner.engineAgentId,engineSessionId:last.sessionId,runId:last.id}) : null
+                        return {...schedule,nextRunAt:nextRunAt(schedule,new Date()),lastResult:last ? {status:last.status,runId:last.id,chat} : null,lastResultUnknown:!last && runs.length >= 100}
+                    }))
+                }
             } else {
-                const body=await readScheduleBody(request) as {slug?:unknown;input?:unknown;action?:unknown;requestId?:unknown}
+                const body=await readScheduleBody(request) as {slug?:unknown;input?:unknown;action?:unknown;requestId?:unknown;runId?:unknown}
                 request.signal.throwIfAborted()
                 await authorize(owner.engineAgentId)
                 request.signal.throwIfAborted()
                 if(!body || typeof body!=='object')throw new DesktopHttpError(400,'Invalid schedule request')
-                const slug=body.slug===undefined ? undefined : z.string().regex(/^[a-zA-Z0-9_-]{1,160}$/).parse(body.slug)
+                const slug=body.slug===undefined ? undefined : scheduleSlug.parse(body.slug)
                 if(request.method==='PUT') {
                     const value=input.parse(body.input)
                     result=slug ? await updateSchedule(engine,owner.engineAgentId,slug,value as unknown as Parameters<typeof updateSchedule>[3]) : await createSchedule(engine,owner.engineAgentId,{...value,cron:value.cron ?? undefined,runAt:value.runAt ?? undefined})
                 } else if(request.method==='DELETE' && slug) {await deleteSchedule(engine,owner.engineAgentId,slug);result={deleted:slug}}
+                else if (request.method === 'POST' && slug && body.action === 'open-run') {
+                    const runId = z.string().regex(/^[a-zA-Z0-9_-]{1,160}$/).parse(body.runId)
+                    result = await adoptDesktopScheduledSession(db, engine, { agentId, engineAgentId: owner.engineAgentId, runId, scheduleSlug: slug }, {
+                        signal: request.signal, authorize: () => authorize(owner.engineAgentId),
+                    })
+                }
                 else if(request.method==='POST' && slug && body.action==='run') {
                     const requestId=z.string().uuid().parse(body.requestId)
                     const response=await fetch(`${engine.baseUrl}/agents/${encodeURIComponent(owner.engineAgentId)}/schedules/${encodeURIComponent(slug)}/run`,{method:'POST',headers:{Authorization:`Bearer ${engine.apiKey}`,'x-desktop-schedule-request-id':requestId},signal:AbortSignal.any([request.signal,AbortSignal.timeout(120000)])})

@@ -46,6 +46,38 @@ function deferred() {
     return { promise, resolve }
 }
 
+test('opens the exact older execution and preserves the routine draft when returning from History', async () => {
+    const onOpenSession = vi.fn()
+    const chat = { agentId: 'alice', sessionId: 'saved-old', engineSessionId: 'engine-old', tabUid: 'schedule:saved-old', title: 'Daily report', runId: 'older' }
+    const posts: unknown[] = []
+    respond = async (url, init) => {
+        if (url.endsWith('/model')) return Response.json(modelView)
+        if (url.endsWith('?history=daily')) return Response.json([
+            { id: 'newer', status: 'error', startedAt: '2026-11-01T08:00:00Z' },
+            { id: 'older', status: 'done', startedAt: '2026-10-31T08:00:00Z' },
+        ])
+        if (init?.method === 'POST') { posts.push(JSON.parse(String(init.body))); return Response.json(chat) }
+        return Response.json([task('daily')])
+    }
+    await act(async () => { root.render(<DesktopCoworkerSchedules agentId="alice" onOpenSession={onOpenSession} />) })
+    await act(async () => { row('Saved daily').click() })
+    const name = container.querySelector<HTMLInputElement>('input[aria-label="Name"]')!
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(name, 'Unsaved name')
+        name.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { button('History').click() })
+    expect(container.textContent).toContain('Error')
+    expect(container.textContent).toContain('Done')
+    const results = [...container.querySelectorAll('button')].filter(node => node.textContent?.trim() === 'Open result chat')
+    expect(results).toHaveLength(2)
+    await act(async () => { results[1].click() })
+    expect(posts).toEqual([{ action: 'open-run', slug: 'daily', runId: 'older' }])
+    expect(onOpenSession).toHaveBeenCalledWith(chat)
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click() })
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="Name"]')?.value).toBe('Unsaved name')
+})
+
 test('a denied initial read preserves the Capabilities guidance without claiming zero tasks, and Refresh recovers', async () => {
     respond = async () => Response.json({ error: grantMessage }, { status: 403 })
     await render()
