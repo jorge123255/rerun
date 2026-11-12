@@ -12,7 +12,7 @@ export type ForemanWorkspaceReadContext = {
 
 export type ForemanWorkspaceReadPorts = {
     grant(workspaceId: string): Promise<boolean>
-    snapshot(workspaceId: string): Promise<ForemanWorkspaceSnapshot>
+    snapshot(binding: DesktopForemanBinding, signal: AbortSignal): Promise<ForemanWorkspaceSnapshot>
     directory: Pick<DesktopTeamDirectory, 'members' | 'lookup'>
     schedules(engineAgentId: string): Promise<DesktopTeamReadAck<ForemanWorkspaceScheduleRow[]>>
     triggers(engineAgentId: string): Promise<DesktopTeamReadAck<ForemanWorkspaceTriggerRow[]>>

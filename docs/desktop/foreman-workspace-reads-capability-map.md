@@ -84,14 +84,14 @@ Offline-read column values: `yes`, `needs new grant`, `needs remote service`, `n
 
 `write_memory` (`account-tools.ts:237`) is on the account catalog and is not on `FOREMAN_MCP_TOOL_NAMES`. It is not a Foreman belt tool.
 
-## Available through a gated adapter
+## Mounted desktop workspace reads
 
-Four read-only tool definitions. If an explicitly authorized production adapter is bound through `bindForemanWorkspaceReads`, they are merged inside `desktopForemanTools` before `registerDesktopForemanTools` only when that call's grant check returns true. Names: `list_spaces`, `list_agents`, `list_schedules`, `list_triggers`. A grant that is false hides them. A grant that flips to false after they are on the belt is refused again inside each execute.
+Desktop engine startup binds four read-only tools through `bindForemanWorkspaceReads`: `list_spaces`, `list_agents`, `list_schedules`, and `list_triggers`. Chief of Staff → Permissions → Read workspace metadata starts off and saves separately from other permissions. The grant is checked before a turn receives these tools and checked again during execution, so revocation also applies to a tool already admitted into a turn.
 
 Authority, re-checked on every call:
 
-- `foremanWorkspaceReadRuntimeMatches` checks runtime identity only. It does not authorize access. An independent, explicit workspace-read grant is required before mounting the adapter. The function re-reads the desktop runtime. The binding workspace id must match `runtime.workspaceId` on both reads, with the same launch nonce. A missing runtime, a mismatch, or a nonce change is a refusal.
-- `readForemanWorkspaceSnapshot` calls `readDesktopBoardState` and `listDesktopAgents` (no second SQL). A revision change between those reads is `uncertain` and is not served.
+- The engine checks the saved grant and calls the authenticated Foreman bridge with the exact workspace, launch, chat, run, and model. The app verifies the live run before and after reading the snapshot, and independently checks the engine’s grant. A stopped run, missing grant, frozen workspace, or stale launch is refused.
+- `readForemanWorkspaceSnapshot` uses the same transactional roster and board snapshot as the desktop app. The tool compares fresh snapshots against the roster directory and rejects changed metadata.
 - Roster membership for routines is `desktopTeamDirectory` queried with the in-file catalog id (`1`), never with a model-supplied path. Schedule and trigger bodies go through `desktopTeamScheduleView` and `desktopTeamTriggerView`.
 - The tool refuses when the caller pins a board `revision` that is not the one just read. It also refuses when the two snapshots in the call disagree.
 - Result cap is 50 rows. Text is scrubbed for bearer tokens, secret query params, and absolute paths. Engine ids, webhook URLs, tokens, and file paths are not fields on the result.

@@ -60,8 +60,8 @@ export function foremanWorkspaceFingerprint(snapshot: ReadySnapshot): string {
         revision: snapshot.revision,
         workspaceId: snapshot.workspaceId,
         catalogWorkspaceId: snapshot.catalogWorkspaceId,
-        boxes: snapshot.boxes.map(box => box.id),
-        roster: snapshot.roster.map(row => row.id),
+        boxes: snapshot.boxes,
+        roster: snapshot.roster,
         foreignIds: [...snapshot.foreignIds].sort(),
     })
 }

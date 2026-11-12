@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { DesktopForemanChatRef } from '@rerun/contracts'
-import { FileTextIcon, PencilIcon, WorkflowIcon, MessageSquareIcon, ShieldCheckIcon } from 'lucide-react'
+import { FileTextIcon, PencilIcon, WorkflowIcon, MessageSquareIcon, ShieldCheckIcon, LayoutGridIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { SETTINGS_CARD, SettingsSection, SwitchRow } from '@/components/notifications/settings/SettingsSection'
@@ -64,6 +64,9 @@ export function DesktopForemanFilePermissions({ chat, disabled = false, onApprov
                     <SwitchRow icon={FileTextIcon} label="Read coworkers’ files" description="Read, list and search saved visible text files." checked={snapshot.grants.foremanAgentFilesRead} disabled={busy || disabled} onChange={enabled => { void change('foremanAgentFilesRead', enabled) }} />
                     <SwitchRow icon={PencilIcon} label="Edit coworkers’ files" description="Create and edit text and Markdown files. This does not turn on read access." checked={snapshot.grants.foremanAgentFilesWrite} disabled={busy || disabled} onChange={enabled => { void change('foremanAgentFilesWrite', enabled) }} />
                 </div></SettingsSection>
+                {snapshot.grants.foremanWorkspaceRead !== undefined && <SettingsSection title="Workspace"><div className={SETTINGS_CARD}>
+                    <SwitchRow icon={LayoutGridIcon} label="Read workspace metadata" description="Read Boxes, coworkers, routines and triggers. Webhook URLs and tokens stay private." checked={snapshot.grants.foremanWorkspaceRead} disabled={busy || disabled} onChange={enabled => { void change('foremanWorkspaceRead', enabled) }} />
+                </div></SettingsSection>}
                 {snapshot.grants.delegate !== undefined && <SettingsSection title="Delegation"><div className={SETTINGS_CARD}>
                     <SwitchRow icon={WorkflowIcon} label="Delegate tasks" description="Run isolated workers that receive only the task and return text." checked={snapshot.grants.delegate} disabled={busy || disabled} onChange={enabled => { void change('delegate', enabled) }} />
                 </div></SettingsSection>}

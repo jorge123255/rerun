@@ -55,3 +55,16 @@ test('action approval requests default off and change only with explicit fresh p
     expect((await f.app.request('/file-permissions', patch({ ...body, enabled: false, expectedGrants: { ...off, requestApproval: true } }))).status).toBe(200)
     expect(f.config().tools.desktopToolGrants).toEqual({ requestApproval: false })
 })
+
+test('workspace metadata is an independent opt-in and requires the exact prior grant', async () => {
+    const f = fixture()
+    const body = { ...context, workspaceId: '1', expectedGrants: off, id: 'foremanWorkspaceRead', enabled: true }
+    expect(await (await f.app.request('/file-permissions')).json()).toMatchObject({ grants: { ...off, foremanWorkspaceRead: false } })
+    expect((await f.app.request('/file-permissions', patch(body))).status).toBe(409)
+    const enabled = await f.app.request('/file-permissions', patch({ ...body, expectedGrants: { ...off, foremanWorkspaceRead: false } }))
+    expect(enabled.status).toBe(200)
+    expect(f.config().tools.desktopToolGrants).toEqual({ foremanWorkspaceRead: true })
+    expect((await f.app.request('/file-permissions', patch({ ...body, enabled: false, expectedGrants: { ...off, foremanWorkspaceRead: false } }))).status).toBe(409)
+    expect((await f.app.request('/file-permissions', patch({ ...body, enabled: false, expectedGrants: { ...off, foremanWorkspaceRead: true } }))).status).toBe(200)
+    expect(f.config().tools.desktopToolGrants).toEqual({ foremanWorkspaceRead: false })
+})

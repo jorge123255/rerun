@@ -43,7 +43,7 @@ test('an existing Foreman profile receives the Chief of Staff name on boot with 
     await ensureForeman()
     const config = await read()
     const model = { connectionId: 'saved-connection', provider: 'openai', model: 'saved-model' }
-    const grants = { foremanAgentFilesRead: true, foremanAgentFilesWrite: false, delegate: true, callAgent: true }
+    const grants = { foremanAgentFilesRead: true, foremanAgentFilesWrite: false, delegate: true, callAgent: true, foremanWorkspaceRead: true }
     await writeFile(join(location.root, 'config.json'), JSON.stringify({
         ...config, ...model, displayName: 'Foreman', tools: { ...config.tools, desktopToolGrants: grants },
     }))

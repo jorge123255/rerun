@@ -6,6 +6,7 @@ import { readDesktopJson } from '@/lib/desktop/server/request-json'
 import { foremanTurn, foremanTurnWire, ownedForemanDispatch } from '@/lib/desktop/server/foreman/chat-store'
 import { desktopForeman } from '@/lib/desktop/server/foreman/binding'
 import { desktopForemanVoice } from '@/lib/desktop/server/foreman-voice/binding'
+import { readGrantedForemanWorkspaceSnapshot } from '@/lib/desktop/server/foreman-workspace-reads'
 import { authorizeForemanAlternate } from '@/lib/desktop/server/foreman-alternates/binding'
 import { materializeDesktopChatDocuments } from '@/lib/desktop/server/document-attachments/chat'
 export const runtime = 'nodejs'
@@ -20,6 +21,7 @@ const schema = z.discriminatedUnion('action', [
     base.extend({ action: z.literal('show_plan'), toolCallId: z.string().min(1).max(256), input: z.unknown() }).strict(),
     base.extend({ action: z.literal('navigate'), eventId: z.string().min(1).max(128), intent: foremanNavigationIntentSchema }).strict(),
     base.extend({ action: z.literal('discover'), url: z.url().max(2048) }).strict(),
+    base.extend({ action: z.literal('workspace_snapshot') }).strict(),
 ])
 export async function POST(request: Request) {
     try {
@@ -50,6 +52,12 @@ export async function POST(request: Request) {
             return Response.json({ binding: record.body.binding, discovery: true })
         }
         if (!await app.isLive(input.binding)) throw new DesktopHttpError(409, 'This Foreman run is no longer current.')
+        if (input.action === 'workspace_snapshot') {
+            const snapshot = await readGrantedForemanWorkspaceSnapshot(runtime, input.binding.workspaceId, request.signal)
+            request.signal.throwIfAborted()
+            if (!await app.isLive(input.binding)) throw new DesktopHttpError(409, 'This Foreman run is no longer current.')
+            return Response.json(snapshot, { headers: { 'cache-control': 'no-store' } })
+        }
         if (input.action === 'show_plan') return Response.json(await app.core.recordShownPlan(input.binding, input.toolCallId, input.input))
         if (input.action === 'navigate') return Response.json(await app.core.emitNavigation(input.binding, input.intent, input.eventId))
         const discovery = await app.core.startDiscovery(input.binding, input.url)

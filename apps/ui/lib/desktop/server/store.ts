@@ -98,7 +98,7 @@ export async function readDesktopBootstrap(db: Client) {
     }
 }
 
-async function readDesktopRosterSnapshot(db: Client) {
+export async function readDesktopRosterSnapshot(db: Client) {
     const tx = await db.transaction('read')
     try {
         // One SQLite snapshot is essential: creating, deleting, or reconciling a

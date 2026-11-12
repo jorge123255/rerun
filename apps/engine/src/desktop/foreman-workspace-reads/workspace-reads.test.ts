@@ -2,14 +2,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FOREMAN_WORKSPACE_READ_MESSAGES as M, FOREMAN_WORKSPACE_READ_ROW_LIMIT } from '@rerun/contracts'
 import type { RunContext } from '../../runtime/context.js'
 import { isDesktopForemanTool, registerDesktopForemanTools } from '../foreman/tool-identity.js'
-import { bindForemanWorkspaceReads, readForemanWorkspaceReads, unbindForemanWorkspaceReads } from './binding.js'
+import { readForemanWorkspaceReads, unbindForemanWorkspaceReads } from './binding.js'
 import { createDesktopForemanWorkspacePorts } from './catalog.js'
 import { createForemanWorkspaceReadTools } from './tools.js'
 import type { ForemanWorkspaceReadContext, ForemanWorkspaceReadPorts } from './ports.js'
 import type { DesktopTeamMember, DesktopTeamReadAck } from '../team-reads/ports.js'
 
-const state = vi.hoisted(() => ({ running: true }))
+const state = vi.hoisted(() => ({ running: true, granted: false }))
 vi.mock('../../agents/registry.js', () => ({ getAgent: async () => ({ id: 'foreman', config: { kind: 'foreman', enabled: true } }) }))
+vi.mock('../../agents/loader.js', async original => ({
+    ...await original<typeof import('../../agents/loader.js')>(),
+    readAgentConfig: async () => ({ kind: 'foreman', enabled: true, tools: { desktopToolGrants: { foremanWorkspaceRead: state.granted } } }),
+}))
+vi.mock('../team-reads/directory.js', () => ({ desktopTeamDirectory: () => harness().directory }))
 vi.mock('../../db/repos/sessions.js', () => ({ getSession: async () => ({ id: 'session', agentId: 'foreman', source: 'dashboard', status: 'open', originAgentId: null, originSessionId: null }) }))
 vi.mock('../../db/repos/runs.js', () => ({ getRun: async () => ({ id: 'run', agentId: 'foreman', sessionId: 'session', status: state.running ? 'running' : 'cancelled' }) }))
 
@@ -210,32 +215,40 @@ const runtime = { launchNonce: '00000000-0000-4000-8000-000000000001', app: { or
 let stop: (() => void) | undefined
 
 describe('foreman tool registry', () => {
-    afterEach(() => { stop?.(); stop = undefined; unbindForemanWorkspaceReads(); vi.unstubAllEnvs() })
+    afterEach(() => { stop?.(); stop = undefined; state.granted = false; unbindForemanWorkspaceReads(); vi.unstubAllEnvs() })
 
-    it('keeps workspace reads off the belt until root binds them, then admits only the Foreman', async () => {
+    it('mounts workspace reads behind the persisted grant and rechecks it for an already-admitted tool', async () => {
         vi.stubEnv('RERUN_DESKTOP_APP', '1')
         const live = { ...binding, runId: 'run' }
-        const network = vi.fn(async () => Response.json({ binding: live, discovery: false })) as typeof fetch
+        const network = vi.fn<typeof fetch>(async (_url, init) => {
+            const body = JSON.parse(String(init?.body))
+            if (body.action === 'binding') return Response.json({ binding: live, discovery: false })
+            expect(body).toEqual({ action: 'workspace_snapshot', launchNonce: runtime.launchNonce, binding: live })
+            return Response.json(snapshot())
+        })
         stop = bindDesktopForeman(runtime, network).close
-        const context = () => ({ agent: { id: 'foreman', config: { kind: 'foreman', enabled: true, tools: { cards: false } }, resolved: { connection: { id: 'conn-1' }, model: 'model-a' } }, sessionId: 'session', runId: 'run', model: 'model-a', abortSignal: new AbortController().signal }) as unknown as RunContext
+        const context = (foremanWorkspaceRead = false) => ({ agent: { id: 'foreman',
+            config: { kind: 'foreman', enabled: true, tools: { cards: false, desktopToolGrants: { foremanWorkspaceRead } } },
+            resolved: { connection: { id: 'conn-1' }, model: 'model-a' },
+        }, sessionId: 'session', runId: 'run', model: 'model-a', abortSignal: new AbortController().signal }) as unknown as RunContext
         const before = await desktopForemanTools(context())
         expect(Object.keys(before.tools)).not.toContain('list_spaces')
-        const { ports } = harness()
-        bindForemanWorkspaceReads(ports)
         expect(readForemanWorkspaceReads()).toBeTruthy()
-        const after = await desktopForemanTools(context())
+        state.granted = true
+        expect((await desktopForemanTools(context())).tools.list_spaces).toBeUndefined()
+        const after = await desktopForemanTools(context(true))
         expect(Object.keys(after.tools)).toEqual(expect.arrayContaining(['show_plan', 'open_panel', 'search_docs', 'ask_user', 'list_spaces', 'list_agents', 'list_schedules', 'list_triggers']))
         for (const absent of ['agent_files_read', 'team_status', 'skill_list', 'db_query', 'fs_read']) expect(Object.keys(after.tools)).not.toContain(absent)
         expect(isDesktopForemanTool(after.tools.list_spaces, 'list_spaces', 'foreman', 'foreman')).toBe(true)
         expect(isDesktopForemanTool(after.tools.list_agents, 'list_agents', 'other', 'foreman')).toBe(false)
         expect(isDesktopForemanTool(after.tools.list_schedules, 'list_schedules', 'foreman', 'coworker')).toBe(false)
-        unbindForemanWorkspaceReads()
-        bindForemanWorkspaceReads({ ...ports, grant: async () => false })
-        const hidden = await desktopForemanTools(context())
-        expect(Object.keys(hidden.tools)).not.toContain('list_spaces')
-        bindForemanWorkspaceReads(ports)
-        const restored = await desktopForemanTools(context())
-        const listed = await restored.tools.list_spaces!.execute!({} as never, { toolCallId: 'call-9', messages: [] })
+        const read = () => after.tools.list_spaces!.execute!({} as never, { toolCallId: 'call-9', messages: [] })
+        const listed = await read()
         expect(listed).toMatchObject({ revision: 4, spaces: [{ id: 'box-1', name: 'Studio', agentCount: 1 }] })
+        state.granted = false
+        const calls = network.mock.calls.length
+        await expect(read()).rejects.toThrow(M.refused)
+        expect(network).toHaveBeenCalledTimes(calls)
+        expect((await desktopForemanTools(context(true))).tools.list_spaces).toBeUndefined()
     })
 })
