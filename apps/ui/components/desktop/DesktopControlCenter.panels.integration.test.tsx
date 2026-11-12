@@ -493,6 +493,65 @@ test('reopens saved coworker Markdown from the board and keeps prompt dialogs an
     await verifyFile(restoredGuide)
 })
 
+test('reopens recorded answers and approval decisions as cards only in their owning chat', async () => {
+    const first = reviewer.id + '-first'
+    const rawAnswer = 'Here are my answers:\n\n**Which report?**\nQuarterly report'
+    const rawDecision = 'Here are my approval decisions:\n\n1. **APPROVED** — Review draft'
+    const app = fixture(undefined, true, undefined, id => id !== first ? [
+        { id: 'engine-sibling-copy', role: 'user', parts: [{ type: 'text', text: rawAnswer }] },
+    ] : [
+        { id: 'engine-question', role: 'assistant', parts: [
+            { type: 'tool-ask_user', toolCallId: 'ask', state: 'output-available', input: {}, output: 'Delivered' },
+        ] },
+        { id: 'engine-answer', role: 'user', parts: [{ type: 'text', text: rawAnswer }], metadata: {
+            savedDecision: { sourceMessageId: 'engine-question', sourceToolCallId: 'ask', decision: { kind: 'answers', items: [
+                { question: 'Which report?', answers: ['Quarterly report'], fromOptions: true, attachmentIds: [] },
+                { question: 'Any caveats?', answers: [], fromOptions: false, attachmentIds: [] },
+            ] } },
+        } },
+        { id: 'engine-approval', role: 'assistant', parts: [
+            { type: 'tool-request_approval', toolCallId: 'approval', state: 'output-available', input: {}, output: 'Delivered' },
+        ] },
+        { id: 'engine-decision', role: 'user', parts: [{ type: 'text', text: rawDecision }], metadata: {
+            savedDecision: { sourceMessageId: 'engine-approval', sourceToolCallId: 'approval', decision: { kind: 'approvals', items: [
+                { action: 'Review draft', detail: 'Read only', decision: 'approved' },
+                { action: 'Rename the draft', decision: 'declined', note: 'Keep this name' },
+            ] } },
+        } },
+        { id: 'engine-another-ask', role: 'assistant', parts: [
+            { type: 'tool-ask_user', toolCallId: 'ask', state: 'output-error', input: {}, errorText: 'Unrelated request failed' },
+        ] },
+    ])
+    const receiptText = (container: HTMLElement) => container.querySelector<HTMLElement>('[data-desktop-tab-active="true"] [role="log"]')
+    const mounted = await app.mount()
+    await openBoardChat(mounted.container)
+    const assertReceipts = async (container: HTMLElement) => {
+        const log = await until(() => {
+            const log = receiptText(container)
+            return log?.textContent?.includes('1 of 2 answered') ? log : null
+        })
+        expect(log.textContent).toContain('Quarterly report')
+        expect(log.textContent).toContain('Skipped')
+        expect(log.textContent).toContain('1 approved, 1 not now')
+        expect(log.textContent).toContain('Keep this name')
+        expect(log.textContent).not.toContain('Here are my answers:')
+        expect(log.textContent).not.toContain('Here are my approval decisions:')
+        expect(log.querySelectorAll('button[aria-label="1 step"]')).toHaveLength(0)
+        expect(log.querySelectorAll('button[aria-label="1 step, 1 failed"]')).toHaveLength(1)
+    }
+    await assertReceipts(mounted.container)
+    await click('Reviewer second chat', mounted.container)
+    await until(() => receiptText(mounted.container)?.textContent?.includes('Here are my answers:'))
+    expect(receiptText(mounted.container)?.textContent).not.toContain('1 of 2 answered')
+    await click('Reviewer first chat', mounted.container)
+    await assertReceipts(mounted.container)
+    await mounted.unmount()
+    const restored = await app.mount()
+    await openBoardChat(restored.container)
+    await assertReceipts(restored.container)
+    expect(app.contentWrites).toEqual([])
+})
+
 test('returns from chat history to the exact waiting question without sending or focusing a sibling chat', async () => {
     const question: DesktopPendingQuestion = {
         id: 'a'.repeat(64), messageId: 'question-message', toolCallId: 'question-call',

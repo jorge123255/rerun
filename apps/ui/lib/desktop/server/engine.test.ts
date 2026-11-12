@@ -68,11 +68,11 @@ beforeEach(async () => {
             })
             return res.end('data: {"type":"text-delta","delta":"Hello back"}\n\n')
         }
-        if (req.method === 'GET' && req.url === '/agents/engine-agent-1/sessions/engine-session-1/messages') {
+        if (req.method === 'GET' && req.url === '/agents/engine-agent-1/sessions/engine-session-1/messages?view=desktop-decisions') {
             return json(res, { messages: [{ id: 'message-1', sessionId: 'engine-session-1', role: 'user', contentJson: JSON.stringify({ text: 'Hello' }), toolCallsJson: null, createdAt: '2026-01-01T00:00:00.000Z' }] })
         }
-        if (req.url === '/agents/engine-agent-1/sessions/unavailable/messages') return json(res, { error: 'engine unavailable' }, 503)
-        if (req.url === '/agents/engine-agent-1/sessions/empty/messages') return json(res, { messages: [] })
+        if (req.url === '/agents/engine-agent-1/sessions/unavailable/messages?view=desktop-decisions') return json(res, { error: 'engine unavailable' }, 503)
+        if (req.url === '/agents/engine-agent-1/sessions/empty/messages?view=desktop-decisions') return json(res, { messages: [] })
         json(res, { error: 'not found' }, 404)
     })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))

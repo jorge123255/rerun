@@ -13,6 +13,7 @@ const { writeAgentConfig } = await import('../../agents/config-write.js')
 const { agentDir } = await import('../../config/paths.js')
 const { createSession, touchSession } = await import('../../db/repos/sessions.js')
 const { appendMessage } = await import('../../db/repos/messages.js')
+const { reserveDesktopQueuedTurn } = await import('../../db/repos/desktop-queued-turns.js')
 
 const id = 'sessionagent'
 const app = createServer()
@@ -167,6 +168,29 @@ describe('GET /agents/:id/sessions/:sid/messages', () => {
             ['user', 'first'],
             ['assistant', 'second'],
         ])
+    })
+
+    it('adds the exact queued user binding only to the desktop decision history view', async () => {
+        const session = await createSession(id, 'decisions')
+        const sibling = await createSession(id, 'sibling')
+        const runId = crypto.randomUUID()
+        const user = await reserveDesktopQueuedTurn(id, { runId, sessionId: session.id, message: 'Saved decision' })
+        const normal = await appendMessage(id, session.id, { role: 'user', content: 'Saved decision' })
+        await reserveDesktopQueuedTurn(id, { runId: crypto.randomUUID(), sessionId: sibling.id, message: 'Other chat' })
+        const path = `/agents/${id}/sessions/${session.id}/messages`
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const result = await app.request(path + '?view=desktop-decisions')
+            expect(result.status).toBe(200)
+            expect(result.headers.get('cache-control')).toBe('no-store')
+            const { messages } = await result.json()
+            expect(messages.map((message: { id: string; desktopRunId?: string }) =>
+                [message.id, message.desktopRunId])).toEqual([[user.id, runId], [normal.id, null]])
+            expect((await (await app.request(path)).json()).messages[0]).not.toHaveProperty('desktopRunId')
+            expect((await app.request(`/agents/otheragent/sessions/${session.id}/messages?view=desktop-decisions`)).status).toBe(404)
+            vi.stubEnv('RERUN_DESKTOP_APP', '0')
+            expect((await (await app.request(path + '?view=desktop-decisions')).json()).messages[0]).not.toHaveProperty('desktopRunId')
+        } finally { vi.unstubAllEnvs() }
     })
 
     it('404s on a session that belongs to another agent', async () => {

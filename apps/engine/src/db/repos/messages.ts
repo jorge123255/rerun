@@ -100,6 +100,20 @@ export async function listDesktopForemanMessages(sessionId: string) {
         .where(eq(messages.sessionId, sessionId)).orderBy(asc(messages.createdAt), asc(sql`rowid`))
 }
 
+// The internal desktop history projection can identify the exact user row admitted for a
+// recorded decision. Ordinary history clients do not need queued-turn identities.
+export async function listDesktopDecisionMessages(agentId: string, sessionId: string) {
+    const { db } = await getSystemDb(agentId)
+    const desktopRunId = sql<string | null>`(
+        SELECT run.id FROM desktop_queued_turns AS receipt
+        JOIN runs AS run ON run.id = receipt.run_id
+        WHERE receipt.message_id = messages.id AND run.session_id = messages.session_id
+          AND run.agent_id = ${agentId} AND messages.role = 'user'
+    )`
+    return db.select({ ...getTableColumns(messages), desktopRunId }).from(messages)
+        .where(eq(messages.sessionId, sessionId)).orderBy(asc(messages.createdAt), asc(sql`rowid`))
+}
+
 /** Read only the text attachment explicitly stored with this user message. */
 export async function readSavedWorkspaceAttachment(agentId: string, sessionId: string, messageId: string, path: string) {
     const { db } = await getSystemDb(agentId)

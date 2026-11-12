@@ -320,6 +320,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         chatActivity: source.chat.activity,
         chatSteps: source.chat.steps,
         chatRequestCue: source.chat.hitlCue,
+        chatReceipt: source.chat.receipt,
         jumpToChatRequest: source.chat.pendingHitl.goTo,
         scrollToLatestMessage: source.chat.conversation.scrollToLatest,
         subRunTrouble: source.subRuns.trouble,

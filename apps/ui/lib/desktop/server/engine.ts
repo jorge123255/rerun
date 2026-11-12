@@ -12,6 +12,7 @@ import { startQueuedChat } from './queued-chat'
 import { DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES, desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf, desktopRerunGrantsOf, type DesktopQuestionGuard, type DesktopApprovalGuard, type DesktopAttachmentItem, type DesktopResolvedAttachment } from '@rerun/contracts'
 import { EngineRequestError, cancelRun, chat, createAgent, getAgent, getSessionMessages, patchAgent } from '@/lib/engine/client'
 import type { DesktopCoworkerPatch, DesktopCoworkerSettings } from '../coworker-settings'
+import { withDesktopSavedDecisions } from './saved-chat-decisions'
 import { publicDesktopHistory, transformEngineMessages, type HistoryMessage } from '@/lib/chat/engine-history'
 import { sanitizeIdentifier } from '@/lib/utils'
 import { assertDesktopImageModel, resolveDesktopChatModel, savedChoice } from './chat-model'
@@ -323,12 +324,14 @@ export async function readDesktopHistory(runtime: DesktopRuntime, sessionId: str
     const agent = await findDesktopAgent(db, session.agentId)
     if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
     try {
-        const messages = await getSessionMessages(engineOf(runtime), agent.engineAgentId, session.engineSessionId, { requireSuccess: true })
-        const history = transformEngineMessages(messages, { desktopSummaries: true, preserveSourceSteps: true })
+        const messages = await getSessionMessages(engineOf(runtime), agent.engineAgentId, session.engineSessionId, { requireSuccess: true, desktopDecisions: true })
+        if (messages.some(message => message.sessionId !== session.engineSessionId)) throw new Error('Foreign conversation history')
+        const history = publicDesktopHistory(transformEngineMessages(messages, { desktopSummaries: true, preserveSourceSteps: true }))
+        const projected = await withDesktopSavedDecisions(db, agent.id, session.id, messages, history)
         // Only a read of this specific alternate acknowledges it. Opening the original, or an
         // older alternate while a newer request is pending, leaves the pending attempt alone.
         await db.execute({ sql: 'UPDATE desktop_regeneration_requests SET pending = 0 WHERE alternate_session_id = ? AND pending = 1', args: [session.id] })
-        return publicDesktopHistory(history)
+        return projected
     } catch (cause) {
         if (cause instanceof EngineRequestError && cause.status === 404) throw new DesktopHttpError(404, 'Conversation not found')
         throw new DesktopHttpError(502, 'Could not load this conversation. Try again.')

@@ -129,7 +129,7 @@ function FeedbackThumb({ rating, current, onRate }: { rating: MessageFeedbackRat
     )
 }
 
-export function DesktopAssistantReply({ message, streaming, latest = streaming, createdAt, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies, agentId, agent, skillProposals, childRuns, toolInstall, onOpenWorkspaceFile }: {
+export function DesktopAssistantReply({ message, streaming, latest = streaming, createdAt, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, answeredRequestCalls, quickReplies, agentId, agent, skillProposals, childRuns, toolInstall, onOpenWorkspaceFile }: {
     message: UIMessage
     streaming: boolean
     latest?: boolean
@@ -138,6 +138,7 @@ export function DesktopAssistantReply({ message, streaming, latest = streaming, 
     feedbackRating?: MessageFeedbackRating | null
     onRate?: (rating: MessageFeedbackRating) => void
     pendingRequestToolCallId?: string
+    answeredRequestCalls?: ReadonlySet<string>
     quickReplies?: { show: boolean; disabled: boolean; pending: boolean; onSend: DesktopQuickReplySend }
     /** The trusted local coworker id that owns this conversation; needed to open a result card. */
     agentId?: string
@@ -185,6 +186,8 @@ export function DesktopAssistantReply({ message, streaming, latest = streaming, 
         } else if (isToolUIPart(part)) {
             const toolName = stripBridgePrefix(getToolName(part))
             if (part.toolCallId === pendingRequestToolCallId || toolName === QUICK_REPLIES_TOOL) continue
+            if (part.state === 'output-available' && answeredRequestCalls?.has(part.toolCallId) &&
+                (toolName === 'ask_user' || toolName === 'request_approval')) continue
             const receiptContext = { ownerId: agentId ?? null, live: streaming }
             if (childRuns && agentId && (toolName === 'call_agent' || toolName === 'delegate_tasks')) {
                 const fallback = <DesktopToolStep part={part} restored={restored} context={receiptContext} />

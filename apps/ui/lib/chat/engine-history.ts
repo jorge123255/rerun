@@ -20,6 +20,8 @@ import { desktopSkillProposalIdOf } from '@/lib/desktop/skill-proposal-source'
 import { hitlKindOf } from '@/lib/chat-hitl'
 import { desktopApprovalInput, desktopQuestionInput, QUICK_REPLIES_TOOL, desktopSourceParts, desktopAttachmentFieldsOf, type DesktopSourcePart, isContextPart, visibleText, desktopStoredAttachmentSelections, desktopImageSnapshotSchema, type DesktopAttachmentFields, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
 
+import type { DesktopSavedChatReceipt } from '@/lib/desktop/saved-chat-decision'
+
 type TextPart = { type: 'text'; text: string }
 type ToolReceiptState = 'input-streaming' | 'input-available' | 'approval-requested' | 'approval-responded' | 'output-available' | 'output-error' | 'output-denied' | 'cancelled' | 'canceled' | 'unknown'
 type ToolInvocationPart = {
@@ -41,7 +43,7 @@ type ToolInvocationPart = {
     output?: unknown
 }
 type UIMessagePart = { type: 'file'; url: string; mediaType: string; filename: string } | TextPart | ToolInvocationPart | DesktopSourcePart | { type: 'step-start' } | { type: 'reasoning'; text: string; providerMetadata: typeof desktopSummaryMetadata }
-export type HistoryMessage = { id: string; role: 'user' | 'assistant'; parts: UIMessagePart[]; metadata?: DesktopAttachmentFields & DesktopCoworkerMentionFields & { authorId?: string; createdAt?: string; documents?: DesktopDocumentReference[] } }
+export type HistoryMessage = { id: string; role: 'user' | 'assistant'; parts: UIMessagePart[]; metadata?: DesktopAttachmentFields & DesktopCoworkerMentionFields & { authorId?: string; createdAt?: string; documents?: DesktopDocumentReference[]; savedDecision?: DesktopSavedChatReceipt } }
 
 function safeParse(json: string | null | undefined): unknown {
     if (!json) return null

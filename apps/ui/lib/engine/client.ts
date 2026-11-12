@@ -463,8 +463,9 @@ export async function getSession(conn: EngineConnection, agentId: string, sessio
     return engineSessionSchema.parse(await res.json())
 }
 
-export async function getSessionMessages(conn: EngineConnection, agentId: string, sessionId: string, options: { requireSuccess?: boolean; signal?: AbortSignal } = {}): Promise<EngineMessage[]> {
-    const path = `/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/messages`
+export async function getSessionMessages(conn: EngineConnection, agentId: string, sessionId: string, options: { requireSuccess?: boolean; signal?: AbortSignal; desktopDecisions?: boolean } = {}): Promise<EngineMessage[]> {
+    const path = `/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/messages` +
+        (options.desktopDecisions ? '?view=desktop-decisions' : '')
     try {
         return await request(conn, path, { method: 'GET', signal: options.signal }, body => engineMessagesListSchema.parse(body).messages)
     } catch (cause) {

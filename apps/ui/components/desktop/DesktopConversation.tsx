@@ -40,6 +40,8 @@ import { DesktopComputerPanel } from './computer-panel/DesktopComputerPanel'
 import { DesktopSelectedMentionText } from './mentions/DesktopSelectedMentionText'
 import { DesktopWorkspaceMessage } from './DesktopWorkspaceMessage'
 import { DesktopAssistantReply } from './DesktopAssistantReply'
+import { DesktopSavedDecisionReceipt } from './DesktopSavedDecisionReceipt'
+import { desktopSavedChatReceiptOf } from '@/lib/desktop/saved-chat-decision'
 import { DesktopChatActivity } from './DesktopChatActivity'
 import { DesktopVoiceComposer } from './voice/DesktopVoiceComposer'
 import { DesktopVoiceHistoryMessage } from './voice/DesktopVoiceHistoryMessage'
@@ -736,6 +738,19 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     // even if its subscription still holds the previous chat's messages.
     const showSaved = ready && (!busy || regenerationSource === sessionId && !!sessionId)
     const transcript = showSaved ? history.transcript ?? messages : busy ? messages : []
+    const { savedReceipts, answeredCalls } = useMemo(() => {
+        const savedReceipts = new Map<string, NonNullable<ReturnType<typeof desktopSavedChatReceiptOf>>>()
+        const answeredCalls = new Map<string, Set<string>>()
+        for (const message of transcript) {
+            const receipt = desktopSavedChatReceiptOf(message, agent.id, sessionId)
+            if (!receipt) continue
+            savedReceipts.set(message.id, receipt)
+            const calls = answeredCalls.get(receipt.sourceMessageId) ?? new Set<string>()
+            calls.add(receipt.sourceToolCallId)
+            answeredCalls.set(receipt.sourceMessageId, calls)
+        }
+        return { savedReceipts, answeredCalls }
+    }, [transcript, agent.id, sessionId])
     const latestAssistant = transcript.findLast(message => message.role === 'assistant')
     const streamingMessage = !showSaved && (status === 'streaming' || serviceStreaming) ? transcript.at(-1) : undefined
     const chatActivity = active && !reconnecting && !pendingRequest && generating
@@ -1482,6 +1497,9 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                         const onOpenWorkspaceFile = active ? openWorkspaceFile : undefined
                         const install = message.role==='user' ? parseInstallMessage(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
                         if(install)return withTimeline(<AgentInstallBlock agentId={agent.id} agentName={agent.name} onOpenWorkspaceFile={onOpenWorkspaceFile} guide={install.guide} installing={setup.view?.completedAt == null} />)
+                        const receipt = savedReceipts.get(message.id)
+                        if (receipt) return withTimeline(<DesktopSavedDecisionReceipt decision={receipt.decision} documents={receipt.documents}
+                            onOpenDocument={active ? index => setDocumentPreview({ attachments: receipt.documents, index }) : undefined} />)
                         const hitl = message.role === 'user' ? parseHitlReply(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
                         const secretReceipt = message.role === 'user' ? parseDesktopSecretReceiptSummary(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
                         if (secretReceipt) return withTimeline(<DesktopSecretSummaryReceipt entries={secretReceipt} />)
@@ -1516,7 +1534,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                                             childRuns={sessionId ? { sessionId, active, onOpenTarget: onOpenCoworkerChat } : undefined}
                                             skillProposals={{ rows: skillProposals.proposals, pinnedIds: skillProposals.pinnedIds, pendingId: skillProposals.pendingId,
                                                 onDecide: proposalsActive ? skillProposals.decide : undefined, onOpenSkill: proposalsActive ? openProposalSkill : undefined }}
-                                            pendingRequestToolCallId={pendingRequest?.toolCallId}
+                                            pendingRequestToolCallId={pendingRequest?.toolCallId} answeredRequestCalls={answeredCalls.get(message.id)}
                                             quickReplies={{ show: messageIndex === transcript.length - 1 && quickRepliesVisible, disabled: !canSendQuickReply,
                                                 pending: quickReplyBusy || queue.pending, onSend: text => sendQuickReply(message.id, text) }}
                                             feedbackRating={feedback.votes.get(message.id)?.rating ?? null}
