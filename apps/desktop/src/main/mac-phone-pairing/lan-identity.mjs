@@ -49,6 +49,7 @@ export async function loadLanIdentity(dataRoot, host, { renew = false } = {}) {
         await writeFile(config, '[req]\nprompt = no\ndistinguished_name = subject\n[subject]\nCN = Rerun Local Pairing\n', { flag: 'wx', mode: 0o600 })
         await exec('/usr/bin/openssl', [
             'req', '-x509', '-new', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
+            '-pkeyopt', 'ec_param_enc:named_curve',
             '-nodes', '-sha256', '-days', '397', '-config', config,
             '-addext', `subjectAltName=IP:${host}`, '-addext', 'basicConstraints=critical,CA:FALSE',
             '-addext', 'keyUsage=critical,digitalSignature', '-addext', 'extendedKeyUsage=serverAuth',
