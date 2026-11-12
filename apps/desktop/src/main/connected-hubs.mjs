@@ -138,7 +138,7 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
         contents.on('will-redirect', navigation)
         contents.on('will-attach-webview', event => event.preventDefault())
         contents.setWindowOpenHandler(({ url }) => {
-            if (!available() || connected(window) !== entry || !window.isFocused()) return { action: 'deny' }
+            if (!available() || connected(window) !== entry) return { action: 'deny' }
             if (sameHub(url, origin)) {
                 return {
                     action: 'allow',
@@ -148,7 +148,7 @@ export function createConnectedHubs({ app, BrowserWindow, ipcMain, session, shel
                     },
                 }
             }
-            external(url)
+            if (window.isFocused()) external(url)
             return { action: 'deny' }
         })
         contents.on('did-create-window', (child, { url }) => {
