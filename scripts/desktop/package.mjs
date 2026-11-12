@@ -46,6 +46,7 @@ if (flag('--stage-only')) {
     const directory = masDevelopment ? (arch === 'x64' ? 'mas-dev' : `mas-dev-${arch}`) : appDirectory
     const packagedApp = join(outputDir ?? join(repoRoot, 'apps', 'desktop', 'release'), directory, 'Rerun Desktop Preview.app')
     await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', packagedApp])
+    await run(process.execPath, [scripts('verify-electron.mjs'), packagedApp])
     if (masSigning) await verifyMasDevelopment(packagedApp, masSigning)
     console.log(`\npackage complete: ${outputDir ?? 'apps/desktop/release'}`)
 }

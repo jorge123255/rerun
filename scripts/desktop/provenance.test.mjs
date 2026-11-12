@@ -53,6 +53,9 @@ test('the actual package entry forces stages, skips stage-only packaging and dis
                 assert.deepEqual(builders[0].options, { cwd: '/synthetic/apps/desktop' })
                 const destination = join(outputDir, masDev ? (arch === 'x64' ? 'mas-dev' : 'mas-dev-arm64') : appDirectory, 'Rerun Desktop Preview.app')
                 assert.deepEqual(packaged.filter(call => call.command === '/usr/bin/codesign').map(call => call.args.at(-1)), [destination])
+                const signature = packaged.findIndex(call => call.command === '/usr/bin/codesign')
+                assert(packaged[signature + 1].args[0].endsWith('/verify-electron.mjs'))
+                assert.equal(packaged[signature + 1].args[1], destination)
                 if (masDev) {
                     assert.equal(packaged[0].command, 'prepare-mas')
                     assert.deepEqual(packaged.at(-1), { command: 'verify-mas', args: [destination] })
