@@ -97,6 +97,8 @@ export function desktopForemanMessages(locale: Locale, source: Source) {
         ownEntryPlaceholder: source.foreman.ownEntryPlaceholder,
         modelPicker: source.agent.modelSelector,
         context: source.chat.context,
+        copy: source.chat.actions.copy,
+        copied: source.chat.actions.copiedExclaim,
         name: source.kit.foreman.tabsLabel,
         tabs: { ...source.kit.foreman.tabs, assistant: source.kit.foreman.tabsLabel },
         close: source.kit.close,

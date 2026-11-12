@@ -196,12 +196,14 @@ export function DesktopForemanChatLayer({
                             {restored && message.history ? <>
                                 {message.role === 'user' && message.coworkerMentions?.length
                                     ? <div data-chat-find-message className="whitespace-pre-wrap wrap-anywhere"><DesktopSelectedMentionText text={message.text} metadata={message} /></div>
-                                    : <DesktopForemanHistoryMessage history={message.history} userLinks={message.role === 'user'} />}
-                                {message.role === 'assistant' && message.text.trim() && answerFeedback && (
+                                    : <DesktopForemanHistoryMessage history={message.history} userLinks={message.role === 'user'}
+                                        draftActions={active && !streaming && message.role === 'assistant'} />}
+                                {message.role === 'assistant' && message.text.trim() && (
                                     <DesktopForemanAnswerActions
-                                        rating={answerFeedback.ratingOf(message.id)}
-                                        disabled={!!streaming || answerFeedback.disabled}
-                                        onRate={rating => answerFeedback.onRate(message.id, rating)}
+                                        copyText={active && !streaming ? message.text : undefined}
+                                        rating={answerFeedback?.ratingOf(message.id)}
+                                        disabled={!!streaming || answerFeedback?.disabled}
+                                        onRate={answerFeedback ? rating => answerFeedback.onRate(message.id, rating) : undefined}
                                         onReviewRetry={replyRetry && /^engine-[A-Za-z0-9_-]{1,128}$/.test(message.id) ? () => replyRetry.review(message.id) : undefined}
                                         retryDisabled={replyRetry?.disabled}
                                     />

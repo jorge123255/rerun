@@ -3,12 +3,10 @@
 import { getToolName, isToolUIPart, type UIMessage } from 'ai'
 import { desktopSourceParts, QUICK_REPLIES_TOOL, stripBridgePrefix, skillProposalIdOf, isPinnable, type MessageFeedbackRating } from '@rerun/contracts'
 import { useMemo, type ReactElement, type ReactNode } from 'react'
-import type { CustomRendererProps, PluginConfig } from 'streamdown'
 import { toast } from 'sonner'
 import { MessageAction } from '@/components/ai-elements/message'
 import { DesktopWorkspaceMessage, type DesktopOpenWorkspaceFile } from './DesktopWorkspaceMessage'
 import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ai-elements/sources'
-import { DRAFT_LANGUAGE, DraftBlock } from '@/components/chat/DraftBlock'
 import { MessageTimeTooltip } from '@/components/chat/MessageTimeTooltip'
 import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { useDesktopLocale } from './DesktopLocale'
@@ -35,6 +33,8 @@ import { isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { desktopCompactionSteps } from '@/lib/desktop/compaction'
 import { desktopFileCardOf, desktopImageGenerationOutput } from '@/lib/desktop/file-card'
 import { useCopy } from '@/lib/use-copy'
+import { copyDesktopPlainText } from '@/lib/desktop/clipboard'
+import { desktopDraftPlugins } from './DesktopDraftBlock'
 import { splitIntoBubbles } from '@/lib/chat/message-bubbles'
 import { cn } from '@/lib/utils'
 import { DesktopBrainProposalBlock } from './brain/proposals/DesktopBrainProposalBlock'
@@ -45,32 +45,6 @@ import { DesktopDelegationMount } from './delegation/DesktopDelegationMount'
 import type { DesktopCoworkerCallOpenTarget } from '@/lib/desktop/coworker-calls-client'
 
 const copyFailed = () => toast.error('Could not copy this reply. Try again.')
-const draftCopyFailed = () => toast.error('Could not copy this draft. Try again.')
-
-// Rerun denies asynchronous clipboard access. Use Chromium's ordinary, user-activated
-// Copy command so the Mac receives only the chosen plain text and no read permission.
-function copyReplyText(text: string) {
-    if (window.top !== window || !navigator.userActivation?.isActive) throw Error('Copy requires an active user gesture')
-    let written = false
-    const onCopy = (event: ClipboardEvent) => {
-        event.preventDefault()
-        if (!event.clipboardData) return
-        event.clipboardData.setData('text/plain', text)
-        written = true
-    }
-    document.addEventListener('copy', onCopy, { once: true })
-    try {
-        if (!document.execCommand('copy') || !written) throw Error('Could not copy reply')
-    } finally {
-        document.removeEventListener('copy', onCopy)
-    }
-}
-
-function DesktopDraftBlock(props: CustomRendererProps) {
-    return <DraftBlock {...props} writeText={copyReplyText} onCopyError={draftCopyFailed} />
-}
-
-const answerPlugins: PluginConfig = { renderers: [{ language: DRAFT_LANGUAGE, component: DesktopDraftBlock }] }
 
 function replyMarkdown(text: string, streaming = false) {
     return <DesktopWorkspaceMessage streaming={streaming}>{text}</DesktopWorkspaceMessage>
@@ -92,7 +66,7 @@ function DesktopAnswerBubbles({ text, streaming, createdAt, agentId, onOpenWorks
             <MessageTimeTooltip key={index} createdAt={index === 0 ? createdAt : undefined} locale={locale} side="right">
                 <div data-bubble-frame={frame} className={cn('min-w-0', frame === 'bare' ? 'w-full' : 'max-w-[88%]', frame === 'bubble' && [AGENT_BUBBLE_SURFACE, 'px-3.5 py-2'])}>
                     <DesktopWorkspaceMessage agentId={agentId} onOpenWorkspaceFile={onOpenWorkspaceFile}
-                        streaming={streaming && index === bubbles.length - 1} plugins={answerPlugins}>{markdown}</DesktopWorkspaceMessage>
+                        streaming={streaming && index === bubbles.length - 1} plugins={desktopDraftPlugins}>{markdown}</DesktopWorkspaceMessage>
                 </div>
             </MessageTimeTooltip>
         ))}
@@ -148,7 +122,7 @@ export function DesktopAssistantReply({ message, streaming, latest = streaming, 
     onOpenWorkspaceFile?: DesktopOpenWorkspaceFile
     skillProposals?: { rows: ReadonlyMap<string, EngineSkillProposal>; pinnedIds: ReadonlySet<string>; pendingId: string | null; onDecide?: (id: string, decision: 'accept' | 'dismiss') => void; onOpenSkill?: (slug: string) => void }
 }) {
-    const { copied, copy } = useCopy(copyFailed, copyReplyText)
+    const { copied, copy } = useCopy(copyFailed, copyDesktopPlainText)
     const compactions = desktopCompactionSteps(message.parts, streaming)
     const lastStepIndex = streaming ? message.parts.findLastIndex(part => !part.type.startsWith('data-')) : -1
     const { t } = useDesktopLocale()

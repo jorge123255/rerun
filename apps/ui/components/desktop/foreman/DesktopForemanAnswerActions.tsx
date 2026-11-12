@@ -1,10 +1,15 @@
 'use client'
 
 import { MessageAction, MessageActions } from '@/components/ai-elements/message'
-import { RotateCwIcon, ThumbsDownIcon, ThumbsUpIcon } from '@/lib/icons'
+import { CheckIcon, CopyIcon, RotateCwIcon, ThumbsDownIcon, ThumbsUpIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { MessageFeedbackRating } from '@rerun/contracts'
 import { useDesktopLocale } from '../DesktopLocale'
+import { copyDesktopPlainText } from '@/lib/desktop/clipboard'
+import { useCopy } from '@/lib/use-copy'
+import { toast } from 'sonner'
+
+const copyFailed = () => toast.error('Could not copy this reply. Try again.')
 
 function FeedbackThumb({ rating, current, disabled, onRate }: {
     rating: MessageFeedbackRating
@@ -28,20 +33,29 @@ function FeedbackThumb({ rating, current, disabled, onRate }: {
     )
 }
 
-export function DesktopForemanAnswerActions({ rating, disabled, onRate, onReviewRetry, retryDisabled }: {
-    rating: MessageFeedbackRating | null
+export function DesktopForemanAnswerActions({ copyText, rating = null, disabled, onRate, onReviewRetry, retryDisabled }: {
+    copyText?: string
+    rating?: MessageFeedbackRating | null
     disabled?: boolean
-    onRate: (rating: MessageFeedbackRating) => void
+    onRate?: (rating: MessageFeedbackRating) => void
     onReviewRetry?: () => void
     retryDisabled?: boolean
 }) {
     const { t } = useDesktopLocale()
-    return <MessageActions className="mt-1" aria-label="Rate this answer">
+    const { copied, copy } = useCopy(copyFailed, copyDesktopPlainText)
+    const copyLabel = t(copied ? 'foreman.copied' : 'foreman.copy')
+    if (!copyText && !onRate && !onReviewRetry) return null
+    return <MessageActions className="mt-1" data-chat-find-ignore>
+        {copyText && <MessageAction tooltip={copyLabel} aria-label={copyLabel} onClick={() => copy(copyText)}>
+            {copied ? <CheckIcon aria-hidden className="size-3.5" /> : <CopyIcon aria-hidden className="size-3.5" />}
+        </MessageAction>}
         {onReviewRetry && <MessageAction tooltip={t('foreman.alternates.regenerate')} label={t('foreman.alternates.regenerate')}
             disabled={disabled || retryDisabled} onClick={onReviewRetry}>
             <RotateCwIcon className="size-3.5" />
         </MessageAction>}
-        <FeedbackThumb rating="up" current={rating} disabled={disabled} onRate={onRate} />
-        <FeedbackThumb rating="down" current={rating} disabled={disabled} onRate={onRate} />
+        {onRate && <>
+            <FeedbackThumb rating="up" current={rating} disabled={disabled} onRate={onRate} />
+            <FeedbackThumb rating="down" current={rating} disabled={disabled} onRate={onRate} />
+        </>}
     </MessageActions>
 }

@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { createPortal } from 'react-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useDesktopControlCenterKeys } from '@/lib/desktop/control-center'
+import { desktopForemanMessages } from '@/lib/desktop/foreman-client/runtime-client'
 import { DesktopForemanChatLayer } from './DesktopForemanChatLayer'
 
 // Keep the real Conversation and use-stick-to-bottom implementation. Only the unrelated
@@ -146,6 +147,68 @@ it('renders a growing reply without clickable preview links, then shows only the
     await render({ liveReply: { runId: 'reply', text: first }, messages })
     expect(preview()).toBeNull()
     expect(host.textContent?.match(/Final saved answer/g)).toHaveLength(1)
+})
+
+it('copies only the saved answer or its chosen draft after reopening the Chief of Staff chat', async () => {
+    const draft = 'Hi Ada,\n\nHere are the notes.'
+    const text = 'Here is a draft.\n\n```draft Launch note\n' + draft + '\n```'
+    const chat = { workspaceId: '1', chatId: 'fmc_abcdefgh' }
+    const state = {
+        chat, sessionId: 'saved-session', model: null,
+        view: { contractVersion: 1 as const, chat, phase: 'plan' as const, live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
+        ui: { revision: 0, snapshot: null },
+        messages: [
+            { id: 'user', role: 'user' as const, parts: [{ type: 'text', text }] },
+            { id: 'engine-answer', role: 'assistant' as const, parts: [
+                { type: 'reasoning', text: 'An internal trace' },
+                { type: 'tool-search_docs', toolCallId: 'private-call', state: 'output-error', errorText: 'Private tool error' },
+                { type: 'text', text },
+            ] },
+        ],
+    }
+    const messages = desktopForemanMessages(state)
+    const data = new DataTransfer()
+    const command = vi.fn(() => {
+        const event = new Event('copy', { cancelable: true })
+        Object.defineProperty(event, 'clipboardData', { value: data })
+        document.dispatchEvent(event)
+        return event.defaultPrevented
+    })
+    const asyncWrite = vi.fn()
+    vi.stubGlobal('navigator', { userActivation: { isActive: false }, clipboard: { writeText: asyncWrite } })
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: command })
+    const copyAnswer = () => host.querySelector<HTMLButtonElement>('button[aria-label="Copy"]')
+    const copyDraft = () => host.querySelector<HTMLButtonElement>('button[aria-label="Copy draft"]')
+    try {
+        await render({ streaming: true, liveReply: { runId: 'current', text }, messages })
+        expect(copyAnswer()).toBeNull()
+        expect(copyDraft()).toBeNull()
+        await render({ active: false, messages })
+        expect(copyAnswer()).toBeNull()
+        expect(copyDraft()).toBeNull()
+        expect(command).not.toHaveBeenCalled()
+        await act(async () => root!.unmount())
+        root = createRoot(host)
+        await render({ messages: desktopForemanMessages(JSON.parse(JSON.stringify(state))) })
+        expect(host.querySelectorAll('[aria-label="Copy draft"]')).toHaveLength(1)
+        expect(host.querySelector('[role="group"][aria-label="Launch note"]')).not.toBeNull()
+        expect(copyAnswer()).not.toBeNull()
+
+        await act(async () => copyAnswer()!.click())
+        expect(command).not.toHaveBeenCalled()
+        vi.stubGlobal('navigator', { userActivation: { isActive: true }, clipboard: { writeText: asyncWrite } })
+        await act(async () => copyDraft()!.click())
+        expect(data.getData('text/plain')).toBe(draft)
+        command.mockReturnValueOnce(false)
+        await act(async () => copyAnswer()!.click())
+        expect(data.getData('text/plain')).toBe(draft)
+        expect(copyAnswer()).not.toBeNull()
+        await act(async () => copyAnswer()!.click())
+        expect(data.getData('text/plain')).toBe(text)
+        expect(host.querySelector('button[aria-label="Copied!"]')).not.toBeNull()
+        expect(command.mock.calls).toEqual([['copy'], ['copy'], ['copy']])
+        expect(asyncWrite).not.toHaveBeenCalled()
+    } finally { Reflect.deleteProperty(document, 'execCommand') }
 })
 
 it('groups consecutive live read steps between reply paragraphs and clears them when saved history takes over', async () => {

@@ -10,6 +10,7 @@ import { DesktopChatLinkLabel, safeDesktopChatLink } from '../../DesktopChatLink
 import { DesktopHistoricalCardView } from '../../tool-presentations/DesktopHistoricalCardView'
 import { DesktopHistoricalStepGroup } from '../../tool-presentations/DesktopHistoricalStepGroup'
 import type { DesktopHistoricalGenericItem } from '../../tool-presentations/plan'
+import { desktopDraftPlugins } from '../../DesktopDraftBlock'
 import type { ForemanHistoryPart } from './parts'
 
 const noPlugins: PluginConfig = {}
@@ -42,9 +43,15 @@ class LiteralFallback extends Component<{ text: string; children: ReactNode }, {
     }
 }
 
-export function DesktopForemanMarkdown({ text, userLinks = false, streaming = false }: { text: string; userLinks?: boolean; streaming?: boolean }) {
+export function DesktopForemanMarkdown({ text, userLinks = false, streaming = false, draftActions = false }: {
+    text: string
+    userLinks?: boolean
+    streaming?: boolean
+    draftActions?: boolean
+}) {
     return <LiteralFallback key={streaming ? 'live' : text} text={text}>
-        <MessageResponse components={streaming ? liveComponents : userLinks ? userLinkComponents : components} plugins={noPlugins}
+        <MessageResponse key={draftActions ? 'drafts' : 'plain'} components={streaming ? liveComponents : userLinks ? userLinkComponents : components}
+            plugins={draftActions ? desktopDraftPlugins : noPlugins}
             allowedTags={userLinks ? userLinkTags : undefined} remarkPlugins={userLinks ? userLinkPlugins : undefined}
             rehypePlugins={noRehypePlugins} controls={false} skipHtml mode={streaming ? 'streaming' : 'static'} isAnimating={streaming}
             className="min-w-0 wrap-anywhere [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto">
@@ -58,8 +65,12 @@ function SavedSource({ url, title }: { url: string; title: string }) {
     return safe ? <Source href={safe} title={title} rel="noopener noreferrer" className="flex min-w-0 items-center gap-2 break-all text-xs underline" /> : <span className="break-words text-xs">{title}</span>
 }
 
-/** Pure saved-parts presentation. No action callbacks, resource readers or live widgets. */
-export function DesktopForemanHistoryMessage({ history, userLinks }: { history: readonly ForemanHistoryPart[]; userLinks?: boolean }) {
+/** Saved parts and user-initiated copy. Tool cards stay read-only. */
+export function DesktopForemanHistoryMessage({ history, userLinks, draftActions }: {
+    history: readonly ForemanHistoryPart[]
+    userLinks?: boolean
+    draftActions?: boolean
+}) {
     const blocks: (Exclude<ForemanHistoryPart, { kind: 'tool' }> | { kind: 'tool-group'; key: string; items: DesktopHistoricalGenericItem[] })[] = []
     for (const part of history) {
         if (part.kind === 'tool') {
@@ -71,7 +82,7 @@ export function DesktopForemanHistoryMessage({ history, userLinks }: { history: 
     return <div className="flex min-w-0 max-w-full flex-col gap-2 break-words">
         {blocks.map(part => {
             switch (part.kind) {
-                case 'text': return <div key={part.key} data-chat-find-message className="contents"><DesktopForemanMarkdown text={part.text} userLinks={userLinks} /></div>
+                case 'text': return <div key={part.key} data-chat-find-message className="contents"><DesktopForemanMarkdown text={part.text} userLinks={userLinks} draftActions={draftActions} /></div>
                 case 'reasoning': return <details key={part.key} className="text-xs text-muted-foreground"><summary>Thinking</summary><DesktopForemanMarkdown text={part.text} /></details>
                 case 'link': return <SavedSource key={part.key} url={part.url} title={part.title} />
                 case 'docs': return <Sources key={part.key} defaultOpen className="min-w-0 max-w-full">
