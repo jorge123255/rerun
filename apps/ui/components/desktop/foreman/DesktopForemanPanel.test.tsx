@@ -103,7 +103,7 @@ it('shows the saved connection failure with a Settings action and clears it when
         view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
         ui: { revision: 0, snapshot: null },
     }
-    const fetch = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(server))
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json(server))
     vi.stubGlobal('fetch', fetch)
     const onOpenModelSettings = vi.fn()
     root = createRoot(document.body.appendChild(document.createElement('div')))
