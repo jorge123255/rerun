@@ -69,6 +69,7 @@ function publicDevice(device) {
         revokedAt: device.revokedAt,
         lastSeenAt: device.lastSeenAt,
         network: device.certificateFingerprint ? 'lan' : 'loopback',
+        sendMessages: device.sendMessages === true,
     }
 }
 
@@ -87,6 +88,7 @@ function validateStore(value, installId) {
             || (device.credentialHash !== null && !HASH.test(device.credentialHash))
             || (device.requestTokenHash !== null && !HASH.test(device.requestTokenHash))
             || (device.certificateFingerprint !== undefined && !HASH.test(device.certificateFingerprint))
+            || (device.sendMessages !== undefined && (typeof device.sendMessages !== 'boolean' || (device.sendMessages && !device.certificateFingerprint)))
             || !Object.values(DEVICE_STATUS).includes(device.status)
             || !Number.isFinite(Date.parse(device.createdAt))) {
             throw new Error('Phone pairing records need recovery.')

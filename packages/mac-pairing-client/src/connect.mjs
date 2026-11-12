@@ -34,29 +34,40 @@ function parseOffer(input) {
     }
 }
 
-async function request(connection, path, { method = 'GET', body, credential, fetchImpl, pinnedFetch } = {}) {
+async function request(connection, path, { method = 'GET', body, credential, fetchImpl, pinnedFetch, signal } = {}) {
     const { origin, certificateFingerprint } = connection
     const url = `${pairingOrigin(origin, certificateFingerprint)}${API_PREFIX}${path}`
     const headers = { Accept: 'application/json' }
     if (body !== undefined) headers['Content-Type'] = 'application/json'
     if (credential) headers.Authorization = `Bearer ${credential}`
+    const controller = new AbortController()
+    const abort = () => controller.abort()
+    if (signal?.aborted) throw new Error('aborted')
+    signal?.addEventListener('abort', abort, { once: true })
+    const timeout = setTimeout(abort, 10_000)
     const options = {
         method,
         headers,
         redirect: 'error',
-        signal: AbortSignal.timeout(10_000),
+        signal: controller.signal,
         body: body === undefined ? undefined : JSON.stringify(body),
     }
-    if (certificateFingerprint && typeof pinnedFetch !== 'function') throw new Error('pinned_transport_required')
-    const response = certificateFingerprint ? await pinnedFetch(url, certificateFingerprint, options) : await fetchImpl(url, options)
-    const payload = await response.json().catch(() => null)
-    if (!response.ok) {
-        const error = new Error(payload?.error ?? 'request_failed')
-        error.status = response.status
-        error.body = payload
-        throw error
+    try {
+        if (certificateFingerprint && typeof pinnedFetch !== 'function') throw new Error('pinned_transport_required')
+        const response = certificateFingerprint ? await pinnedFetch(url, certificateFingerprint, options) : await fetchImpl(url, options)
+        const payload = await response.json().catch(() => null)
+        if (controller.signal.aborted) throw new Error('aborted')
+        if (!response.ok) {
+            const error = new Error(payload?.error ?? 'request_failed')
+            error.status = response.status
+            error.body = payload
+            throw error
+        }
+        return payload
+    } finally {
+        clearTimeout(timeout)
+        signal?.removeEventListener('abort', abort)
     }
-    return payload
 }
 
 export function encodeOfferLink(offer) {
@@ -82,16 +93,22 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
         return session
     }
 
+    async function chatRequest(agentId, chatId, suffix, options) {
+        const session = await sessionOrThrow()
+        const path = `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers/${encodeURIComponent(agentId)}/chats/${encodeURIComponent(chatId)}`
+        return request(session, path + suffix, { ...options, credential: session.credential, fetchImpl, pinnedFetch })
+    }
+
     return {
         parseOffer,
         encodeOfferLink,
-        async connectToThisMac(input) {
+        async connectToThisMac(input, signal) {
             const offer = parseOffer(input)
             if (offer.kind !== SERVICE_NAME || offer.version !== 1) throw new Error('invalid_offer')
             if (!offer.origin || !offer.macId || !offer.fingerprint || !offer.secret) throw new Error('invalid_offer')
             const pending = await request(offer, '/pair/redeem', {
                 method: 'POST',
-                fetchImpl, pinnedFetch,
+                fetchImpl, pinnedFetch, signal,
                 body: {
                     offerId: offer.offerId,
                     macId: offer.macId,
@@ -116,16 +133,17 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
             })
             return pending
         },
-        async waitForApproval() {
+        async waitForApproval(signal) {
             const session = await sessions.read()
             if (!session?.requestToken || !session.deviceId || !session.origin) throw new Error('not_paired')
             const result = await request(session, '/pair/status', {
                 method: 'POST',
-                fetchImpl, pinnedFetch,
+                fetchImpl, pinnedFetch, signal,
                 body: { deviceId: session.deviceId, requestToken: session.requestToken },
             })
-            if (result.status === 'approved' && result.credential) {
-                if (result.macId !== session.macId || result.fingerprint !== session.fingerprint
+            if (result?.status === 'approved') {
+                if (typeof result.credential !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(result.credential)
+                    || result.macId !== session.macId || result.fingerprint !== session.fingerprint
                     || result.workspaceId !== session.workspaceId || result.deviceId !== session.deviceId
                     || (result.origin !== undefined && result.origin !== session.origin)) throw new Error('invalid_pairing_response')
                 await sessions.write({
@@ -140,20 +158,29 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
                     credential: result.credential,
                     savedAt: new Date(now()).toISOString(),
                 })
-            }
+            } else if (result?.status !== 'pending' && result?.status !== 'revoked') throw new Error('invalid_pairing_response')
             return result
         },
-        async listCoworkers() {
+        async listCoworkers(signal) {
             const session = await sessionOrThrow()
-            return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers`, { credential: session.credential, fetchImpl, pinnedFetch })
+            return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers`, { credential: session.credential, fetchImpl, pinnedFetch, signal })
         },
-        async listSavedChats(agentId) {
+        async listSavedChats(agentId, signal) {
             const session = await sessionOrThrow()
-            return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers/${encodeURIComponent(agentId)}/chats`, { credential: session.credential, fetchImpl, pinnedFetch })
+            return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers/${encodeURIComponent(agentId)}/chats`, { credential: session.credential, fetchImpl, pinnedFetch, signal })
         },
-        async openSavedChat(agentId, sessionId) {
-            const session = await sessionOrThrow()
-            return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers/${encodeURIComponent(agentId)}/chats/${encodeURIComponent(sessionId)}`, { credential: session.credential, fetchImpl, pinnedFetch })
+        async openSavedChat(agentId, sessionId, signal) {
+            return chatRequest(agentId, sessionId, '', { signal })
+        },
+        async sendMessage(agentId, sessionId, { requestId, text }, signal) {
+            const result = await chatRequest(agentId, sessionId, '', { method: 'POST', body: { requestId, text }, signal })
+            if (result?.requestId !== requestId) throw new Error('invalid_send_receipt')
+            return result
+        },
+        async readSentTurn(agentId, sessionId, requestId, signal) {
+            const result = await chatRequest(agentId, sessionId, '/turns/' + encodeURIComponent(requestId), { signal })
+            if (!['running', 'done', 'error', 'cancelled'].includes(result?.status)) throw new Error('invalid_turn_status')
+            return result
         },
         readMacSession: () => sessions.read(),
         clearMacSession: () => sessions.clear(),

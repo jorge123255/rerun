@@ -1,16 +1,26 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { API_PREFIX, CREDENTIAL_CLAIM_TTL_MS, DEVICE_STATUS, ERRORS, LOOPBACK_HOST, PROTOCOL_VERSION, SERVICE_NAME } from './protocol.mjs'
 import { hashSecret, hashesEqual, randomSecret } from './crypto.mjs'
-import { readWorkspaceChats } from './workspace-reads.mjs'
+import { readWorkspaceChats, sendWorkspaceMessage } from './workspace-reads.mjs'
 import { assertDeviceWorkspace, hiddenWorkspaceError } from './workspace-access.mjs'
 import { publicDevice } from './store.mjs'
 
 const BODY_LIMIT = 16_384
+const MESSAGE_BODY_LIMIT = 128 * 1024
 const BEARER = /^Bearer ([A-Za-z0-9_-]{43})$/
 const ID = /^[A-Za-z0-9_-]{1,200}$/
 const WORKSPACE = /^[1-9]\d*$/
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function phoneRunId(device, agentId, chatId, requestId) {
+    const bytes = createHash('sha256').update(JSON.stringify(['rerun-mac-phone-turn-v1', device.deviceId, agentId, chatId, requestId.toLowerCase()])).digest()
+    bytes[6] = (bytes[6] & 0x0f) | 0x80
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    const hex = bytes.subarray(0, 16).toString('hex')
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
 
 function send(response, status, body) {
     const payload = JSON.stringify(body)
@@ -27,14 +37,14 @@ function fail(response, code, status = 401) {
     send(response, status, { error: code })
 }
 
-async function readBody(request) {
+async function readBody(request, limit = BODY_LIMIT) {
     if (request.headers['content-type']?.split(';')[0] !== 'application/json') return null
     try {
         const chunks = []
         let size = 0
         for await (const chunk of request) {
             size += chunk.length
-            if (size > BODY_LIMIT) return null
+            if (size > limit) return null
             chunks.push(chunk)
         }
         const value = JSON.parse(Buffer.concat(chunks).toString('utf8'))
@@ -150,27 +160,47 @@ export function createPairingTransport({
             return body ? exclusive(() => claimStatus(response, body)) : fail(response, ERRORS.unauthorized)
         }
 
-        const route = path.startsWith(API_PREFIX) && /^\/workspaces\/([^/]+)\/coworkers(?:\/([^/]+)\/chats(?:\/([^/]+))?)?$/.exec(path.slice(API_PREFIX.length))
-        if (request.method !== 'GET' || !route) return fail(response, ERRORS.not_found, 404)
-        const [, rawWorkspaceId, agentId, chatId] = route
+        const route = path.startsWith(API_PREFIX) && /^\/workspaces\/([^/]+)\/coworkers(?:\/([^/]+)\/chats(?:\/([^/]+)(?:\/turns\/([^/]+))?)?)?$/.exec(path.slice(API_PREFIX.length))
+        if (!route) return fail(response, ERRORS.not_found, 404)
+        const [, rawWorkspaceId, agentId, chatId, requestId] = route
+        const sending = request.method === 'POST' && chatId && !requestId
+        if (!sending && request.method !== 'GET') return fail(response, ERRORS.not_found, 404)
         const presented = hashSecret(BEARER.exec(request.headers.authorization ?? '')?.[1])
         const device = await authenticate(presented)
         if (!device) return fail(response, ERRORS.unauthorized)
-        if (!WORKSPACE.test(rawWorkspaceId) || (agentId && !ID.test(agentId)) || (chatId && !ID.test(chatId))) {
+        if (!WORKSPACE.test(rawWorkspaceId) || (agentId && !ID.test(agentId)) || (chatId && !ID.test(chatId)) || (requestId && !UUID.test(requestId))) {
             return fail(response, ERRORS.not_found, 404)
         }
         const workspaceId = Number(rawWorkspaceId)
         const current = getRuntime()
         try {
             await workspaceFor(device, workspaceId, current)
-            const payload = await readWorkspaceChats(current, { agentId, chatId })
+            if (sending) {
+                if (!tls || device.sendMessages !== true) return fail(response, 'send_not_allowed', 403)
+                const body = await readBody(request, MESSAGE_BODY_LIMIT)
+                if (!body || Object.keys(body).length !== 2 || typeof body.requestId !== 'string' || !UUID.test(body.requestId)
+                    || typeof body.text !== 'string' || !body.text.trim() || body.text.length > 20_000) return fail(response, 'invalid_message', 400)
+                return await exclusive(async () => {
+                    const authorized = await authenticate(presented)
+                    if (!authorized || authorized.deviceId !== device.deviceId) return fail(response, ERRORS.unauthorized)
+                    if (authorized.sendMessages !== true) return fail(response, 'send_not_allowed', 403)
+                    await workspaceFor(authorized, workspaceId, current)
+                    const runId = phoneRunId(authorized, agentId, chatId, body.requestId)
+                    const failure = await sendWorkspaceMessage(current, { agentId, chatId, runId, text: body.text })
+                    return failure ? fail(response, failure.code, failure.status) : send(response, 202, { requestId: body.requestId })
+                })
+            }
+            const runId = requestId ? phoneRunId(device, agentId, chatId, requestId) : undefined
+            const payload = await readWorkspaceChats(current, { agentId, chatId, runId })
             // Device revocation and workspace changes can finish during the network read.
             // The response is released under the same queue used for credential mutations.
             await exclusive(async () => {
                 const authorized = await authenticate(presented)
                 if (!authorized || authorized.deviceId !== device.deviceId) return fail(response, ERRORS.unauthorized)
                 await workspaceFor(authorized, workspaceId, current)
-                return send(response, 200, payload)
+                return send(response, 200, chatId && !requestId ? {
+                    ...payload, permissions: { sendMessages: Boolean(tls && authorized.sendMessages === true && payload.chat?.acceptsMessages) },
+                } : payload)
             })
         } catch (error) {
             if (error.code === ERRORS.not_found) fail(response, ERRORS.not_found, 404)

@@ -65,10 +65,33 @@ async function refresh() {
         try { await window.desktopApp.phonePairing.approve(id); showError(''); await refresh() }
         catch { showError('The phone could not be approved.') }
     })))
-    approvedList.replaceChildren(...paired.map(device => row(device, 'Revoke', async id => {
-        try { await window.desktopApp.phonePairing.revoke(id); showError(''); await refresh() }
-        catch { showError('The phone could not be revoked.') }
-    })))
+    approvedList.replaceChildren(...paired.map(device => {
+        const item = row(device, 'Revoke', async id => {
+            try { await window.desktopApp.phonePairing.revoke(id); showError(''); await refresh() }
+            catch { showError('The phone could not be revoked.') }
+        })
+        if (device.network !== 'lan') return item
+        const label = document.createElement('label')
+        label.className = 'toggle'
+        const toggle = document.createElement('input')
+        toggle.type = 'checkbox'
+        toggle.checked = device.sendMessages
+        toggle.setAttribute('aria-label', `Allow ${device.name || 'iPhone'} to send messages`)
+        toggle.addEventListener('change', async () => {
+            toggle.disabled = true
+            try {
+                await window.desktopApp.phonePairing.setSendMessages(device.deviceId, toggle.checked)
+                showError('')
+            } catch {
+                toggle.checked = device.sendMessages
+                showError('Open this phone’s workspace and its local network listener to change sending access.')
+            } finally { toggle.disabled = false }
+            await refresh().catch(() => showError('Phone pairing is unavailable.'))
+        })
+        label.append(toggle, 'Send messages')
+        item.insertBefore(label, item.lastElementChild)
+        return item
+    }))
 }
 
 async function updateSetting(change) {

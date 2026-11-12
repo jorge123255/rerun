@@ -54,7 +54,7 @@ function json(response, status, body) {
     response.end(payload)
 }
 
-async function startWorkspaceFixture(beforeRead = async () => {}) {
+async function startWorkspaceFixture(beforeRead = async () => {}, onSend) {
     return listen(async (request, response) => {
         if (request.headers.cookie !== `rerun-desktop-session=${SESSION_COOKIE}`) return json(response, 401, { error: 'Unauthorized' })
         const url = new URL(request.url, 'http://127.0.0.1')
@@ -66,7 +66,16 @@ async function startWorkspaceFixture(beforeRead = async () => {}) {
         if (agent !== AGENT.id) return json(response, 404, { error: 'not found' })
         if (!chat) return json(response, 200, { chats: [CHAT] })
         if (chat !== CHAT.id) return json(response, 404, { error: 'not found' })
-        return json(response, 200, { chat: CHAT, messages: [MESSAGE] })
+        if (request.method === 'POST' && onSend) {
+            assert.equal(request.headers.origin, 'http://' + request.headers.host)
+            const chunks = []
+            for await (const chunk of request) chunks.push(chunk)
+            const input = JSON.parse(Buffer.concat(chunks))
+            onSend(input)
+            return json(response, 202, { runId: input.runId })
+        }
+        if (url.searchParams.has('runId')) return json(response, 200, { status: 'done' })
+        return json(response, 200, { chat: { ...CHAT, acceptsMessages: true }, messages: [MESSAGE] })
     })
 }
 
@@ -194,6 +203,53 @@ test('private-network pairing pins TLS and scopes approvals through restart and 
     assert.equal(restored.phoneAccessEnabled, false)
     assert.equal(restored.lanBindingEnabled, false)
     assert.equal(restored.listening, false)
+})
+
+test('only the granted HTTPS device can send to its own saved chat, with stable per-device receipts', async t => {
+    const host = localPairingAddresses()[0]
+    if (!host) { t.skip('no assigned private IPv4 address'); return }
+    const root = await dataRoot(t)
+    const submissions = []
+    const workspace = await startWorkspaceFixture(undefined, body => submissions.push(body))
+    t.after(workspace.close)
+    const { service } = createService(t, root, { workspace })
+    await service.setPhoneAccessEnabled(true)
+    await service.setLanAddress(host)
+    const pair = async () => {
+        const client = createMacPairingClient({ storage: createMemoryStorage(), pinnedFetch })
+        const pending = await client.connectToThisMac(await service.createOffer(1))
+        await service.approveDevice(pending.deviceId)
+        await client.waitForApproval()
+        return { client, deviceId: pending.deviceId }
+    }
+    const { client, deviceId } = await pair()
+    const other = await pair()
+    const message = { requestId: 'b4e687b7-e978-4411-a3bb-7d49c0486c11', text: 'Phone fixture message' }
+    const send = () => client.sendMessage(AGENT.id, CHAT.id, message)
+    assert.equal((await client.openSavedChat(AGENT.id, CHAT.id)).permissions.sendMessages, false)
+    await assert.rejects(send, { status: 403 })
+    assert.equal(submissions.length, 0)
+    await service.setSendMessages(deviceId, true)
+    assert.equal((await client.openSavedChat(AGENT.id, CHAT.id)).permissions.sendMessages, true)
+    assert.equal((await send()).requestId, message.requestId)
+    assert.equal((await send()).requestId, message.requestId)
+    assert.deepEqual(submissions[0], submissions[1])
+    assert.equal(submissions[0].text, message.text)
+    assert.notEqual(submissions[0].runId, message.requestId)
+    assert.equal((await client.readSentTurn(AGENT.id, CHAT.id, message.requestId)).status, 'done')
+    await assert.rejects(() => other.client.sendMessage(AGENT.id, CHAT.id, message), { status: 403 })
+    await assert.rejects(() => client.sendMessage(AGENT.id, 'foreign-chat', message), { status: 404 })
+    await service.stop()
+    const { service: restarted } = createService(t, root, { workspace })
+    await restarted.restore()
+    assert.equal((await client.openSavedChat(AGENT.id, CHAT.id)).permissions.sendMessages, true)
+    assert.equal((await send()).requestId, message.requestId)
+    assert.deepEqual(submissions[0], submissions[2])
+    await restarted.setSendMessages(deviceId, false)
+    await assert.rejects(send, { status: 403 })
+    await restarted.revokeDevice(deviceId)
+    await assert.rejects(send, { status: 401 })
+    assert.equal(submissions.length, 3)
 })
 
 test('pairing success lists coworkers and opens a saved chat through existing desktop workspace reads', async t => {

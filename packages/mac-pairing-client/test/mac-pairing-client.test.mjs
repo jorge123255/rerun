@@ -41,7 +41,7 @@ test('credentials are bound to the original loopback origin and pairing response
             if (url.endsWith('/pair/redeem')) return Response.json({
                 status: 'pending', deviceId: 'device', requestToken: 'request-token', workspaceId: 1,
             })
-            return Response.json({ status: 'approved', deviceId: 'device', credential: 'device-token',
+            return Response.json({ status: 'approved', deviceId: 'device', credential: 'a'.repeat(43),
                 macId: offer.macId, fingerprint: offer.fingerprint, workspaceId: 1, origin: 'http://127.0.0.1:3002' })
         },
     })
@@ -51,4 +51,27 @@ test('credentials are bound to the original loopback origin and pairing response
     await assert.rejects(client.waitForApproval(), /invalid_pairing_response/)
     assert.equal((await client.readMacSession()).status, 'pending')
     assert(calls.every(call => call.url.startsWith(offer.origin + '/') && call.redirect === 'error'))
+})
+
+test('a cancelled pairing request cannot persist its late response', async () => {
+    const storage = createMemoryStorage()
+    const controller = new AbortController()
+    let requestSignal
+    let respond
+    const reply = new Promise(resolve => { respond = resolve })
+    const client = createMacPairingClient({
+        storage,
+        pinnedFetch: async (_url, _fingerprint, options) => {
+            requestSignal = options.signal
+            return reply
+        },
+    })
+    const pending = client.connectToThisMac({ kind: 'rerun-mac-phone-pairing', version: 1, macId: 'mac-a',
+        fingerprint: 'device-fingerprint', certificateFingerprint: 'a'.repeat(64), offerId: 'offer',
+        workspaceId: 1, origin: 'https://192.168.0.2:3001', secret: 'secret' }, controller.signal)
+    controller.abort()
+    assert.equal(requestSignal.aborted, true)
+    respond(Response.json({ status: 'pending', deviceId: 'device', requestToken: 'test-token', workspaceId: 1 }))
+    await assert.rejects(pending, /aborted/)
+    assert.equal(await client.readMacSession(), null)
 })

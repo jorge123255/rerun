@@ -58,3 +58,11 @@ phone a new endpoint and requires a new offer. The Mac stores a private
 certificate key per address in its own application data with mode 0600.
 Loopback approvals cannot authenticate to the HTTPS listener, and HTTPS
 approvals are bound to the certificate that accepted them.
+
+## Sending from an approved iPhone
+
+A phone starts with read access. To let one phone send to saved chats in its
+paired workspace, turn on **Send messages** for it in the Mac pairing window.
+The phone uses the chat’s existing model and coworker settings. A stable send
+ID lets the phone retry a missing acknowledgement without starting a second
+turn. The client polls the exact run and refreshes the saved chat at completion.

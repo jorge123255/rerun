@@ -1,7 +1,7 @@
 import { macFingerprint } from './crypto.mjs'
 import { isPrivateAddress, loadLanIdentity, localPairingAddresses } from './lan-identity.mjs'
 import { createOfferBook } from './offers.mjs'
-import { DEFAULT_OFFER_TTL_MS, ERRORS, LOOPBACK_HOST } from './protocol.mjs'
+import { DEFAULT_OFFER_TTL_MS, DEVICE_STATUS, ERRORS, LOOPBACK_HOST } from './protocol.mjs'
 import { listPublicDevices, publicDevice, readDeviceStore, readSettings, writeDeviceStore, writeSettings } from './store.mjs'
 import { createPairingTransport } from './transport.mjs'
 import { getWorkspace } from '../workspaces/catalog.mjs'
@@ -141,6 +141,17 @@ export function createMacPhonePairingService({
         approveDevice: deviceId => exclusive(async () => {
             if (!transport || !(await settings()).phoneAccessEnabled) throw refusal(ERRORS.disabled)
             return transport.approve(deviceId)
+        }),
+        setSendMessages: (deviceId, enabled) => exclusive(async () => {
+            const record = await store()
+            const device = record.devices.find(entry => entry.deviceId === deviceId)
+            if (!device || device.status !== DEVICE_STATUS.approved || !device.certificateFingerprint) throw refusal(ERRORS.not_found)
+            if (enabled && (!transport?.inScope(device) || !transport.address() || getRuntime()?.workspaceId !== device.workspaceId)) {
+                throw refusal(ERRORS.workspace_not_active)
+            }
+            device.sendMessages = enabled === true
+            await saveStore(record)
+            return publicDevice(device)
         }),
         revokeDevice: deviceId => exclusive(() => (transport ?? newTransport(0)).revoke(deviceId)),
     }

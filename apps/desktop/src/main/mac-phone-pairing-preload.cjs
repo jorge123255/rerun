@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('desktopApp', {
         setNetwork: address => ipcRenderer.invoke('desktop:phone-pairing-network', address),
         createOffer: () => ipcRenderer.invoke('desktop:phone-pairing-offer'),
         approve: deviceId => ipcRenderer.invoke('desktop:phone-pairing-approve', deviceId),
+        setSendMessages: (deviceId, enabled) => ipcRenderer.invoke('desktop:phone-pairing-send-permission', deviceId, enabled === true),
         revoke: deviceId => ipcRenderer.invoke('desktop:phone-pairing-revoke', deviceId),
     },
 })
