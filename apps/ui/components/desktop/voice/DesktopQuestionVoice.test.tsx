@@ -2,6 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { desktopAuxiliaryPurposes } from '@/lib/desktop/auxiliary'
 import { DesktopQuestionCard } from '../DesktopQuestionCard'
 
 const recorder = vi.hoisted(() => ({ start: vi.fn(), stop: vi.fn(), cancel: vi.fn() }))
@@ -12,7 +13,7 @@ vi.mock('./DesktopVoiceRecorderBar', () => ({ DesktopVoiceRecorderBar: () => <sp
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const question = { id: 'a'.repeat(64), messageId: 'message', toolCallId: 'call', questions: [{ question: 'Which choice?', options: ['First', 'Second'] }] }
-const settings = () => Response.json(['search', 'embedding', 'transcription'].map(purpose =>
+const settings = () => Response.json(desktopAuxiliaryPurposes.map(purpose =>
     ({ purpose, revision: 'fixture', configured: purpose === 'transcription' })))
 let host: HTMLDivElement, root: Root
 const button = (action: string) => host.querySelector<HTMLButtonElement>(`[data-hitl="${action}"]`)!
