@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
 import { memoriesListSchema, desktopSemanticIndexStatusSchema, desktopSemanticRecallResultSchema, type DesktopSemanticIndexStatus, type DesktopSemanticRecallResult } from '@rerun/contracts'
 import { MemoryRow } from '@/components/agent/MemoryRow'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
@@ -30,6 +30,7 @@ export function DesktopCoworkerMemoriesBody({ agent, registerCloseGuard, inDialo
     registerCloseGuard: RegisterDesktopPanelCloseGuard
     inDialog?: boolean
 }) {
+    const fieldId = useId()
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/memories`
     const semanticUrl = `/api/desktop/coworkers/${encodeURIComponent(agent.id)}/semantic-memory`
     const [saved, setSaved] = useState<Load<SavedMemories> | null>(null)
@@ -198,7 +199,7 @@ export function DesktopCoworkerMemoriesBody({ agent, registerCloseGuard, inDialo
                     onSubmit={event => { event.preventDefault(); search(query) }}>
                     <div className="relative min-w-40 flex-1">
                         <SearchIcon aria-hidden className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                        <Input id="desktop-memory-search" aria-label="Recall memories" hideRequired value={query}
+                        <Input id={fieldId + '-search'} name="memory-search" aria-label="Recall memories" hideRequired value={query}
                             className="h-8 pl-7 pr-8 text-xs" placeholder="Recall memories…" onChange={event => {
                                 setQuery(event.target.value)
                                 if (!event.target.value.trim() && recalling) search('')
@@ -224,11 +225,11 @@ export function DesktopCoworkerMemoriesBody({ agent, registerCloseGuard, inDialo
             </PanelListHeader>
             <PanelScroller className="space-y-3 px-0">
                 {draft ? <form onSubmit={create} className="space-y-3 rounded-lg border p-3">
-                    <Textarea id="desktop-memory-content" label="Content" required value={draft.content} onChange={e => setDraft({ ...draft, content: e.target.value })}
+                    <Textarea id={fieldId + '-content'} name="memory-content" label="Content" required value={draft.content} onChange={e => setDraft({ ...draft, content: e.target.value })}
                         placeholder="The user prefers concise answers." className="min-h-20" />
                     <div className="grid gap-2 sm:grid-cols-2">
-                        <Input id="desktop-memory-kind" label="Kind" hideRequired value={draft.kind} onChange={e => setDraft({ ...draft, kind: e.target.value })} placeholder="note" />
-                        <Input id="desktop-memory-tags" label="Tags" hideRequired value={draft.tags} onChange={e => setDraft({ ...draft, tags: e.target.value })} placeholder="Separate tags with commas" />
+                        <Input id={fieldId + '-kind'} name="memory-kind" label="Kind" hideRequired value={draft.kind} onChange={e => setDraft({ ...draft, kind: e.target.value })} placeholder="note" />
+                        <Input id={fieldId + '-tags'} name="memory-tags" label="Tags" hideRequired value={draft.tags} onChange={e => setDraft({ ...draft, tags: e.target.value })} placeholder="Separate tags with commas" />
                     </div>
                     <div className="flex gap-2">
                         <Button type="submit" size="sm" disabled={!draft.content.trim()}>Save memory</Button>

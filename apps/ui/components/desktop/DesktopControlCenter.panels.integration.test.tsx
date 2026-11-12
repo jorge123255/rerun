@@ -1203,7 +1203,7 @@ test('opens the selected coworker’s Knowledge inline and returns to the same b
     expect(details.querySelector('input[aria-label="Recall memories"]')).not.toBeNull()
     expect(app.panelReads.slice(earlierReads)).toEqual(['/api/desktop/agents/' + reviewer.id + '/memories'])
     await click('Add memory', details)
-    const note = details.querySelector<HTMLTextAreaElement>('#desktop-memory-content')!
+    const note = details.querySelector<HTMLTextAreaElement>('textarea[name="memory-content"]')!
     await enter(note, 'Unsaved Knowledge draft')
     await backToOverview(details, 'Reviewer')
     const confirmation = await until(() => document.querySelector<HTMLElement>('[role="alertdialog"]'))
@@ -1220,4 +1220,28 @@ test('opens the selected coworker’s Knowledge inline and returns to the same b
     expect(input.value).toBe('Unsent note beside Knowledge')
     expect(chat.textContent).toContain(app.answer(reviewer.id + '-first'))
     expect(app.contentWrites).toEqual([])
+})
+
+test('the inline Knowledge and Control Center Memories forms have separate input labels', async () => {
+    const app = fixture(undefined, true)
+    const { container } = await app.mount()
+    await openBoardChat(container)
+    await click('Coworker card', container)
+    const details = await until(() => container.querySelector<HTMLElement>('section[aria-label="Coworker details"]:not([hidden])'))
+    await click('Knowledge', details)
+    await until(() => details.textContent?.includes('Reviewer private memory'))
+    await click('Add memory', details)
+    const inline = details.querySelector('textarea')!
+    await enter(inline, 'Draft in the side panel')
+
+    await openCoworkerPage('Reviewer')
+    await chooseOpenRow('Knowledge')
+    const dialog = await until(() => panelDialog('Memories'))
+    await click('Add memory', dialog)
+    const modal = dialog.querySelector('textarea')!
+    expect(modal.id).not.toBe(inline.id)
+    expect([...modal.labels ?? []].map(label => label.textContent)).toEqual(['Content'])
+    expect([...inline.labels ?? []].map(label => label.textContent)).toEqual(['Content'])
+    expect(inline.value).toBe('Draft in the side panel')
+    expect(modal.value).toBe('')
 })
