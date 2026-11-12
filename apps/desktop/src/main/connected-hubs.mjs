@@ -33,7 +33,8 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
         onUnavailable: entry => { void dialog.showMessageBox(entry.window, { type: 'warning', title: 'Quick Ask',
             message: 'Quick Ask could not open on this Rerun server.', buttons: ['OK'] }).catch(() => {}) },
     })
-    let picker = null, connecting = null
+    let picker = null, acceptedPicker = null, connecting = null
+    let pendingOpen = null, openingLink = false
 
     function connected(window) {
         if (!window || window.isDestroyed()) return null
@@ -111,6 +112,25 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
         const origin = normalizeHubOrigin(value?.origin)
         return origin && origin === value.origin ? origin : null
     }
+    async function openPendingLink() {
+        if (!available() || openingLink || connecting || picker || !pendingOpen) return
+        openingLink = true
+        const request = pendingOpen
+        try {
+            const origin = await savedOrigin()
+            if (!available() || picker || connecting || pendingOpen !== request) return
+            if (!origin) { openPicker(); return }
+            pendingOpen = null
+            const result = await connect(origin, request.path)
+            if (!result.ok && available()) {
+                pendingOpen ??= request
+                openPicker()
+            }
+        } finally {
+            openingLink = false
+            if (pendingOpen && pendingOpen !== request) void openPendingLink()
+        }
+    }
     function external(value) {
         const url = externalDesktopLink(value)
         if (!url) return false
@@ -133,6 +153,12 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
         window.once('closed', () => {
             if (picker !== window) return
             picker = null
+            if (acceptedPicker === window) {
+                acceptedPicker = null
+                void openPendingLink()
+                return
+            }
+            pendingOpen = null
             connecting?.abort()
             connecting = null
         })
@@ -145,14 +171,14 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
 
     async function openHub(origin, desktopSession, path, signal, offline) {
         signal.throwIfAborted()
-        const address = new URL(path, origin)
+        const address = new URL(path ?? '/', origin)
         if (!sameHub(address, origin)) return false
         const existing = [...windows.values()].find(entry => entry.origin === origin && !entry.window.isDestroyed())
         if (existing) {
-            const target = path === '/' ? existing.recovery.target() : address.href
+            const target = path === null ? existing.recovery.target() : address.href
             if (offline) {
                 if (!existing.recovery.onOfflinePage() && !await existing.recovery.showOffline(target, 'offline')) return false
-            } else if (path !== '/' || existing.recovery.state()) {
+            } else if (path !== null || existing.recovery.state()) {
                 if (!await existing.recovery.navigate(target)) return false
             }
             signal.throwIfAborted()
@@ -265,7 +291,7 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
         finally { signal.removeEventListener('abort', abort) }
     }
 
-    async function connect(address, path = '/', parent) {
+    async function connect(address, path = null, parent) {
         if (!available() || connecting) return { ok: false, reason: 'busy' }
         const origin = normalizeHubOrigin(address)
         if (!origin) return { ok: false, reason: 'invalid' }
@@ -278,14 +304,22 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
             const offline = !result.ok && result.reason === 'unreachable' && await savedOrigin() === origin
             if (!result.ok && !offline) return result
             if (!available() || (parent && picker !== parent)) return { ok: false, reason: 'busy' }
+            const request = parent ? pendingOpen : null
             const opening = AbortSignal.any([controller.signal, AbortSignal.timeout(25000)])
-            if (!await openHub(origin, desktopSession, path, opening, offline)) return { ok: false, reason: 'unreachable' }
+            if (!await openHub(origin, desktopSession, request?.path ?? path, opening, offline)) return { ok: false, reason: 'unreachable' }
+            if (request && pendingOpen === request) pendingOpen = null
             // The connection is usable even if the convenience of remembering its address fails.
             await atomicPrivateJSON(file, { origin }).catch(() => {})
-            if (parent && !parent.isDestroyed()) setTimeout(() => { if (!parent.isDestroyed()) parent.close() }, 0)
+            if (parent && !parent.isDestroyed()) {
+                acceptedPicker = parent
+                setTimeout(() => { if (!parent.isDestroyed()) parent.close() }, 0)
+            }
             return { ok: true }
         } catch { return { ok: false, reason: 'unreachable' } }
-        finally { if (connecting === controller) connecting = null }
+        finally {
+            if (connecting === controller) connecting = null
+            if (!picker && pendingOpen) void openPendingLink()
+        }
     }
 
     async function redeem(entry, code, state) {
@@ -315,7 +349,7 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
     ipcMain.handle('hub:quick-ask-close', event => quickAsk.close(quickAsk.sender(event)))
     ipcMain.handle('hub:quick-ask-sent', (event, path) => quickAsk.sent(quickAsk.sender(event), path))
     ipcMain.handle('hub:saved-origin', event => localSender(event) ? savedOrigin() : null)
-    ipcMain.handle('hub:connect', (event, address) => localSender(event) ? connect(address, '/', picker) : { ok: false, reason: 'invalid' })
+    ipcMain.handle('hub:connect', (event, address) => localSender(event) ? connect(address, null, picker) : { ok: false, reason: 'invalid' })
     ipcMain.handle('hub:offline-state', event => offlineSender(event)?.recovery.state() ?? null)
     ipcMain.handle('hub:offline-retry', event => offlineSender(event)?.recovery.retry() ?? null)
     for (const [channel, action] of [
@@ -369,12 +403,12 @@ export function createConnectedHubs({ app, BrowserWindow, Notification, ipcMain,
                 await serviceSignIn.complete(link.result)
                 return
             }
-            const origin = await savedOrigin()
-            if (origin) await connect(origin, link.path)
-            else openPicker()
+            pendingOpen = { path: link.path }
+            await openPendingLink()
         },
         async closeAll() {
             serviceSignIn.cancelAll()
+            pendingOpen = null
             connecting?.abort()
             quickAsk.reset()
             for (const entry of [...windows.values()]) {

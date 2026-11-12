@@ -22,7 +22,7 @@ import { createQuickAskWindow } from './quick-ask-window.mjs'
 import { loadQuickAskShortcut } from './quick-ask-shortcut.mjs'
 import { createBoardWindows } from './board-windows.mjs'
 import { createConnectedHubs } from './connected-hubs.mjs'
-import { parseHubLink } from './connected-hub-policy.mjs'
+import { parseHubLink, registerHubProtocol } from './connected-hub-policy.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
@@ -241,6 +241,7 @@ function resumeBoard(board) {
 async function launch() {
     if (storageSetupError) throw storageSetupError
     if (mac) {
+        if (app.isPackaged && !registerHubProtocol(app)) console.warn('Could not register Rerun development links with macOS.')
         shortcutPreference = await loadQuickAskShortcut({ dataRoot, globalShortcut, open: toggleQuickAsk })
         connectedHubs = createConnectedHubs({ app, BrowserWindow, Notification, ipcMain, session, shell, dialog, screen, dataRoot,
             available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate),

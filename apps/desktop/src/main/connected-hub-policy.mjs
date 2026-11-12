@@ -7,6 +7,13 @@ const semver = /^(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})(?:-([0-9A-
 const token = /^[A-Za-z0-9_-]{16,128}$/
 const claimToken = /^[A-Za-z0-9_-]{16,64}$/
 
+export function registerHubProtocol(app) {
+    if (!app.isPackaged) return false
+    try {
+        return app.isDefaultProtocolClient(HUB_SCHEME) || app.setAsDefaultProtocolClient(HUB_SCHEME)
+    } catch { return false }
+}
+
 export function normalizeHubOrigin(address) {
     if (typeof address !== 'string' || address.length > 2048 || /[\x00-\x1f\x7f\\]/.test(address)) return null
     const input = address.trim()

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { runInNewContext } from 'node:vm'
 import { test } from 'node:test'
-import { checkHub, hubPartition, normalizeHubOrigin, parseHubLink, sameHub } from '../src/main/connected-hub-policy.mjs'
+import { checkHub, hubPartition, normalizeHubOrigin, parseHubLink, registerHubProtocol, sameHub } from '../src/main/connected-hub-policy.mjs'
 import { createHubAuth } from '../src/main/connected-hub-auth.mjs'
 
 const origin = 'https://hub.example.test'
@@ -51,6 +51,24 @@ test('development links carry only the exact callback or a same-server path', ()
     for (const path of ['//outside.test', '/\\outside.test', 'https://outside.test', '/board\n']) {
         assert.equal(parseHubLink('rerun-desktop-dev://open?path=' + encodeURIComponent(path)), null)
     }
+})
+
+test('the packaged Mac preview registers its declared development scheme without touching the stable scheme', async () => {
+    const packaging = await readFile(new URL('../electron-builder.yml', import.meta.url), 'utf8')
+    assert.match(packaging, /protocols:\s+- name: Rerun Development Links\s+schemes:\s+- rerun-desktop-dev(?:\s|$)/)
+    const calls = []
+    let alreadyDefault = false
+    const app = { isPackaged: false, isDefaultProtocolClient: scheme => { calls.push(['get', scheme]); return alreadyDefault },
+        setAsDefaultProtocolClient: scheme => { calls.push(['set', scheme]); return true } }
+    assert.equal(registerHubProtocol(app), false)
+    assert.deepEqual(calls, [])
+    app.isPackaged = true
+    assert.equal(registerHubProtocol(app), true)
+    alreadyDefault = true
+    assert.equal(registerHubProtocol(app), true)
+    assert.deepEqual(calls, [['get', 'rerun-desktop-dev'], ['set', 'rerun-desktop-dev'], ['get', 'rerun-desktop-dev']])
+    app.isDefaultProtocolClient = () => { throw new Error('Launch Services refused') }
+    assert.equal(registerHubProtocol(app), false)
 })
 
 test('browser sign-in uses PKCE and exchanges a matching state once on its own hub', async () => {
