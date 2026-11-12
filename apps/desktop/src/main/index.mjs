@@ -21,6 +21,8 @@ import { createWindowFind } from './window-find.mjs'
 import { createQuickAskWindow } from './quick-ask-window.mjs'
 import { loadQuickAskShortcut } from './quick-ask-shortcut.mjs'
 import { createBoardWindows } from './board-windows.mjs'
+import { createConnectedHubs } from './connected-hubs.mjs'
+import { parseHubLink } from './connected-hub-policy.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
@@ -37,6 +39,8 @@ let remoteInstallId
 const remoteClosures = new Map()
 let activeSession
 let activeWorkspaceId
+let connectedHubs
+let pendingHubLink
 let transitioning = false
 let quitting = false
 let quittingNow = false
@@ -47,7 +51,7 @@ const closingBoards = new Set()
 const quickAsk = createQuickAskWindow({ app, BrowserWindow, screen, showBoard: showMainWindow, boardScope: () =>
     boardContext(window) ? { epoch: boards.get(window).epoch, contents: window.webContents } : null,
 })
-const windowFind = createWindowFind({ WebContentsView, scopeOf: candidate => boardContext(candidate)?.rendererEpoch ?? null,
+const windowFind = createWindowFind({ WebContentsView, scopeOf: candidate => boardContext(candidate)?.rendererEpoch ?? connectedHubs?.scopeOf(candidate),
     topInset: candidate => mac && !candidate.isFullScreen() ? 28 : 0,
 })
 function boardContext(candidate) {
@@ -134,6 +138,13 @@ function createNotices() { return createDesktopNotifications({ Notification, onC
 
 if (!app.requestSingleInstanceLock()) app.quit()
 else {
+    if (mac) app.on('open-url', (event, address) => {
+        const link = parseHubLink(address)
+        if (!link) return
+        event.preventDefault()
+        if (connectedHubs) void connectedHubs.openLink(link).catch(() => {})
+        else if (link.kind === 'open') pendingHubLink = link
+    })
     app.on('second-instance', showMainWindow)
     app.on('activate', showMainWindow)
     app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
@@ -147,7 +158,12 @@ else {
         void completeDesktopQuit({
             flush: () => boards.flushAll(runtime),
             confirmDiscard: () => confirmDiscard(focusedBoard(), 'Quit'),
-            stop: async () => { await shortcutPreference?.flush(); await remoteMachines?.close(); await supervisor?.stop() },
+            stop: async () => {
+                await connectedHubs?.closeAll()
+                await shortcutPreference?.flush()
+                await remoteMachines?.close()
+                await supervisor?.stop()
+            },
             quit: () => { clickHandoff.stop(); quittingNow = true; app.quit() },
             cancelled: resumeAfterCancelledQuit,
         }).catch(() => { if (!quittingNow) resumeAfterCancelledQuit() })
@@ -193,6 +209,13 @@ async function launch() {
     await mkdir(dataRoot, { recursive: true, mode: 0o700 })
     app.setPath('userData', dataRoot)
     if (mac) {
+        connectedHubs = createConnectedHubs({ app, BrowserWindow, ipcMain, session, shell, dialog, dataRoot,
+            available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate) })
+        if (pendingHubLink) {
+            const link = pendingHubLink
+            pendingHubLink = null
+            void connectedHubs.openLink(link).catch(() => {})
+        }
         shortcutPreference = await loadQuickAskShortcut({ dataRoot, globalShortcut, open: () => quickAsk.toggle() })
         app.once('will-quit', shortcutPreference.unregister)
         installMacApplicationMenu({
@@ -202,9 +225,13 @@ async function launch() {
                 return boardContext(candidate) && boards.get(candidate).drafts.ready ? candidate : null
             },
             openDocumentation: () => openExternal('https://docs.rerun.build'),
-            openFind: () => windowFind.open(focusedBoard()),
+            openFind: () => {
+                const focused = BrowserWindow.getFocusedWindow()
+                windowFind.open(connectedHubs.scopeOf(focused) ? focused : focusedBoard())
+            },
             openQuickAsk: () => quickAsk.toggle(),
             openNewWindow: () => { void openAdditionalBoard().catch(() => {}) },
+            openHubPicker: connectedHubs.openPicker,
         })
         try {
             menuBar = createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow: showMainWindow,

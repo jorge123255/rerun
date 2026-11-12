@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; form-action 'none'; base-uri 'none'">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Connect to Rerun</title>
+    <link rel="stylesheet" href="startup.css">
+    <link rel="stylesheet" href="connected-hub.css">
+    <script defer src="connected-hub.js"></script>
+</head>
+<body>
+    <main>
+        <h1>Connect to Rerun</h1>
+        <p>Open a Rerun server in its own window. Your local workspace stays open.</p>
+        <form>
+            <label for="server-address">Server address</label>
+            <input id="server-address" type="text" inputmode="url" autocomplete="url" spellcheck="false" placeholder="rerun.example.com" autofocus required maxlength="2048">
+            <p id="connection-error" role="alert" hidden></p>
+            <button type="submit">Connect</button>
+        </form>
+    </main>
+</body>
+</html>

@@ -3,6 +3,10 @@
 # Public distribution still needs Developer ID, hardened runtime and notarization.
 appId: build.rerun.desktop.preview
 productName: Rerun Desktop Preview
+protocols:
+    - name: Rerun Development Links
+      schemes:
+          - rerun-desktop-dev
 copyright: Rerun contributors
 directories:
     app: .

@@ -1,6 +1,6 @@
 import { QUICK_ASK_SHORTCUT } from './quick-ask-window.mjs'
 
-export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDesktopPage, openDocumentation, openFind, openQuickAsk, openNewWindow }) {
+export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDesktopPage, openDocumentation, openFind, openQuickAsk, openNewWindow, openHubPicker }) {
     const template = [
         { label: appName, submenu: [
             { role: 'about' },
@@ -29,6 +29,7 @@ export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDes
         ] },
         { role: 'fileMenu', submenu: [
             { id: 'rerun-new-window', label: 'New Window', accelerator: 'CmdOrCtrl+Shift+N', click: openNewWindow },
+            { id: 'rerun-connect-hub', label: 'Connect to Rerun…', click: openHubPicker },
             { id: 'rerun-quick-ask', label: 'Quick Ask…', accelerator: QUICK_ASK_SHORTCUT, registerAccelerator: false, click: openQuickAsk },
             { type: 'separator' }, { role: 'close' },
         ] },

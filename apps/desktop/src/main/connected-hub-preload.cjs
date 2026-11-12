@@ -1,0 +1,37 @@
+const { contextBridge, ipcRenderer } = require('electron')
+
+const bootstrap = ipcRenderer.sendSync('hub:bootstrap')
+function subscribe(channel, callback) {
+    if (typeof callback !== 'function') throw new TypeError('Expected a listener')
+    const listener = (_event, value) => callback(value)
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
+}
+
+if (bootstrap?.audience === 'picker') {
+    contextBridge.exposeInMainWorld('rerunHubPicker', {
+        savedOrigin: () => ipcRenderer.invoke('hub:saved-origin'),
+        connect: address => ipcRenderer.invoke('hub:connect', address),
+    })
+} else if (bootstrap?.audience === 'hub') {
+    contextBridge.exposeInMainWorld('rerunShell', {
+        apiVersion: bootstrap.apiVersion,
+        version: bootstrap.version,
+        platform: bootstrap.platform,
+        channel: bootstrap.channel,
+        capabilities: bootstrap.capabilities,
+        auth: {
+            startBrowserSignIn: options => ipcRenderer.invoke('hub:auth-start', { provider: options?.provider }),
+            submitCode: code => ipcRenderer.invoke('hub:auth-code', code),
+            onResult: callback => subscribe('hub:auth-result', callback),
+        },
+        window: {
+            getState: () => ipcRenderer.invoke('hub:window-state'),
+            onState: callback => subscribe('hub:window-state', callback),
+            setChrome: colors => { void ipcRenderer.invoke('hub:window-chrome', { frameColor: colors?.frameColor }).catch(() => {}) },
+        },
+        find: { open: () => { void ipcRenderer.invoke('hub:find').catch(() => {}) } },
+        links: { openExternal: url => ipcRenderer.invoke('hub:open-link', url) },
+        server: { openPicker: () => { void ipcRenderer.invoke('hub:open-picker').catch(() => {}) } },
+    })
+}
