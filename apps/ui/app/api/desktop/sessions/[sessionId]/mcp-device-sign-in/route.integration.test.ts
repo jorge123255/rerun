@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { PUT as configureServer } from '@/app/api/desktop/coworkers/[agentId]/mcp/route'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
-import { shutdownDesktopRemoteMcp } from '@/lib/desktop/server/mcp-binding'
+import { getDesktopRemoteMcpService, shutdownDesktopRemoteMcp } from '@/lib/desktop/server/mcp-binding'
 import { createDesktopAgent, createDesktopSession } from '@/lib/desktop/server/store'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { GET as readSignIn, POST as browserSignIn } from '../mcp-sign-in/route'
@@ -20,7 +20,10 @@ vi.mock('@/lib/desktop/server/chat-model', () => ({
     resolveDesktopChatModel: vi.fn(async () => ({ connectionId: 'fixture-connection', model: 'fixture-model' })),
 }))
 
-it('uses the mounted Mac routes to resume a saved code after restart and continue only after probing tools', async () => {
+it.each([
+    { outcome: 'continues a saved code after restart and a tool probe', stop: false },
+    { outcome: 'stops an in-flight check and refuses its late token after restart', stop: true },
+])('uses the mounted Mac routes and $outcome', async ({ stop }) => {
     const root = await mkdtemp(join(tmpdir(), 'rerun-mounted-mcp-device-'))
     const runtimePath = join(root, 'runtime.json')
     const resource = 'https://fixture-mcp.example/mcp'
@@ -153,6 +156,41 @@ it('uses the mounted Mac routes to resume a saved code after restart and continu
         expect(await resumed.json()).toEqual({ authorization: waiting.attempt.authorization })
         expect(transport.device).toHaveBeenCalledTimes(1)
         now += 5001
+        if (stop) {
+            const lateToken = { status: 200, body: { access_token: privateToken, token_type: 'Bearer', expires_in: 3600 } }
+            let startedPoll!: (signal: AbortSignal) => void, finishPoll!: (value: typeof lateToken) => void
+            const polling = new Promise<AbortSignal>(resolve => { startedPoll = resolve })
+            const late = new Promise<typeof lateToken>(resolve => { finishPoll = resolve })
+            transport.device.mockImplementationOnce(async (_url: string, signal: AbortSignal) => {
+                startedPoll(signal)
+                return late
+            })
+            const checking = device('check-device-authorization', { ...ids, requestId: randomUUID() })
+            const pollSignal = await polling
+            const decision = { ...ids, operation: 'stop-device-method', decisionId: randomUUID() }
+            try {
+                const stopped = await device('decide-device-method', { decision })
+                expect(stopped.status).toBe(200)
+                expect(await stopped.json()).toMatchObject({ review: { ...ids, state: 'stopped' } })
+                expect(pollSignal.aborted).toBe(true)
+            } finally {
+                finishPoll(lateToken)
+            }
+            expect(await (await checking).json()).toEqual({ attempt: { state: 'unknown', authorization: null } })
+            expect(await (await getDesktopRemoteMcpService(runtime)).store.readOAuth(agent.id, server.name)).toBeNull()
+            await shutdownDesktopRemoteMcp(runtime)
+            await closeDesktopDatabase(root)
+            runtime = { ...runtime, launchNonce: randomUUID(), app: { ...runtime.app, sessionToken: randomUUID() } }
+            await saveRuntime()
+            expect(await (await device('review-device-method')).json()).toMatchObject({ review: { ...ids, state: 'stopped' } })
+            expect(await (await device('read-device-authorization', ids)).json()).toEqual({ authorization: null })
+            expect(await (await device('decide-device-method', { decision })).json()).toMatchObject({ review: { ...ids, state: 'stopped' } })
+            expect(await (await getDesktopRemoteMcpService(runtime)).store.readOAuth(agent.id, server.name)).toBeNull()
+            expect(transport.device).toHaveBeenCalledTimes(2)
+            expect(toolProbe).toEqual([])
+            expect(sent).toEqual([])
+            return
+        }
         const completed = await device('check-device-authorization', { ...ids, requestId: randomUUID() })
         expect(await completed.json()).toEqual({ attempt: { state: 'connected', authorization: null } })
         expect(transport.device).toHaveBeenCalledTimes(2)

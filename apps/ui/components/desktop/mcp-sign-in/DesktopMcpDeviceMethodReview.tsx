@@ -7,9 +7,10 @@ import { useDesktopLocale } from '../DesktopLocale'
 
 const scopeOf = (view: McpDeviceMethodReview) => JSON.stringify([view.reviewId, view.revision, view.workspaceId, view.owner, view.localSessionId, view.serverName, view.registrationRevision, view.method])
 
-export function DesktopMcpDeviceMethodReview({ review, active, onDecide }: {
+export function DesktopMcpDeviceMethodReview({ review, active, authorizationBusy = false, onDecide }: {
     review: McpDeviceMethodReview
     active: boolean
+    authorizationBusy?: boolean
     onDecide(input: McpDeviceReviewDecision, signal: AbortSignal): Promise<McpDeviceMethodReview>
 }) {
     const { t } = useDesktopLocale()
@@ -45,7 +46,7 @@ export function DesktopMcpDeviceMethodReview({ review, active, onDecide }: {
         return () => clearTimeout(timer)
     }, [view.expiresAt])
     async function decide(operation: McpDeviceReviewDecision['operation']) {
-        if (!active || latch.current || scopeOf(view) !== scope) return
+        if (!active || latch.current || scopeOf(view) !== scope || authorizationBusy && operation !== 'stop-device-method') return
         latch.current = true; setBusy(true); setDecisionUnconfirmed(false)
         const controller = new AbortController(); pending.current = controller
         const decisionId = decisions.current.get(operation) ?? crypto.randomUUID()
@@ -63,7 +64,7 @@ export function DesktopMcpDeviceMethodReview({ review, active, onDecide }: {
         }
     }
     const expired = view.expiresAt <= clock
-    const canApprove = active && !busy && view.state === 'pending' && !expired
+    const canApprove = active && !busy && !authorizationBusy && view.state === 'pending' && !expired
     const state = expired && (view.state === 'pending' || view.state === 'approved') ? 'expired' : view.state
     return <section className="min-w-0 space-y-3 border-t border-dashed pt-3" aria-label={t('mcpSignIn.review.region')}>
         <div>
@@ -83,7 +84,7 @@ export function DesktopMcpDeviceMethodReview({ review, active, onDecide }: {
         <div className="flex flex-wrap gap-2">
             {view.state === 'pending' && <>
                 <Button size="sm" disabled={!canApprove} onClick={() => { void decide('approve-device-method') }}>{t('mcpSignIn.review.approve')}</Button>
-                <Button size="sm" variant="ghost" disabled={!active || busy || expired} onClick={() => { void decide('decline-device-method') }}>{t('mcpSignIn.notNow')}</Button>
+                <Button size="sm" variant="ghost" disabled={!canApprove} onClick={() => { void decide('decline-device-method') }}>{t('mcpSignIn.notNow')}</Button>
             </>}
             {(view.state === 'pending' || view.state === 'approved') && <Button size="sm" variant="outline" disabled={!active || busy} onClick={() => { void decide('stop-device-method') }}>{t('mcpSignIn.review.stop')}</Button>}
         </div>

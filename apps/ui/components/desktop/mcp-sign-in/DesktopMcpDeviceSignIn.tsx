@@ -23,9 +23,12 @@ export function DesktopMcpDeviceSignIn({ source, onBack, onConnected }: {
     const controller = useRef<AbortController | null>(null)
     const decisionInFlight = useRef(false)
     const requestIds = useRef<Partial<Record<'start' | 'check', string>>>({})
-    useEffect(() => () => controller.current?.abort(), [])
+    useEffect(() => () => {
+        controller.current?.abort()
+        controller.current = null
+    }, [])
     useEffect(() => {
-        if (!authorization && review?.state !== 'approved') return
+        if (terminal || !authorization && review?.state !== 'approved') return
         const expiresAt = authorization?.expiresAt ?? review!.expiresAt
         const timer = setTimeout(() => {
             setAuthorization(null)
@@ -33,7 +36,7 @@ export function DesktopMcpDeviceSignIn({ source, onBack, onConnected }: {
             setNotice(authorization ? 'codeExpired' : 'approvalExpired')
         }, Math.max(1, expiresAt - Date.now()))
         return () => clearTimeout(timer)
-    }, [authorization, review])
+    }, [authorization, review, terminal])
 
     async function action<T>(input: Record<string, unknown>, signal: AbortSignal): Promise<T> {
         const response = await fetch(`/api/desktop/sessions/${encodeURIComponent(source.sessionId)}/mcp-device-sign-in`, {
@@ -58,7 +61,7 @@ export function DesktopMcpDeviceSignIn({ source, onBack, onConnected }: {
         setBusy(true); setNotice(null)
         try { await work(pending.signal) }
         catch { if (!pending.signal.aborted) setNotice('retry') }
-        finally { if (!pending.signal.aborted) { controller.current = null; setBusy(false) } }
+        finally { if (controller.current === pending) { controller.current = null; setBusy(false) } }
     }
     async function loadReview(signal: AbortSignal) {
         const result = await action<{ review: McpDeviceMethodReview }>({ action: 'review-device-method' }, signal)
@@ -74,9 +77,19 @@ export function DesktopMcpDeviceSignIn({ source, onBack, onConnected }: {
         }
     }
     async function decide(decision: McpDeviceReviewDecision, signal: AbortSignal) {
-        if (controller.current) throw new Error('Device operation is running')
+        const stopping = decision.operation === 'stop-device-method'
+        if (decisionInFlight.current || controller.current && !stopping) throw new Error('Device operation is running')
         decisionInFlight.current = true
         setDeciding(true)
+        if (stopping) {
+            controller.current?.abort()
+            controller.current = null
+            setBusy(false)
+            setAuthorization(null)
+            setNotice(null)
+            // Keep Start and Check unavailable while the exact Stop is awaiting acknowledgement.
+            setTerminal(true)
+        }
         try {
             const { review: next } = await action<{ review: McpDeviceMethodReview }>({ action: 'decide-device-method', decision }, signal)
             if (!review || next.reviewId !== review.reviewId || next.revision !== review.revision
@@ -110,7 +123,7 @@ export function DesktopMcpDeviceSignIn({ source, onBack, onConnected }: {
 
     return <div className="space-y-3">
         {!review && <Button size="sm" variant="outline" disabled={busy} onClick={() => { void run(loadReview) }}>{t('mcpSignIn.device.review')}</Button>}
-        {review && <DesktopMcpDeviceMethodReview review={review} active={!busy} onDecide={decide} />}
+        {review && <DesktopMcpDeviceMethodReview review={review} active authorizationBusy={busy} onDecide={decide} />}
         {review?.state === 'approved' && !terminal && <>
             {authorization ? <div className="space-y-2">
                 <p className="text-sm">{t('mcpSignIn.device.enterCode')} <code className="ml-1 select-all font-semibold">{authorization.userCode}</code></p>

@@ -154,6 +154,60 @@ test('Not now preserves original declined presentation and does not fabricate co
     expect(document.body.textContent).not.toContain('Connected · tools')
 })
 
+test.each(['start', 'check'] as const)('Stop cancels an in-flight device %s and ignores its late result', async operation => {
+    const review: McpDeviceMethodReview = {
+        reviewId: 'review', revision: 'revision', workspaceId: 'workspace', owner: request.source.agentId,
+        localSessionId: 'chat', serverName: request.source.server.name, registrationRevision: request.source.server.revision,
+        expiresAt: Date.now() + 300_000, state: 'approved', method: {
+            kind: 'device-code-rfc8628-v1', resource: request.source.server.url, issuer: 'https://auth.example/',
+            deviceEndpoint: 'https://auth.example/device', tokenEndpoint: 'https://auth.example/token',
+            verificationUri: 'https://auth.example/activate', clientId: 'public-client',
+        },
+    }
+    const authorization = { reviewId: review.reviewId, revision: review.revision, verificationUri: review.method.verificationUri,
+        userCode: 'FIXTURE-HUMAN', expiresAt: Date.now() + 120_000 }
+    const stopRequests: unknown[] = []
+    let operationSignal: AbortSignal | null | undefined
+    let finishOperation!: (response: Response) => void
+    const delayed = new Promise<Response>(resolve => { finishOperation = resolve })
+    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body))
+        expect(body.source).toEqual(request.source)
+        if (body.action === 'review-device-method') return response({ review })
+        if (body.action === 'read-device-authorization') return response({ authorization: operation === 'check' ? authorization : null })
+        if (body.action === `${operation}-device-authorization`) { operationSignal = init?.signal; return delayed }
+        expect(body.action).toBe('decide-device-method')
+        stopRequests.push(body.decision)
+        // First Stop acknowledgement is lost. The card must keep the exact decision retryable.
+        if (stopRequests.length === 1) throw new Error('Lost response')
+        return response({ review: { ...review, state: 'stopped' } })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const { onAccepted } = await mount(request, vi.fn(), { state: 'idle', deviceAvailable: true })
+    await click('Use a device code')
+    await click('Review device sign-in')
+    await click(operation === 'start' ? 'Start device sign-in' : 'Check authorization')
+    expect(operationSignal).toBeDefined()
+    expect(button('Stop device attempt')?.disabled).toBe(false)
+    await click('Stop device attempt')
+    expect(operationSignal?.aborted).toBe(true)
+    expect(document.querySelector('code')).toBeNull()
+    expect(button('Start device sign-in')).toBeUndefined()
+    expect(button('Check authorization')).toBeUndefined()
+    expect(document.body.textContent).toContain('The decision was not confirmed.')
+    await act(async () => finishOperation(response({ attempt: operation === 'start' ? { state: 'waiting', authorization } : { state: 'connected', authorization: null } })))
+    expect(document.querySelector('code, a')).toBeNull()
+    expect(button('Continue')).toBeUndefined()
+    expect(document.body.textContent).not.toContain('Stopped')
+    await click('Stop device attempt')
+    expect(stopRequests).toHaveLength(2)
+    expect(stopRequests[0]).toMatchObject({ reviewId: review.reviewId, revision: review.revision, operation: 'stop-device-method', decisionId: expect.any(String) })
+    expect(stopRequests[1]).toEqual(stopRequests[0])
+    expect(document.body.textContent).toContain('Stopped')
+    expect(button('Back to sign-in')).toBeDefined()
+    expect(onAccepted).not.toHaveBeenCalled()
+})
+
 test('a restored sealed receipt retries its exact unacknowledged continuation', async () => {
     const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
         expect(JSON.parse(String(init?.body))).toMatchObject({ action: 'recover', request: { requestId: 'request', attemptId: 'attempt' } })
