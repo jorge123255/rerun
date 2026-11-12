@@ -1,5 +1,7 @@
 'use client'
 
+import { DesktopCoworkerDataBody } from '@/components/desktop/DesktopCoworkerData'
+import { DesktopRunHistoryBody } from '@/components/desktop/DesktopRunHistory'
 import { DesktopCoworkerMonitoringBody } from '@/components/desktop/DesktopCoworkerMonitoringBody'
 import { DesktopCoworkerMcp } from '@/components/desktop/mcp/DesktopCoworkerMcp'
 import { DesktopCoworkerSchedules } from '@/components/desktop/schedules/DesktopCoworkerSchedules'
@@ -10,7 +12,7 @@ import { DesktopCoworkerTriggers } from '@/components/desktop/triggers/DesktopCo
 import type { DesktopAgentView } from '@/components/desktop/DesktopApp'
 import { decideDesktopOverviewWorkspaceSwitch, type DesktopOverviewFlush, type DesktopOverviewRunBoundary } from '@/lib/desktop/coworker-overview/workspace-switch'
 import type { DesktopOverviewIdentity } from '@/lib/desktop/coworker-overview/identity'
-import type { DesktopOverviewTab } from '@/lib/desktop/coworker-overview/sections'
+import type { DesktopOverviewAcceptedPanelTab, DesktopOverviewTab } from '@/lib/desktop/coworker-overview/sections'
 import type { ReactNode } from 'react'
 import { DesktopCoworkerOverview } from './DesktopCoworkerOverview'
 import type { DesktopOverviewComputer } from './DesktopCoworkerOverviewComputer'
@@ -35,7 +37,7 @@ export type DesktopCoworkerOverviewRootMountProps = {
     focusSlug?: string | null
     onSkillFocusConsumed?: () => void
     onOpenSession?: (sessionId: string, title: string) => void
-    onOpenAcceptedPanel?: (tab: 'files' | 'memories' | 'data' | 'settings' | 'tools' | 'logs') => void
+    onOpenAcceptedPanel?: (tab: DesktopOverviewAcceptedPanelTab) => void
     onClose: () => void
     onShare?: () => void
     onDelete?: (identity: DesktopOverviewIdentity, confirmationName: string) => void | Promise<void>
@@ -97,6 +99,10 @@ function overviewTab(tab: DesktopOverviewTab, props: DesktopCoworkerOverviewRoot
         const open = props.onOpenSession
         return <DesktopCoworkerTriggers agentId={props.agent.id} ingressAvailable={false} onOpenSession={chat => { if (props.agent.id === props.identity.agentId && chat.sessionId) open(chat.sessionId, chat.title) }} />
     }
+    if (tab === 'data') return <DesktopCoworkerDataBody key={props.agent.id} agentId={props.agent.id} />
+    if (tab === 'logs') return <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
+        <DesktopRunHistoryBody key={props.agent.id} agentId={props.agent.id} />
+    </div>
     if (tab === 'monitoring') return <DesktopCoworkerMonitoringBody agent={props.agent} />
     if (tab === 'setup' && props.installAuthor) return <DesktopAgentPanelSetup agentId={props.agent.id} />
     return undefined

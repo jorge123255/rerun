@@ -15,9 +15,9 @@ import type { DesktopAgentView } from './DesktopApp'
  * adapter. The browser is handed a bound source, so it never learns which database it drew and
  * cannot be pointed at another one.
  */
-function CoworkerDataPanel({ agent, initial, requireInitialView }: { agent: DesktopAgentView; initial?: DataFocus | null; requireInitialView?: boolean }) {
+export function DesktopCoworkerDataBody({ agentId, initial, requireInitialView }: { agentId: string; initial?: DataFocus | null; requireInitialView?: boolean }) {
     const [expanded, setExpanded] = useState<DataFocus | null>(null)
-    const source = useMemo(() => desktopDataSource({ kind: 'agent', agentId: agent.id }), [agent.id])
+    const source = useMemo(() => desktopDataSource({ kind: 'agent', agentId }), [agentId])
     return <>
         <DataBrowser source={source} initial={initial ?? null} requireInitialView={requireInitialView} onExpand={setExpanded} />
         {/* The dialog is too narrow for a board or a gallery: the same table and view open here
@@ -43,7 +43,7 @@ export function DesktopCoworkerData({ agent, dialogControl, initial, hideTrigger
                 <DialogTitle>Database</DialogTitle>
                 <DialogDescription>{agent.name}’s private database. Browse, filter, edit a row, or save a view. Only {agent.name} reads and writes it.</DialogDescription>
             </DialogHeader>
-            <CoworkerDataPanel key={agent.id} agent={agent} initial={initial} requireInitialView={requireInitialView} />
+            <DesktopCoworkerDataBody key={agent.id} agentId={agent.id} initial={initial} requireInitialView={requireInitialView} />
         </DialogContent>}
     </Dialog>
 }

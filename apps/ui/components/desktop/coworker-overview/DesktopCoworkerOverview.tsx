@@ -5,7 +5,7 @@ import { AgentViewExpander, measureCardOrigin, type CardOrigin } from '@/compone
 import { resolveDesktopOverviewBox } from '@/lib/desktop/coworker-overview/box'
 import { desktopOverviewIdentityKey, validDesktopOverviewIdentity, type DesktopOverviewIdentity } from '@/lib/desktop/coworker-overview/identity'
 import { closedDesktopOverview, openDesktopOverviewDestination, selectDesktopOverviewTab, type DesktopOverviewControl } from '@/lib/desktop/coworker-overview/navigation'
-import { desktopOverviewServicesDot, shownDesktopOverviewTab, type DesktopOverviewDestination, type DesktopOverviewTab, type DesktopOverviewVisibility } from '@/lib/desktop/coworker-overview/sections'
+import { desktopOverviewServicesDot, shownDesktopOverviewTab, type DesktopOverviewDestination, type DesktopOverviewAcceptedPanelTab, type DesktopOverviewTab, type DesktopOverviewVisibility } from '@/lib/desktop/coworker-overview/sections'
 import { AnimatePresence } from 'motion/react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { DesktopCoworkerOverviewCard } from './DesktopCoworkerOverviewCard'
@@ -38,7 +38,7 @@ export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor 
     onDelete?: (identity: DesktopOverviewIdentity, confirmationName: string) => void | Promise<void>
     onOpenComputer?: () => void
     onRenamed: (identity: DesktopOverviewIdentity, name: string) => void
-    onOpenAcceptedPanel?: (tab: 'files' | 'memories' | 'data' | 'settings' | 'tools' | 'logs') => void
+    onOpenAcceptedPanel?: (tab: DesktopOverviewAcceptedPanelTab) => void
     renderTab?: (tab: DesktopOverviewTab) => ReactNode
 }) {
     const visibility: DesktopOverviewVisibility = { installAuthor, publishedAccess }
@@ -87,7 +87,7 @@ export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor 
                 <DesktopCoworkerOverviewCard identity={identity} name={agent.name} boxName={box.name} enabled={enabled} canManage={canManage} mood={enabled ? mood : 'asleep'} servicesNeedConfig={desktopOverviewServicesDot(servicesNeedConfig)} needsMachineReason={needsMachineReason} settingsDisabledReason={settingsDisabledReason} computerEnabled={computerEnabled} computer={computer} working={working} loadingSlot={loadingSlot} visible={!tab} focus={focus} onFocus={setFocus} onOpen={open} onClose={onClose} onShare={onShare} onDelete={onDelete} onOpenComputer={onOpenComputer} onRenamed={onRenamed} />
             </div>
             <AnimatePresence>
-                {screen && origin && <AgentViewExpander key={tab} origin={origin} ghost={<CardDestinationGhost tab={origin.tab} shape={origin.shape} />}>{screen}</AgentViewExpander>}
+                {screen && origin && <AgentViewExpander key={origin.tab} origin={origin} ghost={<CardDestinationGhost tab={origin.tab} shape={origin.shape} />}>{screen}</AgentViewExpander>}
             </AnimatePresence>
             {screen && !origin && <div className="absolute inset-0 flex flex-col">{screen}</div>}
         </div>

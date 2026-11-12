@@ -218,6 +218,18 @@ function fixture(runStatus?: (sessionId: string, method: 'GET' | 'POST') => Prom
             if (route === 'control-center-chats') return Response.json({ agentId, openChats: layouts.get(agentId)!.tabs.map(tab => ({
                 agentId, tabUid: tab.uid, sessionId: tab.id, title: tab.title,
             })), recentChats: [], recentStatus: 'ok', hasMore: false })
+            if (productionBoard && (route === 'data' || route.startsWith('data/'))) {
+                if (method !== 'GET') throw new Error('Unexpected database mutation')
+                panelReads.push(url.pathname)
+                if (route === 'data') return Response.json({ tables: [{ name: 'notes', columns: [{ name: 'body', type: 'TEXT', pk: false, notnull: false }] }] })
+                if (route === 'data/preferred-view') return Response.json({ viewId: 'saved-notes' })
+                if (route === 'data/tables/notes/views') return Response.json({ views: [{ id: 'saved-notes', table: 'notes', name: 'Saved notes', layout: 'table', columns: ['body'], position: 0 }] })
+                if (route === 'data/tables/notes/rows') return Response.json({ columns: ['body'], rows: [{ _rowid_: 1, body: `${agent.name} private row` }], total: 1 })
+            }
+            if (productionBoard && route === `runs/${agentId}-run/details` && method === 'GET') {
+                panelReads.push(url.pathname)
+                return Response.json({ steps: [{ id: 'step-1', stepNumber: 1, finishReason: 'stop', totalTokens: 42, durationMs: 100 }], tools: [] })
+            }
             if (['files', 'files/read', 'memories', 'tools', 'monitoring', 'runs', 'settings', 'skills', 'skills/proposals'].includes(route)) {
                 panelReads.push(url.pathname)
                 if (method !== 'GET') contentWrites.push(`${method} ${url.pathname}`)
@@ -1105,4 +1117,63 @@ test('reopens saved compaction at its original prompt, with no step in the sibli
     await click('Reviewer first chat', restored.container)
     await check(restored.container)
     expect(app.contentWrites).toEqual([])
+})
+
+
+test('opens inline Logs and Database for the selected board coworker while preserving the chat', async () => {
+    const app = fixture(undefined, true)
+    const mounted = await app.mount()
+    const { container } = mounted
+    const input = await openBoardChat(container)
+    await enter(input, 'Unsent note from the board')
+    const chat = input.closest('[data-desktop-tab-active]')!
+    await until(() => chat.textContent?.includes(app.answer(`${reviewer.id}-first`)))
+    await click('Coworker card', container)
+    const details = await until(() => container.querySelector<HTMLElement>('section[aria-label="Coworker details"]:not([hidden])'))
+    await click('Activity', details)
+    const tabs = await until(() => details.querySelector<HTMLElement>('[data-overview-tabs]'))
+    await click('Logs', tabs)
+    await until(() => details.querySelector('[aria-label="Recent runs"]')?.textContent?.includes('Reviewer model'))
+    expect(details.querySelector('[data-overview-tabs]')).toBe(tabs)
+    expect(panelDialog('Recent runs')).toBeUndefined()
+    const row = details.querySelector<HTMLButtonElement>('[aria-label="Recent runs"] button')!
+    await act(async () => { row.click() })
+    await until(() => details.textContent?.includes('Step 1'))
+    await click('Monitoring', tabs)
+    await until(() => !details.querySelector('[aria-label="Recent runs"]'))
+    const listPath = `/api/desktop/agents/${reviewer.id}/runs`
+    const logReads = app.panelReads.filter(path => path === listPath)
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
+    expect(app.panelReads.filter(path => path === listPath)).toEqual(logReads)
+    await click('Reviewer', details)
+    await click('Database', details)
+    await until(() => details.textContent?.includes('Reviewer private row'))
+    expect(details.querySelector('button[aria-pressed="true"]')?.textContent).toContain('Saved notes')
+    expect(panelDialog('Database')).toBeUndefined()
+    await click('Expand', details)
+    const expanded = await until(() => panelDialog('Coworker database'))
+    await until(() => expanded.textContent?.includes('Reviewer private row'))
+    expect(expanded.querySelector('button[aria-pressed="true"]')?.textContent).toContain('Saved notes')
+    await click('Close', expanded)
+    await until(() => !panelDialog('Coworker database'))
+    await click('Close panel', details)
+    expect(composer()).toBe(input)
+    expect(input.value).toBe('Unsent note from the board')
+    expect(chat.textContent).toContain(app.answer(`${reviewer.id}-first`))
+    expect(app.panelReads).toContain(listPath + `/${reviewer.id}-run/details`)
+    expect(app.panelReads).toContain(`/api/desktop/agents/${reviewer.id}/data/tables/notes/rows`)
+    expect(app.panelReads.every(path => path.startsWith(`/api/desktop/agents/${reviewer.id}/`))).toBe(true)
+    expect(app.contentWrites).toEqual([])
+
+    await act(async () => { expect(await flushDesktopDrafts()).toBe(true) })
+    cancelDraftShutdown()
+    await mounted.unmount()
+    const reopened = await app.mount()
+    const restored = await openBoardChat(reopened.container)
+    await until(() => restored.value === 'Unsent note from the board')
+    await click('Coworker card', reopened.container)
+    const reopenedDetails = await until(() => reopened.container.querySelector<HTMLElement>('section[aria-label="Coworker details"]:not([hidden])'))
+    await click('Database', reopenedDetails)
+    await until(() => reopenedDetails.textContent?.includes('Reviewer private row'))
+    expect(reopenedDetails.querySelector('button[aria-pressed="true"]')?.textContent).toContain('Saved notes')
 })

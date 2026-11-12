@@ -4,7 +4,7 @@ import { useDesktopLocale } from '../DesktopLocale'
 import { AGENT_TABS } from '@/components/agent/agent-tabs'
 import { SidePanelTabSwitcher } from '@/components/layout/SidePanelTabSwitcher'
 import { Button } from '@/components/ui/button'
-import { desktopOverviewSiblingTabs, desktopOverviewViewOf, DESKTOP_OVERVIEW_PUBLISHED_UNAVAILABLE, isDesktopOverviewAcceptedPanel, moveDesktopOverviewSectionTab, type DesktopOverviewTab, type DesktopOverviewVisibility } from '@/lib/desktop/coworker-overview'
+import { desktopOverviewSiblingTabs, desktopOverviewViewOf, DESKTOP_OVERVIEW_PUBLISHED_UNAVAILABLE, isDesktopOverviewAcceptedPanel, moveDesktopOverviewSectionTab, type DesktopOverviewAcceptedPanelTab, type DesktopOverviewTab, type DesktopOverviewVisibility } from '@/lib/desktop/coworker-overview'
 import { ChevronLeftIcon, GlobeIcon, XIcon } from '@/lib/icons'
 import { AgentBuddy } from '@rerun/ui/iso-grid'
 import type { ReactNode } from 'react'
@@ -21,7 +21,7 @@ export function DesktopCoworkerOverviewScreen({ agentId, name, mood, tab, visibi
     onTab: (tab: DesktopOverviewTab) => void
     onBack: () => void
     onClose: () => void
-    onOpenAcceptedPanel?: (tab: 'files' | 'memories' | 'data' | 'settings' | 'tools' | 'logs') => void
+    onOpenAcceptedPanel?: (tab: DesktopOverviewAcceptedPanelTab) => void
     children?: ReactNode
 }) {
     const { t } = useDesktopLocale()
@@ -60,7 +60,7 @@ export function DesktopCoworkerOverviewScreen({ agentId, name, mood, tab, visibi
     )
 }
 
-function AcceptedPanel({ tab, label, onOpen }: { tab: 'files' | 'memories' | 'data' | 'settings' | 'tools' | 'logs'; label: string; onOpen?: (tab: 'files' | 'memories' | 'data' | 'settings' | 'tools' | 'logs') => void }) {
+function AcceptedPanel({ tab, label, onOpen }: { tab: DesktopOverviewAcceptedPanelTab; label: string; onOpen?: (tab: DesktopOverviewAcceptedPanelTab) => void }) {
     const { t } = useDesktopLocale()
     return (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">

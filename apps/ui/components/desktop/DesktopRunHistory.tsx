@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { RunStatusBadge } from '@rerun/ui/monitoring'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
@@ -65,7 +65,7 @@ function RunRow({ agentId, run }: { agentId: string; run: DesktopRunView }) {
     </li>
 }
 
-function RunList({ agentId }: { agentId: string }) {
+export function DesktopRunHistoryBody({ agentId, dismiss }: { agentId: string; dismiss?: ReactNode }) {
     const { t } = useDesktopLocale()
     const [runs, setRuns] = useState<DesktopRunView[] | null>(null)
     const [error, setError] = useState(false)
@@ -102,7 +102,7 @@ function RunList({ agentId }: { agentId: string }) {
         </div>
         <DialogFooter className="shrink-0">
             <Button type="button" variant="outline" onClick={() => void load()}>{t(error ? 'runHistory.retry' : 'runHistory.refresh')}</Button>
-            <DialogClose asChild><Button type="button">{t('runHistory.close')}</Button></DialogClose>
+            {dismiss}
         </DialogFooter>
     </>
 }
@@ -117,7 +117,8 @@ export function DesktopRunHistory({ agent, dialogControl }: { agent: DesktopAgen
                 <DialogTitle>{t('runHistory.title')}</DialogTitle>
                 <DialogDescription>{t('runHistory.description', { limit: DESKTOP_RUN_HISTORY_LIMIT, name: agent.name })}</DialogDescription>
             </DialogHeader>
-            {open && <RunList key={agent.id} agentId={agent.id} />}
+            {open && <DesktopRunHistoryBody key={agent.id} agentId={agent.id}
+                dismiss={<DialogClose asChild><Button type="button">{t('runHistory.close')}</Button></DialogClose>} />}
         </DialogContent>
     </Dialog>
 }
