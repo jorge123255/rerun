@@ -3,9 +3,14 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
+import { coworkerRuleOf, mergeNotificationPrefs, normalizeNotificationPrefs } from '@rerun/contracts'
+import type { DesktopNotificationRuleChange } from '@/lib/desktop/notifications'
 import { DesktopActionsInbox } from './DesktopActionsInbox'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const notices = vi.hoisted(() => ({ show: vi.fn(), error: vi.fn() }))
+vi.mock('sonner', () => ({ toast: Object.assign(notices.show, { error: notices.error }) }))
 
 const checkedAt = '2026-11-04T12:00:00.000Z'
 const question = { id: 'q1', kind: 'question', agentId: 'researcher', agentName: 'Researcher', agentEnabled: true, sessionId: 's1', title: 'Filter before matching', summary: 'Should I filter by date before matching?', updatedAt: '2026-11-04T11:50:00.000Z' }
@@ -30,6 +35,73 @@ afterEach(() => { document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.useRea
 
 const pillOf = (container: HTMLElement) => container.querySelector<HTMLElement>('button[aria-label^="Actions:"]')!
 const panelOf = (container: HTMLElement) => container.querySelector('[aria-label="Actions inbox"]')
+
+test('the inbox row menu mutes, unfollows and undoes one field without navigating or acknowledging the chat', async () => {
+    let saved = normalizeNotificationPrefs({ version: 2, coworkers: { researcher: { mode: 'everything', follow: true } } })
+    const patches: DesktopNotificationRuleChange[] = []
+    const requests: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        requests.push(url)
+        if (url === '/api/desktop/notifications') {
+            if (init?.method === 'PATCH') {
+                const input: DesktopNotificationRuleChange = JSON.parse(String(init.body))
+                const rule = coworkerRuleOf(saved, input.agentId)
+                patches.push(input)
+                if (rule[input.field] !== input.expected) return Response.json({}, { status: 409 })
+                saved = mergeNotificationPrefs(saved, { coworkers: { [input.agentId]: { ...rule, [input.field]: input.value } } })
+            }
+            return Response.json(saved)
+        }
+        if (url === '/api/desktop/completions') return completionsEmpty()
+        return Response.json({ items: [question], unavailableAgentIds: [], checkedAt })
+    }))
+    notices.show.mockClear()
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const onOpen = vi.fn(), onSettings = vi.fn(), onFold = vi.fn()
+    const menuItems = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    async function openMenu() {
+        await act(async () => {
+            const options = container.querySelector<HTMLButtonElement>('button[aria-label="Notification options"]')!
+            options.focus()
+            options.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+        })
+    }
+    async function choose(label: string) {
+        const item = menuItems().find(node => node.textContent?.trim() === label)
+        expect(item).toBeDefined()
+        await act(async () => {
+            item!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+            item!.click()
+        })
+    }
+    try {
+        await act(async () => root.render(<DesktopActionsInbox open workspaceId={7} onOpenChange={onFold} onOpenConversation={onOpen} onOpenNotificationSettings={onSettings} />))
+        await openMenu()
+        expect(patches).toEqual([])
+        await choose('Mute Researcher')
+        expect(onFold).not.toHaveBeenCalled()
+        expect(onOpen).not.toHaveBeenCalled()
+        expect(patches).toEqual([{ workspaceId: 7, agentId: 'researcher', field: 'mode', expected: 'everything', value: 'muted' }])
+        expect(notices.show).toHaveBeenCalledWith('Researcher is muted.', { action: { label: 'Undo', onClick: expect.any(Function) } })
+        const undoMute = notices.show.mock.calls[0]?.[1]?.action?.onClick
+        await openMenu()
+        expect(menuItems().map(node => node.textContent?.trim())).not.toContain('Mute Researcher')
+        await choose('Stop following its scheduled tasks')
+        expect(coworkerRuleOf(saved, 'researcher')).toEqual({ mode: 'muted', follow: false })
+        await act(async () => { undoMute() })
+        expect(patches.at(-1)).toEqual({ workspaceId: 7, agentId: 'researcher', field: 'mode', expected: 'muted', value: 'everything' })
+        expect(coworkerRuleOf(saved, 'researcher')).toEqual({ mode: 'everything', follow: false })
+        expect(container.textContent).toContain(question.summary)
+        await openMenu()
+        await choose('Notification settings')
+        expect(onSettings).toHaveBeenCalledExactlyOnceWith('researcher')
+        expect(onFold).toHaveBeenCalledExactlyOnceWith(false)
+        expect(onOpen).not.toHaveBeenCalled()
+        expect(requests.some(url => url.endsWith('/read'))).toBe(false)
+    } finally { await act(async () => root.unmount()) }
+})
 
 test('an attention row names its coworker, opens that chat, and acknowledging it leaves the sibling', async () => {
     const info = { id: 'notify:ada:chat:run:call', kind: 'info', agentId: 'ada', agentName: 'Ada', agentEnabled: true, sessionId: 'chat-ada', title: 'Launch notes', summary: 'Please review the launch notes', updatedAt: checkedAt, requestedAt: checkedAt }

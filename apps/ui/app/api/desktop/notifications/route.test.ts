@@ -7,7 +7,8 @@ import type { Message, RunDetail, Session } from '@rerun/contracts'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent, createDesktopSession, type DesktopAgent, type DesktopSession } from '@/lib/desktop/server/store'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
-import { GET as readPrefs, PUT as writePrefs } from './route'
+import { setDesktopWorkspaceFrozen } from '@/lib/desktop/server/workspace-admission'
+import { GET as readPrefs, PATCH as changeRule, PUT as writePrefs } from './route'
 import { GET as readEvents } from './events/route'
 import { POST as acknowledge } from './seen/route'
 import { POST as admit } from './admit/route'
@@ -32,9 +33,9 @@ function history(sessionId: string, createdAt: string): Message[] {
         { id: sessionId + '-result', sessionId, role: 'tool', contentJson: JSON.stringify([{ type: 'tool-result', toolName: 'ask_user', toolCallId: sessionId + '-call', output: { type: 'json', value: { status: 'delivered' } } }]), toolCallsJson: null, createdAt },
     ]
 }
-function prefsRequest(body: unknown) {
+function prefsRequest(body: unknown, method = 'PUT') {
     return new Request(`${runtime.app.origin}/api/desktop/notifications`, {
-        method: 'PUT', headers: { host: new URL(runtime.app.origin).host, origin: runtime.app.origin,
+        method, headers: { host: new URL(runtime.app.origin).host, origin: runtime.app.origin,
             cookie: `rerun-desktop-session=${runtime.app.sessionToken}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
     })
 }
@@ -133,6 +134,40 @@ test('GET returns the recommended defaults and PUT merges the patch as the autho
     })
     expect((await (await readPrefs(prefsGet())).json()).coworkers[alice.id]).toEqual({ mode: 'muted' })
     expect((await writePrefs(prefsRequest({ scope: '  ' }))).status).toBe(400)
+})
+
+test('inbox changes and Undo update only the selected coworker field and survive reopening the database', async () => {
+    await writePrefs(prefsRequest({ sound: false, coworkers: { [alice.id]: { mode: 'everything', follow: true }, [bob.id]: { mode: 'muted' } } }))
+    const identity = { workspaceId: 1, agentId: alice.id }
+    const patch = (value: object) => changeRule(prefsRequest({ ...identity, ...value }, 'PATCH'))
+    const mute = { field: 'mode', expected: 'everything', value: 'muted' }
+    expect((await patch(mute)).status).toBe(200)
+    expect((await patch({ field: 'follow', expected: true, value: false })).status).toBe(200)
+    const restored = await patch({ field: 'mode', expected: 'muted', value: 'everything' })
+    expect(await restored.json()).toMatchObject({ sound: false, coworkers: {
+        [alice.id]: { mode: 'everything', follow: false }, [bob.id]: { mode: 'muted' },
+    } })
+    await closeDesktopDatabase(root)
+    expect(await (await readPrefs(prefsGet())).json()).toMatchObject({ coworkers: { [alice.id]: { mode: 'everything', follow: false } } })
+    const stale = await patch({ field: 'mode', expected: 'muted', value: 'default' })
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toMatchObject({ code: 'notification_rule_changed' })
+    expect(await (await readPrefs(prefsGet())).json()).toMatchObject({ coworkers: { [alice.id]: { mode: 'everything', follow: false } } })
+    expect(calls).toEqual([])
+})
+
+test('inbox changes refuse a missing owner, foreign workspace, frozen workspace and unauthenticated request', async () => {
+    const input = { workspaceId: 1, agentId: alice.id, field: 'mode', expected: 'default', value: 'muted' }
+    const anonymous = prefsRequest(input, 'PATCH')
+    anonymous.headers.delete('cookie')
+    expect((await changeRule(anonymous)).status).toBe(401)
+    expect((await changeRule(prefsRequest({ ...input, workspaceId: 2 }, 'PATCH'))).status).toBe(409)
+    expect((await changeRule(prefsRequest({ ...input, agentId: alice.engineAgentId }, 'PATCH'))).status).toBe(404)
+    expect((await changeRule(prefsRequest({ ...input, scope: 'nothing' }, 'PATCH'))).status).toBe(400)
+    setDesktopWorkspaceFrozen(runtime, true)
+    try { expect((await changeRule(prefsRequest(input, 'PATCH'))).status).toBe(409) }
+    finally { setDesktopWorkspaceFrozen(runtime, false) }
+    expect(await (await readPrefs(prefsGet())).json()).toMatchObject({ coworkers: {} })
 })
 
 test('events follow the scope and coworker rules, and an acknowledged event never replays', async () => {

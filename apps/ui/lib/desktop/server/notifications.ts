@@ -2,7 +2,7 @@ import 'server-only'
 import type { Client } from '@libsql/client'
 import { coworkerRuleOf, mergeNotificationPrefs, normalizeNotificationPrefs, notificationPrefsPatchSchema, taskNotifies, taskRuleOf,
     type NotificationPrefs, type NotificationPrefsPatch } from '@rerun/contracts'
-import type { DesktopNotificationReceipt } from '@/lib/desktop/notifications'
+import type { DesktopNotificationReceipt, DesktopNotificationRuleChange } from '@/lib/desktop/notifications'
 import type { NotificationPayload } from '@/lib/engine/types'
 import { readDesktopCompletions } from './completed-actions'
 import { readDesktopAttention } from './attention'
@@ -11,6 +11,8 @@ import { desktopInfoNotificationWanted, ensureDesktopUserNotifications, pendingD
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { withRosterWrite } from './roster-writes'
+import { findDesktopAgent } from './store'
+import { assertDesktopWorkspaceAdmission } from './workspace-admission'
 
 // The database initializer calls this before engines start, establishing the
 // installation cutoff before a new run can finish. Public helpers also ensure it.
@@ -101,14 +103,33 @@ export async function writeDesktopNotificationPrefs(db: Client, patch: Notificat
     return withRosterWrite(() => mergeAndWritePrefs(db, parsed.data))
 }
 
+export async function changeDesktopNotificationRule(runtime: DesktopRuntime, input: DesktopNotificationRuleChange, signal: AbortSignal): Promise<NotificationPrefs> {
+    if (runtime.workspaceId !== input.workspaceId) throw new DesktopHttpError(409, 'The notification workspace changed.')
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    await initializeDesktopNotifications(db)
+    return withRosterWrite(async () => {
+        if (!await findDesktopAgent(db, input.agentId)) throw new DesktopHttpError(404, 'Coworker not found.')
+        const prefs = await readDesktopNotificationPrefs(db)
+        const rule = coworkerRuleOf(prefs, input.agentId)
+        if (rule[input.field] !== input.expected) throw new DesktopHttpError(409, 'This notification setting changed. Reopen its menu.', 'notification_rule_changed')
+        signal.throwIfAborted()
+        assertDesktopWorkspaceAdmission(runtime)
+        const next = input.field === 'mode' ? { ...rule, mode: input.value } : { ...rule, follow: input.value }
+        return savePrefs(db, mergeNotificationPrefs(prefs, { coworkers: { [input.agentId]: next } }))
+    })
+}
+
 async function mergeAndWritePrefs(db: Client, patch: NotificationPrefsPatch): Promise<NotificationPrefs> {
-    const merged = mergeNotificationPrefs(await readDesktopNotificationPrefs(db), patch)
+    return savePrefs(db, mergeNotificationPrefs(await readDesktopNotificationPrefs(db), patch))
+}
+
+async function savePrefs(db: Client, prefs: NotificationPrefs): Promise<NotificationPrefs> {
     const now = new Date().toISOString()
     await db.execute({
         sql: 'INSERT INTO desktop_notification_prefs (workspace_id,prefs,created_at,updated_at) VALUES (1,?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET prefs=excluded.prefs,updated_at=excluded.updated_at',
-        args: [JSON.stringify(merged), now, now],
+        args: [JSON.stringify(prefs), now, now],
     })
-    return merged
+    return prefs
 }
 
 export type DesktopNotificationEvent = {

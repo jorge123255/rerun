@@ -212,6 +212,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         aiProviderTool: aiProviderTool[locale],
         actions: desktopActionMessages(locale, source.kit),
         notificationSettings: source.notifications.settings,
+        notificationRowMenu: source.notifications.inbox.rowMenu,
         notificationUI: desktopNotificationMessages(locale),
         questionForm: source.kit.chat.question,
         question: desktopQuestionMessages(locale),

@@ -17,6 +17,8 @@ import { cn } from '@/lib/utils'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import type { DesktopAgentView } from './DesktopApp'
 import { useDesktopCompletions } from './useDesktopCompletions'
+import { useDesktopNotificationPrefs } from '@/lib/desktop/use-notification-prefs'
+import { DesktopInboxRowMenu } from './DesktopInboxRowMenu'
 import { useDesktopPendingInbox, type DesktopPendingInboxRead } from './useDesktopPendingInbox'
 
 // The original inbox folds question and approval under one « Needs you » heading, keyed on the
@@ -40,6 +42,8 @@ export type DesktopActionsInboxProps = {
      * as it lands, matching the original read-on-visible-conversation semantics.
      */
     visibleSessionId?: string | null
+    workspaceId?: number | null
+    onOpenNotificationSettings?: (agentId: string) => void
     /** Controlled open state. Without it the inbox manages its own fold. */
     open?: boolean
     onOpenChange?: (open: boolean) => void
@@ -49,7 +53,7 @@ export type DesktopActionsInboxProps = {
 
 // The row mirrors @rerun/ui/inbox InboxRow with its hover-revealed Mark-as-read button:
 // marking read is an explicit, per-request acknowledgment that never answers, approves or opens.
-function ActionRow({ item, onOpen, onMarkRead }: { item: DesktopPendingInboxItem; onOpen: (item: DesktopPendingInboxItem) => void; onMarkRead: (item: DesktopPendingInboxItem) => void }) {
+function ActionRow({ item, onOpen, onMarkRead, menu }: { menu?: ReactNode; item: DesktopPendingInboxItem; onOpen: (item: DesktopPendingInboxItem) => void; onMarkRead: (item: DesktopPendingInboxItem) => void }) {
     const { language, t } = useDesktopLocale()
     const status = KIND_STATUS[item.kind]
     const meta = ATTENTION_STATUS_META[status]
@@ -90,6 +94,7 @@ function ActionRow({ item, onOpen, onMarkRead }: { item: DesktopPendingInboxItem
                     <CheckCheckIcon className="size-3.5" />
                 </Button>
             </span>
+            {menu}
         </div>
     )
 }
@@ -97,7 +102,7 @@ function ActionRow({ item, onOpen, onMarkRead }: { item: DesktopPendingInboxItem
 // A finished-run row mirrors the original inbox's Done row: emerald dot and buddy, the final-answer
 // summary (or the scheduled task's name), « finished its run », a ×count when several runs are
 // folded, and an explicit Mark-as-read button. Marking covers exactly the displayed completion IDs.
-function DoneRow({ item, onOpen, onMarkRead }: { item: DesktopCompletionItem; onOpen: (item: DesktopCompletionItem) => void; onMarkRead: (item: DesktopCompletionItem) => void }) {
+function DoneRow({ item, onOpen, onMarkRead, menu }: { menu?: ReactNode; item: DesktopCompletionItem; onOpen: (item: DesktopCompletionItem) => void; onMarkRead: (item: DesktopCompletionItem) => void }) {
     const { language, t } = useDesktopLocale()
     const meta = ATTENTION_STATUS_META.done
     const activate = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -138,6 +143,7 @@ function DoneRow({ item, onOpen, onMarkRead }: { item: DesktopCompletionItem; on
                     <CheckCheckIcon className="size-3.5" />
                 </Button>
             </span>
+            {menu}
         </div>
     )
 }
@@ -211,10 +217,12 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
  * decline; marking pending read is explicit and never answers; a Done row is additionally
  * acknowledged with the exact completion IDs it displayed.
  */
-export function DesktopActionsInbox({ agents, onOpenConversation, visibleSessionId, open: openProp, onOpenChange, className }: DesktopActionsInboxProps) {
+export function DesktopActionsInbox({ agents, onOpenConversation, visibleSessionId, workspaceId, onOpenNotificationSettings, open: openProp, onOpenChange, className }: DesktopActionsInboxProps) {
     const { language, t } = useDesktopLocale()
     const [internalOpen, setInternalOpen] = useState(false)
     const open = openProp ?? internalOpen
+    const [rowMenuOpen, setRowMenuOpen] = useState(false)
+    const { ruleOf, ready: prefsReady, loading: prefsLoading, changeCoworkerRule } = useDesktopNotificationPrefs(open && !!workspaceId && !!onOpenNotificationSettings)
     const change = useCallback(
         (next: boolean) => {
             if (onOpenChange) onOpenChange(next)
@@ -224,6 +232,11 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
     )
     // Original WorkspaceInbox keeps its collapsed pill current. Observe while visible even when
     // folded; each hook still requires an open panel for an explicit mark-read action.
+    const rowMenu = (item: { agentId: string; agentName: string }) => workspaceId && onOpenNotificationSettings
+        ? <DesktopInboxRowMenu workspaceId={workspaceId} agentId={item.agentId} agentName={item.agentName}
+            rule={ruleOf(item.agentId)} ready={prefsReady && !prefsLoading} changeRule={changeCoworkerRule} onOpenChange={setRowMenuOpen}
+            onOpenSettings={() => { change(false); onOpenNotificationSettings(item.agentId) }} />
+        : undefined
     const pendingInbox = useDesktopPendingInbox(open, agents?.map(agent => agent.id), true)
     const { status, items: received, unavailableAgentIds: unavailable, retry, readError: pendingReadError, markRead, markAllRead: markPendingAllRead } = pendingInbox
     const roster = useMemo(() => agents ? new Map(agents.map(agent => [agent.id, agent])) : null, [agents])
@@ -326,7 +339,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
 
     // An outside press or Escape folds the card; the card's own clicks stay its own.
     useEffect(() => {
-        if (!open || confirmAllOpen) return
+        if (!open || confirmAllOpen || rowMenuOpen) return
         const onPointerDown = (event: globalThis.PointerEvent) => {
             if (rootRef.current?.contains(event.target as Node)) return
             change(false)
@@ -343,7 +356,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
             document.removeEventListener('pointerdown', onPointerDown)
             document.removeEventListener('keydown', onKeyDown)
         }
-    }, [open, confirmAllOpen, change, closeToPill])
+    }, [open, confirmAllOpen, rowMenuOpen, change, closeToPill])
 
     const failed = status === 'failed'
     const doneCount = doneItems.reduce((sum, item) => sum + item.count, 0)
@@ -472,7 +485,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
                                     <section aria-label={t('actions.needsYou')}>
                                         <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{t('actions.needsYou')}</h3>
                                         {sorted.map(item => (
-                                            <ActionRow key={item.id} item={item} onOpen={openItem} onMarkRead={markRead} />
+                                            <ActionRow key={item.id} item={item} onOpen={openItem} onMarkRead={markRead} menu={rowMenu(item)} />
                                         ))}
                                     </section>
                                 )}
@@ -480,7 +493,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
                                     <section aria-label={t('actions.done')} className={cn(items.length > 0 && 'mt-1 border-t border-border pt-1')}>
                                         <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{t('actions.done')}</h3>
                                         {doneItems.map(item => (
-                                            <DoneRow key={item.id} item={item} onOpen={openDone} onMarkRead={completions.markRead} />
+                                            <DoneRow key={item.id} item={item} onOpen={openDone} onMarkRead={completions.markRead} menu={rowMenu(item)} />
                                         ))}
                                     </section>
                                 )}

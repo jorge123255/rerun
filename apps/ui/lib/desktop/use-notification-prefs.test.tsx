@@ -2,8 +2,8 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { DEFAULT_NOTIFICATION_PREFS, mergeNotificationPrefs, normalizeNotificationPrefs, type NotificationPrefs } from '@rerun/contracts'
-import { DESKTOP_NOTIFICATION_PREFS_URL } from './notifications'
+import { coworkerRuleOf, DEFAULT_NOTIFICATION_PREFS, mergeNotificationPrefs, normalizeNotificationPrefs, type NotificationPrefs } from '@rerun/contracts'
+import { DESKTOP_NOTIFICATION_PREFS_URL, type DesktopNotificationRuleChange } from './notifications'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -25,7 +25,14 @@ beforeEach(() => {
         if (!init?.method || init.method === 'GET') return Response.json(stored)
         if (failPut) return Response.json({ error: 'nope' }, { status: 500 })
         const patch = JSON.parse(String(init.body))
-        stored = mergeNotificationPrefs(stored, patch)
+        if (init.method === 'PATCH') {
+            const input = patch as DesktopNotificationRuleChange
+            const rule = coworkerRuleOf(stored, input.agentId)
+            if (rule[input.field] !== input.expected) return Response.json({ error: 'rule changed' }, { status: 409 })
+            stored = mergeNotificationPrefs(stored, { coworkers: { [input.agentId]: { ...rule, [input.field]: input.value } } })
+        } else {
+            stored = mergeNotificationPrefs(stored, patch)
+        }
         return Response.json(stored)
     }))
 })
@@ -86,6 +93,24 @@ test('two quick updates serialize and both land', async () => {
     await act(async () => {})
     expect(stored.scope).toBe('mine')
     expect(stored.sound).toBe(false)
+})
+
+test('conditional inbox changes share the settings write queue and refuse a stale Undo', async () => {
+    await mount()
+    const owner = { workspaceId: 7, agentId: 'agent-a' }
+    await act(async () => {
+        hook.setCoworkerRule(owner.agentId, { mode: 'everything', follow: true })
+        expect(await hook.changeCoworkerRule({ ...owner, field: 'mode', expected: 'everything', value: 'muted' })).toBe(true)
+    })
+    expect(hook.ruleOf(owner.agentId)).toEqual({ mode: 'muted', follow: true })
+    expect(vi.mocked(fetch).mock.calls.map(([, init]) => init?.method).filter(Boolean)).toEqual(['PUT', 'PATCH'])
+
+    await act(async () => {
+        hook.setCoworkerRule(owner.agentId, { mode: 'default', follow: false })
+        expect(await hook.changeCoworkerRule({ ...owner, field: 'mode', expected: 'muted', value: 'everything' })).toBe(false)
+    })
+    expect(hook.ruleOf(owner.agentId)).toEqual({ mode: 'default', follow: false })
+    expect(toastError).toHaveBeenCalled()
 })
 
 test('a failed initial read never permits a write based on invented defaults', async () => {

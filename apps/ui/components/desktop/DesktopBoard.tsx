@@ -36,13 +36,15 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
+export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, workspaceId, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
     activitySnapshot?: BoardActivitySnapshot
     agents: DesktopAgentView[]
     workspaceName: string
     workspaceMenu?: ReactNode
     selectedAgentId?: string | null
     visibleSessionId?: string | null
+    workspaceId?: number | null
+    onOpenNotificationSettings?: (agentId: string) => void
     panelInsetRight?: number
     panelInsetLeft?: number
     recenterSignal?: number
@@ -409,7 +411,8 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
             }</DesktopBoardMenu>
             <div className="absolute top-4 left-4 z-40 flex items-start gap-2">{workspaceMenu}</div>
             <div className="absolute bottom-4 left-4 z-40 flex max-w-[calc(100%-2rem)] flex-wrap items-end gap-2">
-            {!placement && onOpenConversation && <DesktopActionsInbox agents={agents} onOpenConversation={onOpenConversation} visibleSessionId={visibleSessionId} />}
+            {!placement && onOpenConversation && <DesktopActionsInbox agents={agents} onOpenConversation={onOpenConversation} visibleSessionId={visibleSessionId}
+                workspaceId={workspaceId} onOpenNotificationSettings={onOpenNotificationSettings} />}
             <ChromeBar aria-label={t('boardActions')} role="group">
                 {placement ? <div className="flex min-w-0 items-center gap-2 pl-3">
                     <div className="min-w-0" role="status">
