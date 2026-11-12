@@ -10,18 +10,15 @@ export function DesktopSelectedMentionText({ text, metadata, linkify = true }: {
     const links = linkify ? composerUrlRanges(text).filter(link => safeDesktopChatLink(link.url) &&
         !mentions.some(mention => mention.start < link.end && link.start < mention.end)) : []
     const tokens = [...mentions, ...links].sort((left, right) => left.start - right.start)
-    let end = 0
-    const parts = tokens.map(token => {
-        const before = text.slice(end, token.start)
-        end = token.end
-        return <Fragment key={token.start}>
-            {before}
+    const parts = tokens.map((token, index) => (
+        <Fragment key={token.start}>
+            {text.slice(tokens[index - 1]?.end ?? 0, token.start)}
             {'url' in token
                 ? <a href={token.url} target="_blank" rel="noopener noreferrer" data-streamdown="link">
                     <DesktopChatLinkLabel title={token.url}>{shortenUrl(token.url)}</DesktopChatLinkLabel>
                 </a>
                 : <span className={MENTION_TOKEN_CLASSES.agent}>{token.token}</span>}
         </Fragment>
-    })
-    return <span>{parts}{text.slice(end)}</span>
+    ))
+    return <span>{parts}{text.slice(tokens.at(-1)?.end ?? 0)}</span>
 }

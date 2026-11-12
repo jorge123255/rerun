@@ -10,6 +10,6 @@ export function safeDesktopChatLink(value: unknown): value is string {
     } catch { return false }
 }
 
-export function DesktopChatLinkLabel({ children, title }: { children?: ReactNode; title?: string }) {
+export function DesktopChatLinkLabel({ children, title }: { children?: ReactNode; title?: string; node?: unknown }) {
     return <span data-chat-find-url={title}><ComposerLinkToken title={title}>{children}</ComposerLinkToken></span>
 }
