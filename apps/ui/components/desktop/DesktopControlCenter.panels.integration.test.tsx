@@ -84,8 +84,12 @@ async function until<T>(read: () => T | null | undefined): Promise<T> {
 }
 async function click(label: string, scope: ParentNode = document) {
     const button = [...scope.querySelectorAll<HTMLButtonElement>('button')].find(item => item.getAttribute('aria-label') === label || item.textContent?.trim() === label)
-    expect(button, label).toBeDefined()
-    await act(async () => { button!.click() })
+    if (!button) throw new Error('Missing button: ' + label)
+    await act(async () => {
+        if (button.getAttribute('role') === 'tab') {
+            button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }))
+        } else button.click()
+    })
 }
 async function backToOverview(scope: ParentNode, name: string) {
     const back = [...scope.querySelectorAll<HTMLButtonElement>('button')]
@@ -1157,10 +1161,10 @@ test('opens inline Logs and Database for the selected board coworker while prese
     await click('Coworker card', container)
     const details = await until(() => container.querySelector<HTMLElement>('section[aria-label="Coworker details"]:not([hidden])'))
     await click('Activity', details)
-    const tabs = await until(() => details.querySelector<HTMLElement>('[data-overview-tabs]'))
+    const tabs = await until(() => details.querySelector<HTMLElement>('[role="tablist"]'))
     await click('Logs', tabs)
     await until(() => details.querySelector('[aria-label="Recent runs"]')?.textContent?.includes('Reviewer model'))
-    expect(details.querySelector('[data-overview-tabs]')).toBe(tabs)
+    expect(details.querySelector('[role="tablist"]')).toBe(tabs)
     expect(panelDialog('Recent runs')).toBeUndefined()
     const row = details.querySelector<HTMLButtonElement>('[aria-label="Recent runs"] button')!
     await act(async () => { row.click() })
@@ -1274,16 +1278,36 @@ test('edits General and Capabilities inline for the selected board coworker', as
     await click('Settings', details)
     await until(() => details.textContent?.includes('Reply length'))
     expect(panelDialog('Edit coworker')).toBeUndefined()
-    const tabs = details.querySelector<HTMLElement>('[data-overview-tabs]')!
+    const tabs = details.querySelector<HTMLElement>('[role="tablist"]')!
+    const general = tabs.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')!
+    const capabilities = tabs.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="false"]')!
+    const key = (target: HTMLButtonElement, name: string) => act(async () => {
+        target.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true }))
+        await new Promise(resolve => setTimeout(resolve, 0))
+    })
     await click('Concise', details)
-    await click('Capabilities', tabs)
+    await act(async () => general.focus())
+    await key(general, 'ArrowRight')
+    expect(document.activeElement).toBe(capabilities)
+    expect(general.getAttribute('aria-selected')).toBe('true')
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+    await key(capabilities, 'Enter')
     const discard = await until(() => document.querySelector<HTMLElement>('[role="alertdialog"]'))
     expect(discard.textContent).toContain('Discard settings changes?')
     await click('Keep editing', discard)
+    await until(() => document.activeElement === capabilities)
+    expect(general.getAttribute('aria-selected')).toBe('true')
     expect(details.querySelector('[aria-label="Concise"]')?.getAttribute('aria-pressed')).toBe('true')
     await click('Save changes', details)
     await until(() => details.querySelector<HTMLButtonElement>('button[type="submit"][disabled]'))
-    await click('Capabilities', tabs)
+    await click('Normal', details)
+    await act(async () => general.focus())
+    await key(general, 'ArrowRight')
+    await key(capabilities, 'Enter')
+    const confirm = await until(() => document.querySelector<HTMLElement>('[role="alertdialog"]'))
+    await click('Discard changes', confirm)
+    await until(() => document.activeElement === capabilities)
+    expect(capabilities.getAttribute('aria-selected')).toBe('true')
     await until(() => details.textContent?.includes('Reviewer file access'))
     expect(panelDialog('Tools')).toBeUndefined()
     const permission = details.querySelector<HTMLButtonElement>('[role="switch"]')!

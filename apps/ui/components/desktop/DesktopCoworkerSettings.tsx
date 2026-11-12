@@ -121,7 +121,7 @@ export function DesktopCoworkerSettingsBody({ agent, authority, disabled, regist
     const [error, setError] = useState('')
     const savingNow = useRef(false)
     const [saving, setSaving] = useState(false)
-    const [pendingClose, setPendingClose] = useState<(() => void) | null>(null)
+    const [pendingClose, setPendingClose] = useState<{ close: () => void; tab: HTMLElement | null } | null>(null)
     const [attempt, setAttempt] = useState(0)
 
     useEffect(() => {
@@ -147,8 +147,11 @@ export function DesktopCoworkerSettingsBody({ agent, authority, disabled, regist
     useFileUnloadGuard(dirty, desktopFileDraftHost())
     const guardClose = useCallback((close: () => void) => {
         if (savingNow.current) return
-        if (dirty) setPendingClose(() => close)
-        else close()
+        if (dirty) {
+            const focused = document.activeElement
+            const tab = focused instanceof HTMLElement && focused.matches('[role="tab"]') ? focused : null
+            setPendingClose({ close, tab })
+        } else close()
     }, [dirty])
     useLayoutEffect(() => registerCloseGuard(guardClose), [registerCloseGuard, guardClose])
 
@@ -226,7 +229,12 @@ export function DesktopCoworkerSettingsBody({ agent, authority, disabled, regist
         {pendingClose && <ConfirmDialog open onOpenChange={open => { if (!open) setPendingClose(null) }}
             title={t('coworker.discardTitle')} description={t('coworker.discardDescription')}
             confirmLabel={t('coworker.discard')} cancelLabel={t('coworker.keepEditing')}
-            onConfirm={() => { setPendingClose(null); pendingClose() }} />}
+            onCloseAutoFocus={event => {
+                if (!pendingClose.tab?.isConnected) return
+                event.preventDefault()
+                pendingClose.tab.focus({ preventScroll: true })
+            }}
+            onConfirm={() => { setPendingClose(null); pendingClose.close() }} />}
     </>
     if (!onDone) return content
     return <DialogContent className="sm:max-w-xl" showCloseButton={!saving}
