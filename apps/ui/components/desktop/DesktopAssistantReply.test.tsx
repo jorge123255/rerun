@@ -100,6 +100,35 @@ test('workspace links send only well-formed proposals through the active handler
     expect(container.textContent).toContain('Owned')
 })
 
+test('renders streamed and saved workspace images through local preview routes only', async () => {
+    const text = [
+        '![Relative chart](./reports/chart%20one.png)',
+        '![Owned chart](/data/agents/engine-owner/workspace/reports/chart.png)',
+        '![Shared chart](/data/shared/reports/team.png)',
+        '![External image](https://example.invalid/tracking.png)',
+        '![File URL](file:///tmp/chart.png)',
+        '![Traversal](reports/%2e%2e/chart.png)',
+        '![Absolute app route](/api/desktop/settings)',
+        '<img src="/api/desktop/settings" alt="Forged image">',
+    ].join('\n\n')
+    const parts: UIMessage['parts'] = [{ type: 'text', text }]
+    for (const streaming of [true, false]) {
+        await render(parts, streaming, 'local-owner')
+        const images = [...container.querySelectorAll<HTMLImageElement>('img')]
+        expect(images.map(image => [image.alt, image.getAttribute('src')])).toEqual([
+            ['Relative chart', '/api/desktop/agents/local-owner/files/image?path=reports%2Fchart+one.png&animation=1'],
+            ['Owned chart', '/api/desktop/agents/local-owner/files/image?path=reports%2Fchart.png&workspaceOwner=engine-owner&animation=1'],
+            ['Shared chart', '/api/desktop/shared-files/media?path=reports%2Fteam.png'],
+        ])
+    }
+    const chart = container.querySelector<HTMLImageElement>('img[alt="Owned chart"]')!
+    await act(async () => chart.dispatchEvent(new Event('error')))
+    expect(container.querySelector('img[alt="Owned chart"]')).toBeNull()
+    expect(container.textContent).toContain('Owned chart')
+    await render(parts, false)
+    expect(container.querySelectorAll('img')).toHaveLength(0)
+})
+
 test('shows the saved time on the first bubble of a reply with multiple text blocks', async () => {
     const createdAt = '2026-01-02T09:05:00.000Z'
     await act(async () => root.render(<DesktopAssistantReply streaming={false} createdAt={createdAt}

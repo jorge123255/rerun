@@ -35,6 +35,11 @@ const inside = (root: string, target: string) => {
 
 const missing = (error: unknown) => ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException)?.code ?? '')
 
+export async function assertWorkspaceLinkOwner(runtime: DesktopRuntime, agentId: string, owner: string): Promise<void> {
+    const agent = await findDesktopAgent(await openDesktopDatabase(runtime.dataRoot), agentId)
+    if (agent?.engineAgentId !== owner) throw new DesktopHttpError(404, 'File not found')
+}
+
 /** The engine stores each agent's workspace under `<engine data>/agents/<id>/workspace` (apps/engine/src/config/paths.ts). */
 export async function coworkerWorkspace(runtime: DesktopRuntime, agentId: string): Promise<string> {
     const coworker = await findDesktopAgent(await openDesktopDatabase(runtime.dataRoot), agentId)

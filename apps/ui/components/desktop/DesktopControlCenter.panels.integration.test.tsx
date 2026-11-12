@@ -357,6 +357,7 @@ test('opens a saved workspace link in the owning Files panel and preserves the c
     const app = fixture(undefined, true, () => [
         `[Q4 review notes](${prefix}Q4%20notes.md)`,
         `[Missing report](${prefix}missing.md)`,
+        '![Quarterly chart](Reports/chart.png)',
         '[Foreign report](/data/agents/engine-auditor/workspace/Reports/Q4%20notes.md)',
     ].join('\n\n'))
     const mounted = await app.mount()
@@ -364,6 +365,8 @@ test('opens a saved workspace link in the owning Files panel and preserves the c
     await enter(input, 'Draft stays in chat')
     const link = await until(() => mounted.container.querySelector<HTMLButtonElement>('button[title="Open Reports/Q4 notes.md"]'))
     expect(mounted.container.querySelector('[title="Open Reports/Q4 notes.md"]')?.textContent).toBe('Q4 review notes')
+    const image = await until(() => mounted.container.querySelector('img[alt="Quarterly chart"]'))
+    expect(image.getAttribute('src')).toBe(`/api/desktop/agents/${reviewer.id}/files/image?path=Reports%2Fchart.png&animation=1`)
     expect(app.fileReads).toEqual([])
     await click('Foreign report', mounted.container)
     expect(panelDialog('Files')).toBeUndefined()
@@ -393,6 +396,7 @@ test('opens a saved workspace link in the owning Files panel and preserves the c
     await mounted.unmount()
     const reopened = await app.mount()
     await openBoardChat(reopened.container)
+    await until(() => reopened.container.querySelector('img[alt="Quarterly chart"]'))
     const restored = await until(() => reopened.container.querySelector<HTMLButtonElement>('button[title="Open Reports/Q4 notes.md"]'))
     await act(async () => restored.click())
     await until(() => panelDialog('Files')?.querySelector('[data-testid="file-preview"]'))

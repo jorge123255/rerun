@@ -3,6 +3,7 @@ import { link, lstat, mkdir, mkdtemp, readFile, readdir, rename, symlink, unlink
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
+import { desktopWorkspaceImageUrl } from '@/lib/desktop/workspace-file-link'
 import { DESKTOP_IMAGE_MAX_BYTES } from '@/lib/desktop/server/image-bytes'
 import { DESKTOP_PREVIEW_MAX_FRAMES } from '@/lib/desktop/server/animated-image'
 import { bindCoworkerPreviewImageFolder } from '@/lib/desktop/server/preview-image'
@@ -138,6 +139,27 @@ test('confined Files previews convert SVG AVIF ICO and BMP to inert PNG without 
         expect(await readFile(path)).toEqual(bytes)
         await link(path, `${path}.linked`)
         expect((await image(`docs/${name}`, undefined, alice, true)).status).toBe(400)
+    }
+})
+
+test('checks Markdown image ownership before reading files, even for identical relative names', async () => {
+    const preview = (href: string, cookie = token) => {
+        const suffix = new URL(desktopWorkspaceImageUrl(alice, href)!, origin).search
+        return GET(request(alice, suffix, cookie), { params: Promise.resolve({ agentId: alice }) })
+    }
+    const local = '/data/agents/engine-alice/workspace/docs/shot.png'
+    const good = await preview(local)
+    expect(good.status).toBe(200)
+    expect(Buffer.from(await good.arrayBuffer())).toEqual(png)
+    expect((await preview(local, '')).status).toBe(401)
+    for (const foreign of [
+        '/data/agents/engine-bob/workspace/docs/shot.png',
+        '/data/agents/engine-bob/workspace/docs/missing.png',
+        '/data/agents/engine-bob/workspace/shared/docs/shot.png',
+    ]) {
+        const response = await preview(foreign)
+        expect(response.status).toBe(404)
+        expect(await response.json()).toEqual({ error: 'File not found' })
     }
 })
 

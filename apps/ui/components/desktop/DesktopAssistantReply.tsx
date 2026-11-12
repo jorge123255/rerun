@@ -2,12 +2,12 @@
 
 import { getToolName, isToolUIPart, type UIMessage } from 'ai'
 import { desktopSourceParts, QUICK_REPLIES_TOOL, stripBridgePrefix, skillProposalIdOf, isPinnable, type MessageFeedbackRating } from '@rerun/contracts'
-import { createContext, useContext, useMemo, type ReactNode } from 'react'
+import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
 import { defaultRemarkPlugins, type Components, type CustomRendererProps, type PluginConfig } from 'streamdown'
 import { toast } from 'sonner'
 import { MessageAction, MessageResponse, type MessageResponseProps } from '@/components/ai-elements/message'
 import { AGENT_WORKSPACE_FILE_PATH_ATTRIBUTE, AGENT_WORKSPACE_FILE_TAG, remarkAgentWorkspaceLinks } from '@/lib/files/workspace-link'
-import { desktopWorkspaceFileLink } from '@/lib/desktop/workspace-file-link'
+import { desktopWorkspaceFileLink, desktopWorkspaceImageUrl } from '@/lib/desktop/workspace-file-link'
 import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ai-elements/sources'
 import { DRAFT_LANGUAGE, DraftBlock } from '@/components/chat/DraftBlock'
 import { MessageTimeTooltip } from '@/components/chat/MessageTimeTooltip'
@@ -45,7 +45,7 @@ import { DesktopDelegationMount } from './delegation/DesktopDelegationMount'
 import type { DesktopCoworkerCallOpenTarget } from '@/lib/desktop/coworker-calls-client'
 
 type OpenWorkspaceFile = (href: string, opener: HTMLElement) => void
-const WorkspaceFileContext = createContext<OpenWorkspaceFile | undefined>(undefined)
+const WorkspaceReplyContext = createContext<{ agentId?: string; openFile?: OpenWorkspaceFile }>({})
 const workspaceFileTags = { [AGENT_WORKSPACE_FILE_TAG]: [AGENT_WORKSPACE_FILE_PATH_ATTRIBUTE] }
 const workspaceLinks: MessageResponseProps['remarkPlugins'] = [
     ...Object.values(defaultRemarkPlugins),
@@ -53,12 +53,12 @@ const workspaceLinks: MessageResponseProps['remarkPlugins'] = [
 ]
 
 function WorkspaceFileLink({ path, children }: { path?: string; children?: ReactNode; node?: unknown }) {
-    const open = useContext(WorkspaceFileContext)
+    const { openFile } = useContext(WorkspaceReplyContext)
     const link = desktopWorkspaceFileLink(path)
-    if (!path || !link || !open) return <span>{children}</span>
+    if (!path || !link || !openFile) return <span>{children}</span>
     return <button type="button" data-streamdown="link" title={`Open ${link.path}`}
         className="wrap-anywhere appearance-none text-left font-medium text-primary underline"
-        onClick={event => open(path, event.currentTarget)}>{children}</button>
+        onClick={event => openFile(path, event.currentTarget)}>{children}</button>
 }
 
 const desktopComponents: Components = {
@@ -71,6 +71,22 @@ const desktopComponents: Components = {
             : <span>{children}</span>
     },
     img: ({ alt }) => <span>{alt || 'Image'}</span>,
+}
+
+function WorkspaceReplyImage({ src, alt }: { src: string; alt: string }) {
+    const [failed, setFailed] = useState(false)
+    return failed ? <span>{alt}</span> : <img src={src} alt={alt} loading="lazy" decoding="async"
+        className="h-auto max-h-[32rem] max-w-full rounded-md border object-contain" onError={() => setFailed(true)} />
+}
+
+const answerComponents: Components = {
+    ...desktopComponents,
+    img: function WorkspaceMarkdownImage({ src, alt }) {
+        const { agentId } = useContext(WorkspaceReplyContext)
+        const url = agentId && typeof src === 'string' ? desktopWorkspaceImageUrl(agentId, src) : null
+        const label = alt || 'Image'
+        return url ? <WorkspaceReplyImage key={url} src={url} alt={label} /> : <span>{label}</span>
+    },
 }
 
 const noPlugins = {}
@@ -103,8 +119,8 @@ function DesktopDraftBlock(props: CustomRendererProps) {
 
 const answerPlugins: PluginConfig = { renderers: [{ language: DRAFT_LANGUAGE, component: DesktopDraftBlock }] }
 
-function replyMarkdown(text: string, streaming = false, plugins: PluginConfig = noPlugins, remarkPlugins?: MessageResponseProps['remarkPlugins']) {
-    return <MessageResponse components={desktopComponents} plugins={plugins} rehypePlugins={noRehypePlugins}
+function replyMarkdown(text: string, streaming = false, plugins: PluginConfig = noPlugins, remarkPlugins?: MessageResponseProps['remarkPlugins'], components = desktopComponents) {
+    return <MessageResponse components={components} plugins={plugins} rehypePlugins={noRehypePlugins}
         remarkPlugins={remarkPlugins} allowedTags={remarkPlugins ? workspaceFileTags : undefined}
         controls={false} skipHtml mode={streaming ? 'streaming' : 'static'} isAnimating={streaming}
         className="min-w-0 wrap-anywhere [&_pre]:overflow-x-auto">
@@ -125,7 +141,7 @@ function DesktopAnswerBubbles({ text, streaming, createdAt, workspaceLinks }: {
         {bubbles.map(({ frame, markdown }, index) => (
             <MessageTimeTooltip key={index} createdAt={index === 0 ? createdAt : undefined} locale={locale} side="right">
                 <div data-bubble-frame={frame} className={cn('min-w-0', frame === 'bare' ? 'w-full' : 'max-w-[88%]', frame === 'bubble' && [AGENT_BUBBLE_SURFACE, 'px-3.5 py-2'])}>
-                    {replyMarkdown(markdown, streaming && index === bubbles.length - 1, answerPlugins, workspaceLinks)}
+                    {replyMarkdown(markdown, streaming && index === bubbles.length - 1, answerPlugins, workspaceLinks, answerComponents)}
                 </div>
             </MessageTimeTooltip>
         ))}
@@ -271,7 +287,7 @@ export function DesktopAssistantReply({ message, streaming, createdAt, onRegener
             blocks.push(<ReasoningStep key={index} text={part.text} isStreaming={live} renderText={replyMarkdown} />)
         }
     }
-    return <WorkspaceFileContext.Provider value={onOpenWorkspaceFile}>
+    return <WorkspaceReplyContext.Provider value={{ agentId, openFile: onOpenWorkspaceFile }}>
         {blocks}
         <DesktopReplySources parts={message.parts} />
         {quickReplies && <DesktopQuickReplies message={message} {...quickReplies} />}
@@ -289,5 +305,5 @@ export function DesktopAssistantReply({ message, streaming, createdAt, onRegener
                 <FeedbackThumb rating="down" current={feedbackRating} onRate={onRate} />
             </div>}
         </div>}
-    </WorkspaceFileContext.Provider>
+    </WorkspaceReplyContext.Provider>
 }
