@@ -107,7 +107,7 @@ it('shows the saved connection failure with a Settings action and clears it when
     vi.stubGlobal('fetch', fetch)
     const onOpenModelSettings = vi.fn()
     root = createRoot(document.body.appendChild(document.createElement('div')))
-    await act(async () => root!.render(<DesktopForemanPanel onClose={vi.fn()} onOpenCoworker={vi.fn()} onOpenBox={vi.fn()}
+    await act(async () => root!.render(<DesktopForemanPanel onClose={vi.fn()} onOpenCoworker={vi.fn()} onOpenCalledChat={vi.fn()} onOpenBox={vi.fn()}
         agentNameOf={id => id} onOpenModelSettings={onOpenModelSettings} />))
     const alert = document.querySelector('[role="alert"]')
     expect(alert?.textContent).toContain('Connection signed out')
