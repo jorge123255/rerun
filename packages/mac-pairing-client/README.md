@@ -1,8 +1,14 @@
 # @rerun/mac-pairing-client
 
-Phone-side client for Rerun's first **Connect to This Mac** slice. The fork has no `apps/mobile` tree, so this package is the matching iPhone entry: it sits beside upstream's "Use your own server" picker and keeps Mac-paired sessions in storage that never overlaps cloud or self-hosted Supabase sessions.
+The **Connect to This Mac** preview runs against a listener on `127.0.0.1`.
+Open **File → Connect iPhone…** in the Mac app to allow local pairing and
+approve a test client. The client can list coworkers and read saved chat text
+in the workspace approved on the Mac. Mac-paired sessions have their own
+storage key, separate from cloud and self-hosted Supabase sessions.
 
-This package is the contract a future stock iPhone app would call. It does not implement a real Supabase project, and it cannot be used by the unmodified stock app as a drop-in replacement for `GET /api/v1/client`.
+A physical phone needs a matching iPhone app and a secure local-network
+transport. The existing iPhone server picker requires a Rerun hub with
+Supabase authentication.
 
 ## Why the stock iPhone app cannot sign in to the Mac unmodified
 
