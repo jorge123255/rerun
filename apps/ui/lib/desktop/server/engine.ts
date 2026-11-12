@@ -1,7 +1,7 @@
 import type { DesktopDocumentSendSelection } from '@rerun/contracts'
 import { admitDesktopChatDocuments } from './document-attachments/chat'
 import { consumeDesktopDocumentAdmission } from './document-attachments/binding'
-import { checkedDesktopCoworkerMentions, desktopCoworkerMentionFieldsOf, desktopStoredCoworkerMentions, visibleText, type DesktopCoworkerMention } from '@rerun/contracts'
+import { checkedDesktopCoworkerMentions, desktopCoworkerMentionFieldsOf, desktopStoredCoworkerMentions, hasDesktopApiConnectionPrefix, visibleText, type DesktopCoworkerMention } from '@rerun/contracts'
 import { validateDesktopCoworkerMentionsAtSend } from './coworker-mentions'
 import { assertDesktopSetupChatAllowed } from './setup/service'
 import type { DesktopTakeoverGuard } from '@rerun/contracts'
@@ -41,7 +41,7 @@ export async function desktopCoworkerMentionTargets(runtime: DesktopRuntime, age
 export async function connectDesktopOpenAI(runtime: DesktopRuntime, apiKey: string) {
     await changeDesktopSettings(runtime, { action: 'key', provider: 'openai', apiKey })
     const { connections } = await readDesktopProviders(runtime)
-    const connection = connections.find(c => c.provider === 'openai')
+    const connection = connections.find(c => c.provider === 'openai' && !hasDesktopApiConnectionPrefix(c.id))
     if (!connection) throw new DesktopHttpError(502, 'Could not read the saved connection.')
     return { id: connection.id, provider: connection.provider, name: connection.name }
 }

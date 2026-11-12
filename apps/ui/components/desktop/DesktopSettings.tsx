@@ -1,7 +1,7 @@
 import { useDesktopLocale } from './DesktopLocale'
 import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata'
 import { useMemo, useState, type FormEvent } from 'react'
-import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, connectionReasoningOptions, desktopApiConnectionIdSchema, desktopApiConnectionProviderSchema, isDesktopSubscriptionProvider, type ConnectionsList } from '@rerun/contracts'
+import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, connectionReasoningOptions, desktopApiConnectionIdSchema, desktopApiConnectionProviderSchema, hasDesktopApiConnectionPrefix, isDesktopSubscriptionProvider, type ConnectionsList } from '@rerun/contracts'
 import { ThemeToggle } from '@rerun/ui/theme'
 import { DesktopLanguageSettings } from './DesktopLanguageSettings'
 import { DesktopCodexLogin } from './DesktopCodexLogin'
@@ -48,7 +48,9 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
     const apiConnections = useMemo(() => Number.isSafeInteger(workspaceId) && (workspaceId ?? 0) > 0 ? createApiConnectionsClient(desktopApiConnectionUiRoutes) : null, [workspaceId])
     const labels = { 'AI providers': t('providers'), 'Tool services': t('toolServices'), Workspace: t('workspace'), Notifications: t('notifications'), Shortcuts: t('shortcuts') }
     const [tab, setTab] = useState<typeof panels[number]>(initialTab ?? 'AI providers')
-    const defaultSource = providers.connections.find(c => c.id === providers.default?.connectionId)?.id ?? providers.connections[0]?.id ?? 'add:openai'
+    const standardConnections = providers.connections.filter(c => !hasDesktopApiConnectionPrefix(c.id))
+    const editable = standardConnections.filter(c => !isDesktopSubscriptionProvider(c.provider))
+    const defaultSource = editable.find(c => c.id === providers.default?.connectionId)?.id ?? editable[0]?.id ?? 'add:openai'
     const [source, setSource] = useState(initialConnectionId ?? defaultSource)
     const [recoveryId, setRecoveryId] = useState(initialConnectionId)
     const [key, setKey] = useState('')
@@ -57,17 +59,19 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
     const [notice, setNotice] = useState('')
     const [error, setError] = useState('')
     const recovery = recoveryId ? providers.connections.find(connection => connection.id === recoveryId) : undefined
+    const recoveringNamed = !!recoveryId && hasDesktopApiConnectionPrefix(recoveryId)
     const recoverySubscription = isDesktopSubscriptionProvider(recovery?.provider) ? recovery.provider : undefined
     const recoveryNamed = recovery && desktopApiConnectionIdSchema.safeParse(recovery.id).success
         && desktopApiConnectionProviderSchema.safeParse(recovery.provider).success ? recovery : undefined
-    const editable = providers.connections.filter(c => !isDesktopSubscriptionProvider(c.provider))
     const current = editable.find(c => c.id === source)
     const provider = current ? desktopProvider.parse(current.provider) : desktopProvider.safeParse(source.replace(/^add:/, '')).data ?? 'openai'
     const missing = desktopProvider.options.filter(p => p !== 'custom' && (p !== 'opencode' || !!workspaceId) && !isDesktopSubscriptionProvider(p) && !editable.some(c => c.provider === p))
-    const picks = providers.connections.filter(c => c.connected && !((c.provider === 'claude' || c.provider === 'opencode') && c.credentialRejected)).flatMap(c => enabledModels(c).map(m => ({ connectionId: c.id, model: m.id })))
+    const defaultConnections = standardConnections.filter(c => c.connected && !((c.provider === 'claude' || c.provider === 'opencode') && c.credentialRejected))
+    const picks = defaultConnections.flatMap(c => enabledModels(c).map(m => ({ connectionId: c.id, model: m.id })))
     const selected = picks.findIndex(p => p.connectionId === providers.default?.connectionId && p.model === providers.default.model)
     const active = providers.default
-    const activeConnection = providers.connections.find(c => c.id === active?.connectionId && c.connected)
+    const activeConnection = standardConnections.find(c => c.id === active?.connectionId && c.connected)
+    const activeNamed = !!active && hasDesktopApiConnectionPrefix(active.connectionId)
     const reasoning = active && activeConnection ? connectionReasoningOptions(activeConnection, active.model) : undefined
     const staleEffort = customReasoningUnavailable(activeConnection ?? null, active?.model ?? null, active)
 
@@ -93,7 +97,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
     }
 
     // A provider that was just added replaces its "add" option with the engine connection.
-    const connection = current ?? (recoveryId || provider === 'custom' ? undefined : providers.connections.find(c => c.provider === provider))
+    const connection = current ?? (recoveryId || provider === 'custom' ? undefined : editable.find(c => c.provider === provider))
     const changeModels = (models: string[], extraModels: string[]) => {
         if (connection) void save({ action: 'models', connectionId: connection.id, models, extraModels }, 'Available models updated.')
     }
@@ -118,7 +122,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                             <Button type="button" size="sm" variant="ghost" onClick={() => {
                                 setRecoveryId(null); setSource(defaultSource); setKey(''); setNotice(''); setError('')
                             }}>Back to AI providers</Button>
-                            {recovery ? <h2 className="text-lg font-semibold">{recovery.name}</h2>
+                            {recovery && (!recoveringNamed || recoveryNamed) ? <h2 className="text-lg font-semibold">{recovery.name}</h2>
                                 : <p role="status" className="text-sm text-muted-foreground">This connection is no longer available. Choose a provider from AI providers to continue.</p>}
                         </div>}
                         {!recoveryId && <div className="space-y-2 rounded-xl border p-4">
@@ -128,10 +132,12 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                 const pick = picks[Number(e.target.value)]
                                 if (pick) void save({ action: 'default', ...pick }, 'Default model saved.')
                             }}>
-                                {selected < 0 && <option value={-1} disabled>{picks.length ? 'Choose a model' : 'Connect a provider to choose a model'}</option>}
-                                {providers.connections.filter(c => c.connected && !((c.provider === 'claude' || c.provider === 'opencode') && c.credentialRejected)).map(c => <optgroup key={c.id} label={c.name}>{picks.map((p, index) => p.connectionId === c.id &&
+                                {selected < 0 && <option value={-1} disabled>{activeNamed && active ? `Saved default · ${modelName(active.connectionId, active.model)}`
+                                    : picks.length ? 'Choose a model' : 'Connect a provider to choose a model'}</option>}
+                                {defaultConnections.map(c => <optgroup key={c.id} label={c.name}>{picks.map((p, index) => p.connectionId === c.id &&
                                     <option key={p.model} value={index}>{c.provider === 'opencode' ? desktopConnectionModelLabel(c, p.model) : c.subscriptionModels?.find(m => m.id === p.model)?.label ?? modelName(c.id, p.model)}</option>)}</optgroup>)}
                             </select>
+                            {activeNamed && <p className="text-xs text-muted-foreground">Choose another provider to change this workspace default.</p>}
                             {activeConnection && active && (activeConnection.provider === 'codex' || reasoning || staleEffort) && <div className="space-y-2 pt-3">
                                 <label htmlFor="desktop-reasoning-effort" className="font-semibold">Reasoning effort</label>
                                 <p id="desktop-reasoning-hint" className="text-sm text-muted-foreground">How much reasoning {activeConnection.provider === 'codex' ? 'Codex' : activeConnection.name} uses for the next message.</p>
@@ -150,7 +156,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                             <ApiConnectionsPanel workspaceId={workspaceId} currentWorkspace={() => workspaceId}
                                 active api={apiConnections} initialConnectionId={recoveryNamed?.id} selectionContext={null} onCatalog={() => onConnectionsChanged?.()} />
                         </div> : <p role="status" className="text-sm text-muted-foreground">Named API-key connections are unavailable until this workspace identity is confirmed.</p>)}
-                        {(!recoveryId || recovery && !recoveryNamed && !recoverySubscription) && <div className="space-y-4 rounded-xl border p-4">
+                        {(!recoveryId || recovery && !recoveringNamed && !recoverySubscription) && <div className="space-y-4 rounded-xl border p-4">
                             <label htmlFor="desktop-provider" className="font-semibold">Provider connection</label>
                             <select id="desktop-provider" className={selectClass} value={connection?.id ?? 'add:' + provider} onChange={e => {
                                 setRecoveryId(null); setSource(e.target.value); setKey(''); setNotice(''); setError('')
@@ -164,14 +170,14 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                             </div>
                             {provider === 'opencode' ? workspaceId && <DesktopOpencodeSettings key={workspaceId} workspaceId={workspaceId}
                                 rejected={!!connection?.credentialRejected} onProviders={onProviders}
-                                onBack={() => { setRecoveryId(null); setSource(providers.connections.find(item => item.provider !== 'opencode')?.id ?? 'add:openai') }} />
+                                onBack={() => { setRecoveryId(null); setSource(editable.find(item => item.provider !== 'opencode')?.id ?? 'add:openai') }} />
                             : provider === 'custom' ? workspaceId && (connection === undefined || connection.customRevision) ? <DesktopCustomProviderPage
                                 key={connection?.id ?? 'new-custom'}
                                 workspaceId={workspaceId}
                                 identity={connection?.customRevision ? { workspaceId, connectionId: connection.id, revision: connection.customRevision } : null}
                                 takenNames={providers.connections.filter(item => item.id !== connection?.id).map(item => item.name)}
                                 defaultModel={providers.default}
-                                onBack={() => { setRecoveryId(null); setSource(providers.connections.find(item => item.provider !== 'custom')?.id ?? 'add:openai') }}
+                                onBack={() => { setRecoveryId(null); setSource(editable.find(item => item.provider !== 'custom')?.id ?? 'add:openai') }}
                                 onReceipt={receipt => { if (receipt.status === 'recorded') onConnectionsChanged?.() }}
                                 onCatalogChanged={onConnectionsChanged}
                             /> : <p role="status">Custom endpoint settings are unavailable.</p> : provider === 'codex' ? <>

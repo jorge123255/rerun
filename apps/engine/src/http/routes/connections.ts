@@ -1,6 +1,6 @@
 import { withDesktopOpencodeSelection } from '../../desktop/opencode/registry.js'
 import { Hono } from 'hono'
-import { DESKTOP_OPENCODE_CONNECTION_ID, RERUN_CONNECTION_ID, boxDefaultUpdateSchema, connectionReasoningOptions, createConnectionSchema, parseDesktopSubscriptionConnectionId, updateConnectionKeysSchema, updateConnectionSchema } from '@rerun/contracts'
+import { DESKTOP_OPENCODE_CONNECTION_ID, RERUN_CONNECTION_ID, boxDefaultUpdateSchema, connectionReasoningOptions, createConnectionSchema, hasDesktopApiConnectionPrefix, parseDesktopSubscriptionConnectionId, updateConnectionKeysSchema, updateConnectionSchema } from '@rerun/contracts'
 import { connectionExists, isConnected, toSummary } from '../../connections/loader.js'
 import { findConnection, getConnection, listConnections } from '../../connections/registry.js'
 import { assertConnectionDeletable, createConnection, deleteConnection, patchConnection, updateConnectionKeys } from '../../connections/store.js'
@@ -18,7 +18,7 @@ import { selectRegisteredCustomDefault } from '../../desktop/custom-providers/bi
 import { badRequest, HttpError } from '../../lib/errors.js'
 
 export const connectionRoutes = new Hono()
-const namedDesktopConnection = (id: string) => desktopApp() && /^cnx_/i.test(id)
+const namedDesktopConnection = (id: string) => desktopApp() && hasDesktopApiConnectionPrefix(id)
 const NAMED_CONNECTION_REFUSAL = 'Use the named API connection settings. This legacy route cannot change its revision or receipt.'
 
 // Tells the hub the box now runs on the workspace's own AI, which ticks its getting-started step.

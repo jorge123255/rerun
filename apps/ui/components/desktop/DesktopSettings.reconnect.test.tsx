@@ -6,6 +6,51 @@ import type { ConnectionsList, ConnectionSummary } from '@rerun/contracts'
 import { expect, it, vi } from 'vitest'
 import { DesktopSettings } from './DesktopSettings'
 
+it('shows a saved named default without offering it as a writable default or a legacy key', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const named: ConnectionSummary = {
+        id: 'cnx_fixture-named', name: 'Named key', provider: 'openai', models: ['named-model'],
+        extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '',
+    }
+    const legacy: ConnectionSummary = { ...named, id: 'legacy-openai', name: 'Standard key', models: ['legacy-model'] }
+    const host = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(host)
+    const save = vi.fn(async () => {})
+    const providers: ConnectionsList = { connections: [named, legacy], default: { connectionId: named.id, model: named.models[0]! } }
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (url, init) => {
+        expect(init?.method).toBe('GET')
+        if (url === '/api/desktop/subscription-login') return Response.json({ 'kimi-code': { phase: 'unavailable' }, 'grok-build': { phase: 'unavailable' } })
+        expect(url).toBe('/api/desktop/api-connections/1/catalog')
+        return Response.json({ version: 1, workspaceId: 1, default: providers.default, connections: [{
+            version: 1, workspaceId: 1, connectionId: named.id, revision: 'rev_fixture-named', provider: named.provider,
+            name: named.name, models: named.models, extraModels: [], connected: true, credentialRejected: false, createdAt: '2026-11-11T00:00:00Z',
+        }] })
+    }))
+    try {
+        await act(async () => root.render(<DesktopSettings providers={providers} workspaceName="Offline fixture" workspaceId={1} onProviders={vi.fn()} onSave={save} />))
+        const model = host.querySelector<HTMLSelectElement>('#desktop-default')!
+        const provider = host.querySelector<HTMLSelectElement>('#desktop-provider')!
+        expect(model.selectedOptions[0]?.textContent).toContain('Saved default')
+        expect(model.selectedOptions[0]?.textContent).toContain('named-model')
+        expect(model.selectedOptions[0]?.disabled).toBe(true)
+        expect(model.querySelector('optgroup[label="Named key"]')).toBeNull()
+        expect(provider.value).toBe(legacy.id)
+        expect([...provider.options].some(option => option.value === named.id)).toBe(false)
+        expect(host.querySelector('[aria-label="Your API keys"]')?.textContent).toContain(named.name)
+        expect(save).not.toHaveBeenCalled()
+        const replacement = [...model.options].find(option => option.textContent === 'legacy-model')!
+        await act(async () => {
+            model.value = replacement.value
+            model.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+        expect(save).toHaveBeenCalledExactlyOnceWith({ action: 'default', connectionId: legacy.id, model: 'legacy-model' })
+    } finally {
+        await act(async () => root.unmount())
+        host.remove()
+        vi.unstubAllGlobals()
+    }
+})
+
 it('opens only the failed subscription, and closes its controls if the saved connection disappears', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     const kimi: ConnectionSummary = {

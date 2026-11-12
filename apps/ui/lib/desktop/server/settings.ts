@@ -1,6 +1,6 @@
 import 'server-only'
 import { writeDesktopWorkspaceIcon } from './workspace-icon'
-import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, connectionReasoningOptions, isDesktopSubscriptionProvider } from '@rerun/contracts'
+import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, connectionReasoningOptions, hasDesktopApiConnectionPrefix, isDesktopSubscriptionProvider } from '@rerun/contracts'
 import { createConnection, listConnections, patchConnection, setBoxDefault, updateConnectionKeys } from '@/lib/engine/client'
 import type { SettingsChange } from '../settings'
 import { desktopConnections } from '../chat-model'
@@ -71,10 +71,16 @@ async function applyChange(runtime: DesktopRuntime, change: SettingsChange) {
         await writeDesktopWorkspaceIcon(db, { name: change.name })
         return
     }
+    if (change.connectionId && hasDesktopApiConnectionPrefix(change.connectionId)) {
+        throw new DesktopHttpError(409, change.action === 'default'
+            ? 'Named API model selection is unavailable. Choose another provider for the workspace default.'
+            : 'Manage this named API key from Your API keys.')
+    }
     const engine = engineOf(runtime)
     const list = await readDesktopProviders(runtime)
     if (change.action === 'key') {
-        const existing = change.connectionId ? list.connections.find(c => c.id === change.connectionId) : list.connections.find(c => c.provider === change.provider)
+        const existing = change.connectionId ? list.connections.find(c => c.id === change.connectionId)
+            : list.connections.find(c => c.provider === change.provider && !hasDesktopApiConnectionPrefix(c.id))
         if (change.connectionId && existing?.provider !== change.provider) throw new DesktopHttpError(400, 'This connection is unavailable.')
         const keys = { [CONNECTION_TOKEN_KEY[change.provider]]: change.apiKey }
         if (existing) await updateConnectionKeys(engine, existing.id, { set: keys })

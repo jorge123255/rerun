@@ -2,8 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { BoxDefaultModel, ConnectionSummary } from '@rerun/contracts'
 
 // In-memory connection endpoints for exercising the desktop UI server against an HTTP engine.
-export function connectionFixture() {
-    const connections: ConnectionSummary[] = []
+export function connectionFixture(connections: ConnectionSummary[] = []) {
     let pick: BoxDefaultModel | null = null
     return (req: IncomingMessage, res: ServerResponse, body: Record<string, unknown>) => {
         const reply = (value: unknown, status = 200) => {

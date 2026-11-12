@@ -108,7 +108,7 @@ function DefaultModel({ session, selectionContext }: { session: ApiConnectionsSe
                 {selected < 0 && <option value={-1} disabled>{external ? `Current connection: ${catalog.default!.connectionId} · ${catalog.default!.model}` : catalog.default ? `${catalog.default.model} (unavailable)` : 'Choose a model'}</option>}
                 {catalog.connections.filter(c => c.connected && !c.credentialRejected).map(connection => <optgroup key={connection.connectionId} label={connection.name}>{choices.map((pick, index) => pick.connectionId === connection.connectionId && <option key={pick.model} value={index}>{catalogFor(connection.provider).models.find(model => model.id === pick.model)?.label ?? pick.model}</option>)}</optgroup>)}
             </select>
-            {!selectionContext && <p role="status" className="text-[11px] text-muted-foreground">Model selection is unavailable until the current local selection authority is connected.</p>}
+            {!selectionContext && <p role="status" className="text-[11px] text-muted-foreground">Named API keys are unavailable as workspace defaults.</p>}
         </div>
     </section>
 }
