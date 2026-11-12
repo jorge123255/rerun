@@ -82,7 +82,7 @@ describe('desktop store', () => {
 
     it('reads the local profile and workspace without provider credentials', async () => {
         const bootstrap = await readDesktopBootstrap(db)
-        expect(bootstrap.profile).toEqual({ id: 1, displayName: 'Local User' })
+        expect(bootstrap.profile).toEqual({ id: 1, displayName: 'Local User', photoId: null })
         expect(bootstrap.workspace).toEqual({ id: 1, name: 'My workspace' })
         expect(bootstrap.agents).toEqual([])
     })
