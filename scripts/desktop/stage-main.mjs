@@ -6,6 +6,7 @@ import { sourceStamp, writeStamp } from './provenance.mjs'
 const required = [
     'index.js', 'index.mjs', 'preload.cjs', 'before-quit.mjs', 'startup.html',
     'startup.css', 'startup.js', 'runtime.mjs', 'supervisor.mjs', 'ui-host.mjs', 'notifications.mjs', 'application-menu.mjs',
+    'mac-menu-bar.mjs', 'tray/trayTemplate.png', 'tray/trayTemplate@2x.png',
 ]
 
 const src = join(desktopDir, 'src', 'main')

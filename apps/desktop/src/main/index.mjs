@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, safeStorage, shell, session } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, safeStorage, shell, session, Tray } from 'electron'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { mkdir } from 'node:fs/promises'
@@ -16,10 +16,13 @@ import { createRemoteMachineIpc } from './remote-machines/ipc.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
 import { createDesktopFileSaves } from './result-files.mjs'
 import { installMacApplicationMenu } from './application-menu.mjs'
+import { createMacMenuBar } from './mac-menu-bar.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
 let window
+let menuBar
+let showWindowOnReady = true
 let supervisor
 let runtime
 let workspaces
@@ -57,6 +60,19 @@ const remoteMachineIpc = createRemoteMachineIpc({ trusted, context: () => {
 const clickHandoff = createNotificationClickHandoff()
 let clickReady = null
 let desktopNotifications = createNotices()
+function showMainWindow() {
+    showWindowOnReady = true
+    if (!window || window.isDestroyed()) return
+    if (window.isMinimized()) window.restore()
+    window.show()
+    window.focus()
+}
+function setMacUnread(count) {
+    if (process.platform !== 'darwin') return
+    app.setBadgeCount(count)
+    try { menuBar?.setUnread(count) }
+    catch { console.warn('Could not update the Rerun menu-bar item.') }
+}
 function runtimeScope() {
     const current = supervisor?.runtime
     if (!current || !runtime || runtime !== current || supervisor.status.state !== 'ready') return null
@@ -77,10 +93,7 @@ function flushNotificationClicks() {
 function createNotices() { return createDesktopNotifications({ Notification, onClick: (target, scope) => {
     const current = clickScope()
     if (!scope || !current || scope.workspaceId !== current.workspaceId || scope.launchNonce !== current.launchNonce) return
-    if (window && !window.isDestroyed()) {
-        if (window.isMinimized()) window.restore()
-        window.show(); window.focus()
-    }
+    showMainWindow()
     // Bind the click to the runtime that originally submitted the notice, even after reload.
     clickHandoff.accept(target, scope)
     flushNotificationClicks()
@@ -88,8 +101,8 @@ function createNotices() { return createDesktopNotifications({ Notification, onC
 
 if (!app.requestSingleInstanceLock()) app.quit()
 else {
-    app.on('second-instance', () => { if (window?.isMinimized()) window.restore(); window?.show(); window?.focus() })
-    app.on('activate', () => { window?.show(); window?.focus() })
+    app.on('second-instance', showMainWindow)
+    app.on('activate', showMainWindow)
     app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
     app.on('before-quit', event => {
         if (quittingNow) return
@@ -156,6 +169,12 @@ async function launch() {
             Menu, appName: app.name, isDesktopPage,
             settingsWindow: () => !quitting && !transitioning && runtimeScope() && draftQuit.ready ? window : null,
         })
+        try {
+            menuBar = createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow: showMainWindow })
+            showWindowOnReady = !menuBar.startedAtLogin
+        } catch {
+            console.warn('Could not start the Rerun menu-bar item.')
+        }
     }
     const dataRoot = resolve(app.getPath('appData'), 'Rerun Desktop Preview')
     await mkdir(dataRoot, { recursive: true, mode: 0o700 })
@@ -217,8 +236,8 @@ async function launch() {
             const scope = runtimeScope()
             if (!scope || !isDesktopPage(event.senderFrame.url) || value?.workspaceId !== scope.workspaceId
                 || value.launchNonce !== scope.launchNonce || !Number.isSafeInteger(value.count) || value.count < 0) return
-            if (process.platform === 'darwin') app.setBadgeCount(Math.min(value.count, 9999))
-        } catch { /* A stale or untrusted renderer cannot update the Dock. */ }
+            setMacUnread(Math.min(value.count, 9999))
+        } catch { /* A stale or untrusted renderer cannot update native badges. */ }
     })
     ipcMain.handle('desktop:save-draining-draft', (event, value) => {
         trusted(event)
@@ -339,7 +358,8 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
         title: 'Rerun Desktop Preview', backgroundColor: '#101214',
         webPreferences: { preload: resolve(directory, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, partition },
     })
-    window.once('ready-to-show', () => window.show())
+    const boardWindow = window
+    boardWindow.once('ready-to-show', () => { if (showWindowOnReady && window === boardWindow) boardWindow.show() })
     window.on('close', event => {
         if (quitting && !quittingNow) { event.preventDefault(); return }
         if (!quittingNow && process.platform === 'darwin') { event.preventDefault(); window.hide() }
@@ -348,7 +368,7 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
     rendererEpoch = randomUUID()
     const invalidateRenderer = () => {
         if (window?.webContents !== contents) return
-        if (process.platform === 'darwin') app.setBadgeCount(0)
+        setMacUnread(0)
         rendererEpoch = randomUUID()
         clickReady = null
         draftQuit.reset()
