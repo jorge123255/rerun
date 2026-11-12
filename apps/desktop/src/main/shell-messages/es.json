@@ -50,5 +50,32 @@
         "open": "Abrir {name}",
         "quickAsk": "Pregunta rápida",
         "openAtLogin": "Abrir al iniciar sesión"
+    },
+    "server": {
+        "label": "Dirección del servidor",
+        "connect": "Conectar",
+        "unreachable": "Nada responde en esta dirección.",
+        "notRerun": "Esta dirección no es un servidor Rerun.",
+        "tooOld": "Este servidor necesita la versión {version} de la app o una posterior.",
+        "insecure": "Esta dirección no está cifrada. Usa https:// salvo que el servidor esté en esta computadora.",
+        "title": "Conectar con Rerun",
+        "description": "Abre un servidor de Rerun en su propia ventana. Tu espacio de trabajo local sigue abierto.",
+        "connecting": "Conectando…",
+        "unsupported": "Este servidor usa otro protocolo de escritorio de Rerun.",
+        "busy": "Hay otra conexión en curso. Vuelve a intentarlo en breve."
+    },
+    "offline": {
+        "title": "No se puede conectar con Rerun",
+        "body": "Revisa tu conexión. La app vuelve a conectarse a {host} sola.",
+        "unavailable": "{host} no responde en este momento. La app lo vuelve a intentar sola.",
+        "retry": "Reintentar",
+        "retrying": "Reintentando…",
+        "incompatibleTitle": "Actualiza Rerun para continuar"
+    },
+    "unload": {
+        "message": "¿Salir de esta página?",
+        "detail": "Un coworker sigue trabajando o un archivo tiene cambios sin guardar.",
+        "leave": "Salir",
+        "stay": "Quedarme"
     }
 }

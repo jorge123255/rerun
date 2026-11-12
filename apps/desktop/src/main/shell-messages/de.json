@@ -50,5 +50,32 @@
         "open": "{name} öffnen",
         "quickAsk": "Schnellfrage",
         "openAtLogin": "Bei der Anmeldung öffnen"
+    },
+    "server": {
+        "label": "Serveradresse",
+        "connect": "Verbinden",
+        "unreachable": "Unter dieser Adresse antwortet nichts.",
+        "notRerun": "Diese Adresse ist kein Rerun-Server.",
+        "tooOld": "Dieser Server braucht Version {version} der App oder neuer.",
+        "insecure": "Diese Adresse ist nicht verschlüsselt. Nutze https://, außer der Server läuft auf diesem Computer.",
+        "title": "Mit Rerun verbinden",
+        "description": "Öffne einen Rerun-Server in einem eigenen Fenster. Dein lokaler Arbeitsbereich bleibt geöffnet.",
+        "connecting": "Verbindung wird hergestellt…",
+        "unsupported": "Dieser Server verwendet ein anderes Rerun-Desktop-Protokoll.",
+        "busy": "Eine andere Verbindung wird gerade hergestellt. Versuche es gleich noch einmal."
+    },
+    "offline": {
+        "title": "Rerun ist nicht erreichbar",
+        "body": "Prüfe deine Verbindung. Die App verbindet sich von selbst wieder mit {host}.",
+        "unavailable": "{host} antwortet gerade nicht. Die App versucht es von selbst erneut.",
+        "retry": "Erneut versuchen",
+        "retrying": "Erneuter Versuch…",
+        "incompatibleTitle": "Aktualisiere Rerun, um weiterzumachen"
+    },
+    "unload": {
+        "message": "Diese Seite verlassen?",
+        "detail": "Ein Coworker arbeitet noch oder eine Datei hat ungesicherte Änderungen.",
+        "leave": "Verlassen",
+        "stay": "Bleiben"
     }
 }

@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { checkHub, hubPartition, hubWindowAddress, HUB_API_VERSION, normalizeHubOrigin, parseHubWorkspaceId, sameHub } from './connected-hub-policy.mjs'
 import { cascadeWindowBounds } from './board-windows.mjs'
+import { hubConnectionError, hubOfflineCopy, hubPickerCopy, hubRecoveryView } from './connected-hub-messages.mjs'
+import { shellText } from './shell-language.mjs'
 import { restoreWindowZoom } from './window-placement.mjs'
 import { createHubAuth } from './connected-hub-auth.mjs'
 import { createHubDownloads, isHubDownload } from './connected-hub-downloads.mjs'
@@ -35,7 +37,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         onUnavailable: entry => { void dialog.showMessageBox(entry.window, { type: 'warning', title: 'Quick Ask',
             message: 'Quick Ask could not open on this Rerun server.', buttons: ['OK'] }).catch(() => {}) },
     })
-    let picker = null, acceptedPicker = null, connecting = null
+    let picker = null, pickerLocale = null, acceptedPicker = null, connecting = null
     let pendingOpen = null, openingLink = false
 
     function entryFor(window) {
@@ -169,17 +171,19 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     function openPicker() {
         if (!available()) return
         if (picker && !picker.isDestroyed()) { show(picker); return }
+        pickerLocale = language()
         const isolated = session.fromPartition('rerun-connected-hub-picker')
         isolated.setPermissionRequestHandler((_contents, _permission, done) => done(false))
         isolated.setPermissionCheckHandler(() => false)
         const window = new BrowserWindow({ width: 530, height: 440, minWidth: 460, minHeight: 390, show: false,
-            title: 'Connect to Rerun', backgroundColor: '#101214', webPreferences: preferences(isolated) })
+            title: hubPickerCopy(pickerLocale).title, backgroundColor: '#101214', webPreferences: preferences(isolated) })
         picker = window
         for (const event of ['will-navigate', 'will-redirect', 'will-attach-webview']) window.webContents.on(event, request => request.preventDefault())
         window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
         window.once('closed', () => {
             if (picker !== window) return
             picker = null
+            pickerLocale = null
             if (acceptedPicker === window) {
                 acceptedPicker = null
                 void openPendingLink()
@@ -299,8 +303,9 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         })
         contents.on('render-process-gone', () => { quickAsk.reset(entry); invalidateNative(entry) })
         contents.on('will-prevent-unload', event => {
-            const result = dialog.showMessageBoxSync(window, { type: 'warning', title: 'Leave this Rerun page?',
-                message: 'Some changes might not have been saved.', buttons: ['Stay', 'Leave'], defaultId: 0, cancelId: 0 })
+            const t = shellText(language(entry.origin))
+            const result = dialog.showMessageBoxSync(window, { type: 'warning', message: t('unload.message'),
+                detail: t('unload.detail'), buttons: [t('unload.stay'), t('unload.leave')], defaultId: 0, cancelId: 0 })
             if (result === 1) event.preventDefault()
             else entry.closeAttempt?.(false)
         })
@@ -394,8 +399,16 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     }
 
     ipcMain.on('hub:bootstrap', event => {
-        if (localSender(event)) { event.returnValue = { audience: 'picker' }; return }
-        if (offlineSender(event)) { event.returnValue = { audience: 'hub-offline' }; return }
+        if (localSender(event)) {
+            event.returnValue = { audience: 'picker', copy: hubPickerCopy(pickerLocale) }
+            return
+        }
+        const offline = offlineSender(event)
+        if (offline) {
+            offline.locale = language(offline.origin)
+            event.returnValue = { audience: 'hub-offline', copy: hubOfflineCopy(offline.locale) }
+            return
+        }
         if (quickAsk.sender(event)) {
             event.returnValue = { audience: 'hub-quick-ask', ...shellIdentity, shortcut: QUICK_ASK_SHORTCUT }
             return
@@ -409,9 +422,20 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     ipcMain.handle('hub:quick-ask-close', event => quickAsk.close(quickAsk.sender(event)))
     ipcMain.handle('hub:quick-ask-sent', (event, path) => quickAsk.sent(quickAsk.sender(event), path))
     ipcMain.handle('hub:saved-origin', event => localSender(event) ? savedOrigin() : null)
-    ipcMain.handle('hub:connect', (event, address) => localSender(event) ? connect(address, null, picker) : { ok: false, reason: 'invalid' })
-    ipcMain.handle('hub:offline-state', event => offlineSender(event)?.recovery.state() ?? null)
-    ipcMain.handle('hub:offline-retry', event => offlineSender(event)?.recovery.retry() ?? null)
+    ipcMain.handle('hub:connect', async (event, address) => {
+        if (!localSender(event)) return { ok: false, reason: 'invalid' }
+        const locale = pickerLocale
+        const result = await connect(address, null, picker)
+        return result.ok ? result : { ...result, message: hubConnectionError(locale, result) }
+    })
+    ipcMain.handle('hub:offline-state', event => {
+        const entry = offlineSender(event)
+        return entry ? hubRecoveryView(entry.locale, entry.recovery.state()) : null
+    })
+    ipcMain.handle('hub:offline-retry', async event => {
+        const entry = offlineSender(event)
+        return entry ? hubRecoveryView(entry.locale, await entry.recovery.retry()) : null
+    })
     for (const [channel, action] of [
         ['hub:window-state', entry => stateOf(entry.window)],
         ['hub:window-chrome', (entry, colors) => {
@@ -467,9 +491,10 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             const entry = entryFor(window)
             if (!entry) return false
             if (available() && entry.recovery.onOfflinePage()) {
+                const frame = entry.contents.mainFrame
                 void entry.recovery.retry().then(issue => {
-                    if (issue && available() && entry.recovery.onOfflinePage()) {
-                        entry.contents.mainFrame.send('hub:offline-state-changed', issue)
+                    if (issue && available() && entry.recovery.onOfflinePage() && entry.contents.mainFrame === frame) {
+                        frame.send('hub:offline-state-changed', hubRecoveryView(entry.locale, issue))
                     }
                 }).catch(() => {})
             } else if (available() && connected(window) && !entry.contents.isLoadingMainFrame()) {

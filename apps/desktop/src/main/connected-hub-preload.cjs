@@ -10,11 +10,13 @@ function subscribe(channel, callback) {
 
 if (bootstrap?.audience === 'picker') {
     contextBridge.exposeInMainWorld('rerunHubPicker', {
+        copy: bootstrap.copy,
         savedOrigin: () => ipcRenderer.invoke('hub:saved-origin'),
         connect: address => ipcRenderer.invoke('hub:connect', address),
     })
 } else if (bootstrap?.audience === 'hub-offline') {
     contextBridge.exposeInMainWorld('rerunHubOffline', {
+        copy: bootstrap.copy,
         state: () => ipcRenderer.invoke('hub:offline-state'),
         retry: () => ipcRenderer.invoke('hub:offline-retry'),
         onState: callback => subscribe('hub:offline-state-changed', callback),

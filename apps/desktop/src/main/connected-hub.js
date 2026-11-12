@@ -3,12 +3,14 @@ const address = document.querySelector('#server-address')
 const submit = form.querySelector('button')
 const error = document.querySelector('#connection-error')
 const picker = window.rerunHubPicker
-const messages = {
-    invalid: 'Enter an HTTPS address or an HTTP address on this Mac.',
-    unreachable: 'Could not reach that server. Check the address and try again.',
-    'not-rerun': 'This server did not identify itself as a Rerun hub.',
-    unsupported: 'This server uses a different Rerun desktop protocol.',
-    busy: 'Another connection is in progress. Try again shortly.',
+const copy = picker?.copy
+if (copy) {
+    document.documentElement.lang = copy.locale
+    document.title = copy.title
+    document.querySelector('h1').textContent = copy.title
+    document.querySelector('main > p').textContent = copy.description
+    form.querySelector('label').textContent = copy.label
+    submit.textContent = copy.connect
 }
 void picker?.savedOrigin().then(origin => { if (!address.value && origin) address.value = origin }, () => {})
 address.addEventListener('input', () => {
@@ -21,17 +23,16 @@ form.addEventListener('submit', async event => {
     error.hidden = true
     submit.disabled = true
     address.disabled = true
-    submit.textContent = 'Connecting…'
+    submit.textContent = copy.connecting
     try {
         const result = await picker.connect(address.value)
         if (result.ok) return
-        error.textContent = result.reason === 'too-old' ? `This server requires Rerun ${result.minimum} or later.`
-            : messages[result.reason] ?? messages.unreachable
-    } catch { error.textContent = messages.unreachable }
+        error.textContent = result.message ?? copy.unreachable
+    } catch { error.textContent = copy.unreachable }
     address.setAttribute('aria-invalid', 'true')
     address.disabled = false
     submit.disabled = false
-    submit.textContent = 'Connect'
+    submit.textContent = copy.connect
     error.hidden = false
     address.focus()
 })
