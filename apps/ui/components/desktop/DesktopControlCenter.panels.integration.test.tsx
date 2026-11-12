@@ -43,8 +43,8 @@ vi.mock('motion/react', async original => {
 
 const date = '2026-11-04T12:00:00.000Z'
 const providers = { connections: [], default: null }
-const reviewer = { id: 'bca843a7-f2c6-461a-9b56-e8b77888fac1', engineAgentId: 'engine-reviewer', name: 'Reviewer', description: 'Reviews', enabled: true, createdAt: date, updatedAt: date }
-const auditor = { id: 'cbf9f65e-24bc-4563-9b8f-459c874b9064', engineAgentId: 'engine-auditor', name: 'Auditor', description: 'Audits', enabled: true, createdAt: date, updatedAt: date }
+const reviewer = { id: 'bca843a7-f2c6-461a-9b56-e8b77888fac1', name: 'Reviewer', description: 'Reviews', enabled: true, createdAt: date, updatedAt: date }
+const auditor = { id: 'cbf9f65e-24bc-4563-9b8f-459c874b9064', name: 'Auditor', description: 'Audits', enabled: true, createdAt: date, updatedAt: date }
 const coworkers = [reviewer, auditor]
 const roots = new Set<ReturnType<typeof createRoot>>()
 const unexpected: string[] = []
@@ -194,6 +194,12 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false, r
             const agent = coworkers.find(item => item.id === agentId)
             const route = agentRoute[2]
             if (!agent) throw new Error(`Unknown fixture coworker ${agentId}`)
+            if (route === 'files/link' && method === 'POST') {
+                const { href } = JSON.parse(String(init?.body))
+                const prefix = '/data/agents/engine-reviewer/workspace/'
+                if (agentId !== reviewer.id || !href.startsWith(prefix)) return Response.json({}, { status: 404 })
+                return Response.json({ path: decodeURIComponent(href.slice(prefix.length)) })
+            }
             if (route === 'sessions') return Response.json({ sessions: sessions(agentId), tabs: layouts.get(agentId) })
             if (route === 'tabs' && method === 'PUT') {
                 const body = JSON.parse(String(init?.body))
@@ -358,7 +364,9 @@ test('opens a saved workspace link in the owning Files panel and preserves the c
     await enter(input, 'Draft stays in chat')
     const link = await until(() => mounted.container.querySelector<HTMLButtonElement>('button[title="Open Reports/Q4 notes.md"]'))
     expect(mounted.container.querySelector('[title="Open Reports/Q4 notes.md"]')?.textContent).toBe('Q4 review notes')
-    expect([...mounted.container.querySelectorAll('button[data-streamdown="link"]')].some(button => button.textContent === 'Foreign report')).toBe(false)
+    expect(app.fileReads).toEqual([])
+    await click('Foreign report', mounted.container)
+    expect(panelDialog('Files')).toBeUndefined()
     expect(app.fileReads).toEqual([])
 
     await act(async () => link.click())

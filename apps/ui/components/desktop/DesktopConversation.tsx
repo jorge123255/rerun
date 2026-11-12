@@ -11,6 +11,7 @@ import { DesktopConversationOverview, type DesktopConversationOverviewAuthority 
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
+import { toast } from 'sonner'
 import { useChat } from '@ai-sdk/react'
 import { useRunReconnect } from '@/hooks/useRunReconnect'
 import { isLongMessage } from '@/lib/composer'
@@ -265,6 +266,7 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
     const [focusedSkill, setFocusedSkill] = useState<string | null>(null)
     const [focusedFile, setFocusedFile] = useState<string | null>(null)
     const fileLinkOpener = useRef<HTMLElement | null>(null)
+    const fileLinkRequest = useRef<AbortController | null>(null)
     const [panelNotice, setPanelNotice] = useState('')
     const handledPanel = useRef<DesktopCoworkerPanelRequest | null>(null)
     const conversationRoot = useRef<HTMLDivElement>(null)
@@ -288,11 +290,30 @@ export function DesktopConversation({ agent, sessionId, sessions, pendingChatSum
             setDetailPanel(open ? panel : null)
         },
     })
-    const openWorkspaceFile = (path: string, opener: HTMLElement) => {
+    useEffect(() => () => fileLinkRequest.current?.abort(), [active, cardOpen, detailPanel, chatsOpen, agent.id, sessionId])
+    const openWorkspaceFile = async (href: string, opener: HTMLElement) => {
         if (!active || cardOpen || detailPanel || chatsOpen || isDesktopQuitting()) return
-        dialogControl('files').onOpenChange(true)
-        fileLinkOpener.current = opener
-        setFocusedFile(path)
+        fileLinkRequest.current?.abort()
+        const request = new AbortController()
+        fileLinkRequest.current = request
+        try {
+            const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agent.id)}/files/link`, {
+                method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ href }), signal: request.signal,
+            })
+            const result = response.ok ? await response.json() : null
+            if (request.signal.aborted || isDesktopQuitting() || !opener.isConnected || opener.closest('[hidden],[inert],[data-desktop-tab-active="false"]')) return
+            if (typeof result?.path !== 'string') {
+                toast.error(t('linkedFileNotFound'))
+                return
+            }
+            dialogControl('files').onOpenChange(true)
+            fileLinkOpener.current = opener
+            setFocusedFile(result.path)
+        } catch {
+            if (!request.signal.aborted && !isDesktopQuitting()) toast.error(t('linkedFileNotFound'))
+        } finally {
+            if (fileLinkRequest.current === request) fileLinkRequest.current = null
+        }
     }
     const restoreWorkspaceFileFocus = (event: Event) => {
         const opener = fileLinkOpener.current

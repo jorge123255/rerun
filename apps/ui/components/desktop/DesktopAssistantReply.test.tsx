@@ -73,8 +73,8 @@ test('renders Markdown during a stream and in the settled reply; copy uses text 
     expect(button.textContent).toBe('Copied')
 })
 
-test('workspace links require the reply owner and an active handler; external HTTPS links keep their normal path', async () => {
-    const agent = { id: 'coworker-local', engineAgentId: 'coworker-engine', name: 'Writer', description: '', createdAt: '', updatedAt: '' }
+test('workspace links send only well-formed proposals through the active handler', async () => {
+    const agent = { id: 'coworker-local', name: 'Writer', description: '', createdAt: '', updatedAt: '' }
     const onOpenWorkspaceFile = vi.fn()
     const text = [
         '[Owned](/data/agents/coworker-engine/workspace/Reports/Q4%20notes.md)',
@@ -88,12 +88,12 @@ test('workspace links require the reply owner and an active handler; external HT
         <DesktopAssistantReply agent={agent} agentId={agent.id} message={message} streaming={streaming} onOpenWorkspaceFile={open} />
     ))
     await show(onOpenWorkspaceFile, true)
-    expect(container.querySelectorAll('button[data-streamdown="link"]')).toHaveLength(1)
+    expect(container.querySelectorAll('button[data-streamdown="link"]')).toHaveLength(2)
     const owned = container.querySelector<HTMLButtonElement>('button[data-streamdown="link"]')!
     expect(owned.textContent).toBe('Owned')
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
     await act(async () => owned.click())
-    expect(onOpenWorkspaceFile).toHaveBeenCalledExactlyOnceWith('Reports/Q4 notes.md', owned)
+    expect(onOpenWorkspaceFile).toHaveBeenCalledExactlyOnceWith('/data/agents/coworker-engine/workspace/Reports/Q4%20notes.md', owned)
     expect(container.querySelector('a')?.getAttribute('href')).toBe('https://example.invalid/agents/coworker-engine/workspace/report.md')
     await show()
     expect(container.querySelector('button[data-streamdown="link"]')).toBeNull()

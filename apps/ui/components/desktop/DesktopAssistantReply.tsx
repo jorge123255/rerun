@@ -7,7 +7,7 @@ import { defaultRemarkPlugins, type Components, type CustomRendererProps, type P
 import { toast } from 'sonner'
 import { MessageAction, MessageResponse, type MessageResponseProps } from '@/components/ai-elements/message'
 import { AGENT_WORKSPACE_FILE_PATH_ATTRIBUTE, AGENT_WORKSPACE_FILE_TAG, remarkAgentWorkspaceLinks } from '@/lib/files/workspace-link'
-import { desktopWorkspaceFilePath } from '@/lib/desktop/workspace-file-link'
+import { desktopWorkspaceFileLink } from '@/lib/desktop/workspace-file-link'
 import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ai-elements/sources'
 import { DRAFT_LANGUAGE, DraftBlock } from '@/components/chat/DraftBlock'
 import { MessageTimeTooltip } from '@/components/chat/MessageTimeTooltip'
@@ -44,14 +44,19 @@ import { DesktopCoworkerCalls } from './coworker-calls/DesktopCoworkerCalls'
 import { DesktopDelegationMount } from './delegation/DesktopDelegationMount'
 import type { DesktopCoworkerCallOpenTarget } from '@/lib/desktop/coworker-calls-client'
 
-type OpenWorkspaceFile = (path: string, opener: HTMLElement) => void
+type OpenWorkspaceFile = (href: string, opener: HTMLElement) => void
 const WorkspaceFileContext = createContext<OpenWorkspaceFile | undefined>(undefined)
 const workspaceFileTags = { [AGENT_WORKSPACE_FILE_TAG]: [AGENT_WORKSPACE_FILE_PATH_ATTRIBUTE] }
+const workspaceLinks: MessageResponseProps['remarkPlugins'] = [
+    ...Object.values(defaultRemarkPlugins),
+    [remarkAgentWorkspaceLinks, { linkPath: (href: string | undefined) => href && desktopWorkspaceFileLink(href) ? href : null }],
+]
 
 function WorkspaceFileLink({ path, children }: { path?: string; children?: ReactNode; node?: unknown }) {
     const open = useContext(WorkspaceFileContext)
-    if (!path || !open) return <span>{children}</span>
-    return <button type="button" data-streamdown="link" title={`Open ${path}`}
+    const link = desktopWorkspaceFileLink(path)
+    if (!path || !link || !open) return <span>{children}</span>
+    return <button type="button" data-streamdown="link" title={`Open ${link.path}`}
         className="wrap-anywhere appearance-none text-left font-medium text-primary underline"
         onClick={event => open(path, event.currentTarget)}>{children}</button>
 }
@@ -175,11 +180,6 @@ export function DesktopAssistantReply({ message, streaming, createdAt, onRegener
     skillProposals?: { rows: ReadonlyMap<string, EngineSkillProposal>; pinnedIds: ReadonlySet<string>; pendingId: string | null; onDecide?: (id: string, decision: 'accept' | 'dismiss') => void; onOpenSkill?: (slug: string) => void }
 }) {
     const { copied, copy } = useCopy(copyFailed, copyReplyText)
-    const engineAgentId = agent?.id === agentId ? agent?.engineAgentId : undefined
-    const workspaceLinks = useMemo<MessageResponseProps['remarkPlugins']>(() => engineAgentId ? [
-        ...Object.values(defaultRemarkPlugins),
-        [remarkAgentWorkspaceLinks, { linkPath: (href: string | undefined) => desktopWorkspaceFilePath(href, engineAgentId) }],
-    ] : undefined, [engineAgentId])
     const compactions = desktopCompactionSteps(message.parts, streaming)
     const blocks: ReactNode[] = []
     let text = '', paragraph = ''
@@ -191,7 +191,7 @@ export function DesktopAssistantReply({ message, streaming, createdAt, onRegener
             paragraph += part.text
             // A table or fenced block can span consecutive text parts from the model.
             if (message.parts[index + 1]?.type !== 'text') {
-                blocks.push(<DesktopAnswerBubbles key={index} text={paragraph} streaming={live} createdAt={replyTime} workspaceLinks={workspaceLinks} />)
+                blocks.push(<DesktopAnswerBubbles key={index} text={paragraph} streaming={live} createdAt={replyTime} workspaceLinks={onOpenWorkspaceFile ? workspaceLinks : undefined} />)
                 if (paragraph.trim()) replyTime = undefined
                 paragraph = ''
             }

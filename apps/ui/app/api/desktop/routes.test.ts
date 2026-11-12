@@ -407,6 +407,7 @@ describe('desktop API routes', () => {
         expect(bootstrapBody.agents).toHaveLength(1)
         expect(bootstrapBody.connections).toHaveLength(1)
         expect(JSON.stringify(bootstrapBody)).not.toContain('provider-secret')
+        expect(JSON.stringify(bootstrapBody)).not.toContain('engine-agent-1')
 
         const chat = await postChat(request('/api/desktop/chat', { method: 'POST', body: { agentId, text: 'Hello' } }))
         expect(chat.status).toBe(200)
