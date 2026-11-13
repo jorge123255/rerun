@@ -54,6 +54,7 @@ function rowTitle(row: Row, columns: readonly FriendlyColumn[]): string {
 type LeadSourcesSheetProps = {
     row: Row | null
     onOpenChange: (open: boolean) => void
+    onCloseAutoFocus?: (event: Event) => void
     /** The columns to list, in order. */
     columns: readonly FriendlyColumn[]
     /** Provenance is not read here. The field list still renders when this is null. */
@@ -61,10 +62,10 @@ type LeadSourcesSheetProps = {
     tones?: Record<string, BadgeTone>
 }
 
-export function LeadSourcesSheet({ row, onOpenChange, columns, sources, tones }: LeadSourcesSheetProps) {
+export function LeadSourcesSheet({ row, onOpenChange, onCloseAutoFocus, columns, sources, tones }: LeadSourcesSheetProps) {
     return (
         <Sheet open={row !== null} onOpenChange={onOpenChange}>
-            <SheetContent className="gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-md">
+            <SheetContent onCloseAutoFocus={onCloseAutoFocus} className="gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-md">
                 {row && (
                     <>
                         <SheetHeader className="shrink-0 pr-12">

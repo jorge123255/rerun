@@ -90,7 +90,7 @@ describe('ViewBoard current view ownership', () => {
         await press('Enter', { repeat: true })
         expect(onOpenRow).not.toHaveBeenCalled()
         await press('Enter')
-        expect(onOpenRow).toHaveBeenCalledExactlyOnceWith(row('Original row'))
+        expect(onOpenRow).toHaveBeenCalledExactlyOnceWith(row('Original row'), card)
         expect(props.source.updateRow).not.toHaveBeenCalled()
     })
 

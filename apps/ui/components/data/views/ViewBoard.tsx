@@ -26,7 +26,7 @@ type ViewBoardProps = {
     query: string
     refreshKey: number
     context: CellContext
-    onOpenRow?: (row: DbRow) => void
+    onOpenRow?: (row: DbRow, trigger: HTMLElement) => void
     /** A committed change to this source/table; the caller guards its current owner. */
     onRowsChanged?: () => void
 }
@@ -172,7 +172,7 @@ export function ViewBoard({ source, table, view, query, refreshKey, context, onO
                 {lanes.map(lane => (
                     <BoardLane key={lane.key} lane={lane} valueFormat={valueFormat} context={context} loading={moving || loadingLanes.has(lane.key)} onShowMore={() => showMore(lane)}>
                         {lane.rows.map((row, i) => (
-                            <BoardCard key={rowKey(row) ?? i} row={row} from={lane.key} disabled={moving || loadingLanes.size > 0} onOpen={onOpenRow && (() => onOpenRow(row))}>
+                            <BoardCard key={rowKey(row) ?? i} row={row} from={lane.key} disabled={moving || loadingLanes.size > 0} onOpen={onOpenRow}>
                                 <BoardItem row={row} fields={fields} formats={formats} context={context} />
                             </BoardCard>
                         ))}
@@ -201,17 +201,17 @@ function BoardLane({ lane, valueFormat, context, loading, onShowMore, children }
     )
 }
 
-function BoardCard({ row, from, disabled, onOpen, children }: { row: DbRow; from: string; disabled: boolean; onOpen?: () => void; children: React.ReactNode }) {
+function BoardCard({ row, from, disabled, onOpen, children }: { row: DbRow; from: string; disabled: boolean; onOpen?: ViewBoardProps['onOpenRow']; children: React.ReactNode }) {
     const id = rowKey(row)
     const { setNodeRef, listeners, attributes, isDragging } = useDraggable({ id: `${from}:${id}`, data: { row, from } satisfies DragData, disabled: disabled || id === null })
 
     return (
-        <div ref={setNodeRef} {...listeners} {...attributes} onClick={onOpen}
+        <div ref={setNodeRef} {...listeners} {...attributes} onClick={onOpen && (event => onOpen(row, event.currentTarget))}
             onKeyDown={event => {
                 if (event.defaultPrevented || event.nativeEvent.isComposing || event.target !== event.currentTarget) return
                 if (onOpen && !isDragging && event.key === 'Enter') {
                     event.preventDefault()
-                    if (!event.repeat) onOpen()
+                    if (!event.repeat) onOpen(row, event.currentTarget)
                     return
                 }
                 listeners?.onKeyDown?.(event)
