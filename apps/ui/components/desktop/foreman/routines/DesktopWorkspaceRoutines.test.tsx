@@ -81,6 +81,31 @@ test('renders the original empty state without running anything on mount', async
     expect(api.mutate).not.toHaveBeenCalled()
 })
 
+test('a one-shot routine shows the saved timezone and refuses an offset-free edit', async () => {
+    const api = client([{ ...routine, cron: null, runAt: '2026-12-02T14:30:00Z', nextRunAt: '2026-12-02T14:30:00Z', lastRunAt: null, timezone: 'America/Chicago' }])
+    await mount(api)
+    expect(document.body.textContent).toContain('8:30:00 AM CST')
+    await click('Daily options'); await click('Edit')
+    expect(document.body.textContent).toContain('8:30:00 AM CST')
+    const field = document.querySelector<HTMLInputElement>('input[aria-label^="Run at"]')!
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, '2026-12-02T08:30:00')
+        field.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const save = [...document.querySelectorAll('button')].find(button => button.textContent === 'Save changes')!
+    expect(save.disabled).toBe(true)
+    expect(field.getAttribute('aria-invalid')).toBe('true')
+    expect(api.mutate).not.toHaveBeenCalled()
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, '2026-12-02T09:30:00-06:00')
+        field.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await click('Save changes')
+    expect(api.mutate).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'edit', input: expect.objectContaining({ runAt: '2026-12-02T15:30:00.000Z', cron: null, timezone: 'America/Chicago' }),
+    }))
+})
+
 test('Run now opens the exact adopted result chat and never a guessed session', async () => {
     const api = client()
     const { onOpenChat } = await mount(api)

@@ -10,6 +10,7 @@ import { PanelDeleteButton, PanelEditorBody, PanelEditorFooter, PanelEditorHeade
 import { TimezoneCombobox } from '@/components/agent/TimezoneCombobox'
 import { RunModelField, type RunModelPick } from '@/components/agent/RunModelField'
 import { desktopModelViewSchema, type DesktopModelView } from '@/lib/desktop/chat-model'
+import { desktopScheduleInstant } from '@/lib/desktop/schedule-description'
 import type { ConnectionGroup } from '@/lib/engine/model-groups'
 import type { DesktopScheduleEditInput, DesktopWorkspaceRoutine, DesktopWorkspaceRoutineChat } from '@rerun/contracts'
 import { HistoryIcon } from '@/lib/icons'
@@ -37,6 +38,10 @@ export function DesktopWorkspaceRoutineEditor({ routine, active, externalChange,
     const [mode, setMode] = useState<'cron' | 'runAt'>(routine.runAt ? 'runAt' : 'cron')
     const [cron, setCron] = useState(routine.cron ?? '0 8 * * *')
     const [runAt, setRunAt] = useState(routine.runAt ?? '')
+    const runAtId = useId()
+    const instant = mode === 'runAt' ? desktopScheduleInstant(runAt) : null
+    const timeError = mode === 'runAt' && runAt.trim() && !instant ? t('routines.invalidRunAt') : undefined
+    const canSaveTime = mode === 'cron' ? !!cron.trim() : !!instant
     const [timezone, setTimezone] = useState(routine.timezone)
     const [enabled, setEnabled] = useState(routine.enabled)
     const [busy, setBusy] = useState(false)
@@ -119,7 +124,11 @@ export function DesktopWorkspaceRoutineEditor({ routine, active, externalChange,
                 onChange={next => { setMode(next.mode); setCron(next.cron ?? ''); setRunAt(next.runAt ?? ''); setTimezone(next.timezone) }} />
             <Field label={t('routines.scheduleType')}><select aria-label={t('routines.scheduleType')} value={mode} disabled={busy} onChange={event => setMode(event.target.value as 'cron' | 'runAt')}><option value="cron">{t('routines.recurring')}</option><option value="runAt">{t('routines.once')}</option></select></Field>
             {mode === 'cron' ? <Field label={t('routines.cron')}><Input aria-label={t('routines.cron')} value={cron} onChange={event => setCron(event.target.value)} disabled={busy} /></Field>
-                : <Field label={t('routines.runAt')}><Input aria-label={t('routines.runAt')} value={runAt} onChange={event => setRunAt(event.target.value)} placeholder="2026-12-01T08:00:00-06:00" disabled={busy} /></Field>}
+                : <Field label={t('routines.runAt')} htmlFor={runAtId}>
+                    <Input id={runAtId} aria-label={t('routines.runAt')} value={runAt} onChange={event => setRunAt(event.target.value)} placeholder="2026-12-01T08:00:00-06:00" disabled={busy}
+                        aria-invalid={timeError ? true : undefined} aria-describedby={timeError ? runAtId + '-error' : undefined} />
+                    {timeError && <p id={runAtId + '-error'} className="text-xs text-destructive">{timeError}</p>}
+                </Field>}
             <Field label={t('routines.editor.timezone')}><TimezoneCombobox value={timezone} onChange={setTimezone}
                 placeholder={t('routines.timezone.placeholder')} searchPlaceholder={t('routines.timezone.search')} emptyLabel={t('routines.timezone.empty')} /></Field>
             <p className="text-xs text-muted-foreground">{t('routines.rawHelp')}</p>
@@ -147,9 +156,9 @@ export function DesktopWorkspaceRoutineEditor({ routine, active, externalChange,
                 confirmDescription={t('routines.editor.deleteDescription')} confirmLabel={t('routines.editor.delete')} cancelLabel={t('cancel')}
                 onClick={() => void perform(onDelete)} />
             <Button size="sm" variant="outline" disabled={busy || externalChange || pinChanged || savedPinUnavailable || (hasSavedPin && !modelView) || (routine.setupPending && !routine.enabled)} onClick={() => perform(() => onRun(routine))}>{t('routines.runNow')}</Button>
-            <Button size="sm" disabled={busy || externalChange || !name.trim() || !body.trim() || !canSaveModel} onClick={() => perform(() => onSave({
-                name, description, body, enabled, timezone, cron: mode === 'cron' ? cron : null,
-                runAt: mode === 'runAt' ? new Date(runAt).toISOString() : null,
+            <Button size="sm" disabled={busy || externalChange || !name.trim() || !body.trim() || !canSaveModel || !canSaveTime} onClick={() => perform(() => onSave({
+                name, description, body, enabled, timezone, cron: mode === 'cron' ? cron.trim() : null,
+                runAt: instant,
                 ...(pinChanged ? { modelOverride: newPin } : {}),
             }))}>{t('routines.editor.saveChanges')}</Button>
         </PanelEditorFooter>

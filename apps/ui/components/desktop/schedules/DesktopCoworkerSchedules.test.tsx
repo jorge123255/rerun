@@ -47,6 +47,29 @@ function deferred() {
     return { promise, resolve }
 }
 
+test('requires an explicit offset for a one-shot time and saves that exact instant', async () => {
+    respond = async (url, init) => {
+        if (url.endsWith('/model')) return Response.json(modelView)
+        if (init?.method === 'PUT') putBodies.push(JSON.parse(String(init.body)))
+        return Response.json([task('daily', { cron: null, runAt: '2026-12-02T08:00:00-06:00' })])
+    }
+    await render()
+    await act(async () => { row('Saved daily').click() })
+    const field = container.querySelector<HTMLInputElement>('input[aria-label^="Run at"]')!
+    const enter = (value: string) => act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, value)
+        field.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await enter('2026-12-02T08:00:00')
+    expect(button('Save changes').disabled).toBe(true)
+    await enter('2026-02-30T08:00:00-06:00')
+    expect(button('Save changes').disabled).toBe(true)
+    await enter('2026-12-02T09:30:00-06:00')
+    expect(button('Save changes').disabled).toBe(false)
+    await act(async () => { button('Save changes').click() })
+    expect(putBodies[0]?.input).toMatchObject({ runAt: '2026-12-02T15:30:00.000Z', timezone: 'America/Chicago', cron: null })
+})
+
 test('opens the exact older execution and preserves the routine draft when returning from History', async () => {
     const onOpenSession = vi.fn()
     const chat = { agentId: 'alice', sessionId: 'saved-old', engineSessionId: 'engine-old', tabUid: 'schedule:saved-old', title: 'Daily report', runId: 'older' }

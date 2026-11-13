@@ -12,6 +12,7 @@ import { RoutineList, routineKey } from '@rerun/ui/foreman'
 import { nextRunAt, routineFrequency } from '@/lib/schedules/cron'
 import type { DesktopWorkspaceRoutinesClient } from '@/lib/desktop/workspace-routines/client'
 import { scheduleRequest } from '@/lib/desktop/schedules/client'
+import { desktopScheduleSummary } from '@/lib/desktop/schedule-description'
 import type { DesktopScheduleEditInput, DesktopWorkspaceRoutine, DesktopWorkspaceRoutineChat, DesktopWorkspaceRoutinesView } from '@rerun/contracts'
 import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { useDesktopLocale } from '../../DesktopLocale'
@@ -93,7 +94,10 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, dock
             const key = routineKey(routine)
             const held = heldNextRuns[key]
             const stillHeld = key in heldNextRuns && (held === null || new Date(held).getTime() > now)
-            return { ...routine, frequency: routineFrequency(routine, (key, values) => t(`routines.${key}`, values), locale), nextRunAt: stillHeld ? held : nextRunAt({ ...routine, lastRunAt: routine.lastRunAt ?? null }, at) }
+            const frequency = routine.runAt
+                ? desktopScheduleSummary(routine, t, locale)
+                : routineFrequency(routine, (key, values) => t(`routines.${key}`, values), locale)
+            return { ...routine, frequency, nextRunAt: stillHeld ? held : nextRunAt({ ...routine, lastRunAt: routine.lastRunAt ?? null }, at) }
         })
     }, [data, now, heldNextRuns, locale, t])
 

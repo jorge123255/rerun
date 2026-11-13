@@ -26,12 +26,18 @@ export function humanCron(cron: string, locale = 'en'): string | null {
     }
 }
 
-export function scheduleSummary(schedule: Pick<EngineSchedule, 'cron' | 'runAt' | 'timezone'>, t?: ScheduleCopy, locale?: string): string {
+export function scheduleSummary(schedule: Pick<EngineSchedule, 'cron' | 'runAt' | 'timezone'>, t?: ScheduleCopy, locale?: string, displayZone?: string): string {
     if (schedule.cron) {
         const human = humanCron(schedule.cron, locale)
         return `${human ?? schedule.cron}${schedule.timezone ? ` · ${schedule.timezone}` : ''}`
     }
-    if (schedule.runAt) return t ? t('schedule.once', { date: formatDate(schedule.runAt, locale) }) : `once · ${new Date(schedule.runAt).toLocaleString()}`
+    if (schedule.runAt) {
+        if (!t && !displayZone) return `once · ${new Date(schedule.runAt).toLocaleString()}`
+        const date = displayZone
+            ? formatDate(schedule.runAt, locale, { timeZone: displayZone, timeZoneName: 'short' })
+            : formatDate(schedule.runAt, locale)
+        return t ? t('schedule.once', { date }) : `once · ${date}`
+    }
     return '—'
 }
 

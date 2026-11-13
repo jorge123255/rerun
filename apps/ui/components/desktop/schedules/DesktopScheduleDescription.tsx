@@ -5,8 +5,7 @@ import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PencilIcon } from '@/lib/icons'
-import { scheduleSummary } from '@/lib/schedules/cron'
-import { createDesktopScheduleParser, validateDesktopSchedulePreview, type DesktopScheduleParser, type DesktopSchedulePreview, type DesktopScheduleSelection } from '@/lib/desktop/schedule-description'
+import { createDesktopScheduleParser, desktopScheduleSummary, validateDesktopSchedulePreview, type DesktopScheduleParser, type DesktopSchedulePreview, type DesktopScheduleSelection } from '@/lib/desktop/schedule-description'
 import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { useDesktopLocale } from '../DesktopLocale'
 import type { DesktopProvider } from '@/lib/desktop/settings'
@@ -82,7 +81,7 @@ export function DesktopScheduleDescription({mode,cron,runAt,timezone,agentId,con
             if(own===epoch.current){setBusy(false);request.current=undefined}
         }
     }
-    const summary=scheduleSummary({cron:mode==='cron'?cron:null,runAt:mode==='runAt'?runAt:null,timezone}, (key, values) => t(`routines.${key}`, values), desktopLocaleTag(language.locale))
+    const summary = desktopScheduleSummary({ cron: mode === 'cron' ? cron : null, runAt: mode === 'runAt' ? runAt : null, timezone }, t, desktopLocaleTag(language.locale))
     return <Field label={t('routines.when')}>
         <div className="flex items-center gap-1.5">
             <div className="flex h-8 flex-1 items-center rounded-md border border-input bg-muted/40 px-3 text-sm"><span className={summary==='—'?'text-muted-foreground':''}>{summary}</span></div>
