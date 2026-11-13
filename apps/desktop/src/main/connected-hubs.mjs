@@ -199,7 +199,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         const isolated = session.fromPartition('rerun-connected-hub-picker')
         isolated.setPermissionRequestHandler((_contents, _permission, done) => done(false))
         isolated.setPermissionCheckHandler(() => false)
-        const window = new BrowserWindow({ width: 530, height: 440, minWidth: 460, minHeight: 390, show: false,
+        const window = new BrowserWindow({ width: 530, height: 490, minWidth: 460, minHeight: 450, show: false,
             title: hubPickerCopy(pickerLocale).title, backgroundColor: '#101214', webPreferences: preferences(isolated) })
         picker = window
         for (const event of ['will-navigate', 'will-redirect', 'will-attach-webview']) window.webContents.on(event, request => request.preventDefault())

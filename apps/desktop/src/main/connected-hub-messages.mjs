@@ -18,7 +18,6 @@ export function hubPickerCopy(locale) {
     return {
         locale: shellLocale(locale) ?? 'en',
         title: t('server.title'),
-        description: t('server.description'),
         label: t('server.label'),
         connect: t('server.connect'),
         useCloud: t('server.useCloud'),

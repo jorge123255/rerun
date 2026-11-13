@@ -64,7 +64,6 @@
         "tooOld": "This server needs version {version} of the app or later.",
         "insecure": "This address is not encrypted. Use https:// unless the server runs on this computer.",
         "title": "Connect to Rerun",
-        "description": "Open a Rerun server in its own window.",
         "connecting": "Connecting…",
         "unsupported": "This server uses a different Rerun desktop protocol.",
         "busy": "Another connection is in progress. Try again shortly."

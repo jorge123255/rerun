@@ -12,7 +12,6 @@ if (copy) {
     document.documentElement.lang = copy.locale
     document.title = copy.title
     document.querySelector('h1').textContent = copy.title
-    document.querySelector('main > p').textContent = copy.description
     form.querySelector('label').textContent = copy.label
     submit.textContent = copy.connect
     cloud.textContent = copy.useCloud

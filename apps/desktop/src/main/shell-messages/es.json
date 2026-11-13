@@ -64,7 +64,6 @@
         "tooOld": "Este servidor necesita la versión {version} de la app o una posterior.",
         "insecure": "Esta dirección no está cifrada. Usa https:// salvo que el servidor esté en esta computadora.",
         "title": "Conectar con Rerun",
-        "description": "Abre un servidor de Rerun en su propia ventana.",
         "connecting": "Conectando…",
         "unsupported": "Este servidor usa otro protocolo de escritorio de Rerun.",
         "busy": "Hay otra conexión en curso. Vuelve a intentarlo en breve."
