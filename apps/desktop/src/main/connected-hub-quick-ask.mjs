@@ -30,6 +30,7 @@ export function createConnectedHubQuickAsk({ app, BrowserWindow, screen, preload
 
     return {
         reset,
+        ownsWindow: window => !!surface && surface.window === window && active(surface),
         toggle(candidate, owner) {
             if (active(surface) && (candidate === surface.window || owner === surface.owner)) {
                 if (surface.requested) hide(surface)

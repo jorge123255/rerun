@@ -172,12 +172,18 @@ function setMacUnread(count) {
     localUnread = count
     publishMacUnread()
 }
-function toggleQuickAsk() {
+function toggleQuickAsk(candidate) {
     if (quitting) return
-    const focused = BrowserWindow.getFocusedWindow() ?? lastWorkspaceWindow
+    const focused = candidate ?? BrowserWindow.getFocusedWindow() ?? lastWorkspaceWindow
     const background = !supervisor && bootStatus.state === 'choose' && !openingLocalWorkspace
-    if (connectedHubs?.toggleQuickAsk(focused, { background })) quickAsk.reset()
-    else quickAsk.toggle()
+    if (connectedHubs?.toggleQuickAsk(focused, { background })) {
+        quickAsk.reset()
+        return
+    }
+    if (!focused || focused.isDestroyed() || boardContext(focused) || quickAsk.ownsWindow(focused)) {
+        connectedHubs?.resetQuickAsk()
+        quickAsk.toggle()
+    }
 }
 function desktopSettings() {
     return { quickAsk: shortcutPreference.state().enabled, closeToTray: true, openAtLogin: macLoginItemSettings(app)?.openAtLogin === true }
@@ -378,7 +384,7 @@ async function launch() {
             },
             openDocumentation: () => openExternal('https://docs.rerun.build'),
             openFind: (_item, candidate) => windowFind.open(workspaceMenuTarget(candidate)),
-            openQuickAsk: toggleQuickAsk,
+            openQuickAsk: (_item, candidate) => toggleQuickAsk(candidate),
             openLocalWorkspace: () => {
                 showMainWindow()
                 if (runtimeScope()) void startupWorkspace.remember('local')

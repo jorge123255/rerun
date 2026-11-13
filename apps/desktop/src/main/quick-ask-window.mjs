@@ -61,6 +61,7 @@ export function createQuickAskWindow({ app, BrowserWindow, screen, boardScope, s
     }
 
     return {
+        ownsWindow: window => !!surface && surface.window === window && active(surface),
         toggle() {
             const scope = boardScope()
             if (!sameScope(scope, ready)) return

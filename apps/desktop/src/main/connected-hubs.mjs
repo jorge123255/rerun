@@ -654,7 +654,9 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
                     message: 'Close the other windows for this Rerun server to use Quick Ask here.', buttons: ['OK'] }).catch(() => {})
                 return true
             }
-            return quickAsk.toggle(window, entry)
+            // An unavailable connected board still owns its native commands.
+            if (entry || quickAsk.ownsWindow(window)) return quickAsk.toggle(window, entry)
+            return !!entryFor(window)
         },
         resetQuickAsk: () => quickAsk.reset(),
         async openLink(link) {
