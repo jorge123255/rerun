@@ -44,7 +44,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         onUnavailable: entry => { void dialog.showMessageBox(entry.window, { type: 'warning', title: 'Quick Ask',
             message: 'Quick Ask could not open on this Rerun server.', buttons: ['OK'] }).catch(() => {}) },
     })
-    let picker = null, pickerLocale = null, acceptedPicker = null, connecting = null
+    let picker = null, pickerOwner = null, pickerLocale = null, acceptedPicker = null, connecting = null
     let pendingOpen = null, openingLink = false
     let appearanceWrites = Promise.resolve()
     const appearancePath = origin => resolve(dataRoot, `hub-appearance-${createHash('sha256').update(origin).digest('hex')}.json`)
@@ -181,10 +181,12 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     const preferences = desktopSession => ({ preload, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true,
         spellcheck: true, session: desktopSession })
 
-    function openPicker() {
+    function openPicker(owner) {
         if (!available()) return
         if (picker && !picker.isDestroyed()) { show(picker); return }
-        pickerLocale = language()
+        const hub = entryFor(owner)
+        pickerOwner = owner && !owner.isDestroyed() ? owner : null
+        pickerLocale = language(hub?.origin)
         const isolated = session.fromPartition('rerun-connected-hub-picker')
         isolated.setPermissionRequestHandler((_contents, _permission, done) => done(false))
         isolated.setPermissionCheckHandler(() => false)
@@ -195,7 +197,9 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
         window.once('closed', () => {
             if (picker !== window) return
+            const owner = pickerOwner
             picker = null
+            pickerOwner = null
             pickerLocale = null
             if (acceptedPicker === window) {
                 acceptedPicker = null
@@ -205,6 +209,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             pendingOpen = null
             connecting?.abort()
             connecting = null
+            if (available() && owner && !owner.isDestroyed() && owner.isVisible()) show(owner)
         })
         window.once('ready-to-show', () => show(window))
         void window.loadFile(fileURLToPath(pickerPage)).catch(() => window.destroy())
@@ -486,7 +491,10 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     })
     ipcMain.handle('hub:quick-ask-close', event => quickAsk.close(quickAsk.sender(event)))
     ipcMain.handle('hub:quick-ask-sent', (event, path) => quickAsk.sent(quickAsk.sender(event), path))
-    ipcMain.handle('hub:saved-origin', event => localSender(event) ? savedOrigin() : null)
+    ipcMain.handle('hub:picker-origin', event => localSender(event) ? entryFor(pickerOwner)?.origin ?? savedOrigin() : null)
+    ipcMain.handle('hub:picker-cancel', event => {
+        if (available() && localSender(event) && picker !== acceptedPicker) picker.close()
+    })
     async function connectFromPicker(event, address) {
         if (!localSender(event)) return { ok: false, reason: 'invalid' }
         const locale = pickerLocale
@@ -566,7 +574,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             entry.native.workspaceId = workspaceId
             publishUnread()
         }],
-        ['hub:open-picker', () => openPicker()],
+        ['hub:open-picker', entry => openPicker(entry.window)],
         ['hub:auth-start', (entry, options) => entry.auth.start(options?.provider)],
         ['hub:auth-code', (entry, code) => redeem(entry, code)],
     ]) ipcMain.handle(channel, (event, value, registrationId) => {

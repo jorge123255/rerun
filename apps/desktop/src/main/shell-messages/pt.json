@@ -54,6 +54,7 @@
         "openAtLogin": "Abrir ao iniciar sessão"
     },
     "server": {
+        "cancel": "Cancelar",
         "label": "Endereço do servidor",
         "connect": "Conectar",
         "useCloud": "Usar Rerun Cloud",

@@ -2,6 +2,7 @@ const form = document.querySelector('form')
 const address = document.querySelector('#server-address')
 const submit = form.querySelector('button[type="submit"]')
 const cloud = document.querySelector('#connect-cloud')
+const cancel = document.querySelector('#cancel')
 const error = document.querySelector('#connection-error')
 const picker = window.rerunHubPicker
 const copy = picker?.copy
@@ -13,8 +14,9 @@ if (copy) {
     form.querySelector('label').textContent = copy.label
     submit.textContent = copy.connect
     cloud.textContent = copy.useCloud
+    cancel.textContent = copy.cancel
 }
-void picker?.savedOrigin().then(origin => { if (!address.value && origin) address.value = origin }, () => {})
+void picker?.initialOrigin().then(origin => { if (!address.value && origin) address.value = origin }, () => {})
 address.addEventListener('input', () => {
     error.hidden = true
     address.removeAttribute('aria-invalid')
@@ -43,3 +45,12 @@ form.addEventListener('submit', event => {
     void connect(false)
 })
 cloud.addEventListener('click', () => { void connect(true) })
+function dismiss() {
+    void picker?.cancel().catch(() => {})
+}
+cancel.addEventListener('click', dismiss)
+document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return
+    event.preventDefault()
+    dismiss()
+})

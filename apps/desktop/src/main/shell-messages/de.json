@@ -54,6 +54,7 @@
         "openAtLogin": "Bei der Anmeldung öffnen"
     },
     "server": {
+        "cancel": "Abbrechen",
         "label": "Serveradresse",
         "connect": "Verbinden",
         "useCloud": "Rerun Cloud verwenden",

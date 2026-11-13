@@ -54,6 +54,7 @@
         "openAtLogin": "Open at Login"
     },
     "server": {
+        "cancel": "Cancel",
         "label": "Server address",
         "connect": "Connect",
         "useCloud": "Use Rerun Cloud",

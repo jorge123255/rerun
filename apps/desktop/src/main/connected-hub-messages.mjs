@@ -22,6 +22,7 @@ export function hubPickerCopy(locale) {
         label: t('server.label'),
         connect: t('server.connect'),
         useCloud: t('server.useCloud'),
+        cancel: t('server.cancel'),
         connecting: t('server.connecting'),
         unreachable: t('server.unreachable'),
     }

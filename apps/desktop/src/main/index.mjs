@@ -395,7 +395,11 @@ async function launch() {
                 if (connectedHubs.duplicateWindow(target) || !boardContext(target)) return
                 void openAdditionalBoard(cascadeWindowBounds(target, screen)).catch(() => {})
             },
-            openHubPicker: () => { reopeningHub?.controller.abort(); leaveLocalUnlock(); connectedHubs.openPicker() },
+            openHubPicker: (_item, candidate) => {
+                reopeningHub?.controller.abort()
+                leaveLocalUnlock()
+                connectedHubs.openPicker(workspaceMenuTarget(candidate))
+            },
             openPhonePairing: () => phonePairingWindow.open(),
             reloadWindow: (_item, candidate) => {
                 const target = workspaceMenuTarget(candidate)
@@ -454,7 +458,7 @@ async function launch() {
             if (!canConnectToServer(event)) return false
             reopeningHub?.controller.abort()
             leaveLocalUnlock()
-            connectedHubs.openPicker()
+            connectedHubs.openPicker(window)
             return true
         })
         ipcMain.on('desktop:find-open', event => {

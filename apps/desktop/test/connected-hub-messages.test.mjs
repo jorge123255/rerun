@@ -13,6 +13,7 @@ test('bundled connection pages use their supported language and interpolate the 
         }
     }
     assert.equal(hubPickerCopy('fr-CA').title, 'Se connecter à Rerun')
+    assert.equal(hubPickerCopy('fr-CA').cancel, 'Annuler')
     assert.deepEqual(hubPickerCopy('xx'), hubPickerCopy('en'))
 })
 
