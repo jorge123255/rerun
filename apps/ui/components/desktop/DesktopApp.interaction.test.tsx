@@ -13,6 +13,7 @@ import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
 import { loadMessages } from '@rerun/i18n/messages'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
+import { buildDesktopModelView } from '@/lib/desktop/chat-model'
 import { generalTabUid } from '@/lib/desktop/general-threads'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -535,16 +536,25 @@ test.each([
     } finally { await act(async () => { root.unmount() }) }
 })
 
-test('a board tile opens the saved conversation and New chat starts a separate session', async () => {
+test('a board tile holds the first send for model setup, then opens a separate new session', async () => {
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
     const agent = { id: 'researcher', name: 'Researcher', description: 'Finds answers', createdAt: '', updatedAt: '' }
     const session = { id: 'previous', agentId: agent.id, title: 'First chat', createdAt: '', updatedAt: '' }
     const sent: unknown[] = []
-    const providers: ConnectionsList = { default: null, connections: [{ id: 'key', name: 'OpenAI', provider: 'openai', models: ['gpt-6-sol'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }] }
+    let providers: ConnectionsList = { default: null, connections: [{ id: 'key', name: 'OpenAI', provider: 'openai', models: ['gpt-6-sol'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }] }
     mockDesktopFetch((url, init) => {
         if (url === settingsUrl && (init?.method ?? 'GET') === 'GET') return Response.json(providers)
+        if (url === settingsUrl && init?.method === 'PATCH') {
+            const { action, connectionId, model } = JSON.parse(String(init.body))
+            expect(action).toBe('default')
+            providers = { ...providers, default: { connectionId, model } }
+            return Response.json(providers)
+        }
+        if (/\/api\/desktop\/agents\/researcher\/model(?:\?|$)/.test(url)) return Response.json(buildDesktopModelView({
+            connections: providers.connections, workspace: providers.default, coworker: null, conversation: null,
+        }))
         if (url.endsWith('/sessions')) return Response.json({ sessions: [session] })
         if (url === '/api/desktop/sessions/previous/messages') return Response.json({ messages: [{ id: 'reply', role: 'assistant', parts: [{ type: 'text', text: 'Saved answer' }] }] })
         if (url === '/api/desktop/chat') {
@@ -572,6 +582,18 @@ test('a board tile opens the saved conversation and New chat starts a separate s
         expect(container.querySelector('[aria-label="Team board"]')).toBe(board)
         expect(container.querySelector('[aria-label="Open chat with Researcher"]')).toBe(tile)
         expect(container.querySelector('[aria-label="Coworker chat"]')?.textContent).toContain('Saved answer')
+        await send('Continue')
+        expect(sent).toEqual([])
+        const picker = container.querySelector<HTMLSelectElement>('#desktop-default')!
+        expect(picker).not.toBeNull()
+        await act(async () => {
+            picker.value = '0'
+            picker.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+        expect(providers.default).toEqual({ connectionId: 'key', model: 'gpt-6-sol' })
+        await act(async () => { button('Back to chat').click() })
+        expect(container.querySelector('#desktop-message')).toHaveProperty('value', 'Continue')
+        expect(sent).toEqual([])
         await send('Continue')
         await act(async () => { button('New thread').click() })
         await send('Start fresh')

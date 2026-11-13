@@ -512,6 +512,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     useEffect(() => { queueScope.current = queue.key; return () => { queueScope.current = '' } }, [queue.key])
     const [queueNotice, setQueueNotice] = useState<keyof typeof queueCopy>()
     const [modelReady, setModelReady] = useState(false)
+    const [modelSetupRequired, setModelSetupRequired] = useState(false)
     const [sendQueuedId, setSendQueuedId] = useState<string | null>(null)
     const flushingQueue = useRef<string | null>(null)
     const restoredQueues = useRef(new Set<string>())
@@ -933,13 +934,17 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     if (submissionScope.current.key !== submissionKey) submissionScope.current = { key: submissionKey, epoch: submissionScope.current.epoch + 1 }
     const submissionMounted = useRef(true)
     useEffect(() => { submissionMounted.current = true; return () => { submissionMounted.current = false } }, [])
-    const submissionCurrent = useRef({ active, input, draft, generating, busy, queue, liveRunId, engineRunning, inactive, stopping, ready, requestBlocked, pendingRequest })
-    submissionCurrent.current = { active, input, draft, generating, busy, queue, liveRunId, engineRunning, inactive, stopping, ready, requestBlocked, pendingRequest }
+    const submissionCurrent = useRef({ active, input, draft, generating, busy, queue, liveRunId, engineRunning, inactive, stopping, ready, requestBlocked, pendingRequest, modelSetupRequired })
+    submissionCurrent.current = { active, input, draft, generating, busy, queue, liveRunId, engineRunning, inactive, stopping, ready, requestBlocked, pendingRequest, modelSetupRequired }
 
     async function submit(event: React.FormEvent) {
         event.preventDefault()
         const text = composer.current.text.trim()
         if (!active || !draft.loaded || draft.error || isDesktopQuitting() || preparingSubmit.current || (requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || (quickReplyRequest.current && !(generating && quickReplyRequest.current.accepted)) || inactive || (!text && !attachmentPaths.length && !documents.attachments.length && !uploadsBusy()) || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current || pendingAttachment.current) return
+        if (modelSetupRequired && !generating && !queue.queued) {
+            onOpenModelSettings?.()
+            return
+        }
         const intent = submissionScope.current
         const currentIntent = () => submissionMounted.current && submissionScope.current === intent && submissionCurrent.current.active && !isDesktopQuitting()
         preparingSubmit.current = true
@@ -983,6 +988,10 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                 draftQueues.current.delete(item.id)
                 setQueueNotice(undefined)
                 if (!live.generating && currentIntent()) setSendQueuedId(item.id)
+                return
+            }
+            if (live.modelSetupRequired) {
+                onOpenModelSettings?.()
                 return
             }
             setLiveSessionId(null)
@@ -1810,7 +1819,8 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                     <div ref={setVoiceReviewTarget} />
                     <div className="flex min-w-0 items-center justify-between gap-2 px-1.5 pb-1.5">
                         <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
-                            workspaceModel={modelLabel} connections={connections} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel} onReady={setModelReady} />
+                            connections={connections} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel}
+                            onReady={setModelReady} onSetupRequired={setModelSetupRequired} />
                         <div className="flex shrink-0 items-center gap-1">
                             <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={uploadDisabled || uploadsActive}
                                 paths={textAttachments} onChange={paths => {

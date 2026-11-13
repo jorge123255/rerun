@@ -4,6 +4,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { ConnectionSummary } from '@rerun/contracts'
 import { buildDesktopModelView, type DesktopModelPick } from '@/lib/desktop/chat-model'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages } from '@/lib/desktop/locale'
+import { DesktopLocale } from './DesktopLocale'
 import { DesktopConversation } from './DesktopConversation'
 import { DesktopModelSelector } from './DesktopModelSelector'
 import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
@@ -66,7 +69,7 @@ test('a click changes one chat, a star pins the coworker, and workspace default 
     expect(patches.at(-1)).toEqual({ action: 'conversation', sessionId: 'one', connectionId: 'local', model: 'model-chat' })
     expect(coworker).toBeNull()
     expect(button('Local · model-chat')).toBeTruthy()
-    const star = [...document.querySelectorAll('button')].find(item => item.getAttribute('aria-label') === 'Make model-coworker this coworker’s default')
+    const star = [...document.querySelectorAll('button')].find(item => item.getAttribute('aria-label') === "Make model-coworker this coworker's default")
     expect(star).toBeTruthy()
     await act(async () => { star!.click() })
     expect(patches.at(-1)).toEqual({ action: 'coworker', connectionId: 'local', model: 'model-coworker', sessionId: 'one' })
@@ -114,6 +117,56 @@ test.each([true, false])('a late save result is isolated when switching chats (s
     expect(reported.at(-1)).toEqual({ connectionId: 'local', model: 'model-bob' })
     expect(button('Local · model-bob')).toBeTruthy()
     expect(document.body.textContent).not.toContain('Save failed for first chat')
+})
+
+test('opens model setup directly in the workspace language after an empty model load', async () => {
+    const empty = buildDesktopModelView({ connections: [], workspace: null, coworker: null, conversation: null })
+    const fetcher = vi.fn(async () => Response.json(empty))
+    vi.stubGlobal('fetch', fetcher)
+    const onOpenSettings = vi.fn()
+    const onReady = vi.fn()
+    const onSetupRequired = vi.fn()
+    const language = { locale: 'fr' as const, preference: 'fr' as const, messages: desktopMessages('fr', await loadMessages('fr')) }
+    container = document.body.appendChild(document.createElement('div'))
+    root = createRoot(container)
+    await act(async () => root.render(<DesktopLocale initial={language}>
+        <DesktopModelSelector agentId="alice" sessionId="open" onOpenSettings={onOpenSettings} onReady={onReady} onSetupRequired={onSetupRequired} />
+    </DesktopLocale>))
+    await click(language.messages.modelPicker.setUp)
+    expect(onOpenSettings).toHaveBeenCalledOnce()
+    expect(onSetupRequired).toHaveBeenLastCalledWith(true)
+    expect(onReady).toHaveBeenLastCalledWith(false)
+    expect(fetcher).toHaveBeenCalledOnce()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+})
+
+test('keeps a saved chat choice through missing workspace setup and admits it when the default returns', async () => {
+    const choice = { connectionId: 'local', model: 'model-chat' }
+    const snapshot = (configured: boolean) => buildDesktopModelView({
+        connections: [local], workspace: configured ? { connectionId: local.id, model: 'model-workspace' } : null,
+        coworker: null, conversation: choice,
+    })
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json(snapshot(false))).mockResolvedValueOnce(Response.json(snapshot(true)))
+    vi.stubGlobal('fetch', fetcher)
+    const onReady = vi.fn()
+    const onSetupRequired = vi.fn()
+    const onConversationChoice = vi.fn()
+    container = document.body.appendChild(document.createElement('div'))
+    root = createRoot(container)
+    const render = (active: boolean) => act(async () => root.render(<DesktopModelSelector agentId="alice" sessionId="open"
+        active={active} onReady={onReady} onSetupRequired={onSetupRequired} onConversationChoice={onConversationChoice} />))
+    await render(true)
+    expect(button('Local · model-chat')).toBeTruthy()
+    expect(onConversationChoice).toHaveBeenCalledExactlyOnceWith(choice)
+    expect(onReady).toHaveBeenLastCalledWith(false)
+    expect(onSetupRequired).toHaveBeenLastCalledWith(true)
+    await render(false)
+    await render(true)
+    expect(button('Local · model-chat')).toBeTruthy()
+    expect(onReady).toHaveBeenLastCalledWith(true)
+    expect(onSetupRequired).toHaveBeenLastCalledWith(false)
+    expect(onConversationChoice).toHaveBeenCalledTimes(1)
+    expect(fetcher.mock.calls.every(([, options]) => !options.method)).toBe(true)
 })
 
 test('shows an unavailable saved model instead of replacing it', async () => {

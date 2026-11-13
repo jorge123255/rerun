@@ -62,12 +62,6 @@ export const desktopModelViewSchema = z.object({
 })
 export type DesktopModelView = z.infer<typeof desktopModelViewSchema>
 
-export const MODEL_SOURCE_LABEL: Record<DesktopModelSource, string> = {
-    conversation: 'This chat',
-    coworker: 'Coworker default',
-    workspace: 'Workspace default',
-}
-
 type CatalogConnection = Pick<ConnectionSummary, 'id' | 'name' | 'provider' | 'connected' | 'models' | 'extraModels'
     | 'codexReasoning' | 'customReasoning' | 'customRevision' | 'subscriptionModels' | 'opencodeModels'> & Partial<Pick<ConnectionSummary, 'credentialRejected'>>
 

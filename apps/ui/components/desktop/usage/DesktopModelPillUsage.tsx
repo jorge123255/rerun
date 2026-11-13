@@ -8,7 +8,7 @@ import { desktopPlanPillUsage } from '@/lib/desktop/plan-limits'
 import { planWindowName, planWindowPercent, planWindowReset } from '@/lib/engine/ai-sources'
 
 export function useDesktopModelPillUsage(
-    effective: DesktopModelView['effective'] | undefined,
+    effective: Pick<DesktopModelView['effective'], 'available' | 'connectionId' | 'provider'> | undefined,
     connections: readonly ConnectionSummary[] | undefined,
     active = true,
 ) {

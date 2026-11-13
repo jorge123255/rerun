@@ -251,6 +251,44 @@ const localProfileCopy = {
     de: { description: 'Dein Name und dein Foto auf diesem Mac.', photoHelp: 'Wird im Arbeitsbereichsmenü angezeigt.' },
 } satisfies Record<Locale, { description: string; photoHelp: string }>
 
+const desktopModelPickerCopy = {
+    en: {
+        scope: 'Choosing a model changes only this chat. The star sets this coworker’s default.',
+        conversation: 'This chat', unavailable: 'Unavailable · {model}',
+        workspaceRequired: 'Choose a workspace default model in Settings before sending a message.',
+        savedUnavailable: 'This saved model is no longer offered. Choose another model or use a default.',
+        coworkerPin: '{model} is this coworker’s default',
+    },
+    fr: {
+        scope: 'Le choix du modèle s’applique uniquement à cette conversation. L’étoile définit le modèle par défaut du collègue.',
+        conversation: 'Cette conversation', unavailable: 'Indisponible · {model}',
+        workspaceRequired: 'Choisissez un modèle par défaut pour l’espace de travail dans les paramètres avant d’envoyer un message.',
+        savedUnavailable: 'Ce modèle enregistré n’est plus proposé. Choisissez un autre modèle ou utilisez un modèle par défaut.',
+        coworkerPin: '{model} est le modèle par défaut de ce collègue',
+    },
+    es: {
+        scope: 'La elección del modelo solo se aplica a este chat. La estrella fija el modelo predeterminado del compañero.',
+        conversation: 'Este chat', unavailable: 'No disponible · {model}',
+        workspaceRequired: 'Elige un modelo predeterminado para el espacio de trabajo en los ajustes antes de enviar un mensaje.',
+        savedUnavailable: 'Este modelo guardado ya no se ofrece. Elige otro modelo o usa uno predeterminado.',
+        coworkerPin: '{model} es el modelo predeterminado de este compañero',
+    },
+    pt: {
+        scope: 'A escolha do modelo só se aplica a esta conversa. A estrela define o modelo padrão do colega.',
+        conversation: 'Esta conversa', unavailable: 'Indisponível · {model}',
+        workspaceRequired: 'Escolha um modelo padrão para o espaço de trabalho nas configurações antes de enviar uma mensagem.',
+        savedUnavailable: 'Este modelo salvo não é mais oferecido. Escolha outro modelo ou use um modelo padrão.',
+        coworkerPin: '{model} é o modelo padrão deste colega',
+    },
+    de: {
+        scope: 'Die Modellauswahl gilt nur für diesen Chat. Der Stern legt das Standardmodell des Kollegen fest.',
+        conversation: 'Dieser Chat', unavailable: 'Nicht verfügbar · {model}',
+        workspaceRequired: 'Wähle vor dem Senden in den Einstellungen ein Standardmodell für den Arbeitsbereich.',
+        savedUnavailable: 'Dieses gespeicherte Modell wird nicht mehr angeboten. Wähle ein anderes Modell oder verwende ein Standardmodell.',
+        coworkerPin: '{model} ist das Standardmodell dieses Kollegen',
+    },
+}
+
 export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
     return {
         ...mac[locale],
@@ -355,6 +393,11 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
             copyFailed: copyDeviceCodeFailure[locale],
         },
         defaultModel: source.connections.models.defaultModel,
+        modelPicker: {
+            ...source.agent.modelSelector,
+            ...desktopModelPickerCopy[locale],
+            manage: source.agent.modelPickerProviders.manage,
+        },
         workspace: source.workspace.settings.fallbackName,
         notifications: source.layout.workspaceMenu.notifications,
         shortcuts: source.layout.menu.shortcuts,
