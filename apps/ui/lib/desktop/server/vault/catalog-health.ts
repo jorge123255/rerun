@@ -11,7 +11,7 @@ export function vaultCatalogHealth(
     launchNonce: string,
     assertWorkspace: () => void,
     shutdown: AbortSignal,
-    inspect: (entry: Account, signal: AbortSignal) => Promise<'signed-out' | 'expired' | { toolCount: number; credentialExpiresAt?: string }>,
+    inspect: (entry: Account, signal: AbortSignal) => Promise<'signed-out' | 'expired' | 'rejected' | { toolCount: number; credentialExpiresAt?: string }>,
 ) {
     let checking = false
 
@@ -39,6 +39,9 @@ export function vaultCatalogHealth(
                 health = { state: 'disconnected', checkedAt, message: 'Sign in to this account before checking its connection.' }
             } else if (observed === 'expired') {
                 health = { state: 'error', checkedAt, message: 'The saved sign-in expired. Reconnect to check this account.' }
+            } else if (observed === 'rejected') {
+                // The app answered and refused the saved key: a different failure from an app that did not answer.
+                health = { state: 'error', checkedAt, message: 'The app refused the saved key.', credentialRejected: true }
             } else if (observed === 'failed') {
                 health = { state: 'error', checkedAt, message: 'The app did not respond to the connection check.' }
             } else {

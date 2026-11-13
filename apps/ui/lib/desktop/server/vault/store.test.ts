@@ -814,6 +814,7 @@ test('explicit Vault checks report only the current account revision and launch,
         const active = new AbortController()
         const operations: string[] = []
         let fail = false
+        let refuse = 0
         let onResponse: (() => Promise<unknown>) | undefined
         const network: McpNetwork = async (url, init, guard) => {
             await guard()
@@ -822,6 +823,7 @@ test('explicit Vault checks report only the current account revision and launch,
             const body = JSON.parse(init.body!)
             operations.push(body.method)
             if (fail) throw new Error(token)
+            if (refuse) return new Response('no', { status: refuse })
             const result = body.method === 'initialize' ? { protocolVersion: '2025-03-26' }
                 : { tools: [{ name: 'lookup', description: token, inputSchema: { type: 'object' } }] }
             if (body.method === 'tools/list') await onResponse?.()
@@ -839,9 +841,21 @@ test('explicit Vault checks report only the current account revision and launch,
         expect(JSON.stringify(await list())).not.toContain(token)
 
         fail = true
-        expect(await check(entry.id, entry.revision, active.signal)).toMatchObject({ state: 'error' })
+        const unreachable = await check(entry.id, entry.revision, active.signal)
+        expect(unreachable).toMatchObject({ state: 'error' })
+        // An app that did not answer says nothing about the key.
+        expect(unreachable).not.toHaveProperty('credentialRejected')
         expect(JSON.stringify(await list())).not.toContain(token)
         fail = false
+        // An app that answers and refuses the key is told apart, so an install can undo itself.
+        for (const status of [401, 403]) {
+            refuse = status
+            expect(await check(entry.id, entry.revision, active.signal)).toMatchObject({ state: 'error', credentialRejected: true })
+        }
+        refuse = 500
+        expect(await check(entry.id, entry.revision, active.signal)).not.toHaveProperty('credentialRejected')
+        refuse = 0
+        expect(JSON.stringify(await list())).not.toContain(token)
         onResponse = async () => {
             await expect(check(entry.id, entry.revision, active.signal)).rejects.toMatchObject({ status: 409 })
             await f.vault.mutate({ operation: 'rename-app', id: entry.id, revision: entry.revision, label: 'Current AgentMail' }, allow)

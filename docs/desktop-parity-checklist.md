@@ -210,12 +210,12 @@ Upstream `dev` at `ac9d248347d81fd32cdb2faea676af93df52368b`.
 Upstream `dev` moved to `56bebe60b637b3a6b4e1f746655a34d2762448f6` on November 13, 2026. Product changes since `ac9d2483`, none ported yet:
 
 - [ ] A coworker types a secret into a browser page without seeing it. [Upstream #196](https://github.com/rerun-build/rerun/pull/196)
-- [ ] "Not now" refuses an approval in one tap and the reason moves to "Explain". [Upstream #206](https://github.com/rerun-build/rerun/pull/206)
+- [x] "Not now" refuses an approval in one tap and the reason moves to "Explain". The shared approval card takes upstream's change at `56e5574c` and upstream's four component tests pass with the Mac card's nine. Not exercised on the Mac board, which needs a model that asks for an approval. [Upstream #206](https://github.com/rerun-build/rerun/pull/206)
 - [ ] The Chief of Staff gets a General conversation with threads and every conversation behind the clock of its column. [Upstream #201](https://github.com/rerun-build/rerun/pull/201) · [Upstream #202](https://github.com/rerun-build/rerun/pull/202) · [Upstream #203](https://github.com/rerun-build/rerun/pull/203)
-- [ ] A key the app rejects is refused at install, not at the first run. [Upstream #205](https://github.com/rerun-build/rerun/pull/205)
+- [ ] A key the app rejects is refused at install, not at the first run. In source: the Vault connection check tells a refused key (HTTP 401 or 403, or an SSE sign-in refusal) from an app that did not answer, and adding a catalog account with a key dials it once and removes the new account when the app refuses it. Fixtures cover refusal, acceptance, no answer and an account without a key. Replacing the key of an existing account is not checked, and no real app has been dialed on the Mac. [Upstream #205](https://github.com/rerun-build/rerun/pull/205)
 - [ ] A coworker answers questions about Rerun from the documentation. [Upstream #208](https://github.com/rerun-build/rerun/pull/208)
 - [ ] Switch workspace from the header of the workspace menu. [Upstream #197](https://github.com/rerun-build/rerun/pull/197)
-- [ ] Hide "Hire an expert" from the help menu. [Upstream #195](https://github.com/rerun-build/rerun/pull/195)
+- [x] Hide "Hire an expert" from the help menu. The Mac help list drops the row at `56e5574c`; fixture evidence only. [Upstream #195](https://github.com/rerun-build/rerun/pull/195)
 - [ ] Removing a Vault entry revokes its Composio account and a Composio user is scoped to its workspace. These belong with the managed accounts port above. [Upstream #192](https://github.com/rerun-build/rerun/pull/192) · [Upstream #199](https://github.com/rerun-build/rerun/pull/199)
 
 The 150 or so upstream commits between this branch's base `a6d63a4b` and the Vault stack are not linked one by one in this checklist. A keyword search on November 13, 2026 found Mac code for fourteen of their features (conversation rename, team reads, WhatsApp Status, Quick ask, paid-data consent, the AI status tool, question attachments, the scoped external key and others). That search is not a behaviour audit.

@@ -216,10 +216,15 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
                 const row = await check()
                 if (row.transport === 'sse') {
                     if (!sse) throw new Error('Vault SSE is unavailable')
-                    const result = await sse.runtime.probe({
-                        ...sseReference(probeOwner(account.id), row), requestId: randomUUID(), operation: 'probe',
-                    }, signal)
-                    return { toolCount: result.tools.length }
+                    try {
+                        const result = await sse.runtime.probe({
+                            ...sseReference(probeOwner(account.id), row), requestId: randomUUID(), operation: 'probe',
+                        }, signal)
+                        return { toolCount: result.tools.length }
+                    } catch (error) {
+                        if (row.has_credential === 1 && error instanceof SseFailure && error.code === 'auth-needed') return 'rejected'
+                        throw error
+                    }
                 }
                 let credentialExpiresAt: string | undefined
                 if (row.oauth_enabled === 1) {
@@ -235,11 +240,23 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
                     async read() { return { ...view(await check()), bearer: '' } },
                     async readOAuth() { return null },
                 }
-                const probeRuntime = remoteMcpRuntime(probeStore, async () => ({ enabled: true, granted: true }), network, undefined,
+                // The app says a key is wrong only when it is called with it.
+                let refused = false
+                const observed: McpNetwork = async (input, init, guard) => {
+                    const response = await network(input, init, guard)
+                    if (response.status === 401 || response.status === 403) refused = true
+                    return response
+                }
+                const probeRuntime = remoteMcpRuntime(probeStore, async () => ({ enabled: true, granted: true }), observed, undefined,
                     (_owner, _name, _revision, _phase, active) => credentials(check, active, false))
-                const result = await probeRuntime.probe(account.id, account.name, account.revision, signal)
-                if (!result.tools) throw new Error('Vault app did not return its tools')
-                return { toolCount: result.tools.length, ...(credentialExpiresAt && { credentialExpiresAt }) }
+                try {
+                    const result = await probeRuntime.probe(account.id, account.name, account.revision, signal)
+                    if (!result.tools) throw new Error('Vault app did not return its tools')
+                    return { toolCount: result.tools.length, ...(credentialExpiresAt && { credentialExpiresAt }) }
+                } catch (error) {
+                    if (refused && row.has_credential === 1 && row.oauth_enabled !== 1) return 'rejected'
+                    throw error
+                }
             })
         },
         tools(owner: string, signal: AbortSignal, authorizeRun?: (signal: AbortSignal) => Promise<void>) {
