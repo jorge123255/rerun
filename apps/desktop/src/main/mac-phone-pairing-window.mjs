@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path'
 const directory = dirname(fileURLToPath(import.meta.url))
 const page = resolve(directory, 'mac-phone-pairing.html')
 
-export function createPhonePairingWindow({ BrowserWindow }) {
+export function createPhonePairingWindow({ BrowserWindow, title }) {
     let current = null
 
     function close() {
@@ -25,7 +25,7 @@ export function createPhonePairingWindow({ BrowserWindow }) {
             current = new BrowserWindow({
                 width: 560,
                 height: 640,
-                title: 'Connect iPhone',
+                title: title(),
                 show: false,
                 webPreferences: {
                     preload: resolve(directory, 'mac-phone-pairing-preload.cjs'),

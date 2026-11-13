@@ -20,16 +20,35 @@ let renderedDevices = null
 let renderedNetworks = null
 let updating = false
 let creatingOffer = false
+let copy = { unavailable: 'Phone pairing is unavailable. Try reopening this window.' }
+let errorKey
+const copyNodes = document.querySelectorAll('[data-copy]')
 
-function showError(text) {
-    error.hidden = !text
-    error.textContent = text || ''
+function translate(key, values = {}) {
+    return copy[key].replace(/\{([a-z]+)\}/gi, (placeholder, name) => values[name] ?? placeholder)
+}
+
+function showError(key) {
+    errorKey = key
+    error.hidden = !key
+    error.textContent = key ? translate(key) : ''
+}
+
+function updateCopy(next) {
+    if (next.locale === copy.locale) return
+    copy = next
+    document.documentElement.lang = copy.locale
+    for (const node of copyNodes) node.textContent = translate(node.dataset.copy)
+    qr.alt = copy.qrAlt
+    renderedDevices = renderedNetworks = null
+    showError(errorKey)
 }
 
 function row(device, actionLabel, action) {
     const item = document.createElement('li')
     const label = document.createElement('span')
-    label.textContent = `${device.name || 'iPhone'} · workspace ${device.workspaceId}${device.network === 'lan' ? ' · Local network' : ''}`
+    label.textContent = translate('device', { name: device.name || 'iPhone', workspace: device.workspaceId })
+        + (device.network === 'lan' ? ` · ${copy.localNetwork}` : '')
     const button = document.createElement('button')
     button.textContent = actionLabel
     button.addEventListener('click', () => { void action(device.deviceId) })
@@ -39,8 +58,10 @@ function row(device, actionLabel, action) {
 
 async function refresh() {
     const status = await window.desktopApp.phonePairing.status()
+    updateCopy(status.copy)
     const ready = status?.selectedWorkspaceId != null
     entry.hidden = ready
+    openLocal.disabled = ready
     controls.hidden = !ready
     enable.disabled = updating || !ready
     if (displayedOffer && (!ready || !status.listening || status.selectedWorkspaceId !== displayedOffer.workspaceId
@@ -58,15 +79,15 @@ async function refresh() {
     if (renderedNetworks !== choices) {
         renderedNetworks = choices
         const missing = status.lanAddress && !addresses.includes(status.lanAddress)
-        network.replaceChildren(new Option('This Mac only', ''), ...addresses.map(address => new Option(`Local network (${address})`, address)))
-        if (missing) network.append(new Option(`Unavailable (${status.lanAddress})`, status.lanAddress))
+        network.replaceChildren(new Option(copy.thisMac, ''), ...addresses.map(address => new Option(translate('networkAddress', { address }), address)))
+        if (missing) network.append(new Option(translate('unavailableAddress', { address: status.lanAddress }), status.lanAddress))
     }
     network.value = status.lanAddress ?? ''
     network.disabled = updating || !status.phoneAccessEnabled
     createOffer.hidden = !status.listening || status.selectedWorkspaceId === null
     origin.hidden = !status.origin && !status.lanBindingEnabled
-    origin.textContent = status.origin ? `Listening on ${status.origin}`
-        : status.lanBindingEnabled ? 'Local network is unavailable. Choose an active address or This Mac only.' : ''
+    origin.textContent = status.origin ? translate('listening', { origin: status.origin })
+        : status.lanBindingEnabled ? copy.networkUnavailable : ''
     const devices = JSON.stringify(status.devices)
     if (devices === renderedDevices) return
     renderedDevices = devices
@@ -74,14 +95,14 @@ async function refresh() {
     const paired = status.devices.filter(device => device.status === 'approved')
     pending.hidden = waiting.length === 0
     approved.hidden = paired.length === 0
-    pendingList.replaceChildren(...waiting.map(device => row(device, 'Approve', async id => {
+    pendingList.replaceChildren(...waiting.map(device => row(device, copy.approve, async id => {
         try { await window.desktopApp.phonePairing.approve(id); showError(''); await refresh() }
-        catch { showError('The phone could not be approved.') }
+        catch { showError('approveFailed') }
     })))
     approvedList.replaceChildren(...paired.map(device => {
-        const item = row(device, 'Revoke', async id => {
+        const item = row(device, copy.revoke, async id => {
             try { await window.desktopApp.phonePairing.revoke(id); showError(''); await refresh() }
-            catch { showError('The phone could not be revoked.') }
+            catch { showError('revokeFailed') }
         })
         if (device.network !== 'lan') return item
         const label = document.createElement('label')
@@ -89,7 +110,7 @@ async function refresh() {
         const toggle = document.createElement('input')
         toggle.type = 'checkbox'
         toggle.checked = device.sendMessages
-        toggle.setAttribute('aria-label', `Allow ${device.name || 'iPhone'} to send messages`)
+        toggle.setAttribute('aria-label', translate('sendLabel', { name: device.name || 'iPhone' }))
         toggle.addEventListener('change', async () => {
             toggle.disabled = true
             try {
@@ -97,11 +118,11 @@ async function refresh() {
                 showError('')
             } catch {
                 toggle.checked = device.sendMessages
-                showError('Open this phone’s workspace and its local network listener to change sending access.')
+                showError('sendFailed')
             } finally { toggle.disabled = false }
-            await refresh().catch(() => showError('Phone pairing is unavailable.'))
+            await refresh().catch(() => showError('unavailable'))
         })
-        label.append(toggle, 'Send messages')
+        label.append(toggle, copy.send)
         item.insertBefore(label, item.lastElementChild)
         return item
     }))
@@ -111,20 +132,20 @@ async function updateSetting(change) {
     updating = true
     enable.disabled = network.disabled = true
     try { await change(); showError('') }
-    catch { showError('iPhone access could not be updated.') }
+    catch { showError('updateFailed') }
     finally { updating = false }
     await refresh()
 }
 
 openLocal.addEventListener('click', async () => {
     try { await window.desktopApp.phonePairing.openLocal(); showError('') }
-    catch { showError('The local workspace could not be opened.') }
+    catch { showError('openFailed') }
 })
 enable.addEventListener('change', () => {
-    void updateSetting(() => window.desktopApp.phonePairing.setEnabled(enable.checked)).catch(() => showError('Phone pairing is unavailable.'))
+    void updateSetting(() => window.desktopApp.phonePairing.setEnabled(enable.checked)).catch(() => showError('unavailable'))
 })
 network.addEventListener('change', () => {
-    void updateSetting(() => window.desktopApp.phonePairing.setNetwork(network.value || null)).catch(() => showError('Phone pairing is unavailable.'))
+    void updateSetting(() => window.desktopApp.phonePairing.setNetwork(network.value || null)).catch(() => showError('unavailable'))
 })
 createOffer.addEventListener('click', async () => {
     if (creatingOffer) return
@@ -140,12 +161,12 @@ createOffer.addEventListener('click', async () => {
         showError('')
         await refresh()
         code.hidden = displayedOffer !== result.offer
-    } catch { showError('A pairing offer could not be created for the workspace this Mac is running.') }
+    } catch { showError('offerFailed') }
     finally { creatingOffer = createOffer.disabled = false }
 })
 async function poll() {
     try { await refresh() }
-    catch { showError('Phone pairing is unavailable. Try reopening this window.') }
+    catch { showError('unavailable') }
     setTimeout(poll, 1000)
 }
 void poll()

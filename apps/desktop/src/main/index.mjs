@@ -15,7 +15,7 @@ import { desktopMicrophonePermissions } from './media-permissions.mjs'
 import { createDesktopFileSaves, safeDisplayedImageError } from './result-files.mjs'
 import { installMacApplicationMenu } from './application-menu.mjs'
 import { approvedQuitAction, BUILD_RELEASE, createMacUpdater } from './mac-updates.mjs'
-import { loadShellLanguage, localizeStartupStatus, shellText } from './shell-language.mjs'
+import { loadShellLanguage, localizeStartupStatus, shellCopy, shellText } from './shell-language.mjs'
 import { createMacMenuBar, macLoginItemSettings, setMacOpenAtLogin } from './mac-menu-bar.mjs'
 import { attachDesktopContextMenu, externalDesktopLink } from './window-context-menu.mjs'
 import { createWindowFind } from './window-find.mjs'
@@ -74,7 +74,8 @@ const boards = createBoardWindows({ startupUrl: pathToFileURL(startup).href, isD
 const rendererCrashInterval = 60_000
 const rendererFailureStatus = { state: 'error', messageKey: 'rendererClosed' }
 const changingBoards = new Set()
-const phonePairingWindow = createPhonePairingWindow({ BrowserWindow })
+const phonePairingCopy = () => shellCopy(shellLanguage?.forScope('local'), 'phonePairing')
+const phonePairingWindow = createPhonePairingWindow({ BrowserWindow, title: () => phonePairingCopy().title })
 const quickAsk = createQuickAskWindow({ app, BrowserWindow, screen, showBoard: revealWorkspaceWindow,
     language: () => shellLanguage?.forScope('local'), boardScope: candidate => {
         const context = boardContext(candidate)
@@ -608,9 +609,9 @@ async function launch() {
         if (!phonePairing) throw new Error('Open a local workspace before pairing an iPhone.')
         return phonePairing
     }
-    ipcMain.handle('desktop:phone-pairing-status', event => {
+    ipcMain.handle('desktop:phone-pairing-status', async event => {
         assertPhonePairingWindow(event)
-        return phonePairing?.status() ?? null
+        return { ...await phonePairing?.status(), copy: phonePairingCopy() }
     })
     ipcMain.handle('desktop:phone-pairing-open-local', event => {
         assertPhonePairingWindow(event)
