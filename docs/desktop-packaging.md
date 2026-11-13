@@ -11,6 +11,7 @@ distribution still requires a release signing and notarization workflow.
 pnpm install                                   # workspace deps incl. electron + electron-builder
 pnpm desktop:install                           # update ~/Applications/Rerun Desktop Preview.app
 pnpm desktop:install --commit FULL_SHA          # install only this checked-out commit
+pnpm desktop:install --dmg IMAGE --commit FULL_SHA --sha256 DIGEST
 pnpm desktop:package                           # build a separate signed preview
 pnpm desktop:package --dmg                     # build and verify the preview DMG
 pnpm desktop:stage                             # rebuild runtime resources for QA without making an .app
@@ -29,6 +30,12 @@ build receipts. It checks again that the source is still clean and Rerun is clos
 macOS swaps the verified bundle into place atomically. A failed build or exchange leaves the
 installed app intact. The installer clears its staging output on completion and recovers leftovers
 from an interrupted install on the next run. A kernel lock allows only one installer at a time.
+
+To install an already verified preview disk image, pass its path with `--dmg`
+and the full commit and SHA-256 from the build report. This uses the signed
+bundle in the image. The installer checks the digest, signature, Electron
+integrity and source receipts before the same atomic exchange. An upgrade
+must also satisfy the installed preview’s signing requirement.
 
 For agents reviewing code in separate worktrees, run `pnpm desktop:stage` for runtime QA.
 Use `pnpm desktop:package` when you need a separate signed preview.

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -123,4 +125,27 @@ macTest('refuses a foreign app or symlink destination even if it appears during 
         await writeFile(join(f.target, 'keep'), 'foreign')
     } }))
     assert.equal(await readFile(join(f.target, 'keep'), 'utf8'), 'foreign')
+})
+
+macTest('disk image installation requires pinned input and preserves the installed app on verification failure', async t => {
+    const f = await fixture(t)
+    await f.install(A)
+    const image = join(f.root, 'candidate.dmg')
+    const bundle = await f.build(join(f.root, 'image-source'), B)
+    execFileSync('/usr/bin/hdiutil', ['create', '-quiet', '-srcfolder', join(bundle, '..'), '-format', 'UDZO', image])
+    const sha256 = createHash('sha256').update(await readFile(image)).digest('hex')
+    const options = { image, commit: B.sourceCommit, sha256 }
+    await assert.rejects(f.install(undefined, { ...options, commit: undefined }), /requires --commit/)
+    await assert.rejects(f.install(undefined, { ...options, sha256: '0'.repeat(64) }), /SHA-256 does not match/)
+    const stagedImage = join(f.applications, '.rerun-desktop-install.noindex', 'in-use.dmg')
+    await writeFile(stagedImage, 'keep')
+    await assert.rejects(f.install(undefined, { ...options, image: stagedImage }), /outside the preview installer/)
+    assert.equal(await readFile(stagedImage, 'utf8'), 'keep')
+    await rm(stagedImage)
+    await verifyBundle(f.target, A)
+
+    await rm(f.target, { recursive: true })
+    await assert.rejects(f.install(undefined, options), /codesign.*exited/)
+    await assert.rejects(access(f.target), { code: 'ENOENT' })
+    assert.deepEqual(await f.stages(), ['install.lock'])
 })
