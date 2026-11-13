@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { createHash, randomUUID } from 'node:crypto'
 import { checkHub, hubPartition, hubWindowAddress, HUB_API_VERSION, isPublishedPageHandoff, normalizeHubOrigin, parseHubWorkspaceId, RERUN_CLOUD_ORIGIN, sameHub } from './connected-hub-policy.mjs'
 import { cascadeWindowBounds } from './board-windows.mjs'
-import { canChangeRecoveryServer, hubConnectionError, hubOfflineCopy, hubPickerCopy, hubRecoveryView } from './connected-hub-messages.mjs'
+import { canChangeRecoveryServer, hubConnectionError, hubOfflineCopy, hubPickerCopy, hubRecoveryView, isIncompatibleHub } from './connected-hub-messages.mjs'
 import { shellText } from './shell-language.mjs'
 import { macWorkspaceMinimumSize, restoreWindowZoom } from './window-placement.mjs'
 import { hideWorkspaceWindow, revealWorkspaceWindow as show } from './window-visibility.mjs'
@@ -436,7 +436,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             let issue = null
             if (!result.ok) {
                 if (result.reason === 'unreachable' && await savedOrigin() === origin) issue = { reason: 'offline' }
-                else if (restoring && (result.reason === 'too-old' || canChangeRecoveryServer(result.reason))) {
+                else if (restoring && (result.reason === 'too-old' || isIncompatibleHub(result.reason))) {
                     issue = { reason: result.reason, minimum: result.minimum }
                 }
                 else return result

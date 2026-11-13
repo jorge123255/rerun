@@ -25,9 +25,8 @@ test('recovery renders the matching condition while retaining only the retry rea
     assert.notEqual(offline.message, down.message)
     assert.notEqual(offline.title, old.title)
     assert.match(old.message, /7\.2\.1/)
-    assert.deepEqual(Object.keys(old), ['reason', 'title', 'message'])
-    assert.equal(down.changeServer, undefined)
-    assert.equal(offline.changeServer, undefined)
+    for (const view of [down, offline, old]) assert.equal(view.changeServer, 'Cambiar de servidor…')
+    assert.equal(hubRecoveryView('es', { reason: 'renderer-crashed' }).changeServer, undefined)
     assert.equal(hubRecoveryView('es', null), null)
     for (const reason of ['not-rerun', 'unsupported']) {
         assert.deepEqual(hubRecoveryView('es', { reason }), {

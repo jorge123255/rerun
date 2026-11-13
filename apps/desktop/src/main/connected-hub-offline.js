@@ -26,6 +26,11 @@ function renderUpdate() {
     const status = update?.status
     install.hidden = !(incompatible && status === 'ready')
     download.hidden = !(incompatible && bridge?.download && install.hidden && status !== 'downloading')
+    const replaceServerFirst = issue?.reason === 'not-rerun' || issue?.reason === 'unsupported'
+    button.classList.toggle('secondary', !install.hidden || !download.hidden || replaceServerFirst)
+    changeServer.classList.toggle('secondary', !replaceServerFirst)
+    if (replaceServerFirst && button.nextElementSibling === changeServer) button.before(changeServer)
+    else if (!replaceServerFirst && changeServer.nextElementSibling === button) button.after(changeServer)
     const text = incompatible && copy
         ? (bridge.appStore ? copy.appStore : { checking: copy.checking, downloading: copy.downloading, error: copy.failed }[status])
         : null
@@ -41,6 +46,7 @@ function render(value) {
     message.textContent = value.message
     changeServer.textContent = value.changeServer ?? ''
     changeServer.hidden = !value.changeServer
+    button.hidden = false
     renderUpdate()
     if (becameIncompatible && updater) {
         void updater.getState().then(state => {

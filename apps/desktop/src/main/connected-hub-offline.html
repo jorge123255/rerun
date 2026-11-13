@@ -2,23 +2,24 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Can’t reach Rerun</title>
     <link rel="stylesheet" href="startup.css">
     <script defer src="connected-hub-offline.js"></script>
 </head>
-<body>
+<body class="auth-surface recovery">
     <div id="mac-titlebar" aria-hidden="true"></div>
     <main>
+        <img class="foreman" src="startup-assets/foreman.webp" alt="" width="56" height="57">
         <h1 id="title">Can’t reach Rerun</h1>
         <p id="message" role="status"></p>
         <p id="update-status" role="status" hidden></p>
         <div class="actions">
             <button type="button" id="download" hidden></button>
             <button type="button" id="install" hidden></button>
-            <button type="button" id="change-server" hidden></button>
-            <button type="button" id="retry">Try again</button>
+            <button type="button" id="retry" hidden>Try again</button>
+            <button type="button" id="change-server" class="secondary" hidden></button>
         </div>
     </main>
 </body>

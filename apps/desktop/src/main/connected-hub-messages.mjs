@@ -44,8 +44,12 @@ export function hubOfflineCopy(locale) {
     }
 }
 
-export function canChangeRecoveryServer(reason) {
+export function isIncompatibleHub(reason) {
     return reason === 'not-rerun' || reason === 'unsupported'
+}
+
+export function canChangeRecoveryServer(reason) {
+    return isIncompatibleHub(reason) || reason === 'offline' || reason === 'unavailable' || reason === 'too-old'
 }
 
 export function hubRecoveryView(locale, issue) {
@@ -56,7 +60,7 @@ export function hubRecoveryView(locale, issue) {
     const canChangeServer = canChangeRecoveryServer(reason)
     let title = t('offline.title')
     if (reason === 'too-old') title = t('offline.incompatibleTitle')
-    if (canChangeServer) title = t('server.title')
+    if (isIncompatibleHub(reason)) title = t('server.title')
     const message = reason === 'unavailable' || reason === 'offline'
         ? t(reason === 'unavailable' ? 'offline.unavailable' : 'offline.body', { host })
         : hubConnectionError(locale, { reason, minimum })
