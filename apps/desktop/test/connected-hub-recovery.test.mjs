@@ -6,26 +6,36 @@ import { createHubRecovery } from '../src/main/connected-hub-recovery.mjs'
 const origin = 'https://hub.example.test'
 const offlinePage = new URL('file:///staged/connected-hub-offline.html')
 
-function fixture(check = async () => ({ ok: true }), now) {
+function fixture(check = async () => ({ ok: true }), now, abortDuringNavigation = false) {
     const contents = Object.assign(new EventEmitter(), { mainFrame: { url: origin + '/' } })
     const loads = []
-    let code = 200, destroyed = false, invalidations = 0
+    let code = 200, destroyed = false, invalidations = 0, dispatching = false, aborted = false
+    let recoveryLoaded
+    const loaded = new Promise(resolve => { recoveryLoaded = resolve })
     const window = Object.assign(new EventEmitter(), {
         webContents: contents,
         isDestroyed: () => destroyed,
         async loadURL(url) {
             loads.push(url)
+            if (abortDuringNavigation && dispatching) {
+                aborted = true
+                return
+            }
             contents.mainFrame.url = url
-            contents.emit('did-navigate', {}, url, url === offlinePage.href ? 200 : code)
+            dispatching = true
+            contents.emit('did-navigate', {}, url, code)
+            dispatching = false
+            if (url === offlinePage.href) recoveryLoaded()
+            if (aborted) throw new Error('ERR_ABORTED')
         },
     })
     const hub = createHubRecovery({ window, origin, offlinePage, available: () => true, check, invalidate: () => invalidations++, now })
-    return { hub, loads, contents, invalidations: () => invalidations, setCode: value => { code = value },
+    return { hub, loads, loaded, contents, invalidations: () => invalidations, setCode: value => { code = value },
         close() { destroyed = true; window.emit('closed') } }
 }
 
-test('503 and a main-frame connection failure keep the exact route for same-hub retry', async () => {
-    const f = fixture()
+test('a first 503 loads recovery after the board navigation settles and retry opens the exact route', async () => {
+    const f = fixture(undefined, undefined, true)
     f.setCode(503)
     const target = origin + '/board?workspace=1#chat'
     assert(await f.hub.navigate(target))
@@ -35,15 +45,21 @@ test('503 and a main-frame connection failure keep the exact route for same-hub 
     assert.equal(await f.hub.retry(), null)
     assert.equal(f.contents.mainFrame.url, target)
     assert.deepEqual(f.loads, [target, offlinePage.href, target])
+})
+
+test('a main-frame connection failure keeps the exact route for same-hub retry', async () => {
+    const f = fixture()
+    const target = origin + '/board?workspace=1#chat'
     f.contents.emit('did-fail-load', {}, -102, '', target, true)
+    await f.loaded
     assert(f.hub.onOfflinePage())
     assert.equal(f.hub.state().reason, 'offline')
-    assert.equal(f.invalidations(), 2)
+    assert.equal(f.invalidations(), 1)
 })
 
 test('a renderer crash reopens the last committed route and a repeated crash requires explicit retry', async () => {
     let now = 0
-    const { hub, contents, loads, invalidations, close } = fixture(undefined, () => now)
+    const { hub, contents, loads, loaded, invalidations, close } = fixture(undefined, () => now)
     const route = origin + '/board?workspace=7#coworker'
     contents.emit('did-navigate-in-page', {}, route, true)
     contents.emit('render-process-gone', {}, { reason: 'clean-exit' })
@@ -53,6 +69,7 @@ test('a renderer crash reopens the last committed route and a repeated crash req
     assert.equal(hub.state(), null)
     now += 5000
     contents.emit('render-process-gone', {}, { reason: 'oom' })
+    await loaded
     assert.deepEqual(loads, [route, offlinePage.href])
     assert.equal(hub.state().reason, 'renderer-crashed')
     assert.equal(hub.onOfflinePage(), true)

@@ -8,6 +8,7 @@ export function createHubRecovery({ window, origin, offlinePage, available, chec
     let target = origin + '/'
     let issue = null
     let rendering = null
+    let boardLoad = null
     let retry = null
     let closed = false
     let lastCrash = -Infinity
@@ -23,7 +24,7 @@ export function createHubRecovery({ window, origin, offlinePage, available, chec
         issue = { reason, ...(minimum && { minimum }) }
         invalidate()
         if (!rendering) {
-            rendering = window.loadURL(offlinePage.href).then(() => true, () => false)
+            rendering = window.loadURL(offlinePage.href).then(() => onOfflinePage(), () => false)
                 .finally(() => { rendering = null })
         }
         return rendering
@@ -31,20 +32,38 @@ export function createHubRecovery({ window, origin, offlinePage, available, chec
 
     async function load(address) {
         if (!alive() || !sameHub(address, origin)) return false
+        const attempt = { recovery: null }
+        boardLoad = attempt
+        let loaded = true
         try { await window.loadURL(address) }
-        catch { if (!rendering && !onOfflinePage()) return false }
+        catch { loaded = false }
+        if (boardLoad !== attempt) return false
+        boardLoad = null
+        if (attempt.recovery) {
+            const { address, reason } = attempt.recovery
+            return showOffline(address, reason)
+        }
+        if (!loaded && !rendering && !onOfflinePage()) return false
         if (rendering) await rendering
         return alive() && (onOfflinePage() || (!issue && sameHub(contents.mainFrame?.url, origin)))
     }
 
+    function recoverNavigation(address, reason) {
+        if (boardLoad) {
+            // Electron's load promises share finish events. Let the explicit
+            // board load settle before starting a new navigation in its window.
+            boardLoad.recovery = { address, reason }
+        } else void showOffline(address, reason)
+    }
+
     contents.on('did-fail-load', (_event, code, _description, address, mainFrame) => {
         // Aborted includes downloads and a navigation replaced by a newer one.
-        if (mainFrame && code !== -3 && sameHub(address, origin)) void showOffline(address, 'offline')
+        if (mainFrame && code !== -3 && sameHub(address, origin)) recoverNavigation(address, 'offline')
     })
     contents.on('did-navigate', (_event, address, code) => {
         if (!sameHub(address, origin)) return
         if (code >= 502 && code <= 504) {
-            void showOffline(address, 'unavailable')
+            recoverNavigation(address, 'unavailable')
             return
         }
         target = address
