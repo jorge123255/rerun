@@ -137,6 +137,7 @@ function fixture(runStatus?: (sessionId: string, method: 'GET' | 'POST') => Prom
         placements: coworkers.map((agent, index) => ({ agentId: agent.id, spaceId: boxId, col: index * 3, row: 0 })) }
     let gettingStartedDismissed = false
     let gettingStartedModels = 0
+    let gettingStartedSchedules = 0
     let roster = coworkers
     const drafts = createDesktopDraftFixture()
     const recent = createDesktopRecentFixture()
@@ -191,7 +192,7 @@ function fixture(runStatus?: (sessionId: string, method: 'GET' | 'POST') => Prom
         }
         if (productionBoard && url.pathname === '/api/desktop/getting-started') {
             if (method === 'POST') gettingStartedDismissed = JSON.parse(String(init?.body)).action === 'dismiss'
-            return Response.json(desktopGettingStartedResponse(2, gettingStartedDismissed, { coworkers: 2, connectedProviders: gettingStartedModels, modelChats: 0, schedules: 0 }))
+            return Response.json(desktopGettingStartedResponse(2, gettingStartedDismissed, { coworkers: 2, connectedProviders: gettingStartedModels, modelChats: 0, schedules: gettingStartedSchedules }))
         }
         if (productionBoard && method === 'GET' && url.pathname === '/api/desktop/api-connections/2/catalog') {
             return Response.json({ version: 1, workspaceId: 2, default: null, connections: [] })
@@ -318,6 +319,7 @@ function fixture(runStatus?: (sessionId: string, method: 'GET' | 'POST') => Prom
     return {
         panelReads, messageReads, fileReads, contentWrites, voiceAudioReads, managementWrites, layouts, answer,
         connectGettingStartedModel: () => { gettingStartedModels = 1 },
+        saveGettingStartedSchedule: () => { gettingStartedSchedules = 1 },
         async mount(language?: DesktopLanguage) {
             const container = document.createElement('div')
             document.body.append(container)
@@ -1136,6 +1138,28 @@ test('updates Getting started when returning from model settings without reopeni
     await click('Team board')
     await until(() => mounted.container.querySelector('[aria-label="Getting started: 2 of 3 done"]'))
     expect(document.querySelector('[aria-label="Hide"]')).toBeNull()
+})
+
+test('opens the checklist when live progress first completes without replaying it on remount', async () => {
+    const app = fixture(undefined, true)
+    app.connectGettingStartedModel()
+    const mounted = await app.mount()
+    const incomplete = '[aria-label="Getting started: 2 of 3 done"]'
+    const complete = '[aria-label="Getting started: 3 of 3 done"]'
+    const hide = '[aria-label="Hide"]'
+    await until(() => mounted.container.querySelector(incomplete))
+    expect(document.querySelector(hide)).toBeNull()
+
+    app.saveGettingStartedSchedule()
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    await until(() => mounted.container.querySelector(complete))
+    await until(() => document.querySelector(hide))
+    expect(document.body.textContent).toContain('Your workspace is all set')
+    await mounted.unmount()
+
+    const restarted = await app.mount()
+    await until(() => restarted.container.querySelector(complete))
+    expect(document.querySelector(hide)).toBeNull()
 })
 
 test('reopens the localized workspace checklist from Help after a persisted dismissal', async () => {

@@ -40,8 +40,12 @@ async function postAction(action: 'dismiss' | 'reopen', signal: AbortSignal): Pr
 
 /** Local checklist. Hidden after dismiss until Control Center asks it to reopen. A failed read shows nothing. */
 export function DesktopGettingStartedPill({ workspaceId, visible, onAddCoworker, onModelSettings, onOpenSchedules }: DesktopGettingStartedPillProps) {
-    const [snapshot, setSnapshot] = useState<DesktopGettingStartedResponse | null>(null)
-    const [open, setOpen] = useState(false)
+    const [{ snapshot, open }, setView] = useState({
+        snapshot: null as DesktopGettingStartedResponse | null,
+        open: false,
+        completionSeen: false,
+    })
+    const setOpen = (next: boolean) => setView(view => ({ ...view, open: next }))
     const pending = useRef<AbortController | null>(null)
     const refresh = useCallback(async (action?: 'dismiss' | 'reopen') => {
         // A background read must not cancel a dismissal or reopen in flight.
@@ -52,8 +56,16 @@ export function DesktopGettingStartedPill({ workspaceId, visible, onAddCoworker,
         try {
             const next = action ? await postAction(action, controller.signal) : await readSnapshot(controller.signal)
             if (controller.signal.aborted || next?.workspaceId !== workspaceId) return
-            setSnapshot(next)
-            if (action === 'reopen' && !next.dismissed) setOpen(true)
+            setView(view => {
+                // An already completed checklist on first read is not a new milestone.
+                const justCompleted = !action && next.complete && !view.completionSeen
+                    && view.snapshot?.workspaceId === workspaceId && !view.snapshot.dismissed
+                return {
+                    snapshot: next,
+                    open: !next.dismissed && (view.open || action === 'reopen' || justCompleted),
+                    completionSeen: view.completionSeen || next.complete,
+                }
+            })
         } finally {
             if (pending.current === controller) pending.current = null
         }
@@ -86,7 +98,7 @@ export function DesktopGettingStartedPill({ workspaceId, visible, onAddCoworker,
     return (
         <DesktopGettingStartedPopover
             steps={snapshot.steps}
-            open={open}
+            open={visible && open}
             onOpenChange={next => { setOpen(next); if (next) void refresh() }}
             onStep={onStep}
             onHide={() => {
