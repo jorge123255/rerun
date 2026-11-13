@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { KeyRound } from 'lucide-react'
+import { KeyRound, Plug } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { PanelList, PanelSection } from '@/components/ui/panel-list'
 import { PanelRow } from '@/components/ui/panel-row'
@@ -54,13 +54,14 @@ export function DesktopCoworkerVault({ agentId, query }: { agentId: string; quer
         return () => { pending.current?.abort(); pending.current = null }
     }, [request])
 
-    const matches = (entry: Entry) => `${entry.name} ${entry.variable}`.toLowerCase().includes(query.trim().toLowerCase())
+    const detail = (entry: Entry) => 'kind' in entry ? `MCP · ${entry.hasBearer ? 'Bearer token configured' : 'No authentication configured'}` : entry.variable
+    const matches = (entry: Entry) => `${entry.name} ${detail(entry)}`.toLowerCase().includes(query.trim().toLowerCase())
     const attached = listing?.attached.filter(matches) ?? []
     const available = listing?.available.filter(matches) ?? []
     const row = (entry: Entry, attached: boolean) => (
         <PanelRow key={entry.id} title={entry.name}
-            description={entry.sharedWithAll ? `${entry.variable} · Shared with every coworker` : entry.variable}
-            leading={<KeyRound className="size-4" />}
+            description={entry.sharedWithAll ? `${detail(entry)} · Shared with every coworker` : detail(entry)}
+            leading={'kind' in entry ? <Plug className="size-4" /> : <KeyRound className="size-4" />}
             actions={<>
                 {attached && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">Vault</span>}
                 <Button size="sm" variant="outline" aria-label={`${attached ? 'Remove' : 'Add'} ${entry.name}`}

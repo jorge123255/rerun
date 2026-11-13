@@ -3,7 +3,7 @@ import { abortable, type remoteMcpRuntime } from './remote'
 import type { RemoteMcpStore } from './store'
 
 /** Adapter-neutral definitions for root's local Codex dynamic-tool bridge. Never send credentials. */
-export async function remoteMcpTools(agent: string, store: RemoteMcpStore, runtime: ReturnType<typeof remoteMcpRuntime>, signal: AbortSignal) {
+export async function remoteMcpTools(agent: string, store: Pick<RemoteMcpStore, 'list'>, runtime: ReturnType<typeof remoteMcpRuntime>, signal: AbortSignal) {
     const definitions = []
     const currentCatalog: (()=>void)[] = []
     const validations: (()=>Promise<void>)[] = []

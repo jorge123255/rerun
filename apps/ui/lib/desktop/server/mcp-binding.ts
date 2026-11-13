@@ -1,3 +1,5 @@
+import { desktopVaultMcpRuntime } from './vault/mcp-runtime'
+import { createDesktopSecretCrypto } from './secret-requests/crypto'
 import { shutdownDesktopForeman } from './foreman/binding'
 import { shutdownDesktopForemanVoice } from './foreman-voice/binding'
 import { canonicalDesktopEngineRoot, desktopEngineParts } from './runtime'
@@ -258,7 +260,13 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
             return write()
         })),
     })
-    const bridge = desktopMcpBridge(store, remote, authorizeRun, sse)
+    const vaultMcp = desktopVaultMcpRuntime(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId, access, entry.shutdown.signal)
+    const bridge = desktopMcpBridge(store, remote, authorizeRun, {
+        async tools(owner, run, signal) {
+            return [...await sse.tools(owner, run, signal), ...await vaultMcp.tools(owner, signal)]
+        },
+        releaseRun: sse.releaseRun,
+    })
     const deviceReview = bindTrustedMcpDeviceMethodReview({ runtime, db, key: masterKey, store, shutdown: entry.shutdown.signal })
     entry.shutdown.signal.addEventListener('abort', deviceReview.dispose, { once: true })
     return { store, references, runtime: remote, bridge, access, authorizeRun, deviceReview, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),

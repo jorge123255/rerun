@@ -8,6 +8,9 @@ import { desktopVaultMutation } from '../../vault'
 import { DesktopHttpError } from '../auth'
 import { initializeDesktopRound45 } from '../round45-schema'
 import { initializeDesktopRound46 } from '../round46-schema'
+import { initializeDesktopRound47 } from '../round47-schema'
+import { desktopVaultMcpRuntime } from './mcp-runtime'
+import type { McpNetwork } from '../mcp/remote'
 import { createCanonicalMcpSecretReferences } from '../mcp-secret-references/binding'
 import { ensureDesktopMcpSecretReferenceSchema } from '../mcp-secret-references/schema'
 import { desktopMcpSecretReferenceCanonical, type DesktopMcpSecretReferenceConfig } from '@rerun/contracts'
@@ -28,15 +31,17 @@ async function fixture(migrate = true) {
     await db.executeMultiple(`PRAGMA foreign_keys=ON;
         CREATE TABLE desktop_schema_migrations (version INTEGER PRIMARY KEY,id TEXT NOT NULL UNIQUE);
         INSERT INTO desktop_schema_migrations VALUES (44,'keirolabs-search-credentials');
-        CREATE TABLE desktop_agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, workspace_id INTEGER NOT NULL);
-        CREATE TABLE desktop_deletions (agent_id TEXT NOT NULL, completed INTEGER NOT NULL);
+        CREATE TABLE desktop_agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, workspace_id INTEGER NOT NULL, engine_agent_id TEXT);
+        CREATE TABLE desktop_deletions (agent_id TEXT NOT NULL, completed INTEGER NOT NULL, engine_agent_id TEXT);
+        CREATE TABLE desktop_remote_mcp (agent_id TEXT NOT NULL,name TEXT NOT NULL);
         CREATE TABLE desktop_secret_credentials (agent_id TEXT NOT NULL,key TEXT NOT NULL,version INTEGER NOT NULL,sealed_value TEXT NOT NULL);
         CREATE TABLE desktop_mcp_stdio (owner TEXT NOT NULL,name TEXT NOT NULL,executable TEXT NOT NULL,args TEXT NOT NULL,revision TEXT NOT NULL);`)
     await db.batch([firstAgent, secondAgent, foreignAgent].map((id, i) => ({
-        sql: 'INSERT INTO desktop_agents VALUES (?,?,?)', args: [id, ['First', 'Second', 'Foreign'][i], i === 2 ? 2 : 1],
+        sql: 'INSERT INTO desktop_agents(id,name,workspace_id) VALUES (?,?,?)', args: [id, ['First', 'Second', 'Foreign'][i], i === 2 ? 2 : 1],
     })), 'write')
     await initializeDesktopRound45(db)
     if (migrate) await initializeDesktopRound46(db)
+    await initializeDesktopRound47(db)
     return { db, root, file, open, vault: desktopVault(db, crypto, 7) }
 }
 
@@ -45,6 +50,7 @@ test('upgrades a prior workspace, saves redacted metadata, rotates ciphertext, a
     try {
         const result = await f.vault.mutate({ operation: 'create', name: 'Team key', variable: 'TEAM_KEY', value: secret }, allow)
         const [entry] = result.entries
+        if ('kind' in entry) throw new Error('Expected a standalone secret')
         expect(result).toEqual({ coworkers: [{ id: firstAgent, name: 'First' }, { id: secondAgent, name: 'Second' }],
             entries: [{ id: entry.id, revision: entry.revision, name: 'Team key', variable: 'TEAM_KEY', agentIds: [], sharedWithAll: false }] })
         const row = async () => (await f.db.execute('SELECT sealed,value_revision FROM desktop_vault_secrets')).rows[0]
@@ -61,7 +67,7 @@ test('upgrades a prior workspace, saves redacted metadata, rotates ciphertext, a
             await initializeDesktopRound45(reopened)
             await initializeDesktopRound46(reopened)
             expect(await desktopVault(reopened, crypto, 7).list()).toEqual(updated)
-            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }])
+            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }])
             expect((await reopened.execute('PRAGMA foreign_key_check')).rows).toEqual([])
         } finally { reopened.close() }
         expect((await readFile(f.file)).includes(secret)).toBe(false)
@@ -86,7 +92,7 @@ test('serializes conflicting assignments, rejects foreign and stale targets, and
         expect(b.agentIds).toEqual([secondAgent])
         await expect(share(first, [])).rejects.toMatchObject({ status: 409 })
         await share(a, [])
-        await f.db.execute({ sql: 'INSERT INTO desktop_deletions VALUES (?,0)', args: [secondAgent] })
+        await f.db.execute({ sql: 'INSERT INTO desktop_deletions(agent_id,completed) VALUES (?,0)', args: [secondAgent] })
         expect((await f.vault.list()).entries.find(entry => entry.id === b.id)?.agentIds).toEqual([])
         await f.vault.mutate({ operation: 'delete', id: b.id, revision: b.revision }, allow)
         expect((await f.vault.list()).entries).toHaveLength(1)
@@ -255,5 +261,71 @@ test('the coworker Vault changes just that owner and preserves entries, other as
         await expect(f.vault.assignCoworker(firstAgent, { ...target, revision: shared.entries[0].revision, attached: false }, allow)).rejects.toMatchObject({ status: 409 })
         await expect(f.vault.forCoworker(foreignAgent)).rejects.toMatchObject({ status: 404 })
         await expect(f.vault.assignCoworker(foreignAgent, { ...target, attached: true }, allow)).rejects.toMatchObject({ status: 404 })
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('a single Vault MCP credential lends tools to permitted coworkers and revokes old catalogs on changes', async () => {
+    const f = await fixture()
+    const shutdown = new AbortController()
+    try {
+        const token = 'synthetic-vault-server-token'
+        const config = { operation: 'create-server' as const, name: 'release-notes', url: 'https://mcp.example.test/v1', bearer: token }
+        await expect(f.vault.mutate({ ...config, url: 'https://mcp.example.test/v1?token=bad' }, allow)).rejects.toMatchObject({ status: 400 })
+        const [saved] = (await f.vault.mutate(config, allow)).entries
+        await expect(f.vault.mutate(config, allow)).rejects.toMatchObject({ code: 'vault_conflict' })
+        expect(saved).toMatchObject({ kind: 'mcp', hasBearer: true, agentIds: [] })
+        expect(JSON.stringify(saved)).not.toContain(token)
+        const first = await f.vault.assignCoworker(firstAgent, { id: saved.id, revision: saved.revision, attached: true }, allow)
+        const entry = first.attached[0]
+        await f.vault.assignCoworker(secondAgent, { id: entry.id, revision: entry.revision, attached: true }, allow)
+        const reopened = f.open()
+        try {
+            let granted = true
+            let requests = 0
+            let duringResolution: (() => Promise<void>) | undefined
+            const network: McpNetwork = async (url, init, guard) => {
+                expect(url).toBe(config.url)
+                await duringResolution?.()
+                await guard()
+                requests++
+                expect(new Headers(init.headers).get('authorization')).toBe('Bearer ' + token)
+                const body = JSON.parse(init.body!)
+                const result = body.method === 'initialize' ? { protocolVersion: '2025-03-26' }
+                    : body.method === 'tools/list' ? { tools: [{ name: 'list', inputSchema: { type: 'object' }, description: token }] }
+                    : { content: [{ type: 'text', text: 'ready ' + token }] }
+                return body.id === undefined ? new Response(null, { status: 202 }) : Response.json({ jsonrpc: '2.0', id: body.id, result })
+            }
+            const runtime = desktopVaultMcpRuntime(reopened, crypto, 7, async () => ({ enabled: true, granted }), shutdown.signal, network)
+            const signal = new AbortController().signal
+            expect(await runtime.tools(foreignAgent, signal)).toEqual([])
+            granted = false
+            await expect(runtime.tools(firstAgent, signal)).rejects.toThrow()
+            expect(requests).toBe(0)
+            granted = true
+            const [one] = await runtime.tools(firstAgent, signal)
+            expect(one.name).toBe('release-notes_list')
+            expect(one.description).not.toContain(token)
+            const [two] = await runtime.tools(secondAgent, signal)
+            expect(JSON.stringify(await one.execute({}, signal))).toMatch(/ready.*REDACTED/)
+            const before = requests
+            duringResolution = async () => {
+                duringResolution = undefined
+                const [current] = (await f.vault.forCoworker(firstAgent)).attached
+                await f.vault.assignCoworker(firstAgent, { id: current.id, revision: current.revision, attached: false }, allow)
+            }
+            await expect(one.execute({}, signal)).rejects.toThrow()
+            expect(requests).toBe(before)
+            expect(await runtime.tools(firstAgent, signal)).toEqual([])
+            await expect(two.execute({}, signal)).rejects.toThrow()
+            const [stillAssigned] = await runtime.tools(secondAgent, signal)
+            expect(stillAssigned.name).toBe(two.name)
+            await f.db.execute({ sql: 'INSERT INTO desktop_remote_mcp VALUES(?,?)', args: [firstAgent, config.name] })
+            const [available] = (await f.vault.forCoworker(firstAgent)).available
+            await expect(f.vault.assignCoworker(firstAgent, { id: available.id, revision: available.revision, attached: true }, allow)).rejects.toMatchObject({ code: 'vault_conflict' })
+            const [current] = (await f.vault.forCoworker(secondAgent)).attached
+            await f.vault.mutate({ operation: 'replace-server-bearer', id: current.id, revision: current.revision, bearer: 'new-fixture-token' }, allow)
+            await expect(stillAssigned.execute({}, signal)).rejects.toThrow()
+            expect((await readFile(f.file)).includes(token)).toBe(false)
+        } finally { shutdown.abort(); reopened.close() }
     } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
 })

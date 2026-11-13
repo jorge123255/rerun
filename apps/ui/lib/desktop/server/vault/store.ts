@@ -1,8 +1,10 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
 import type { Client, Transaction } from '@libsql/client'
-import { desktopCoworkerVaultListing, desktopVaultListing, type DesktopCoworkerVaultMutation, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '../../vault'
+import { desktopCoworkerVaultListing, desktopVaultListing, type DesktopCoworkerVaultMutation, type DesktopCoworkerVaultEntry, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '../../vault'
 import { DesktopHttpError } from '../auth'
+import { endpoint } from '../mcp/model'
+import { oauthHttps } from '../mcp/oauth-network'
 import { withRosterWrite } from '../roster-writes'
 import type { DesktopSecretCrypto } from '../secret-requests/crypto'
 
@@ -13,7 +15,7 @@ async function readVault(tx: Transaction) {
         ORDER BY name,id`)).rows.map(row => ({ id: String(row.id), name: String(row.name) }))
     const ownerIds = new Set(coworkers.map(row => row.id))
     const attachments = new Map<string, string[]>()
-    for (const row of (await tx.execute('SELECT item_id,agent_id FROM desktop_vault_attachments ORDER BY agent_id')).rows) {
+    for (const row of (await tx.execute('SELECT item_id,agent_id FROM desktop_vault_attachments UNION ALL SELECT item_id,agent_id FROM desktop_vault_mcp_attachments ORDER BY agent_id')).rows) {
         const id = String(row.item_id), agentId = String(row.agent_id)
         if (!ownerIds.has(agentId)) continue
         const agents = attachments.get(id) ?? []
@@ -24,7 +26,11 @@ async function readVault(tx: Transaction) {
         id: String(row.id), name: String(row.name), variable: String(row.variable), revision: String(row.revision),
         sharedWithAll: row.shared_with_all === 1, agentIds: attachments.get(String(row.id)) ?? [],
     }))
-    return desktopVaultListing.parse({ entries, coworkers })
+    const servers = (await tx.execute('SELECT id,name,url,revision,sealed IS NOT NULL AS has_bearer,shared_with_all FROM desktop_vault_mcp_servers ORDER BY name,id')).rows.map(row => ({
+        kind: 'mcp', id: String(row.id), name: String(row.name), url: String(row.url), revision: String(row.revision),
+        sharedWithAll: row.shared_with_all === 1, hasBearer: row.has_bearer === 1, agentIds: attachments.get(String(row.id)) ?? [],
+    }))
+    return desktopVaultListing.parse({ entries: [...servers, ...entries], coworkers })
 }
 
 function requireCoworker(listing: DesktopVaultListing, agentId: string) {
@@ -35,7 +41,7 @@ function requireCoworker(listing: DesktopVaultListing, agentId: string) {
 
 function coworkerListing(listing: DesktopVaultListing, agentId: string) {
     requireCoworker(listing, agentId)
-    const attached: Omit<DesktopVaultEntry, 'agentIds'>[] = []
+    const attached: DesktopCoworkerVaultEntry[] = []
     const available: typeof attached = []
     for (const { agentIds, ...entry } of listing.entries) {
         const group = entry.sharedWithAll || agentIds.includes(agentId) ? attached : available
@@ -57,6 +63,10 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
         try {
             return await crypto.seal({ domain: 'vault', agentId: id, key: variable, version: 1, workspaceId, revision }, bytes)
         } finally { bytes.fill(0) }
+    }
+
+    async function sealBearer(id: string, url: string, revision: string, bearer: string) {
+        return bearer ? seal(id, url, revision, bearer) : null
     }
 
     async function list() {
@@ -99,6 +109,18 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         sql: 'INSERT INTO desktop_vault_secrets(id,name,variable,revision,value_revision,sealed) VALUES(?,?,?,?,?,?)',
                         args: [id, input.name, input.variable, revision, revision, sealed],
                     })
+                } else if (input.operation === 'create-server') {
+                    let url: string
+                    try { url = oauthHttps(endpoint(input.url)).href }
+                    catch { throw new DesktopHttpError(400, 'Enter a public HTTPS MCP endpoint without a query or credentials.') }
+                    if (listing.entries.some(entry => 'kind' in entry && entry.name === input.name)) {
+                        throw new DesktopHttpError(409, 'An MCP server already uses this name in the Vault.', 'vault_conflict')
+                    }
+                    const id = randomUUID()
+                    await tx.execute({
+                        sql: 'INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,sealed) VALUES(?,?,?,?,?,?)',
+                        args: [id, input.name, url, revision, revision, await sealBearer(id, url, revision, input.bearer)],
+                    })
                 } else {
                     const entry = listing.entries.find(row => row.id === input.id)
                     if (!entry) throw new DesktopHttpError(404, 'Vault entry not found.')
@@ -108,25 +130,43 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         if (agentIds.some(id => !listing.coworkers.some(agent => agent.id === id))) {
                             throw new DesktopHttpError(409, 'A selected coworker is no longer in this workspace.')
                         }
-                        const other = listing.entries.find(row => row.id !== entry.id && row.variable === entry.variable && overlaps(row, { ...input, agentIds }))
-                        if (other) throw new DesktopHttpError(409, `A coworker would receive ${entry.variable} from both ${entry.name} and ${other.name}.`, 'vault_conflict')
                         const targets = new Set((input.sharedWithAll ? listing.coworkers.map(agent => agent.id) : agentIds)
                             .filter(id => !entry.sharedWithAll && !entry.agentIds.includes(id)))
-                        if (targets.size) {
-                            const privateCredentials = await tx.execute({
-                                sql: 'SELECT agent_id FROM desktop_secret_credentials WHERE key=?',
-                                args: [entry.variable],
+                        const server = 'kind' in entry
+                        if (server) {
+                            const collisions = await tx.execute({
+                                sql: 'SELECT agent_id FROM desktop_remote_mcp WHERE name=? UNION ALL SELECT owner AS agent_id FROM desktop_mcp_stdio WHERE name=?',
+                                args: [entry.name, entry.name],
                             })
-                            if (privateCredentials.rows.some(row => targets.has(String(row.agent_id)))) {
-                                throw new DesktopHttpError(409, `A selected coworker already has a private credential named ${entry.variable}.`, 'vault_conflict')
+                            if (collisions.rows.some(row => targets.has(String(row.agent_id)))) {
+                                throw new DesktopHttpError(409, `A selected coworker already has an MCP server named ${entry.name}.`, 'vault_conflict')
+                            }
+                        } else {
+                            const other = listing.entries.find(row => !('kind' in row) && row.id !== entry.id && row.variable === entry.variable && overlaps(row, { ...input, agentIds }))
+                            if (other) throw new DesktopHttpError(409, `A coworker would receive ${entry.variable} from both ${entry.name} and ${other.name}.`, 'vault_conflict')
+                            if (targets.size) {
+                                const privateCredentials = await tx.execute({ sql: 'SELECT agent_id FROM desktop_secret_credentials WHERE key=?', args: [entry.variable] })
+                                if (privateCredentials.rows.some(row => targets.has(String(row.agent_id)))) {
+                                    throw new DesktopHttpError(409, `A selected coworker already has a private credential named ${entry.variable}.`, 'vault_conflict')
+                                }
                             }
                         }
-                        await tx.execute({ sql: 'DELETE FROM desktop_vault_attachments WHERE item_id=?', args: [entry.id] })
-                        for (const id of agentIds) await tx.execute({ sql: 'INSERT INTO desktop_vault_attachments(item_id,agent_id) VALUES(?,?)', args: [entry.id, id] })
-                        await tx.execute({ sql: 'UPDATE desktop_vault_secrets SET revision=?,shared_with_all=? WHERE id=?', args: [revision, Number(input.sharedWithAll), entry.id] })
+                        const table = server ? 'desktop_vault_mcp_servers' : 'desktop_vault_secrets'
+                        const attachments = server ? 'desktop_vault_mcp_attachments' : 'desktop_vault_attachments'
+                        await tx.execute({ sql: `DELETE FROM ${attachments} WHERE item_id=?`, args: [entry.id] })
+                        for (const id of agentIds) await tx.execute({ sql: `INSERT INTO ${attachments}(item_id,agent_id) VALUES(?,?)`, args: [entry.id, id] })
+                        await tx.execute({ sql: `UPDATE ${table} SET revision=?,shared_with_all=? WHERE id=?`, args: [revision, Number(input.sharedWithAll), entry.id] })
+                    } else if (input.operation === 'replace-server-bearer') {
+                        if (!('kind' in entry)) throw new DesktopHttpError(400, 'This entry is not an MCP server.')
+                        const sealed = await sealBearer(entry.id, entry.url, revision, input.bearer)
+                        await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET revision=?,credential_revision=?,sealed=? WHERE id=?', args: [revision, revision, sealed, entry.id] })
                     } else if (input.operation === 'replace') {
+                        if ('kind' in entry) throw new DesktopHttpError(400, 'This entry is not a standalone secret.')
                         const sealed = await seal(entry.id, entry.variable, revision, input.value)
                         await tx.execute({ sql: 'UPDATE desktop_vault_secrets SET revision=?,value_revision=?,sealed=? WHERE id=?', args: [revision, revision, sealed, entry.id] })
+                    } else if ('kind' in entry) {
+                        await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_attachments WHERE item_id=?', args: [entry.id] })
+                        await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_servers WHERE id=?', args: [entry.id] })
                     } else {
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_attachments WHERE item_id=?', args: [entry.id] })
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_secrets WHERE id=?', args: [entry.id] })
