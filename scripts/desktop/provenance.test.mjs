@@ -12,14 +12,39 @@ test('the actual package entry forces stages, skips stage-only packaging and dis
     const root = await mkdtemp(join(tmpdir(), 'rerun-package-dispatch-'))
     try {
         const report = join(root, 'dispatched.jsonl')
-        const stub = `import { appendFileSync } from 'node:fs'; export {existsSync} from 'node:fs'; export const sha256File=async()=>{throw new Error('Unexpected runner read')}; export const repoRoot='/synthetic'; export const flag=name=>process.argv.includes(name); export const buildId=async()=> 'synthetic'; export const output=async()=> ''; export async function run(command,args,options){appendFileSync(process.env.PROVENANCE_TEST_REPORT,JSON.stringify({command,args,options})+'\\n')}`
+        const stub = `
+            import { appendFileSync } from 'node:fs'
+            export { existsSync } from 'node:fs'
+            export const sha256File = async () => { throw new Error('Unexpected runner read') }
+            export const repoRoot = '/synthetic'
+            export const desktopDir = '/synthetic/apps/desktop'
+            export const flag = name => process.argv.includes(name)
+            export const buildId = async () => 'synthetic'
+            let reads = 0
+            export const output = async (command, args) => {
+                if (command !== 'git' || args[0] !== 'rev-parse') return ''
+                reads++
+                return (reads === Number(process.env.PROVENANCE_CHANGE_AT) ? 'b' : 'a').repeat(40)
+            }
+            export async function run(command, args, options) {
+                appendFileSync(process.env.PROVENANCE_TEST_REPORT, JSON.stringify({ command, args, options }) + '\\n')
+            }`
         const signing = `export async function previewSigningArguments(){return ['-c.mac.identity=offline-fixture']}`
         const mas = `import {appendFileSync} from 'node:fs'; const record=(command,args)=>appendFileSync(process.env.PROVENANCE_TEST_REPORT,JSON.stringify({command,args})+'\\n'); export async function prepareMasDevelopment(){record('prepare-mas',[]);return {signingArgs:['-c.masDev.identity=offline-fixture']}} export async function verifyMasDevelopment(app){record('verify-mas',[app])}`
-        const modules = Object.fromEntries(Object.entries({ 'lib.mjs': stub, 'signing.mjs': signing, 'mas-development.mjs': mas })
+        const install = `
+            import { appendFileSync } from 'node:fs'
+            export const bundleName = 'Rerun Desktop Preview.app'
+            export async function verifyBundle(app, stamp) {
+                appendFileSync(process.env.PROVENANCE_TEST_REPORT,
+                    JSON.stringify({ command: 'verify-bundle', args: [app, stamp] }) + '\\n')
+                if (process.env.PROVENANCE_STALE_RECEIPT) throw new Error('UI receipt does not match ' + stamp.sourceCommit)
+            }`
+        const modules = Object.fromEntries(Object.entries({ 'lib.mjs': stub, 'signing.mjs': signing, 'mas-development.mjs': mas, 'install.mjs': install })
             .map(([file, source]) => [new URL(file, import.meta.url).href, source]))
         const hook = `const modules=${JSON.stringify(modules)}; export async function load(url,context,next){if(Object.hasOwn(modules,url))return {format:'module',shortCircuit:true,source:modules[url]};return next(url,context)}`
         const loader = join(root, 'loader.mjs')
         await writeFile(loader, hook)
+        const packageEntry = fileURLToPath(new URL('./package.mjs', import.meta.url))
         execFileSync(process.execPath, ['--loader', loader, fileURLToPath(new URL('./package.mjs', import.meta.url)), '--stage-only', '--build'], { env: { ...process.env, PROVENANCE_TEST_REPORT: report }, stdio: ['ignore', 'pipe', 'pipe'] })
         const calls = (await readFile(report, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
         assert.equal(calls.length, 10)
@@ -58,9 +83,28 @@ test('the actual package entry forces stages, skips stage-only packaging and dis
                 assert.equal(packaged[signature + 1].args[1], destination)
                 if (masDev) {
                     assert.equal(packaged[0].command, 'prepare-mas')
-                    assert.deepEqual(packaged.at(-1), { command: 'verify-mas', args: [destination] })
+                    assert.deepEqual(packaged.at(-2), { command: 'verify-mas', args: [destination] })
                 }
+                assert.deepEqual(packaged.at(-1), { command: 'verify-bundle', args: [destination, {
+                    protocolVersion: 1, sourceCommit: 'a'.repeat(40), buildId: 'synthetic', arch,
+                }] })
             }
+        }
+        for (const [env, message, builderInvoked] of [
+            [{ PROVENANCE_CHANGE_AT: '2' }, /The source changed during staging/, false],
+            [{ PROVENANCE_CHANGE_AT: '3' }, /The source changed during packaging/, true],
+            [{ PROVENANCE_STALE_RECEIPT: '1' }, /UI receipt does not match/, true],
+        ]) {
+            await writeFile(report, '')
+            assert.throws(() => execFileSync(process.execPath, ['--loader', loader, packageEntry], {
+                env: { ...process.env, PROVENANCE_TEST_REPORT: report, ...env }, stdio: ['ignore', 'pipe', 'pipe'],
+            }), error => {
+                assert.match(String(error.stderr), message)
+                assert.doesNotMatch(String(error.stdout), /package complete/)
+                return true
+            })
+            const calls = (await readFile(report, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+            assert.equal(calls.some(call => call.command === 'npx'), builderInvoked)
         }
     } finally { await rm(root, { recursive: true, force: true }) }
 })
