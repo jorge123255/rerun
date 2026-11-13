@@ -75,9 +75,11 @@ const rendererCrashInterval = 60_000
 const rendererFailureStatus = { state: 'error', messageKey: 'rendererClosed' }
 const changingBoards = new Set()
 const phonePairingWindow = createPhonePairingWindow({ BrowserWindow })
-const quickAsk = createQuickAskWindow({ app, BrowserWindow, screen, showBoard: showMainWindow,
-    language: () => shellLanguage?.forScope('local'), boardScope: () =>
-    boardContext(window) ? { epoch: boards.get(window).epoch, contents: window.webContents } : null,
+const quickAsk = createQuickAskWindow({ app, BrowserWindow, screen, showBoard: revealWorkspaceWindow,
+    language: () => shellLanguage?.forScope('local'), boardScope: candidate => {
+        const context = boardContext(candidate)
+        return context ? { epoch: context.rendererEpoch, contents: candidate.webContents, appearance: boards.get(candidate).appearance } : null
+    },
 })
 const windowFind = createWindowFind({ WebContentsView, scopeOf: candidate => boardContext(candidate)?.rendererEpoch ?? connectedHubs?.scopeOf(candidate),
     language: candidate => shellLanguage?.forScope(connectedHubs?.languageScopeOf(candidate) ?? 'local'),
@@ -200,7 +202,7 @@ function toggleQuickAsk(candidate) {
     }
     if (!focused || focused.isDestroyed() || boardContext(focused) || quickAsk.ownsWindow(focused)) {
         connectedHubs?.resetQuickAsk()
-        quickAsk.toggle()
+        quickAsk.toggle(focused && !focused.isDestroyed() ? focused : window)
     }
 }
 function desktopSettings() {
@@ -535,12 +537,15 @@ async function launch() {
         ipcMain.handle('desktop:quick-ask-send', (event, text) => quickAsk.send(event, text))
         ipcMain.on('desktop:quick-ask-close', event => quickAsk.close(event))
         for (const [channel, action] of [
-            ['desktop:quick-ask-ready', (event, value) => quickAsk.register(event, value, boards.get(window).epoch)],
+            ['desktop:quick-ask-ready', (event, value, board) => quickAsk.register(event, value, board.epoch)],
             ['desktop:quick-ask-unready', quickAsk.unregister],
             ['desktop:quick-ask-ack', quickAsk.acknowledge],
         ]) {
             ipcMain.on(channel, (event, value) => {
-                try { trustedPrimary(event); if (isDesktopPage(event.senderFrame.url)) action(event, value) } catch {}
+                try {
+                    const board = trusted(event)
+                    if (isDesktopPage(event.senderFrame.url)) action(event, value, board)
+                } catch {}
             })
         }
     }
@@ -901,8 +906,8 @@ function createBoardWindow(desktopSession, bounds, { primary = false, showOnRead
     const invalidateRenderer = () => {
         windowFind.close(boardWindow)
         if (!contents.isDestroyed()) boards.invalidate(board)
+        quickAsk.invalidate(contents)
         if (!primary || window !== boardWindow) return
-        quickAsk.invalidate()
         setMacUnread(0)
         clickReady = null
         // Revoke the lease immediately, then drain only this workspace's remote work.

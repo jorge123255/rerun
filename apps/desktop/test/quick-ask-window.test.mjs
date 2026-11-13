@@ -33,23 +33,31 @@ test('Quick Ask is isolated and keeps one prompt identity through refusal and re
     const frame = { send: (channel, payload) => { assert.equal(channel, 'desktop:quick-ask-deliver'); deliveries.push(payload) } }
     const board = { mainFrame: frame }
     const sender = { sender: board, senderFrame: frame }
+    const otherFrame = { send: () => assert.fail('A different board received the prompt') }
+    const other = { mainFrame: otherFrame }
+    const otherSender = { sender: other, senderFrame: otherFrame }
     let epoch = 'first'
-    const quickAsk = createQuickAskWindow({ app: { focus() {} }, BrowserWindow: Window, showBoard: () => { shown++ },
-        boardScope: () => ({ epoch, contents: board }), language: () => language,
+    const quickAsk = createQuickAskWindow({ app: { focus() {} }, BrowserWindow: Window, showBoard: target => { assert.equal(target, board); shown++ },
+        boardScope: target => target === board ? { epoch, contents: board, appearance: 'light' }
+            : { epoch: 'other', contents: other, appearance: 'dark' },
+        language: () => language,
         screen: { getCursorScreenPoint() {}, getDisplayNearestPoint: () => ({ workArea: { x: 0, y: 0, width: 900, height: 600 } }) } })
-    quickAsk.toggle()
+    quickAsk.toggle(board)
     assert.equal(popup, undefined)
     quickAsk.register(sender, { registrationId: '1' }, epoch)
-    quickAsk.toggle()
+    quickAsk.register(otherSender, { registrationId: '1' }, 'other')
+    quickAsk.toggle(board)
     await Promise.resolve()
     assert.equal(popup.visible, true)
-    assert.deepEqual(copies, [shellCopy('fr','quickAsk')])
+    assert.deepEqual(copies, [{ ...shellCopy('fr','quickAsk'), appearance: 'light' }])
     const event = { sender: popup.webContents, senderFrame: popup.webContents.mainFrame }
     assert.equal(await quickAsk.send({ ...event, senderFrame: {} }, 'Foreign frame'), false)
     assert.equal(await quickAsk.send(event, 'x'.repeat(4001)), false)
     const first = quickAsk.send(event, '  Original prompt  ')
     const saved = deliveries[0]
     assert.equal(saved.prompt, 'Original prompt')
+    quickAsk.acknowledge(otherSender, { ...saved, accepted: true })
+    assert.equal(popup.visible, true)
     quickAsk.acknowledge(sender, { ...saved, accepted: false })
     assert.equal(await first, false)
     assert.equal(popup.visible, true)
@@ -61,11 +69,13 @@ test('Quick Ask is isolated and keeps one prompt identity through refusal and re
     assert.equal(shown, 1)
     assert.equal(popup.visible, false)
     language = 'de'
-    quickAsk.toggle()
-    assert.deepEqual(copies.at(-1), shellCopy('de','quickAsk'))
+    quickAsk.toggle(board)
+    assert.deepEqual(copies.at(-1), { ...shellCopy('de','quickAsk'), appearance: 'light' })
     const stale = quickAsk.send(event, 'Unacknowledged prompt')
     epoch = 'second'
-    quickAsk.invalidate()
+    quickAsk.invalidate(other)
+    assert.equal(popup.isDestroyed(), false)
+    quickAsk.invalidate(board)
     assert.equal(await stale, false)
     assert.equal(popup.isDestroyed(), true)
     assert.equal(await quickAsk.send(event, 'Old workspace'), false)

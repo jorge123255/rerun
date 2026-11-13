@@ -1,4 +1,6 @@
 :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+:root[data-appearance="light"] { color-scheme: light; }
+:root[data-appearance="dark"] { color-scheme: dark; }
 * { box-sizing: border-box; }
 body { margin: 0; height: 100dvh; padding: 8px; }
 form { display: flex; flex-direction: column; height: 100%; gap: 8px; padding: 12px; border: 1px solid light-dark(#e4e4e7, #333338); border-radius: 16px; background: light-dark(#fff, #18181b); }

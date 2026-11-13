@@ -19,6 +19,8 @@ window.desktopQuickAsk.onFocus(value => {
     if (value) {
         copy = value
         document.documentElement.lang = copy.locale
+        if (copy.appearance === 'light' || copy.appearance === 'dark') document.documentElement.dataset.appearance = copy.appearance
+        else delete document.documentElement.dataset.appearance
         document.title = copy.title
         prompt.placeholder = copy.placeholder
         prompt.setAttribute('aria-label', copy.placeholder)

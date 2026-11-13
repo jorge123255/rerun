@@ -29,9 +29,10 @@ export function focusQuickAsk({ app, screen, window }) {
 }
 
 export function createQuickAskWindow({ app, BrowserWindow, screen, boardScope, showBoard, language = () => 'en' }) {
-    let surface, ready, pending
+    let surface, pending
+    const registrations = new Map()
     const sameScope = (left, right) => !!left && !!right && left.epoch === right.epoch && left.contents === right.contents
-    const active = entry => !!entry && entry === surface && sameScope(entry.scope, boardScope())
+    const active = entry => !!entry && entry === surface && sameScope(entry.scope, boardScope(entry.board))
     const trusted = event => active(surface) && event.sender === surface.window.webContents
         && event.senderFrame === event.sender.mainFrame && event.senderFrame.url === page.href
     const registration = value => typeof value?.registrationId === 'string' && /^[0-9]{1,16}$/.test(value.registrationId)
@@ -49,6 +50,10 @@ export function createQuickAskWindow({ app, BrowserWindow, screen, boardScope, s
         settle(false)
         if (entry && !entry.window.isDestroyed()) entry.window.destroy()
     }
+    function invalidate(contents) {
+        registrations.delete(contents)
+        if (surface?.scope.contents === contents) reset()
+    }
     function hide(entry) {
         entry.requested = false
         entry.window.hide()
@@ -57,22 +62,24 @@ export function createQuickAskWindow({ app, BrowserWindow, screen, boardScope, s
         if (!active(entry) || !entry.requested || !entry.loaded) return
         entry.shownAt = Date.now()
         focusQuickAsk({ app, screen, window: entry.window })
-        entry.window.webContents.send('desktop:quick-ask-focus', shellCopy(language(), 'quickAsk'))
+        entry.window.webContents.send('desktop:quick-ask-focus', {
+            ...shellCopy(language(), 'quickAsk'), appearance: boardScope(entry.board)?.appearance,
+        })
     }
 
     return {
         ownsWindow: window => !!surface && surface.window === window && active(surface),
-        toggle() {
-            const scope = boardScope()
-            if (!sameScope(scope, ready)) return
-            if (active(surface)) {
+        toggle(board) {
+            if (active(surface) && (surface.board === board || surface.window === board)) {
                 if (surface.requested) hide(surface)
                 else { surface.requested = true; reveal(surface) }
                 return
             }
+            const scope = boardScope(board)
+            if (!scope || !sameScope(scope, registrations.get(scope.contents)) || pending) return
             reset()
             const window = new BrowserWindow(quickAskWindowOptions({ preload, partition: 'rerun-desktop-quick-ask' }))
-            const entry = { window, scope, requested: true, loaded: false, shownAt: 0, attempt: null }
+            const entry = { window, board, scope, requested: true, loaded: false, shownAt: 0, attempt: null }
             surface = entry
             window.setAlwaysOnTop(true, 'floating')
             window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
@@ -88,24 +95,27 @@ export function createQuickAskWindow({ app, BrowserWindow, screen, boardScope, s
             }).catch(() => { if (surface === entry) reset() })
         },
         reset,
-        invalidate() { ready = null; reset() },
+        invalidate,
         register(event, value, epoch) {
             if (!registration(value)) return
-            ready = { contents: event.sender, frame: event.senderFrame, registrationId: value.registrationId, epoch }
+            const previous = registrations.get(event.sender)
+            if (previous && previous.frame === event.senderFrame && previous.registrationId === value.registrationId && previous.epoch === epoch) return
+            if (previous) invalidate(event.sender)
+            registrations.set(event.sender, { contents: event.sender, frame: event.senderFrame, registrationId: value.registrationId, epoch })
         },
         unregister(event, value) {
-            if (!ready || ready.contents !== event.sender || ready.frame !== event.senderFrame || ready.registrationId !== value?.registrationId) return
-            ready = null
-            reset()
+            const ready = registrations.get(event.sender)
+            if (ready && ready.frame === event.senderFrame && ready.registrationId === value?.registrationId) invalidate(event.sender)
         },
         close(event) { if (trusted(event)) hide(surface) },
         async send(event, text) {
-            if (!trusted(event) || !surface.requested || !sameScope(surface.scope, ready) || pending
+            if (!trusted(event) || !surface.requested || pending
                 || typeof text !== 'string' || text.length > 4000 || !text.trim()) return false
             const entry = surface
+            const target = registrations.get(entry.scope.contents)
+            if (!sameScope(entry.scope, target)) return false
             const prompt = text.trim()
             if (entry.attempt?.prompt !== prompt) entry.attempt = { prompt, requestId: randomUUID() }
-            const target = ready
             const { requestId } = entry.attempt
             const accepted = await new Promise(resolve => {
                 pending = { requestId, target, resolve, timer: setTimeout(() => settle(false), 20_000) }
@@ -115,12 +125,13 @@ export function createQuickAskWindow({ app, BrowserWindow, screen, boardScope, s
             if (!accepted || !active(entry)) return false
             entry.attempt = null
             hide(entry)
-            showBoard()
+            showBoard(entry.board)
             return true
         },
         acknowledge(event, value) {
-            if (pending && ready === pending.target && event.sender === ready.contents && event.senderFrame === ready.frame
-                && value?.registrationId === ready.registrationId && value.requestId === pending.requestId && sameScope(ready, boardScope())) {
+            const ready = registrations.get(event.sender)
+            if (pending && ready === pending.target && event.senderFrame === ready.frame
+                && value?.registrationId === ready.registrationId && value.requestId === pending.requestId && active(surface)) {
                 settle(value.accepted === true)
             }
         },
