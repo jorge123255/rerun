@@ -154,13 +154,16 @@ function showWorkspaceWindow() {
     if (quitting) return
     showWindowOnReady = true
     if (deferringStartupWindow) return
-    for (const candidate of [BrowserWindow.getFocusedWindow(), lastWorkspaceWindow]) {
+    const focused = BrowserWindow.getFocusedWindow()
+    if (connectedHubs?.restorePickerOnActivation(focused)) return
+    for (const candidate of [focused, lastWorkspaceWindow]) {
         if (connectedHubs?.focusWindow(candidate)) return
         if (boardContext(candidate)) { revealWorkspaceWindow(candidate); return }
     }
     if (connectedHubs && bootStatus.state === 'choose' && !openingLocalWorkspace && !supervisor) {
         void reopenRememberedHub().then(opened => {
-            if (!opened && !quitting && !openingLocalWorkspace) showMainWindow()
+            if (!opened && !quitting && !openingLocalWorkspace
+                && !connectedHubs.restorePickerOnActivation(BrowserWindow.getFocusedWindow())) showMainWindow()
         })
     } else showMainWindow()
 }

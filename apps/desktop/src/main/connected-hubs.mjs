@@ -651,6 +651,12 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             }
         },
         openPicker,
+        restorePickerOnActivation(focused) {
+            if (!available() || !picker || picker.isDestroyed()) return false
+            if (picker.isMinimized() || !focused) show(picker)
+            else if (focused !== picker) return false
+            return true
+        },
         openCloud: () => connect(RERUN_CLOUD_ORIGIN),
         async reopenRemembered(options) {
             const origin = await savedOrigin()
