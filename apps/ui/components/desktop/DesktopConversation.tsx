@@ -762,8 +762,10 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     const requestBlocked = reconnecting || setupBlocked || !!sessionId && (question !== null || approval !== null || takeover !== null || serviceRequest !== null || secretRequest !== null || mcpSignIn === undefined || !!mcpRequest)
     const canRegenerate = draft.loaded && !draft.error && !draft.quitting && !quickReplyBusy && !requestBlocked && !inactive && !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping && !queue.queued && !queue.pending
     const feedback = useDesktopReplyFeedback(agent.id, sessionId, active)
-    const stopTarget = busy ? liveSessionId : runInFlight ? sessionId : null
-    const stopRunId = busy ? liveRunId : runInFlight ? engineRunning.runId : null
+    // The SDK can still report busy from the previous tab while the visible chat changes.
+    const ownsLiveStop = !!sessionId && liveSessionId === sessionId
+    const stopTarget = (busy ? ownsLiveStop : runInFlight) ? sessionId : null
+    const stopRunId = stopTarget ? (busy ? liveRunId : engineRunning.runId) : null
     const historyError = history.id === sessionId ? history.error : undefined
     const savedFailure = history.id === sessionId ? replayedRunFailure(history.transcript ?? [], history.lastError ?? engineRunning.failedRunError ?? null) : null
     const stopBanner = reconnectNote || savedFailure || (!reconnecting ? error?.message : undefined)
