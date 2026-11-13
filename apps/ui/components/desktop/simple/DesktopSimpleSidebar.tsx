@@ -4,9 +4,10 @@ import { byRecency, coworkerLine, type AgentStatus, type CoworkerLineKey, type C
 import { shortRelativeTime } from '@rerun/i18n/format'
 import { Orb } from '@rerun/ui/foreman'
 import { AgentBuddy, buddyMoodOfStatus } from '@rerun/ui/iso-grid'
-import { Plus, Search, Users } from 'lucide-react'
+import { Ellipsis, PanelRight, Plus, Search, Users } from 'lucide-react'
 import { useMemo, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { TooltipLabeled } from '@/components/ui/tooltip'
 import type { BoardActivityStatus } from '@/lib/desktop/board-activity'
 import type { DesktopCoworkerPreviews } from '@/lib/desktop/coworker-previews'
@@ -25,7 +26,7 @@ function statusOf(status: BoardActivityStatus | undefined): AgentStatus {
  * The left column of the Simple view: the workspace, search, then the Chief of Staff and one tile
  * per coworker, the most recently active first.
  */
-export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenForeman, onSearch, onNewCoworker }: {
+export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenCard, onOpenForeman, onSearch, onNewCoworker }: {
     workspaceMenu: ReactNode
     agents: DesktopAgentView[]
     statuses: Record<string, BoardActivityStatus>
@@ -34,6 +35,7 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
     foremanOpen: boolean
     disabled?: boolean
     onOpenCoworker: (agentId: string) => void
+    onOpenCard?: (agentId: string) => void
     onOpenForeman?: () => void
     onSearch?: () => void
     onNewCoworker: () => void
@@ -85,7 +87,7 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
                                 <span className="min-w-0 flex-1">
                                     <span className="flex items-baseline gap-2">
                                         <span className="min-w-0 flex-1 truncate text-sm font-medium">{agent.name}</span>
-                                        {latest && <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{shortRelativeTime(latest.updatedAt, language.locale)}</span>}
+                                        {latest && <span className={cn('shrink-0 text-[11px] text-muted-foreground tabular-nums', onOpenCard && 'group-focus-within:invisible group-hover:invisible')}>{shortRelativeTime(latest.updatedAt, language.locale)}</span>}
                                     </span>
                                     <span className="flex items-center gap-2">
                                         <span className={cn('min-w-0 flex-1 truncate text-xs', LINE_TONE[line.tone])}>{line.text || ' '}</span>
@@ -93,6 +95,18 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
                                     </span>
                                 </span>
                             </button>
+                            {/* Where the time sits, on hover or focus. */}
+                            {onOpenCard && <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="icon-sm" disabled={disabled} aria-label={t('workspaceView.tile.more', { name: agent.name })}
+                                        className="absolute top-1.5 right-1.5 size-6 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100">
+                                        <Ellipsis className="size-3.5" />
+                                    </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="start" side="right" className="w-auto">
+                                    <DropdownMenuItem onSelect={() => onOpenCard(agent.id)} className="gap-2 whitespace-nowrap"><PanelRight className="size-4" />{t('workspaceView.tile.card')}</DropdownMenuItem>
+                                </DropdownMenuContent>
+                            </DropdownMenu>}
                         </div>
                     </li>
                 })}

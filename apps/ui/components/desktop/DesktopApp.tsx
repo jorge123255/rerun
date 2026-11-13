@@ -942,7 +942,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                         <DesktopSimpleSidebar workspaceMenu={workspaceMenu} agents={agents} statuses={boardActivity.statuses} previews={coworkerPreviews}
                             selectedId={panelOpen ? selectedAgentId : null} foremanOpen={foremanEngaged && foremanOpen && !panelOpen}
                             disabled={creationNavigationBlocked || workspaceDialogActive || quitting}
-                            onOpenCoworker={id => selectCoworker(id)} onNewCoworker={() => showBoard(true)}
+                            onOpenCoworker={id => selectCoworker(id)} onOpenCard={openBoardCoworkerSettings} onNewCoworker={() => showBoard(true)}
                             onOpenForeman={controlCenterDisabled ? undefined : () => { setRequestedPanel(null); setPanelOpen(false); engageForeman() }}
                             onSearch={() => { if (!creationAdmission.current.blocked && !controlCenterDisabled) setControlCenterOpen(true) }} />
                     </div>
