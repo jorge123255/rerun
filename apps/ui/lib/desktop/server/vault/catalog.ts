@@ -11,13 +11,13 @@ function compileConnection(manifest: ReturnType<typeof getDesktopServiceManifest
     if (selected?.kind === 'oauth') {
         if (Object.keys(values).length) throw new Error('Browser sign-in does not accept credentials here')
         const plan = compileCatalogOAuth(manifest, methodId)
-        return parseConnection({ name: oauthAccountServerName(plan, instanceId), url: plan.endpoint, bearer: '', browserSignIn: true }, manifest.name)
+        return { ...parseConnection({ name: oauthAccountServerName(plan, instanceId), url: plan.endpoint, bearer: '', browserSignIn: true }, manifest.name), skills: plan.skills }
     }
     const { plan, headers, bearer } = compileAccountService(manifest, methodId, values, { id: methodId, supported: true }, { label: manifest.name, instanceId })
     const names = Object.keys(headers)
     if (names.length > 1) throw new Error('This app needs more than one authentication header')
     const header = !bearer && names.length ? { name: names[0], value: headers[names[0]] } : undefined
-    return parseConnection({ name: plan.serverName, url: oauthHttps(plan.url).href, bearer, header }, manifest.name)
+    return { ...parseConnection({ name: plan.serverName, url: oauthHttps(plan.url).href, bearer, header }, manifest.name), skills: plan.skills }
 }
 
 function parseConnection(fields: object, displayName: string) {
@@ -59,4 +59,12 @@ export function compileVaultCatalogApp(slug: string, methodId: string, values: R
 
 export function vaultCatalogAllowsInstances(slug: string) {
     return getDesktopServiceManifest(slug).manifest.multiInstance
+}
+
+export function vaultCatalogSkills(slug: string, methodId: string) {
+    const catalog = getDesktopServiceManifest(slug)
+    const method = vaultCatalogMethods(catalog).find(item => item.id === methodId)
+    if (!method) throw new Error('Unsupported catalog method')
+    const fields = Object.fromEntries(method.inputs.filter(input => input.required).map(input => [input.key, 'catalog-eligibility-fixture']))
+    return compileConnection(catalog.manifest, methodId, fields).skills
 }

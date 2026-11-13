@@ -27,7 +27,7 @@ import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { withRosterWrite } from './roster-writes'
 import { findDesktopAgent } from './store'
-import { bindDesktopServiceSkillOwners } from './service-skills/authority'
+import { bindDesktopServiceSkillOwners, syncDesktopVaultSkills } from './service-skills/authority'
 
 // Folder and bundled-file mutations share `skill-publication.ts` with the desktop skill tools.
 // The roster lock only orders this process. It is not what keeps the engine, or any other
@@ -98,6 +98,8 @@ async function skillDirectoryExists(path: string): Promise<boolean> {
 }
 
 export async function readSkillBundledFile(runtime: DesktopRuntime, agentId: string, slug: string, path: string): Promise<{ content: string; truncated: boolean; identity: string } | null> {
+    const { engineAgentId } = await assertCoworkerSkillIdentity(runtime, agentId)
+    if (slug.startsWith('svc-') && (await syncDesktopVaultSkills(runtime, engineAgentId, AbortSignal.timeout(10000))).has(slug)) return null
     return withSkillStore(runtime, agentId, async skillsRoot => {
         const root = skillDirectory(skillsRoot, slug)
         if (!await skillDirectoryExists(root)) return null
@@ -106,7 +108,7 @@ export async function readSkillBundledFile(runtime: DesktopRuntime, agentId: str
             if (error instanceof SkillBoundaryError && error.status === 404) return null
             rethrow(error)
         }
-    })
+    }, engineAgentId)
 }
 
 export async function writeSkillBundledFile(
@@ -151,15 +153,20 @@ export async function replaceCoworkerSkillManifest(runtime: DesktopRuntime, agen
 }
 
 export async function readCoworkerSkillFolder(runtime: DesktopRuntime, agentId: string, slug: string): Promise<PublishedSkill | null> {
-    return withSkillStore(runtime, agentId, skillsRoot => guard(() => readPublishedSkill(skillsRoot, slug)))
+    const { engineAgentId } = await assertCoworkerSkillIdentity(runtime, agentId)
+    const hidden = await syncDesktopVaultSkills(runtime, engineAgentId, AbortSignal.timeout(10000))
+    if (hidden.has(slug)) return null
+    return withSkillStore(runtime, agentId, skillsRoot => guard(() => readPublishedSkill(skillsRoot, slug)), engineAgentId)
 }
 
 export async function listCoworkerSkillFolders(runtime: DesktopRuntime, agentId: string): Promise<(PublishedSkill & { fromConnector: boolean })[]> {
+    const { engineAgentId } = await assertCoworkerSkillIdentity(runtime, agentId)
+    const hidden = await syncDesktopVaultSkills(runtime, engineAgentId, AbortSignal.timeout(10000))
     return withSkillStore(runtime, agentId, async skillsRoot => {
         const [skills, registry] = await Promise.all([guard(() => listPublishedSkills(skillsRoot)), readSkillOwnersRegistry(runtime, agentId)])
         const owned = new Set(Object.values(registry.services).flatMap(service => service.skills))
-        return skills.map(skill => ({ ...skill, fromConnector: owned.has(skill.slug) }))
-    })
+        return skills.filter(skill => !hidden.has(skill.slug)).map(skill => ({ ...skill, fromConnector: owned.has(skill.slug) }))
+    }, engineAgentId)
 }
 
 export async function deleteCoworkerSkillFolder(runtime: DesktopRuntime, agentId: string, slug: string, beforeCommit?: () => Promise<void>): Promise<void> {

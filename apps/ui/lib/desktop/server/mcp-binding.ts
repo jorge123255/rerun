@@ -14,7 +14,7 @@ import { z } from 'zod'
 import { createDesktopSelfMcpBinding } from './self-mcp/binding'
 import { desktopRerunToolCatalog, desktopCodexToolCatalog } from '@rerun/contracts'
 import { serviceStore } from './services/store'
-import { bindDesktopServiceSkillOwners, desktopServiceSkillRestartScope } from './service-skills/authority'
+import { bindDesktopServiceSkillOwners, desktopServiceSkillRestartScope, syncDesktopVaultSkillsForOwner } from './service-skills/authority'
 import { localServiceLifecycle, type ServiceAuthority } from './services/lifecycle'
 import { serviceApi } from './services/api'
 import { serviceEngineBridge } from './services/bridge'
@@ -214,9 +214,13 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     const servicesBridge = serviceEngineBridge(installedServices, services, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'services')
         return (await historicalOwner(identity, signal)).owner.id
-    }, (owner, identity, signal) => serviceTransports.releaseRun(owner, identity, signal), (owner, identity, signal) => vaultCatalog.tools(owner, signal, async active => {
-        if (await authorizeRun(identity, active, 'services') !== owner) throw new Error('Service run owner changed')
-    }))
+    }, (owner, identity, signal) => serviceTransports.releaseRun(owner, identity, signal), async (owner, identity, signal) => {
+        const active = AbortSignal.any([signal, entry.shutdown.signal])
+        await syncDesktopVaultSkillsForOwner(runtime, owner, active)
+        return vaultCatalog.tools(owner, active, async stop => {
+            if (await authorizeRun(identity, stop, 'services') !== owner) throw new Error('Service run owner changed')
+        })
+    })
     const accounts = await canonicalServiceAccounts(runtime, installedServices, services, masterKey, {
         additionalTransport: (record, run, signal) => serviceTransports?.service(record, run, signal),
         oauthCredential: (record, run, signal) => serviceOAuth.credentialFor(record, run, signal),
