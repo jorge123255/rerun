@@ -90,7 +90,15 @@ export function createMacPhonePairingService({
         const devices = deviceStore.devices.filter(device => device.status !== DEVICE_STATUS.pending
             || (device.workspaceId === selectedWorkspaceId && transport?.inScope(device)
                 && at - Date.parse(device.createdAt) < CREDENTIAL_CLAIM_TTL_MS))
-            .map(device => ({ ...publicDevice(device), workspaceName: workspaceNames.get(device.workspaceId) ?? null }))
+            .map(device => ({
+                ...publicDevice(device),
+                workspaceName: workspaceNames.get(device.workspaceId) ?? null,
+                ...(device.status === DEVICE_STATUS.approved && {
+                    // Older records lack a collection marker. Keep their credentials usable.
+                    pairingState: device.credentialIssued !== false ? 'paired'
+                        : transport?.canClaim(device) ? 'awaiting_phone' : 'incomplete',
+                }),
+            }))
         const address = transport?.address() ?? null
         return {
             phoneAccessEnabled: current.phoneAccessEnabled,
@@ -161,7 +169,8 @@ export function createMacPhonePairingService({
             const record = await store()
             const device = record.devices.find(entry => entry.deviceId === deviceId)
             if (!device || device.status !== DEVICE_STATUS.approved || !device.certificateFingerprint) throw refusal(ERRORS.not_found)
-            if (enabled && (!transport?.inScope(device) || !transport.address() || getRuntime()?.workspaceId !== device.workspaceId)) {
+            if (enabled && (device.credentialIssued === false || !transport?.inScope(device)
+                || !transport.address() || getRuntime()?.workspaceId !== device.workspaceId)) {
                 throw refusal(ERRORS.workspace_not_active)
             }
             device.sendMessages = enabled === true

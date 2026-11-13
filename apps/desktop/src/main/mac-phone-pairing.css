@@ -21,4 +21,5 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--auth-car
 ul { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 8px; }
 li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: center; }
 .pending-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.pairing-detail { display: block; }
 .error { color: light-dark(#b70013, #ff9294); margin: 0; }

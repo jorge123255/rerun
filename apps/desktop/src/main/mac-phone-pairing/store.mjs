@@ -87,6 +87,7 @@ function validateStore(value, installId) {
             || (device.name !== null && (typeof device.name !== 'string' || device.name.length > 80))
             || (device.credentialHash !== null && !HASH.test(device.credentialHash))
             || (device.requestTokenHash !== null && !HASH.test(device.requestTokenHash))
+            || (device.credentialIssued !== undefined && typeof device.credentialIssued !== 'boolean')
             || (device.certificateFingerprint !== undefined && !HASH.test(device.certificateFingerprint))
             || (device.sendMessages !== undefined && (typeof device.sendMessages !== 'boolean' || (device.sendMessages && !device.certificateFingerprint)))
             || !Object.values(DEVICE_STATUS).includes(device.status)

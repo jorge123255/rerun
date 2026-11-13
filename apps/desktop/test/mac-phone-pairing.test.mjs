@@ -192,6 +192,29 @@ test('declining a pending request persists and cannot revoke an already approved
     assert.equal((await reopened.status()).devices.find(device => device.deviceId === approved.deviceId).status, 'approved')
 })
 
+test('the Mac distinguishes approval from credential collection, including after restart', async t => {
+    const root = await dataRoot(t)
+    const { service } = createService(t, root)
+    await service.setPhoneAccessEnabled(true)
+    const { pending: paired } = await pairedClient(service)
+    const otherPhone = createMacPairingClient({ storage: createMemoryStorage() })
+    const waiting = await otherPhone.connectToThisMac(await service.createOffer(1))
+    await service.approveDevice(waiting.deviceId)
+    const state = async (service, id) => (await service.status()).devices.find(device => device.deviceId === id).pairingState
+    assert.equal(await state(service, waiting.deviceId), 'awaiting_phone')
+    assert.equal(await state(service, paired.deviceId), 'paired')
+    await service.stop()
+    const reopened = createService(t, root).service
+    await reopened.restore()
+    assert.equal(await state(reopened, waiting.deviceId), 'incomplete')
+    assert.equal(await state(reopened, paired.deviceId), 'paired')
+    assert.deepEqual(await otherPhone.waitForApproval(), { status: 'revoked' })
+    const retry = await otherPhone.connectToThisMac(await reopened.createOffer(1))
+    await reopened.approveDevice(retry.deviceId)
+    assert.equal((await otherPhone.waitForApproval()).status, 'approved')
+    assert.equal(await state(reopened, retry.deviceId), 'paired')
+})
+
 test('expired approval requests stop appearing in the Mac pairing status', async t => {
     const root = await dataRoot(t)
     const { service, time } = createService(t, root)

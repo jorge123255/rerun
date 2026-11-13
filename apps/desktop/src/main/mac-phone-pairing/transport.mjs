@@ -104,6 +104,10 @@ export function createPairingTransport({
     let closing = false
     const certificateFingerprint = tls?.certificateFingerprint
     const inScope = device => device.certificateFingerprint === certificateFingerprint
+    function activeClaim(deviceId) {
+        const claim = claims.get(deviceId)
+        return claim && claim.expiresAt > now() && claim.runtime === getRuntime() ? claim : null
+    }
 
     function address() {
         const value = server.address()
@@ -122,7 +126,7 @@ export function createPairingTransport({
         if (!presented || !(await enabled())) return null
         const store = await getStore()
         return store.devices.find(device => inScope(device) && device.status === DEVICE_STATUS.approved
-            && hashesEqual(device.credentialHash, presented)) ?? null
+            && device.credentialIssued !== false && hashesEqual(device.credentialHash, presented)) ?? null
     }
 
     async function workspaceFor(device, requested, current) {
@@ -164,14 +168,22 @@ export function createPairingTransport({
         const store = await getStore()
         const device = store.devices.find(entry => entry.deviceId === body.deviceId)
         if (!device || !inScope(device) || !hashesEqual(device.requestTokenHash, presented)) return fail(response, ERRORS.unauthorized)
-        const claim = claims.get(device.deviceId)
         if (device.status === DEVICE_STATUS.revoked || (device.status === DEVICE_STATUS.pending
             && now() - Date.parse(device.createdAt) >= CREDENTIAL_CLAIM_TTL_MS)) {
             return send(response, 200, { status: DEVICE_STATUS.revoked })
         }
         const common = { status: device.status, deviceId: device.deviceId, workspaceId: device.workspaceId }
         if (device.status === DEVICE_STATUS.pending) return send(response, 200, common)
-        if (!claim || claim.expiresAt <= now() || claim.runtime !== getRuntime()) {
+        const claim = activeClaim(device.deviceId)
+        if (!claim) {
+            claims.delete(device.deviceId)
+            return send(response, 200, { status: DEVICE_STATUS.revoked })
+        }
+        device.credentialIssued = true
+        await saveStore(store)
+        if (!activeClaim(device.deviceId)) {
+            device.credentialIssued = false
+            await saveStore(store)
             claims.delete(device.deviceId)
             return send(response, 200, { status: DEVICE_STATUS.revoked })
         }
@@ -287,6 +299,7 @@ export function createPairingTransport({
 
     return {
         address, certificateFingerprint, inScope,
+        canClaim: device => inScope(device) && Boolean(activeClaim(device.deviceId)),
         async listen() {
             if (!tls && host !== LOOPBACK_HOST) throw Object.assign(new Error(ERRORS.lan_off), { code: ERRORS.lan_off })
             await new Promise((resolve, reject) => {
@@ -315,6 +328,7 @@ export function createPairingTransport({
             const credential = randomSecret()
             device.credentialHash = hashSecret(credential)
             device.status = DEVICE_STATUS.approved
+            device.credentialIssued = false
             device.approvedAt = new Date(at).toISOString()
             await saveStore(store)
             for (const [id, claim] of claims) if (claim.expiresAt <= at) claims.delete(id)

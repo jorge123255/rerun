@@ -14,6 +14,8 @@ const origin = document.getElementById('origin')
 const error = document.getElementById('error')
 const pending = document.getElementById('pending')
 const pendingList = document.getElementById('pending-list')
+const unfinished = document.getElementById('unfinished')
+const unfinishedList = document.getElementById('unfinished-list')
 const approved = document.getElementById('approved')
 const approvedList = document.getElementById('approved-list')
 let displayedOffer = null
@@ -100,8 +102,11 @@ async function refresh() {
     if (devices === renderedDevices) return
     renderedDevices = devices
     const waiting = status.devices.filter(device => device.status === 'pending')
-    const paired = status.devices.filter(device => device.status === 'approved')
+    const approvedDevices = status.devices.filter(device => device.status === 'approved')
+    const incomplete = approvedDevices.filter(device => device.pairingState !== 'paired')
+    const paired = approvedDevices.filter(device => device.pairingState === 'paired')
     pending.hidden = waiting.length === 0
+    unfinished.hidden = incomplete.length === 0
     approved.hidden = paired.length === 0
     pendingList.replaceChildren(...waiting.map(device => {
         const item = row(device, copy.approve, async id => {
@@ -122,11 +127,20 @@ async function refresh() {
         item.append(actions)
         return item
     }))
+    async function revoke(id) {
+        try { await window.desktopApp.phonePairing.revoke(id); showError(''); await refresh() }
+        catch { showError('revokeFailed') }
+    }
+    unfinishedList.replaceChildren(...incomplete.map(device => {
+        const item = row(device, copy.revoke, revoke)
+        const detail = document.createElement('small')
+        detail.className = 'footnote pairing-detail'
+        detail.textContent = device.pairingState === 'awaiting_phone' ? copy.awaitingPhone : copy.pairAgain
+        item.firstElementChild.append(detail)
+        return item
+    }))
     approvedList.replaceChildren(...paired.map(device => {
-        const item = row(device, copy.revoke, async id => {
-            try { await window.desktopApp.phonePairing.revoke(id); showError(''); await refresh() }
-            catch { showError('revokeFailed') }
-        })
+        const item = row(device, copy.revoke, revoke)
         if (device.network !== 'lan') return item
         const label = document.createElement('label')
         label.className = 'toggle'
