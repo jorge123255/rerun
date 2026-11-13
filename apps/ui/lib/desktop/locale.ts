@@ -359,6 +359,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         send: source.chat.composer.editor.send,
         stop: source.chat.promptInput.stop,
         stoppingRun: source.chat.queued.stopping,
+        queuedMessage: source.chat.queued,
         chatActivity: source.chat.activity,
         chatSteps: source.chat.steps,
         chatRequestCue: source.chat.hitlCue,

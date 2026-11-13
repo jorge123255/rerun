@@ -4,8 +4,11 @@ import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { UIMessage } from 'ai'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
 import type { DesktopQueuedMessage } from '@/lib/desktop/queued-message'
 import { DesktopConversation, type ComposerDraft } from './DesktopConversation'
+import { DesktopLocale } from './DesktopLocale'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const chat = vi.hoisted(() => ({ messages: [] as UIMessage[], status: 'ready', error: undefined as Error | undefined, sendMessage: vi.fn(), stop: vi.fn(), setMessages: vi.fn(), clearError: vi.fn() }))
@@ -62,7 +65,10 @@ beforeEach(() => {
     container = document.createElement('div'); document.body.append(container); root = createRoot(container)
 })
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals() })
-const render = (sessionId = 'one', initialDraft?: ComposerDraft) => act(async () => { root.render(<DesktopConversation agent={agent} sessionId={sessionId} sessions={[]} initialDraft={initialDraft} onChatSession={() => {}} onSelectSession={() => {}} />) })
+const render = (sessionId = 'one', initialDraft?: ComposerDraft, language?: DesktopLanguage) => act(async () => {
+    const conversation = <DesktopConversation agent={agent} sessionId={sessionId} sessions={[]} initialDraft={initialDraft} onChatSession={() => {}} onSelectSession={() => {}} />
+    root.render(language ? <DesktopLocale initial={language}>{conversation}</DesktopLocale> : conversation)
+})
 const button = (label: string) => [...container.querySelectorAll('button')].find(el => el.getAttribute('aria-label') === label || el.textContent?.trim() === label)!
 const click = (label: string) => act(async () => { button(label).click() })
 const type = (text: string) => act(async () => {
@@ -71,6 +77,20 @@ const type = (text: string) => act(async () => {
     el.dispatchEvent(new Event('input', { bubbles: true }))
 })
 async function finishRun() { chat.status = 'streaming'; await render(); running = false; chat.status = 'ready'; await render() }
+
+test('queued chat uses the workspace language for its badge and action labels', async () => {
+    const source = await loadMessages('fr')
+    const language: DesktopLanguage = { preference: 'fr', locale: 'fr', messages: desktopMessages('fr', source) }
+    await render('one', undefined, language)
+    await type('Suivi après cette réponse')
+    await click(source.chat.composer.editor.send)
+    const send = button(source.chat.queued.sendNowLabel)
+    expect(send).toBeTruthy()
+    expect(send.closest('.grid')?.textContent).toContain(source.chat.queued.badge)
+    await click(source.chat.queued.removeLabel)
+    expect(saved.has('one')).toBe(false)
+    expect(sent).toHaveLength(0)
+})
 
 test('busy Send saves the attachment and exact chat, then flushes once using its stored UUID', async () => {
     await render('one', { text: '', attachment: 'notes.md' })
