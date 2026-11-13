@@ -174,7 +174,7 @@ Upstream `dev` at `27a80049bedfedb86cf24c00ce7776df93ed798f` includes the worksp
 
 - [ ] Upstream `ed8b4f54` adds paid app accounts to the Vault. Preserve individual account assignment, billing ownership, and the restriction on sharing paid slots with every coworker. [Upstream #185](https://github.com/rerun-build/rerun/pull/185)
 
-- [ ] Upstream `e48f8f94` offers an existing Vault account when a coworker suggests an app. The Mac card needs to validate account health and authority, attach the exact selected entry, and resume only after the assignment is confirmed. [Upstream #186](https://github.com/rerun-build/rerun/pull/186)
+- [x] Reuse an existing Vault account when a coworker suggests an app. On Mac arm64 at `599ababd`, a seeded Linear suggestion offered two checked accounts and omitted a signed-out one. The board attached only Support Linear, resumed exactly once with a loopback model, and retained the reply and assignment after cold restart. Fixtures verify revision, grant and health checks and rollback if Finish fails. Live app execution and Vault-first creation from the card's New account button remain open. [Upstream #186](https://github.com/rerun-build/rerun/pull/186)
 
 - [ ] Upstream `9d9f5849` includes Vault app requirements in sanitized coworker archives and keeps compatible Vault assignments on same-workspace duplicates. Review the Mac duplicate grant and credential policy before porting the attachment behavior. Portable archives must exclude credentials and workspace Vault identifiers. [Upstream #187](https://github.com/rerun-build/rerun/pull/187) · [Upstream Vault routes #188](https://github.com/rerun-build/rerun/pull/188)
 
