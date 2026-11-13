@@ -4,6 +4,7 @@ import { PauseIcon, Play } from '@/lib/icons'
 import { formatVoiceDuration } from '@/lib/voice/duration'
 import { PEAK_COUNT } from '@rerun/contracts'
 import { Spinner } from '@/components/ui/spinner'
+import { Button } from '@/components/ui/button'
 import type { DesktopVoiceDraft, DesktopVoiceScope } from '@rerun/contracts'
 import type { DesktopVoiceRecordingTake } from '@/lib/desktop/voice/useDesktopVoiceRecorder'
 import { useDesktopVoicePlayback } from '@/lib/desktop/voice/useDesktopVoicePlayback'
@@ -11,12 +12,13 @@ import { desktopVoiceAudioReference } from '@/lib/desktop/voice/voice'
 import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopVoiceSeek } from './DesktopVoiceWaveform'
 
-export function DesktopVoiceReview({ scope, take, draft, error, active }: {
+export function DesktopVoiceReview({ scope, take, draft, error, active, onOpenTranscriptionSettings }: {
     scope: DesktopVoiceScope
     take: DesktopVoiceRecordingTake | null
     draft: DesktopVoiceDraft | null
     error: string | null
     active: boolean
+    onOpenTranscriptionSettings?: () => void
 }) {
     const { t } = useDesktopLocale()
     const durationMs = take?.durationMs ?? draft?.recording.durationMs ?? 0
@@ -40,5 +42,9 @@ export function DesktopVoiceReview({ scope, take, draft, error, active }: {
         {take?.limited && <p role="alert" className="text-xs text-amber-500">Recording reached the 2 MB limit. This bounded take is ready for review.</p>}
         {draft?.transcript && <div className="max-h-40 overflow-y-auto rounded-md bg-muted/40 px-2.5 py-2 text-xs whitespace-pre-wrap break-words text-foreground/80"><span className="mb-1 block font-medium text-muted-foreground">{t('voiceTranscript')}</span>{draft.transcript}</div>}
         {(error || playback.error) && <p role="alert" className="text-xs text-destructive">{error ?? playback.error}</p>}
+        {active && draft?.phase === 'unavailable' && onOpenTranscriptionSettings &&
+            <Button type="button" size="sm" variant="outline" className="self-start" onClick={onOpenTranscriptionSettings}>
+                {t('setUpTranscription')}
+            </Button>}
     </div>
 }

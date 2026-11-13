@@ -5,6 +5,9 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { DesktopVoiceDraft } from '@rerun/contracts'
 import { desktopVoiceAudioReference } from '@/lib/desktop/voice/voice'
 import { DesktopVoiceReview } from './DesktopVoiceReview'
+import { DesktopLocale } from '../DesktopLocale'
+import { desktopMessages } from '@/lib/desktop/locale'
+import { loadMessages } from '@rerun/i18n/messages'
 
 const original = { agentId: 'owner', tabUid: 'original-tab' }
 const current = { ...original, sessionId: 'bound-session' }
@@ -68,4 +71,32 @@ it.each([false, true])('uses the original recording reference and releases it wh
     await render(true)
     expect(button.disabled).toBe(false)
     expect(fetcher).toHaveBeenCalledTimes(1)
+})
+
+it('offers localized setup only for an active draft that needs transcription configuration', async () => {
+    const onSetup = vi.fn()
+    const onSubmit = vi.fn((event: React.FormEvent) => event.preventDefault())
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    const language = { preference: 'fr', locale: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) } as const
+    const host = document.body.appendChild(document.createElement('div'))
+    root = createRoot(host)
+    const render = (phase: DesktopVoiceDraft['phase'], active: boolean) => act(async () => root!.render(
+        <DesktopLocale initial={language}><form onSubmit={onSubmit}>
+            <DesktopVoiceReview scope={current} draft={{ ...draft, phase }} take={null} error="Test message" active={active}
+                onOpenTranscriptionSettings={onSetup} />
+        </form></DesktopLocale>,
+    ))
+    const setup = () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Configurer la transcription')
+    await render('failed', true)
+    expect(setup()).toBeUndefined()
+    await render('unavailable', false)
+    expect(setup()).toBeUndefined()
+    await render('unavailable', true)
+    const button = setup()
+    expect(button?.type).toBe('button')
+    await act(async () => button!.click())
+    expect(onSetup).toHaveBeenCalledOnce()
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(fetcher).not.toHaveBeenCalled()
 })

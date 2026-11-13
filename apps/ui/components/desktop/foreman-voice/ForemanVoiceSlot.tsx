@@ -28,7 +28,7 @@ export function ForemanVoiceSlot({ voice, onOpenTranscriptionSettings }: Foreman
                     : busy ? <TextShimmer className="truncate text-sm">{view.phase === 'restoring' ? 'Restoring recording…' : view.phase === 'starting' ? 'Opening microphone…' : view.phase === 'saving' ? 'Saving recording…' : 'Sending…'}</TextShimmer> : null}
         {view.pending && <Review voice={voice} />}
         {view.error && <p role="alert" className="break-words text-xs text-destructive">{view.error}</p>}
-        {view.snapshot?.setup === 'transcription' && <Button type="button" size="sm" variant="outline" onClick={onOpenTranscriptionSettings}>Set up transcription</Button>}
+        {view.snapshot?.setup === 'transcription' && <Button type="button" size="sm" variant="outline" onClick={onOpenTranscriptionSettings}>{t('setUpTranscription')}</Button>}
         <div className="flex flex-wrap gap-2">
             {['idle', 'starting', 'listening'].includes(view.phase) && <Button type="button" size="sm" variant="ghost" disabled={!view.restored || !voice.active}
                 onPointerDown={event => {

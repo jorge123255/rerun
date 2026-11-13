@@ -211,7 +211,7 @@ function scheduledRunOf(message: UIMessage) {
     return parseScheduledRun(prompt)
 }
 
-export function DesktopConversation({ agent, workspaceId, sessionId, sessions, pendingChatSummaries, tabUid, active = true, arrival, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, onHistoryVisibility, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: {
+export function DesktopConversation({ agent, workspaceId, sessionId, sessions, pendingChatSummaries, tabUid, active = true, arrival, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, onHistoryVisibility, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, onOpenTranscriptionSettings, overview }: {
     agent: DesktopAgentView
     workspaceId?: number | null
     sessionId: string | null
@@ -237,6 +237,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     modelLabel?: string
     connections?: ConnectionSummary[]
     onOpenModelSettings?: () => void
+    onOpenTranscriptionSettings?: () => void
     overview?: DesktopConversationOverviewAuthority
 }) {
     const { language, t } = useDesktopLocale()
@@ -1825,7 +1826,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                                 reviewTarget={voiceReviewTarget} modelChoice={!sessionId && conversationChoice.current?.session === null ? conversationChoice.current.pick : undefined}
                                 active={active && !draft.quitting && !cardOpen && !detailPanel && !chatsOpen} besideSend
                                 disabled={generating || stopping || inactive || !ready || !modelReady || requestBlocked || !!pendingRequest || !!queue.queued || queue.pending || uploadsActive || preparingSend || !draft.loaded}
-                                onActivity={setVoiceActivity} onSent={voiceSent} />}
+                                onActivity={setVoiceActivity} onSent={voiceSent} onOpenTranscriptionSettings={onOpenTranscriptionSettings} />}
                             {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget || !stopRunId} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">{t('stop')}</span></Button>}
                             <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={voiceActivity.busy || !draft.loaded || !uploadsLoaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || inactive || (!input.trim() && !attachmentPaths.length && !documents.attachments.length) || stopping || !ready || !queue.loaded || queue.pending || !!queue.error || uploadsActive || blockedUploads.length > 0 || preparingSend}>
                                 <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">{t('send')}</span>

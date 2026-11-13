@@ -37,6 +37,7 @@ type Props = {
     onOpenCoworkerChat?: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel: () => void
     onOpenModelSettings: () => void
+    onOpenTranscriptionSettings?: () => void
     modelLabel?: string
     connections?: ConnectionSummary[]
     overview?: DesktopConversationOverviewAuthority
@@ -56,7 +57,7 @@ function initialTabs(agentId: string, layout: DesktopTabLayout | null, sessions:
     return id && session ? openSessionTab(pinned, id, session.title) : pinned
 }
 
-export function DesktopChatTabs({ agent, workspaceId, sessions, pendingChatSummaries, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, refreshThreads, reload, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: Props) {
+export function DesktopChatTabs({ agent, workspaceId, sessions, pendingChatSummaries, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, refreshThreads, reload, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, onOpenTranscriptionSettings, overview }: Props) {
     const { t } = useDesktopLocale()
     const [layout, setLayout] = useState(() => initialTabs(agent.id, initialLayout, sessions, requested))
     const [rejectedRequest, setRejectedRequest] = useState<DesktopChatRequest | null>(() => {
@@ -375,7 +376,7 @@ export function DesktopChatTabs({ agent, workspaceId, sessions, pendingChatSumma
                         }}
                         onChatSession={(id, sourceDraft) => bindSession(tab.uid, id, sourceDraft)}
                         onOpenCoworkerChat={onOpenCoworkerChat}
-                        modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
+                        modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onOpenTranscriptionSettings={onOpenTranscriptionSettings} onClosePanel={onClosePanel}
                         onHistoryVisibility={trackHistory}
                         renderHistory={(_busy, control) => <DesktopChatHistory control={control} agentId={agent.id} pendingChatSummaries={pendingChatSummaries}
                             sessions={sessions} verifiedRunStatus={history?.uid === tab.uid && history.verified}
