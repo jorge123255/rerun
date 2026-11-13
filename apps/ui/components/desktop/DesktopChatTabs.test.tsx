@@ -160,6 +160,7 @@ test('keeps an unaccepted first send open, then allows its bound running tab to 
     let finish!: () => void
     let stopRequests = 0
     let sent: unknown
+    const workspaceModel = { connectionId: 'fixture-openai', provider: 'openai', name: 'Fixture OpenAI', model: 'fixture-model', label: 'Fixture model' }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
         const draftResponse = drafts.handle(input, options)
         if (draftResponse) return draftResponse
@@ -171,7 +172,7 @@ test('keeps an unaccepted first send open, then allows its bound running tab to 
         if (url.endsWith('/chat')) { sent = JSON.parse(String(options?.body)); return new Promise<Response>(r => { accept = r }) }
         if (url.endsWith('/messages')) return Response.json({ messages: [] })
         if (url.endsWith('/stop')) { if (options?.method === 'POST') stopRequests++; return Response.json({ running: false }) }
-        if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
+        if (url.includes('/model')) return Response.json({ catalog: [], workspace: workspaceModel, coworker: null, conversation: null, effective: { source: 'workspace', ...workspaceModel, available: true } })
         const background = desktopBackgroundRead(input, options); if (background) return background
         throw Error('Unexpected request: ' + url)
     }))

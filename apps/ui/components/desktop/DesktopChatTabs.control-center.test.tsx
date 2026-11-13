@@ -39,6 +39,7 @@ function fixture(initialLayout: DesktopTabLayout) {
     const chatRequests: unknown[] = []
     const stopRequests: string[] = []
     let chat: (() => Response) | undefined
+    const workspaceModel = { connectionId: 'fixture-openai', provider: 'openai', name: 'Fixture OpenAI', model: 'fixture-model', label: 'Fixture model' }
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), 'http://127.0.0.1')
         const method = init?.method ?? 'GET'
@@ -66,8 +67,8 @@ function fixture(initialLayout: DesktopTabLayout) {
             if (method === 'POST') stopRequests.push(url.pathname)
             return Response.json({ running: false })
         }
-        if (url.pathname.endsWith('/model') && method === 'GET') return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null,
-            effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
+        if (url.pathname.endsWith('/model') && method === 'GET') return Response.json({ catalog: [], workspace: chat ? workspaceModel : null, coworker: null, conversation: null,
+            effective: chat ? { source: 'workspace', ...workspaceModel, available: true } : { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
         if (url.pathname === '/api/desktop/chat' && method === 'POST' && chat) {
             chatRequests.push(JSON.parse(String(init?.body)))
             return chat()
