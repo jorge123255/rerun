@@ -2,6 +2,9 @@
 import { act, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages } from '@/lib/desktop/locale'
+import { DesktopLocale } from '../DesktopLocale'
 vi.mock('@/lib/desktop/use-schedule-tool-notices', () => ({ useDesktopScheduleToolNotices: () => null }))
 vi.mock('@/components/ui/panel-steps', () => ({ PanelSteps: ({ children }: { children: ReactNode }) => <>{children}</> }))
 vi.mock('@/components/agent/RunModelField', () => ({
@@ -46,6 +49,27 @@ function deferred() {
     const promise = new Promise<Response>(done => { resolve = done })
     return { promise, resolve }
 }
+
+test('uses the selected language for the coworker list, editor and saved run status', async () => {
+    const language = { preference: 'fr', locale: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) } as const
+    const chat = { agentId: 'alice', sessionId: 'result', engineSessionId: 'engine-result', tabUid: 'schedule:result', title: 'Daily', runId: 'run' }
+    respond = async (url, init) => {
+        if (url.endsWith('/model')) return Response.json(modelView)
+        if (init?.method === 'PUT') putBodies.push(JSON.parse(String(init.body)))
+        return Response.json([task('daily', { enabled: false, lastResult: { status: 'done', runId: chat.runId, chat } })])
+    }
+    await act(async () => root.render(<DesktopLocale initial={language}><DesktopCoworkerSchedules agentId="alice" onOpenSession={vi.fn()} /></DesktopLocale>))
+    expect(container.textContent).toContain('1 tâche planifiée')
+    expect(container.textContent).toContain('en pause')
+    expect(container.textContent).toContain('Dernier résultat : ' + language.messages.routines.status.done)
+    await act(async () => { row('Saved daily').click() })
+    expect(container.textContent).toContain('Modifier la tâche')
+    expect(container.querySelector('input[aria-label="Nom"]')).toBeTruthy()
+    expect(container.querySelector('select[aria-label="Type de planification"]')).toBeTruthy()
+    expect(button('Historique')).toBeTruthy()
+    await act(async () => { button('Enregistrer').click() })
+    expect(putBodies[0]?.input).toMatchObject({ cron: '0 8 * * *', timezone: 'America/Chicago', enabled: false })
+})
 
 test('requires an explicit offset for a one-shot time and saves that exact instant', async () => {
     respond = async (url, init) => {
