@@ -125,3 +125,37 @@ test('active saved metadata and the existing menu actions remain visible while t
     await act(async () => { menuItem('Existing team board')!.click() })
     expect(onBoard).toHaveBeenCalledOnce()
 })
+
+test('keeps a confirmed workspace available to open when the catalog cannot be reread', async () => {
+    const original = workspace(1, 'My workspace')
+    const created = workspace(2, 'Acme')
+    const list = vi.fn<DesktopWorkspaceClient['list']>()
+        .mockResolvedValueOnce(listResult(1, [original]))
+        .mockRejectedValue(new Error('Catalog temporarily unavailable'))
+    const create = vi.fn<DesktopWorkspaceClient['create']>().mockResolvedValue({ ok: true, workspace: created, switched: false })
+    const switchTo = vi.fn<DesktopWorkspaceClient['switchTo']>().mockResolvedValue({ ok: false, code: 'busy', message: 'Switch is busy.' })
+    const client: DesktopWorkspaceClient = { list, create, rename: vi.fn(), switchTo }
+    mount(<DesktopWorkspaceSwitcher client={client} />)
+    await act(async () => { await Promise.resolve() })
+    const trigger = document.querySelector<HTMLButtonElement>('[aria-label^="Workspace menu"]')!
+    await openMenu(trigger)
+    await act(async () => { menuItem('New workspace')!.click() })
+    const input = document.querySelector<HTMLInputElement>('[role="dialog"] input')!
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, created.name)
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const submit = () => document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]')!
+    await act(async () => { submit().click() })
+    await act(async () => { submit().click() })
+
+    expect(create).toHaveBeenCalledOnce()
+    expect(switchTo).toHaveBeenCalledExactlyOnceWith({ requestId: expect.any(String), workspaceId: 2 })
+    await openMenu(trigger)
+    const retry = menuItem(created.name)
+    expect(retry).toBeTruthy()
+    await act(async () => { retry!.click() })
+    expect(switchTo).toHaveBeenCalledTimes(2)
+    expect(switchTo).toHaveBeenLastCalledWith({ requestId: expect.any(String), workspaceId: 2 })
+    expect(create).toHaveBeenCalledOnce()
+})

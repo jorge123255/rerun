@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import type { DesktopWorkspaceClient } from '@/lib/desktop/workspaces'
+import type { DesktopWorkspaceRecord } from '@rerun/contracts'
 import { DESKTOP_WORKSPACE_ICONS } from '@/lib/desktop/icon-catalog'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 import { cn } from '@/lib/utils'
@@ -26,7 +27,7 @@ export function CreateDesktopWorkspaceDialog({
     open: boolean
     onOpenChange: (open: boolean) => void
     client: DesktopWorkspaceClient
-    onCreated: (workspaceId: number) => void | Promise<void>
+    onCreated: (workspace: DesktopWorkspaceRecord) => void
 }) {
     const { t } = useDesktopLocale()
     const icons = DESKTOP_WORKSPACE_ICONS
@@ -77,7 +78,7 @@ export function CreateDesktopWorkspaceDialog({
             }
             attempt.current = null
             onOpenChange(false)
-            await onCreated(result.workspace.workspaceId)
+            onCreated(result.workspace)
         } catch {
             setError('The workspace could not be confirmed. Retry with the same name and icon to check it.')
             setBusy(false)

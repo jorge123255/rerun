@@ -102,10 +102,16 @@ export function DesktopWorkspaceSwitcher({
         }
     }
 
-    const handleCreated = async (workspaceId: number) => {
-        await refresh()
-        const created = (await client.list()).catalog.workspaces.find(w => w.workspaceId === workspaceId)
-        if (created) await handleSwitch(created)
+    const handleCreated = (created: DesktopWorkspaceRecord) => {
+        // Keep the confirmed workspace available if opening it fails and the catalog cannot refresh.
+        setSnapshot(previous => previous && {
+            ...previous,
+            catalog: {
+                ...previous.catalog,
+                workspaces: [...previous.catalog.workspaces.filter(workspace => workspace.workspaceId !== created.workspaceId), created],
+            },
+        })
+        void handleSwitch(created)
     }
 
     const iconUrl = desktopWorkspaceIconSelectionUrl({
