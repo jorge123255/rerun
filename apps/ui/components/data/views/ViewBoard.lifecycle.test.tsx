@@ -78,6 +78,22 @@ const move = (item: Row, from = 'Todo', to = 'Done') => {
 }
 
 describe('ViewBoard current view ownership', () => {
+    it('opens the focused row on Enter without using the drag gesture', async () => {
+        const onOpenRow = vi.fn()
+        await render({ onOpenRow })
+        const card = container.querySelector('[data-drag-disabled]')!
+        const press = (key: string, init: KeyboardEventInit = {}) => act(async () => {
+            card.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }))
+        })
+        await press(' ')
+        await press('Enter', { isComposing: true })
+        await press('Enter', { repeat: true })
+        expect(onOpenRow).not.toHaveBeenCalled()
+        await press('Enter')
+        expect(onOpenRow).toHaveBeenCalledExactlyOnceWith(row('Original row'))
+        expect(props.source.updateRow).not.toHaveBeenCalled()
+    })
+
     it.each(['source', 'table', 'view', 'query', 'refresh'] as const)('does not publish a late Show more response after a %s change', async changed => {
         const f = fixture(), pending = deferred<Awaited<ReturnType<DataSource['readRows']>>>()
         const read = f.source.readRows

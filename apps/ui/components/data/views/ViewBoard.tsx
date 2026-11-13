@@ -206,7 +206,17 @@ function BoardCard({ row, from, disabled, onOpen, children }: { row: DbRow; from
     const { setNodeRef, listeners, attributes, isDragging } = useDraggable({ id: `${from}:${id}`, data: { row, from } satisfies DragData, disabled: disabled || id === null })
 
     return (
-        <div ref={setNodeRef} {...listeners} {...attributes} onClick={onOpen} className={cn(onOpen ? 'cursor-pointer' : 'cursor-grab', 'rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50', isDragging && 'opacity-40')}>
+        <div ref={setNodeRef} {...listeners} {...attributes} onClick={onOpen}
+            onKeyDown={event => {
+                if (event.defaultPrevented || event.nativeEvent.isComposing || event.target !== event.currentTarget) return
+                if (onOpen && !isDragging && event.key === 'Enter') {
+                    event.preventDefault()
+                    if (!event.repeat) onOpen()
+                    return
+                }
+                listeners?.onKeyDown?.(event)
+            }}
+            className={cn(onOpen ? 'cursor-pointer' : 'cursor-grab', 'rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50', isDragging && 'opacity-40')}>
             {children}
         </div>
     )
