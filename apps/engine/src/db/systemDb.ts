@@ -332,6 +332,15 @@ export function systemDbExists(id: string): boolean {
     return existsSync(systemDbPath(id))
 }
 
+/** Caller holds the deletion lease. Flush the existing writer before a byte-pinned snapshot. */
+export async function checkpointAndCloseSystemDb(id: string): Promise<void> {
+    const entry = pool.get(id)
+    if (!entry) return
+    const { rows } = await entry.client.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+    if (Number(rows[0]?.busy) !== 0) throw new Error('Coworker database is still in use')
+    closeSystemDb(id)
+}
+
 export function closeSystemDb(id: string): void {
     const entry = pool.get(id)
     if (!entry) return
