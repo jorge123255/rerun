@@ -854,13 +854,13 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                             else showBoard(true)
                         }} />
                 </div>}
-                {!controlCenterDisabled && !controlCenterOpen && !panelOpen && !foremanEngaged && <DesktopForemanDock open={foremanOpen} onToggle={engageForeman} />}
+                {!controlCenterDisabled && !panelOpen && !foremanEngaged && <DesktopForemanDock open={foremanOpen} onToggle={engageForeman} />}
                 {foremanEngaged && <div className="pointer-events-none absolute inset-2 z-40 grid min-h-0" style={{ gridTemplateColumns: `${foremanLeftTrack}px minmax(0,1fr) ${foremanRightTrack}px` }}>
 
                     <DesktopForemanPanel key={foremanTarget?.chatId ?? 'home'} target={foremanTarget}
                         onSelectConversation={runtimeWorkspaceId !== null ? openForemanConversation : undefined}
                         controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout} mentionTargets={foremanMentionTargets}
-                        hidden={controlCenterDisabled || controlCenterOpen || panelOpen || settings || workspaceSettings || profileOpen || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
+                        hidden={controlCenterDisabled || (controlCenterOpen && foremanOpen) || panelOpen || settings || workspaceSettings || profileOpen || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
                         findEnabled={foremanOpen && !panelOpen && !controlCenterDisabled}
                         centerOpen={controlCenterOpen} onOpenTranscriptionSettings={() => openSettingsAt('Tool services')} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('The Chief of Staff chat was closed.')); setForemanOpen(false) }}
                         onOpenCoworker={openForemanCoworker} onOpenCalledChat={openCoworkerChat} onOpenBox={openForemanBox} onBuildCompleted={refreshForemanBoard}
@@ -959,6 +959,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 }} />
             <DesktopControlCenter activity={boardActivity} onRefreshActivity={boardActivity.refresh} coworkers={agents} selectedCoworkerId={panelOpen ? selectedAgentId : null} initialRecent={initialData.recentCoworkers}
                 open={controlCenterOpen} onOpenChange={setControlCenterOpen} disabled={controlCenterDisabled}
+                anchorToOrb={!foremanOpen && !panelOpen}
                 board={boardState.board}
                 runtimeWorkspaceId={runtimeWorkspaceId ?? undefined} runtimeLaunchNonce={initialData.runtimeLaunchNonce} onExternalMcp={openExternalMcp} onServers={openServers}
                 onAddBox={initialData.board && !boardState.error ? () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setNewBoxSignal(signal => signal + 1) } : undefined}

@@ -53,7 +53,7 @@ const ANCHORED = 'flex translate-x-0 translate-y-0 gap-3 rounded-none bg-transpa
 function measureOrbAnchor(): OrbAnchor | null {
     if (!window.matchMedia(ANCHOR_QUERY).matches) return null
     const orb = document.querySelector('[data-foreman-orb]')?.getBoundingClientRect()
-    if (!orb) return null
+    if (!orb?.width || !orb.height) return null
     const { clientWidth, clientHeight } = document.documentElement
     const horizontal = orb.left + orb.width / 2 > clientWidth / 2 ? 'right' : 'left'
     const vertical = orb.top + orb.height / 2 > clientHeight / 2 ? 'bottom' : 'top'

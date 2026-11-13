@@ -57,6 +57,7 @@ export type DesktopControlCenterProps = DesktopParityCallbacks & {
     open?: boolean
     onOpenChange?: (open: boolean) => void
     disabled?: boolean
+    anchorToOrb?: boolean
     initialRecent?: DesktopRecentCoworkers
     activity?: BoardActivitySnapshot
     onRefreshActivity?: () => Promise<BoardActivitySnapshot | null>
@@ -88,7 +89,7 @@ export type DesktopControlCenterProps = DesktopParityCallbacks & {
     darkTheme?: boolean
 }
 
-export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, runtimeWorkspaceId, runtimeLaunchNonce, onOpenDesktop, onAskAssistant, open: controlledOpen, onOpenChange, disabled = false, initialRecent, activity, onRefreshActivity, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onGettingStarted, onHelp, onChangelog, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
+export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, runtimeWorkspaceId, runtimeLaunchNonce, onOpenDesktop, onAskAssistant, open: controlledOpen, onOpenChange, disabled = false, anchorToOrb = false, initialRecent, activity, onRefreshActivity, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onGettingStarted, onHelp, onChangelog, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
     const { language, t } = useDesktopLocale()
     const copy = language.messages.controlCenter
     const details = copy.details
@@ -543,7 +544,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
             busy={parity.state.busy} notice={parity.state.notice} openingLabel={details.opening}
             open={open}
             onOpenChange={setOpen}
-            anchorToOrb={false}
+            anchorToOrb={anchorToOrb}
             description={copy.desktopDescription}
             labels={{ title: copy.title, back: copy.back, open: copy.hints.open, more: copy.hints.more, askRerun: copy.askRerun }}
             closeHint={copy.closeHint}
