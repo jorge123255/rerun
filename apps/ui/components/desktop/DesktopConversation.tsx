@@ -20,9 +20,9 @@ import { isLongMessage } from '@/lib/composer'
 import { replayedRunFailure } from '@/lib/desktop/chat-resume'
 import { DefaultChatTransport, readUIMessageStream, type UIMessage, type FileUIPart } from 'ai'
 import { AgentBuddy } from '@rerun/ui/iso-grid'
-import { Message, MessageContent } from '@rerun/ui/chat'
+import { Message, MessageContent, Suggestion, Suggestions } from '@rerun/ui/chat'
 import { FloatingPill } from '@/components/agent/sheet/floating'
-import { Conversation, ConversationContent, ConversationScrollButton, type ConversationHandle } from '@/components/ai-elements/conversation'
+import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton, type ConversationHandle } from '@/components/ai-elements/conversation'
 import { bringBlockIn, useArriveByTop } from '@/hooks/useArriveByTop'
 import type { DesktopChatRequest } from '@/lib/desktop/chat-request'
 import { summarizePendingHitl } from '@/lib/chat/hitl-cue'
@@ -1357,6 +1357,18 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
         unknownUploads ? `${unknownUploads} attachment${unknownUploads > 1 ? 's' : ''} may already be in this coworker’s Files. Check Files, then dismiss ${unknownUploads > 1 ? 'these upload statuses' : 'this upload status'} before sending.` : '',
     ].filter(Boolean).join(' ')
 
+    const canSendStarter = active && !input && !attachmentPaths.length && !documents.attachments.length
+        && draft.loaded && !draft.error && !draft.quitting && !requestBlocked && !pendingRequest
+        && !inactive && !stopping && !preparingSend && !voiceActivity.busy && !voiceActivity.dirty && !regenerationSource
+        && queue.loaded && !queue.queued && !queue.pending && !queue.error
+        && uploadsLoaded && !uploadsActive && !blockedUploads.length
+    const sendStarter = (text: string) => {
+        if (!canSendStarter || !composerForm.current || composer.current.text || isDesktopQuitting()) return
+        // Use the normal form after the draft update is visible to its submission guard.
+        flushSync(() => setInput(text))
+        composerForm.current?.requestSubmit()
+    }
+
     const lastUserIndex = transcript.findLastIndex(message => message.role === 'user')
     const savedRetryAnswer = lastUserIndex < 0 ? undefined : transcript.findLast((message, index) =>
         index > lastUserIndex && message.role === 'assistant' && message.id.startsWith('engine-'))
@@ -1568,11 +1580,18 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                     <DesktopConversationFind open={finding} onOpenChange={setFindOpen} transcript={findTranscript} />
                     {!ready && !historyError && !busy && <p role="status" className="text-sm text-muted-foreground">{t('openingSavedChat')}</p>}
                     {threadRows.leading.map(thread => <DesktopThreadBranch key={thread.id} thread={thread} needsYou={pendingChatSummaries?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />)}
-                    {ready && transcript.length === 0 && threadRows.leading.length === 0 && !busy && (
-                        <div className="py-16 text-center">
-                            <div className="text-sm font-medium">Start a conversation with {agent.name}</div>
-                            <div className="mt-1 text-sm text-muted-foreground">Messages stream from the local engine and remain available after restart.</div>
-                        </div>
+                    {ready && transcript.length === 0 && threadRows.leading.length === 0 && !busy && !setupBlocked && !historyError && (
+                        <ConversationEmptyState className="px-2 py-10">
+                            <AgentBuddy agentId={agent.id} mood={inactive ? 'asleep' : 'idle'} size={96} />
+                            <div className="space-y-1">
+                                <h3 className="text-sm font-medium">{t('chatStart.startTitle')}</h3>
+                                {!inactive && <p className="text-sm text-muted-foreground">{t('chatStart.sendToCoworker')}</p>}
+                            </div>
+                            {canSendStarter && <Suggestions className="mt-2 justify-center">
+                                {Object.values(language.messages.chatStart.starters).map(starter =>
+                                    <Suggestion key={starter} suggestion={starter} onClick={sendStarter} />)}
+                            </Suggestions>}
+                        </ConversationEmptyState>
                     )}
                     {sessionId && active && <DesktopNativeWritebackReview agentId={agent.id} sessionId={sessionId} refreshKey={`${status}/${transcript.length}`}/>}
                     <div ref={findTranscript} className="contents">{transcript.map((message, messageIndex) => {

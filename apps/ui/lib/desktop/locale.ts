@@ -33,13 +33,14 @@ import foreman from '@rerun/i18n/messages/en/foreman.json'
 import kit from '@rerun/i18n/messages/en/kit.json'
 import layout from '@rerun/i18n/messages/en/layout.json'
 import notifications from '@rerun/i18n/messages/en/notifications.json'
+import mobileChat from '@rerun/i18n/messages/en/mobileChat.json'
 import mobileSettings from '@rerun/i18n/messages/en/mobileSettings.json'
 import services from '@rerun/i18n/messages/en/services.json'
 import subRuns from '@rerun/i18n/messages/en/subRuns.json'
 import workspace from '@rerun/i18n/messages/en/workspace.json'
 import ui from '@rerun/i18n/messages/en/ui.json'
 
-const englishSource = { account, agent, brain, builder, changelog, chat, common, connections, data, dialogs, files, foreman, kit, layout, mobileSettings, notifications, services, subRuns, workspace, ui }
+const englishSource = { account, agent, brain, builder, changelog, chat, common, connections, data, dialogs, files, foreman, kit, layout, mobileChat, mobileSettings, notifications, services, subRuns, workspace, ui }
 type DesktopMessageSource = typeof englishSource
 
 const desktopSetupAuthorCopy = {
@@ -506,6 +507,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         stoppingRun: source.chat.queued.stopping,
         queuedMessage: source.chat.queued,
         queue: desktopQueueCopy[locale],
+        chatStart: source.mobileChat.empty,
         composerEditor: { ...source.chat.composer.editor, open: source.chat.composer.openEditor },
         chatActivity: source.chat.activity,
         chatSteps: source.chat.steps,
