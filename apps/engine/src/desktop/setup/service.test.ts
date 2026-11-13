@@ -191,3 +191,34 @@ it('initializes a confirmed Foreman template as pending setup without enabling t
     expect(await initializeImportedSetup({ ...input, foreman })).toEqual(saved)
     await expect(initializeImportedSetup({ ...input, foreman: { focus: 'Different scope' } })).rejects.toThrow('different request')
 })
+
+it('sets up a disabled Share copy only for its exact indexed receipt and original directory', async () => {
+    const { lstat } = await import('node:fs/promises')
+    const requirements = [{ kind: 'service-reconnect' as const, name: 'linear' }]
+    const input = await seedImport('f', requirements)
+    const root = agentDir(input.engineAgentId)
+    const marker = resolve(root, '.desktop-template-import.json')
+    const saved = JSON.parse(await readFile(marker, 'utf8'))
+    const { desktopTemplateGuidedSetup } = await import('@rerun/contracts')
+    const share = { ...input, ...desktopTemplateGuidedSetup(input, requirements), share: true as const }
+    const identity = await lstat(root, { bigint: true })
+    const folder = { dev: String(identity.dev), ino: String(identity.ino) }
+
+    await expect(initializeImportedSetup(share)).rejects.toThrow('Share import')
+    await writeFile(marker, JSON.stringify({ ...saved, foremanDisabled: true, folder }))
+    await expect(initializeImportedSetup(share)).rejects.toThrow('Foreman import')
+    await writeFile(marker, JSON.stringify({ ...saved, shareDisabled: true, folder: { ...folder, ino: '0' } }))
+    await expect(initializeImportedSetup(share)).rejects.toThrow('Share import')
+    await writeFile(marker, JSON.stringify({ ...saved, shareDisabled: true, folder }))
+    await expect(initializeImportedSetup(input)).rejects.toThrow('Share import')
+    await expect(initializeImportedSetup({ ...share, foreman: {} })).rejects.toThrow('Foreman import')
+    await expect(initializeImportedSetup(share)).rejects.toThrow('still be switched off')
+    await writeAgentConfig(input.engineAgentId, agentConfigSchema.parse({ name: 'Share copy', enabled: false }))
+    await expect(initializeImportedSetup({ ...share, prompt: 'Forged instructions' })).rejects.toThrow('captured template')
+    const result = await initializeImportedSetup(share)
+    expect(await initializeImportedSetup(share)).toEqual(result)
+    expect(await readDesktopSetup(input.engineAgentId)).toMatchObject({
+        prompt: share.prompt, required: true, pending: true, sessionId: null, completedAt: null,
+    })
+    expect((await getAgent(input.engineAgentId)).config.enabled).toBe(false)
+})

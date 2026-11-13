@@ -8,7 +8,7 @@ import { bindDesktopServiceSkillOwners } from '../service-skills/authority'
 import { trustedSkillOwners } from '../../../../../engine/src/desktop/service-skills/authority'
 import { readPortableArchive } from '../../../../../engine/src/desktop/templates/portable-package'
 import { importDesktopPortableTemplate } from '../../../../../engine/src/desktop/templates/portable-import'
-import { readForemanTemplateImport } from '../../../../../engine/src/desktop/templates/install'
+import { readDisabledTemplateImport } from '../../../../../engine/src/desktop/templates/install'
 import { readConfined } from '../../../../../engine/src/desktop/templates/files'
 import { captureScopedCoworkerMemories, restoreScopedCoworkerMemories } from '../../../../../engine/src/desktop/coworker-share-memory/scoped'
 import { memoryPackageToArchiveMembers } from '../../../../../engine/src/desktop/coworker-share-memory/members'
@@ -110,8 +110,8 @@ export async function openDesktopCoworkerShareBinding(runtime: DesktopRuntime, r
         const installId = stableId(['share-install',runtime.workspaceId,snapshotId,requestId])
         const operation = await prepareTemplateIntent(db,engineClient,{ operation: { operation: 'install',templateId: imported.templateId,revision: imported.revision } },{ requestId: installId,scopeKey: `foreman:share:${runtime.workspaceId}:${snapshotId}` })
         const canonical = desktopTemplateAuthority(runtime)
-        const templates = createDesktopTemplateServer({ db,engine: engineClient,foremanDisabled: true,
-            initializeImportedSetup: async input => { await current(runtime,true); return canonical.initializeImportedSetup(input) },
+        const templates = createDesktopTemplateServer({ db,engine: engineClient,shareDisabled: true,
+            initializeImportedSetup: async input => { await current(runtime,true); return canonical.initializeImportedSetup({ ...input, share: true }) },
             commitInstalled: async input => {
                 await current(runtime,true,input.signal)
                 if (prepared.memories || prepared.database) {
@@ -120,7 +120,7 @@ export async function openDesktopCoworkerShareBinding(runtime: DesktopRuntime, r
                     const agentRoot = join(engineRoot,'agents',target.engineAgentId)
                     const assertFreshImport = async () => {
                         await current(runtime,true,input.signal)
-                        const proof = await readForemanTemplateImport(join(engineRoot,'agents'),target.engineAgentId,input.receiptId)
+                        const proof = await readDisabledTemplateImport(join(engineRoot,'agents'),target.engineAgentId,input.receiptId,'share')
                         if (proof.state !== 'present' || proof.templateId !== input.templateId || proof.revision !== input.revision || await findDesktopAgent(db,target.agentId)) throw new DesktopHttpError(409,'Private content requires the exact unpublished fresh coworker import.')
                         const config = await readConfined(join(engineRoot,'agents',target.engineAgentId),'config.json',DESKTOP_TEMPLATE_LIMITS.maxFileBytes)
                         if (!config.ok || JSON.parse(config.text).enabled !== false) throw new DesktopHttpError(409,'Private content requires a fresh disabled coworker.')

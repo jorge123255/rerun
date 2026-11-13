@@ -78,6 +78,7 @@ const importReceiptSchema = z.strictObject({
     agentKey: desktopTemplateAgentKeySchema,
     phase: z.enum(['bound', 'files', 'indexed']),
     foremanDisabled: z.literal(true).optional(),
+    shareDisabled: z.literal(true).optional(),
     folder: z.strictObject({dev:z.string(),ino:z.string()}).optional(),
 })
 type ImportReceipt = z.infer<typeof importReceiptSchema>
@@ -179,6 +180,7 @@ async function readReceipt(folder: string): Promise<ImportReceipt | null> {
 
 async function installManifestUnlocked(input: {
     foremanDisabled?: true
+    shareDisabled?: true
     dataRoot: string
     agentsRoot: string
     importReceiptId: string
@@ -188,6 +190,8 @@ async function installManifestUnlocked(input: {
     insertIndex: (id: string, name: string, createdAt?: string) => Promise<void>
     readIndex: (id: string) => Promise<{ name: string; createdAt?: string; status?: string } | null>
 }): Promise<{ status: 'ready' | 'uncertain'; reason?: string; coworkers: InstalledPhase[] }> {
+    if (input.foremanDisabled && input.shareDisabled) throw new TemplateRequestError(400, 'Conflicting template import modes')
+    const disabled = input.foremanDisabled || input.shareDisabled
     if (await readOwnJson(requestHome(input.dataRoot), `cancel-install-${input.importReceiptId}.json`)) throw new TemplateRequestError(409, 'This installation was cancelled. Start a new installation instead.')
     const manifest = await readManifest(input.dataRoot, input.templateId, input.revision)
     const wanted = new Map(input.coworkers.map(coworker => [coworker.agentKey, coworker.engineAgentId]))
@@ -214,7 +218,7 @@ async function installManifestUnlocked(input: {
         }
         const bound: ImportReceipt = {
             version: 1, importReceiptId: input.importReceiptId, templateId: input.templateId, revision: input.revision,
-            engineAgentId, agentKey: coworker.agentKey, phase: 'bound', ...(input.foremanDisabled && { foremanDisabled: true }),
+            engineAgentId, agentKey: coworker.agentKey, phase: 'bound', ...(input.foremanDisabled && { foremanDisabled: true }), ...(input.shareDisabled && { shareDisabled: true }),
         }
         if (!kind) {
             const staged = await mkdtemp(join(input.agentsRoot, '.template-import-'))
@@ -229,8 +233,8 @@ async function installManifestUnlocked(input: {
         }
         let receipt = await readReceipt(folder)
         const identity = await lstat(folder,{bigint:true})
-        const ownedForemanFolder = receipt?.folder ? receipt.folder.dev === String(identity.dev) && receipt.folder.ino === String(identity.ino) : !input.foremanDisabled
-        if (!ownedForemanFolder || !receipt || receipt.importReceiptId !== bound.importReceiptId || receipt.engineAgentId !== engineAgentId || receipt.templateId !== bound.templateId || receipt.revision !== bound.revision || receipt.agentKey !== coworker.agentKey || receipt.foremanDisabled !== bound.foremanDisabled) {
+        const ownedFolder = receipt?.folder ? receipt.folder.dev === String(identity.dev) && receipt.folder.ino === String(identity.ino) : !disabled
+        if (!ownedFolder || !receipt || receipt.importReceiptId !== bound.importReceiptId || receipt.engineAgentId !== engineAgentId || receipt.templateId !== bound.templateId || receipt.revision !== bound.revision || receipt.agentKey !== coworker.agentKey || receipt.foremanDisabled !== bound.foremanDisabled || receipt.shareDisabled !== bound.shareDisabled) {
             phases.push({ engineAgentId, agentKey: coworker.agentKey, name: coworker.name, description: coworker.description, phase: 'foreign' })
             uncertain = 'An imported coworker folder is not owned by this receipt'
             continue
@@ -248,9 +252,9 @@ async function installManifestUnlocked(input: {
                 break
             }
             let bytes = stored.bytes
-            if (input.foremanDisabled && file.path === 'config.json') {
+            if (disabled && file.path === 'config.json') {
                 // The captured conservative config remains otherwise exact; enabling is reserved
-                // for the later explicit lead action. No runnable enabled window during import.
+                // for a later explicit user action. No runnable enabled window during import.
                 const config = JSON.parse(Buffer.from(bytes).toString('utf8'))
                 bytes = Buffer.from(JSON.stringify({ ...config, enabled: false }, null, 4), 'utf8')
             }
@@ -296,17 +300,22 @@ async function installManifestUnlocked(input: {
     return { status: 'ready', coworkers: phases }
 }
 
-/** Foreman lookup is read-only and proves the original imported directory, not merely its name. */
-export async function readForemanTemplateImport(agentsRoot: string, engineAgentId: string, importReceiptId: string) {
+/** Read-only proof for the exact disabled import mode and original directory. */
+export async function readDisabledTemplateImport(agentsRoot: string, engineAgentId: string, importReceiptId: string, mode: 'foreman' | 'share') {
     const path = destination(agentsRoot,engineAgentId)
     const before = await lstat(path,{bigint:true}).catch((error: NodeJS.ErrnoException) => error.code === 'ENOENT' ? null : Promise.reject(error))
     if (!before) return {state:'absent' as const}
     if (!before.isDirectory() || before.isSymbolicLink()) return {state:'replaced' as const}
     const receipt = await readReceipt(path)
     const after = await lstat(path,{bigint:true})
-    if (!receipt || !receipt.foremanDisabled || receipt.engineAgentId !== engineAgentId || receipt.importReceiptId !== importReceiptId || receipt.folder?.dev !== String(before.dev) || receipt.folder.ino !== String(before.ino) || before.dev !== after.dev || before.ino !== after.ino) return {state:'replaced' as const}
+    const matchesMode = mode === 'foreman' ? receipt?.foremanDisabled && !receipt.shareDisabled : receipt?.shareDisabled && !receipt.foremanDisabled
+    if (!receipt || !matchesMode || receipt.engineAgentId !== engineAgentId || receipt.importReceiptId !== importReceiptId || receipt.folder?.dev !== String(before.dev) || receipt.folder.ino !== String(before.ino) || before.dev !== after.dev || before.ino !== after.ino) return {state:'replaced' as const}
     if (receipt.phase !== 'indexed') return {state:'unknown' as const}
     return {state:'present' as const,engineAgentId,importReceiptId,templateId:receipt.templateId,revision:receipt.revision}
+}
+
+export function readForemanTemplateImport(agentsRoot: string, engineAgentId: string, importReceiptId: string) {
+    return readDisabledTemplateImport(agentsRoot, engineAgentId, importReceiptId, 'foreman')
 }
 
 export function installManifest(input: Parameters<typeof installManifestUnlocked>[0]): ReturnType<typeof installManifestUnlocked> {

@@ -7,7 +7,7 @@ import { claimDesktopSetupSession, continueDesktopSetupSession, DesktopSetupMuta
 
 const mutationInput = z.strictObject({ requestId: z.uuid(), expectedRevision: z.string().min(1) })
 const saveInput = mutationInput.extend({ prompt: z.string().max(100_000), required: z.boolean().nullable() })
-const importInput = z.strictObject({ agentId: z.uuid(), importReceiptId: z.uuid(), prompt: z.string().max(DESKTOP_TEMPLATE_LIMITS.maxFileBytes), required: z.boolean(), foreman: desktopForemanImportedSetupSchema.optional() })
+const importInput = z.strictObject({ agentId: z.uuid(), importReceiptId: z.uuid(), prompt: z.string().max(DESKTOP_TEMPLATE_LIMITS.maxFileBytes), required: z.boolean(), foreman: desktopForemanImportedSetupSchema.optional(), share: z.literal(true).optional() })
 
 export const desktopSetupRoutes = new Hono()
 

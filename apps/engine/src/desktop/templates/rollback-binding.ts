@@ -53,10 +53,10 @@ export async function rollbackDesktopTemplateInstall(rawInput:unknown,roots:{dat
    const present=await lstat(folder,{bigint:true}).catch(error=>{if(missing(error))return null;throw error}),queued=await lstat(quarantine,{bigint:true}).catch(error=>{if(missing(error))return null;throw error})
    const index=(await raw().execute({sql:'SELECT name,status,created_at FROM agents WHERE id=?',args:[member.engineAgentId]})).rows[0]
    if(!present&&!queued&&!receipt){if(index)throw new TemplateRequestError(409,'Missing import folder has an existing index');return}
-   const marker=await readOwnJson(present?folder:quarantine,'.desktop-template-import.json') as {foremanDisabled?:boolean;indexCreatedAt?:string;folder?:{dev:string;ino:string}}|null
+   const marker=await readOwnJson(present?folder:quarantine,'.desktop-template-import.json') as {foremanDisabled?:boolean;shareDisabled?:boolean;indexCreatedAt?:string;folder?:{dev:string;ino:string}}|null
    const pinned = present ?? queued
    const identity = marker?.folder ?? (receipt?.phase==='index-removed' && receipt.dev && receipt.ino ? {dev:receipt.dev,ino:receipt.ino}:null)
-   if(marker?.foremanDisabled || !identity || (pinned && (String(pinned.dev)!==identity.dev||String(pinned.ino)!==identity.ino)))throw new TemplateRequestError(409,'This import has no exact fresh-folder cleanup proof')
+   if(marker?.foremanDisabled || marker?.shareDisabled || !identity || (pinned && (String(pinned.dev)!==identity.dev||String(pinned.ino)!==identity.ino)))throw new TemplateRequestError(409,'This import has no exact fresh-folder cleanup proof')
    if(index&&(index.name!==manifest.coworkers.find(row=>row.agentKey===member.agentKey)?.name||index.status!=='idle'||!marker?.indexCreatedAt||index.created_at!==marker.indexCreatedAt))throw new TemplateRequestError(409,'The imported coworker has changed or started working')
    const initial=index?{name:String(index.name),createdAt:String(index.created_at)}:null
    // Startup may have initialized an empty system DB. Close its writer under the

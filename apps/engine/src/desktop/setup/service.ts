@@ -15,7 +15,7 @@ import { sessionClaim } from '../../runtime/run-control.js'
 import { assertDesktopAgentNotDeleted, desktopDeletionActive } from '../agent-lifecycle.js'
 import { readConfined, replaceOwnFile } from '../templates/files.js'
 import { readOwnJson, replaceOwnJson } from '../templates/store.js'
-import { readForemanTemplateImport, readManifest } from '../templates/install.js'
+import { readDisabledTemplateImport, readManifest } from '../templates/install.js'
 import type { RunContext } from '../../runtime/context.js'
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
@@ -189,23 +189,25 @@ export async function continueDesktopSetupSession(engineAgentId: string): Promis
     return session
 }
 
-const templateImportSchema = z.object({ version: z.literal(1), engineAgentId: z.string(), importReceiptId: z.string(), templateId: z.string(), revision: z.string(), agentKey: z.string(), phase: z.literal('indexed'), foremanDisabled: z.literal(true).optional() })
+const templateImportSchema = z.object({ version: z.literal(1), engineAgentId: z.string(), importReceiptId: z.string(), templateId: z.string(), revision: z.string(), agentKey: z.string(), phase: z.literal('indexed'), foremanDisabled: z.literal(true).optional(), shareDisabled: z.literal(true).optional() })
 
-export async function initializeImportedSetup(input: { agentId: string; engineAgentId: string; importReceiptId: string; prompt: string; required: boolean; foreman?: DesktopForemanImportedSetup; signal?: AbortSignal }): Promise<{ revision: string }> {
+export async function initializeImportedSetup(input: { agentId: string; engineAgentId: string; importReceiptId: string; prompt: string; required: boolean; foreman?: DesktopForemanImportedSetup; share?: true; signal?: AbortSignal }): Promise<{ revision: string }> {
     return withAgentLock(input.engineAgentId, async () => {
         input.signal?.throwIfAborted()
         const config = await readConfig(input.engineAgentId)
         const binding = templateImportSchema.safeParse(await readOwnJson(agentDir(input.engineAgentId), '.desktop-template-import.json'))
         if (!binding.success || binding.data.engineAgentId !== input.engineAgentId || binding.data.importReceiptId !== input.importReceiptId) throw conflict('This coworker is not owned by that completed template import.')
         if (Boolean(binding.data.foremanDisabled) !== Boolean(input.foreman)) throw conflict('This setup does not match the Foreman import.')
-        if (input.foreman) {
-            const proof = await readForemanTemplateImport(dirname(agentDir(input.engineAgentId)), input.engineAgentId, input.importReceiptId)
+        if (Boolean(binding.data.shareDisabled) !== Boolean(input.share) || (input.foreman && input.share)) throw conflict('This setup does not match the Share import.')
+        if (input.foreman || input.share) {
+            const mode = input.foreman ? 'foreman' : 'share'
+            const proof = await readDisabledTemplateImport(dirname(agentDir(input.engineAgentId)), input.engineAgentId, input.importReceiptId, mode)
             if (proof.state !== 'present' || proof.templateId !== binding.data.templateId || proof.revision !== binding.data.revision) {
-                throw conflict('This setup does not match the Foreman import.')
+                throw conflict(input.foreman ? 'This setup does not match the Foreman import.' : 'This setup does not match the Share import.')
             }
         }
         const fingerprint = digest({ agentId: input.agentId, engineAgentId: input.engineAgentId, importReceiptId: input.importReceiptId, prompt: input.prompt.trim(), required: input.required, templateId: binding.data.templateId, revision: binding.data.revision, agentKey: binding.data.agentKey,
-            ...(input.foreman && { foreman: input.foreman }) })
+            ...(input.foreman && { foreman: input.foreman }), ...(input.share && { share: true }) })
         const priorValue = await readOwnJson(agentDir(input.engineAgentId), IMPORT_RECEIPT)
         const prior = priorValue === null ? null : importMarkerSchema.safeParse(priorValue)
         if (prior && (!prior.success || prior.data.fingerprint !== fingerprint || prior.data.agentId !== input.agentId || prior.data.engineAgentId !== input.engineAgentId || prior.data.importReceiptId !== input.importReceiptId)) throw conflict('The setup import receipt belongs to a different request.')
@@ -220,7 +222,7 @@ export async function initializeImportedSetup(input: { agentId: string; engineAg
         const matchesCaptured = (source.setup.required === true) === input.required && source.setup.prompt.trim() === input.prompt.trim()
         const matchesGuided = guided.required === input.required && guided.prompt.trim() === input.prompt.trim()
         if (!matchesCaptured && !matchesGuided) throw conflict('Setup does not match the captured template revision.')
-        if (input.foreman && config.enabled) throw conflict('The Foreman import must still be switched off.')
+        if ((input.foreman || input.share) && config.enabled) throw conflict('The imported coworker must still be switched off.')
         const prompt = input.foreman ? foremanImportedSetupPrompt(input.prompt, input.foreman.focus) : input.prompt.trim()
         if (Buffer.byteLength(prompt) > DESKTOP_TEMPLATE_LIMITS.maxFileBytes) throw conflict('The imported setup instructions are too long.')
         const journal = await journalOf(input.engineAgentId)
