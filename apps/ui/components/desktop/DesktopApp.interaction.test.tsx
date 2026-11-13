@@ -497,10 +497,11 @@ test.each([
     const root = createRoot(container)
     const agent = { id: 'researcher', name: 'Researcher', description: '', createdAt: '', updatedAt: '' }
     let resolveSessions!: (response: Response) => void
+    let rejectSessions!: (reason: Error) => void
     const fetcher = mockDesktopFetch(url => {
         if (url === settingsUrl) return Response.json(disconnected)
         if (url === '/api/desktop/agents/researcher/sessions') {
-            return new Promise<Response>(resolve => { resolveSessions = resolve })
+            return new Promise<Response>((resolve, reject) => { resolveSessions = resolve; rejectSessions = reject })
         }
     })
     const panel = () => container.querySelector('[data-testid="desktop-coworker-chat"]')!
@@ -516,8 +517,10 @@ test.each([
         const tile = container.querySelector<HTMLElement>('[aria-label="' + open + '"]')!
         await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
         opening()
-        await act(async () => { resolveSessions(Response.json({ error: 'Could not load conversations' }, { status: 500 })) })
+        await act(async () => { rejectSessions(new TypeError('Failed to fetch')) })
         expect(panel().querySelector('[data-slot="desktop-composer"]')).toBeNull()
+        expect(panel().querySelector('[role="alert"]')?.textContent).toContain(language.messages.threadHistory.loadFailed)
+        expect(panel().textContent).not.toContain('Failed to fetch')
         const retry = panel().querySelector<HTMLButtonElement>('[role="alert"] button')!
         expect(retry.textContent).toBe(retryLabel)
         await act(async () => { retry.click() })
@@ -666,13 +669,17 @@ test('open General picks up a saved sibling without rewriting the active layout'
     const path = '/api/desktop/agents/researcher/sessions'
     const initial = { sessions: [general, sibling], tabs: { revision: 2, activeIndex: 0, tabs: [{ uid: generalTabUid(coworker.id), id: general.id, title: 'General' }] } }
     let background: Response | undefined
+    let networkDropped = false
     const threadReads = () => fetcher.mock.calls.filter(([url]) => url === path + '?view=threads').length
     const fetcher = mockDesktopFetch((url, init) => {
         if (url === settingsUrl) return Response.json(disconnected)
         if (url === path) return Response.json(initial)
-        if (url === path + '?view=threads') return background?.clone() ?? Response.json({
-            sessions: [general, { ...routine, runStatus, ...(outcome && { automationOutcome: outcome, title: 'No new leads' }) }, newSibling],
-        })
+        if (url === path + '?view=threads') {
+            if (networkDropped) return Promise.reject(new TypeError('Failed to fetch'))
+            return background?.clone() ?? Response.json({
+                sessions: [general, { ...routine, runStatus, ...(outcome && { automationOutcome: outcome, title: 'No new leads' }) }, newSibling],
+            })
+        }
         if (url === '/api/desktop/board-activity') return Response.json({
             agents: { [coworker.id]: 'idle' },
             attention: { items: waiting ? [{ id: 'ask', agentId: coworker.id, agentName: coworker.name, agentEnabled: true,
@@ -695,6 +702,11 @@ test('open General picks up a saved sibling without rewriting the active layout'
         expect(container.querySelector('[data-thread-row="sibling"]')).not.toBeNull()
         expect(container.textContent).not.toContain('Temporary read failure')
         background = undefined
+        networkDropped = true
+        await tick()
+        expect(container.querySelector('[data-thread-row="sibling"]')).not.toBeNull()
+        expect(container.textContent).not.toContain('Failed to fetch')
+        networkDropped = false
         const beforeFocus = threadReads()
         expect(container.querySelector('[data-thread-row="new-sibling"]')).toBeNull()
         await act(async () => { window.dispatchEvent(new Event('focus')) })

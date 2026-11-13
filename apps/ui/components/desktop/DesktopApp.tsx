@@ -1015,7 +1015,7 @@ function CoworkerChat({ agent, workspaceId, attention, overview, requested, requ
         .filter(item => item.agentId === agent.id && item.kind !== 'info')
         .map(item => [item.sessionId, item.summary])), [agent.id, attention.items])
     const [bootstrap, setBootstrap] = useState<{ layout: DesktopTabLayout | null } | null>(null)
-    const [error, setError] = useState<string | null>(null)
+    const [sessionReadFailed, setSessionReadFailed] = useState(false)
     const [checkedRequest, setCheckedRequest] = useState<DesktopChatRequest | null>(null)
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/sessions`
     const sessionRead = useRef<AbortController | null>(null)
@@ -1045,10 +1045,10 @@ function CoworkerChat({ agent, workspaceId, attention, overview, requested, requ
                 }) ? previous : body.sessions
             })
             if (restoreTabs) setBootstrap({ layout: body.tabs ?? null })
-            if (!background) setError(null)
+            if (!background) setSessionReadFailed(false)
             return true
-        } catch (cause) {
-            if (!background && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load conversations')
+        } catch {
+            if (!background && !controller.signal.aborted) setSessionReadFailed(true)
             if (!controller.signal.aborted) return false
         } finally {
             if (sessionRead.current === controller) sessionRead.current = null
@@ -1073,19 +1073,23 @@ function CoworkerChat({ agent, workspaceId, attention, overview, requested, requ
         if (missing && requested && checkedRequest !== requested) void readSessions({ checking: requested })
     }, [missing, requested, checkedRequest, readSessions])
     const dismiss = <Button type="button" variant="ghost" size="icon-sm" aria-label={t('closePanel')} className="absolute right-3 top-3" onClick={onClosePanel}><X /></Button>
+    const retryRead = () => {
+        setSessionReadFailed(false)
+        void readSessions({ restoreTabs: !bootstrap, checking: missing ? requested ?? undefined : undefined })
+    }
     const reload = () => {
         setBootstrap(null)
-        setError(null)
+        setSessionReadFailed(false)
         setCheckedRequest(null)
         void readSessions({ restoreTabs: true })
     }
     return <>
-        {(error || (missing && checkedRequest === requested)) && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">
-            {error ?? t('savedChatUnavailable')}
-            <Button type="button" size="sm" variant="outline" onClick={reload}>{t('retryConversations')}</Button>
+        {(sessionReadFailed || (missing && checkedRequest === requested)) && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">
+            {t(sessionReadFailed ? 'threadHistory.loadFailed' : 'savedChatUnavailable')}
+            <Button type="button" size="sm" variant="outline" onClick={retryRead}>{t('retryConversations')}</Button>
         </div>}
-        {missing && checkedRequest !== requested && !error && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">{t('openingSavedChat')}</p>}
-        {!error && !bootstrap && <div className="mt-auto shrink-0 border-t p-2.5">
+        {missing && checkedRequest !== requested && !sessionReadFailed && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">{t('openingSavedChat')}</p>}
+        {!sessionReadFailed && !bootstrap && <div className="mt-auto shrink-0 border-t p-2.5">
             <div data-slot="desktop-composer" className="min-h-[5.5rem] rounded-xl border border-input bg-muted/40 px-2.5 py-2">
                 <p role="status" className="text-sm text-muted-foreground">{t('openingCoworkerChat', { name: agent.name })}</p>
             </div>

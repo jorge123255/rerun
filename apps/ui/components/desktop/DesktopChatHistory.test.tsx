@@ -35,7 +35,7 @@ const inboxOf = (rows: DesktopChatHistoryConversation[]) => ({ items: rows.filte
 })), unavailableAgentIds: [], checkedAt: createdAt })
 const settle = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
 async function click(label: string) {
-    const button = [...document.querySelectorAll('button')].find(b => !b.closest('[hidden]') && (b.textContent?.trim() === label || b.getAttribute('aria-label') === label))
+    const button = [...document.querySelectorAll('button')].find(b => !b.closest('[hidden], [inert]') && (b.textContent?.trim() === label || b.getAttribute('aria-label') === label))
     expect(button, `button ${label}`).toBeTruthy()
     await act(async () => { button!.click() })
     await settle(100)
@@ -371,8 +371,15 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
     let root = createRoot(container)
     const visible = () => container.querySelector<HTMLElement>('[data-desktop-tab-active="true"]')!
     const openAlice = () => openTile('Alice')
-    const history = () => click(`Conversation history (${saved.filter(s => s.agentId === 'alice').length})`)
-    const choose = (title: string) => click([...document.querySelectorAll('[role="dialog"] button')].find(b => b.textContent?.includes(title))!.textContent!)
+    const history = async () => {
+        await click(`Conversation history (${saved.filter(s => s.agentId === 'alice').length})`)
+        expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    }
+    const choose = (title: string) => {
+        const row = [...document.querySelectorAll('[role="dialog"] button')].find(b => b.textContent?.includes(title))
+        expect(row, title + ' in ' + document.querySelector('[role="dialog"]')?.textContent).toBeDefined()
+        return click(row!.textContent!)
+    }
     try {
         await act(async () => { root.render(<DesktopApp initialData={initialData} />) })
         await openAlice()
@@ -493,7 +500,7 @@ test('history read failure can be retried without turning it into an empty saved
         await act(async () => { root.render(<DesktopApp initialData={{ theme: 'system', profile: { id: 1, displayName: 'Test' }, workspace: { id: 1, name: 'Test' }, connections: [], default: null,
             agents: [{ id: 'alice', name: 'Alice', description: '', createdAt, updatedAt: createdAt }] }} />) })
         await openTile('Alice')
-        expect(container.querySelector('[role="alert"]')?.textContent).toContain('History unavailable')
+        expect(container.querySelector('[role="alert"]')?.textContent).toContain('Could not load conversations.')
         await click('Retry conversations')
         expect(container.querySelector('[role="alert"]')).toBeNull()
         await click('Conversation history (1)')
