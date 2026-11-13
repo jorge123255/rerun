@@ -622,7 +622,13 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             }
             return true
         },
-        toggleQuickAsk(window) {
+        toggleQuickAsk(window, { background = false } = {}) {
+            if (background && (!window || window.isDestroyed()) && !picker && !connecting) {
+                // A login launch can restore a hub without any window taking focus.
+                // Do not guess which server to use when more than one is open.
+                const primary = [...windows.values()].filter(entry => entry.primary && !entry.window.isDestroyed())
+                if (primary.length === 1 && !primary[0].window.isVisible()) window = primary[0].window
+            }
             const entry = connected(window)
             if (entry && !singleQuickAskReceiver(entry)) {
                 void dialog.showMessageBox(window, { type: 'info', title: 'Quick Ask',

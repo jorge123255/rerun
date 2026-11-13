@@ -170,8 +170,10 @@ function setMacUnread(count) {
     publishMacUnread()
 }
 function toggleQuickAsk() {
+    if (quitting) return
     const focused = BrowserWindow.getFocusedWindow() ?? lastWorkspaceWindow
-    if (connectedHubs?.toggleQuickAsk(focused)) quickAsk.reset()
+    const background = !supervisor && bootStatus.state === 'choose' && !openingLocalWorkspace
+    if (connectedHubs?.toggleQuickAsk(focused, { background })) quickAsk.reset()
     else quickAsk.toggle()
 }
 function desktopSettings() {
