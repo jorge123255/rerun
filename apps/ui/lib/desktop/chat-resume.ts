@@ -5,6 +5,8 @@ export type DesktopOwnedRun = Pick<Run, 'id' | 'agentId' | 'sessionId' | 'status
 export type DesktopRunRecovery = {
     activeRunId: string | null
     lastError: string | null
+    failedRunId: string | null
+    runVersion: string
 }
 
 // The newest run of this coworker and conversation is the only one that speaks.
@@ -18,6 +20,8 @@ export function desktopRunRecovery(runs: readonly DesktopOwnedRun[], engineAgent
     return {
         activeRunId: running?.id ?? null,
         lastError: latest?.status === 'error' ? latest.error?.trim() || null : null,
+        failedRunId: latest?.status === 'error' ? latest.id : null,
+        runVersion: JSON.stringify([latest?.id ?? null, latest?.status ?? null, running?.id ?? null]),
     }
 }
 

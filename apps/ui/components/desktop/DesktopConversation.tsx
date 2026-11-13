@@ -174,7 +174,7 @@ async function questionFor(sessionId: string, signal: AbortSignal) {
     return desktopQuestionViewSchema.parse(body).question
 }
 
-type DesktopHistoryRead = { messages: UIMessage[]; lastError: string | null; activeRunId: string | null; runsUnavailable: boolean }
+type DesktopHistoryRead = { messages: UIMessage[]; lastError: string | null; activeRunId: string | null; runsUnavailable: boolean; runVersion?: string | null }
 
 async function historyFor(sessionId: string, signal: AbortSignal): Promise<DesktopHistoryRead> {
     const response = await fetch(`/api/desktop/sessions/${encodeURIComponent(sessionId)}/messages`, { signal })
@@ -186,6 +186,7 @@ async function historyFor(sessionId: string, signal: AbortSignal): Promise<Deskt
         lastError: typeof body.lastError === 'string' ? body.lastError : null,
         activeRunId: typeof body.activeRunId === 'string' ? body.activeRunId : null,
         runsUnavailable: body.runsUnavailable === true,
+        runVersion: typeof body.runVersion === 'string' ? body.runVersion : body.runVersion === null ? null : undefined,
     }
 }
 
@@ -487,7 +488,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
         })
         batchUpload.current = work
     }, [imageUploads.start, textUploads.start, imageUploads.failureVersion, textUploads.failureVersion, documents.add, reportUploadNotice])
-    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; takeover?: DesktopPendingTakeover | null; serviceRequest?: ServiceRequest | null; secretRequest?: DesktopSecretRequestView | null; mcpSignIn?: DesktopMcpSignInResponse | null; error?: string; loadedGeneration?: number; lastError?: string | null; activeRunId?: string | null; runsUnavailable?: boolean }>({ id: null, question: null, approval: null, takeover: null, serviceRequest: null, secretRequest: null, mcpSignIn: null })
+    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; takeover?: DesktopPendingTakeover | null; serviceRequest?: ServiceRequest | null; secretRequest?: DesktopSecretRequestView | null; mcpSignIn?: DesktopMcpSignInResponse | null; error?: string; loadedGeneration?: number; lastError?: string | null; activeRunId?: string | null; runsUnavailable?: boolean; runVersion?: string | null }>({ id: null, question: null, approval: null, takeover: null, serviceRequest: null, secretRequest: null, mcpSignIn: null })
     const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer | DesktopTakeoverTerminal; onAccepted?: () => void; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
     const quickReplyRequest = useRef<{ sessionId: string; requestId: string; accepted: boolean } | null>(null)
     const quickReplyIds = useRef(new Map<string, string>())
@@ -807,7 +808,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
             if (controller.signal.aborted) return
             if ([pending, approval, takeover, serviceRequest, secretRequest?.receipt ? null : secretRequest, mcpSignIn?.request?.receipt ? null : mcpSignIn?.request].filter(Boolean).length > 1) throw new Error('This conversation changed while loading. Reload it to see the current request.')
             setMessages(result.messages)
-            setHistory({ id: sessionId, transcript: result.messages, question: pending, approval, takeover, serviceRequest, secretRequest, mcpSignIn, loadedGeneration: historyGeneration, lastError: result.lastError, activeRunId: result.activeRunId, runsUnavailable: result.runsUnavailable })
+            setHistory({ id: sessionId, transcript: result.messages, question: pending, approval, takeover, serviceRequest, secretRequest, mcpSignIn, loadedGeneration: historyGeneration, lastError: result.lastError, activeRunId: result.activeRunId, runsUnavailable: result.runsUnavailable, runVersion: result.runVersion })
         }).catch(cause => {
             if (!controller.signal.aborted) setHistory({ id: sessionId, error: cause instanceof Error ? cause.message : 'Could not load history' })
         })
@@ -816,32 +817,64 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
 
     useEffect(() => {
         setStopError(undefined)
-        if (busy || !sessionId || !ready) return
-        let cancelled = false
+    }, [sessionId, busy, ready, attempt])
+
+    useEffect(() => {
+        if (busy || !sessionId || !ready || history.loadedGeneration !== historyGeneration) return
+        const controller = new AbortController()
         let timer: ReturnType<typeof setTimeout> | undefined
-        let wasRunning = false
+        let checking = false
+        let refreshing = false
+        let wasRunning = !!history.activeRunId
         const check = async () => {
+            if (checking || refreshing || controller.signal.aborted || isDesktopQuitting()) return
+            clearTimeout(timer)
+            checking = true
+            let unavailable = false
             try {
-                const response = await fetch(stopUrl(sessionId))
+                const response = await fetch(stopUrl(sessionId), { signal: controller.signal })
                 const body = await response.json().catch(() => ({}))
-                if (cancelled) return
+                if (controller.signal.aborted) return
                 if (!response.ok) throw new Error('Run status unavailable')
                 const running = body.running === true
-                setEngineRunning({ id: sessionId, running, runId: running && typeof body.runId === 'string' ? body.runId : null, failedRunId: typeof body.failedRunId === 'string' ? body.failedRunId : null, failedRunError: typeof body.failedRunError === 'string' ? body.failedRunError : null })
-                if (running) {
-                    wasRunning = true
-                    timer = setTimeout(check, RUN_POLL_MS)
-                } else if (wasRunning) {
+                const runId = running && typeof body.runId === 'string' ? body.runId : null
+                const failedRunId = typeof body.failedRunId === 'string' ? body.failedRunId : null
+                const failedRunError = typeof body.failedRunError === 'string' ? body.failedRunError : null
+                setEngineRunning(current => current.id === sessionId && current.running === running && current.runId === runId
+                    && current.failedRunId === failedRunId && current.failedRunError === failedRunError
+                    ? current : { id: sessionId, running, runId, failedRunId, failedRunError })
+                const changed = typeof body.runVersion === 'string' && body.runVersion !== history.runVersion
+                if (changed || !running && wasRunning) {
+                    refreshing = true
                     setHistory(current => current.id === sessionId ? { ...current, question: undefined, approval: undefined, takeover: undefined, serviceRequest: undefined, secretRequest: undefined, mcpSignIn: undefined } : current)
-                    setAttempt(n => n + 1) // The reply finished elsewhere: reload the saved transcript.
+                    setAttempt(n => n + 1)
                 }
+                wasRunning = running
             } catch {
-                if (!cancelled) timer = setTimeout(check, RUN_POLL_MS)
+                unavailable = true
+            } finally {
+                checking = false
+                // Idle tabs read on foreground return. A run we already observed keeps its
+                // completion check even if the user leaves the tab.
+                if (!refreshing && !controller.signal.aborted && (wasRunning || unavailable || active && document.visibilityState !== 'hidden')) timer = setTimeout(check, RUN_POLL_MS)
             }
         }
         void check()
-        return () => { cancelled = true; clearTimeout(timer) }
-    }, [sessionId, busy, ready, attempt])
+        const catchUp = () => {
+            if (document.visibilityState !== 'hidden') void check()
+            else if (!wasRunning) clearTimeout(timer)
+        }
+        if (active) {
+            window.addEventListener('focus', catchUp)
+            document.addEventListener('visibilitychange', catchUp)
+        }
+        return () => {
+            controller.abort()
+            clearTimeout(timer)
+            window.removeEventListener('focus', catchUp)
+            document.removeEventListener('visibilitychange', catchUp)
+        }
+    }, [sessionId, busy, ready, active, historyGeneration, history.loadedGeneration, history.activeRunId, history.runVersion])
 
     const resumedRun = useRef<string | null>(null)
     const wasActive = useRef(active)

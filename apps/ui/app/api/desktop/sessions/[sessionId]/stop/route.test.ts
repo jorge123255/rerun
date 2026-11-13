@@ -119,7 +119,7 @@ describe('/api/desktop/sessions/[sessionId]/stop', () => {
     it('cancels only that conversation’s engine run; the other coworker keeps working', async () => {
         const { researcher, reviewer, a, b } = await twoHeldTurns()
         expect(await board()).toEqual({ [researcher.id]: 'working', [reviewer.id]: 'working' })
-        expect(await (await get(a.id)).json()).toEqual({ running: true, runId: 'run-a', failedRunId: null, failedRunError: null })
+        expect(await (await get(a.id)).json()).toEqual({ running: true, runId: 'run-a', failedRunId: null, failedRunError: null, runVersion: JSON.stringify(['run-a', 'running', 'run-a']) })
 
         const response = await post(a.id)
         expect(response.status).toBe(200)
@@ -128,12 +128,12 @@ describe('/api/desktop/sessions/[sessionId]/stop', () => {
         expect(runs.find(r => r.id === 'run-a')!.status).toBe('cancelled')
         expect(runs.find(r => r.id === 'run-b')!.status).toBe('running')
         expect(await board()).toEqual({ [researcher.id]: 'idle', [reviewer.id]: 'working' })
-        expect(await (await get(a.id)).json()).toEqual({ running: false, runId: null, failedRunId: null, failedRunError: null })
-        expect(await (await get(b.id)).json()).toEqual({ running: true, runId: 'run-b', failedRunId: null, failedRunError: null })
+        expect(await (await get(a.id)).json()).toEqual({ running: false, runId: null, failedRunId: null, failedRunError: null, runVersion: JSON.stringify(['run-a', 'cancelled', null]) })
+        expect(await (await get(b.id)).json()).toEqual({ running: true, runId: 'run-b', failedRunId: null, failedRunError: null, runVersion: JSON.stringify(['run-b', 'running', 'run-b']) })
 
         // A follow-up turn in the canceled conversation is a new run that can itself be stopped.
         runs.push({ id: 'run-a2', agentId: 'engine-researcher', sessionId: 'es-a', status: 'running' })
-        expect(await (await get(a.id)).json()).toEqual({ running: true, runId: 'run-a2', failedRunId: null, failedRunError: null })
+        expect(await (await get(a.id)).json()).toEqual({ running: true, runId: 'run-a2', failedRunId: null, failedRunError: null, runVersion: JSON.stringify(['run-a2', 'running', 'run-a2']) })
         expect(await (await post(a.id)).json()).toEqual({ canceled: 1, alreadyFinished: false })
         expect(runs.find(r => r.id === 'run-b')!.status).toBe('running')
     })

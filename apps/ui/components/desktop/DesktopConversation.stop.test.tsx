@@ -192,6 +192,50 @@ test('a transient engine status error is retried for a reopened running conversa
     } finally { vi.useRealTimers() }
 })
 
+test('an idle conversation catches a run started elsewhere and a reply completed while hidden', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+        const originalFetch = globalThis.fetch
+        let runVersion = 'first-done'
+        let reply = 'First saved reply'
+        let visibility: DocumentVisibilityState = 'visible'
+        vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input)
+            if (url.endsWith('/messages')) return Response.json({
+                messages: [{ id: reply, role: 'assistant', parts: [{ type: 'text', text: reply }] }], activeRunId, runVersion,
+            })
+            if (url.endsWith('/stop') && init?.method !== 'POST') return Response.json({ running, runId: activeRunId, runVersion })
+            return originalFetch(input, init)
+        }))
+        await render()
+        expect(container.textContent).toContain(reply)
+
+        running = true; activeRunId = 'second-run'; runVersion = 'second-running'
+        await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+        expect(button('Stop')).toBeDefined()
+        expect(chat.resumeStream).toHaveBeenCalledTimes(1)
+
+        running = false; activeRunId = null; runVersion = 'second-done'; reply = 'Second saved reply'
+        await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+        expect(container.textContent).toContain(reply)
+        expect(button('Stop')).toBeUndefined()
+
+        visibility = 'hidden'
+        runVersion = 'third-done'; reply = 'Finished while the window was hidden'
+        await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+        expect(container.textContent).not.toContain(reply)
+        visibility = 'visible'
+        await act(async () => { document.dispatchEvent(new Event('visibilitychange')); window.dispatchEvent(new Event('focus')) })
+        expect(container.textContent).toContain(reply)
+        expect(chat.resumeStream).toHaveBeenCalledTimes(1)
+        expect(chat.sendMessage).not.toHaveBeenCalled()
+    } finally {
+        vi.restoreAllMocks()
+        vi.useRealTimers()
+    }
+})
+
 test('a reopened run is not readable until its final history and both pending-request reads finish', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {

@@ -29,13 +29,12 @@ async function runningRuns({ conn, engineAgentId, engineSessionId }: Target) {
     }
 }
 
-export async function readDesktopTurnRunning(runtime: DesktopRuntime, sessionId: string): Promise<{ running: boolean; runId: string | null; failedRunId: string | null; failedRunError: string | null }> {
+export async function readDesktopTurnRunning(runtime: DesktopRuntime, sessionId: string) {
     const target = await targetOf(runtime, sessionId)
     try {
-        const owned = (await listRuns(target.conn, target.engineAgentId, { sessionId: target.engineSessionId })).filter(run => run.sessionId === target.engineSessionId && run.agentId === target.engineAgentId)
-        const recovery = desktopRunRecovery(owned, target.engineAgentId, target.engineSessionId)
-        const latest = [...owned].sort((left, right) => right.startedAt.localeCompare(left.startedAt) || right.id.localeCompare(left.id))[0]
-        return { running: !!recovery.activeRunId, runId: recovery.activeRunId, failedRunId: latest?.status === 'error' ? latest.id : null, failedRunError: recovery.lastError }
+        const runs = await listRuns(target.conn, target.engineAgentId, { sessionId: target.engineSessionId, limit: 50 })
+        const recovery = desktopRunRecovery(runs, target.engineAgentId, target.engineSessionId)
+        return { running: !!recovery.activeRunId, runId: recovery.activeRunId, failedRunId: recovery.failedRunId, failedRunError: recovery.lastError, runVersion: recovery.runVersion }
     } catch { throw new DesktopHttpError(502, 'Could not read this reply’s status. Try again.') }
 }
 
