@@ -227,6 +227,15 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         signal.throwIfAborted()
         const address = new URL(path ?? '/', origin)
         if (!sameHub(address, origin)) return false
+        if (!bounds && !issue && path !== null) {
+            // An explicit link can already be open in another workspace window.
+            const matching = [...windows.values()].find(entry => entry.origin === origin && connected(entry.window) === entry
+                && entry.contents.mainFrame.url === address.href && !entry.contents.isLoadingMainFrame())
+            if (matching) {
+                if (reveal()) show(matching.window)
+                return true
+            }
+        }
         const placement = bounds ? null : await windowPlacements.restore(origin)
         signal.throwIfAborted()
         const existing = !bounds && [...windows.values()].find(entry => entry.origin === origin && !entry.window.isDestroyed())
