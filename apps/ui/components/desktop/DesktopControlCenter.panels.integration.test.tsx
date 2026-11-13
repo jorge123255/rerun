@@ -136,6 +136,7 @@ function fixture(runStatus?: (sessionId: string, method: 'GET' | 'POST') => Prom
     const board: DesktopBoardState = { revision: 1, spaces: [{ id: boxId, name: 'Review Box', col_start: 0, row_start: 0, col_end: 11, row_end: 7 }],
         placements: coworkers.map((agent, index) => ({ agentId: agent.id, spaceId: boxId, col: index * 3, row: 0 })) }
     let gettingStartedDismissed = false
+    let gettingStartedModels = 0
     let roster = coworkers
     const drafts = createDesktopDraftFixture()
     const recent = createDesktopRecentFixture()
@@ -190,7 +191,10 @@ function fixture(runStatus?: (sessionId: string, method: 'GET' | 'POST') => Prom
         }
         if (productionBoard && url.pathname === '/api/desktop/getting-started') {
             if (method === 'POST') gettingStartedDismissed = JSON.parse(String(init?.body)).action === 'dismiss'
-            return Response.json(desktopGettingStartedResponse(2, gettingStartedDismissed, { coworkers: 2, connectedProviders: 0, modelChats: 0, schedules: 0 }))
+            return Response.json(desktopGettingStartedResponse(2, gettingStartedDismissed, { coworkers: 2, connectedProviders: gettingStartedModels, modelChats: 0, schedules: 0 }))
+        }
+        if (productionBoard && method === 'GET' && url.pathname === '/api/desktop/api-connections/2/catalog') {
+            return Response.json({ version: 1, workspaceId: 2, default: null, connections: [] })
         }
         if (url.pathname === '/api/desktop/settings' && method === 'GET') return Response.json(providers)
         if (productionBoard && url.pathname === '/api/desktop/agents' && method === 'GET') return Response.json({ agents: roster })
@@ -313,6 +317,7 @@ function fixture(runStatus?: (sessionId: string, method: 'GET' | 'POST') => Prom
     }))
     return {
         panelReads, messageReads, fileReads, contentWrites, voiceAudioReads, managementWrites, layouts, answer,
+        connectGettingStartedModel: () => { gettingStartedModels = 1 },
         async mount(language?: DesktopLanguage) {
             const container = document.createElement('div')
             document.body.append(container)
@@ -1117,6 +1122,20 @@ test('opens the current Box overview from the board and restores the checklist d
     await enter(await until(commandField), 'Getting started')
     await chooseOpenRow('Getting started')
     await until(() => restarted.container.querySelector(`[aria-label="${pill}"]`))
+})
+
+test('updates Getting started when returning from model settings without reopening the checklist', async () => {
+    const app = fixture(undefined, true)
+    const mounted = await app.mount()
+    await until(() => mounted.container.querySelector('[aria-label="Getting started: 1 of 3 done"]'))
+    await click('Getting started: 1 of 3 done')
+    const model = await until(() => [...document.querySelectorAll<HTMLButtonElement>('li button')].find(button => button.textContent?.includes('Connect a model')))
+    await act(async () => { model.click() })
+    await until(() => document.querySelector('#desktop-api-key'))
+    app.connectGettingStartedModel()
+    await click('Team board')
+    await until(() => mounted.container.querySelector('[aria-label="Getting started: 2 of 3 done"]'))
+    expect(document.querySelector('[aria-label="Hide"]')).toBeNull()
 })
 
 test('reopens the localized workspace checklist from Help after a persisted dismissal', async () => {

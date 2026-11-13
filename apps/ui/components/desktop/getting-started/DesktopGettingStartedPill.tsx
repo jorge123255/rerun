@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { DesktopGettingStartedPopover } from '@/components/desktop/getting-started/DesktopGettingStartedPopover'
+import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import { desktopGettingStartedResponseSchema, type DesktopGettingStartedResponse, type DesktopGettingStartedStepId } from '@/lib/desktop/getting-started/progress'
 import { publishDesktopGettingStartedAvailability } from '@/lib/desktop/help/availability'
 import { onDesktopGettingStartedReopen } from '@/lib/desktop/getting-started/reopen'
 
 type DesktopGettingStartedPillProps = {
     workspaceId: number
+    visible: boolean
     onAddCoworker: () => void
     onModelSettings: () => void
     onOpenSchedules: () => void
@@ -37,24 +39,35 @@ async function postAction(action: 'dismiss' | 'reopen', signal: AbortSignal): Pr
 }
 
 /** Local checklist. Hidden after dismiss until Control Center asks it to reopen. A failed read shows nothing. */
-export function DesktopGettingStartedPill({ workspaceId, onAddCoworker, onModelSettings, onOpenSchedules }: DesktopGettingStartedPillProps) {
+export function DesktopGettingStartedPill({ workspaceId, visible, onAddCoworker, onModelSettings, onOpenSchedules }: DesktopGettingStartedPillProps) {
     const [snapshot, setSnapshot] = useState<DesktopGettingStartedResponse | null>(null)
     const [open, setOpen] = useState(false)
     const pending = useRef<AbortController | null>(null)
     const refresh = useCallback(async (action?: 'dismiss' | 'reopen') => {
+        // A background read must not cancel a dismissal or reopen in flight.
+        if (!action && pending.current) return
         pending.current?.abort()
         const controller = new AbortController()
         pending.current = controller
-        const next = action ? await postAction(action, controller.signal) : await readSnapshot(controller.signal)
-        if (controller.signal.aborted || next?.workspaceId !== workspaceId) return
-        setSnapshot(next)
-        if (action === 'reopen' && !next.dismissed) setOpen(true)
+        try {
+            const next = action ? await postAction(action, controller.signal) : await readSnapshot(controller.signal)
+            if (controller.signal.aborted || next?.workspaceId !== workspaceId) return
+            setSnapshot(next)
+            if (action === 'reopen' && !next.dismissed) setOpen(true)
+        } finally {
+            if (pending.current === controller) pending.current = null
+        }
     }, [workspaceId])
+    const refreshProgress = useCallback(() => refresh(), [refresh])
+    useVisibleInterval(refreshProgress, 10_000, { enabled: visible && !snapshot?.dismissed, refreshOnFocus: true })
 
     useEffect(() => {
-        void refresh()
         const stop = onDesktopGettingStartedReopen(() => { void refresh('reopen') })
-        return () => { stop(); pending.current?.abort() }
+        return () => {
+            stop()
+            pending.current?.abort()
+            pending.current = null
+        }
     }, [refresh])
     useEffect(() => {
         publishDesktopGettingStartedAvailability(snapshot?.workspaceId === workspaceId ? workspaceId : null)

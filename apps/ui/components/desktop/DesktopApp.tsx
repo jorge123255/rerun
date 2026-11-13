@@ -329,6 +329,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const changelog = useDesktopChangelog(initialData.runtimeLaunchNonce, !modalOrActionActive && !boardInteraction && !controlCenterOpen && !panelOpen)
     const coworkerPanelBlocked = modalOrActionActive || changelog.open
     const controlCenterDisabled = coworkerPanelBlocked || boardInteraction
+    const gettingStartedVisible = !controlCenterDisabled && !controlCenterOpen && !panelOpen && !foremanOpen
 
     useEffect(() => {
         const openFromShortcut = () => {
@@ -846,8 +847,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     onRename={renameCoworker} onShare={agent => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting() && currentAgents.current.some(current => current.id === agent.id)) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) } }} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />}
                 {runtimeWorkspaceId !== null && initialData.runtimeLaunchNonce && <div className="absolute bottom-4 left-4 z-30"
-                    hidden={controlCenterDisabled || controlCenterOpen || panelOpen || foremanOpen}>
-                    <DesktopGettingStartedPill key={runtimeWorkspaceId} workspaceId={runtimeWorkspaceId}
+                    hidden={!gettingStartedVisible}>
+                    <DesktopGettingStartedPill key={runtimeWorkspaceId} workspaceId={runtimeWorkspaceId} visible={gettingStartedVisible}
                         onAddCoworker={() => showBoard(true)} onModelSettings={openSettings}
                         onOpenSchedules={() => {
                             const coworker = currentAgents.current.find(agent => agent.enabled !== false)
