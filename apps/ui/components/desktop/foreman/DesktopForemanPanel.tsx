@@ -52,6 +52,8 @@ export type DesktopForemanPanelProps = {
     composerTrailing?: ReactNode
     controlledOpen?: boolean
     hidden?: boolean
+    // Take the whole space given, as in the middle of the Simple view.
+    fill?: boolean
     centerOpen?: boolean
     findEnabled?: boolean
     onOpenChange?: (open: boolean) => void
@@ -213,7 +215,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         active={!props.hidden && !state.view.live && !state.question && !state.approval && !intakeOpen && !pendingStarter && !pendingSend && !modelSaving} engage={() => {}}
         accepted={() => { void client.refresh() }} onSlot={setVoice} onSettings={props.onOpenTranscriptionSettings} />}
     {!intakeOpen && <DesktopCompanyResearch chat={state.chat} active={!!props.controlledOpen && !props.hidden} refreshKey={JSON.stringify(state.view)} />}
-    <DesktopForemanColumn
+    <DesktopForemanColumn fill={props.fill}
         mentionTargets={props.mentionTargets} team={props.team} firstName={props.firstName} nextRoutine={props.nextRoutine} routineNow={props.routineNow}
         onOpenCalledChat={props.onOpenCalledChat}
         callSources={state.callSources}

@@ -95,6 +95,7 @@ export type DesktopForemanColumnProps = {
     focusRequest?: string
     controlledOpen?: boolean
     hidden?: boolean
+    fill?: boolean
     centerOpen?: boolean
     findEnabled?: boolean
     dockFeed?: ExactDockFeed | null
@@ -135,7 +136,7 @@ export function DesktopForemanColumn({
     headerActions,
     runNotice,
     renderBoardOverlay,
-    className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, controlledOpen, hidden, centerOpen, findEnabled, dockFeed, voiceSlot, intake, intakeFinished, separateConversation, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
+    className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, controlledOpen, hidden, fill, centerOpen, findEnabled, dockFeed, voiceSlot, intake, intakeFinished, separateConversation, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
     const { t } = useDesktopLocale()
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
@@ -276,7 +277,7 @@ export function DesktopForemanColumn({
         || documents.attachments.length || sendingDocuments || attachmentComposer && (!documents.loaded || documents.busy))
     return (
         <>
-        <DesktopForemanDockLayout scope={dockBinding.scope} open={ui.open} hidden={hidden}
+        <DesktopForemanDockLayout scope={dockBinding.scope} open={ui.open} hidden={hidden} fill={fill}
             placement={dockBinding.placement} dock={dockBinding.dock} onPlacement={dockBinding.onPlacement} onDock={dockBinding.onDock}
             onClose={() => changeOpen(false)} returnFocus={() => triggerRef.current} onLayout={onLayout}>
             {header => <div ref={column} className="relative flex h-full min-h-0 flex-col">

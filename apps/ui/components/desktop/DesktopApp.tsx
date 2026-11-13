@@ -962,9 +962,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     <div className="flex min-w-0 flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">{t('workspaceView.chat.pick')}</div>
                 </div>}
                 {!controlCenterDisabled && !panelOpen && !foremanEngaged && <DesktopForemanDock open={foremanOpen} onToggle={engageForeman} />}
-                {foremanEngaged && <div className="pointer-events-none absolute inset-2 z-40 grid min-h-0" style={{ left: simple ? 296 : undefined, gridTemplateColumns: `${foremanLeftTrack}px minmax(0,1fr) ${foremanRightTrack}px` }}>
+                {foremanEngaged && <div className="pointer-events-none absolute inset-2 z-40 grid min-h-0" style={{ left: simple ? 288 : undefined, ...(simple && { top: 0, right: 0, bottom: 0 }), gridTemplateColumns: `${foremanLeftTrack}px minmax(0,1fr) ${foremanRightTrack}px` }}>
 
-                    <DesktopForemanPanel key={foremanTarget?.chatId ?? 'home'} target={foremanTarget}
+                    <DesktopForemanPanel fill={simple} key={foremanTarget?.chatId ?? 'home'} target={foremanTarget}
                         onSelectConversation={runtimeWorkspaceId !== null ? openForemanConversation : undefined}
                         controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout} mentionTargets={foremanMentionTargets} team={foremanTeam} firstName={foremanFirstName} nextRoutine={nextRoutine} routineNow={upcoming?.now}
                         hidden={controlCenterDisabled || (controlCenterOpen && foremanOpen) || panelOpen || settings || workspaceSettings || profileOpen || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
