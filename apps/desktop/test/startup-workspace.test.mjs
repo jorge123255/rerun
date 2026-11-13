@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
-import { configureStartupProfile, hasLocalWorkspace } from '../src/main/startup-workspace.mjs'
+import { configureStartupProfile, hasLocalWorkspace, loadStartupWorkspace } from '../src/main/startup-workspace.mjs'
 
 test('the startup preload forwards the localized retry label', async () => {
     const source = await readFile(new URL('../src/main/preload.cjs', import.meta.url), 'utf8')
@@ -73,6 +73,23 @@ test('remembering a server does not turn a fresh profile into a local workspace'
         assert.equal(await hasLocalWorkspace(root), true)
         await rm(path, { recursive: true })
     }
+})
+
+test('startup remembers the latest explicit choice without creating a workspace', async t => {
+    const root = await mkdtemp(join(tmpdir(), 'rerun-startup-selection-'))
+    t.after(() => rm(root, { recursive: true, force: true }))
+    const preference = await loadStartupWorkspace(root)
+    assert.equal(preference.selection(), null)
+    void preference.remember('connected')
+    void preference.remember('local')
+    await preference.flush()
+    assert.equal((await loadStartupWorkspace(root)).selection(), 'local')
+    await preference.remember('connected')
+    await preference.remember('https://foreign.example')
+    assert.equal((await loadStartupWorkspace(root)).selection(), 'connected')
+    assert.equal(await hasLocalWorkspace(root), false)
+    await writeFile(join(root, 'startup-workspace.json'), '{"version":2,"selection":"connected"}')
+    assert.equal((await loadStartupWorkspace(root)).selection(), null)
 })
 
 test('the startup screen routes each choice separately and keeps the latest status', async () => {

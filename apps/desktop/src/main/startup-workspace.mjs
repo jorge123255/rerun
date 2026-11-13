@@ -1,6 +1,6 @@
 import { mkdirSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
-import { pathExists } from './workspaces/paths.mjs'
+import { atomicPrivateJSON, pathExists, readJSON } from './workspaces/paths.mjs'
 
 function contains(root, candidate) {
     const path = relative(root, candidate)
@@ -43,4 +43,24 @@ export async function hasLocalWorkspace(dataRoot) {
         if (await pathExists(join(dataRoot, entry))) return true
     }
     return false
+}
+
+export async function loadStartupWorkspace(dataRoot) {
+    const path = join(dataRoot, 'startup-workspace.json')
+    const saved = await readJSON(path).catch(() => null)
+    const valid = value => value === 'local' || value === 'connected'
+    let selection = saved?.version === 1 && valid(saved.selection) ? saved.selection : null
+    let pending = Promise.resolve()
+    return {
+        selection: () => selection,
+        remember(next) {
+            if (!valid(next) || selection === next) return pending
+            selection = next
+            pending = pending.then(() => atomicPrivateJSON(path, { version: 1, selection: next })).catch(() => {
+                console.warn('Could not save the Rerun startup workspace preference.')
+            })
+            return pending
+        },
+        flush: () => pending,
+    }
 }

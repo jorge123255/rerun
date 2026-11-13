@@ -25,7 +25,7 @@ const preload = fileURLToPath(new URL('./connected-hub-preload.cjs', import.meta
 const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads', 'notifications', 'badge', 'settings', 'oauth', 'locale']
 
 export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
-    updates, canRestartForUpdate, available, openFind, closeFind, setUnread, desktopSettings, changeDesktopSettings, setLanguage, language }) {
+    updates, canRestartForUpdate, available, openFind, closeFind, setUnread, desktopSettings, changeDesktopSettings, setLanguage, language, onConnect }) {
     const file = resolve(dataRoot, 'connected-hub.json')
     const windows = new Map()
     const childWindows = new Map()
@@ -202,7 +202,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     const stateOf = window => ({ focused: window.isFocused(), visible: window.isVisible() && !window.isMinimized(),
         fullscreen: window.isFullScreen(), maximized: window.isMaximized() })
 
-    async function openHub(origin, desktopSession, path, signal, offline, bounds) {
+    async function openHub(origin, desktopSession, path, signal, offline, bounds, reveal = () => true) {
         signal.throwIfAborted()
         const address = new URL(path ?? '/', origin)
         if (!sameHub(address, origin)) return false
@@ -217,7 +217,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
                 if (!await existing.recovery.navigate(target)) return false
             }
             signal.throwIfAborted()
-            show(existing.window)
+            if (reveal()) show(existing.window)
             return true
         }
         const primary = !bounds
@@ -352,7 +352,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
                 const capture = windowPlacements.track(origin, window)
                 window.on('close', () => { capture(); void windowPlacements.flush() })
             }
-            show(window)
+            if (reveal()) show(window)
             return true
         } catch { abort(); return false }
         finally { signal.removeEventListener('abort', abort) }
@@ -377,25 +377,28 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             cascadeWindowBounds(entry.window, screen))
     }
 
-    async function connect(address, { path = null, parent, remember = true } = {}) {
-        if (!available() || connecting) return { ok: false, reason: 'busy' }
+    async function connect(address, { path = null, parent, remember = true, signal, reveal } = {}) {
+        if (!available() || connecting || signal?.aborted) return { ok: false, reason: 'busy' }
         const origin = normalizeHubOrigin(address)
         if (!origin) return { ok: false, reason: 'invalid' }
         const controller = new AbortController()
         connecting = controller
+        const lifetime = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
         try {
             const desktopSession = session.fromPartition(hubPartition(origin))
             const result = await checkHub(origin, version, desktopSession.fetch.bind(desktopSession),
-                AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]))
+                AbortSignal.any([lifetime, AbortSignal.timeout(8000)]))
             const offline = !result.ok && result.reason === 'unreachable' && await savedOrigin() === origin
             if (!result.ok && !offline) return result
             if (!available() || (parent && picker !== parent)) return { ok: false, reason: 'busy' }
             const request = parent ? pendingOpen : null
-            const opening = AbortSignal.any([controller.signal, AbortSignal.timeout(25000)])
-            if (!await openHub(origin, desktopSession, request?.path ?? path, opening, offline)) return { ok: false, reason: 'unreachable' }
+            const opening = AbortSignal.any([lifetime, AbortSignal.timeout(25000)])
+            if (!await openHub(origin, desktopSession, request?.path ?? path, opening, offline, undefined, reveal)) {
+                return { ok: false, reason: 'unreachable' }
+            }
             if (request && pendingOpen === request) pendingOpen = null
             // The connection is usable even if the convenience of remembering its address fails.
-            if (remember) await atomicPrivateJSON(file, { origin }).catch(() => {})
+            if (remember) await atomicPrivateJSON(file, { origin }).then(() => onConnect?.(), () => {})
             if (parent && !parent.isDestroyed()) {
                 acceptedPicker = parent
                 setTimeout(() => { if (!parent.isDestroyed()) parent.close() }, 0)
@@ -526,10 +529,10 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         },
         openPicker,
         openCloud: () => connect(RERUN_CLOUD_ORIGIN),
-        async reopenRemembered() {
+        async reopenRemembered(options) {
             const origin = await savedOrigin()
             if (!origin || !available() || picker || openingLink || pendingOpen || connecting) return false
-            return (await connect(origin, { remember: false })).ok
+            return (await connect(origin, { ...options, remember: false })).ok
         },
         ownsWindow: window => !!entryFor(window),
         focusWindow(window) {

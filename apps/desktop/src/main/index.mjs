@@ -27,7 +27,7 @@ import { hideWorkspaceWindow, revealWorkspaceWindow } from './window-visibility.
 import { createConnectedHubs } from './connected-hubs.mjs'
 import { hubConnectionError } from './connected-hub-messages.mjs'
 import { parseHubLink, registerHubProtocol } from './connected-hub-policy.mjs'
-import { configureStartupProfile, hasLocalWorkspace } from './startup-workspace.mjs'
+import { configureStartupProfile, hasLocalWorkspace, loadStartupWorkspace } from './startup-workspace.mjs'
 import { createMacPhonePairingService } from './mac-phone-pairing/index.mjs'
 import { pairingQrImage } from './mac-phone-pairing/qr.mjs'
 import { createPhonePairingWindow } from './mac-phone-pairing-window.mjs'
@@ -64,6 +64,7 @@ let quitting = false
 let quittingNow = false
 let phonePairing
 let openingLocalWorkspace
+let startupWorkspace
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const boards = createBoardWindows({ startupUrl: pathToFileURL(startup).href, isDesktopPage })
@@ -135,18 +136,25 @@ function showMainWindow() {
     revealWorkspaceWindow(window)
 }
 function reopenRememberedHub() {
-    reopeningHub ??= connectedHubs.reopenRemembered().catch(() => false).finally(() => { reopeningHub = null })
-    return reopeningHub
+    if (!reopeningHub) {
+        const controller = new AbortController()
+        const promise = connectedHubs.reopenRemembered({
+            signal: controller.signal, reveal: () => showWindowOnReady,
+        }).catch(() => false).finally(() => { if (reopeningHub?.controller === controller) reopeningHub = null })
+        reopeningHub = { controller, promise }
+    }
+    return reopeningHub.promise
 }
 function showWorkspaceWindow() {
     if (quitting) return
+    showWindowOnReady = true
     for (const candidate of [BrowserWindow.getFocusedWindow(), lastWorkspaceWindow]) {
         if (connectedHubs?.focusWindow(candidate)) return
         if (boardContext(candidate)) { revealWorkspaceWindow(candidate); return }
     }
     if (connectedHubs && bootStatus.state === 'choose' && !openingLocalWorkspace && !supervisor) {
         void reopenRememberedHub().then(opened => {
-            if (!opened && !quitting) showMainWindow()
+            if (!opened && !quitting && !openingLocalWorkspace) showMainWindow()
         })
     } else showMainWindow()
 }
@@ -251,6 +259,7 @@ else {
         const link = parseHubLink(address)
         if (!link) return
         event.preventDefault()
+        if (link.kind === 'open') reopeningHub?.controller.abort()
         if (connectedHubs) void connectedHubs.openLink(link).catch(() => {})
         else if (link.kind === 'open') pendingHubLink = link
     })
@@ -278,6 +287,7 @@ else {
                 saveBoardPlacement?.()
                 await windowPlacements?.flush()
                 await shellLanguage?.flush()
+                await startupWorkspace?.flush()
             },
             quit: () => { clickHandoff.stop(); quittingNow = true; approvedQuitAction(macUpdates, app) },
             cancelled: resumeAfterCancelledQuit,
@@ -318,6 +328,7 @@ function resumeBoard(board) {
 async function launch() {
     const openRememberedHub = !pendingHubLink
     if (mac) {
+        startupWorkspace = await loadStartupWorkspace(dataRoot)
         if (app.isPackaged && !registerHubProtocol(app)) console.warn('Could not register Rerun development links with macOS.')
         shortcutPreference = await loadQuickAskShortcut({ dataRoot, globalShortcut, open: toggleQuickAsk })
         const currentLanguageScope = () => {
@@ -332,7 +343,8 @@ async function launch() {
             updates: macUpdates, canRestartForUpdate: () => !transitioning && !changingBoards.size,
             available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate),
             setUnread: count => { hubUnread = count; publishMacUnread() }, desktopSettings, changeDesktopSettings,
-            setLanguage: (scope, locale) => shellLanguage.set(scope, locale), language: scope => shellLanguage.forScope(scope) })
+            setLanguage: (scope, locale) => shellLanguage.set(scope, locale), language: scope => shellLanguage.forScope(scope),
+            onConnect: () => startupWorkspace.remember('connected') })
         app.on('browser-window-focus', (_event, candidate) => {
             const hub = connectedHubs.ownsWindow(candidate)
             if (boards.get(candidate) || hub) {
@@ -360,14 +372,15 @@ async function launch() {
             openQuickAsk: toggleQuickAsk,
             openLocalWorkspace: () => {
                 showMainWindow()
-                if (bootStatus.state === 'choose') void startLocalWorkspace()
+                if (runtimeScope()) void startupWorkspace.remember('local')
+                else if (bootStatus.state === 'choose') void openLocalWorkspace()
             },
             openNewWindow: (_item, candidate) => {
                 const focused = candidate ?? BrowserWindow.getFocusedWindow() ?? lastWorkspaceWindow
                 if (connectedHubs.duplicateWindow(focused)) return
                 void openAdditionalBoard().catch(() => {})
             },
-            openHubPicker: () => { leaveLocalUnlock(); connectedHubs.openPicker() },
+            openHubPicker: () => { reopeningHub?.controller.abort(); leaveLocalUnlock(); connectedHubs.openPicker() },
             openPhonePairing: () => phonePairingWindow.open(),
             reloadWindow: (_item, candidate) => {
                 const last = lastWorkspaceWindow && !lastWorkspaceWindow.isDestroyed() ? lastWorkspaceWindow : window
@@ -411,8 +424,12 @@ async function launch() {
             return event.senderFrame.url === pathToFileURL(startup).href && !quitting
         }
         const canConnectToServer = event => onStartupPage(event) && !!bootStatus.choices && !supervisor
-        ipcMain.handle('desktop:startup-local', event => onStartupPage(event) && bootStatus.state === 'choose' && startLocalWorkspace())
+        ipcMain.handle('desktop:startup-local', event => onStartupPage(event) && bootStatus.state === 'choose' && openLocalWorkspace())
         ipcMain.handle('desktop:startup-cloud', async event => {
+            if (!canConnectToServer(event)) return { ok: false }
+            const restore = reopeningHub
+            restore?.controller.abort()
+            await restore?.promise
             if (!canConnectToServer(event)) return { ok: false }
             leaveLocalUnlock()
             const locale = shellLanguage.forScope('local')
@@ -421,6 +438,7 @@ async function launch() {
         })
         ipcMain.handle('desktop:startup-connect', event => {
             if (!canConnectToServer(event)) return false
+            reopeningHub?.controller.abort()
             leaveLocalUnlock()
             connectedHubs.openPicker()
             return true
@@ -606,13 +624,22 @@ async function launch() {
         } catch {}
     })
     const existingLocal = !mac || await hasLocalWorkspace(dataRoot)
+    const restoreConnected = startupWorkspace?.selection() === 'connected'
     if (mac) {
         const t = shellText(shellLanguage.forScope('local'))
-        bootStatus = existingLocal ? { state: 'starting', message: t('startup.keychainPrompt') } : workspaceChoiceStatus()
+        bootStatus = existingLocal && !restoreConnected
+            ? { state: 'starting', message: t('startup.keychainPrompt') } : workspaceChoiceStatus()
     }
     await window.loadFile(startup)
-    if (existingLocal) await startLocalWorkspace()
-    else if (openRememberedHub) await reopenRememberedHub()
+    if (openRememberedHub && (restoreConnected || !existingLocal)) await reopenRememberedHub()
+    if (existingLocal && !restoreConnected) await startLocalWorkspace()
+}
+
+async function openLocalWorkspace() {
+    reopeningHub?.controller.abort()
+    const opened = await startLocalWorkspace()
+    if (opened && runtimeScope()) await startupWorkspace?.remember('local')
+    return opened
 }
 
 async function startLocalWorkspace() {
