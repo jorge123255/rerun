@@ -851,7 +851,15 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const simple = resolveDesktopWorkspaceView({ preference: viewPreference, placing: !!creation.placement || !!templatePlacement.placement || placingCopy }) === 'simple'
     const chooseView = (view: DesktopWorkspaceView) => { saveDesktopWorkspaceView({ view }); setViewPreference(view) }
     const [coworkerPreviews, setCoworkerPreviews] = useState<DesktopCoworkerPreviews['previews'] | null>(null)
-    const previewsKey = simple ? JSON.stringify([boardActivity.statuses, selectedAgentId, panelOpen, agents.length]) : null
+    // The local engine does not announce a finished turn here, so the list is read again when the
+    // board's activity or the open conversation changes, and every few seconds while it is on screen.
+    const [previewTick, setPreviewTick] = useState(0)
+    useEffect(() => {
+        if (!simple) return
+        const timer = setInterval(() => { if (!document.hidden) setPreviewTick(tick => tick + 1) }, 5_000)
+        return () => clearInterval(timer)
+    }, [simple])
+    const previewsKey = simple ? JSON.stringify([boardActivity.statuses, selectedAgentId, panelOpen, agents.length, visibleSession?.sessionId ?? null, previewTick]) : null
     useEffect(() => {
         if (previewsKey === null) return
         const controller = new AbortController()
