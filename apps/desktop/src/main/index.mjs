@@ -40,6 +40,7 @@ const mac = process.platform === 'darwin'
 let dataRoot
 let windowPlacements
 const boardPlacement = 'local-board'
+const startupRevealDelay = 3000
 let storageSetupError
 let window
 let menuBar
@@ -160,7 +161,11 @@ function reopenRememberedHub() {
 function showWorkspaceWindow() {
     if (quitting) return
     showWindowOnReady = true
-    if (deferringStartupWindow) return
+    if (deferringStartupWindow) {
+        if (bootStatus.messageKey === 'reconnecting'
+            && !connectedHubs.restorePickerOnActivation(BrowserWindow.getFocusedWindow())) showMainWindow()
+        return
+    }
     const focused = BrowserWindow.getFocusedWindow()
     if (connectedHubs?.restorePickerOnActivation(focused)) return
     for (const candidate of [focused, lastWorkspaceWindow]) {
@@ -688,7 +693,23 @@ async function launch() {
     let linkResult
     try {
         await window.loadFile(startup)
-        if (!pendingHubLink && (restoreConnected || !existingLocal)) openedHub = await reopenRememberedHub()
+        if (!pendingHubLink && (restoreConnected || !existingLocal)) {
+            // Give a healthy server a chance to take over without flashing the chooser.
+            // A slow server still needs a visible startup surface, as in upstream Rerun.
+            const initialStatus = bootStatus
+            const reconnecting = { ...initialStatus, messageKey: 'reconnecting' }
+            const reveal = setTimeout(() => {
+                if (quitting || pendingHubLink || bootStatus !== initialStatus) return
+                publishBootStatus(reconnecting)
+                if (showWindowOnReady) showMainWindow()
+            }, startupRevealDelay)
+            try {
+                openedHub = await reopenRememberedHub()
+            } finally {
+                clearTimeout(reveal)
+                if (bootStatus === reconnecting) publishBootStatus(initialStatus)
+            }
+        }
         while (pendingHubLink && !quitting) {
             const link = pendingHubLink
             pendingHubLink = null
@@ -700,7 +721,7 @@ async function launch() {
     }
     if (mac && !openedHub && linkResult !== 'workspace' && showWindowOnReady && !quitting) {
         if (linkResult === 'picker') window.showInactive()
-        else showMainWindow()
+        else if (!window.isVisible()) showMainWindow()
     }
     if (existingLocal && !restoreConnected && !linkResult) await startLocalWorkspace()
 }

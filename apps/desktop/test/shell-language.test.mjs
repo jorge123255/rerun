@@ -55,6 +55,7 @@ test('every shell language translates startup, service failure, and renderer rec
     const cases = [
         { state: 'ready' },
         { state: 'starting', messageKey: 'starting' },
+        { state: 'choose', messageKey: 'reconnecting' },
         { state: 'error', messageKey: 'servicesFailed' },
         { state: 'error', messageKey: 'rendererClosed' },
         { state: 'error', messageKey: 'switchRecovery' },

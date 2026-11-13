@@ -122,6 +122,7 @@
         "openFailed": "No se pudo abrir este espacio de trabajo de forma segura. Selecciona Reintentar para volver a abrirlo.",
         "stateRecovery": "Hay que recuperar el estado del espacio de trabajo. Para hacerlo, selecciona Reintentar.",
         "chooseWorkspace": "Elige dónde se ejecuta tu espacio de trabajo.",
+        "reconnecting": "Volviendo a conectar con tu último servidor…",
         "signInCloud": "Iniciar sesión en Rerun Cloud",
         "runLocally": "Ejecutar en este Mac",
         "connectServer": "Conectar a un servidor",

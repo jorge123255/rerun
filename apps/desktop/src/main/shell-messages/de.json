@@ -122,6 +122,7 @@
         "openFailed": "Dieser Workspace konnte nicht sicher geöffnet werden. Wähle Erneut versuchen, um ihn zu öffnen.",
         "stateRecovery": "Der Zustand des Workspaces muss wiederhergestellt werden. Wähle dazu Erneut versuchen.",
         "chooseWorkspace": "Wähle, wo dein Workspace ausgeführt wird.",
+        "reconnecting": "Verbindung zum zuletzt verwendeten Server wird wiederhergestellt…",
         "signInCloud": "Bei Rerun Cloud anmelden",
         "runLocally": "Auf diesem Mac ausführen",
         "connectServer": "Mit einem Server verbinden",
