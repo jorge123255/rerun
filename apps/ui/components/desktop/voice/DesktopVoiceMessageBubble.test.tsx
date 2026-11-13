@@ -2,6 +2,9 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages } from '@/lib/desktop/locale'
+import { DesktopLocale } from '../DesktopLocale'
 import { DesktopVoiceMessageBubble } from './DesktopVoiceMessageBubble'
 import { desktopVoiceAudioReference } from '@/lib/desktop/voice/voice'
 
@@ -34,7 +37,7 @@ it('loads only the exact saved audio reference on Play and never transcribes or 
     expect(fetcher).toHaveBeenCalledWith(src, { cache: 'no-store', signal: expect.any(AbortSignal) })
 
     await act(async () => {
-        const transcript = [...document.querySelectorAll('button')].find(button => button.textContent === 'Show transcript')!
+        const transcript = [...document.querySelectorAll('button')].find(button => button.textContent === 'Transcript')!
         transcript.click()
     })
     expect(document.body.textContent).toContain('saved transcript')
@@ -47,6 +50,43 @@ it('refuses a remote or different-owner history reference', async () => {
     await act(async () => root!.render(<DesktopVoiceMessageBubble scope={scope} src="https://example.com/audio.webm" durationMs={1200} peaks={[]} transcript="saved" />))
     expect(document.querySelector('[role="alert"]')?.textContent).toContain('unavailable')
     expect(fetcher).not.toHaveBeenCalled()
+})
+
+it('uses the workspace language and enables keyboard seeking only after loading the exact recording', async () => {
+    const language = { preference: 'fr', locale: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) } as const
+    const fetcher = vi.fn(async () => new Response(Uint8Array.from([1, 2, 3]), { headers: { 'content-type': 'audio/webm' } }))
+    vi.stubGlobal('fetch', fetcher)
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:voice')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    const src = desktopVoiceAudioReference(scope, attemptId)
+    const render = (active: boolean) => act(async () => root!.render(<DesktopLocale initial={language}>
+        <DesktopVoiceMessageBubble scope={scope} src={src} durationMs={2000} peaks={[]} transcript="Texte enregistré" active={active} />
+    </DesktopLocale>))
+    await render(true)
+    const play = document.querySelector<HTMLButtonElement>('button[aria-label="Écouter le message vocal"]')
+    const seek = document.querySelector<HTMLInputElement>('input[type="range"][aria-label="Avancer"]')
+    expect(play).not.toBeNull()
+    expect(seek?.disabled).toBe(true)
+    expect(fetcher).not.toHaveBeenCalled()
+
+    await act(async () => play!.click())
+    expect(fetcher).toHaveBeenCalledExactlyOnceWith(src, { cache: 'no-store', signal: expect.any(AbortSignal) })
+    expect(seek?.disabled).toBe(true)
+    const audio = document.querySelector('audio')!
+    await act(async () => audio.dispatchEvent(new Event('loadedmetadata')))
+    expect(seek?.disabled).toBe(false)
+    expect(seek?.max).toBe('2000')
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(seek, '800')
+        seek!.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(audio.currentTime).toBe(0.8)
+
+    await render(false)
+    expect(seek?.disabled).toBe(true)
+    expect(audio.getAttribute('src')).toBeNull()
 })
 
 it('cancels an in-flight playback read when the chat becomes inactive', async () => {
