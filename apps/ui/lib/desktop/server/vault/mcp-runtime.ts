@@ -1,8 +1,10 @@
 import 'server-only'
+import { redactDesktopMcpSecretValue } from '@rerun/contracts'
 import type { Client } from '@libsql/client'
 import { remoteMcpLifecycle } from '../mcp/lifecycle'
 import type { RemoteServer } from '../mcp/model'
 import { remoteMcpRuntime, type McpAccess, type McpNetwork } from '../mcp/remote'
+import { emptyMcpMaterialLease, type DesktopMcpMaterialSource } from '../mcp-secret-references/lease'
 import { remoteMcpTools } from '../mcp/tools'
 import type { DesktopSecretCrypto } from '../secret-requests/crypto'
 import { vaultMcpHttps } from './mcp-network'
@@ -15,7 +17,7 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
 
     async function assigned(agentId: string, name?: string) {
         return (await db.execute({
-            sql: `SELECT s.id,s.name,s.url,s.revision,s.credential_revision,s.sealed IS NOT NULL AS has_bearer
+            sql: `SELECT s.id,s.name,s.url,s.revision,s.credential_revision,s.credential_header,s.sealed IS NOT NULL AS has_credential
                 FROM desktop_vault_mcp_servers s JOIN desktop_agents a ON a.id=? AND a.workspace_id=1
                 WHERE (? IS NULL OR s.name=?)
                 AND NOT EXISTS (SELECT 1 FROM desktop_deletions d WHERE d.agent_id=a.id OR d.engine_agent_id=a.engine_agent_id)
@@ -27,7 +29,7 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
         })).rows
     }
     function view(row: Awaited<ReturnType<typeof assigned>>[number]): RemoteServer {
-        return { id: String(row.id), name: String(row.name), url: String(row.url), revision: String(row.revision), transport: 'http', hasBearer: row.has_bearer === 1 }
+        return { id: String(row.id), name: String(row.name), url: String(row.url), revision: String(row.revision), transport: 'http', hasBearer: row.has_credential === 1 && row.credential_header === null }
     }
     const store = {
         lifecycle,
@@ -35,22 +37,48 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
         async read(agentId: string, name: string) {
             const [row] = await assigned(agentId, name)
             if (!row) throw new Error('Vault MCP server unavailable')
-            const { hasBearer, ...server } = view(row)
-            if (!hasBearer) return { ...server, bearer: '' }
-            const credentialRevision = String(row.credential_revision)
-            const sealed = (await db.execute({
-                sql: 'SELECT sealed FROM desktop_vault_mcp_servers WHERE id=? AND revision=? AND credential_revision=?',
-                args: [server.id!, server.revision, credentialRevision],
-            })).rows[0]?.sealed
-            if (typeof sealed !== 'string') throw new Error('Vault MCP credential changed')
-            const bytes = await crypto.open({ domain: 'vault', agentId: server.id!, key: server.url, version: 1, workspaceId, revision: credentialRevision }, sealed)
-            try {
-                return { ...server, bearer: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8') }
-            } finally { bytes.fill(0) }
+            return { ...view(row), bearer: '' }
         },
         async readOAuth() { return null },
     }
-    const runtime = remoteMcpRuntime(store, access, network)
+    const material: DesktopMcpMaterialSource = async (owner, name, revision, _phase, signal) => {
+        const check = async () => {
+            signal.throwIfAborted()
+            const permission = await access(owner)
+            const [row] = await assigned(owner, name)
+            signal.throwIfAborted()
+            if (!permission.enabled || !permission.granted || row?.revision !== revision) throw new Error('Vault MCP authority changed')
+            return row
+        }
+        const row = await check()
+        if (row.has_credential !== 1) return emptyMcpMaterialLease()
+        const { id, url } = view(row)
+        const credentialRevision = String(row.credential_revision)
+        const header = typeof row.credential_header === 'string' ? row.credential_header : null
+        const sealed = (await db.execute({
+            sql: 'SELECT sealed FROM desktop_vault_mcp_servers WHERE id=? AND revision=? AND credential_revision=? AND credential_header IS ?',
+            args: [id!, revision, credentialRevision, header],
+        })).rows[0]?.sealed
+        if (typeof sealed !== 'string') throw new Error('Vault MCP credential changed')
+        const bytes = await crypto.open({ domain: 'vault', agentId: id!, key: header ? JSON.stringify([url, header]) : url, version: 1, workspaceId, revision: credentialRevision }, sealed)
+        try {
+            await check()
+            const value = new TextDecoder().decode(bytes)
+            const lease = emptyMcpMaterialLease()
+            lease.configured = true
+            const headers = lease.material.headers
+            const name = header ?? 'Authorization'
+            headers[name] = header ? value : `Bearer ${value}`
+            lease.check = async () => { await check() }
+            lease.protect = result => redactDesktopMcpSecretValue(result, [bytes])
+            lease.release = async () => { bytes.fill(0); delete headers[name] }
+            return lease
+        } catch (error) {
+            bytes.fill(0)
+            throw error
+        }
+    }
+    const runtime = remoteMcpRuntime(store, access, network, undefined, material)
     return {
         tools: (owner: string, signal: AbortSignal) => remoteMcpTools(owner, store, runtime, AbortSignal.any([signal, shutdown])),
     }

@@ -138,20 +138,46 @@ function SecretForm({ busy, onSubmit }: { busy: boolean; onSubmit: (input: { nam
     </form>
 }
 
-function ServerForm({ busy, onSubmit }: { busy: boolean; onSubmit: (input: { name: string; url: string; bearer: string }) => void }) {
+type ServerCredential = { bearer: string; header?: { name: string; value: string } }
+
+function readServerCredential(form: HTMLFormElement, data: FormData): ServerCredential {
+    const value = String(data.get('credential') ?? '')
+    const field = form.elements.namedItem('credential')
+    if (field instanceof HTMLInputElement) field.value = ''
+    return data.get('authentication') === 'header'
+        ? { bearer: '', header: { name: String(data.get('headerName')), value } }
+        : { bearer: data.get('authentication') === 'bearer' ? value : '' }
+}
+
+function ServerCredentialFields({ busy, initial = 'none', headerName }: { busy: boolean; initial?: string; headerName?: string }) {
+    const [mode, setMode] = useState(initial)
+    return <fieldset disabled={busy} className="space-y-3">
+        <label className="block space-y-1 text-sm">Authentication
+            <select name="authentication" className="block h-9 w-full rounded-md border bg-background px-2 text-sm" value={mode} onChange={event => setMode(event.target.value)}>
+                <option value="none">None</option>
+                <option value="bearer">Bearer token</option>
+                <option value="header">Custom header</option>
+            </select>
+        </label>
+        {mode === 'header' && <label className="block space-y-1 text-sm">Header name<Input name="headerName" placeholder="X-API-Key" required maxLength={128} defaultValue={headerName} /></label>}
+        {mode !== 'none' && <label className="block space-y-1 text-sm">{mode === 'header' ? 'Header value' : 'Bearer token'}
+            <Input key={mode} name="credential" type="password" autoComplete="new-password" required maxLength={8192} />
+        </label>}
+    </fieldset>
+}
+
+function ServerForm({ busy, onSubmit }: { busy: boolean; onSubmit: (input: { name: string; url: string } & ServerCredential) => void }) {
     function submit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault()
         const form = event.currentTarget
         const data = new FormData(form)
-        onSubmit({ name: String(data.get('name')), url: String(data.get('url')), bearer: String(data.get('bearer')) })
-        const field = form.elements.namedItem('bearer')
-        if (field instanceof HTMLInputElement) field.value = ''
+        onSubmit({ name: String(data.get('name')), url: String(data.get('url')), ...readServerCredential(form, data) })
     }
     return <form onSubmit={submit} className="space-y-4">
         <h3 className="font-medium">Add MCP server</h3>
         <label className="block space-y-1 text-sm">Name<Input name="name" required maxLength={64} pattern="[A-Za-z0-9_\-]+" disabled={busy} /></label>
         <label className="block space-y-1 text-sm">HTTPS endpoint<Input name="url" type="url" required maxLength={2048} disabled={busy} /></label>
-        <label className="block space-y-1 text-sm">Bearer token (optional)<Input name="bearer" type="password" autoComplete="new-password" maxLength={8192} disabled={busy} /></label>
+        <ServerCredentialFields busy={busy} />
         <Button type="submit" disabled={busy}>Save MCP server</Button>
     </form>
 }
@@ -173,7 +199,7 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
         <header>
             <h3 className="font-medium">{entry.name}</h3>
             <p className="font-mono text-sm text-muted-foreground">{'kind' in entry ? entry.url : entry.variable}</p>
-            {server && <p className="text-sm text-muted-foreground">{server.hasBearer ? 'Bearer token configured' : 'No authentication configured'}</p>}
+            {server && <p className="text-sm text-muted-foreground">{server.headerName ? `Header configured: ${server.headerName}` : server.hasBearer ? 'Bearer token configured' : 'No authentication configured'}</p>}
         </header>
         <fieldset disabled={busy} className="space-y-3 border-t pt-4">
             <legend className="text-sm font-medium">Coworkers</legend>
@@ -187,7 +213,7 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
             <Button size="sm" disabled={busy || !changed} onClick={() => onSubmit({ operation: 'share', ...target, agentIds, sharedWithAll })}>Save assignments</Button>
         </fieldset>
         <div className="flex flex-wrap gap-2 border-t pt-4">
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => setReplace(!replace)}>{server ? 'Change bearer token' : 'Replace value'}</Button>
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => setReplace(!replace)}>{server ? 'Change authentication' : 'Replace value'}</Button>
             <ConfirmDialog title={`Delete “${entry.name}”?`} description={users ? `This removes the entry and its assignment for ${users}.` : 'This removes the entry from this workspace.'}
                 confirmLabel={server ? 'Delete MCP server' : 'Delete secret'} pending={busy} onConfirm={() => onSubmit({ operation: 'delete', ...target }, 'list')}>
                 <Button variant="outline" size="sm" disabled={busy}>{server ? 'Delete MCP server' : 'Delete secret'}</Button>
@@ -195,14 +221,22 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
         </div>
         {replace && <form className="space-y-3" onSubmit={event => {
             event.preventDefault()
-            const field = event.currentTarget.elements.namedItem('value')
-            if (field instanceof HTMLInputElement) {
-                onSubmit(server ? { operation: 'replace-server-bearer', ...target, bearer: field.value } : { operation: 'replace', ...target, value: field.value })
-                field.value = ''
+            const form = event.currentTarget
+            if (server) {
+                const credential = readServerCredential(form, new FormData(form))
+                onSubmit(credential.header ? { operation: 'replace-server-header', ...target, header: credential.header }
+                    : { operation: 'replace-server-bearer', ...target, bearer: credential.bearer })
+            } else {
+                const field = form.elements.namedItem('value')
+                if (field instanceof HTMLInputElement) {
+                    onSubmit({ operation: 'replace', ...target, value: field.value })
+                    field.value = ''
+                }
             }
         }}>
-            <label className="block space-y-1 text-sm">{server ? 'New bearer token (leave blank to remove)' : 'New secret value'}<Input name="value" type="password" autoComplete="new-password" required={!server} maxLength={server ? 8192 : 16384} disabled={busy} /></label>
-            <Button type="submit" size="sm" disabled={busy}>{server ? 'Save bearer token' : 'Save new value'}</Button>
+            {server ? <ServerCredentialFields busy={busy} headerName={server.headerName} initial={server.headerName ? 'header' : server.hasBearer ? 'bearer' : 'none'} />
+                : <label className="block space-y-1 text-sm">New secret value<Input name="value" type="password" autoComplete="new-password" required maxLength={16384} disabled={busy} /></label>}
+            <Button type="submit" size="sm" disabled={busy}>{server ? 'Save authentication' : 'Save new value'}</Button>
         </form>}
     </div>
 }

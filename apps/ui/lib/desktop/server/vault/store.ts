@@ -26,9 +26,9 @@ async function readVault(tx: Transaction) {
         id: String(row.id), name: String(row.name), variable: String(row.variable), revision: String(row.revision),
         sharedWithAll: row.shared_with_all === 1, agentIds: attachments.get(String(row.id)) ?? [],
     }))
-    const servers = (await tx.execute('SELECT id,name,url,revision,sealed IS NOT NULL AS has_bearer,shared_with_all FROM desktop_vault_mcp_servers ORDER BY name,id')).rows.map(row => ({
+    const servers = (await tx.execute('SELECT id,name,url,revision,sealed IS NOT NULL AND credential_header IS NULL AS has_bearer,credential_header,shared_with_all FROM desktop_vault_mcp_servers ORDER BY name,id')).rows.map(row => ({
         kind: 'mcp', id: String(row.id), name: String(row.name), url: String(row.url), revision: String(row.revision),
-        sharedWithAll: row.shared_with_all === 1, hasBearer: row.has_bearer === 1, agentIds: attachments.get(String(row.id)) ?? [],
+        sharedWithAll: row.shared_with_all === 1, hasBearer: row.has_bearer === 1, ...(typeof row.credential_header === 'string' && { headerName: row.credential_header }), agentIds: attachments.get(String(row.id)) ?? [],
     }))
     return desktopVaultListing.parse({ entries: [...servers, ...entries], coworkers })
 }
@@ -65,8 +65,9 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
         } finally { bytes.fill(0) }
     }
 
-    async function sealBearer(id: string, url: string, revision: string, bearer: string) {
-        return bearer ? seal(id, url, revision, bearer) : null
+    function sealServerCredential(id: string, url: string, revision: string, input: { bearer: string } | { header: { name: string; value: string } }) {
+        if ('header' in input) return seal(id, JSON.stringify([url, input.header.name]), revision, input.header.value)
+        return input.bearer ? seal(id, url, revision, input.bearer) : null
     }
 
     async function list() {
@@ -118,8 +119,8 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                     }
                     const id = randomUUID()
                     await tx.execute({
-                        sql: 'INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,sealed) VALUES(?,?,?,?,?,?)',
-                        args: [id, input.name, url, revision, revision, await sealBearer(id, url, revision, input.bearer)],
+                        sql: 'INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,sealed,credential_header) VALUES(?,?,?,?,?,?,?)',
+                        args: [id, input.name, url, revision, revision, await sealServerCredential(id, url, revision, input.header ? { header: input.header } : { bearer: input.bearer }), input.header?.name ?? null],
                     })
                 } else {
                     const entry = listing.entries.find(row => row.id === input.id)
@@ -156,10 +157,10 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         await tx.execute({ sql: `DELETE FROM ${attachments} WHERE item_id=?`, args: [entry.id] })
                         for (const id of agentIds) await tx.execute({ sql: `INSERT INTO ${attachments}(item_id,agent_id) VALUES(?,?)`, args: [entry.id, id] })
                         await tx.execute({ sql: `UPDATE ${table} SET revision=?,shared_with_all=? WHERE id=?`, args: [revision, Number(input.sharedWithAll), entry.id] })
-                    } else if (input.operation === 'replace-server-bearer') {
+                    } else if (input.operation === 'replace-server-bearer' || input.operation === 'replace-server-header') {
                         if (!('kind' in entry)) throw new DesktopHttpError(400, 'This entry is not an MCP server.')
-                        const sealed = await sealBearer(entry.id, entry.url, revision, input.bearer)
-                        await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET revision=?,credential_revision=?,sealed=? WHERE id=?', args: [revision, revision, sealed, entry.id] })
+                        const sealed = await sealServerCredential(entry.id, entry.url, revision, input)
+                        await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET revision=?,credential_revision=?,sealed=?,credential_header=? WHERE id=?', args: [revision, revision, sealed, 'header' in input ? input.header.name : null, entry.id] })
                     } else if (input.operation === 'replace') {
                         if ('kind' in entry) throw new DesktopHttpError(400, 'This entry is not a standalone secret.')
                         const sealed = await seal(entry.id, entry.variable, revision, input.value)

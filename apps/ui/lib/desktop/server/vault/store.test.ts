@@ -9,6 +9,7 @@ import { DesktopHttpError } from '../auth'
 import { initializeDesktopRound45 } from '../round45-schema'
 import { initializeDesktopRound46 } from '../round46-schema'
 import { initializeDesktopRound47 } from '../round47-schema'
+import { initializeDesktopRound48 } from '../round48-schema'
 import { desktopVaultMcpRuntime } from './mcp-runtime'
 import type { McpNetwork } from '../mcp/remote'
 import { createCanonicalMcpSecretReferences } from '../mcp-secret-references/binding'
@@ -23,7 +24,7 @@ const allow = () => {}
 const firstAgent = randomUUID(), secondAgent = randomUUID(), foreignAgent = randomUUID()
 const secret = 'fixture-value-never-in-a-projection'
 
-async function fixture(migrate = true) {
+async function fixture(migrate = true, headerMigration = true) {
     const root = await mkdtemp(join(tmpdir(), 'rerun-desktop-vault-'))
     const file = join(root, 'app.db')
     const open = () => createClient({ url: `file:${file}` })
@@ -42,6 +43,7 @@ async function fixture(migrate = true) {
     await initializeDesktopRound45(db)
     if (migrate) await initializeDesktopRound46(db)
     await initializeDesktopRound47(db)
+    if (headerMigration) await initializeDesktopRound48(db)
     return { db, root, file, open, vault: desktopVault(db, crypto, 7) }
 }
 
@@ -67,7 +69,7 @@ test('upgrades a prior workspace, saves redacted metadata, rotates ciphertext, a
             await initializeDesktopRound45(reopened)
             await initializeDesktopRound46(reopened)
             expect(await desktopVault(reopened, crypto, 7).list()).toEqual(updated)
-            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }])
+            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }, { version: 48 }])
             expect((await reopened.execute('PRAGMA foreign_key_check')).rows).toEqual([])
         } finally { reopened.close() }
         expect((await readFile(f.file)).includes(secret)).toBe(false)
@@ -306,7 +308,7 @@ test('a single Vault MCP credential lends tools to permitted coworkers and revok
             expect(one.name).toBe('release-notes_list')
             expect(one.description).not.toContain(token)
             const [two] = await runtime.tools(secondAgent, signal)
-            expect(JSON.stringify(await one.execute({}, signal))).toMatch(/ready.*REDACTED/)
+            expect(JSON.stringify(await one.execute({}, signal))).toMatch(/ready.*redacted/i)
             const before = requests
             duringResolution = async () => {
                 duringResolution = undefined
@@ -327,5 +329,76 @@ test('a single Vault MCP credential lends tools to permitted coworkers and revok
             await expect(stillAssigned.execute({}, signal)).rejects.toThrow()
             expect((await readFile(f.file)).includes(token)).toBe(false)
         } finally { shutdown.abort(); reopened.close() }
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('Vault custom auth headers are endpoint-bound, redacted and revision fenced', async () => {
+    const f = await fixture()
+    const shutdown = new AbortController()
+    try {
+        const raw = 'fixture header value !'
+        const draft = { operation: 'create-server', name: 'reports', url: 'https://mcp.example.test/rpc', bearer: '' } as const
+        for (const name of ['Host', 'cookie', 'content-length', 'Mcp-Session-Id', 'Proxy-Authorization', 'x-rerun-vault-item', 'x-forwarded-for', 'bad name']) {
+            expect(desktopVaultMutation.safeParse({ ...draft, header: { name, value: raw } }).success).toBe(false)
+        }
+        for (const value of [' a', 'a\r\nb', '']) {
+            expect(desktopVaultMutation.safeParse({ ...draft, header: { name: 'X-Api-Key', value } }).success).toBe(false)
+        }
+        expect(desktopVaultMutation.safeParse({ ...draft, bearer: 'competing-token', header: { name: 'X-Api-Key', value: raw } }).success).toBe(false)
+        const [entry] = (await f.vault.mutate(desktopVaultMutation.parse({ ...draft, header: { name: 'X-Api-Key', value: raw } }), allow)).entries
+        expect(entry).toMatchObject({ kind: 'mcp', headerName: 'x-api-key', hasBearer: false })
+        expect(JSON.stringify(entry)).not.toContain(raw)
+        const [assigned] = (await f.vault.assignCoworker(firstAgent, { id: entry.id, revision: entry.revision, attached: true }, allow)).attached
+        let requests = 0
+        let expected: string | null = raw
+        const network: McpNetwork = async (url, init, guard) => {
+            await guard()
+            requests++
+            expect(url).toBe(draft.url)
+            const headers = new Headers(init.headers)
+            expect(headers.get('x-api-key')).toBe(expected)
+            expect(headers.get('authorization')).toBeNull()
+            const body = JSON.parse(init.body!)
+            const result = body.method === 'initialize' ? { protocolVersion: '2025-03-26' }
+                : body.method === 'tools/list' ? { tools: [{ name: 'read', inputSchema: { type: 'object' }, description: Buffer.from(raw).toString('base64') }] }
+                : { content: [{ type: 'text', text: encodeURIComponent(raw) }] }
+            return body.id === undefined ? new Response(null, { status: 202 }) : Response.json({ jsonrpc: '2.0', id: body.id, result })
+        }
+        const runtime = desktopVaultMcpRuntime(f.db, crypto, 7, async () => ({ enabled: true, granted: true }), shutdown.signal, network)
+        const [tool] = await runtime.tools(firstAgent, shutdown.signal)
+        expect(tool.description).toBe('[redacted]')
+        expect(JSON.stringify(await tool.execute({}, shutdown.signal))).toContain('[redacted]')
+        expect((await readFile(f.file)).includes(raw)).toBe(false)
+        const before = requests
+        await f.db.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET credential_header=? WHERE id=?', args: ['x-other-header', entry.id] })
+        await runtime.tools(firstAgent, shutdown.signal).then(tools => expect(tools).toEqual([]))
+        expect(requests).toBe(before)
+        await f.db.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET credential_header=? WHERE id=?', args: ['x-api-key', entry.id] })
+        await f.vault.mutate({ operation: 'replace-server-bearer', id: entry.id, revision: assigned.revision, bearer: '' }, allow)
+        await expect(tool.execute({}, shutdown.signal)).rejects.toThrow()
+        expect(requests).toBe(before)
+        expected = null
+        expect(await runtime.tools(firstAgent, shutdown.signal)).toHaveLength(1)
+        expect((await f.vault.forCoworker(firstAgent)).attached[0]).not.toHaveProperty('headerName')
+    } finally { shutdown.abort(); f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+
+test('round 48 retains the old bearer ciphertext and its workspace revision', async () => {
+    const f = await fixture(true, false)
+    try {
+        const id = randomUUID(), revision = randomUUID(), url = 'https://mcp.example.test/legacy'
+        const context = { domain: 'vault' as const, agentId: id, key: url, version: 1, workspaceId: 7, revision }
+        const value = 'previous-release-bearer-fixture'
+        const sealed = await crypto.seal(context, Buffer.from(value))
+        await f.db.execute({
+            sql: 'INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,sealed) VALUES(?,?,?,?,?,?)',
+            args: [id, 'legacy', url, revision, revision, sealed],
+        })
+        await initializeDesktopRound48(f.db)
+        await initializeDesktopRound48(f.db)
+        expect((await f.db.execute('SELECT revision,credential_revision,sealed,credential_header FROM desktop_vault_mcp_servers')).rows)
+            .toEqual([{ revision, credential_revision: revision, sealed, credential_header: null }])
+        expect((await f.vault.list()).entries).toEqual([{ kind: 'mcp', id, name: 'legacy', url, revision, sharedWithAll: false, agentIds: [], hasBearer: true }])
     } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
 })

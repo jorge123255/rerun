@@ -54,7 +54,7 @@ export function DesktopCoworkerVault({ agentId, query }: { agentId: string; quer
         return () => { pending.current?.abort(); pending.current = null }
     }, [request])
 
-    const detail = (entry: Entry) => 'kind' in entry ? `MCP · ${entry.hasBearer ? 'Bearer token configured' : 'No authentication configured'}` : entry.variable
+    const detail = (entry: Entry) => 'kind' in entry ? `MCP · ${entry.headerName ? `Header configured: ${entry.headerName}` : entry.hasBearer ? 'Bearer token configured' : 'No authentication configured'}` : entry.variable
     const matches = (entry: Entry) => `${entry.name} ${detail(entry)}`.toLowerCase().includes(query.trim().toLowerCase())
     const attached = listing?.attached.filter(matches) ?? []
     const available = listing?.available.filter(matches) ?? []
