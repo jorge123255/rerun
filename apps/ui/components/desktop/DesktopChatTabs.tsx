@@ -357,30 +357,34 @@ export function DesktopChatTabs({ agent, workspaceId, sessions, pendingChatSumma
                 {saveError.conflict ? 'Reload open tabs' : 'Retry saving tabs'}
             </Button>}
         </div>}
-        {canMountChats && layout.tabs.map(tab => {
-            const visible = !rejectedRequest && active.uid === tab.uid
-            if (!visible && !visited.includes(tab.uid)) return null
-            const arrival = requested && tab.id && ('id' in requested ? tab.id === requested.id
-                : tab.uid === requested.tabUid && tab.id === requested.sessionId) ? requested : null
-            return <div key={tab.uid} data-desktop-tab-active={visible} hidden={!visible} className={visible ? 'flex h-full min-h-0 flex-col' : 'hidden'}>
-                <DesktopConversation overview={overview} agent={agent} workspaceId={workspaceId} sessionId={tab.id} sessions={sessions} pendingChatSummaries={pendingChatSummaries} tabUid={tab.uid} active={selected && visible} arrival={arrival}
-                    requestedPanel={selected && visible ? requestedPanel : null} onPanelRequestHandled={onPanelRequestHandled}
-                    tabStrip={visible ? strip : false} onTabActivity={report} initialDraft={drafts[tab.uid]} onStartFork={startFork} onFinishFork={finishFork}
-                    onSelectSession={(id, title) => {
-                        open(id, title ?? sessions.find(s => s.id === id)?.title ?? 'New conversation')
-                        if (id && !sessions.some(session => session.id === id)) void refreshSessions().catch(() => setNotice('Chat opened. Could not refresh the chat list. Reopen the coworker to retry.'))
-                    }}
-                    onChatSession={(id, sourceDraft) => bindSession(tab.uid, id, sourceDraft)}
-                    onOpenCoworkerChat={onOpenCoworkerChat}
-                    modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
-                    onHistoryVisibility={trackHistory}
-                    renderHistory={(_busy, control) => <DesktopChatHistory control={control} agentId={agent.id} pendingChatSummaries={pendingChatSummaries}
-                        sessions={sessions} verifiedRunStatus={history?.uid === tab.uid && history.verified}
-                        count={sessions.length} selectedId={tab.id} busy={false} onCreate={() => open(null, 'New conversation')}
-                        onSelect={id => open(id, sessions.find(s => s.id === id)?.title ?? 'Conversation')} />}
-                    renderRunHistory={control => <DesktopRunHistory agent={agent} dialogControl={control} />} />
-            </div>
-        })}
+        {/* Keep visited transcripts measurable. A zero-height resize re-arms their scroll lock. */}
+        {canMountChats && <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)]">
+            {layout.tabs.map(tab => {
+                const visible = !rejectedRequest && active.uid === tab.uid
+                if (!visible && !visited.includes(tab.uid)) return null
+                const arrival = requested && tab.id && ('id' in requested ? tab.id === requested.id
+                    : tab.uid === requested.tabUid && tab.id === requested.sessionId) ? requested : null
+                return <div key={tab.uid} data-desktop-tab-active={visible} inert={!visible} aria-hidden={!visible || undefined}
+                    className={visible ? 'col-start-1 row-start-1 flex min-h-0 min-w-0 flex-col' : 'invisible col-start-1 row-start-1 flex min-h-0 min-w-0 flex-col overflow-hidden'}>
+                    <DesktopConversation overview={overview} agent={agent} workspaceId={workspaceId} sessionId={tab.id} sessions={sessions} pendingChatSummaries={pendingChatSummaries} tabUid={tab.uid} active={selected && visible} arrival={arrival}
+                        requestedPanel={selected && visible ? requestedPanel : null} onPanelRequestHandled={onPanelRequestHandled}
+                        tabStrip={visible ? strip : false} onTabActivity={report} initialDraft={drafts[tab.uid]} onStartFork={startFork} onFinishFork={finishFork}
+                        onSelectSession={(id, title) => {
+                            open(id, title ?? sessions.find(s => s.id === id)?.title ?? 'New conversation')
+                            if (id && !sessions.some(session => session.id === id)) void refreshSessions().catch(() => setNotice('Chat opened. Could not refresh the chat list. Reopen the coworker to retry.'))
+                        }}
+                        onChatSession={(id, sourceDraft) => bindSession(tab.uid, id, sourceDraft)}
+                        onOpenCoworkerChat={onOpenCoworkerChat}
+                        modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
+                        onHistoryVisibility={trackHistory}
+                        renderHistory={(_busy, control) => <DesktopChatHistory control={control} agentId={agent.id} pendingChatSummaries={pendingChatSummaries}
+                            sessions={sessions} verifiedRunStatus={history?.uid === tab.uid && history.verified}
+                            count={sessions.length} selectedId={tab.id} busy={false} onCreate={() => open(null, 'New conversation')}
+                            onSelect={id => open(id, sessions.find(s => s.id === id)?.title ?? 'Conversation')} />}
+                        renderRunHistory={control => <DesktopRunHistory agent={agent} dialogControl={control} />} />
+                </div>
+            })}
+        </div>}
         <CloseRunningTabDialog open={pendingClose !== null} onOpenChange={value => { if (!value) setPendingClose(null) }}
             onConfirm={() => { if (pendingClose) close(pendingClose) }} />
     </>
