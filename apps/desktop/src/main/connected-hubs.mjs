@@ -202,7 +202,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     const stateOf = window => ({ focused: window.isFocused(), visible: window.isVisible() && !window.isMinimized(),
         fullscreen: window.isFullScreen(), maximized: window.isMaximized() })
 
-    async function openHub(origin, desktopSession, path, signal, offline, bounds, reveal = () => true) {
+    async function openHub(origin, desktopSession, path, signal, issue, bounds, reveal = () => true) {
         signal.throwIfAborted()
         const address = new URL(path ?? '/', origin)
         if (!sameHub(address, origin)) return false
@@ -211,8 +211,8 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         const existing = !bounds && [...windows.values()].find(entry => entry.origin === origin && !entry.window.isDestroyed())
         if (existing) {
             const target = path === null ? existing.recovery.target() : address.href
-            if (offline) {
-                if (!existing.recovery.onOfflinePage() && !await existing.recovery.showOffline(target, 'offline')) return false
+            if (issue) {
+                if (!await existing.recovery.showOffline(target, issue.reason, issue.minimum)) return false
             } else if (path !== null || existing.recovery.state()) {
                 if (!await existing.recovery.navigate(target)) return false
             }
@@ -344,7 +344,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         const abort = () => { if (!window.isDestroyed()) window.destroy() }
         signal.addEventListener('abort', abort, { once: true })
         try {
-            const opened = offline ? await entry.recovery.showOffline(address.href, 'offline') : await entry.recovery.navigate(address.href)
+            const opened = issue ? await entry.recovery.showOffline(address.href, issue.reason, issue.minimum) : await entry.recovery.navigate(address.href)
             signal.throwIfAborted()
             if (!opened) throw new Error('Server left its origin')
             if (placement) {
@@ -373,11 +373,11 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         }
         if (!address) return
         resetHubQuickAsk(entry.origin)
-        await openHub(entry.origin, entry.contents.session, address, AbortSignal.timeout(25000), offline,
+        await openHub(entry.origin, entry.contents.session, address, AbortSignal.timeout(25000), offline ? entry.recovery.state() : null,
             cascadeWindowBounds(entry.window, screen))
     }
 
-    async function connect(address, { path = null, parent, remember = true, signal, reveal } = {}) {
+    async function connect(address, { path = null, parent, remember = true, signal, reveal, restoring = false } = {}) {
         if (!available() || connecting || signal?.aborted) return { ok: false, reason: 'busy' }
         const origin = normalizeHubOrigin(address)
         if (!origin) return { ok: false, reason: 'invalid' }
@@ -388,12 +388,16 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             const desktopSession = session.fromPartition(hubPartition(origin))
             const result = await checkHub(origin, version, desktopSession.fetch.bind(desktopSession),
                 AbortSignal.any([lifetime, AbortSignal.timeout(8000)]))
-            const offline = !result.ok && result.reason === 'unreachable' && await savedOrigin() === origin
-            if (!result.ok && !offline) return result
+            let issue = null
+            if (!result.ok) {
+                if (result.reason === 'unreachable' && await savedOrigin() === origin) issue = { reason: 'offline' }
+                else if (restoring && result.reason === 'too-old') issue = { reason: result.reason, minimum: result.minimum }
+                else return result
+            }
             if (!available() || (parent && picker !== parent)) return { ok: false, reason: 'busy' }
             const request = parent ? pendingOpen : null
             const opening = AbortSignal.any([lifetime, AbortSignal.timeout(25000)])
-            if (!await openHub(origin, desktopSession, request?.path ?? path, opening, offline, undefined, reveal)) {
+            if (!await openHub(origin, desktopSession, request?.path ?? path, opening, issue, undefined, reveal)) {
                 return { ok: false, reason: 'unreachable' }
             }
             if (request && pendingOpen === request) pendingOpen = null
@@ -532,7 +536,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         async reopenRemembered(options) {
             const origin = await savedOrigin()
             if (!origin || !available() || picker || openingLink || pendingOpen || connecting) return false
-            return (await connect(origin, { ...options, remember: false })).ok
+            return (await connect(origin, { ...options, remember: false, restoring: true })).ok
         },
         ownsWindow: window => !!entryFor(window),
         focusWindow(window) {

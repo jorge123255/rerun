@@ -16,10 +16,11 @@ export function createHubRecovery({ window, origin, offlinePage, available, chec
     const state = () => issue && { host, ...issue }
     const onOfflinePage = () => !window.isDestroyed() && !!issue && contents.mainFrame?.url === offlinePage.href
 
-    function showOffline(address, reason) {
+    function showOffline(address, reason, minimum) {
         if (!alive() || !sameHub(address, origin)) return Promise.resolve(false)
+        if (onOfflinePage() && target === address && issue.reason === reason && issue.minimum === minimum) return Promise.resolve(true)
         target = address
-        issue = { reason }
+        issue = { reason, ...(minimum && { minimum }) }
         invalidate()
         if (!rendering) {
             rendering = window.loadURL(offlinePage.href).then(() => true, () => false)
@@ -91,7 +92,7 @@ export function createHubRecovery({ window, origin, offlinePage, available, chec
                 if (result.ok) await load(target)
                 else if (result.reason !== 'unreachable') {
                     issue = { reason: result.reason, ...(result.minimum ? { minimum: result.minimum } : {}) }
-                } else if (issue.reason !== 'unavailable') issue = { reason: 'offline' }
+                } else if (issue.reason !== 'unavailable' && issue.reason !== 'too-old') issue = { reason: 'offline' }
                 return state()
             })().finally(() => { retry = null })
             retry = { controller, promise }

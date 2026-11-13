@@ -101,3 +101,17 @@ test('retry coalesces concurrent requests, keeps incompatible hubs offline, and 
     assert.equal(await second, null)
     assert.deepEqual(loads, [offlinePage.href])
 })
+
+test('a saved server requiring an update stays on its local recovery page until a compatible check', async () => {
+    let result = { ok: false, reason: 'unreachable' }
+    const { hub, loads, contents } = fixture(async () => result)
+    const target = origin + '/board'
+    assert(await hub.showOffline(target, 'too-old', '7.2.1'))
+    assert(await hub.showOffline(target, 'too-old', '7.2.1'))
+    assert.deepEqual(await hub.retry(), { host: 'hub.example.test', reason: 'too-old', minimum: '7.2.1' })
+    assert.deepEqual(loads, [offlinePage.href])
+    result = { ok: true }
+    assert.equal(await hub.retry(), null)
+    assert.equal(contents.mainFrame.url, target)
+    assert.deepEqual(loads, [offlinePage.href, target])
+})
