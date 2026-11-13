@@ -223,7 +223,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     const stateOf = window => ({ focused: window.isFocused(), visible: window.isVisible() && !window.isMinimized(),
         fullscreen: window.isFullScreen(), maximized: window.isMaximized() })
 
-    async function openHub(origin, desktopSession, path, signal, issue, bounds, reveal = () => true) {
+    async function openHub(origin, desktopSession, path, { signal, issue, bounds, appearance, reveal = () => true }) {
         signal.throwIfAborted()
         const address = new URL(path ?? '/', origin)
         if (!sameHub(address, origin)) return false
@@ -242,10 +242,12 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             return true
         }
         const primary = !bounds
-        await appearanceWrites
-        const savedAppearance = await readJSON(appearancePath(origin)).catch(() => null)
-        signal.throwIfAborted()
-        const appearance = savedAppearance?.version === 1 ? appearanceOf(savedAppearance.appearance) : null
+        if (appearance === undefined) {
+            await appearanceWrites
+            const saved = await readJSON(appearancePath(origin)).catch(() => null)
+            signal.throwIfAborted()
+            appearance = saved?.version === 1 ? appearanceOf(saved.appearance) : null
+        }
         const window = new BrowserWindow({ ...(placement?.bounds ?? bounds), ...macWorkspaceMinimumSize, show: false,
             title: 'Rerun', backgroundColor: backgroundFor(appearance ?? systemAppearance()),
             titleBarStyle: 'hidden', trafficLightPosition: { x: 12, y: 8 },
@@ -418,8 +420,12 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         }
         if (!address) return
         resetHubQuickAsk(entry.origin)
-        await openHub(entry.origin, entry.contents.session, address, AbortSignal.timeout(25000), offline ? entry.recovery.state() : null,
-            cascadeWindowBounds(entry.window, screen))
+        await openHub(entry.origin, entry.contents.session, address, {
+            signal: AbortSignal.timeout(25000),
+            issue: offline ? entry.recovery.state() : null,
+            bounds: cascadeWindowBounds(entry.window, screen),
+            appearance: entry.appearance,
+        })
     }
 
     async function connect(address, { path = null, parent, remember = true, signal, reveal, restoring = false } = {}) {
@@ -444,7 +450,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             if (!available() || (parent && picker !== parent)) return { ok: false, reason: 'busy' }
             const request = parent ? pendingOpen : null
             const opening = AbortSignal.any([lifetime, AbortSignal.timeout(25000)])
-            if (!await openHub(origin, desktopSession, request?.path ?? path, opening, issue, undefined, reveal)) {
+            if (!await openHub(origin, desktopSession, request?.path ?? path, { signal: opening, issue, reveal })) {
                 return { ok: false, reason: 'unreachable' }
             }
             if (request && pendingOpen === request) pendingOpen = null
