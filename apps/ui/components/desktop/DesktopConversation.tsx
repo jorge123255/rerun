@@ -55,7 +55,7 @@ import { cn } from '@/lib/utils'
 import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
 import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
-import { desktopServiceRequestViewSchema, parseHitlReply, parseInstallMessage, parseVoiceMessage, type DesktopVoiceSendReceipt, type ConnectionSummary } from '@rerun/contracts'
+import { desktopServiceRequestViewSchema, parseHitlReply, parseInstallMessage, parseVoiceMessage, type DesktopVoiceSendReceipt, type BoxDefaultModel, type ConnectionSummary } from '@rerun/contracts'
 import { DesktopServiceRequestBlock, type DesktopServiceRequestBlockProps } from './service-requests/DesktopServiceRequestBlock'
 import { DesktopServiceRequestReceipt } from './service-requests/DesktopServiceRequestReceipt'
 import { DesktopMcpSignInBlock } from './mcp-sign-in/DesktopMcpSignInBlock'
@@ -211,7 +211,7 @@ function scheduledRunOf(message: UIMessage) {
     return parseScheduledRun(prompt)
 }
 
-export function DesktopConversation({ agent, workspaceId, sessionId, sessions, pendingChatSummaries, tabUid, active = true, arrival, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, onHistoryVisibility, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, onOpenTranscriptionSettings, overview }: {
+export function DesktopConversation({ agent, workspaceId, sessionId, sessions, pendingChatSummaries, tabUid, active = true, arrival, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, onHistoryVisibility, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, workspaceDefault, connections, onOpenModelSettings, onOpenTranscriptionSettings, overview }: {
     agent: DesktopAgentView
     workspaceId?: number | null
     sessionId: string | null
@@ -235,6 +235,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     onOpenCoworkerChat?: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel?: () => void
     modelLabel?: string
+    workspaceDefault?: BoxDefaultModel | null
     connections?: ConnectionSummary[]
     onOpenModelSettings?: () => void
     onOpenTranscriptionSettings?: () => void
@@ -1824,7 +1825,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                     <div ref={setVoiceReviewTarget} />
                     <div className="flex min-w-0 items-center justify-between gap-2 px-1.5 pb-1.5">
                         <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
-                            connections={connections} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel}
+                            connections={connections} workspaceDefault={workspaceDefault} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel}
                             onReady={setModelReady} onBlocked={setModelBlock} openRequest={openModelRequest} />
                         <div className="flex shrink-0 items-center gap-1">
                             <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={uploadDisabled || uploadsActive}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import type { ConnectionSummary } from '@rerun/contracts'
+import type { BoxDefaultModel, ConnectionSummary } from '@rerun/contracts'
 import { ChevronDown, Settings2, Star } from 'lucide-react'
 import { DotSpinner } from '@/components/ui/dot-spinner'
 import { UsageRing } from '@/components/agent/UsageRing'
@@ -21,6 +21,7 @@ type Props = {
     disabled?: boolean
     active?: boolean
     connections?: ConnectionSummary[]
+    workspaceDefault?: BoxDefaultModel | null
     onOpenSettings?: () => void
     onConversationChoice?: (choice: DesktopModelPick | undefined) => void
     onReady?: (ready: boolean) => void
@@ -46,7 +47,7 @@ export function DesktopModelSelector(props: Props) {
     return <ChatModelMenu key={JSON.stringify([props.agentId, props.sessionId])} {...props} />
 }
 
-function ChatModelMenu({ agentId, sessionId, disabled, active = true, connections, onOpenSettings, onConversationChoice, onReady, onBlocked, openRequest }: Props) {
+function ChatModelMenu({ agentId, sessionId, disabled, active = true, connections, workspaceDefault, onOpenSettings, onConversationChoice, onReady, onBlocked, openRequest }: Props) {
     const { t } = useDesktopLocale()
     const [open, setOpen] = useState(false)
     const [state, setState] = useState<DesktopModelView | null>(null)
@@ -59,6 +60,14 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, connection
     const handledOpen = useRef(openRequest)
     const version = useRef(0)
     const current = state
+    // The board polls Settings, including quota updates. Only model-affecting changes need a fresh
+    // conversation read. The server still resolves the saved choice and exact workspace default.
+    const catalogKey = JSON.stringify([
+        workspaceDefault?.connectionId, workspaceDefault?.model, workspaceDefault?.reasoningEffort, workspaceDefault?.customReasoningRevision,
+        connections?.map(connection => [connection.id, connection.provider, connection.name, connection.connected, connection.credentialRejected,
+            connection.models, connection.extraModels, connection.customRevision, connection.customReasoning,
+            connection.codexReasoning, connection.subscriptionModels, connection.opencodeModels]),
+    ])
     useEffect(() => {
         if (!active || openRequest === handledOpen.current) return
         handledOpen.current = openRequest
@@ -82,7 +91,7 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, connection
             if (!controller.signal.aborted && started === version.current) setError(cause instanceof Error ? cause.message : 'Could not load models')
         })
         return () => controller.abort()
-    }, [load, active, open])
+    }, [load, active, open, catalogKey])
 
     const conversation = pending ?? (current?.conversation ? { connectionId: current.conversation.connectionId, model: current.conversation.model } : undefined)
     useEffect(() => {

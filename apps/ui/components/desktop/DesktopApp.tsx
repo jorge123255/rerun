@@ -233,7 +233,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             if (providerRead.current === read) providerRead.current = null
         }
     }, [])
-    useVisibleInterval(refreshProviders, 5000)
+    useVisibleInterval(refreshProviders, 5000, { refreshOnFocus: true })
     useEffect(() => () => providerRead.current?.abort(), [])
     const applyProviders = useCallback((snapshot: ConnectionsList) => {
         // A read begun before a settings or sign-in change must not undo that change.
@@ -881,7 +881,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                             <CoworkerChat workspaceId={runtimeWorkspaceId} attention={boardActivity.attention} onOpenCoworkerChat={openCoworkerChat} key={selectedAgent.id} agent={overview ? { ...selectedAgent, spaceId: overviewBox } : selectedAgent} overview={overview} requested={requestedSession} selected={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !profileOpen && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
                                 requestedPanel={requestedPanel?.agentId === selectedAgent.id ? requestedPanel : null} onPanelRequestHandled={panelRequestHandled}
                                 onVisibleSession={reportVisibleSession}
-                                onClosePanel={closePanel} modelLabel={modelLabel} connections={providers.connections} onOpenModelSettings={openSettings} onOpenTranscriptionSettings={openTranscriptionSettings} />
+                                onClosePanel={closePanel} modelLabel={modelLabel} workspaceDefault={providers.default} connections={providers.connections} onOpenModelSettings={openSettings} onOpenTranscriptionSettings={openTranscriptionSettings} />
                         </section>
                     </SidePanel>
                 </div>}
@@ -994,7 +994,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     )
 }
 
-function CoworkerChat({ agent, workspaceId, attention, overview, requested, requestedPanel, onPanelRequestHandled, selected, modelLabel, connections, onOpenModelSettings, onOpenTranscriptionSettings, onOpenCoworkerChat, onClosePanel, onVisibleSession }: {
+function CoworkerChat({ agent, workspaceId, attention, overview, requested, requestedPanel, onPanelRequestHandled, selected, modelLabel, workspaceDefault, connections, onOpenModelSettings, onOpenTranscriptionSettings, onOpenCoworkerChat, onClosePanel, onVisibleSession }: {
     agent: DesktopAgentView
     workspaceId: number | null
     attention: DesktopAttention
@@ -1005,6 +1005,7 @@ function CoworkerChat({ agent, workspaceId, attention, overview, requested, requ
     selected: boolean
     onVisibleSession?: (agentId: string, sessionId: string | null) => void
     modelLabel?: string
+    workspaceDefault: ConnectionsList['default']
     connections: ConnectionsList['connections']
     onOpenModelSettings: () => void
     onOpenTranscriptionSettings: () => void
@@ -1099,6 +1100,6 @@ function CoworkerChat({ agent, workspaceId, attention, overview, requested, requ
         {!bootstrap || !sessions ? dismiss : <DesktopChatTabs workspaceId={workspaceId} onOpenCoworkerChat={onOpenCoworkerChat}
             agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} pendingChatSummaries={pendingChatSummaries} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
-            refreshSessions={readSessions} refreshThreads={refreshThreads} reload={reload} modelLabel={modelLabel} connections={connections} onOpenModelSettings={onOpenModelSettings} onOpenTranscriptionSettings={onOpenTranscriptionSettings} onClosePanel={onClosePanel} />}
+            refreshSessions={readSessions} refreshThreads={refreshThreads} reload={reload} modelLabel={modelLabel} workspaceDefault={workspaceDefault} connections={connections} onOpenModelSettings={onOpenModelSettings} onOpenTranscriptionSettings={onOpenTranscriptionSettings} onClosePanel={onClosePanel} />}
     </>
 }

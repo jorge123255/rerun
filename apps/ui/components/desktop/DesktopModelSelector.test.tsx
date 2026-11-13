@@ -246,6 +246,35 @@ test('Send opens the picker for a retired model and preserves the draft until a 
     expect(container.textContent).toContain('Saved answer')
 })
 
+test('an open picker refreshes a retired or restored model when the board gets a new catalog', async () => {
+    const choice = { connectionId: local.id, model: 'model-chat' }
+    const workspace = { connectionId: local.id, model: 'model-workspace' }
+    let connection = local
+    const fetcher = vi.fn(async () => Response.json(buildDesktopModelView({
+        connections: [connection], workspace, coworker: null, conversation: choice,
+    })))
+    vi.stubGlobal('fetch', fetcher)
+    const onBlocked = vi.fn()
+    const onConversationChoice = vi.fn()
+    container = document.body.appendChild(document.createElement('div'))
+    root = createRoot(container)
+    const render = () => act(async () => root.render(<DesktopModelSelector agentId="alice" sessionId="open"
+        connections={[connection]} onBlocked={onBlocked} onConversationChoice={onConversationChoice} />))
+    await render()
+    expect(button('Local · model-chat')).toBeTruthy()
+    await render()
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    connection = { ...local, models: ['model-workspace'] }
+    await render()
+    expect(button('Unavailable · model-chat')).toBeTruthy()
+    expect(onBlocked).toHaveBeenLastCalledWith('unavailable')
+    connection = local
+    await render()
+    expect(button('Local · model-chat')).toBeTruthy()
+    expect(onBlocked).toHaveBeenLastCalledWith(null)
+    expect(onConversationChoice).toHaveBeenCalledExactlyOnceWith(choice)
+})
+
 test('the usage rings follow the exact chat connection, update with the latest snapshot, and expire', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
     vi.setSystemTime(new Date('2026-11-11T12:00:00.000Z'))
