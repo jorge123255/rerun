@@ -386,6 +386,13 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
             },
         },
         coworker: desktopCoworkerMessages(locale, source),
+        coworkerSetup: {
+            gate: source.chat.installGate,
+            skipped: source.agent.agentPanelChat,
+            install: source.chat.agentInstall,
+            loading: source.kit.primitives.loading,
+            retry: source.ui.upload.retry,
+        },
         creation: desktopCreationMessages(locale, source),
         foreman: desktopForemanMessages(locale, source),
         gettingStarted: desktopGettingStartedMessages(locale, source.foreman.gettingStarted),

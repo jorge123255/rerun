@@ -5,6 +5,7 @@ import type { CatalogEntry } from '@rerun/ui/new-agent'
 import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { ArrowRightIcon, WrenchIcon } from '@/lib/icons'
+import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopInstallGate } from './DesktopInstallGate'
 import { useDesktopSetup } from './useDesktopSetup'
 
@@ -32,13 +33,14 @@ export function DesktopSetupGate({ agentId, agentName, apps, disabled = false, c
     onOpenSetupChat: DesktopOpenSetupChat
 }) {
     const setup = useDesktopSetup(agentId)
+    const { t } = useDesktopLocale()
 
-    if (setup.loading && !setup.view) return <p role="status" className="text-xs text-muted-foreground">Loading setup…</p>
+    if (setup.loading && !setup.view) return <p role="status" className="text-xs text-muted-foreground">{t('coworkerSetup.loading')}</p>
     if (!setup.view) {
         return setup.error ? (
             <div className="space-y-2">
                 <p role="alert" className="text-xs text-destructive">{setup.error}</p>
-                <Button type="button" size="sm" variant="outline" onClick={() => void setup.refresh()}>Retry</Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => void setup.refresh()}>{t('coworkerSetup.retry')}</Button>
             </div>
         ) : null
     }
@@ -86,6 +88,7 @@ export function DesktopSetupSkippedBanner({ agentId, canStart = true, disabled =
     onOpenSetupChat: DesktopOpenSetupChat
 }) {
     const setup = useDesktopSetup(agentId)
+    const { t } = useDesktopLocale()
     if (!setup.view || !desktopSetupNeedsSetup(setup.view) || !setup.view.skipped) return null
 
     const resume = async () => {
@@ -103,10 +106,10 @@ export function DesktopSetupSkippedBanner({ agentId, canStart = true, disabled =
     return (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-muted/40 py-1 pr-1.5 pl-3 text-xs text-muted-foreground">
             <WrenchIcon className="size-3.5 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">This coworker has not been set up yet</span>
+            <span className="min-w-0 flex-1 truncate">{t('coworkerSetup.skipped.notSetUp')}</span>
             {setup.error && <span role="alert" className="w-full text-destructive">{setup.error}</span>}
             <Button size="xs" variant="outline" disabled={disabled || setup.mutating !== null} onClick={() => void resume()}>
-                Set it up
+                {t('coworkerSetup.skipped.setUp')}
                 <ArrowRightIcon className="size-3" />
             </Button>
         </div>
