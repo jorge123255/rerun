@@ -40,9 +40,31 @@ describe('desktop terminal completion records', () => {
         expect(await getSystemDb(input.agentId)).not.toBe(first)
         expect(await listRunCompletions(input.agentId, { limit: 10 })).toEqual([{
             id: 'run-persisted', agentId: 'persisted', sessionId: 'persisted-chat', runId: 'run-persisted',
-            source: 'schedule', slug: 'daily-report', completedAt: time, text: 'The report is ready.',
+            source: 'schedule', slug: 'daily-report', sourceName: 'Daily report', completedAt: time, text: 'The report is ready.',
             provider: 'codex', model: 'terra', costMicros: 0, stepCount: 3,
         }])
+    })
+
+    it('upgrades existing receipts without inventing a name for old runs', async () => {
+        const owner = 'legacy-receipts'
+        owners.add(owner)
+        const { client } = await getSystemDb(owner)
+        await client.executeMultiple(`
+            CREATE TABLE run_completions (
+                id TEXT PRIMARY KEY, agent_id TEXT, session_id TEXT, run_id TEXT, source TEXT,
+                slug TEXT, completed_at TEXT, text TEXT, provider TEXT, model TEXT, cost_micros INTEGER, step_count INTEGER
+            );
+            INSERT INTO run_completions (id, agent_id, session_id, run_id, source, slug, completed_at)
+                VALUES ('legacy', 'legacy-receipts', 'legacy-chat', 'legacy', 'schedule', 'digest', '2026-11-03T12:00:00.000Z');
+        `)
+        const [old] = await listRunCompletions(owner, { limit: 10 })
+        expect(old).toMatchObject({ id: 'legacy', slug: 'digest' })
+        expect(old).not.toHaveProperty('sourceName')
+        await recordRunCompletion(completion(owner, 'current', { trigger: { source: 'schedule', slug: 'digest', name: 'Daily digest' } }))
+        closeSystemDb(owner)
+        expect(await listRunCompletions(owner, { limit: 10 })).toEqual([
+            expect.objectContaining({ id: 'current', slug: 'digest', sourceName: 'Daily digest' }), old,
+        ])
     })
 
     it('keeps the first terminal record when the same run is replayed with different text, metadata or session', async () => {

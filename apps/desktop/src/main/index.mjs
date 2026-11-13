@@ -764,7 +764,8 @@ async function initializeLocalWorkspace(identity) {
     const bundle = await loadBundle(resources)
     if (quitting) return
     if (process.platform === 'darwin') app.setAboutPanelOptions({ version: bundle.buildId })
-    supervisor = new RuntimeSupervisor({ bundle, root: dataRoot, identity, appStoreBuild: process.mas === true })
+    supervisor = new RuntimeSupervisor({ bundle, root: dataRoot, identity, appStoreBuild: process.mas === true,
+        systemLanguages: [...app.getPreferredSystemLanguages(), app.getLocale()] })
     remoteInstallId = identity.installId
     remoteMachines = createNativeRemoteMachines({ dataRoot, installId: identity.installId, safeStorage,
         workspaceKey: workspaceId => workspaceIdentity(identity, workspaceId).encryptionKey,

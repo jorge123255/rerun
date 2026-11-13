@@ -891,6 +891,7 @@ export const engineRunCompletionSchema = z.object({
     runId: z.string().nullable(),
     source: z.enum(['chat', 'schedule', 'trigger']),
     slug: z.string().nullable(),
+    sourceName: z.string().max(200).optional(),
     completedAt: z.string(),
     text: z.string().nullable(),
     provider: z.string().nullable(),

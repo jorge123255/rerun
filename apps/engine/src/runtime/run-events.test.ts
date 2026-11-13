@@ -143,6 +143,14 @@ describe('emitRunTerminal', () => {
         expect('authorId' in (await emit({ trigger: schedule })).metadata).toBe(false)
     })
 
+    it('carries the routine display name separately from its slug and error detail', async () => {
+        expect((await emit({ trigger: schedule, kind: 'error', error: 'timeout' })).metadata)
+            .toMatchObject({ sourceName: schedule.name, scheduleSlug: schedule.slug, error: 'timeout' })
+        expect((await emit({ trigger: { source: 'trigger', name: 'New intake', slug: 'intake' } })).metadata)
+            .toMatchObject({ sourceName: 'New intake', triggerSlug: 'intake' })
+        expect((await emit({})).metadata).not.toHaveProperty('sourceName')
+    })
+
     it('fills the run facts and defaults the missing ones to null', async () => {
         const full = await emit({ usage: { totalTokens: 3 }, stepCount: 2, provider: 'openai', model: 'gpt', costMicros: 42 })
         expect(full).toMatchObject({ agentId: 'a1', sessionId: 's1', runId: 'r1' })

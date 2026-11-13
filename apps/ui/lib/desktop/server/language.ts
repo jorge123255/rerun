@@ -5,16 +5,28 @@ import { desktopMessages } from '../locale'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 
+function resolvedLanguage(preference: Locale | null, acceptLanguage: string | null) {
+    return resolveLocale({ userLocale: preference, acceptLanguage: acceptLanguage ?? process.env.RERUN_DESKTOP_SYSTEM_LANGUAGES })
+}
+
 async function languageOf(preference: Locale | null, acceptLanguage: string | null) {
-    const locale = resolveLocale({ userLocale: preference, acceptLanguage })
+    const locale = resolvedLanguage(preference, acceptLanguage)
     return { preference, locale, messages: desktopMessages(locale, await loadMessages(locale)) }
 }
 
-export async function readDesktopLanguage(runtime: DesktopRuntime, acceptLanguage: string | null) {
+async function readLanguagePreference(runtime: DesktopRuntime) {
     const db = await openDesktopDatabase(runtime.installRoot ?? runtime.dataRoot)
     const result = await db.execute('SELECT locale FROM desktop_language WHERE id = 1')
     const saved = result.rows[0]?.locale
-    return languageOf(isLocale(saved) ? saved : null, acceptLanguage)
+    return isLocale(saved) ? saved : null
+}
+
+export async function readDesktopLocale(runtime: DesktopRuntime, acceptLanguage: string | null) {
+    return resolvedLanguage(await readLanguagePreference(runtime), acceptLanguage)
+}
+
+export async function readDesktopLanguage(runtime: DesktopRuntime, acceptLanguage: string | null) {
+    return languageOf(await readLanguagePreference(runtime), acceptLanguage)
 }
 
 export async function saveDesktopLanguage(runtime: DesktopRuntime, preference: Locale | null, acceptLanguage: string | null) {

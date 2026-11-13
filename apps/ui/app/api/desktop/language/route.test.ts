@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
 import { PUT } from './route'
+import { POST as readEngineLanguage } from '../internal/language/route'
 import { closeDesktopDatabase } from '@/lib/desktop/server/database'
 import { readDesktopLanguage } from '@/lib/desktop/server/language'
 import { desktopTranslator } from '@/lib/desktop/locale'
@@ -28,6 +29,12 @@ test('language changes require desktop authentication and persist on the install
         process.env.RERUN_DESKTOP_INSTALL_DIR = root
         process.env.RERUN_DESKTOP_WORKSPACE_ID = '1'
         process.env.RERUN_DESKTOP_RUNTIME_FILE = runtimeFile
+        process.env.RERUN_DESKTOP_SYSTEM_LANGUAGES = 'de-DE,en'
+        const engineRequest = (token: string) => new Request(runtime.app.origin + '/api/desktop/internal/language', {
+            method: 'POST', headers: { host: '127.0.0.1:3100', authorization: 'Bearer ' + token },
+        })
+        expect((await readEngineLanguage(engineRequest('wrong'))).status).toBe(401)
+        expect(await (await readEngineLanguage(engineRequest(runtime.engine.apiKey))).json()).toEqual({ locale: 'de' })
         expect((await readDesktopLanguage(runtime, 'unsupported,es-MX;q=0.8')).locale).toBe('es')
         expect((await readDesktopLanguage(runtime, 'ja-JP')).locale).toBe('en')
         expect((await PUT(request('de', 'wrong'))).status).toBe(401)
@@ -41,8 +48,10 @@ test('language changes require desktop authentication and persist on the install
         await closeDesktopDatabase(root)
         const secondWorkspace = { ...runtime, dataRoot: join(root, 'workspaces', '2'), workspaceId: 2 }
         expect(await readDesktopLanguage(secondWorkspace, 'de')).toEqual(pack)
+        expect(await (await readEngineLanguage(engineRequest(runtime.engine.apiKey))).json()).toEqual({ locale: 'fr' })
         const automatic = await PUT(request(null, runtime.app.sessionToken, 'pt-BR'))
         expect(await automatic.json()).toMatchObject({ preference: null, locale: 'pt' })
+        expect(await (await readEngineLanguage(engineRequest(runtime.engine.apiKey))).json()).toEqual({ locale: 'de' })
         await closeDesktopDatabase(root)
         expect((await readDesktopLanguage(runtime, 'de-DE')).locale).toBe('de')
     } finally {

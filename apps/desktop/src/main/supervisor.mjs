@@ -23,9 +23,9 @@ export async function candidatePort() {
 }
 
 export class RuntimeSupervisor extends EventEmitter {
-    constructor({ bundle, root, identity, appStoreBuild = false, launch = spawn, fetcher = fetch, port = candidatePort, startupTimeout = 60000, stopTimeout = 35000 }) {
+    constructor({ bundle, root, identity, appStoreBuild = false, systemLanguages = [], launch = spawn, fetcher = fetch, port = candidatePort, startupTimeout = 60000, stopTimeout = 35000 }) {
         super()
-        Object.assign(this, { bundle, root, identity, appStoreBuild, launch, fetcher, port, startupTimeout, stopTimeout })
+        Object.assign(this, { bundle, root, identity, appStoreBuild, systemLanguages, launch, fetcher, port, startupTimeout, stopTimeout })
         // Engine drains include a 25-second isolated-screen close plus final worker cleanup.
         // Wait for their acknowledgement without treating a legitimate drain as a failure.
         this.children = new Set()
@@ -149,7 +149,7 @@ export class RuntimeSupervisor extends EventEmitter {
                 await atomicPrivateJSON(runtimeFile, runtime)
                 const shared = { ...childEnvironment(), RERUN_DESKTOP_APP: '1', RERUN_DESKTOP_DATA_DIR: dataRoot, RERUN_DESKTOP_RUNTIME_FILE: runtimeFile, RERUN_DESKTOP_SECRET_KEY: identity.encryptionKey, RERUN_DESKTOP_WORKSPACE_ID: String(workspaceId), RERUN_DESKTOP_INSTALL_ROOT: installRoot, RERUN_DESKTOP_INSTALL_DIR: installRoot, RERUN_DESKTOP_ENGINE_ROOT: engineRoot, RERUN_DESKTOP_WORKSPACE_NAME: this.workspaceMetadata?.name || 'My workspace', RERUN_DESKTOP_WORKSPACE_ICON: this.workspaceMetadata?.iconCatalogId || '', RERUN_DESKTOP_ADMISSIONS_FROZEN: this.workspaceMetadata?.frozen ? '1' : '0' }
                 if (this.appStoreBuild) shared.RERUN_DESKTOP_APP_STORE = '1'
-                const ui = this.spawnOwned([this.bundle.uiHost], { ...shared, RERUN_DESKTOP_UI_ROOT: this.bundle.uiRoot, RERUN_DESKTOP_RENAME_HELPER: this.bundle.renameHelperPath, RERUN_DESKTOP_PDF_HELPER: this.bundle.pdfHelperPath, RERUN_DESKTOP_PDF_TEXT_HELPER: this.bundle.pdfTextHelperPath, PORT: String(uiPort), HOSTNAME: '127.0.0.1' }, undefined, 'ui')
+                const ui = this.spawnOwned([this.bundle.uiHost], { ...shared, RERUN_DESKTOP_SYSTEM_LANGUAGES: this.systemLanguages.join(','), RERUN_DESKTOP_UI_ROOT: this.bundle.uiRoot, RERUN_DESKTOP_RENAME_HELPER: this.bundle.renameHelperPath, RERUN_DESKTOP_PDF_HELPER: this.bundle.pdfHelperPath, RERUN_DESKTOP_PDF_TEXT_HELPER: this.bundle.pdfTextHelperPath, PORT: String(uiPort), HOSTNAME: '127.0.0.1' }, undefined, 'ui')
                 await this.waitForHealth(ui, `${runtime.app.origin}/api/desktop/health`, { Cookie: `rerun-desktop-session=${runtime.app.sessionToken}` }, runtime)
                 const engine = this.spawnOwned([this.bundle.engineEntry, 'desktop-run'], {
                     ...shared, RERUN_HOST: '127.0.0.1', RERUN_PORT: String(enginePort), RERUN_API_KEY: identity.engineApiKey,

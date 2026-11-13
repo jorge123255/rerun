@@ -171,6 +171,8 @@ export const agentConfigSchema = z.object({
     // two only say where to run it.
     model: z.string().nullable().default(null),
     verbosity: verbositySchema.default('normal'),
+    // Fallback language for an unattended run with no earlier human message.
+    language: z.string().max(35).nullable().default(null),
     tools: toolsSchema.prefault({}),
     mcpServers: z.array(mcpServerSchema).default([]),
     selfImprovement: selfImprovementSchema.prefault({}),

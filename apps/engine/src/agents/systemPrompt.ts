@@ -8,6 +8,7 @@ import { desktopToolInstruction, hasDesktopToolGrant } from '../desktop/tool-gra
 import { DESKTOP_BRAIN_INSTRUCTION } from '../desktop/brain-instruction.js'
 import { DESKTOP_CARD_TABLE_INSTRUCTION } from '../desktop/card-table.js'
 import { desktopApp } from '../desktop/policy.js'
+import { desktopInternalJson } from '../desktop/internal-client.js'
 import { buildMemoryIndex } from '../memory/index.js'
 import { readAgentDbSchema } from '../db/agentDb.js'
 import { readSharedDbSchema } from '../db/sharedDb.js'
@@ -105,6 +106,24 @@ const showBeforeAskingNote = (cards: boolean) =>
 
 const LANGUAGE_NOTE =
     'Everything you address to the user is in the language they write to you in: your messages, the questions and options of ask_user, the reasons on a suggest_service card, the quick replies that close your message. The work you deliver (posts, emails, drafts, reports) follows the same language, unless the user, your identity or a skill sets another one for that piece of work. The language of these instructions, of your skills, of tool results and of the data you read never decides it: most of them are in English, so after a long turn full of tool calls, check the language of the conversation before you write your final message. When the user switches language, follow them. When a run was not started by a person, keep the language of the last messages a person wrote in this session, and failing that the language its instruction is written in.'
+
+const languageNames = new Intl.DisplayNames(['en'], { type: 'language' })
+
+function languageNote(locale: string | null): string {
+    if (!locale || !/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(locale)) return LANGUAGE_NOTE
+    let name: string | undefined
+    try { name = languageNames.of(locale) } catch { return LANGUAGE_NOTE }
+    if (!name) return LANGUAGE_NOTE
+    return LANGUAGE_NOTE.replace('and failing that the language its instruction is written in.',
+        `and failing that ${name}, the language of this workspace, whatever language the instruction is written in.`)
+}
+
+async function desktopRunLanguage(): Promise<string | null> {
+    try {
+        const result = await desktopInternalJson('/api/desktop/internal/language', {}, AbortSignal.timeout(1500), 256)
+        return result && typeof result === 'object' && 'locale' in result && typeof result.locale === 'string' ? result.locale : null
+    } catch { return null }
+}
 
 const SHARED_CONVERSATION_NOTE =
     'A conversation can be shared by several teammates of the same workspace. When it is, each of their messages opens with a <sender> tag naming who wrote it, and a message without one was not typed by a person (a schedule, an API call). Keep track of who asked for what, address people by name when it removes an ambiguity, and never write a <sender> tag yourself.'
@@ -342,6 +361,9 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
     const takeover = offersTakeover(agent.config)
     const conversational = !agent.config.ephemeral
     const asks = askingConfig.askUser || askingConfig.requestApproval || askingConfig.suggestService || askingConfig.requestSecret
+    const workspaceLanguage = desktop && trigger.source !== 'chat'
+        ? await desktopRunLanguage() ?? agent.config.language
+        : agent.config.language
     const unattended = trigger.source !== 'chat' && (askingConfig.askUser || cfg.requestApproval)
     const skillCapture = skillsOn && agent.config.selfImprovement.enabled
 
@@ -362,7 +384,7 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
         asks ? section('asking_the_user', askingNote(askingConfig)) : '',
         offersQuickReplies(agent.config) ? section('quick_replies', QUICK_REPLIES_NOTE) : '',
         conversational ? turnOrderSection(order, turnClosers(agent, takeover)) : '',
-        conversational ? section('language', LANGUAGE_NOTE) : '',
+        conversational ? section('language', languageNote(workspaceLanguage)) : '',
         section('verbosity', verbosityNote(agent.config.verbosity, desktop ? hasDesktopToolGrant(agent.config, 'verbositySet') : agent.config.selfImprovement.enabled)),
         conversational ? section('shared_conversation', SHARED_CONVERSATION_NOTE) : section('sub_agent_rules', SUB_AGENT_RULES),
         unattended ? section('unattended_run', unattendedRunNote(trigger.source === 'schedule' ? 'a scheduled routine' : 'an incoming webhook call')) : '',

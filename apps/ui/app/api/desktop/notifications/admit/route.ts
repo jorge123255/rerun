@@ -10,6 +10,6 @@ export function POST(request: Request) {
     return desktopRoute(request, async runtime => {
         const parsed = input.safeParse(await readNotificationBody(request))
         if (!parsed.success) throw new DesktopHttpError(400, 'Send valid notification identities.')
-        return Response.json(await admitDesktopNotificationEvents(runtime, parsed.data.keys), { headers: { 'cache-control': 'no-store' } })
+        return Response.json(await admitDesktopNotificationEvents(runtime, parsed.data.keys, request.headers.get('accept-language')), { headers: { 'cache-control': 'no-store' } })
     })
 }

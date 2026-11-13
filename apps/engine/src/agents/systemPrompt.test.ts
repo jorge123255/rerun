@@ -5,6 +5,8 @@ import { resolve } from 'node:path'
 process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-system-prompt-'))
 
 const { afterEach, describe, expect, it, vi } = await import('vitest')
+const { desktopInternalJson } = await import('../desktop/internal-client.js')
+vi.mock('../desktop/internal-client.js', () => ({ desktopInternalJson: vi.fn() }))
 const { agentConfigSchema } = await import('@rerun/contracts')
 const { buildSystemPrompt: buildSystemPromptBlocks, systemPromptText, currentTimeNote, nowBlock, userLanguageBlock } = await import('./systemPrompt.js')
 
@@ -260,6 +262,30 @@ describe('current time', () => {
 
     it('carries the exact timestamp in the turn block', () => {
         expect(nowBlock(new Date('2026-08-16T14:32:07Z'))).toBe('<now>\n2026-08-16T14:32:07Z (Sunday, 16 August 2026, 14:32 UTC)\n</now>')
+    })
+
+    it('falls back to the configured workspace language only when there is no earlier human message', async () => {
+        const routine = { source: 'schedule', slug: 'digest', name: 'Daily digest' } as const
+        const french = { ...agent, config: agentConfigSchema.parse({ ...agent.config, language: 'fr' }) }
+        const { stable } = await buildSystemPromptBlocks(french, routine)
+        expect(stable).toContain('keep the language of the last messages a person wrote in this session, and failing that French, the language of this workspace')
+        expect(await buildSystemPrompt(agent, routine)).toContain('and failing that the language its instruction is written in.')
+        const invalid = { ...agent, config: { ...agent.config, language: 'not a locale' } }
+        expect(await buildSystemPrompt(invalid, routine)).toContain('and failing that the language its instruction is written in.')
+    })
+
+    it('reads the current Mac language for routines and triggers without overriding normal chat', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const getLanguage = vi.mocked(desktopInternalJson)
+        getLanguage.mockResolvedValueOnce({ locale: 'fr' }).mockResolvedValueOnce({ locale: 'de' }).mockRejectedValueOnce(new Error('offline'))
+        try {
+            expect(await buildSystemPrompt(agent, { source: 'schedule', slug: 'digest', name: 'Daily digest' })).toContain('failing that French')
+            expect(await buildSystemPrompt(agent, { source: 'trigger', slug: 'intake', name: 'Intake' })).toContain('failing that German')
+            expect(await buildSystemPrompt(agent, { source: 'chat' })).not.toContain('the language of this workspace')
+            expect(await buildSystemPrompt(agent, { source: 'schedule', slug: 'digest', name: 'Daily digest' })).toContain('failing that the language its instruction is written in')
+            expect(getLanguage).toHaveBeenCalledTimes(3)
+            expect(getLanguage).toHaveBeenCalledWith('/api/desktop/internal/language', {}, expect.any(AbortSignal), 256)
+        } finally { getLanguage.mockReset(); vi.unstubAllEnvs() }
     })
 
     it('names the language of the user in the turn block of an install, and adds nothing without one', () => {

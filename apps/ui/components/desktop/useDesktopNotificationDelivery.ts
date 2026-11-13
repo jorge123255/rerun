@@ -7,6 +7,9 @@ import { resolveDesktopNotificationClick } from '@/lib/desktop/notification-clic
 import { showDesktopNotificationToast } from '@/lib/desktop/notification-toast'
 import { DESKTOP_NOTIFICATION_EVENTS_URL, DESKTOP_NOTIFICATION_ADMIT_URL, DESKTOP_NOTIFICATION_DELIVERY_URL, desktopNotificationAdmissionsSchema, desktopNotificationEventsSchema } from '@/lib/desktop/notifications'
 
+import type { DesktopNotificationAdmission } from '@/lib/desktop/notifications'
+import { useDesktopLocale } from './DesktopLocale'
+
 export const DESKTOP_NOTIFICATION_POLL_MS = 3000
 type DeliveryArgs = {
     onOpenConversation?: (target: { agentId: string; sessionId: string }) => void
@@ -40,6 +43,10 @@ async function boundedDelivery(work: Promise<DesktopNotificationDeliveryResult>)
  * sound share the one attempt, so polling, reconnecting and restarting never replay. An
  * interrupted or ambiguous attempt stays consumed instead of risking a duplicate banner. */
 export function useDesktopNotificationDelivery({ onOpenConversation, visibleSessionId, navigationBlocked = false }: DeliveryArgs = {}): void {
+    const { t } = useDesktopLocale()
+    const showToast = useEffectEvent((event: DesktopNotificationAdmission, onClick: (target: DesktopNotificationTarget) => void) => {
+        showDesktopNotificationToast(event, onClick, t)
+    })
     const visible = useRef(visibleSessionId); visible.current = visibleSessionId
     const [pendingClick, setPendingClick] = useState<{ target: DesktopNotificationTarget } | null>(null)
     const clickRead = useRef<AbortController | null>(null)
@@ -97,7 +104,7 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
                         let inAppStatus: 'shown' | 'unavailable' = 'unavailable'
                         let nativeStatus: DesktopNotificationDeliveryResult['status'] = 'unavailable'
                         if (!signal.aborted && !isDesktopQuitting() && !looking && admitted.channels.toast) {
-                            showDesktopNotificationToast(event, click)
+                            showToast(event, click)
                             status = 'shown'
                             inAppStatus = 'shown'
                             if (bridge.available) {
@@ -120,7 +127,7 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
                         if (admitted.channels.toast) {
                             // The in-app card needs no bridge; the native alert is silent because
                             // the original sound asset below is the sole sound, avoiding a double ring.
-                            showDesktopNotificationToast(event, click)
+                            showToast(event, click)
                             status = 'shown'
                             inAppStatus = 'shown'
                             if (bridge.available) {

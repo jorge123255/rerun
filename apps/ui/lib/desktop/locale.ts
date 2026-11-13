@@ -254,6 +254,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         },
         aiProviderTool: aiProviderTool[locale],
         actions: desktopActionMessages(locale, source.kit),
+        notificationToast: source.notifications.toast,
         notificationSettings: source.notifications.settings,
         notificationRowMenu: source.notifications.inbox.rowMenu,
         notificationUI: desktopNotificationMessages(locale),

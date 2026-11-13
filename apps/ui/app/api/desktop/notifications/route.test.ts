@@ -8,6 +8,7 @@ import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/
 import { createDesktopAgent, createDesktopSession, type DesktopAgent, type DesktopSession } from '@/lib/desktop/server/store'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { setDesktopWorkspaceFrozen } from '@/lib/desktop/server/workspace-admission'
+import { saveDesktopLanguage } from '@/lib/desktop/server/language'
 import { GET as readPrefs, PATCH as changeRule, PUT as writePrefs } from './route'
 import { GET as readEvents } from './events/route'
 import { POST as acknowledge } from './seen/route'
@@ -210,6 +211,31 @@ test('done events follow the chat/schedule decision: started runs under mine, ot
     const scheduled = after.events.filter(event => event.kind === 'done')
     expect(scheduled.map(event => event.agentId)).toEqual([bob.id])
     expect(scheduled[0]!.subtitle).toBe('morning-digest · Done')
+})
+
+test('localizes routine names and terminal states when polling and admitting after reopening', async () => {
+    const slug = 'morning-digest'
+    const sourceName = 'Bilan du matin'
+    completions.push({ owner: bob.engineAgentId, rows: [{
+        id: 'named-done', runId: 'named-done', agentId: bob.engineAgentId, sessionId: bobChat.engineSessionId, source: 'schedule',
+        slug, sourceName, completedAt: raised(80_000), text: null, provider: 'codex', model: 'fixture', costMicros: null, stepCount: 1,
+    }] })
+    const failure = scheduledTerminal('named-failure', slug)
+    expect(await (await enginePost({
+        ...failure, metadata: { status: 'error', source: 'schedule', scheduleSlug: slug, sourceName, error: 'timeout' },
+    })).json()).toMatchObject({ persisted: true })
+    await saveDesktopLanguage(runtime, 'fr', null)
+    await closeDesktopDatabase(root)
+
+    const { events } = await (await readEvents(eventsGet())).json() as { events: DesktopNotificationEvent[] }
+    const selected = events.filter(event => event.agentId === bob.id && event.source === 'schedule')
+    expect(selected).toEqual([
+        expect.objectContaining({ kind: 'done', subtitle: 'Bilan du matin · Terminé', sessionId: bobChat.id, body: null }),
+        expect.objectContaining({ kind: 'error', subtitle: 'Bilan du matin · Échec', sessionId: bobChat.id, body: 'timeout' }),
+    ])
+    const admitted = await admit(notificationPost('admit', { keys: selected.map(event => event.key) }))
+    expect(admitted.status).toBe(200)
+    expect((await admitted.json()).events).toEqual(selected.map(event => expect.objectContaining(event)))
 })
 
 test('only explicit failed terminals announce as Failed; stopped and successful runs stay out of the failure ledger', async () => {
