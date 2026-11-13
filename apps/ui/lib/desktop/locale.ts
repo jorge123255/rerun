@@ -294,6 +294,10 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         ...mac[locale],
         boardUI: desktopBoardCopy[locale],
         macSettings: macSettingsCopy[locale],
+        newWorkspace: {
+            ...source.dialogs.createWorkspace,
+            menu: source.layout.workspaceMenu.newWorkspace,
+        },
         workspaceForm: {
             ...source.workspace.settings,
             close: source.ui.close,

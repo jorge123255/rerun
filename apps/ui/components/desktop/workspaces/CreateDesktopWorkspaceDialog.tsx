@@ -1,14 +1,15 @@
 'use client'
 
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { DESKTOP_WORKSPACE_UI_COPY, type DesktopWorkspaceClient } from '@/lib/desktop/workspaces'
+import type { DesktopWorkspaceClient } from '@/lib/desktop/workspaces'
 import { DESKTOP_WORKSPACE_ICONS } from '@/lib/desktop/icon-catalog'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 import { cn } from '@/lib/utils'
 import { CheckIcon, Loader2Icon } from '@/lib/icons'
 import { useEffect, useRef, useState } from 'react'
+import { useDesktopLocale } from '../DesktopLocale'
 
 type Step = 0 | 1
 
@@ -27,6 +28,7 @@ export function CreateDesktopWorkspaceDialog({
     client: DesktopWorkspaceClient
     onCreated: (workspaceId: number) => void | Promise<void>
 }) {
+    const { t } = useDesktopLocale()
     const icons = DESKTOP_WORKSPACE_ICONS
     const [step, setStep] = useState<Step>(0)
     const [name, setName] = useState('')
@@ -52,9 +54,14 @@ export function CreateDesktopWorkspaceDialog({
     const submit = async () => {
         if (busy) return
         const trimmed = name.trim()
-        if (!trimmed) { setError('Name is required'); return }
+        if (!trimmed) { setError(t('newWorkspace.nameRequired')); return }
         if (trimmed.length > WORKSPACE_NAME_MAX) {
-            setError(`Keep the name under ${WORKSPACE_NAME_MAX} characters`)
+            setError(t('workspaceForm.nameTooLong', { max: WORKSPACE_NAME_MAX }))
+            return
+        }
+        if (step === 0) {
+            setStep(1)
+            setError(null)
             return
         }
         setBusy(true)
@@ -79,25 +86,25 @@ export function CreateDesktopWorkspaceDialog({
 
     return (
         <Dialog open={open} onOpenChange={next => { if (!next) close() }}>
-            <DialogContent className="flex max-h-[min(100dvh-2rem,40rem)] w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
-                <div className="flex min-h-0 flex-1 flex-col p-6">
+            <DialogContent closeLabel={t('workspaceForm.close')} className="flex max-h-[min(100dvh-2rem,40rem)] w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+                <form className="flex min-h-0 flex-1 flex-col p-6" onSubmit={event => { event.preventDefault(); void submit() }}>
                     <div className="mb-6 flex gap-1.5" aria-hidden>
                         {[0, 1].map(index => (
                             <span key={index} className={cn('h-1 flex-1 rounded-full', index <= step ? 'bg-foreground' : 'bg-border')} />
                         ))}
                     </div>
                     <DialogHeader className="mb-4">
-                        <DialogTitle>{step === 0 ? DESKTOP_WORKSPACE_UI_COPY.nameTitle : DESKTOP_WORKSPACE_UI_COPY.iconTitle}</DialogTitle>
-                        <p className="text-sm text-muted-foreground">
-                            {step === 0 ? DESKTOP_WORKSPACE_UI_COPY.nameHelp : DESKTOP_WORKSPACE_UI_COPY.iconHelp}
-                        </p>
+                        <DialogTitle>{t(step === 0 ? 'newWorkspace.steps.name.title' : 'newWorkspace.steps.icon.title')}</DialogTitle>
+                        <DialogDescription>
+                            {t(step === 0 ? 'newWorkspace.steps.name.description' : 'newWorkspace.steps.icon.description')}
+                        </DialogDescription>
                     </DialogHeader>
                     <div className="min-h-0 flex-1 overflow-y-auto pb-4">
                         {step === 0 && (
                             <Input
-                                label="Name"
+                                label={t('newWorkspace.name')}
                                 required
-                                placeholder="e.g. Acme Inc."
+                                placeholder={t('newWorkspace.namePlaceholder')}
                                 maxLength={WORKSPACE_NAME_MAX}
                                 value={name}
                                 disabled={busy}
@@ -135,20 +142,16 @@ export function CreateDesktopWorkspaceDialog({
                     </div>
                     <DialogFooter className="mt-auto -mx-6 -mb-6 flex flex-wrap gap-2 border-t bg-muted/50 px-6 py-4">
                         {step === 0 ? (
-                            <Button type="button" variant="outline" disabled={busy} onClick={close}>{DESKTOP_WORKSPACE_UI_COPY.cancel}</Button>
+                            <Button type="button" variant="outline" disabled={busy} onClick={close}>{t('workspaceForm.cancel')}</Button>
                         ) : (
-                            <Button type="button" variant="outline" disabled={busy} onClick={() => setStep(0)}>{DESKTOP_WORKSPACE_UI_COPY.back}</Button>
+                            <Button type="button" variant="outline" disabled={busy} onClick={() => setStep(0)}>{t('newWorkspace.back')}</Button>
                         )}
-                        {step === 0 ? (
-                            <Button type="button" disabled={busy || !name.trim()} onClick={() => setStep(1)}>{DESKTOP_WORKSPACE_UI_COPY.continue}</Button>
-                        ) : (
-                            <Button type="button" disabled={busy} onClick={() => void submit()}>
-                                {busy && <Loader2Icon className="animate-spin" />}
-                                {busy ? DESKTOP_WORKSPACE_UI_COPY.creating : DESKTOP_WORKSPACE_UI_COPY.create}
-                            </Button>
-                        )}
+                        <Button type="submit" disabled={busy || !name.trim()}>
+                            {busy && <Loader2Icon className="animate-spin" />}
+                            {t(step === 0 ? 'newWorkspace.continue' : busy ? 'newWorkspace.creating' : 'newWorkspace.create')}
+                        </Button>
                     </DialogFooter>
-                </div>
+                </form>
             </DialogContent>
         </Dialog>
     )

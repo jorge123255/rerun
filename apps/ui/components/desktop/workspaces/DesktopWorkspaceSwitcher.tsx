@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils'
 import { useCallback, useEffect, useMemo, useState, type ReactNode, type ComponentProps } from 'react'
 import type { DesktopWorkspaceListResult, DesktopWorkspaceRecord } from '@rerun/contracts'
 import { toast } from 'sonner'
+import { useDesktopLocale } from '../DesktopLocale'
 
 /**
  * Local port of WorkspaceSwitcher workspace list + New workspace + rename entry.
@@ -40,6 +41,7 @@ export function DesktopWorkspaceSwitcher({
     workspaceSettingsInMenu?: boolean
     onCloseAutoFocus?: ComponentProps<typeof DropdownMenuContent>['onCloseAutoFocus']
 }) {
+    const { t } = useDesktopLocale()
     const [snapshot, setSnapshot] = useState<DesktopWorkspaceListResult | null>(null)
     const [busy, setBusy] = useState(false)
     const [createOpen, setCreateOpen] = useState(false)
@@ -150,7 +152,7 @@ export function DesktopWorkspaceSwitcher({
                     })}
                     <DropdownMenuItem disabled={disabled || busy || switchBlocked || !snapshot} onSelect={() => setCreateOpen(true)} className="gap-2 text-muted-foreground">
                         <PlusIcon className="size-4" />
-                        {DESKTOP_WORKSPACE_UI_COPY.newWorkspace}
+                        {t('newWorkspace.menu')}
                     </DropdownMenuItem>
                     {!workspaceSettingsInMenu && <><DropdownMenuSeparator />
                     <DropdownMenuItem disabled={disabled || busy || !active || switchBlocked} onSelect={() => onRenameActive ? onRenameActive() : setRenameOpen(true)} className="gap-2 text-muted-foreground">
