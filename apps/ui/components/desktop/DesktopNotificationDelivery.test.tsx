@@ -29,6 +29,7 @@ beforeEach(() => {
     notify.mockReset().mockResolvedValue({ status: 'accepted' }); audioPlay.mockReset().mockResolvedValue(undefined); navigate.mockReset()
     vi.stubGlobal('Audio', class { play = audioPlay; pause() {} })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     ;(window as unknown as { desktopApp: unknown }).desktopApp = { notifications: {
         notify, onNotificationClick: (callback: typeof listener) => { listener = callback; return () => { listener = undefined } },
     } }
@@ -121,6 +122,22 @@ test('an open chat suppresses visible alerts but a hidden Mac window still recei
     events.push(event()); await mount('chat-a'); expect(notify).not.toHaveBeenCalled()
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
     await tick(); expect(notify).toHaveBeenCalledTimes(1)
+})
+
+test('a visible chat in an unfocused Mac window receives attention once', async () => {
+    const question = event()
+    const info = { ...event('notify-user:agent-a:session-a:run-a:call-a'), kind: 'info' as const, silent: true }
+    events.push(question, info)
+    vi.mocked(document.hasFocus).mockReturnValue(false)
+    await mount('chat-a')
+    expect(notify.mock.calls.map(([target]) => target.key)).toEqual([question.key, info.key])
+    expect(receipts.map(receipt => [receipt.key, receipt.inAppStatus, receipt.nativeStatus])).toEqual([
+        [question.key, 'shown', 'accepted'],
+        [info.key, 'shown', 'accepted'],
+    ])
+    vi.mocked(document.hasFocus).mockReturnValue(true)
+    await tick()
+    expect(notify).toHaveBeenCalledTimes(2)
 })
 test('terminal clicks reject a rebound owner or conversation', async () => {
     await mount(); terminal = { agentId: 'another-owner', sessionId: 'another-chat' }

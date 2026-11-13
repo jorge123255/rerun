@@ -40,6 +40,8 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
     const visible = useRef(visibleSessionId); visible.current = visibleSessionId
     useEffect(() => {
         const lifetime = new AbortController()
+        const isWatching = (sessionId: string) => sessionId === visible.current
+            && document.visibilityState === 'visible' && document.hasFocus()
         let click: AbortController | undefined
         const openTarget = (target: DesktopNotificationTarget) => {
             click?.abort()
@@ -63,7 +65,7 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
                 const body = desktopNotificationEventsSchema.parse(await response.json())
                 if (signal.aborted || isDesktopQuitting()) return
                 const bridge = desktopNotificationsBridge()
-                const keys = body.events.filter(event => event.kind === 'info' || (!(document.visibilityState === 'visible' && event.sessionId === visible.current)
+                const keys = body.events.filter(event => event.kind === 'info' || (!isWatching(event.sessionId)
                     && (body.channels.toast || (body.channels.sound && event.kind !== 'done')))).slice(0, 50).map(event => event.key)
                 if (!keys.length) return
                 const admission = await fetch(DESKTOP_NOTIFICATION_ADMIT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keys }), cache: 'no-store', signal })
@@ -71,7 +73,7 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
                 const admitted = desktopNotificationAdmissionsSchema.parse(await admission.json())
                 for (const event of admitted.events) {
                     if (event.kind === 'info') {
-                        const looking = document.visibilityState === 'visible' && event.sessionId === visible.current
+                        const looking = isWatching(event.sessionId)
                         let status: DesktopNotificationDeliveryResult['status'] | 'shown' = 'unavailable'
                         let inAppStatus: 'shown' | 'unavailable' = 'unavailable'
                         let nativeStatus: DesktopNotificationDeliveryResult['status'] = 'unavailable'
