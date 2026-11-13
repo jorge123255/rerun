@@ -23,3 +23,14 @@ export const desktopVaultListing = z.strictObject({
 
 export type DesktopVaultListing = z.infer<typeof desktopVaultListing>
 export type DesktopVaultEntry = z.infer<typeof desktopVaultEntry>
+
+export const desktopCoworkerVaultMutation = z.strictObject({ ...target, attached: z.boolean() })
+export type DesktopCoworkerVaultMutation = z.infer<typeof desktopCoworkerVaultMutation>
+
+const coworkerVaultEntry = desktopVaultEntry.omit({ agentIds: true })
+export const desktopCoworkerVaultListing = z.strictObject({
+    agentId: z.uuid(),
+    attached: z.array(coworkerVaultEntry),
+    available: z.array(coworkerVaultEntry),
+})
+export type DesktopCoworkerVaultListing = z.infer<typeof desktopCoworkerVaultListing>

@@ -1,7 +1,7 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
 import type { Client, Transaction } from '@libsql/client'
-import { desktopVaultListing, type DesktopVaultEntry, type DesktopVaultMutation } from '../../vault'
+import { desktopCoworkerVaultListing, desktopVaultListing, type DesktopCoworkerVaultMutation, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '../../vault'
 import { DesktopHttpError } from '../auth'
 import { withRosterWrite } from '../roster-writes'
 import type { DesktopSecretCrypto } from '../secret-requests/crypto'
@@ -27,6 +27,22 @@ async function readVault(tx: Transaction) {
     return desktopVaultListing.parse({ entries, coworkers })
 }
 
+function requireCoworker(listing: DesktopVaultListing, agentId: string) {
+    if (!listing.coworkers.some(coworker => coworker.id === agentId)) {
+        throw new DesktopHttpError(404, 'Coworker not found in this workspace.')
+    }
+}
+
+function coworkerListing(listing: DesktopVaultListing, agentId: string) {
+    requireCoworker(listing, agentId)
+    const attached = [], available = []
+    for (const { agentIds, ...entry } of listing.entries) {
+        const group = entry.sharedWithAll || agentIds.includes(agentId) ? attached : available
+        group.push(entry)
+    }
+    return desktopCoworkerVaultListing.parse({ agentId, attached, available })
+}
+
 function overlaps(a: DesktopVaultEntry, b: Pick<DesktopVaultEntry, 'agentIds' | 'sharedWithAll'>) {
     if (a.sharedWithAll && b.sharedWithAll) return true
     if (a.sharedWithAll) return b.agentIds.length > 0
@@ -42,64 +58,93 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
         } finally { bytes.fill(0) }
     }
 
-    return {
-        async list() {
-            const tx = await db.transaction('read')
-            try { return await readVault(tx) } finally { tx.close() }
-        },
-        mutate(input: DesktopVaultMutation, assertCurrent: () => void) {
-            return withRosterWrite(async () => {
-                assertCurrent()
-                const tx = await db.transaction('write')
-                try {
-                    const revision = randomUUID()
-                    if (input.operation === 'create') {
-                        const id = randomUUID()
-                        const sealed = await seal(id, input.variable, revision, input.value)
-                        assertCurrent()
-                        await tx.execute({
-                            sql: 'INSERT INTO desktop_vault_secrets(id,name,variable,revision,value_revision,sealed) VALUES(?,?,?,?,?,?)',
-                            args: [id, input.name, input.variable, revision, revision, sealed],
-                        })
-                    } else {
-                        const listing = await readVault(tx)
-                        const entry = listing.entries.find(row => row.id === input.id)
-                        if (!entry) throw new DesktopHttpError(404, 'Vault entry not found.')
-                        if (input.revision !== entry.revision) throw new DesktopHttpError(409, 'This Vault entry changed. Reopen it and try again.')
-                        if (input.operation === 'share') {
-                            const agentIds = [...new Set(input.agentIds)]
-                            if (agentIds.some(id => !listing.coworkers.some(agent => agent.id === id))) {
-                                throw new DesktopHttpError(409, 'A selected coworker is no longer in this workspace.')
-                            }
-                            const other = listing.entries.find(row => row.id !== entry.id && row.variable === entry.variable && overlaps(row, { ...input, agentIds }))
-                            if (other) throw new DesktopHttpError(409, `A coworker would receive ${entry.variable} from both ${entry.name} and ${other.name}.`, 'vault_conflict')
-                            const targets = new Set(input.sharedWithAll ? listing.coworkers.map(agent => agent.id) : agentIds)
-                            if (targets.size) {
-                                const privateCredentials = await tx.execute({
-                                    sql: 'SELECT agent_id FROM desktop_secret_credentials WHERE key=?',
-                                    args: [entry.variable],
-                                })
-                                if (privateCredentials.rows.some(row => targets.has(String(row.agent_id)))) {
-                                    throw new DesktopHttpError(409, `A selected coworker already has a private credential named ${entry.variable}.`, 'vault_conflict')
-                                }
-                            }
-                            await tx.execute({ sql: 'DELETE FROM desktop_vault_attachments WHERE item_id=?', args: [entry.id] })
-                            for (const id of agentIds) await tx.execute({ sql: 'INSERT INTO desktop_vault_attachments(item_id,agent_id) VALUES(?,?)', args: [entry.id, id] })
-                            await tx.execute({ sql: 'UPDATE desktop_vault_secrets SET revision=?,shared_with_all=? WHERE id=?', args: [revision, Number(input.sharedWithAll), entry.id] })
-                        } else if (input.operation === 'replace') {
-                            const sealed = await seal(entry.id, entry.variable, revision, input.value)
-                            await tx.execute({ sql: 'UPDATE desktop_vault_secrets SET revision=?,value_revision=?,sealed=? WHERE id=?', args: [revision, revision, sealed, entry.id] })
-                        } else {
-                            await tx.execute({ sql: 'DELETE FROM desktop_vault_attachments WHERE item_id=?', args: [entry.id] })
-                            await tx.execute({ sql: 'DELETE FROM desktop_vault_secrets WHERE id=?', args: [entry.id] })
-                        }
+    async function list() {
+        const tx = await db.transaction('read')
+        try { return await readVault(tx) } finally { tx.close() }
+    }
+
+    function mutate(change: DesktopVaultMutation | (DesktopCoworkerVaultMutation & { operation: 'coworker'; agentId: string }), assertCurrent: () => void) {
+        return withRosterWrite(async () => {
+            assertCurrent()
+            const tx = await db.transaction('write')
+            try {
+                const revision = randomUUID()
+                const listing = await readVault(tx)
+                let input: DesktopVaultMutation
+                if (change.operation === 'coworker') {
+                    requireCoworker(listing, change.agentId)
+                    const entry = listing.entries.find(row => row.id === change.id)
+                    if (!entry) throw new DesktopHttpError(404, 'Vault entry not found.')
+                    if (entry.revision !== change.revision) throw new DesktopHttpError(409, 'This Vault entry changed. Reopen it and try again.')
+                    if (entry.sharedWithAll) throw new DesktopHttpError(409, 'This entry is shared with every coworker. Change it in the workspace Vault.')
+                    if (change.attached && entry.agentIds.length >= 250 && !entry.agentIds.includes(change.agentId)) {
+                        throw new DesktopHttpError(409, 'This entry already has the maximum number of individual assignments.')
                     }
-                    const result = await readVault(tx)
+                    const assigned = entry.agentIds.includes(change.agentId)
+                    if (assigned === change.attached) {
+                        assertCurrent()
+                        return listing
+                    }
+                    input = {
+                        operation: 'share', id: change.id, revision: change.revision, sharedWithAll: false,
+                        agentIds: change.attached ? [...entry.agentIds, change.agentId] : entry.agentIds.filter(id => id !== change.agentId),
+                    }
+                } else input = change
+                if (input.operation === 'create') {
+                    const id = randomUUID()
+                    const sealed = await seal(id, input.variable, revision, input.value)
                     assertCurrent()
-                    await tx.commit()
-                    return result
-                } finally { tx.close() }
-            })
+                    await tx.execute({
+                        sql: 'INSERT INTO desktop_vault_secrets(id,name,variable,revision,value_revision,sealed) VALUES(?,?,?,?,?,?)',
+                        args: [id, input.name, input.variable, revision, revision, sealed],
+                    })
+                } else {
+                    const entry = listing.entries.find(row => row.id === input.id)
+                    if (!entry) throw new DesktopHttpError(404, 'Vault entry not found.')
+                    if (input.revision !== entry.revision) throw new DesktopHttpError(409, 'This Vault entry changed. Reopen it and try again.')
+                    if (input.operation === 'share') {
+                        const agentIds = [...new Set(input.agentIds)]
+                        if (agentIds.some(id => !listing.coworkers.some(agent => agent.id === id))) {
+                            throw new DesktopHttpError(409, 'A selected coworker is no longer in this workspace.')
+                        }
+                        const other = listing.entries.find(row => row.id !== entry.id && row.variable === entry.variable && overlaps(row, { ...input, agentIds }))
+                        if (other) throw new DesktopHttpError(409, `A coworker would receive ${entry.variable} from both ${entry.name} and ${other.name}.`, 'vault_conflict')
+                        const targets = new Set((input.sharedWithAll ? listing.coworkers.map(agent => agent.id) : agentIds)
+                            .filter(id => !entry.sharedWithAll && !entry.agentIds.includes(id)))
+                        if (targets.size) {
+                            const privateCredentials = await tx.execute({
+                                sql: 'SELECT agent_id FROM desktop_secret_credentials WHERE key=?',
+                                args: [entry.variable],
+                            })
+                            if (privateCredentials.rows.some(row => targets.has(String(row.agent_id)))) {
+                                throw new DesktopHttpError(409, `A selected coworker already has a private credential named ${entry.variable}.`, 'vault_conflict')
+                            }
+                        }
+                        await tx.execute({ sql: 'DELETE FROM desktop_vault_attachments WHERE item_id=?', args: [entry.id] })
+                        for (const id of agentIds) await tx.execute({ sql: 'INSERT INTO desktop_vault_attachments(item_id,agent_id) VALUES(?,?)', args: [entry.id, id] })
+                        await tx.execute({ sql: 'UPDATE desktop_vault_secrets SET revision=?,shared_with_all=? WHERE id=?', args: [revision, Number(input.sharedWithAll), entry.id] })
+                    } else if (input.operation === 'replace') {
+                        const sealed = await seal(entry.id, entry.variable, revision, input.value)
+                        await tx.execute({ sql: 'UPDATE desktop_vault_secrets SET revision=?,value_revision=?,sealed=? WHERE id=?', args: [revision, revision, sealed, entry.id] })
+                    } else {
+                        await tx.execute({ sql: 'DELETE FROM desktop_vault_attachments WHERE item_id=?', args: [entry.id] })
+                        await tx.execute({ sql: 'DELETE FROM desktop_vault_secrets WHERE id=?', args: [entry.id] })
+                    }
+                }
+                const result = await readVault(tx)
+                assertCurrent()
+                await tx.commit()
+                return result
+            } finally { tx.close() }
+        })
+    }
+
+    return {
+        list,
+        mutate(input: DesktopVaultMutation, assertCurrent: () => void) { return mutate(input, assertCurrent) },
+        async forCoworker(agentId: string) { return coworkerListing(await list(), agentId) },
+        async assignCoworker(agentId: string, input: DesktopCoworkerVaultMutation, assertCurrent: () => void) {
+            return coworkerListing(await mutate({ ...input, operation: 'coworker', agentId }, assertCurrent), agentId)
         },
     }
 }

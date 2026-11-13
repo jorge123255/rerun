@@ -24,6 +24,7 @@ import { ServiceTransportConnection } from '../transports/ServiceTransportConnec
 import { serviceOAuthClient } from '@/lib/desktop/service-oauth-client'
 import { desktopServiceTransportClient } from '@/lib/desktop/service-transports-client'
 import { DesktopServiceAccountForm } from './DesktopServiceAccountForm'
+import { DesktopCoworkerVault } from '../../vault/DesktopCoworkerVault'
 
 function libraryService(row: ServiceAccountLibraryRow): ServiceSearchResult {
     return { slug: row.slug, name: row.name, category: row.category, summary: row.summary, icon: row.icon, requiresSecrets: row.requiresSecrets, setup: row.setup, setupReason: row.setupReason, installed: row.installed, installStatus: row.installStatus, verified: row.verified, multiInstance: row.multiInstance && row.addAccount }
@@ -249,6 +250,7 @@ function Accounts({ agentId, focusSlug, focusRequestKey }: { agentId: string; fo
                                 </PanelList>
                             ) : !error && <EmptyState icon={UnplugIcon} title="No apps installed" description="Add an app from the Library to extend this coworker’s tools." />}
                         </PanelSection>
+                        <DesktopCoworkerVault key={agentId} agentId={agentId} query={query} />
                         <PanelSection label="Library">
                             {loading && !catalog.length ? <SkeletonPanelRows rows={6} leading /> : catalog.length ? (
                                 <ServiceList services={catalog.map(libraryService)} onInstall={slug => void openSlug(slug)} onAddAccount={slug => { const row = catalog.find(item => item.slug === slug); if (row?.addAccount) void openSlug(slug, `additional:${slug}`) }} />

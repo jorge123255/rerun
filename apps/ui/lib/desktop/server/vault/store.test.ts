@@ -233,3 +233,27 @@ test('a private credential still resolves and cannot be silently replaced by an 
         expect(consumed).toBe(false)
     } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
 })
+
+test('the coworker Vault changes just that owner and preserves entries, other assignments and shared-all policy', async () => {
+    const f = await fixture()
+    try {
+        const [item] = (await f.vault.mutate({ operation: 'create', name: 'Deploy key', variable: 'DEPLOY_KEY', value: secret }, allow)).entries
+        const target = { id: item.id, revision: item.revision }
+        const first = await f.vault.assignCoworker(firstAgent, { ...target, attached: true }, allow)
+        expect(first).toMatchObject({ agentId: firstAgent, available: [], attached: [{ id: item.id, name: item.name, sharedWithAll: false }] })
+        expect(first.attached[0]).not.toHaveProperty('agentIds')
+        expect(JSON.stringify(first)).not.toContain(secret)
+        await expect(f.vault.assignCoworker(secondAgent, { ...target, attached: true }, allow)).rejects.toMatchObject({ status: 409 })
+        const second = await f.vault.forCoworker(secondAgent)
+        expect(second.attached).toEqual([])
+        const both = await f.vault.assignCoworker(secondAgent, { ...second.available[0], attached: true }, allow)
+        const detached = await f.vault.assignCoworker(firstAgent, { ...both.attached[0], attached: false }, allow)
+        expect(detached).toMatchObject({ attached: [], available: [{ id: item.id }] })
+        expect((await f.vault.list()).entries[0].agentIds).toEqual([secondAgent])
+        const shared = await f.vault.mutate({ operation: 'share', ...target, revision: detached.available[0].revision, sharedWithAll: true, agentIds: [] }, allow)
+        expect((await f.vault.forCoworker(firstAgent)).attached[0].sharedWithAll).toBe(true)
+        await expect(f.vault.assignCoworker(firstAgent, { ...target, revision: shared.entries[0].revision, attached: false }, allow)).rejects.toMatchObject({ status: 409 })
+        await expect(f.vault.forCoworker(foreignAgent)).rejects.toMatchObject({ status: 404 })
+        await expect(f.vault.assignCoworker(foreignAgent, { ...target, attached: true }, allow)).rejects.toMatchObject({ status: 404 })
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})

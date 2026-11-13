@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { DesktopServiceAccountsClient, ServiceAccountDetail, ServiceAccountLibraryRow } from '@/lib/desktop/service-accounts-client'
 import type { DesktopServiceAccountView } from '@rerun/contracts'
 
@@ -19,6 +19,13 @@ import { DesktopCoworkerServices } from '../DesktopCoworkerServices'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const roots: Array<{ root: Root; host: HTMLElement }> = []
+const agentId = '00000000-0000-4000-8000-000000000001'
+const vaultRequest = vi.fn<typeof fetch>()
+beforeEach(() => {
+    vaultRequest.mockReset().mockResolvedValue(Response.json({ agentId, attached: [], available: [] }))
+    vi.stubGlobal('fetch', vaultRequest)
+})
+afterEach(() => { vi.unstubAllGlobals() })
 afterEach(() => { for (const { root, host } of roots.splice(0)) { act(() => root.unmount()); host.remove() }; state.detail.mockReset(); state.installed.mockReset().mockResolvedValue([]); state.reconfigure.mockReset() })
 
 function row(installStatus: ServiceAccountLibraryRow['installStatus'], multiInstance: boolean, addAccount: boolean): ServiceAccountLibraryRow {
@@ -63,7 +70,7 @@ it('mounts account setup through the existing Apps entry and keeps chat focus wh
     state.catalog.mockResolvedValue({ total: 0, services: [] })
     const host = document.createElement('div'); document.body.append(host)
     const root = createRoot(host); roots.push({ root, host })
-    await act(async () => { root.render(<DesktopCoworkerServices agentId="coworker-1" focusSlug="fixture" focusRequestKey="chat-request-1" />) })
+    await act(async () => { root.render(<DesktopCoworkerServices agentId={agentId} focusSlug="fixture" focusRequestKey="chat-request-1" />) })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 250)) })
     expect(state.detail).toHaveBeenCalledWith('fixture')
     expect(host.textContent).toContain('Fixture account')
@@ -82,4 +89,34 @@ it('Finish setup selects the saved account and blocks other account actions duri
     expect([...host.querySelectorAll('button')].find(button => button.textContent === 'Probe connection')?.disabled).toBe(true)
     expect(state.reconfigure).toHaveBeenCalledWith('fixture', installed().revision, 'default', {})
     await act(async () => { finish() })
+})
+
+it('adds and removes assigned secrets from the Apps list and explains shared entries', async () => {
+    const item = { id: '00000000-0000-4000-8000-000000000002', revision: '00000000-0000-4000-8000-000000000003', name: 'Release key', variable: 'RELEASE_KEY', sharedWithAll: false }
+    const shared = { ...item, id: '00000000-0000-4000-8000-000000000004', name: 'Team key', sharedWithAll: true }
+    const saved = { ...item, revision: '00000000-0000-4000-8000-000000000005' }
+    vaultRequest
+        .mockResolvedValueOnce(Response.json({ agentId, attached: [shared], available: [item] }))
+        .mockResolvedValueOnce(Response.json({ agentId, attached: [shared, saved], available: [] }))
+        .mockResolvedValueOnce(Response.json({ agentId, attached: [shared], available: [item] }))
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    roots.push({ root, host })
+    await act(async () => { root.render(<DesktopServiceAccounts agentId={agentId} />) })
+    const button = (label: string) => host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)
+    expect(host.textContent).toContain('Shared with every coworker')
+    expect(button('Remove Team key')?.disabled).toBe(true)
+    expect(host.textContent).toContain('From the Vault')
+    await act(async () => { button('Add Release key')!.click() })
+    expect(button('Add Release key')).toBeNull()
+    const url = `/api/desktop/coworkers/${agentId}/vault`
+    expect(vaultRequest).toHaveBeenLastCalledWith(url, expect.objectContaining({
+        method: 'POST', body: JSON.stringify({ id: item.id, revision: item.revision, attached: true }),
+    }))
+    await act(async () => { button('Remove Release key')!.click() })
+    expect(vaultRequest).toHaveBeenLastCalledWith(url, expect.objectContaining({
+        method: 'POST', body: JSON.stringify({ id: item.id, revision: saved.revision, attached: false }),
+    }))
+    expect(button('Add Release key')).not.toBeNull()
 })
