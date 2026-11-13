@@ -5,7 +5,7 @@ import { ProviderErrorNotice } from '@/components/chat/ProviderErrorNotice'
 import { useDesktopLocale } from '../DesktopLocale'
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import type { ConnectionsList, DesktopCoworkerCallTarget, DesktopForemanChatRef, DesktopForemanModelRef } from '@rerun/contracts'
+import type { ConnectionsList, DesktopCoworkerCallTarget, DesktopForemanChatRef, DesktopForemanModelRef, TeamAgent } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 import { isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 import { flushDesktopForemanUiSaves } from '@/lib/desktop/foreman-client'
@@ -31,6 +31,8 @@ export type DesktopForemanPanelProps = {
     target?: DesktopForemanChatRef | null
     onSelectConversation?: (chat: DesktopForemanChatRef | null) => Promise<void>
     mentionTargets?: DesktopCoworkerCallTarget[]
+    team?: TeamAgent[]
+    firstName?: string
     command?: DesktopForemanCommand | null
     onOpenCoworker: (target: { agentId: string; sessionId?: string }) => void | Promise<void>
     onOpenCalledChat: (target: { agentId: string; sessionId: string }) => Promise<void>
@@ -207,7 +209,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         accepted={() => { void client.refresh() }} onSlot={setVoice} onSettings={props.onOpenTranscriptionSettings} />}
     {!intakeOpen && <DesktopCompanyResearch chat={state.chat} active={!!props.controlledOpen && !props.hidden} refreshKey={JSON.stringify(state.view)} />}
     <DesktopForemanColumn
-        mentionTargets={props.mentionTargets}
+        mentionTargets={props.mentionTargets} team={props.team} firstName={props.firstName}
         onOpenCalledChat={props.onOpenCalledChat}
         callSources={state.callSources}
         sessionId={state.sessionId} pendingSend={pendingSend} onRetryPendingSend={client.retryPendingMessage}
@@ -216,7 +218,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         dockFeed={dockFeed} voiceSlot={voiceModel ? voice?.slot : undefined} sendDisabled={modelSaving} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)} retrySnapshot={state.retrySnapshot}
         question={state.question} onAnswerQuestion={client.answerQuestion}
         approval={state.approval} onDecideApproval={client.decideApproval}
-        starter={state.starter} onStarterAnswer={client.answerStarter} intakeFinished={intake.finished}
+        starter={state.starter} onStarterAnswer={client.answerStarter} intakeFinished={intake.finished} separateConversation={state.separateConversation}
         runNotice={state.runFailure && !pendingSend ? <ProviderErrorNotice kind={state.runFailure.kind}
             onSwitchModel={canSwitchModel ? () => modelPicker.current?.open() : undefined}
             onReconnect={failedConnection && props.onReconnectConnection ? () => props.onReconnectConnection?.(failedConnection) : props.onOpenModelSettings}

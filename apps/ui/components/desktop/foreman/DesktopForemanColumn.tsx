@@ -13,6 +13,7 @@ import type { DesktopForemanLiveReply } from '@/lib/desktop/foreman/live-reply'
 import { DesktopForemanChatLayer, type DesktopForemanMessage } from './DesktopForemanChatLayer'
 import { useDesktopForemanFeedback } from '@/lib/desktop/use-foreman-feedback'
 import { DesktopForemanComposer } from './DesktopForemanComposer'
+import { DesktopForemanTeamWelcome } from './DesktopForemanTeamWelcome'
 import { DesktopForemanHeader } from './DesktopForemanHeader'
 import { DesktopForemanRoutines } from './DesktopForemanRoutines'
 import { DesktopWorkspaceRoutines } from './routines/DesktopWorkspaceRoutines'
@@ -34,9 +35,10 @@ import type { DesktopTemplateIdentity } from '@/components/desktop/templates/typ
 import { Button } from '@/components/ui/button'
 import { RotateCwIcon } from '@/lib/icons'
 import { useDesktopLocale } from '../DesktopLocale'
+import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { DesktopForemanAlternateReview, DesktopForemanAlternates } from './DesktopForemanAlternates'
 import { useDesktopForemanAlternates } from './useDesktopForemanAlternates'
-import { FOREMAN_AGENT_ID, foremanDocumentScope, trimDesktopCoworkerMentions, type DesktopCoworkerCallTarget, type DesktopCoworkerMention } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, foremanDocumentScope, trimDesktopCoworkerMentions, type DesktopCoworkerCallTarget, type DesktopCoworkerMention, type TeamAgent } from '@rerun/contracts'
 import type { DesktopForemanPersistedUi } from '@/lib/desktop/foreman-client/persistence'
 import type { MentionSkill } from '@/components/chat/MentionAutocomplete'
 import { useDesktopMentionAutocomplete } from '../mentions/useDesktopMentionAutocomplete'
@@ -61,6 +63,8 @@ export type DesktopForemanColumnProps = {
     live: { runId: string } | null
     messages: DesktopForemanMessage[]
     mentionTargets?: DesktopCoworkerCallTarget[]
+    team?: TeamAgent[]
+    firstName?: string
     onOpenCalledChat?: (target: DesktopCoworkerCallOpenTarget) => Promise<void>
     callSources?: readonly { callId: string; runId: string }[]
     sessionId?: string
@@ -95,6 +99,7 @@ export type DesktopForemanColumnProps = {
     voiceSlot?: ReactNode
     intake?: DesktopForemanIntakeController
     intakeFinished?: boolean
+    separateConversation?: boolean
     starter?: DesktopStarterView | null
     onStarterAnswer?: (input: DesktopLocalStarterDecision) => Promise<void>
     /** Opens the template library on one template's review; absent until root wires the seam. */
@@ -112,7 +117,7 @@ export function DesktopForemanColumn({
     ports,
     live,
     messages,
-    mentionTargets,
+    mentionTargets, team, firstName = '',
     onOpenCalledChat,
     callSources,
     sessionId,
@@ -128,7 +133,7 @@ export function DesktopForemanColumn({
     headerActions,
     runNotice,
     renderBoardOverlay,
-    className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, controlledOpen, hidden, centerOpen, findEnabled, dockFeed, voiceSlot, intake, intakeFinished, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
+    className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, controlledOpen, hidden, centerOpen, findEnabled, dockFeed, voiceSlot, intake, intakeFinished, separateConversation, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
     const { t } = useDesktopLocale()
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
@@ -264,7 +269,9 @@ export function DesktopForemanColumn({
     const plan = projectPlanCard(foreman.planSnapshot)
     const docked = ui.placement.mode === 'dock'
     // The rail takes the empty conversation's place instead of sitting under the welcome orb.
-    const starterPack = Boolean(!intakeFinished && !starter && onReviewTemplate && foreman.restored && messages.length === 0 && !plan.view && !foreman.build)
+    const starterPack = Boolean(!separateConversation && !intakeFinished && !starter && onReviewTemplate && foreman.restored && messages.length === 0 && !plan.view && !foreman.build)
+    const welcomeActionsDisabled = !!(hidden || !ui.open || onRoutines || alternates.open || retryDisabled || pendingSend || ui.draft
+        || documents.attachments.length || sendingDocuments || attachmentComposer && (!documents.loaded || documents.busy))
     return (
         <>
         <DesktopForemanDockLayout scope={dockBinding.scope} open={ui.open} hidden={hidden}
@@ -311,6 +318,16 @@ export function DesktopForemanColumn({
                             {approval && onDecideApproval && <DesktopApprovalCard approval={approval} disabled={hidden || !!foreman.blocked} onDecide={onDecideApproval} />}
                         </> : null}
                         emptyWelcome={!starterPack && !pendingStarter}
+                        emptyContent={team && !starterPack && !pendingStarter && !starter && <DesktopForemanTeamWelcome
+                            agents={team} firstName={firstName}
+                            disabled={welcomeActionsDisabled}
+                            onAction={(text, selected, submit) => {
+                                if (welcomeActionsDisabled || isDesktopQuitting() || composerScope.current.draft) return
+                                foreman.setDraft(text, selected)
+                                if (submit) send(text.trim())
+                                else requestAnimationFrame(() => column.current?.querySelector<HTMLTextAreaElement>('textarea[data-desktop-foreman-composer]:not([disabled])')?.focus())
+                            }}
+                        />}
                         planSnapshot={foreman.planSnapshot}
                         decisionStatus={ui.decision}
                         build={foreman.build}

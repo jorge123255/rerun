@@ -26,13 +26,16 @@ const ROW_ICONS: Record<Exclude<TeamEmptyStateRow['leading'], 'agent'>, LucideIc
 
 type ForemanTeamEmptyStateProps = {
     model: TeamEmptyStateModel
-    now: number
+    now?: number
     onSend?: (text: string) => void
     onPrefill?: (text: string) => void
+    onAction?: (row: TeamEmptyStateRow) => void
     className?: string
+    disabled?: boolean
+    pulseLabels?: (count: number, working: number) => { coworkers: string; working: string }
 }
 
-export function ForemanTeamEmptyState({ model, now, onSend, onPrefill, className }: ForemanTeamEmptyStateProps) {
+export function ForemanTeamEmptyState({ model, now, onSend, onPrefill, onAction, className, disabled, pulseLabels }: ForemanTeamEmptyStateProps) {
     const run = (action: TeamEmptyStateAction) => (action.type === 'send' ? onSend : onPrefill)?.(action.text)
 
     return (
@@ -44,10 +47,10 @@ export function ForemanTeamEmptyState({ model, now, onSend, onPrefill, className
                 <h3 className="text-sm font-medium text-balance text-foreground">{model.title}</h3>
                 {model.subtitle && <p className={cn('text-sm text-balance text-muted-foreground', SHORT_HIDDEN)}>{model.subtitle}</p>}
             </div>
-            {model.pulse && <Pulse pulse={model.pulse} now={now} />}
+            {model.pulse && <Pulse pulse={model.pulse} now={now} labels={pulseLabels?.(model.pulse.agents.length, model.pulse.working)} />}
             <div className="flex w-full max-w-sm flex-col gap-2 text-left">
                 {model.rows.map(row => (
-                    <PanelRow key={row.id} onClick={() => run(row.action)} leading={<RowLeading row={row} />} title={row.title} description={<span className={SHORT_HIDDEN}>{row.description}</span>} className={cn('py-2.5', SHORT_ROW)} />
+                    <PanelRow key={row.id} disabled={disabled} onClick={() => onAction ? onAction(row) : run(row.action)} leading={<RowLeading row={row} />} title={row.title} description={<span className={SHORT_HIDDEN}>{row.description}</span>} className={cn('py-2.5', SHORT_ROW)} />
                 ))}
             </div>
         </div>
@@ -64,7 +67,7 @@ function RowLeading({ row }: { row: TeamEmptyStateRow }) {
     )
 }
 
-function Pulse({ pulse, now }: { pulse: TeamPulse; now: number }) {
+function Pulse({ pulse, now, labels }: { pulse: TeamPulse; now?: number; labels?: { coworkers: string; working: string } }) {
     const count = pulse.agents.length
     return (
         <div className={cn('flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs text-muted-foreground', SHORT_HIDDEN)}>
@@ -74,15 +77,15 @@ function Pulse({ pulse, now }: { pulse: TeamPulse; now: number }) {
                 ))}
             </span>
             <span>
-                {count} {count === 1 ? 'coworker' : 'coworkers'}
+                {labels?.coworkers ?? (count === 1 ? '1 coworker' : `${count} coworkers`)}
                 {pulse.working > 0 && (
                     <>
                         {' · '}
-                        <span className="text-emerald-500">{pulse.working} working now</span>
+                        <span className="text-emerald-500">{labels?.working ?? `${pulse.working} working now`}</span>
                     </>
                 )}
             </span>
-            {pulse.nextRoutine && (
+            {pulse.nextRoutine && now !== undefined && (
                 <span className="flex min-w-0 items-center gap-1">
                     <CalendarClockIcon className="size-3 shrink-0" />
                     <span className="truncate">

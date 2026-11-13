@@ -86,7 +86,7 @@ export function DesktopForemanChatLayer({
     writing,
     restored,
     question,
-    emptyWelcome,
+    emptyWelcome, emptyContent,
     planSnapshot,
     decisionStatus,
     build,
@@ -121,6 +121,7 @@ export function DesktopForemanChatLayer({
     restored: boolean
     question?: ReactNode
     emptyWelcome?: boolean
+    emptyContent?: ReactNode
     planSnapshot: DesktopTrustedPlanSnapshot | null
     decisionStatus: DesktopPlanDecisionStatus
     build: DesktopForemanBuildProgressView | null
@@ -167,11 +168,12 @@ export function DesktopForemanChatLayer({
     return (
         <div className={cn('pointer-events-auto relative flex min-h-0 w-full flex-1 flex-col', className)}>
             <AnimatePresence>
-                {emptyWelcome && empty && restored && <DesktopForemanWelcome key="welcome" thinking={streaming} />}
+                {emptyWelcome && !emptyContent && empty && restored && <DesktopForemanWelcome key="welcome" thinking={streaming} />}
             </AnimatePresence>
             {/* Match ForemanChatLayer: resize follows the latest message until the reader scrolls up. */}
             <Conversation className="min-h-0" aria-label={t('foreman.conversation')}>
-                <ConversationContent scrollClassName="overflow-y-auto" className="mx-auto w-full max-w-xl justify-end gap-4 px-3 pb-5 pt-24 md:min-h-full">
+                <ConversationContent scrollClassName="overflow-y-auto md:[container-type:size]" className="mx-auto w-full max-w-xl justify-end gap-4 px-3 pb-5 pt-24 md:min-h-full">
+                    {empty && restored && !streaming && emptyContent}
                     {findScope && <ForemanTranscriptFind key={findScope} transcript={transcript} hidden={findHidden} onClose={onCloseFind} />}
                     {!restored && empty && (
                         <div aria-hidden className="flex flex-col gap-4">

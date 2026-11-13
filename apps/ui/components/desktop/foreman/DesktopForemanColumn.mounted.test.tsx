@@ -18,8 +18,8 @@ vi.mock('./dock', () => ({
 vi.mock('@rerun/ui/primitives/use-is-mobile', () => ({ useIsMobile: () => false }))
 vi.mock('./DesktopForemanHeader', () => ({ DesktopForemanHeader: (props: HeaderProps) => <button onClick={() => props.onTabChange('routines')}>Routines tab</button> }))
 vi.mock('./DesktopForemanComposer', () => ({ DesktopForemanComposer: (props: ComposerProps) => <div><textarea data-desktop-foreman-composer aria-label="Message the Foreman" value={props.draft} onChange={event => props.onDraftChange(event.target.value)} disabled={props.disabled} />{props.trailing}{props.controls}<button disabled={props.sendDisabled} onClick={() => props.onSend(props.draft)}>Send draft</button></div> }))
-vi.mock('./DesktopForemanChatLayer', () => ({ DesktopForemanChatLayer: ({ children, renderChildWork, question, error }: ComponentProps<typeof import('./DesktopForemanChatLayer').DesktopForemanChatLayer>) =>
-    <div>Chat{renderChildWork?.(new Map())}{question}{children}{error && <p role="alert">{error}</p>}</div> }))
+vi.mock('./DesktopForemanChatLayer', () => ({ DesktopForemanChatLayer: ({ children, renderChildWork, question, error, emptyContent }: ComponentProps<typeof import('./DesktopForemanChatLayer').DesktopForemanChatLayer>) =>
+    <div>Chat{emptyContent}{renderChildWork?.(new Map())}{question}{children}{error && <p role="alert">{error}</p>}</div> }))
 vi.mock('./routines/DesktopWorkspaceRoutines', () => ({ DesktopWorkspaceRoutines: () => <div>Routines content</div> }))
 vi.mock('./plan/DesktopPlanBoardPreview', () => ({ DesktopPlanBoardPreview: () => null }))
 import { DesktopForemanColumn } from './DesktopForemanColumn'
@@ -208,4 +208,28 @@ it('offers the paperclip and dictation on a saved Chief of Staff question', asyn
     await click('Routines tab')
     expect(record()).toBeNull()
     expect(answer).not.toHaveBeenCalled()
+})
+
+it('prefills a team action with the selected coworker and protects the existing draft', async () => {
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    const team = [
+        { id: 'active-ada', name: 'Ada QA', handle: null, status: 'working', disabledAt: null },
+        { id: 'disabled-ada', name: 'Ada QA', handle: null, status: 'idle', disabledAt: '2026-11-11' },
+    ]
+    await act(async () => root!.render(<DesktopForemanColumn chat={chat} ports={ports} live={null} messages={[]}
+        team={team} firstName="Sam" agentNameOf={id => id} controlledOpen separateConversation />))
+    const action = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')]
+        .find(button => button.textContent?.startsWith(label))!
+    expect(document.body.textContent).toContain("Hi Sam, I'm Rerun. Here is your team.")
+    expect(document.body.textContent).toContain('1 coworker')
+    expect(action('Give Ada QA a task').disabled).toBe(false)
+    await act(async () => action('Give Ada QA a task').click())
+    expect(document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')?.value).toBe('Ask @Ada QA to ')
+    expect(ports.conversation.sendMessage).not.toHaveBeenCalled()
+    expect(action('Build a new coworker').disabled).toBe(true)
+    await act(async () => action('Build a new coworker').click())
+    expect(document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')?.value).toBe('Ask @Ada QA to ')
+    expect(ports.persistence.save).toHaveBeenLastCalledWith(expect.objectContaining({
+        draft: 'Ask @Ada QA to ', draftCoworkerMentions: [{ targetId: 'active-ada', token: '@Ada QA', start: 4, end: 11 }],
+    }))
 })

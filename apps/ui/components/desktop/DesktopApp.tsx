@@ -6,11 +6,12 @@ import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
 import type { ThemePreference } from '@rerun/ui/theme'
 import { PARKED_ORB_SIZE } from '@rerun/ui/foreman'
-import { connectionsListSchema, PROVIDER_LABELS, type ConnectionsList, type Run, type SessionSource } from '@rerun/contracts'
+import { connectionsListSchema, PROVIDER_LABELS, type ConnectionsList, type Run, type SessionSource, type TeamAgent } from '@rerun/contracts'
 import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import type { SettingsChange } from '@/lib/desktop/settings'
 import { DesktopSettings } from './DesktopSettings'
 import { DesktopLocalProfileDialog } from './DesktopLocalProfileDialog'
+import { readFirstName } from '@/lib/naming/first-name'
 import { desktopProfilePhotoUrl } from '@/lib/desktop/local-profile'
 import { ArrowLeft, X } from 'lucide-react'
 import { SidePanel } from '@/components/layout/SidePanel'
@@ -264,6 +265,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         }))
     }, [agents, boardState.board])
     const boardActivity = useBoardActivity(agents.map(agent => agent.id))
+    const foremanTeam = useMemo<TeamAgent[]>(() => agents.filter(agent => agent.enabled !== false).map(agent => ({
+        id: agent.id, name: agent.name, handle: null, status: boardActivity.statuses[agent.id] ?? 'unknown', disabledAt: null,
+    })), [agents, boardActivity.statuses])
+    const foremanFirstName = readFirstName({ name: profile.displayName === 'Local User' ? '' : profile.displayName })
     // Responses already in flight cannot reintroduce a coworker after its confirmed deletion.
     const deletedAgents = useRef(new Set<string>())
     const [creating, setCreating] = useState(false)
@@ -862,7 +867,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
 
                     <DesktopForemanPanel key={foremanTarget?.chatId ?? 'home'} target={foremanTarget}
                         onSelectConversation={runtimeWorkspaceId !== null ? openForemanConversation : undefined}
-                        controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout} mentionTargets={foremanMentionTargets}
+                        controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout} mentionTargets={foremanMentionTargets} team={foremanTeam} firstName={foremanFirstName}
                         hidden={controlCenterDisabled || (controlCenterOpen && foremanOpen) || panelOpen || settings || workspaceSettings || profileOpen || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
                         findEnabled={foremanOpen && !panelOpen && !controlCenterDisabled}
                         centerOpen={controlCenterOpen} onOpenTranscriptionSettings={openTranscriptionSettings} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('The Chief of Staff chat was closed.')); setForemanOpen(false) }}
