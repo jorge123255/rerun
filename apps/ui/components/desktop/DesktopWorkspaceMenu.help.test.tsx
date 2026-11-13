@@ -107,7 +107,7 @@ test.each(['fr', 'es', 'de', 'pt'] as const)('Help opens the mounted Mac shortcu
     const help = document.querySelector('[role="dialog"]')!
     expect(help.querySelector('[data-slot="dialog-title"]')?.textContent).toBe(source.layout.help.label)
     expect(help.querySelector('[data-slot="dialog-close"]')?.textContent).toBe(source.kit.close)
-    expect([...help.querySelectorAll('a')].map(link => link.textContent?.trim())).toEqual([labels.docs, labels.community, labels.hireExpert])
+    expect([...help.querySelectorAll('a')].map(link => link.textContent?.trim())).toEqual([labels.docs, labels.community])
     expect(help.textContent).toContain(labels.gettingStarted)
     const showShortcuts = [...help.querySelectorAll('button')].find(button => button.textContent?.trim() === labels.shortcuts)!
     await act(async () => { showShortcuts.click() })

@@ -1,5 +1,5 @@
 import { isDesktopForemanDocsCitation, RERUN_PUBLIC_DOCS_CORPUS } from '@rerun/contracts'
-import { docsUrl, landingUrl } from '@/lib/site'
+import { docsUrl } from '@/lib/site'
 
 /** Copied from HelpMenuItems. Not a new destination. */
 export const DESKTOP_HELP_COMMUNITY_URL = 'https://discord.gg/cJUUgdTg5p'
@@ -35,7 +35,7 @@ export function desktopHelpEntries(options: { gettingStarted: boolean; shortcuts
         !!docs && { id: 'docs', kind: 'link', href: docs },
         { id: 'community', kind: 'link', href: DESKTOP_HELP_COMMUNITY_URL },
         options.shortcuts && { id: 'shortcuts', kind: 'shortcuts' },
-        { id: 'experts', kind: 'link', href: landingUrl(DESKTOP_HELP_EXPERTS_PATH) },
+        // Upstream hides "Hire an expert" for now (#195); the path stays for when it returns.
     ]
     return entries.filter((entry): entry is DesktopHelpEntry => entry !== false)
 }
