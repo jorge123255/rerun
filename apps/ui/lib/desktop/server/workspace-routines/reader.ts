@@ -1,6 +1,7 @@
 import 'server-only'
+import { soonestRoutine } from '@/lib/foreman/team-empty-state'
 import { nextRunAt, routineFrequency } from '@/lib/schedules/cron'
-import { byNextRun, type DesktopScheduledRun, type DesktopScheduleRecord, type DesktopWorkspaceRoutine, type DesktopWorkspaceRoutineChat, type DesktopWorkspaceRoutineOwner, type DesktopWorkspaceRoutinesView } from '@rerun/contracts'
+import { byNextRun, type DesktopScheduledRun, type DesktopUpcomingRoutine, type DesktopScheduleRecord, type DesktopWorkspaceRoutine, type DesktopWorkspaceRoutineChat, type DesktopWorkspaceRoutineOwner, type DesktopWorkspaceRoutinesView } from '@rerun/contracts'
 
 export type DesktopWorkspaceRoutinesAuthority = {
     listOwners: (signal?: AbortSignal) => Promise<readonly DesktopWorkspaceRoutineOwner[]>
@@ -12,6 +13,17 @@ export type DesktopWorkspaceRoutinesAuthority = {
 
 export function createDesktopWorkspaceRoutinesReader(authority: DesktopWorkspaceRoutinesAuthority) {
     return {
+        async upcoming(signal?: AbortSignal): Promise<DesktopUpcomingRoutine[]> {
+            const owners = await authority.listOwners(signal)
+            const schedules = await Promise.all(owners.filter(owner => owner.enabled && owner.scheduleGranted && !owner.setupPending)
+                .map(async owner => ({ owner, schedules: await authority.listSchedules(owner, signal) })))
+            signal?.throwIfAborted()
+            const now = Date.now()
+            return schedules.flatMap(({ owner, schedules }) => {
+                const next = soonestRoutine(schedules.map(schedule => ({ ...schedule, lastRunAt: schedule.lastRunAt ?? null })), now)
+                return next ? [{ agentId: owner.agentId, ...next }] : []
+            })
+        },
         async list(signal?: AbortSignal): Promise<DesktopWorkspaceRoutinesView> {
             const now = new Date()
             const owners = await authority.listOwners(signal)

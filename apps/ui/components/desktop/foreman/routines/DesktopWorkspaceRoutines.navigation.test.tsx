@@ -29,7 +29,7 @@ vi.mock('@/lib/desktop/server/settings', () => ({ engineOf: (runtime: DesktopRun
 vi.mock('@/lib/desktop/server/schedules-binding', () => ({ authorizeDesktopSchedules: async () => {} }))
 vi.mock('@/lib/engine/client', () => ({
     EngineRequestError: class extends Error {},
-    getAgent: async (_engine: unknown, id: string) => { expect(id).toBe('engine-copy'); return { config: { enabled: true, setup: { required: false } } } },
+    getAgent: async (_engine: unknown, id: string) => { expect(id).toBe('engine-copy'); return { config: { enabled: true, tools: { desktopToolGrants: { schedule: true } }, setup: { required: false } } } },
     listLatestScheduleRuns: async (_engine: unknown, id: string) => { expect(id).toBe('engine-copy'); return state.runs },
     getSession: async (_engine: unknown, id: string, sessionId: string) => { expect(id).toBe('engine-copy'); expect(sessionId).toBe('engine-result-session'); return { id: sessionId, agentId: id, source: 'schedule', title: 'Copy result NOTICE27', createdAt: '2026-11-06T08:00:00.000Z' } },
     getRun: async (_engine: unknown, id: string, runId: string) => { expect(id).toBe('engine-copy'); return state.runs.find(run => run.id === runId) },

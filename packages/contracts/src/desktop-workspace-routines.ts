@@ -66,12 +66,20 @@ export const desktopWorkspaceRoutinesViewSchema = z.object({
 }).strict()
 export type DesktopWorkspaceRoutinesView = z.infer<typeof desktopWorkspaceRoutinesViewSchema>
 
+export const desktopUpcomingRoutinesSchema = z.array(z.strictObject({
+    agentId: id,
+    name: z.string().min(1).max(120),
+    at: z.number().int().positive().max(8_640_000_000_000_000),
+}))
+export type DesktopUpcomingRoutine = z.infer<typeof desktopUpcomingRoutinesSchema>[number]
+
 export const desktopWorkspaceRoutineOwnerSchema = z.object({
     agentId: id,
     engineAgentId: id,
     name: z.string().min(1).max(200),
     enabled: z.boolean(),
     setupPending: z.boolean(),
+    scheduleGranted: z.boolean(),
 }).strict()
 export type DesktopWorkspaceRoutineOwner = z.infer<typeof desktopWorkspaceRoutineOwnerSchema>
 

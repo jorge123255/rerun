@@ -48,6 +48,7 @@ import { DesktopNewAgentDialog } from './DesktopNewAgentDialog'
 import type { DesktopCreationIntent } from '@/lib/desktop/new-agent'
 import type { DesktopBoardState } from '@/lib/desktop/spaces'
 import { useBoardActivity } from './useBoardActivity'
+import { useDesktopUpcomingRoutines } from './useDesktopUpcomingRoutines'
 import type { DesktopAttention } from '@/lib/desktop/attention'
 import { DesktopTemplateNavigation } from './templates/DesktopTemplateNavigation'
 import { DesktopControlCenter } from './DesktopControlCenter'
@@ -268,6 +269,19 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const foremanTeam = useMemo<TeamAgent[]>(() => agents.filter(agent => agent.enabled !== false).map(agent => ({
         id: agent.id, name: agent.name, handle: null, status: boardActivity.statuses[agent.id] ?? 'unknown', disabledAt: null,
     })), [agents, boardActivity.statuses])
+    const upcoming = useDesktopUpcomingRoutines(runtimeWorkspaceId, initialData.runtimeLaunchNonce, foremanTeam.map(agent => agent.id), !quitting)
+    const { routineCountdowns, nextRoutine } = useMemo(() => {
+        const upcomingByOwner = new Map(upcoming?.routines.map(routine => [routine.agentId, routine]))
+        const routineCountdowns = new Map<string, { at: number }>()
+        let nextRoutine: { name: string; at: number } | undefined
+        for (const agent of foremanTeam) {
+            const routine = upcomingByOwner.get(agent.id)
+            if (!routine) continue
+            routineCountdowns.set(agent.id, { at: routine.at })
+            if (!nextRoutine || routine.at < nextRoutine.at) nextRoutine = routine
+        }
+        return { routineCountdowns, nextRoutine }
+    }, [upcoming, foremanTeam])
     const foremanFirstName = readFirstName({ name: profile.displayName === 'Local User' ? '' : profile.displayName })
     // Responses already in flight cannot reintroduce a coworker after its confirmed deletion.
     const deletedAgents = useRef(new Set<string>())
@@ -832,7 +846,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 style={{ '--desktop-idle-orb-width': !controlCenterDisabled && !panelOpen && !foremanEngaged ? `${PARKED_ORB_SIZE + 8}px` : '0px' } as CSSProperties} aria-hidden={settings || undefined}
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow [--desktop-board-edge:16px] md:[--desktop-board-edge:25px]">
                 {runtimeWorkspaceId != null ? <FxBoardCameraBoundary workspaceId={runtimeWorkspaceId} currentWorkspace={() => runtimeWorkspaceId} persistence={cameraPersistence} bindFlush={flush => { cameraFlush.current = flush }}>{camera => (
-                <DesktopBoard activitySnapshot={boardActivity} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
+                <DesktopBoard activitySnapshot={boardActivity} routineCountdowns={routineCountdowns} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
                     workspaceId={runtimeWorkspaceId} launchNonce={initialData.runtimeLaunchNonce} onOpenNotificationSettings={openNotifications}
                     cameraMountKey={camera.mountKey} initialCamera={camera.initialCamera} onCameraChange={camera.onCameraChange}
                     newBoxSignal={newBoxSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
@@ -848,7 +862,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     onOpenSettings={openBoardCoworkerSettings}
                     onRename={renameCoworker} onShare={agent => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting() && currentAgents.current.some(current => current.id === agent.id)) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) } }} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
-                )}</FxBoardCameraBoundary> : <DesktopBoard activitySnapshot={boardActivity} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
+                )}</FxBoardCameraBoundary> : <DesktopBoard activitySnapshot={boardActivity} routineCountdowns={routineCountdowns} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
                     newBoxSignal={newBoxSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
                     board={boardState.board} onBoardCommand={initialData.board ? boardState.command : undefined}
                     boardSaving={boardState.saving} boardError={boardState.error} onRetryBoard={boardState.retry}
@@ -867,7 +881,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
 
                     <DesktopForemanPanel key={foremanTarget?.chatId ?? 'home'} target={foremanTarget}
                         onSelectConversation={runtimeWorkspaceId !== null ? openForemanConversation : undefined}
-                        controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout} mentionTargets={foremanMentionTargets} team={foremanTeam} firstName={foremanFirstName}
+                        controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout} mentionTargets={foremanMentionTargets} team={foremanTeam} firstName={foremanFirstName} nextRoutine={nextRoutine} routineNow={upcoming?.now}
                         hidden={controlCenterDisabled || (controlCenterOpen && foremanOpen) || panelOpen || settings || workspaceSettings || profileOpen || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
                         findEnabled={foremanOpen && !panelOpen && !controlCenterDisabled}
                         centerOpen={controlCenterOpen} onOpenTranscriptionSettings={openTranscriptionSettings} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('The Chief of Staff chat was closed.')); setForemanOpen(false) }}

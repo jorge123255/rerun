@@ -1,7 +1,7 @@
 import { useDesktopLocale } from './DesktopLocale'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { CHROME_SIZE, ChromeBar, ChromeButton, ChromeDivider } from '@rerun/ui/chrome'
-import type { ContainerCellRect, GridPosition, IsoCamera, ResizePatch, TileStyle } from '@rerun/ui/iso-grid'
+import type { ContainerCellRect, GridPosition, IsoCamera, ResizePatch, TileCountdown, TileStyle } from '@rerun/ui/iso-grid'
 import { IsoGrid, SPACE_COLOR, agentTileStyle, disabledAgentTileStyle, DISABLED_AGENT_LABEL, type Container, type Tile } from '@rerun/ui/iso-grid'
 import { Plus } from 'lucide-react'
 import type { DesktopAgentView } from './DesktopApp'
@@ -37,8 +37,9 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, gettingStarted, selectedAgentId, visibleSessionId, workspaceId, launchNonce, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onOpenSettings, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
+export function DesktopBoard({ activitySnapshot, routineCountdowns, agents, workspaceName, workspaceMenu, gettingStarted, selectedAgentId, visibleSessionId, workspaceId, launchNonce, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onOpenSettings, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
     activitySnapshot?: BoardActivitySnapshot
+    routineCountdowns?: ReadonlyMap<string, TileCountdown>
     agents: DesktopAgentView[]
     workspaceName: string
     workspaceMenu?: ReactNode
@@ -169,7 +170,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                 const placed = memberships.get(agent.id)
                 if (!placed || !renderedBoard.spaces.some(space => space.id === placed.spaceId)) return []
                 return [{ id: agent.id, position: { col: placed.col, row: placed.row }, span: 2, containerId: placed.spaceId,
-                    style: agent.enabled === false ? disabledAgentTileStyle(agent.name) : tileStyle(activity[agent.id] ?? 'unknown', agent.name, attentionCounts.get(agent.id) ?? 0),
+                    style: agent.enabled === false ? disabledAgentTileStyle(agent.name) : tileStyle(activity[agent.id] ?? 'unknown', agent.name, attentionCounts.get(agent.id) ?? 0, routineCountdowns?.get(agent.id)),
                     ariaLabel: t('openCoworker', { name: agent.name }) + (attentionCounts.has(agent.id) ? ', ' + t('needs') : '') }]
             })
             const containers: Container[] = renderedBoard.spaces.length ? renderedBoard.spaces.map((space, index) => ({
@@ -184,7 +185,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
             position: layout.positions.get(agent.id)!,
             span: 2,
             containerId: 'team',
-            style: agent.enabled === false ? disabledAgentTileStyle(agent.name) : tileStyle(activity[agent.id] ?? 'unknown', agent.name, attentionCounts.get(agent.id) ?? 0),
+            style: agent.enabled === false ? disabledAgentTileStyle(agent.name) : tileStyle(activity[agent.id] ?? 'unknown', agent.name, attentionCounts.get(agent.id) ?? 0, routineCountdowns?.get(agent.id)),
             ariaLabel: t('openCoworker', { name: agent.name }) + (attentionCounts.has(agent.id) ? ', ' + t('needs') : ''),
         }))
         const box: Container = {
@@ -194,7 +195,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
             placeholderLabel: t('creation.first'),
         }
         return { tiles, containers: [box] }
-    }, [agents, workspaceName, activity, attentionCounts, layout, renderedBoard, preview, board, t])
+    }, [agents, workspaceName, activity, attentionCounts, routineCountdowns, layout, renderedBoard, preview, board, t])
 
     useEffect(() => { if (placement?.requestId) placeButton.current?.focus({ preventScroll: true }) }, [placement?.requestId])
 
@@ -510,11 +511,11 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
 }
 
 // Rerun's agentTileStyle: working shimmers amber, a failed read uses the offline tile with an honest label.
-function tileStyle(status: BoardActivityStatus, name: string, attentionCount: number): TileStyle {
-    if (status === 'working' || status === 'waiting_human') return agentTileStyle(status, name, attentionCount)
+function tileStyle(status: BoardActivityStatus, name: string, attentionCount: number, countdown?: TileCountdown): TileStyle {
+    if (status === 'working' || status === 'waiting_human') return { ...agentTileStyle(status, name, attentionCount), countdown }
     if (status === 'unreachable' || status === 'unknown') {
         const style = agentTileStyle('offline', name)
         return { ...style, status: { label: ACTIVITY_LABEL[status], tone: style.status?.tone ?? 'neutral' } }
     }
-    return agentTileStyle('idle', name)
+    return { ...agentTileStyle('idle', name), countdown }
 }

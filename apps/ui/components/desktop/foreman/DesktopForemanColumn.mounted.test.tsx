@@ -217,11 +217,12 @@ it('prefills a team action with the selected coworker and protects the existing 
         { id: 'disabled-ada', name: 'Ada QA', handle: null, status: 'idle', disabledAt: '2026-11-11' },
     ]
     await act(async () => root!.render(<DesktopForemanColumn chat={chat} ports={ports} live={null} messages={[]}
-        team={team} firstName="Sam" agentNameOf={id => id} controlledOpen separateConversation />))
+        team={team} firstName="Sam" nextRoutine={{ name: 'Daily digest', at: 3_600_001 }} routineNow={1} agentNameOf={id => id} controlledOpen separateConversation />))
     const action = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')]
         .find(button => button.textContent?.startsWith(label))!
     expect(document.body.textContent).toContain("Hi Sam, I'm Rerun. Here is your team.")
     expect(document.body.textContent).toContain('1 coworker')
+    expect(document.body.textContent).toContain('Daily digest in 1h')
     expect(action('Give Ada QA a task').disabled).toBe(false)
     await act(async () => action('Give Ada QA a task').click())
     expect(document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')?.value).toBe('Ask @Ada QA to ')

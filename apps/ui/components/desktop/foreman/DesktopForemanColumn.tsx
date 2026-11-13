@@ -65,6 +65,8 @@ export type DesktopForemanColumnProps = {
     mentionTargets?: DesktopCoworkerCallTarget[]
     team?: TeamAgent[]
     firstName?: string
+    nextRoutine?: { name: string; at: number }
+    routineNow?: number
     onOpenCalledChat?: (target: DesktopCoworkerCallOpenTarget) => Promise<void>
     callSources?: readonly { callId: string; runId: string }[]
     sessionId?: string
@@ -117,7 +119,7 @@ export function DesktopForemanColumn({
     ports,
     live,
     messages,
-    mentionTargets, team, firstName = '',
+    mentionTargets, team, firstName = '', nextRoutine, routineNow,
     onOpenCalledChat,
     callSources,
     sessionId,
@@ -319,7 +321,7 @@ export function DesktopForemanColumn({
                         </> : null}
                         emptyWelcome={!starterPack && !pendingStarter}
                         emptyContent={team && !starterPack && !pendingStarter && !starter && <DesktopForemanTeamWelcome
-                            agents={team} firstName={firstName}
+                            agents={team} firstName={firstName} nextRoutine={nextRoutine} now={routineNow}
                             disabled={welcomeActionsDisabled}
                             onAction={(text, selected, submit) => {
                                 if (welcomeActionsDisabled || isDesktopQuitting() || composerScope.current.draft) return

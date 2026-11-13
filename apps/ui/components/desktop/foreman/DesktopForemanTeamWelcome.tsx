@@ -4,15 +4,17 @@ import { checkedDesktopCoworkerMentions, teamEmptyStateOf, type DesktopCoworkerM
 import { ForemanTeamEmptyState } from '@/components/foreman/empty-state/ForemanTeamEmptyState'
 import { useDesktopLocale } from '../DesktopLocale'
 
-export function DesktopForemanTeamWelcome({ agents, firstName, disabled, onAction }: {
+export function DesktopForemanTeamWelcome({ agents, firstName, nextRoutine, now, disabled, onAction }: {
     agents: TeamAgent[]
     firstName: string
+    nextRoutine?: { name: string; at: number }
+    now?: number
     disabled: boolean
     onAction: (text: string, mentions: DesktopCoworkerMention[], submit: boolean) => void
 }) {
     const { t, language } = useDesktopLocale()
     const team = language.messages.chatStart.team
-    const model = teamEmptyStateOf({ agents, firstName, nextRoutine: null, copy: {
+    const model = teamEmptyStateOf({ agents, firstName, nextRoutine: nextRoutine ?? null, copy: {
         greeting: name => name ? t('chatStart.team.greetingNamed', { firstName: name }) : team.greeting,
         greetingWithTeam: greeting => t('chatStart.team.greetingWithTeam', { greeting }),
         emptySubtitle: team.emptySubtitle,
@@ -34,7 +36,7 @@ export function DesktopForemanTeamWelcome({ agents, firstName, disabled, onActio
         }),
         build: team.build,
     } })
-    return <ForemanTeamEmptyState model={model} disabled={disabled}
+    return <ForemanTeamEmptyState model={model} now={now} disabled={disabled}
         pulseLabels={(count, working) => ({ coworkers: t('chatStart.pulseCoworkers', { count }), working: t('chatStart.pulseWorking', { count: working }) })}
         onAction={row => {
             if (disabled) return

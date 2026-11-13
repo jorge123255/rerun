@@ -1,7 +1,7 @@
 import 'server-only'
 import { z } from 'zod'
 import { request as engineRequest, EngineRequestError, getAgent, listLatestScheduleRuns } from '@/lib/engine/client'
-import { desktopScheduleRecordSchema, desktopWorkspaceRoutineChatSchema, type DesktopWorkspaceRoutineMutation, type DesktopWorkspaceRoutineMutationResult } from '@rerun/contracts'
+import { desktopRerunGrantsOf, desktopScheduleRecordSchema, desktopWorkspaceRoutineChatSchema, type DesktopWorkspaceRoutineMutation, type DesktopWorkspaceRoutineMutationResult } from '@rerun/contracts'
 import { openDesktopDatabase } from '../database'
 import { findDesktopAgent, listDesktopAgents } from '../store'
 import { engineOf } from '../settings'
@@ -37,9 +37,10 @@ export async function desktopWorkspaceRoutinesAuthority(runtime: DesktopRuntime)
         async listOwners(signal) {
             const rows = await listDesktopAgents(db)
             const settled = await Promise.allSettled(rows.filter(row => row.enabled).map(async row => {
-                const current = await getAgent(engine, row.engineAgentId)
+                const current = await getAgent(engine, row.engineAgentId, { signal })
                 signal?.throwIfAborted()
-                return { agentId: row.id, engineAgentId: row.engineAgentId, name: row.name, enabled: row.enabled && current.config.enabled, setupPending: current.config.setup?.required === true && !current.config.setup?.completedAt }
+                return { agentId: row.id, engineAgentId: row.engineAgentId, name: row.name, enabled: row.enabled && current.config.enabled, setupPending: current.config.setup?.required === true && !current.config.setup?.completedAt,
+                    scheduleGranted: desktopRerunGrantsOf(current.config.tools).schedule }
             }))
             signal?.throwIfAborted()
             const failed = settled.filter((value): value is PromiseRejectedResult => value.status === 'rejected')

@@ -33,6 +33,8 @@ export type DesktopForemanPanelProps = {
     mentionTargets?: DesktopCoworkerCallTarget[]
     team?: TeamAgent[]
     firstName?: string
+    nextRoutine?: { name: string; at: number }
+    routineNow?: number
     command?: DesktopForemanCommand | null
     onOpenCoworker: (target: { agentId: string; sessionId?: string }) => void | Promise<void>
     onOpenCalledChat: (target: { agentId: string; sessionId: string }) => Promise<void>
@@ -209,7 +211,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         accepted={() => { void client.refresh() }} onSlot={setVoice} onSettings={props.onOpenTranscriptionSettings} />}
     {!intakeOpen && <DesktopCompanyResearch chat={state.chat} active={!!props.controlledOpen && !props.hidden} refreshKey={JSON.stringify(state.view)} />}
     <DesktopForemanColumn
-        mentionTargets={props.mentionTargets} team={props.team} firstName={props.firstName}
+        mentionTargets={props.mentionTargets} team={props.team} firstName={props.firstName} nextRoutine={props.nextRoutine} routineNow={props.routineNow}
         onOpenCalledChat={props.onOpenCalledChat}
         callSources={state.callSources}
         sessionId={state.sessionId} pendingSend={pendingSend} onRetryPendingSend={client.retryPendingMessage}
