@@ -45,7 +45,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             message: 'Quick Ask could not open on this Rerun server.', buttons: ['OK'] }).catch(() => {}) },
     })
     let picker = null, pickerOwner = null, pickerLocale = null, acceptedPicker = null, connecting = null
-    let pendingOpen = null, openingLink = false
+    let pendingOpen = null, openingLink = null
     let appearanceWrites = Promise.resolve()
     const appearancePath = origin => resolve(dataRoot, `hub-appearance-${createHash('sha256').update(origin).digest('hex')}.json`)
 
@@ -155,17 +155,21 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     }
     async function openPendingLink() {
         if (!available() || openingLink || connecting || picker || !pendingOpen) return
-        openingLink = true
+        const attempt = new AbortController()
+        openingLink = attempt
         const request = pendingOpen
         try {
             const origin = await savedOrigin()
-            if (!available() || picker || connecting || pendingOpen !== request) return
+            if (!available() || attempt.signal.aborted || picker || connecting || pendingOpen !== request) return
             if (!origin) {
                 openPicker()
                 return 'picker'
             }
             pendingOpen = null
-            const result = await connect(origin, { path: request.path, remember: false, recoverIncompatible: true })
+            const result = await connect(origin, {
+                path: request.path, remember: false, recoverIncompatible: true, signal: attempt.signal,
+            })
+            if (attempt.signal.aborted) return
             if (result.ok) return 'workspace'
             if (available()) {
                 pendingOpen ??= request
@@ -173,7 +177,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
                 return 'picker'
             }
         } finally {
-            openingLink = false
+            openingLink = null
             if (pendingOpen && pendingOpen !== request) void openPendingLink()
         }
     }
@@ -725,11 +729,13 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
                 return
             }
             pendingOpen = { path: link.path }
+            openingLink?.abort()
             return openPendingLink()
         },
         async closeAll() {
             serviceSignIn.cancelAll()
             pendingOpen = null
+            openingLink?.abort()
             connecting?.controller.abort()
             quickAsk.reset()
             for (const entry of [...windows.values()]) {
