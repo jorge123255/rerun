@@ -39,7 +39,7 @@ vi.mock('ai-sdk-provider-claude-code', async importOriginal => {
 })
 
 const { afterEach, beforeEach, describe, expect, it } = await import('vitest')
-const { generateText, tool } = await import('ai')
+const { generateText, streamText, tool } = await import('ai')
 const { z } = await import('zod')
 const { agentConfigSchema, connectionConfigSchema } = await import('@rerun/contracts')
 const { CLAUDE_HARNESS_ENV, CODEX_HARNESS_OVERRIDES, CODEX_ONE_SHOT_INSTRUCTIONS, modelFor, resolveModel } = await import('./providers.js')
@@ -156,6 +156,39 @@ describe('resolveModel over the OpenAI chat format', () => {
         await generateText({ model: resolveModel(agentOn('openrouter', 'acme/large', { OPENROUTER_API_KEY: 'or-key' })).model, prompt: 'hello' })
 
         expect(sent().url).toBe('https://openrouter.ai/api/v1/chat/completions')
+    })
+})
+
+describe('OpenAI API retry policy', () => {
+    const agent = agentOn('openai', 'gpt-5', { OPENAI_API_KEY: 'oa-key' })
+
+    function rejectWith429(code: string) {
+        fetchMock.mockImplementation(async () => Response.json({
+            error: { code, type: code, message: 'Fixture provider refused the request' },
+        }, { status: 429 }))
+    }
+
+    it.each(['stream', 'one-shot'] as const)('fails the %s immediately when credits are exhausted', async mode => {
+        rejectWith429('insufficient_quota')
+        if (mode === 'stream') {
+            const onError = vi.fn()
+            const stream = streamText({ model: resolveModel(agent).model, prompt: 'hello', maxRetries: 1, onError })
+            await stream.consumeStream()
+            expect(onError).toHaveBeenCalledExactlyOnceWith({ error: expect.objectContaining({ statusCode: 429, isRetryable: false }) })
+        } else {
+            await expect(generateText({ model: modelFor(agent), prompt: 'hello', maxRetries: 1 }))
+                .rejects.toMatchObject({ statusCode: 429, isRetryable: false })
+        }
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('still retries a transient rate limit', async () => {
+        rejectWith429('rate_limit_exceeded')
+        const onError = vi.fn()
+        const stream = streamText({ model: resolveModel(agent).model, prompt: 'hello', maxRetries: 1, onError })
+        await stream.consumeStream()
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+        expect(onError).toHaveBeenCalledExactlyOnceWith({ error: expect.objectContaining({ reason: 'maxRetriesExceeded' }) })
     })
 })
 

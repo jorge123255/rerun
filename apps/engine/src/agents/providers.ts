@@ -5,7 +5,7 @@ import { customInferenceModel } from '../desktop/custom-providers/model.js'
 import { createDesktopSubscriptionModel } from '../desktop/subscription-acp/model.js'
 import { findDesktopSubscriptionConnection } from '../desktop/subscription-acp/connections.js'
 import { desktopDelegationCodexCwd } from '../desktop/delegation/child-scope.js'
-import { createProviderRegistry, wrapLanguageModel, type LanguageModel, type ToolSet } from 'ai'
+import { APICallError, createProviderRegistry, wrapLanguageModel, type LanguageModel, type LanguageModelMiddleware, type ToolSet } from 'ai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
@@ -41,6 +41,7 @@ import { cacheBreakpointsFetch } from './openrouter-cache.js'
 import { openrouterStreamRetryMiddleware } from './openrouter-stream-retry.js'
 import { agentProcessEnv } from './process-env.js'
 import { BRIDGE_SERVER_NAME, CLI_PROVIDERS, type LoadedAgent } from './types.js'
+import { apiCreditsMessage } from '../runtime/provider-errors.js'
 import { hubCallerHeaders } from '../runtime/hub.js'
 import { desktopClaudeRuntime } from '../desktop/claude-plan/runtime.js'
 import { desktopCodexRuntime, signedInFlag } from '../desktop/codex-runtime.js'
@@ -458,6 +459,33 @@ function openrouterCompatibleOptions(agent: LoadedAgent, provider: 'rerun' | 'op
     }
 }
 
+// The SDK retries HTTP 429 by default. Retrying a definitive billing refusal cannot recover the
+// turn, but a transient rate limit should still use the normal backoff.
+async function withoutOpenAICreditsRetry<T>(call: () => PromiseLike<T>): Promise<T> {
+    try {
+        return await call()
+    } catch (error) {
+        if (!APICallError.isInstance(error) || !error.isRetryable || !apiCreditsMessage('openai', error)) throw error
+        throw new APICallError({
+            message: error.message,
+            url: error.url,
+            requestBodyValues: error.requestBodyValues,
+            statusCode: error.statusCode,
+            responseHeaders: error.responseHeaders,
+            responseBody: error.responseBody,
+            data: error.data,
+            cause: error.cause,
+            isRetryable: false,
+        })
+    }
+}
+
+const openAICreditsMiddleware: LanguageModelMiddleware = {
+    specificationVersion: 'v3',
+    wrapGenerate: ({ doGenerate }) => withoutOpenAICreditsRetry(doGenerate),
+    wrapStream: ({ doStream }) => withoutOpenAICreditsRetry(doStream),
+}
+
 function registryFor(agent: LoadedAgent, tools?: ToolSet, mcpServers?: McpServer[], options?: CliModelOptions) {
     const e = connectionEnv(agent)
     return createProviderRegistry({
@@ -571,7 +599,8 @@ export function modelFor(agent: LoadedAgent, override?: ModelOverride, tools?: T
             },
         } })
     }
-    return registryFor(agent, tools, mcpServers, options).languageModel(`${provider}:${model}`)
+    const languageModel = registryFor(agent, tools, mcpServers, options).languageModel(`${provider}:${model}`)
+    return provider === 'openai' ? wrapLanguageModel({ model: languageModel, middleware: openAICreditsMiddleware }) : languageModel
 }
 
 // A model plus whatever has to be torn down once the run is over. Only the Codex app-server holds a
@@ -626,6 +655,8 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
         const openrouter = openaiChat({ ...openrouterCompatibleOptions(agent, provider), fetch: provider === 'openrouter' ? cacheBreakpointsFetch(reasoningFetch) : reasoningFetch })
         return { model: wrapLanguageModel({ model: openrouter.languageModel(model), middleware: [openrouterStreamRetryMiddleware, openrouterReasoningMiddleware, replies.middleware, cardTags, guard] }), close: noClose, quickReplies: replies.read }
     }
-    const middleware = provider === 'google' ? [googleToolSchemaMiddleware, replies.middleware, cardTags, guard] : [replies.middleware, cardTags, guard]
+    const middleware = [replies.middleware, cardTags, guard]
+    if (provider === 'google') middleware.unshift(googleToolSchemaMiddleware)
+    if (provider === 'openai') middleware.push(openAICreditsMiddleware)
     return { model: wrapLanguageModel({ model: registryFor(agent, tools, mcpServers).languageModel(`${provider}:${model}`), middleware }), close: noClose, quickReplies: replies.read }
 }

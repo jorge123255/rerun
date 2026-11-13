@@ -1406,7 +1406,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
             continueRun: () => { if (sessionId) void sendMessage({ text: 'Continue where you left off.' }, { body: { agentId: agent.id, sessionId } }) },
             stopRun: () => { void handleStop() },
             newConversation: () => onSelectSession(null, 'New conversation'),
-            switchModel: () => {},
+            switchModel: () => setOpenModelRequest(value => value + 1),
             reconnectProvider: () => onOpenModelSettings?.(),
         },
     })
@@ -1708,16 +1708,12 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                     {recovery.notice && <DesktopProviderErrorNotice
                         kind={recovery.notice.kind}
                         message={recovery.notice.message}
-                        agentId={agent.id}
-                        sessionId={sessionId}
                         onRetry={canRetry ? () => recovery.act('retry') : undefined}
                         onContinue={() => recovery.act('continue')}
                         onStopRun={() => recovery.act('stop')}
                         onNewConversation={() => recovery.act('new-conversation')}
                         onReconnect={() => recovery.act('reconnect')}
-                        onConversationChoice={pick => rememberModel(pick)}
-                        onOpenModelSettings={onOpenModelSettings}
-                        onModelSaved={() => setModelRevision(value => value + 1)}
+                        onSwitchModel={() => recovery.act('switch-model')}
                     />}
                     {requestCards.map(card => (
                         <div key={card.key} ref={waitingCard === card ? pendingBlock : undefined}

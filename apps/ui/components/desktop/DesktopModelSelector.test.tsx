@@ -246,6 +246,39 @@ test('Send opens the picker for a retired model and preserves the draft until a 
     expect(container.textContent).toContain('Saved answer')
 })
 
+test('the credits notice changes the model in the composer for the same saved conversation', async () => {
+    coworker = null
+    conversations = { open: null }
+    patches.length = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        if (String(url).endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
+        if (String(url).endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
+        if (String(url).includes('/model')) {
+            if (init?.method === 'PATCH') patches.push(JSON.parse(String(init.body)))
+            return Response.json(view(patches.some(body => (body as { action?: string }).action === 'conversation') ? { connectionId: 'local', model: 'model-chat' } : null))
+        }
+        if (String(url).endsWith('/messages')) return Response.json({ messages: [{ id: 'saved', role: 'assistant', parts: [{ type: 'text', text: 'Saved answer' }] }] })
+        if (String(url).endsWith('/stop')) return Response.json({ running: false, failedRunId: 'failed-turn', failedRunError: 'OpenAI API credits used up' })
+        if ((init?.method ?? 'GET') === 'GET') {
+            if (/^\/api\/desktop\/agents\/[^/]+\/queue\?/.test(url)) return Response.json({ queued: null })
+            if (/^\/api\/desktop\/sessions\/[^/]+\/feedback(?:\?|$)/.test(url)) return Response.json({ votes: [] })
+        }
+        const background = desktopBackgroundRead(url, init); if (background) return background
+        throw new Error(`Unexpected request ${url}`)
+    }))
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    const agent = { id: 'alice', name: 'Alice', description: '', createdAt: '', updatedAt: '' }
+    await act(async () => { root.render(<DesktopConversation agent={agent} sessionId="open" sessions={[{ id: 'open', agentId: 'alice', title: 'Open', createdAt: '', updatedAt: '' }]} onSelectSession={() => {}} onChatSession={() => {}} />) })
+    expect(button('Local · model-workspace')).toBeTruthy()
+    await click('Switch model')
+    await click('model-chat')
+    expect(patches).toEqual([{ action: 'conversation', sessionId: 'open', connectionId: 'local', model: 'model-chat' }])
+    expect(button('Local · model-chat')).toBeTruthy()
+    expect(container.textContent).toContain('Saved answer')
+})
+
 test('an open picker refreshes a retired or restored model when the board gets a new catalog', async () => {
     const choice = { connectionId: local.id, model: 'model-chat' }
     const workspace = { connectionId: local.id, model: 'model-workspace' }
