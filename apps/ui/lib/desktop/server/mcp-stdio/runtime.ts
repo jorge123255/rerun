@@ -10,7 +10,7 @@ export type StdioAuthority=(owner:string,action:'manage'|'use',run:StdioRun|unde
 type Tool={name:string;description?:string;inputSchema:Record<string,unknown>}
 type Process=ReturnType<typeof spawnStdio>
 type Entry={material?:DesktopMcpMaterialLease;owner:string;name:string;revision:string;users:Set<string>;controller:AbortController;check:()=>void;release:()=>void;opening:Promise<{process:Process;tools:Tool[];fingerprint:string;cwd:string}>;process?:Process;tail:Promise<unknown>;cwd?:string;idle?:ReturnType<typeof setTimeout>}
-export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProcess?:StdioSpawn,materials?:DesktopMcpMaterialSource,vaultPrograms?:(owner:string)=>Promise<StdioConnection[]>){
+export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProcess?:StdioSpawn,materials?:DesktopMcpMaterialSource,vaultPrograms?:(owner:string)=>Promise<StdioConnection[]>,vaultMaterials?:DesktopMcpMaterialSource){
  const entries=new Map<string,Entry>(),retired=new Set<Entry>();let closed=false
  const key=(owner:string,name:string)=>JSON.stringify([owner,name])
  const runKey=(run:StdioRun)=>JSON.stringify([run.engineAgentId,run.sessionId,run.runId])
@@ -66,10 +66,11 @@ export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProc
    if(final.access.cwd!==cwd)throw new Error('Local MCP owner changed')
    entry.cwd=cwd
    entry.check();signal.throwIfAborted()
-   entry.material=materials && !final.connection.approvedExecutable?await materials(owner,name,revision,'discovery',controller.signal):emptyMcpMaterialLease()
+   const loadMaterial=final.connection.approvedExecutable?vaultMaterials:materials
+   entry.material=loadMaterial?await loadMaterial(owner,name,revision,'discovery',controller.signal):emptyMcpMaterialLease()
    await guard(entry,run,signal)
    if(final.connection.approvedExecutable && await executableIdentity(final.connection.executable,signal)!==fingerprint)throw new Error('Local executable changed')
-   entry.check();signal.throwIfAborted()
+   await guard(entry,run,signal);entry.check();signal.throwIfAborted()
    const resolved=entry.material.configured?{...first.connection,args:[...entry.material.material.args]}:first.connection
    const process=spawnStdio(resolved,cwd,controller.signal,spawnProcess,entry.material.material.env);entry.process=process
    const stop=()=>controller.abort();signal.addEventListener('abort',stop,{once:true})

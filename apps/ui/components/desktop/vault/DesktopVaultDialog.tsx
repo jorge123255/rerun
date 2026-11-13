@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { PanelRow } from '@/components/ui/panel-row'
 import { PanelSteps } from '@/components/ui/panel-steps'
 import { PanelScroller } from '@/components/ui/panel-list'
-import { desktopVaultListing, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '@/lib/desktop/vault'
+import { desktopVaultListing, desktopVaultProgramCredentialLimit, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '@/lib/desktop/vault'
 
 async function requestVault(signal: AbortSignal, input?: DesktopVaultMutation) {
     const response = await fetch('/api/desktop/vault', {
@@ -206,8 +206,52 @@ function ProgramForm({ busy, entry, onSave }: {
             <textarea name="arguments" defaultValue={entry?.args.join('\n')} disabled={busy} className="block min-h-20 w-full rounded-md border bg-background p-2 font-mono text-sm" />
         </label>
         <p className="text-xs text-muted-foreground">Choose a program you trust. It runs with your Mac user’s access. Keep secrets out of arguments. Coworkers also need the Local MCP programs permission.</p>
+        {!!entry?.credentialNames.length && <p className="text-xs text-muted-foreground">Changing the executable or its arguments clears saved credentials. Re-enter them after reviewing the program.</p>}
         <Button type="submit" disabled={busy}>{entry ? 'Save reviewed program' : 'Save local program'}</Button>
     </form>
+}
+
+function ProgramCredentials({ entry, busy, onSubmit }: {
+    entry: Extract<DesktopVaultEntry, { kind: 'program' }>
+    busy: boolean
+    onSubmit: (input: DesktopVaultMutation) => void
+}) {
+    const [edit, setEdit] = useState<string | null>(null)
+    const target = { id: entry.id, revision: entry.revision }
+    function submit(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault()
+        const form = event.currentTarget
+        const data = new FormData(form)
+        const field = form.elements.namedItem('credential')
+        if (field instanceof HTMLInputElement) field.value = ''
+        onSubmit({ operation: 'set-program-credential', ...target, variable: edit || String(data.get('variable')), value: String(data.get('credential')) })
+    }
+    return <section className="space-y-3 border-t pt-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-sm font-medium">Program credentials</h4>
+            <Button size="sm" variant="outline" disabled={busy || entry.credentialNames.length >= desktopVaultProgramCredentialLimit} onClick={() => setEdit('')}>Add credential</Button>
+        </div>
+        <p className="text-xs text-muted-foreground">These values are available only to this program when it runs for an assigned coworker.</p>
+        {entry.credentialNames.map(variable => <div key={variable} className="flex flex-wrap items-center justify-between gap-2">
+            <span className="break-all font-mono text-sm">{variable}</span>
+            <div className="flex gap-2">
+                <Button size="sm" variant="outline" disabled={busy} aria-label={`Replace ${variable}`} onClick={() => setEdit(variable)}>Replace</Button>
+                <ConfirmDialog title={`Remove ${variable}?`} description="The program will no longer receive this credential." confirmLabel="Remove credential"
+                    pending={busy} onConfirm={() => onSubmit({ operation: 'remove-program-credential', ...target, variable })}>
+                    <Button size="sm" variant="outline" disabled={busy} aria-label={`Remove ${variable}`}>Remove</Button>
+                </ConfirmDialog>
+            </div>
+        </div>)}
+        {edit !== null && <form key={edit} onSubmit={submit} className="space-y-3">
+            {edit ? <p className="font-mono text-sm">{edit}</p>
+                : <label className="block space-y-1 text-sm">Variable name<Input name="variable" required maxLength={128} pattern="[A-Za-z_][A-Za-z0-9_]*" placeholder="SERVICE_API_KEY" disabled={busy} /></label>}
+            <label className="block space-y-1 text-sm">Credential value<Input name="credential" type="password" autoComplete="new-password" required maxLength={8192} disabled={busy} /></label>
+            <div className="flex gap-2">
+                <Button size="sm" type="submit" disabled={busy}>Save credential</Button>
+                <Button size="sm" type="button" variant="outline" disabled={busy} onClick={() => setEdit(null)}>Cancel</Button>
+            </div>
+        </form>}
+    </section>
 }
 
 function VaultDetail({ entry, coworkers, busy, onSubmit }: {
@@ -241,6 +285,7 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
             </label>)}
             <Button size="sm" disabled={busy || !changed} onClick={() => onSubmit({ operation: 'share', ...target, agentIds, sharedWithAll })}>Save assignments</Button>
         </fieldset>
+        {program && <ProgramCredentials entry={program} busy={busy} onSubmit={onSubmit} />}
         <div className="flex flex-wrap gap-2 border-t pt-4">
             <Button variant="outline" size="sm" disabled={busy} onClick={() => setReplace(!replace)}>{program ? 'Review program' : server ? 'Change authentication' : 'Replace value'}</Button>
             <ConfirmDialog title={`Delete “${entry.name}”?`} description={users ? `This removes the entry and its assignment for ${users}.` : 'This removes the entry from this workspace.'}

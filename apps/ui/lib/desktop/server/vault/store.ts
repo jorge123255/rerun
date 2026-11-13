@@ -1,12 +1,13 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
 import type { Client, Transaction } from '@libsql/client'
-import { desktopCoworkerVaultListing, desktopVaultListing, type DesktopCoworkerVaultMutation, type DesktopCoworkerVaultEntry, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '../../vault'
+import { desktopCoworkerVaultListing, desktopVaultListing, desktopVaultProgramCredentialLimit, type DesktopCoworkerVaultMutation, type DesktopCoworkerVaultEntry, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '../../vault'
 import { DesktopHttpError } from '../auth'
 import { executableIdentity } from '../mcp-stdio/process'
 import { endpoint } from '../mcp/model'
 import { oauthHttps } from '../mcp/oauth-network'
 import { withRosterWrite } from '../roster-writes'
+import { vaultProgramCredentialContext } from './mcp-programs'
 import type { DesktopSecretCrypto } from '../secret-requests/crypto'
 
 async function readVault(tx: Transaction) {
@@ -31,8 +32,15 @@ async function readVault(tx: Transaction) {
         kind: 'mcp', id: String(row.id), name: String(row.name), url: String(row.url), revision: String(row.revision),
         sharedWithAll: row.shared_with_all === 1, hasBearer: row.has_bearer === 1, ...(typeof row.credential_header === 'string' && { headerName: row.credential_header }), agentIds: attachments.get(String(row.id)) ?? [],
     }))
+    const credentialNames = new Map<string, string[]>()
+    for (const row of (await tx.execute('SELECT item_id,name FROM desktop_vault_mcp_program_credentials ORDER BY name')).rows) {
+        const id = String(row.item_id)
+        const names = credentialNames.get(id) ?? []
+        names.push(String(row.name))
+        credentialNames.set(id, names)
+    }
     const programs = (await tx.execute('SELECT id,name,executable,args,revision,shared_with_all FROM desktop_vault_mcp_programs ORDER BY name,id')).rows.map(row => ({
-        kind: 'program', id: String(row.id), name: String(row.name), executable: String(row.executable), args: JSON.parse(String(row.args)), revision: String(row.revision),
+        kind: 'program', id: String(row.id), name: String(row.name), executable: String(row.executable), args: JSON.parse(String(row.args)), revision: String(row.revision), credentialNames: credentialNames.get(String(row.id)) ?? [],
         sharedWithAll: row.shared_with_all === 1, agentIds: attachments.get(String(row.id)) ?? [],
     }))
     return desktopVaultListing.parse({ entries: [...servers, ...programs, ...entries], coworkers })
@@ -182,10 +190,39 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         await tx.execute({ sql: `UPDATE ${table} SET revision=?,shared_with_all=? WHERE id=?`, args: [revision, Number(input.sharedWithAll), entry.id] })
                     } else if (input.operation === 'replace-program') {
                         if (!('kind' in entry) || entry.kind !== 'program') throw new DesktopHttpError(400, 'This entry is not a local MCP program.')
+                        const prior = (await tx.execute({ sql: 'SELECT executable_identity,args FROM desktop_vault_mcp_programs WHERE id=?', args: [entry.id] })).rows[0]
+                        if (entry.executable !== input.executable || prior.executable_identity !== approvedExecutable || prior.args !== JSON.stringify(input.args)) {
+                            await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_program_credentials WHERE item_id=?', args: [entry.id] })
+                        }
                         await tx.execute({
                             sql: 'UPDATE desktop_vault_mcp_programs SET executable=?,args=?,executable_identity=?,revision=? WHERE id=?',
                             args: [input.executable, JSON.stringify(input.args), approvedExecutable!, revision, entry.id],
                         })
+                    } else if (input.operation === 'set-program-credential' || input.operation === 'remove-program-credential') {
+                        if (!('kind' in entry) || entry.kind !== 'program') throw new DesktopHttpError(400, 'This entry is not a local MCP program.')
+                        const exists = entry.credentialNames.includes(input.variable)
+                        if (input.operation === 'set-program-credential') {
+                            if (!exists && entry.credentialNames.length >= desktopVaultProgramCredentialLimit) {
+                                throw new DesktopHttpError(409, 'This program already has the maximum number of credentials.')
+                            }
+                            const row = (await tx.execute({ sql: 'SELECT executable_identity,args FROM desktop_vault_mcp_programs WHERE id=?', args: [entry.id] })).rows[0]
+                            const context = vaultProgramCredentialContext(workspaceId, {
+                                id: entry.id, executable: entry.executable, approvedExecutable: String(row.executable_identity), args: String(row.args),
+                            }, input.variable, revision)
+                            const value = Buffer.from(input.value, 'utf8')
+                            let sealed: string
+                            try { sealed = await crypto.seal(context, value) }
+                            finally { value.fill(0) }
+                            await tx.execute({
+                                sql: `INSERT INTO desktop_vault_mcp_program_credentials(item_id,name,credential_revision,sealed) VALUES(?,?,?,?)
+                                      ON CONFLICT(item_id,name) DO UPDATE SET credential_revision=excluded.credential_revision,sealed=excluded.sealed`,
+                                args: [entry.id, input.variable, revision, sealed],
+                            })
+                        } else {
+                            if (!exists) throw new DesktopHttpError(404, 'This program credential is no longer saved.')
+                            await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_program_credentials WHERE item_id=? AND name=?', args: [entry.id, input.variable] })
+                        }
+                        await tx.execute({ sql: 'UPDATE desktop_vault_mcp_programs SET revision=? WHERE id=?', args: [revision, entry.id] })
                     } else if (input.operation === 'replace-server-bearer' || input.operation === 'replace-server-header') {
                         if (!('kind' in entry) || entry.kind !== 'mcp') throw new DesktopHttpError(400, 'This entry is not an HTTPS MCP server.')
                         const sealed = await sealServerCredential(entry.id, entry.url, revision, input)
@@ -196,6 +233,7 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         await tx.execute({ sql: 'UPDATE desktop_vault_secrets SET revision=?,value_revision=?,sealed=? WHERE id=?', args: [revision, revision, sealed, entry.id] })
                     } else if ('kind' in entry && entry.kind === 'program') {
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_program_attachments WHERE item_id=?', args: [entry.id] })
+                        await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_program_credentials WHERE item_id=?', args: [entry.id] })
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_programs WHERE id=?', args: [entry.id] })
                     } else if ('kind' in entry) {
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_attachments WHERE item_id=?', args: [entry.id] })

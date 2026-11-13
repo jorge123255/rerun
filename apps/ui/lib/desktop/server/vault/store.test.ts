@@ -11,9 +11,10 @@ import { initializeDesktopRound46 } from '../round46-schema'
 import { initializeDesktopRound47 } from '../round47-schema'
 import { initializeDesktopRound48 } from '../round48-schema'
 import { initializeDesktopRound49 } from '../round49-schema'
+import { initializeDesktopRound50 } from '../round50-schema'
 import { stdioRuntime } from '../mcp-stdio/runtime'
 import { stdioStore } from '../mcp-stdio/store'
-import { assignedVaultMcpPrograms } from './mcp-programs'
+import { assignedVaultMcpPrograms, vaultProgramMaterials } from './mcp-programs'
 import { desktopVaultMcpRuntime } from './mcp-runtime'
 import type { McpNetwork } from '../mcp/remote'
 import { createCanonicalMcpSecretReferences } from '../mcp-secret-references/binding'
@@ -50,6 +51,7 @@ async function fixture(migrate = true, headerMigration = true) {
     await initializeDesktopRound47(db)
     if (headerMigration) await initializeDesktopRound48(db)
     await initializeDesktopRound49(db)
+    await initializeDesktopRound50(db)
     return { db, root, file, open, vault: desktopVault(db, crypto, 7) }
 }
 
@@ -75,7 +77,7 @@ test('upgrades a prior workspace, saves redacted metadata, rotates ciphertext, a
             await initializeDesktopRound45(reopened)
             await initializeDesktopRound46(reopened)
             expect(await desktopVault(reopened, crypto, 7).list()).toEqual(updated)
-            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }, { version: 48 }, { version: 49 }])
+            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }, { version: 48 }, { version: 49 }, { version: 50 }])
             expect((await reopened.execute('PRAGMA foreign_key_check')).rows).toEqual([])
         } finally { reopened.close() }
         expect((await readFile(f.file)).includes(secret)).toBe(false)
@@ -468,4 +470,54 @@ lines.on('line', line => {
         expect(JSON.stringify(await reviewed.execute({}, 'reviewed', signal))).toContain('reviewed')
         expect((await store.list(firstAgent))).toEqual([])
     } finally { await runtime.shutdown(); f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('local program credentials stay scoped to the assigned entry and revisions', async () => {
+    const f = await fixture()
+    try {
+        const programPath = await realpath(process.execPath)
+        const create = (name: string) => f.vault.mutate({ operation: 'create-program', name, executable: programPath, args: [] }, allow)
+        const [initial] = (await create('a')).entries
+        await create('b')
+        for (const variable of ['PATH', 'NODE_OPTIONS', 'PYTHONPATH', 'RERUN_API_KEY', 'DYLD_INSERT_LIBRARIES']) {
+            expect(desktopVaultMutation.safeParse({ operation: 'set-program-credential', id: initial.id, revision: initial.revision, variable, value: secret }).success).toBe(false)
+        }
+        const variable = 'SERVICE_API_KEY'
+        const [saved] = (await f.vault.mutate({ operation: 'set-program-credential', id: initial.id, revision: initial.revision, variable, value: secret }, allow)).entries
+        expect(saved).toMatchObject({ credentialNames: [variable] })
+        expect(JSON.stringify(saved)).not.toContain(secret)
+        const [attached] = (await f.vault.assignCoworker(firstAgent, { id: saved.id, revision: saved.revision, attached: true }, allow)).attached
+        expect(attached).not.toHaveProperty('credentialNames')
+        const [other] = (await f.vault.forCoworker(firstAgent)).available
+        const both = await f.vault.assignCoworker(firstAgent, { id: other.id, revision: other.revision, attached: true }, allow)
+        const currentOther = both.attached.find(entry => entry.id === other.id)!
+        const reopen = f.open()
+        try {
+            const signal = AbortSignal.timeout(5000)
+            const materials = vaultProgramMaterials(reopen, crypto, 7)
+            await expect(materials(secondAgent, 'a', attached.revision, 'discovery', signal)).rejects.toThrow()
+            const unrelated = await materials(firstAgent, 'b', currentOther.revision, 'discovery', signal)
+            expect(unrelated.material.env).toEqual({})
+            await unrelated.release()
+            const lease = await materials(firstAgent, 'a', attached.revision, 'discovery', signal)
+            try {
+                expect(lease.material.env).toEqual({ [variable]: secret })
+                expect(lease.material.inheritEnv).toBe(false)
+                expect(lease.protect({ text: Buffer.from(secret).toString('base64') })).toEqual({ text: '[redacted]' })
+                await expect(vaultProgramMaterials(reopen, crypto, 8)(firstAgent, 'a', attached.revision, 'discovery', signal)).rejects.toThrow()
+                await f.db.execute({ sql: 'UPDATE desktop_vault_mcp_programs SET args=? WHERE id=?', args: ['["--version"]', saved.id] })
+                await expect(materials(firstAgent, 'a', attached.revision, 'discovery', signal)).rejects.toThrow()
+                await f.db.execute({ sql: 'UPDATE desktop_vault_mcp_programs SET args=? WHERE id=?', args: ['[]', saved.id] })
+                const [rotated] = (await f.vault.mutate({ operation: 'set-program-credential', id: saved.id, revision: attached.revision, variable, value: 'rotated-local-fixture' }, allow)).entries
+                await expect(lease.check()).rejects.toThrow()
+                const [changed] = (await f.vault.mutate({ operation: 'replace-program', id: saved.id, revision: rotated.revision, executable: programPath, args: ['--version'] }, allow)).entries
+                expect(changed).toMatchObject({ credentialNames: [] })
+                const current = await materials(firstAgent, 'a', changed.revision, 'discovery', signal)
+                expect(current.material.env).toEqual({})
+                await current.release()
+            } finally { await lease.release() }
+            expect(lease.material.env).toEqual({})
+            expect((await readFile(f.file)).includes(secret)).toBe(false)
+        } finally { reopen.close() }
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
 })
