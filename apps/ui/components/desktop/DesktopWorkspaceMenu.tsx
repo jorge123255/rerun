@@ -14,7 +14,7 @@ import { createDesktopWorkspaceClient } from '@/lib/desktop/workspaces'
 import { DesktopWorkspaceSwitcher } from './workspaces/DesktopWorkspaceSwitcher'
 import { DesktopWorkspaceSwitchLoader } from './workspaces/DesktopWorkspaceSwitchLoader'
 
-export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, profilePhoto, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onProfile, onWorkspaceSettings, onControlCenter, onShortcuts, onHelp, onSharedData, onSharedFiles, onBrain, onTemplates, onExternalMcp, onServers, onImportCoworker, navigationDisabled = false, settingsDisabled = false }: {
+export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, profilePhoto, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onProfile, onWorkspaceSettings, onControlCenter, onShortcuts, onHelp, onSharedData, onSharedFiles, onBrain, onTemplates, onVault, onExternalMcp, onServers, onImportCoworker, navigationDisabled = false, settingsDisabled = false }: {
     workspaceName: string
     iconCatalogId?: string | null
     iconUploadId?: string | null
@@ -36,6 +36,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     onSharedFiles?: () => void
     onBrain?: () => void
     onTemplates?: () => void
+    onVault?: () => void
     onExternalMcp?: () => void
     onServers?: () => void
     onImportCoworker?: () => void
@@ -60,6 +61,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
                 {onSharedData && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onSharedData() }}><Database /> Shared database</DropdownMenuItem>}
                 {onSharedFiles && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onSharedFiles() }}><Folder /> {t('sharedFiles.title')}</DropdownMenuItem>}
                 {onTemplates && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onTemplates() }}><Package /> {t('templates')}</DropdownMenuItem>}
+                {onVault && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onVault() }}><KeyRound /> Vault</DropdownMenuItem>}
                 {onImportCoworker && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onImportCoworker() }}><Import /> Import coworker</DropdownMenuItem>}
                 {onBrain && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onBrain() }}><Brain /> {t('brainDesktop.title')}</DropdownMenuItem>}
                 {onControlCenter && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onControlCenter() }}><Search /> {t('controlCenter.title')}</DropdownMenuItem>}
