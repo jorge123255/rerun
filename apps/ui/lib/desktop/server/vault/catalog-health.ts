@@ -11,7 +11,7 @@ export function vaultCatalogHealth(
     launchNonce: string,
     assertWorkspace: () => void,
     shutdown: AbortSignal,
-    inspect: (entry: Account, signal: AbortSignal) => Promise<'signed-out' | 'expired' | number>,
+    inspect: (entry: Account, signal: AbortSignal) => Promise<'signed-out' | 'expired' | { toolCount: number; credentialExpiresAt?: string }>,
 ) {
     let checking = false
 
@@ -42,7 +42,7 @@ export function vaultCatalogHealth(
             } else if (observed === 'failed') {
                 health = { state: 'error', checkedAt, message: 'The app did not respond to the connection check.' }
             } else {
-                health = { state: 'healthy', checkedAt, toolCount: observed }
+                health = { state: 'healthy', checkedAt, ...observed }
             }
 
             await withRosterWrite(async () => {

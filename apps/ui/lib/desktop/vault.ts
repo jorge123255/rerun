@@ -27,7 +27,7 @@ const methodId = z.string().min(1).max(128)
 const appValues = z.record(z.string().regex(/^[A-Za-z0-9_]{1,128}$/), z.string().max(8192))
 const target = { id: z.uuid(), revision: z.uuid() }
 export const desktopVaultHealthTarget = z.strictObject(target)
-export const desktopVaultHealthReceipt = desktopServiceHealthSchema.extend({ state: z.enum(['healthy', 'error', 'disconnected']), checkedAt: z.iso.datetime() })
+export const desktopVaultHealthReceipt = desktopServiceHealthSchema.extend({ state: z.enum(['healthy', 'error', 'disconnected']), checkedAt: z.iso.datetime(), credentialExpiresAt: z.iso.datetime().optional() })
 export type DesktopVaultHealthReceipt = z.infer<typeof desktopVaultHealthReceipt>
 const sharing = { agentIds: z.array(z.uuid()).max(250), sharedWithAll: z.boolean() }
 

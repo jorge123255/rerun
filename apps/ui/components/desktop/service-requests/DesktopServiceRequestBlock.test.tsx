@@ -149,3 +149,29 @@ test('owner/source replacement aborts the matching Apps flow and ignores its lat
     expect(fetcher.mock.calls).toHaveLength(reads)
     expect(first.onAccepted).not.toHaveBeenCalled()
 })
+
+test('selects the exact named Vault account and waits for the canonical Finish response', async () => {
+    let detail = serviceRequestFixture()
+    const selected = { key: 'vault:person-2', slug: 'fixture', label: 'Support', revision: installationRevision }
+    detail.services[0].vaultAccounts = [{ ...selected, key: 'vault:person-1', label: 'Sales' }, selected]
+    const sent: DesktopServiceRequestMutation[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+        if (init.method === 'GET') return Response.json({ request: detail })
+        const input = JSON.parse(String(init.body)) as DesktopServiceRequestMutation
+        sent.push(input)
+        if (input.action === 'progress') {
+            detail = { ...detail, choices: input.choices, revision: nextCardRevision }
+            return Response.json({ serviceRequestId: scope.serviceRequestId, revision: nextCardRevision, currentIndex: 0, choices: input.choices })
+        }
+        return finishFixtureResponse(input.requestId)
+    }))
+    const { onAccepted } = await mount()
+    expect(button('New account')).toBeTruthy()
+    expect(button('Use Sales')).toBeTruthy()
+    await act(async () => { button('Use Support').click(); button('Use Support').click() })
+    await flush()
+    expect(sent.map(item => item.action)).toEqual(['progress', 'finish'])
+    for (const item of sent) expect(item.choices).toEqual([{ slug: 'fixture', choice: 'use-connection',
+        installation: { key: selected.key, revision: selected.revision } }])
+    expect(onAccepted).toHaveBeenCalledTimes(1)
+})

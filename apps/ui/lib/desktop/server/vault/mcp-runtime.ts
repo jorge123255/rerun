@@ -125,10 +125,12 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
                     return row
                 }
                 const row = await check()
+                let credentialExpiresAt: string | undefined
                 if (row.oauth_enabled === 1) {
                     const token = await oauth.readOAuth(account.id, account.name)
                     if (!token) return 'signed-out'
                     if (token.refreshPending || token.expiresAt <= Date.now()) return 'expired'
+                    credentialExpiresAt = new Date(token.expiresAt).toISOString()
                 }
                 // The workspace owner explicitly checks one saved account. No coworker is
                 // assigned and the probe only initializes the connection and lists tools.
@@ -141,7 +143,7 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
                     (_owner, _name, _revision, _phase, active) => credentials(check, active, false))
                 const result = await probeRuntime.probe(account.id, account.name, account.revision, signal)
                 if (!result.tools) throw new Error('Vault app did not return its tools')
-                return result.tools.length
+                return { toolCount: result.tools.length, ...(credentialExpiresAt && { credentialExpiresAt }) }
             })
         },
         tools(owner: string, signal: AbortSignal, authorizeRun?: (signal: AbortSignal) => Promise<void>) {

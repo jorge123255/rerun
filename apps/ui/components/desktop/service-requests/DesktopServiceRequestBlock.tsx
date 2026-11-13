@@ -44,7 +44,7 @@ function selectedConnection(detail: DesktopServiceRequestDetail, index: number) 
     const connections = usableConnections(detail, index)
     if (choice?.choice === 'use-connection') {
         const selected = connections.find(connection => connection.key === choice.installation.key && connection.revision === choice.installation.revision)
-        if (selected) return selected
+        if (selected || choice.installation.key.startsWith('vault:')) return selected
     }
     return connections.length === 1 ? connections[0] : undefined
 }
@@ -52,7 +52,7 @@ function selectedConnection(detail: DesktopServiceRequestDetail, index: number) 
 function canFinish(detail: DesktopServiceRequestDetail, choices: DesktopServiceChoice[]) {
     return choices.every(choice => choice.choice !== 'pending')
         && detail.services.every((row, index) => row.catalog.status !== 'unavailable' && row.connectionsStatus === 'ready'
-            && (choices[index]?.choice !== 'use-connection' || usableConnections(detail, index).some(connection => {
+            && (choices[index]?.choice !== 'use-connection' || [...usableConnections(detail, index), ...(row.vaultAccounts ?? [])].some(connection => {
                 const choice = choices[index]
                 return choice.choice === 'use-connection' && connection.key === choice.installation.key && connection.revision === choice.installation.revision
             })))
@@ -157,7 +157,7 @@ function ServiceRequestBlock(props: DesktopServiceRequestBlockProps) {
             source: detail.source, expectedRevision: detail.revision, currentIndex, choices })
     }
 
-    async function decide(kind: 'advance' | 'skip' | 'select' | 'connection', index?: number, installation?: { key: string; revision: string }) {
+    async function decide(kind: 'advance' | 'skip' | 'select' | 'connection' | 'vault', index?: number, installation?: { key: string; revision: string }) {
         const owner = client.current
         const saved = detailRef.current
         if (!owner || !current(owner) || busy.current || !fresh.current || !saved || attempt || accepted || saved.retry.phase !== 'open') return
@@ -169,13 +169,13 @@ function ServiceRequestBlock(props: DesktopServiceRequestBlockProps) {
             const currentIndex = saved.currentIndex
             const slug = saved.services[currentIndex].slug
             if (kind === 'skip') choices[currentIndex] = { slug, choice: 'skip' }
-            if (kind === 'connection' && installation) choices[currentIndex] = { slug, choice: 'use-connection', installation }
+            if ((kind === 'connection' || kind === 'vault') && installation) choices[currentIndex] = { slug, choice: 'use-connection', installation }
             if (kind === 'advance') {
                 const connection = selectedConnection(saved, currentIndex)
                 if (connection && choices[currentIndex].choice !== 'skip') choices[currentIndex] = { slug, choice: 'use-connection', installation: { key: connection.key, revision: connection.revision } }
             }
             const target = kind === 'select' ? index! : kind === 'connection' ? currentIndex : Math.min(currentIndex + 1, saved.services.length - 1)
-            const finishing = (kind === 'advance' || kind === 'skip') && currentIndex === saved.services.length - 1 && canFinish(saved, choices)
+            const finishing = (kind === 'advance' || kind === 'skip' || kind === 'vault') && currentIndex === saved.services.length - 1 && canFinish(saved, choices)
             const changed = target !== currentIndex || JSON.stringify(choices) !== JSON.stringify(saved.choices)
             const next = changed ? await apply(owner, mutation(saved, 'progress', target, choices)) : saved
             if (finishing && next && current(owner) && canFinish(next, next.choices)) await apply(owner, mutation(next, 'finish', next.currentIndex, next.choices))
@@ -247,8 +247,9 @@ function ServiceRequestBlock(props: DesktopServiceRequestBlockProps) {
     const catalog = row.catalog
     const named = catalog.status === 'available' || catalog.status === 'unsupported-auth' ? catalog : null
     const available = usableConnections(detail, detail.currentIndex)
+    const vaultAccounts = row.vaultAccounts ?? []
     const connection = selectedConnection(detail, detail.currentIndex)
-    const selected = detail.choices.map((choice, index) => choice.choice === 'use-connection' && usableConnections(detail, index)
+    const selected = detail.choices.map((choice, index) => choice.choice === 'use-connection' && [...usableConnections(detail, index), ...(detail.services[index].vaultAccounts ?? [])]
         .some(item => item.key === choice.installation.key && item.revision === choice.installation.revision))
     const choice = detail.choices[detail.currentIndex]
     const nextChoices = [...detail.choices]
@@ -260,15 +261,23 @@ function ServiceRequestBlock(props: DesktopServiceRequestBlockProps) {
     return <div className="min-w-0 space-y-2">
         <DesktopServiceSuggestionCard name={named?.name ?? row.slug} slug={row.slug} reason={row.reason} icon={named?.icon ?? null} category={named?.category ?? 'other'}
             current={detail.currentIndex} count={detail.services.length} selected={selected} skipped={choice.choice === 'skip'}
-            unavailableReason={unavailableReason} connectionMessage={row.connectionsStatus === 'unavailable' ? 'Connection state is unavailable. Refresh before finishing.'
+            unavailableReason={unavailableReason} newAccount={vaultAccounts.length > 0} connectionMessage={row.connectionsStatus === 'unavailable' ? 'Connection state is unavailable. Refresh before finishing.'
                 : choice.choice === 'use-connection' && !selected[detail.currentIndex] ? 'The selected connection changed or is no longer usable. Choose a current connection or Skip.'
+                    : vaultAccounts.length ? 'Choose an account from the Vault or connect a new one.'
                     : connection ? 'Current connection is healthy and available to this coworker.' : 'Configure and probe a connection in Apps. Apps permission is managed there.'}
             canConnect={!!named?.methods.some(method => method.supported)} canUseConnection={!!connection}
             canAdvance={detail.currentIndex < detail.services.length - 1 || canFinish(detail, nextChoices)} configuring={configuring} busy={working}
             disabled={locked} inline={props.inline} onConnect={() => { void connect() }} onCancel={() => { if (flow.current) { flow.current.cancelled = true; flow.current.controller.abort() } }}
             onSkip={() => { void decide('skip') }} onAdvance={() => { void decide('advance') }} onSelect={index => { void decide('select', index) }} />
-        {available.length > 1 && <div className="flex flex-wrap gap-2" aria-label="Choose an existing connection">{available.map(item => <Button key={`${item.key}:${item.revision}`} size="sm" variant="outline"
-            disabled={locked || configuring} onClick={() => { void decide('connection', undefined, { key: item.key, revision: item.revision }) }}>Use {item.key}</Button>)}</div>}
+        {vaultAccounts.length > 0 && <section className="space-y-1.5" aria-label="Already in the Vault">
+            <p className="text-xs text-muted-foreground">Already in the Vault</p>
+            <div className="flex flex-wrap gap-2">{vaultAccounts.map(item => <Button key={item.key} size="sm" variant="outline"
+                disabled={locked || configuring} onClick={() => { void decide('vault', undefined, { key: item.key, revision: item.revision }) }}>
+                Use {item.label}
+            </Button>)}</div>
+        </section>}
+        {(available.length > 1 || (!connection && available.length > 0)) && <div className="flex flex-wrap gap-2" aria-label="Choose an existing connection">{available.map(item => <Button key={`${item.key}:${item.revision}`} size="sm" variant="outline"
+            disabled={locked || configuring} onClick={() => { void decide('connection', undefined, { key: item.key, revision: item.revision }) }}>Use {item.label ?? item.key}</Button>)}</div>}
         {loading && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2Icon className="size-4 animate-spin" />Loading suggested apps…</p>}
         {attempt && <div className="space-y-1"><p className="text-xs text-muted-foreground">Saved {attempt.action === 'finish' ? 'Finish' : 'app progress'} is waiting for acknowledgement. The same choices will be retried.</p>
             <ul className="space-y-1 text-xs text-muted-foreground">{attempt.choices.map(item => <li key={item.slug} className="wrap-anywhere">{item.slug}: {item.choice === 'use-connection' ? `Use connection ${item.installation.key}` : item.choice === 'skip' ? 'Skipped' : 'Pending'}</li>)}</ul>

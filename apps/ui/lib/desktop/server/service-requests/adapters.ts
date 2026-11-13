@@ -1,6 +1,6 @@
 import { withoutStoppedWebhookForms } from '../trigger-requests/stopped'
 import 'server-only'
-import { desktopServiceConnectionSchema, type DesktopServiceConnection, type DesktopServiceHealth, type DesktopServiceRequest, type DesktopServiceRequestCatalog } from '@rerun/contracts'
+import { desktopServiceConnectionSchema, type DesktopServiceChoice, type DesktopServiceConnection, type DesktopServiceHealth, type DesktopServiceRequest, type DesktopServiceRequestCatalog } from '@rerun/contracts'
 import { findDesktopServiceRequest } from '@rerun/contracts'
 import { EngineRequestError, chat, getSessionMessages } from '@/lib/engine/client'
 import { DesktopHttpError } from '../auth'
@@ -10,6 +10,8 @@ import { getDesktopRemoteMcpService } from '../mcp-binding'
 import type { DesktopRuntime } from '../runtime'
 import type { DesktopAgent, DesktopSession } from '../store'
 import { getDesktopServiceManifest, getDesktopServiceMethodAvailability } from '../services/catalog/index'
+import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
+import { attachServiceVaultAccounts, readServiceVaultAccounts, vaultConnection } from './vault'
 import { desktopServiceConnectionUsable } from './usable'
 import type { FollowUpResponse, SealedReceipt, ServiceRequestDatabase, ServiceRequestSealAuthority } from './service'
 
@@ -58,6 +60,16 @@ export async function readDesktopServiceConnections(runtime: DesktopRuntime, own
     }
 }
 
+export async function readDesktopServiceVaultOffers(runtime: DesktopRuntime, ownerId: string, signal: AbortSignal) {
+    const [db, service] = await Promise.all([openDesktopDatabase(runtime.dataRoot), getDesktopRemoteMcpService(runtime)])
+    const authority = await service.services.current(ownerId, 'manage', undefined, signal)
+    if (!authority.enabled || !authority.granted || !authority.check) return []
+    const accounts = await readServiceVaultAccounts(db, ownerId, runtime.launchNonce)
+    authority.check()
+    signal.throwIfAborted()
+    return accounts.filter(account => !account.attached && Date.now() < account.expires).map(account => account.view)
+}
+
 /** Network/config reads happen before the write transaction. Exact installation rows
  * are then read on that transaction; synchronous lifecycle guards fence local changes. */
 export async function prepareDesktopServiceSeal(runtime: DesktopRuntime, ownerId: string, signal: AbortSignal): Promise<ServiceRequestSealAuthority> {
@@ -71,13 +83,14 @@ export async function prepareDesktopServiceSeal(runtime: DesktopRuntime, ownerId
     let freshUntil = Infinity
     const check = () => {
         signal.throwIfAborted()
+        assertDesktopWorkspaceAdmission(runtime)
         try { authority.check!(); for (const guard of guards) guard() } catch {
             throw new DesktopHttpError(409, 'App permission or a connection changed. Refresh the card before finishing.')
         }
         if (Date.now() >= freshUntil) throw new DesktopHttpError(409, 'App connection health expired. Refresh the connection before finishing.')
     }
     check()
-    return { check, async installations(query: ServiceRequestDatabase) {
+    return { check, async installations(query: ServiceRequestDatabase, choices?: DesktopServiceChoice[]) {
         check()
         const owner = (await query.execute({ sql: 'SELECT engine_agent_id, enabled FROM desktop_agents WHERE id = ?', args: [ownerId] })).rows[0]
         if (!owner || owner.engine_agent_id !== authority.engineAgentId || Boolean(Number(owner.enabled)) !== authority.enabled) throw new DesktopHttpError(409, 'Coworker identity or permission changed. Refresh the conversation.')
@@ -95,9 +108,16 @@ export async function prepareDesktopServiceSeal(runtime: DesktopRuntime, ownerId
             if (usable) freshUntil = Math.min(freshUntil, Date.parse(health.checkedAt ?? '') + 60_000)
             return desktopServiceConnectionSchema.safeParse({ key: String(row.key), revision: String(row.revision), slug: String(row.slug), state, usable, healthState: health.state })
         })
-        check()
         if (connections.some(item => !item.success)) return 'unavailable'
-        return connections.flatMap(item => item.success ? [item.data] : [])
+        const installed = connections.flatMap(item => item.success ? [item.data] : [])
+        const accounts = authority.enabled && authority.granted ? await readServiceVaultAccounts(query, ownerId, runtime.launchNonce) : []
+        const selected = choices ? await attachServiceVaultAccounts(query, ownerId, accounts, choices) : []
+        const vault = accounts.filter(account => account.attached || selected.includes(account))
+        for (const account of vault) {
+            if (!choices || selected.includes(account)) freshUntil = Math.min(freshUntil, account.expires)
+        }
+        check()
+        return [...installed, ...vault.map(vaultConnection)]
     } }
 }
 
