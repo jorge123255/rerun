@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('desktopApp', {
         status: () => ipcRenderer.invoke('desktop:phone-pairing-status'),
         openLocal: () => ipcRenderer.invoke('desktop:phone-pairing-open-local'),
         setEnabled: enabled => ipcRenderer.invoke('desktop:phone-pairing-enable', enabled === true),
+        retry: () => ipcRenderer.invoke('desktop:phone-pairing-retry'),
         setNetwork: address => ipcRenderer.invoke('desktop:phone-pairing-network', address),
         createOffer: workspaceId => ipcRenderer.invoke('desktop:phone-pairing-offer', workspaceId),
         approve: deviceId => ipcRenderer.invoke('desktop:phone-pairing-approve', deviceId),

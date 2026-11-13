@@ -7,12 +7,11 @@ h2 { font-size: 15px; margin: 0 0 8px; }
 #pairing-entry, #pairing-controls:not([hidden]) { display: grid; gap: 12px; }
 #pairing-entry[hidden] { display: none; }
 #pairing-entry { text-align: center; }
-.footnote, .mono { margin: 0; font-size: 13px; color: var(--auth-muted); }
-#current-workspace, li > span { overflow-wrap: anywhere; }
-.mono { font-family: ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; }
+.footnote { margin: 0; font-size: 13px; color: var(--auth-muted); }
+#current-workspace, #origin, li > span { overflow-wrap: anywhere; }
 .toggle { display: flex; gap: 8px; align-items: center; }
 select { max-width: 100%; }
-.actions:has(button[hidden]) { display: none; }
+.actions:not(:has(button:not([hidden]))) { display: none; }
 #pairing-code:not([hidden]) { display: grid; justify-items: center; gap: 8px; }
 #pairing-qr { width: min(256px, 100%); aspect-ratio: 1; padding: 16px; background: white; image-rendering: pixelated; }
 #manual-offer { width: 100%; }

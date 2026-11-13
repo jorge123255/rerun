@@ -622,6 +622,7 @@ async function launch() {
         selectLocalWorkspace()
     })
     ipcMain.handle('desktop:phone-pairing-enable', (event, enabled) => trustedPhonePairing(event).setPhoneAccessEnabled(enabled === true))
+    ipcMain.handle('desktop:phone-pairing-retry', event => trustedPhonePairing(event).restore())
     ipcMain.handle('desktop:phone-pairing-network', (event, address) => trustedPhonePairing(event).setLanAddress(address))
     ipcMain.handle('desktop:phone-pairing-offer', async (event, workspaceId) => {
         if (!Number.isSafeInteger(workspaceId) || workspaceId < 1) throw new Error('Choose a local workspace before pairing an iPhone.')

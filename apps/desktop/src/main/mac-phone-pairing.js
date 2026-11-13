@@ -4,6 +4,7 @@ const controls = document.getElementById('pairing-controls')
 const currentWorkspace = document.getElementById('current-workspace')
 const openLocal = document.getElementById('open-local')
 const network = document.getElementById('network')
+const retry = document.getElementById('retry-pairing')
 const createOffer = document.getElementById('create-offer')
 const offer = document.getElementById('offer')
 const code = document.getElementById('pairing-code')
@@ -95,9 +96,14 @@ async function refresh() {
     network.value = status.lanAddress ?? ''
     network.disabled = updating || !status.phoneAccessEnabled
     createOffer.hidden = !status.listening || status.selectedWorkspaceId === null
-    origin.hidden = !status.origin && !status.lanBindingEnabled
-    origin.textContent = status.origin ? translate('listening', { origin: status.origin })
-        : status.lanBindingEnabled ? copy.networkUnavailable : ''
+    const needsRetry = status.phoneAccessEnabled && !status.listening
+    retry.hidden = !needsRetry
+    retry.disabled = updating
+    const listenerStatus = status.origin ? translate('listening', { origin: status.origin })
+        : needsRetry && status.lanAddress && !addresses.includes(status.lanAddress) ? copy.networkUnavailable
+        : needsRetry ? copy.listenerUnavailable : ''
+    origin.hidden = !listenerStatus
+    if (origin.textContent !== listenerStatus) origin.textContent = listenerStatus
     const devices = JSON.stringify(status.devices)
     if (devices === renderedDevices) return
     renderedDevices = devices
@@ -165,11 +171,12 @@ async function refresh() {
     }))
 }
 
-async function updateSetting(change) {
+async function updateSetting(change, failure = 'updateFailed') {
+    if (updating) return
     updating = true
-    enable.disabled = network.disabled = true
+    enable.disabled = network.disabled = retry.disabled = true
     try { await change(); showError('') }
-    catch { showError('updateFailed') }
+    catch { showError(failure) }
     finally { updating = false }
     await refresh()
 }
@@ -183,6 +190,9 @@ enable.addEventListener('change', () => {
 })
 network.addEventListener('change', () => {
     void updateSetting(() => window.desktopApp.phonePairing.setNetwork(network.value || null)).catch(() => showError('unavailable'))
+})
+retry.addEventListener('click', () => {
+    void updateSetting(() => window.desktopApp.phonePairing.retry(), 'retryFailed').catch(() => showError('unavailable'))
 })
 createOffer.addEventListener('click', async () => {
     if (creatingOffer || selectedWorkspaceId === null) return

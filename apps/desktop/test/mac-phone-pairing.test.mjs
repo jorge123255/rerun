@@ -286,6 +286,39 @@ test('enabling phone access starts a loopback transport and never enables LAN', 
     await service.stop()
 })
 
+test('retry restores the saved endpoint and its approved device after a port conflict', async t => {
+    const root = await dataRoot(t)
+    const workspace = await startWorkspaceFixture()
+    t.after(workspace.close)
+    const { service } = createService(t, root, { workspace })
+    const { origin } = await service.setPhoneAccessEnabled(true)
+    const { client } = await pairedClient(service)
+    await service.stop()
+
+    const blocker = createServer()
+    const port = Number(new URL(origin).port)
+    await new Promise((resolve, reject) => {
+        blocker.once('error', reject)
+        blocker.listen(port, LOOPBACK_HOST, resolve)
+    })
+    t.after(() => { if (blocker.listening) blocker.close() })
+
+    const { service: reopened } = createService(t, root, { workspace })
+    await assert.rejects(() => reopened.restore(), { code: 'EADDRINUSE' })
+    const status = await reopened.status()
+    assert.equal(status.phoneAccessEnabled, true)
+    assert.equal(status.listening, false)
+    assert.equal(status.origin, null)
+    assert.equal(status.devices[0].pairingState, 'paired')
+    assert.equal((await reopened.settings()).loopbackPort, port)
+
+    await new Promise((resolve, reject) => blocker.close(error => error ? reject(error) : resolve()))
+    assert.equal((await reopened.restore()).origin, origin)
+    assert.equal((await client.listCoworkers()).coworkers[0].name, AGENT.name)
+    await reopened.setPhoneAccessEnabled(false)
+    assert.equal((await reopened.restore()).listening, false)
+})
+
 test('private-network pairing pins TLS and scopes approvals through restart and revocation', async t => {
     const host = localPairingAddresses()[0]
     if (!host) { t.skip('no assigned private IPv4 address'); return }
