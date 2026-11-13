@@ -35,8 +35,7 @@ export function localizeStartupStatus(value, { state, messageKey, ...status }) {
         ...status, state,
         message: t('startup.' + (messageKey ?? (state === 'ready' ? 'opening' : 'preparing'))),
         copy: {
-            locale, preview: t('startup.preview'), headingFirst: t('startup.headingFirst'),
-            headingSecond: t('startup.headingSecond'), quit: t('startup.quit'), footnote: t('startup.footnote'),
+            locale, title: t('startup.title'), quit: t('startup.quit'), footnote: t('startup.footnote'),
             retry: t('offline.retry'), retryFailed: t('startup.retryFailed'),
         },
     }

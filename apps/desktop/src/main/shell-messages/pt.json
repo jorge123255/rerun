@@ -105,9 +105,7 @@
     },
     "startup": {
         "rendererClosed": "A janela do workspace foi fechada inesperadamente. Tente reabri-la.",
-        "preview": "PRÉVIA PARA DESKTOP",
-        "headingFirst": "Seus coworkers.",
-        "headingSecond": "Seu Mac.",
+        "title": "Boas-vindas ao Rerun",
         "quit": "Sair",
         "footnote": "Seu workspace e o histórico ficam neste Mac. Os provedores de IA usam a rede quando você conversa.",
         "preparing": "Preparando seu workspace local…",

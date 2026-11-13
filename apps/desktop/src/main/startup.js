@@ -18,9 +18,7 @@ function update(status) {
     if (status.copy) {
         copy = status.copy
         document.documentElement.lang = copy.locale
-        document.getElementById('preview').textContent = copy.preview
-        document.getElementById('heading-first').textContent = copy.headingFirst
-        document.getElementById('heading-second').textContent = copy.headingSecond
+        document.getElementById('welcome-title').textContent = copy.title
         quit.textContent = copy.quit
         localFootnote.textContent = copy.footnote
     }

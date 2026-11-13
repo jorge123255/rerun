@@ -167,7 +167,7 @@ test('the startup screen routes each choice separately and keeps the latest stat
 
     notify(localizeStartupStatus('fr-CA', { state: 'error', messageKey: 'rendererClosed' }))
     assert.equal(documentElement.lang, 'fr')
-    assert.equal(elements.get('heading-first').textContent, 'Vos coworkers.')
+    assert.equal(elements.get('welcome-title').textContent, 'Bienvenue sur Rerun')
     assert.equal(elements.get('quit').textContent, 'Quitter')
     assert.equal(elements.get('retry').textContent, 'Réessayer')
     assert.match(elements.get('message').textContent, /fermée de façon inattendue/)

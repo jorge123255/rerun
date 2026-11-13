@@ -66,7 +66,7 @@ test('every shell language translates startup, service failure, and renderer rec
             assert.equal(translated.state, status.state)
             assert.equal(translated.copy.locale, locale)
             assert.notEqual(translated.message, english.message)
-            for (const field of ['headingFirst', 'headingSecond', 'quit', 'retry', 'footnote']) {
+            for (const field of ['title', 'quit', 'retry', 'footnote']) {
                 assert.notEqual(translated.copy[field], english.copy[field])
             }
         }

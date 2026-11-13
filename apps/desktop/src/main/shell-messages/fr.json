@@ -105,9 +105,7 @@
     },
     "startup": {
         "rendererClosed": "La fenêtre du workspace s’est fermée de façon inattendue. Essayez de la rouvrir.",
-        "preview": "APERÇU BUREAU",
-        "headingFirst": "Vos coworkers.",
-        "headingSecond": "Votre Mac.",
+        "title": "Bienvenue sur Rerun",
         "quit": "Quitter",
         "footnote": "Votre workspace et son historique restent sur ce Mac. Les fournisseurs d’IA utilisent le réseau lorsque vous discutez.",
         "preparing": "Préparation de votre workspace local…",

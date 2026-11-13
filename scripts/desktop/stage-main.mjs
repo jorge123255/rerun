@@ -5,6 +5,7 @@ import { sourceStamp, writeStamp } from './provenance.mjs'
 
 const required = [
     'index.js', 'index.mjs', 'preload.cjs', 'before-quit.mjs', 'startup.html',
+    'startup-assets/board-dark.webp', 'startup-assets/board-light.webp', 'startup-assets/foreman.webp',
     'startup.css', 'startup.js', 'startup-workspace.mjs', 'runtime.mjs', 'supervisor.mjs', 'ui-host.mjs', 'notifications.mjs', 'application-menu.mjs',
     'shell-language.mjs', ...['de', 'en', 'es', 'fr', 'pt'].map(locale => `shell-messages/${locale}.json`),
     'mac-updates.mjs', 'mac-update-signature.mjs', 'release-config.mjs',

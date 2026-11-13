@@ -105,9 +105,7 @@
     },
     "startup": {
         "rendererClosed": "Das Workspace-Fenster wurde unerwartet geschlossen. Versuche, es erneut zu öffnen.",
-        "preview": "DESKTOP-VORSCHAU",
-        "headingFirst": "Deine Coworker.",
-        "headingSecond": "Dein Mac.",
+        "title": "Willkommen bei Rerun",
         "quit": "Beenden",
         "footnote": "Dein Workspace und sein Verlauf bleiben auf diesem Mac. KI-Anbieter nutzen das Netzwerk, wenn du chattest.",
         "preparing": "Dein lokaler Workspace wird vorbereitet…",

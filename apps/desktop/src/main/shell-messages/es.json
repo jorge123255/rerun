@@ -105,9 +105,7 @@
     },
     "startup": {
         "rendererClosed": "La ventana del espacio de trabajo se cerró inesperadamente. Intenta volver a abrirla.",
-        "preview": "VISTA PREVIA DE ESCRITORIO",
-        "headingFirst": "Tus coworkers.",
-        "headingSecond": "Tu Mac.",
+        "title": "Te damos la bienvenida a Rerun",
         "quit": "Salir",
         "footnote": "Tu espacio de trabajo y su historial se quedan en este Mac. Los proveedores de IA usan la red cuando chateas.",
         "preparing": "Preparando tu espacio de trabajo local…",

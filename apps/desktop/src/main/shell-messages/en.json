@@ -105,9 +105,7 @@
     },
     "startup": {
         "rendererClosed": "The workspace window closed unexpectedly. Try reopening it.",
-        "preview": "DESKTOP PREVIEW",
-        "headingFirst": "Your coworkers.",
-        "headingSecond": "Your Mac.",
+        "title": "Welcome to Rerun",
         "quit": "Quit",
         "footnote": "Your workspace and history stay on this Mac. AI providers use the network when you chat.",
         "preparing": "Preparing your local workspace…",
