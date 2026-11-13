@@ -6,8 +6,11 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages } from '@/lib/desktop/locale'
 import { DesktopApp } from './DesktopApp'
 import { DesktopFindChat } from './DesktopFindChat'
+import { DesktopLocale } from './DesktopLocale'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let drafts: ReturnType<typeof createDesktopDraftFixture>
@@ -25,8 +28,8 @@ const click = (label: string) => act(async () => {
     const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.getAttribute('aria-label') === label || b.textContent?.trim() === label)
     expect(button, label).toBeTruthy(); button!.click()
 })
-const type = (text: string) => act(async () => {
-    const input = document.querySelector<HTMLInputElement>('[aria-label="Search saved chat titles"]')!
+const type = (text: string, label = 'Search saved chat titles') => act(async () => {
+    const input = document.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, text)
     input.dispatchEvent(new Event('input', { bubbles: true }))
     input.dispatchEvent(new Event('change', { bubbles: true }))
@@ -139,6 +142,31 @@ test('debounces, aborts stale queries, reports failures distinctly and retries',
             '/api/desktop/conversations/search?q=Other',
         ])
     } finally { await act(async () => { root.unmount() }) }
+})
+
+test('French chat search localizes the dialog and returns the original saved identity', async () => {
+    const language = { preference: 'fr', locale: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) } as const
+    const onSelect = vi.fn()
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({}, { status: 503 }))
+        .mockResolvedValueOnce(Response.json({ hits, hasMore: true }))
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    try {
+        await act(async () => root.render(<DesktopLocale initial={language}><DesktopFindChat onSelect={onSelect} /></DesktopLocale>))
+        await click('Rechercher une conversation')
+        const dialog = () => document.querySelector('[role="dialog"]')!
+        expect(dialog().textContent).toContain('Saisissez au moins 2 caractères')
+        await type('Shared', 'Rechercher dans les titres enregistrés')
+        expect(dialog().querySelector('[role="status"]')?.textContent).toBe('Recherche en cours…')
+        await settle()
+        expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('Impossible de rechercher')
+        await click('Réessayer')
+        await settle()
+        expect(dialog().textContent).toContain('50 premiers résultats')
+        await select('Bob')
+        expect(onSelect).toHaveBeenCalledExactlyOnceWith(hits[1])
+    } finally { await act(async () => root.unmount()) }
 })
 
 test('a stale search selection never falls back to the coworker’s newest conversation', async () => {

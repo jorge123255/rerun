@@ -1,6 +1,9 @@
 import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages } from '@/lib/desktop/locale'
 import { DesktopApp } from './DesktopApp'
+import { DesktopLocale } from './DesktopLocale'
 
 const profile = { id: 1, displayName: 'Local User' }
 const workspace = { id: 1, name: 'My workspace' }
@@ -33,5 +36,18 @@ describe('DesktopApp', () => {
         expect(html).toContain('aria-label="Workspace"')
         expect(html).toContain('Find chat')
         expect(html).not.toContain('data-side-panel')
+    })
+
+    it('localizes the setup and connected provider states without translating provider or model names', async () => {
+        const language = { preference: 'fr', locale: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) } as const
+        const initial = { profile, workspace, agents: [], theme: 'system' as const, default: null, connections: [] }
+        const render = (connections: Parameters<typeof DesktopApp>[0]['initialData']['connections']) => renderToString(
+            <DesktopLocale initial={language}><DesktopApp initialData={{ ...initial, connections }} /></DesktopLocale>,
+        )
+        expect(render([])).toContain('Configurer un fournisseur')
+        const html = render([{ id: 'openai', name: 'OpenAI', provider: 'openai', models: ['gpt-6-sol'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }])
+        expect(html).toContain('OpenAI est connecté')
+        expect(html).toContain('Ouvrir les paramètres des modèles')
+        expect(html).not.toContain('Set up provider')
     })
 })

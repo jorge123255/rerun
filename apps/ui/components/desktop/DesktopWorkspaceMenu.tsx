@@ -46,7 +46,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     const openingControlCenter = useRef(false)
     const workspaceClient = useMemo(() => createDesktopWorkspaceClient(), [])
     useEffect(() => { void flushDesktopWorkspaceMetadata().catch(() => {}) }, [workspaceName, iconCatalogId, iconUploadId])
-    return <nav aria-label="Workspace" className="flex min-w-0 flex-wrap items-center gap-1.5">
+    return <nav aria-label={t('workspace')} className="flex min-w-0 flex-wrap items-center gap-1.5">
         <DesktopWorkspaceSwitcher client={workspaceClient} profileLabel={`${profileName} · Rerun Local`} profilePhoto={profilePhoto} activeDisplay={{ name: workspaceName, iconCatalogId, iconUploadId }} disabled={navigationDisabled}
             workspaceSettingsInMenu
             onRenameActive={onWorkspaceSettings ? () => { openingControlCenter.current = true; onWorkspaceSettings() } : undefined}
@@ -62,8 +62,8 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
                 {onBrain && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onBrain() }}><Brain /> {t('brainDesktop.title')}</DropdownMenuItem>}
                 {onControlCenter && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onControlCenter() }}><Search /> {t('controlCenter.title')}</DropdownMenuItem>}
                 <DropdownMenuItem disabled={settingsDisabled} onSelect={onSettings}><Settings /> {t('settings')}</DropdownMenuItem>
-                {onExternalMcp && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onExternalMcp() }}><KeyRound /> API keys & MCP</DropdownMenuItem>}
-                {onServers && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onServers() }}><Server /> Servers</DropdownMenuItem>}
+                {onExternalMcp && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onExternalMcp() }}><KeyRound /> {t('controlCenter.commands.api_keys')}</DropdownMenuItem>}
+                {onServers && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onServers() }}><Server /> {t('controlCenter.localCommands.servers')}</DropdownMenuItem>}
                 {onWorkspaceSettings && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onWorkspaceSettings() }}><Settings /> {t('workspaceSettings')}</DropdownMenuItem>}
                 {onProfile && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onProfile() }}><UserRound /> {t('localProfile.title')}</DropdownMenuItem>}
                 {onShortcuts && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onShortcuts() }}><Keyboard /> {t('shortcutDialog.title')}</DropdownMenuItem>}
@@ -79,12 +79,12 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
                 <HelpCircleIcon className="size-4 text-muted-foreground" />
             </ChromePill>
         </TooltipLabeled>}
-        <Button type="button" variant="outline" size="sm" disabled={settingsDisabled} onClick={onSettings} aria-keyshortcuts="Meta+," title="Open model settings"
+        <Button type="button" variant="outline" size="sm" disabled={settingsDisabled} onClick={onSettings} aria-keyshortcuts="Meta+," title={t('boardUI.modelSettings')}
             className="h-8 rounded-full bg-background/90 px-2.5 text-xs backdrop-blur-xl">
             {providerLabel ? <span role="status" className="flex min-w-0 items-center gap-1.5">
-                <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-emerald-500" />{providerLabel} is connected
+                <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-emerald-500" />{t('boardUI.providerConnected', { provider: providerLabel })}
                 {modelLabel && <span className="max-w-36 truncate text-muted-foreground">{modelLabel}</span>}
-            </span> : 'Set up provider'}
+            </span> : t('boardUI.providerSetup')}
         </Button>
     </nav>
 }

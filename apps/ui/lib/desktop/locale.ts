@@ -14,6 +14,7 @@ import { desktopBrainCopy } from './i18n/brain-messages'
 import { desktopSharedFilesCopy } from './i18n/shared-files-messages'
 import { desktopMcpSignInCopy } from './i18n/mcp-sign-in-messages'
 import { macSettingsCopy } from './i18n/mac-settings-messages'
+import { desktopBoardCopy } from './i18n/board-messages'
 import dialogs from '@rerun/i18n/messages/en/dialogs.json'
 import type { Locale } from '@rerun/i18n'
 import { createTranslator } from 'use-intl/core'
@@ -224,6 +225,7 @@ const localProfileCopy = {
 export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
     return {
         ...mac[locale],
+        boardUI: desktopBoardCopy[locale],
         macSettings: macSettingsCopy[locale],
         brain: source.brain,
         files: source.files,
