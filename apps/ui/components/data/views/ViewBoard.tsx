@@ -209,6 +209,11 @@ function BoardCard({ row, from, disabled, onOpen, children }: { row: DbRow; from
         <div ref={setNodeRef} {...listeners} {...attributes} onClick={onOpen && (event => onOpen(row, event.currentTarget))}
             onKeyDown={event => {
                 if (event.defaultPrevented || event.nativeEvent.isComposing || event.target !== event.currentTarget) return
+                if (isDragging && event.key === 'Escape') {
+                    // Let the drag sensor receive Escape on document without also closing the parent panel.
+                    event.preventDefault()
+                    return
+                }
                 if (onOpen && !isDragging && event.key === 'Enter') {
                     event.preventDefault()
                     if (!event.repeat) onOpen(row, event.currentTarget)
