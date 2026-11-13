@@ -370,8 +370,12 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             closeFind(window)
             hideWorkspaceWindow(window)
         })
-        contents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
-            if (!mainFrame || inPlace) return
+        contents.on('did-start-navigation', ({ url, isSameDocument, isMainFrame }) => {
+            if (!isMainFrame) return
+            // A browser handoff belongs to the page that started it. A late
+            // callback must not replace a task or board the user has since opened.
+            if (sameHub(url, origin) && (!isSameDocument || url !== contents.mainFrame?.url)) auth.cancel()
+            if (isSameDocument) return
             payments.close(entry)
             quickAsk.reset(entry)
             entry.scope = randomUUID()
@@ -479,13 +483,17 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     }
 
     async function redeem(entry, code, state) {
+        const frame = entry.contents.mainFrame
+        const address = frame?.url
+        const scope = entry.scope
         const result = await entry.auth.redeem(code, state)
-        if (connected(entry.window) !== entry || !available()) return { status: 'error', reason: 'expired' }
+        if (!available() || connected(entry.window) !== entry || entry.scope !== scope
+            || entry.contents.mainFrame !== frame || frame?.url !== address) return { status: 'error', reason: 'expired' }
+        frame.send('hub:auth-result', result)
         if (result.status === 'signed-in') {
             show(entry.window)
             void entry.window.loadURL(entry.origin + '/').catch(() => {})
         }
-        entry.contents.send('hub:auth-result', result)
         return result
     }
 
