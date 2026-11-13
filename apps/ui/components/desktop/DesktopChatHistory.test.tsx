@@ -354,7 +354,8 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
                 finish = () => { controller.enqueue(encoder.encode('data: {"type":"finish"}\n\ndata: [DONE]\n\n')); controller.close() }
             } }), { headers: { 'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1', 'x-session-id': id } })
         }
-        if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
+        // The conversation sends only once a model is available to it.
+        if (url.includes('/model')) return Response.json({ catalog: [], workspace: { connectionId: 'fixture-openai', model: 'gpt-4o-mini' }, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: 'fixture-openai', provider: 'openai', name: 'Fixture OpenAI', model: 'gpt-4o-mini', label: 'Fixture model', available: true } })
         if ((init?.method ?? 'GET') === 'GET') {
             if (/^\/api\/desktop\/sessions\/[^/]+\/stop$/.test(url)) return Response.json({ running: false })
             if (/^\/api\/desktop\/sessions\/[^/]+\/feedback(?:\?|$)/.test(url)) return Response.json({ votes: [] })

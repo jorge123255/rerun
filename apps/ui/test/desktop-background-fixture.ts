@@ -11,6 +11,9 @@ export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestIn
     // The workspace menu reads the Vault as it opens, for the mark on its Vault row.
     // The board counts down to the next routine; a workspace without one has nothing to show.
     if (url.pathname === '/api/desktop/workspace/routines/upcoming') return Response.json([])
+    // A coworker's Apps panel lists what it holds from the workspace Vault.
+    const coworkerVault = /^\/api\/desktop\/coworkers\/([^/]+)\/vault$/.exec(url.pathname)
+    if (coworkerVault) return Response.json({ agentId: coworkerVault[1], attached: [], available: [] })
     if (url.pathname === '/api/desktop/workspace-view') return Response.json({ view: null, lastOpened: null })
     if (url.pathname === '/api/desktop/vault') return Response.json({ entries: [], coworkers: [] })
     if (/^\/api\/desktop\/coworkers\/[^/]+\/document-attachments$/.test(url.pathname)) return Response.json({ attachments: [] })
