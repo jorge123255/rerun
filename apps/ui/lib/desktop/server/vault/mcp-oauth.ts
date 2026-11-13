@@ -1,5 +1,4 @@
 import 'server-only'
-import { randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
 import { remoteMcpLifecycle } from '../mcp/lifecycle'
 import { loopbackMcpOAuth } from '../mcp/oauth-loopback'
@@ -7,8 +6,9 @@ import type { OAuthJson } from '../mcp/oauth-network'
 import type { BrowserOAuthWriteAdmission, OAuthTokenBundle, SettleOAuthWrite } from '../mcp/store'
 import type { DesktopSecretCrypto } from '../secret-requests/crypto'
 import { withRosterWrite } from '../roster-writes'
+import { mirrorVaultOAuth, retireVaultOAuthOrigin, sealVaultOAuth, vaultOAuthContext } from './catalog-oauth-origin'
 
-export function vaultMcpOAuth(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, assertWorkspace: () => void, json?: OAuthJson) {
+export function vaultMcpOAuth(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, assertWorkspace: () => void, json?: OAuthJson, legacyKey?: () => Buffer) {
     const lifecycle = remoteMcpLifecycle()
     const readEntry = async (id: string, name: string) => {
         assertWorkspace()
@@ -21,13 +21,10 @@ export function vaultMcpOAuth(db: Client, crypto: DesktopSecretCrypto, workspace
         if (!row) throw new Error('Vault browser sign-in is unavailable')
         return { id, name, url: String(row.url), revision: String(row.revision), bearer: '', generation: row.generation, sealed: row.sealed }
     }
-    function context(id: string, url: string, generation: string) {
-        return { domain: 'vault' as const, agentId: id, key: JSON.stringify(['mcp-oauth', url]), version: 1, workspaceId, revision: generation }
-    }
     async function readOAuth(id: string, name: string): Promise<OAuthTokenBundle | null> {
         const row = await readEntry(id, name)
         if (typeof row.sealed !== 'string') return null
-        const bytes = await crypto.open(context(id, row.url, String(row.generation)), String(row.sealed))
+        const bytes = await crypto.open(vaultOAuthContext(workspaceId, id, row.url, String(row.generation)), String(row.sealed))
         try {
             const bundle = JSON.parse(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8')) as OAuthTokenBundle
             if (bundle.resource !== row.url) throw new Error('Vault OAuth resource changed')
@@ -39,15 +36,11 @@ export function vaultMcpOAuth(db: Client, crypto: DesktopSecretCrypto, workspace
         return { registrationId: id, revision: row.revision, resource: row.url, sealed: typeof row.sealed === 'string' ? row.sealed : null }
     }
     function replaceOAuth(id: string, name: string, expected: { registrationId: string; revision: string; sealed: string | null },
-        bundle: OAuthTokenBundle, signal: AbortSignal, approval?: BrowserOAuthWriteAdmission, settle?: SettleOAuthWrite) {
+        bundle: OAuthTokenBundle, signal: AbortSignal, approval?: BrowserOAuthWriteAdmission, settle?: SettleOAuthWrite, purpose?: 'refresh') {
         if (approval || settle || expected.registrationId !== id) throw new Error('Vault OAuth authority changed')
         return lifecycle.commitCredentials(id, name, signal, check => withRosterWrite(async () => {
             check(); assertWorkspace()
-            const generation = randomUUID()
-            const bytes = Buffer.from(JSON.stringify(bundle), 'utf8')
-            let sealed: string
-            try { sealed = await crypto.seal(context(id, bundle.resource, generation), bytes) }
-            finally { bytes.fill(0) }
+            const { generation, sealed } = await sealVaultOAuth(crypto, workspaceId, id, bundle)
             const tx = await db.transaction('write')
             try {
                 const result = await tx.execute({
@@ -59,6 +52,9 @@ export function vaultMcpOAuth(db: Client, crypto: DesktopSecretCrypto, workspace
                     args: [generation, sealed, id, name, expected.revision, bundle.resource, expected.sealed],
                 })
                 if (result.rowsAffected !== 1) throw new Error('Vault OAuth credential changed')
+                if (purpose === 'refresh') {
+                    if (legacyKey) await mirrorVaultOAuth(tx, id, legacyKey, bundle)
+                } else await retireVaultOAuthOrigin(tx, id)
                 check(); assertWorkspace()
                 await tx.commit()
                 return sealed

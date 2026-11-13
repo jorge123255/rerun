@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { Client, Transaction } from '@libsql/client'
 import { desktopCoworkerVaultListing, desktopVaultHealthReceipt, desktopVaultListing, desktopVaultProgramCredentialLimit, type DesktopCoworkerVaultMutation, type DesktopCoworkerVaultEntry, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '../../vault'
 import { compileVaultCatalogApp, vaultCatalogAllowsInstances } from './catalog'
+import { retireVaultOAuthOrigin } from './catalog-oauth-origin'
 import { newServiceInstanceId } from '@/lib/services/instances'
 import { DesktopHttpError } from '../auth'
 import { executableIdentity } from '../mcp-stdio/process'
@@ -246,6 +247,9 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         }
                         const table = server ? entry.kind === 'program' ? 'desktop_vault_mcp_programs' : 'desktop_vault_mcp_servers' : 'desktop_vault_secrets'
                         const attachments = server ? entry.kind === 'program' ? 'desktop_vault_mcp_program_attachments' : 'desktop_vault_mcp_attachments' : 'desktop_vault_attachments'
+                        if ('kind' in entry && entry.kind === 'mcp' && entry.browserSignIn) {
+                            await retireVaultOAuthOrigin(tx, entry.id, new Set(input.sharedWithAll ? listing.coworkers.map(agent => agent.id) : agentIds))
+                        }
                         await tx.execute({ sql: `DELETE FROM ${attachments} WHERE item_id=?`, args: [entry.id] })
                         for (const id of agentIds) await tx.execute({ sql: `INSERT INTO ${attachments}(item_id,agent_id) VALUES(?,?)`, args: [entry.id, id] })
                         await tx.execute({ sql: `UPDATE ${table} SET revision=?,shared_with_all=? WHERE id=?`, args: [revision, Number(input.sharedWithAll), entry.id] })
@@ -296,6 +300,7 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         catch { throw new DesktopHttpError(400, 'Check the app’s authentication fields and try again.') }
                         if (entry.name !== connection.name || entry.url !== connection.url) throw new DesktopHttpError(409, 'This method uses a different server. Add a new Vault entry to review it.')
                         const sealed = await sealServerCredential(entry.id, entry.url, revision, connection.header ? { header: connection.header } : { bearer: connection.bearer })
+                        if (entry.browserSignIn) await retireVaultOAuthOrigin(tx, entry.id)
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_oauth WHERE item_id=?', args: [entry.id] })
                         await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET revision=?,credential_revision=?,sealed=?,credential_header=?,oauth_enabled=?,catalog_method=?,catalog_name=? WHERE id=?',
                             args: [revision, revision, sealed, connection.header?.name ?? null, Number(connection.browserSignIn === true), input.methodId, connection.displayName, entry.id] })
@@ -303,6 +308,7 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         if (!('kind' in entry) || entry.kind !== 'mcp') throw new DesktopHttpError(400, 'This entry is not an HTTPS MCP server.')
                         if (entry.catalog && input.operation === 'enable-server-oauth') throw new DesktopHttpError(400, 'Choose a supported authentication method for this app.')
                         if (input.operation === 'clear-server-oauth' && !entry.browserSignIn) throw new DesktopHttpError(409, 'Browser sign-in is off.')
+                        if (entry.browserSignIn) await retireVaultOAuthOrigin(tx, entry.id)
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_oauth WHERE item_id=?', args: [entry.id] })
                         await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET oauth_enabled=1,sealed=NULL,credential_header=NULL,revision=? WHERE id=?', args: [revision, entry.id] })
                     } else if (input.operation === 'replace-server-bearer' || input.operation === 'replace-server-header') {
@@ -320,6 +326,7 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_program_credentials WHERE item_id=?', args: [entry.id] })
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_programs WHERE id=?', args: [entry.id] })
                     } else if ('kind' in entry) {
+                        if (entry.browserSignIn) await retireVaultOAuthOrigin(tx, entry.id)
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_catalog_health WHERE item_id=?', args: [entry.id] })
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_attachments WHERE item_id=?', args: [entry.id] })
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_oauth WHERE item_id=?', args: [entry.id] })

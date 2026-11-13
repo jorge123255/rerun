@@ -17,6 +17,7 @@ import { initializeDesktopTemplates } from '../templates/schema'
 import { initializeDesktopRound45 } from '../round45-schema'
 import { initializeDesktopRound47 } from '../round47-schema'
 import { initializeDesktopRound55 } from '../round55-schema'
+import { initializeDesktopRound56 } from '../round56-schema'
 import { initializeDesktopRound52 } from '../round52-schema'
 import { ensureDesktopCoworkerShareSchema } from './schema'
 import { ingestDesktopCoworkerShareArchive, openDesktopCoworkerShareBinding, readCurrentDesktopCoworkerShareSource } from './binding'
@@ -57,6 +58,7 @@ beforeEach(async () => {
     await initializeDesktopRound47(fixture.db)
     await initializeDesktopRound52(fixture.db)
     await initializeDesktopRound55(fixture.db)
+    await initializeDesktopRound56(fixture.db)
     await initializeDesktopTemplates(fixture.db); await ensureDesktopCoworkerShareSchema(fixture.db)
     await fixture.db.execute({ sql: 'INSERT INTO desktop_agents VALUES(?,1,?,?,?,?,?,?)',args: [sourceId,'source','Ada','Notes',1,'2026-11-06T00:00:00Z','2026-11-06T00:00:00Z'] })
     await fixture.db.execute({ sql: 'INSERT INTO desktop_spaces VALUES(?,1,?,0,0,30,30)',args: [boxId,'Box'] })

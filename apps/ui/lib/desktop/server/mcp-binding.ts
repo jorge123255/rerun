@@ -1,4 +1,5 @@
 import { adoptDesktopCatalogApps } from './vault/catalog-adoption'
+import { vaultMcpOAuth } from './vault/mcp-oauth'
 import { assertDesktopWorkspaceAdmission, desktopWorkspaceFrozen } from './workspace-admission'
 import { assignedVaultMcpPrograms, vaultProgramMaterials } from './vault/mcp-programs'
 import { desktopVaultMcpRuntime } from './vault/mcp-runtime'
@@ -202,7 +203,12 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         })
         for (const row of rows) await services.skillAuthority.assertReady(owner, String(row.installation_id), signal)
     }
-    const vaultMcp = desktopVaultMcpRuntime(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId, access, entry.shutdown.signal, undefined, () => assertDesktopWorkspaceAdmission(runtime))
+    const vaultCrypto = createDesktopSecretCrypto(masterKey)
+    const assertVaultWorkspace = () => assertDesktopWorkspaceAdmission(runtime)
+    const vaultOAuth = vaultMcpOAuth(db, vaultCrypto, runtime.workspaceId, assertVaultWorkspace, undefined, masterKey)
+    entry.shutdown.signal.addEventListener('abort', () => vaultOAuth.shutdown(), { once: true })
+    const vaultMcp = desktopVaultMcpRuntime(db, vaultCrypto, runtime.workspaceId, access, entry.shutdown.signal,
+        undefined, assertVaultWorkspace, undefined, 'mcp', vaultOAuth)
     const vaultCatalog = desktopVaultMcpRuntime(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId,
         owner => access(owner, 'services'), entry.shutdown.signal, undefined, () => assertDesktopWorkspaceAdmission(runtime), undefined, 'catalog', vaultMcp.oauth, verifyAdoptedSkills)
     const servicesBridge = serviceEngineBridge(installedServices, services, async (identity, signal, action) => {

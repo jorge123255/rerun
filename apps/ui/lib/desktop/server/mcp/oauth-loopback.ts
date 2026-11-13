@@ -8,7 +8,9 @@ import type {McpOAuthAttempt,McpOAuthAttempts} from './oauth-attempt'
 export type OAuthStatus={state:'idle'|'waiting'|'connected'|'error'|'unsupported';message?:string}
 type AttemptStatus={revision:string;url:string;status:OAuthStatus;attemptId?:string}
 type Attempt=AttemptStatus & {slot:string;ended:boolean;controller:AbortController;server?:Server;timer:ReturnType<typeof setTimeout>;used:boolean;release:()=>void;reservation?:McpOAuthAttempt}
-type BrowserCredentialStore=Pick<RemoteMcpStore,'browserCredentialState'|'replaceOAuth'>
+type BrowserCredentialStore=Pick<RemoteMcpStore,'browserCredentialState'> & {
+ replaceOAuth(...args:[...Parameters<RemoteMcpStore['replaceOAuth']>, purpose?: 'refresh']):ReturnType<RemoteMcpStore['replaceOAuth']>
+}
 type BrowserApprovalCheck=(credential:NonNullable<Awaited<ReturnType<BrowserCredentialStore['browserCredentialState']>>>,signal:AbortSignal)=>Promise<BrowserOAuthWriteAdmission>
 const browserLifetime = 300_000
 export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'writeOAuth'|'lifecycle'>,access:McpAccess,json:OAuthJson=oauthJson,credentials?:BrowserCredentialStore,reservations?:McpOAuthAttempts) {
@@ -197,13 +199,13 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
      await authority(agent,name,revision,signal,ticket.assertCurrent)
      const marked={...token,refreshPending:randomBytes(24).toString('base64url')}
      let markedSeal:string|undefined
-     if(credentials && expected)markedSeal=await abortable(credentials.replaceOAuth(agent,name,expected,marked,signal),signal)
+     if(credentials && expected)markedSeal=await abortable(credentials.replaceOAuth(agent,name,expected,marked,signal,undefined,undefined,'refresh'),signal)
      else await abortable(store.writeOAuth(agent,name,revision,marked,signal),signal)
      await authority(agent,name,revision,signal,ticket.assertCurrent)
      const result=await json(token.tokenEndpoint,signal,new URLSearchParams({grant_type:'refresh_token',refresh_token:token.refreshToken,client_id:token.clientId,resource:token.resource}))
      const next=tokens(result,fresh,token.clientId,token)
      await authority(agent,name,revision,signal,ticket.assertCurrent)
-     if(credentials && expected && markedSeal)await abortable(credentials.replaceOAuth(agent,name,{...expected,sealed:markedSeal},next,signal),signal)
+     if(credentials && expected && markedSeal)await abortable(credentials.replaceOAuth(agent,name,{...expected,sealed:markedSeal},next,signal,undefined,undefined,'refresh'),signal)
      else await abortable(store.writeOAuth(agent,name,revision,next,signal),signal)
      await authority(agent,name,revision,signal,ticket.assertCurrent)
      return next.accessToken
