@@ -28,13 +28,14 @@ import { useDesktopLocale } from '../DesktopLocale'
 export function DesktopWorkspaceSwitcher({
     client,
     profileLabel = 'Rerun Local', profilePhoto,
-    className, menuItems, activeDisplay, disabled = false, onCloseAutoFocus, onRenameActive, workspaceSettingsInMenu = false,
+    className, menuItems, activeDisplay, disabled = false, onCloseAutoFocus, onRenameActive, workspaceSettingsInMenu = false, onMenuOpenChange,
 }: {
     client: DesktopWorkspaceClient
     profileLabel?: string
     profilePhoto?: string | null
     className?: string
     menuItems?: ReactNode
+    onMenuOpenChange?: (open: boolean) => void
     activeDisplay?: { name: string; iconCatalogId?: string | null; iconUploadId?: string | null }
     disabled?: boolean
     onRenameActive?: () => void
@@ -121,7 +122,7 @@ export function DesktopWorkspaceSwitcher({
     const name = activeDisplay?.name || active?.name || 'Workspace'
     return (
         <div className={cn('min-w-0', className)}>
-            <DropdownMenu modal={false}>
+            <DropdownMenu modal={false} onOpenChange={onMenuOpenChange}>
                 <DropdownMenuTrigger asChild>
                     <WorkspacePill
                         name={name}

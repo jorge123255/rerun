@@ -8,7 +8,8 @@ import { HelpCircleIcon } from '@/lib/icons'
 import { Button } from '@/components/ui/button'
 import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import type { DesktopAgentView } from './DesktopApp'
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { desktopVaultListing } from '@/lib/desktop/vault'
 import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata'
 import { createDesktopWorkspaceClient } from '@/lib/desktop/workspaces'
 import { DesktopWorkspaceSwitcher } from './workspaces/DesktopWorkspaceSwitcher'
@@ -47,11 +48,22 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     const openingControlCenter = useRef(false)
     const workspaceClient = useMemo(() => createDesktopWorkspaceClient(), [])
     useEffect(() => { void flushDesktopWorkspaceMetadata().catch(() => {}) }, [workspaceName, iconCatalogId, iconUploadId])
+    // Vault entries waiting on a sign-in: read on mount and each time the menu opens.
+    const vaultEnabled = !!onVault
+    const [vaultSignedOut, setVaultSignedOut] = useState(false)
+    const refreshVaultSignedOut = useCallback(() => {
+        if (!vaultEnabled) return
+        void fetch('/api/desktop/vault', { cache: 'no-store' })
+            .then(async response => response.ok ? desktopVaultListing.parse(await response.json()) : null)
+            .then(listing => { if (listing) setVaultSignedOut(listing.entries.some(entry => 'kind' in entry && entry.kind === 'mcp' && entry.signedOut)) })
+            .catch(() => {})
+    }, [vaultEnabled])
+    useEffect(refreshVaultSignedOut, [refreshVaultSignedOut])
     const providerStatus = providerLabel ? t('boardUI.providerConnected', { provider: providerLabel }) : t('boardUI.providerSetup')
     const providerSummary = providerLabel && modelLabel ? `${providerStatus} · ${modelLabel}` : providerStatus
     return <nav aria-label={t('workspace')} className="flex min-w-0 items-center gap-1.5">
         <DesktopWorkspaceSwitcher className="pointer-events-auto" client={workspaceClient} profileLabel={`${profileName} · Rerun Local`} profilePhoto={profilePhoto} activeDisplay={{ name: workspaceName, iconCatalogId, iconUploadId }} disabled={navigationDisabled}
-            workspaceSettingsInMenu
+            workspaceSettingsInMenu onMenuOpenChange={open => { if (open) refreshVaultSignedOut() }}
             onRenameActive={onWorkspaceSettings ? () => { openingControlCenter.current = true; onWorkspaceSettings() } : undefined}
             onCloseAutoFocus={event => {
                 if (openingControlCenter.current) event.preventDefault()
@@ -61,7 +73,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
                 {onSharedData && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onSharedData() }}><Database /> Shared database</DropdownMenuItem>}
                 {onSharedFiles && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onSharedFiles() }}><Folder /> {t('sharedFiles.title')}</DropdownMenuItem>}
                 {onTemplates && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onTemplates() }}><Package /> {t('templates')}</DropdownMenuItem>}
-                {onVault && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onVault() }}><KeyRound /> Vault</DropdownMenuItem>}
+                {onVault && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onVault() }}><KeyRound /> Vault{vaultSignedOut && <span role="img" className="ml-auto size-2 rounded-full bg-orange-500" aria-label="An app of the Vault is signed out" />}</DropdownMenuItem>}
                 {onImportCoworker && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onImportCoworker() }}><Import /> Import coworker</DropdownMenuItem>}
                 {onBrain && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onBrain() }}><Brain /> {t('brainDesktop.title')}</DropdownMenuItem>}
                 {onControlCenter && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onControlCenter() }}><Search /> {t('controlCenter.title')}</DropdownMenuItem>}

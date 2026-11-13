@@ -3,17 +3,21 @@ import { randomUUID } from 'node:crypto'
 import type { Client, Transaction } from '@libsql/client'
 import { desktopCoworkerVaultListing, desktopVaultHealthReceipt, desktopVaultListing, desktopVaultProgramCredentialLimit, type DesktopCoworkerVaultMutation, type DesktopCoworkerVaultEntry, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '../../vault'
 import { compileVaultCatalogApp, vaultCatalogAllowsInstances } from './catalog'
-import { retireVaultOAuthOrigin } from './catalog-oauth-origin'
+import { retireVaultOAuthOrigin, vaultOAuthContext } from './catalog-oauth-origin'
 import { newServiceInstanceId } from '@/lib/services/instances'
 import { DesktopHttpError } from '../auth'
 import { executableIdentity } from '../mcp-stdio/process'
 import { endpoint } from '../mcp/model'
 import { oauthHttps } from '../mcp/oauth-network'
+import type { OAuthTokenBundle } from '../mcp/store'
 import { withRosterWrite } from '../roster-writes'
 import { vaultProgramCredentialContext } from './mcp-programs'
 import type { DesktopSecretCrypto } from '../secret-requests/crypto'
 
-async function readVault(tx: Transaction, launchNonce: string) {
+// Whether a browser sign-in entry has no usable saved sign-in, as its own status reports it.
+type SignedOut = (id: string, url: string, generation: unknown, sealed: unknown) => Promise<boolean>
+
+async function readVault(tx: Transaction, launchNonce: string, signedOut: SignedOut) {
     const coworkers = (await tx.execute(`
         SELECT id,name FROM desktop_agents a WHERE workspace_id=1
         AND NOT EXISTS (SELECT 1 FROM desktop_deletions d WHERE d.agent_id=a.id AND d.completed=0)
@@ -31,14 +35,14 @@ async function readVault(tx: Transaction, launchNonce: string) {
         id: String(row.id), name: String(row.name), variable: String(row.variable), revision: String(row.revision),
         sharedWithAll: row.shared_with_all === 1, agentIds: attachments.get(String(row.id)) ?? [],
     }))
-    const servers = (await tx.execute({
+    const servers = await Promise.all((await tx.execute({
         sql: `SELECT s.id,s.name,s.url,s.revision,s.sealed IS NOT NULL AND s.credential_header IS NULL AS has_bearer,
-            s.credential_header,s.oauth_enabled,s.catalog_slug,s.catalog_method,s.catalog_name,s.catalog_instance,s.catalog_label,s.shared_with_all,h.receipt
+            s.credential_header,s.oauth_enabled,o.generation AS oauth_generation,o.sealed AS oauth_sealed,s.catalog_slug,s.catalog_method,s.catalog_name,s.catalog_instance,s.catalog_label,s.shared_with_all,h.receipt
             FROM desktop_vault_mcp_servers s LEFT JOIN desktop_vault_mcp_oauth o ON o.item_id=s.id
             LEFT JOIN desktop_vault_catalog_health h ON h.item_id=s.id AND h.revision=s.revision
                 AND h.oauth_generation IS o.generation AND h.launch_nonce=?
             ORDER BY s.name,s.id`, args: [launchNonce],
-    })).rows.map(row => ({
+    })).rows.map(async row => ({
         ...(typeof row.catalog_slug === 'string' && typeof row.catalog_method === 'string' && typeof row.catalog_name === 'string' && {
             catalog: {
                 slug: row.catalog_slug, methodId: row.catalog_method, name: row.catalog_name,
@@ -49,7 +53,8 @@ async function readVault(tx: Transaction, launchNonce: string) {
         }),
         kind: 'mcp', id: String(row.id), name: String(row.name), url: String(row.url), revision: String(row.revision),
         sharedWithAll: row.shared_with_all === 1, hasBearer: row.has_bearer === 1, ...(row.oauth_enabled === 1 && { browserSignIn: true }), ...(typeof row.credential_header === 'string' && { headerName: row.credential_header }), agentIds: attachments.get(String(row.id)) ?? [],
-    }))
+        ...(row.oauth_enabled === 1 && await signedOut(String(row.id), String(row.url), row.oauth_generation, row.oauth_sealed) && { signedOut: true }),
+    })))
     const credentialNames = new Map<string, string[]>()
     for (const row of (await tx.execute('SELECT item_id,name FROM desktop_vault_mcp_program_credentials ORDER BY name')).rows) {
         const id = String(row.item_id)
@@ -116,9 +121,22 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
         return input.bearer ? seal(id, url, revision, input.bearer) : null
     }
 
+    // A refresh that was refused, or interrupted before the provider acknowledged it, leaves its
+    // mark on the saved sign-in. The entry then waits on a new sign-in like one never signed in.
+    const signedOut: SignedOut = async (id, url, generation, sealed) => {
+        if (typeof generation !== 'string' || typeof sealed !== 'string') return true
+        try {
+            const bytes = await crypto.open(vaultOAuthContext(workspaceId, id, url, generation), sealed)
+            try {
+                const bundle = JSON.parse(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8')) as OAuthTokenBundle
+                return bundle.resource !== url || !!bundle.refreshPending || bundle.expiresAt <= Date.now() + 60_000 && !bundle.refreshToken
+            } finally { bytes.fill(0) }
+        } catch { return true }
+    }
+
     async function list() {
         const tx = await db.transaction('read')
-        try { return await readVault(tx, launchNonce) } finally { tx.close() }
+        try { return await readVault(tx, launchNonce, signedOut) } finally { tx.close() }
     }
 
     function mutate(change: DesktopVaultMutation | (DesktopCoworkerVaultMutation & { operation: 'coworker'; agentId: string }), assertCurrent: () => void) {
@@ -134,7 +152,7 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
             const tx = await db.transaction('write')
             try {
                 const revision = randomUUID()
-                const listing = await readVault(tx, launchNonce)
+                const listing = await readVault(tx, launchNonce, signedOut)
                 let input: DesktopVaultMutation
                 if (change.operation === 'coworker') {
                     requireCoworker(listing, change.agentId)
@@ -339,7 +357,7 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_secrets WHERE id=?', args: [entry.id] })
                     }
                 }
-                const result = await readVault(tx, launchNonce)
+                const result = await readVault(tx, launchNonce, signedOut)
                 assertCurrent()
                 await tx.commit()
                 return result

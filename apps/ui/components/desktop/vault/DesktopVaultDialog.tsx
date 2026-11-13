@@ -153,7 +153,7 @@ function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: Sug
                                 <h4 className="text-xs font-medium uppercase text-muted-foreground">{label}</h4>
                                 {items.map(item => <PanelRow key={item.id} leading={'kind' in item ? <Plug className="size-4" /> : <KeyRound className="size-4" />} title={entryTitle(item)}
                                     description={`${entrySubtitle(item)} · ${item.sharedWithAll ? 'Every coworker' : item.agentIds.length ? `${item.agentIds.length} assigned` : 'Unassigned'}`}
-                                    footer={'kind' in item && item.kind === 'mcp' && item.catalog ? vaultAccountHealthText(item.catalog.health) : undefined}
+                                    footer={'kind' in item && item.kind === 'mcp' && item.catalog ? vaultAccountHealthText(item.catalog.health, item.signedOut) : undefined}
                                     actions={<ChevronRight className="size-4" />} onClick={() => navigate(item.id)} />)}
                             </section>
                         })}
@@ -335,7 +335,7 @@ function VaultDetail({ entry, coworkers, busy, onSubmit, onUseInChat }: {
             {server && <p className="text-sm text-muted-foreground">{server.headerName ? `Header configured: ${server.headerName}` : server.hasBearer ? 'Bearer token configured' : server.browserSignIn ? 'Browser sign-in' : 'No authentication configured'}</p>}
         </header>
         {server?.catalog && <section className="space-y-2 border-t pt-4" aria-label="Account connection">
-            <p role="status" className="text-sm">{vaultAccountHealthText(server.catalog.health)}</p>
+            <p role="status" className="text-sm">{vaultAccountHealthText(server.catalog.health, server.signedOut)}</p>
             {server.catalog.health?.message && <p className="text-sm text-muted-foreground">{server.catalog.health.message}</p>}
             <Button size="sm" variant="outline" disabled={busy || replace || renaming}
                 onClick={() => void onSubmit({ operation: 'check-health', ...target })}>Check connection</Button>

@@ -798,7 +798,7 @@ test('the named-account migration keeps the original Vault app and OAuth identit
         await initializeDesktopRound54(f.db)
         await initializeDesktopRound54(f.db)
         expect((await f.vault.list()).entries).toEqual([{
-            id, name: 'linear', url: 'https://mcp.linear.app/mcp', revision, kind: 'mcp', browserSignIn: true, hasBearer: false,
+            id, name: 'linear', url: 'https://mcp.linear.app/mcp', revision, kind: 'mcp', browserSignIn: true, signedOut: true, hasBearer: false,
             catalog: { slug: 'linear', methodId: 'oauth', name: 'Linear' }, agentIds: [firstAgent], sharedWithAll: false,
         }])
     } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
@@ -864,4 +864,40 @@ test('explicit Vault checks report only the current account revision and launch,
             args: [browser.id, randomUUID(), 'opaque-new-generation'] })
         expect((await list()).entries.find(item => item.id === browser.id)).not.toHaveProperty('catalog.health')
     } finally { shutdown.abort(); f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('a browser sign-in entry reports signed out until it holds a usable saved sign-in', async () => {
+    const f = await fixture()
+    try {
+        const { sealVaultOAuth } = await import('./catalog-oauth-origin')
+        const [key] = (await f.vault.mutate({ operation: 'add-app', slug: 'agentmail', methodId: 'api-key', values: { AGENTMAIL_API_KEY: 'am_synthetic-key' } }, allow)).entries
+        expect(key).not.toHaveProperty('signedOut')
+        const added = (await f.vault.mutate({ operation: 'add-app', slug: 'linear', methodId: 'oauth', values: {} }, allow)).entries
+        const linear = added.find(item => item.name === 'linear')!
+        expect(linear).toMatchObject({ browserSignIn: true, signedOut: true })
+        const read = async () => (await f.vault.list()).entries.find(item => item.id === linear.id)!
+        const bundle = { accessToken: 'synthetic-access', refreshToken: 'synthetic-refresh', expiresAt: Date.now() + 3_600_000,
+            resource: 'url' in linear ? linear.url : '', issuer: 'https://issuer.example/', tokenEndpoint: 'https://issuer.example/token', clientId: 'client' }
+        const save = async (next: typeof bundle & { refreshPending?: string }) => {
+            const { generation, sealed } = await sealVaultOAuth(crypto, 7, linear.id, next)
+            await f.db.execute({ sql: `INSERT INTO desktop_vault_mcp_oauth(item_id,generation,sealed) VALUES(?,?,?)
+                ON CONFLICT(item_id) DO UPDATE SET generation=excluded.generation,sealed=excluded.sealed`, args: [linear.id, generation, sealed] })
+        }
+        await save(bundle)
+        expect(await read()).not.toHaveProperty('signedOut')
+        expect(JSON.stringify(await f.vault.list())).not.toContain('synthetic-access')
+        // An access token past its time is refreshed by the next run, so the entry still holds its sign-in.
+        await save({ ...bundle, expiresAt: Date.now() - 1000 })
+        expect(await read()).not.toHaveProperty('signedOut')
+        // A refresh the provider never acknowledged, or refused, leaves its mark.
+        await save({ ...bundle, refreshPending: 'unacknowledged' })
+        expect(await read()).toHaveProperty('signedOut', true)
+        await save({ ...bundle, expiresAt: Date.now() - 1000, refreshToken: undefined as never })
+        expect(await read()).toHaveProperty('signedOut', true)
+        await f.db.execute({ sql: 'UPDATE desktop_vault_mcp_oauth SET sealed=? WHERE item_id=?', args: ['unreadable', linear.id] })
+        expect(await read()).toHaveProperty('signedOut', true)
+        await f.db.execute({ sql: 'DELETE FROM desktop_vault_mcp_oauth WHERE item_id=?', args: [linear.id] })
+        expect(await read()).toHaveProperty('signedOut', true)
+        expect((await f.vault.forCoworker(firstAgent)).available.find(item => item.id === linear.id)).toHaveProperty('signedOut', true)
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
 })
