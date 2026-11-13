@@ -6,7 +6,10 @@ import { DesktopCoworkerOverview } from './DesktopCoworkerOverview'
 
 vi.mock('@/components/agent/sheet/AgentCard', () => ({ CardDestinationGhost: () => null }))
 vi.mock('@/components/agent/sheet/AgentViewExpander', () => ({
-    AgentViewExpander: ({ children }: { children: ReactNode }) => children,
+    AgentViewExpander: ({ children, onGrown }: { children: ReactNode; onGrown?: () => void }) => <>
+        {children}
+        <button type="button" onClick={onGrown}>Finish expansion</button>
+    </>,
     measureCardOrigin: (tab: string) => ({ tab, shape: 'row' }),
 }))
 vi.mock('motion/react', async importOriginal => ({
@@ -29,9 +32,15 @@ it.each(['Back', 'Escape'])('restores the originating Overview control after %s'
             onRenamed={vi.fn()}
         />))
         const files = host.querySelector<HTMLElement>('[data-overview-focus="files"]')!
+        const card = files.closest('[data-side-panel-body]')!.firstElementChild!
         await act(async () => files.focus())
         expect(document.activeElement).toBe(files)
         await act(async () => files.querySelector('button')!.click())
+        expect(card.classList.contains('invisible')).toBe(false)
+        expect(card.hasAttribute('inert')).toBe(true)
+        const finish = [...host.querySelectorAll('button')].find(button => button.textContent === 'Finish expansion')!
+        await act(async () => finish.click())
+        expect(card.classList.contains('invisible')).toBe(true)
         const back = [...host.querySelectorAll('button')].find(button => button.textContent === 'QA Coworker' && !button.closest('[aria-hidden="true"]'))!
         expect(back).toBeDefined()
         back.focus()
@@ -42,6 +51,8 @@ it.each(['Back', 'Escape'])('restores the originating Overview control after %s'
         })
         expect(back.isConnected).toBe(false)
         expect(document.activeElement).toBe(files)
+        expect(card.classList.contains('invisible')).toBe(false)
+        expect(card.hasAttribute('inert')).toBe(false)
     } finally {
         await act(async () => root.unmount())
         host.remove()

@@ -246,6 +246,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     const setup = useDesktopSetup(agent.id)
     const setupBlocked = !setup.view || !!setup.error || setup.view.pending && (!setup.view.sessionId || setup.view.sessionId !== sessionId)
     const [cardOpen, setCardOpen] = useState(false)
+    const [overviewCovered, setOverviewCovered] = useState(false)
     const [serviceStreaming, setServiceStreaming] = useState(false)
     const [voiceActivity, setVoiceActivity] = useState({ busy: false, dirty: false })
     const [voiceReviewTarget, setVoiceReviewTarget] = useState<HTMLDivElement | null>(null)
@@ -1478,7 +1479,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                 overviewCloseControl.requestClose(() => { dismissCard(); setPanelFocus('card') })
             }
         }}>
-            <header className="relative z-40 grid shrink-0 grid-cols-[minmax(2.5rem,1fr)_minmax(0,max-content)_minmax(2.5rem,1fr)] items-center gap-1 px-3 pt-3">
+            <header inert={overviewCovered} className={cn('relative z-40 grid shrink-0 grid-cols-[minmax(2.5rem,1fr)_minmax(0,max-content)_minmax(2.5rem,1fr)] items-center gap-1 px-3 pt-3', overviewCovered && 'invisible [&_button]:backdrop-filter-none')}>
                 <div className="flex min-w-0 items-center justify-start">
                     {renderHistory ? renderHistory(busy, { needsRequest, active: active && !cardOpen && !detailPanel, onOpenChange: onChatsOpenChange }) : sessions.length > 0 && (
                         <select
@@ -1504,12 +1505,12 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                 </h1>
                 {onClosePanel && <Button type="button" aria-label={t('closePanel')} variant="ghost" size="icon-sm" className="justify-self-end" onClick={() => overviewCloseControl.requestClose(onClosePanel)}><XIcon className="size-4" /></Button>}
             </header>
-            {cardOpen && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={() => overviewCloseControl.requestClose(dismissCard)} />}
+            {cardOpen && !overviewCovered && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={() => overviewCloseControl.requestClose(dismissCard)} />}
             <section aria-label="Coworker details" hidden={!cardOpen} className={!cardOpen ? "hidden" : overview ? "absolute inset-x-3 top-14 bottom-3 z-40 flex min-h-0 flex-col overflow-auto rounded-2xl border border-border bg-background shadow-xl" : "absolute inset-x-3 top-14 z-40 rounded-2xl border border-border bg-background p-4 shadow-xl"}>
                 {overview && cardOpen && active && <DesktopConversationOverview
                     authority={overview} agent={agent} active={active && !draft.quitting}
                     working={generating} settingsDisabledReason={generating || !!sessionId && engineRunning.id !== sessionId ? 'Wait for this coworker’s current run to finish.' : null}
-                    closeControl={overviewCloseControl} onClose={dismissCard} onOpenSession={onSelectSession}
+                    closeControl={overviewCloseControl} onClose={dismissCard} onOpenSession={onSelectSession} onCoveredChange={setOverviewCovered}
                 />}
                 <div hidden={!!overview}>
                 <p className="text-sm text-muted-foreground">{agent.description || 'Local coworker'}</p>
@@ -1535,6 +1536,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                 </div>
                 </div>
             </section>
+            <div inert={overviewCovered} className={cn('contents', overviewCovered && 'invisible')}>
             {tabStrip ?? <div className="flex shrink-0 items-center gap-1 px-3 pt-2 pb-1">
                 <div aria-label="Current conversation" className="flex h-7 min-w-0 items-center gap-1 rounded-md bg-muted pl-2.5 pr-1 text-xs text-foreground">
                     <span title={currentTitle} className="max-w-40 truncate">{currentTitle}</span>
@@ -1690,6 +1692,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                 </ConversationContent>
                 {transcriptActive && <ConversationScrollButton pending={pendingCue} aria-label={t('scrollToLatestMessage')} />}
             </Conversation>
+            </div>
 
             <DesktopServicesDialog agent={agent} hideTrigger focusSlug={serviceApps?.slug} focusRequestKey={serviceApps?.token} dialogControl={{open:detailPanel==='services'||!!serviceApps,onOpenChange:open=>{
                 if(!open){serviceApps?.settle();if(detailPanel==='services')setDetailPanel(null)}else if(!serviceApps)setDetailPanel('services')
@@ -1702,7 +1705,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                     await decideTakeover(takeover.attempt ?? { action: 'done', takeoverId: takeover.id, requestId: crypto.randomUUID() })
                 }} />
             <MessageFeedbackDialog open={feedback.dialogOpen} rating={feedback.dialogRating} notice="Feedback is stored on this Mac." onOpenChange={feedback.onDialogOpenChange} onSubmit={feedback.submitDetails} />
-            <div className={cn('shrink-0 border-t p-2.5', pendingRequest && 'border-t-0 py-0')}>
+            <div inert={overviewCovered} className={cn('shrink-0 border-t p-2.5', pendingRequest && 'border-t-0 py-0', overviewCovered && 'invisible')}>
                 {proposalsActive && <DesktopSkillProposalDock proposals={pinnedSkillProposals} pendingId={skillProposals.pendingId} onDecide={skillProposals.decide} onOpenSkill={openProposalSkill} />}
                 {proposalsActive && skillProposals.unavailable && <p role="status" className="mb-2 text-xs text-muted-foreground">Could not check all proposed changes. <Button type="button" variant="link" size="sm" onClick={() => void skillProposals.refresh()}>Retry</Button></p>}
                 {draft.quitting ? <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">Saving drafts before quitting…</p>

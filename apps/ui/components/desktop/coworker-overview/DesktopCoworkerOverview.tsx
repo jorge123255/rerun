@@ -8,7 +8,7 @@ import { closedDesktopOverview, openDesktopOverviewDestination, selectDesktopOve
 import { desktopOverviewServicesDot, shownDesktopOverviewTab, type DesktopOverviewDestination, type DesktopOverviewTab, type DesktopOverviewVisibility } from '@/lib/desktop/coworker-overview/sections'
 import { useDesktopPanelCloseGuard, type DesktopPanelCloseControl, type RegisterDesktopPanelCloseGuard } from '@/lib/desktop/use-dialog-control'
 import { AnimatePresence } from 'motion/react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react'
 import { DesktopCoworkerOverviewCard } from './DesktopCoworkerOverviewCard'
 import type { DesktopOverviewComputer } from './DesktopCoworkerOverviewComputer'
 import { DesktopCoworkerOverviewScreen } from './DesktopCoworkerOverviewScreen'
@@ -17,7 +17,7 @@ const SHAPE: Record<DesktopOverviewDestination, CardDestinationShape> = {
     services: 'tile', skills: 'tile', memories: 'tile', scheduled: 'tile', files: 'row', data: 'row', monitoring: 'button', settings: 'button',
 }
 
-export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor = false, publishedAccess = false, canManage = null, phase = 'ready', error, servicesNeedConfig = null, needsMachineReason = null, settingsDisabledReason = null, computerEnabled = false, computer = { status: 'closed' }, working = false, mood = 'idle', loadingSlot, onClose, onShare, onDelete, onOpenComputer, onRenamed, closeControl, renderTab }: {
+export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor = false, publishedAccess = false, canManage = null, phase = 'ready', error, servicesNeedConfig = null, needsMachineReason = null, settingsDisabledReason = null, computerEnabled = false, computer = { status: 'closed' }, working = false, mood = 'idle', loadingSlot, onClose, onShare, onDelete, onOpenComputer, onRenamed, onCoveredChange, closeControl, renderTab }: {
     identity: DesktopOverviewIdentity
     agent: { id: string; name: string; enabled?: boolean; spaceId?: string }
     boxes: readonly { id: string; name: string }[] | null
@@ -39,6 +39,7 @@ export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor 
     onDelete?: (identity: DesktopOverviewIdentity, confirmationName: string) => void | Promise<void>
     onOpenComputer?: () => void
     onRenamed: (identity: DesktopOverviewIdentity, name: string) => void
+    onCoveredChange?: (covered: boolean) => void
     closeControl?: DesktopPanelCloseControl
     renderTab?: (tab: DesktopOverviewTab, registerCloseGuard: RegisterDesktopPanelCloseGuard) => ReactNode
 }) {
@@ -48,11 +49,16 @@ export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor 
     const { register, requestClose } = closeControl ?? localCloseControl
     const [navigation, setNavigation] = useState(closedDesktopOverview)
     const [origin, setOrigin] = useState<CardOrigin | null>(null)
+    const [grownFrom, setGrownFrom] = useState<CardOrigin | null>(null)
     const [focus, setFocus] = useState<DesktopOverviewControl>('services')
-    useEffect(() => { setNavigation(closedDesktopOverview); setOrigin(null); setFocus('services') }, [identityKey])
+    useEffect(() => { setNavigation(closedDesktopOverview); setOrigin(null); setGrownFrom(null); setFocus('services') }, [identityKey])
     const box = resolveDesktopOverviewBox(agent.spaceId, boxes)
     const enabled = agent.enabled !== false
     const tab = navigation.tab ? shownDesktopOverviewTab(navigation.tab, visibility) : null
+    const validOwner = validDesktopOverviewIdentity(identity) && identity.agentId === agent.id
+    const covered = validOwner && phase === 'ready' && box.status !== 'unavailable' && !!tab && (!origin || grownFrom === origin)
+    useLayoutEffect(() => { onCoveredChange?.(covered) }, [covered, onCoveredChange])
+    useLayoutEffect(() => () => { onCoveredChange?.(false) }, [onCoveredChange])
     const open = (destination: DesktopOverviewDestination, from: HTMLElement) => {
         if (destination !== 'settings' && !enabled) return
         if (destination === 'settings' && settingsDisabledReason) return
@@ -61,7 +67,7 @@ export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor 
         setOrigin(measured)
         setNavigation(openDesktopOverviewDestination(destination, visibility))
     }
-    if (!validDesktopOverviewIdentity(identity) || identity.agentId !== agent.id) {
+    if (!validOwner) {
         return <p role="alert" className="p-4 text-sm text-destructive">This coworker’s owner is unavailable.</p>
     }
     if (phase === 'loading') return <div role="status" className="flex min-h-40 items-center justify-center p-4">{loadingSlot ?? <p className="text-sm text-muted-foreground">Loading this coworker…</p>}</div>
@@ -71,6 +77,7 @@ export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor 
         setFocus(origin?.tab ?? focus)
         setNavigation(closedDesktopOverview)
         setOrigin(null)
+        setGrownFrom(null)
     }
     const screen = tab && (
             <DesktopCoworkerOverviewScreen agentId={agent.id} name={agent.name} mood={enabled ? mood : 'asleep'} tab={tab} visibility={visibility} servicesNeedConfig={desktopOverviewServicesDot(servicesNeedConfig)} onTab={next => {
@@ -87,11 +94,11 @@ export function DesktopCoworkerOverview({ identity, agent, boxes, installAuthor 
             event.preventDefault()
             requestClose(tab ? returnToCard : onClose)
         }}>
-            <div className={tab ? 'invisible absolute inset-0 overflow-hidden' : 'min-h-0 flex-1'} aria-hidden={tab ? true : undefined}>
+            <div className={tab ? `absolute inset-0 overflow-hidden${covered ? ' invisible' : ''}` : 'min-h-0 flex-1'} inert={!!tab} aria-hidden={tab ? true : undefined}>
                 <DesktopCoworkerOverviewCard identity={identity} name={agent.name} boxName={box.name} enabled={enabled} canManage={canManage} mood={enabled ? mood : 'asleep'} servicesNeedConfig={desktopOverviewServicesDot(servicesNeedConfig)} needsMachineReason={needsMachineReason} settingsDisabledReason={settingsDisabledReason} computerEnabled={computerEnabled} computer={computer} working={working} loadingSlot={loadingSlot} visible={!tab} focus={focus} onFocus={setFocus} onOpen={open} onClose={onClose} onShare={onShare} onDelete={onDelete} onOpenComputer={onOpenComputer} onRenamed={onRenamed} />
             </div>
             <AnimatePresence>
-                {screen && origin && <AgentViewExpander key={origin.tab} origin={origin} ghost={<CardDestinationGhost tab={origin.tab} shape={origin.shape} />}>{screen}</AgentViewExpander>}
+                {screen && origin && <AgentViewExpander key={origin.tab} origin={origin} onGrown={() => setGrownFrom(origin)} ghost={<CardDestinationGhost tab={origin.tab} shape={origin.shape} />}>{screen}</AgentViewExpander>}
             </AnimatePresence>
             {screen && !origin && <div className="absolute inset-0 flex flex-col">{screen}</div>}
         </div>

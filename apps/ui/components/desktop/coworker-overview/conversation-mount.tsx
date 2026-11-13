@@ -17,6 +17,7 @@ type Props = {
     settingsDisabledReason: string | null
     closeControl?: DesktopCoworkerOverviewRootMountProps['closeControl']
     onClose(): void
+    onCoveredChange?(covered: boolean): void
     onOpenSession: NonNullable<DesktopCoworkerOverviewRootMountProps['onOpenSession']>
 }
 
@@ -39,6 +40,7 @@ export function DesktopConversationOverview(props: Props) {
         settingsDisabledReason={props.settingsDisabledReason}
         publishedAccess={false}
         closeControl={props.closeControl}
+        onCoveredChange={props.onCoveredChange}
         onClose={() => { if (current()) latest.current.onClose() }}
         onRenamed={(source, name) => { if (current() && sameDesktopOverviewIdentity(source, identity)) latest.current.authority.onRenamed(source, name) }}
         onOpenSession={(id, title) => { if (current()) latest.current.onOpenSession(id, title) }}

@@ -759,6 +759,7 @@ test('opens saved work steps from the board in order without hiding the reply or
 
 test('a restored coworker run shows current activity only in its own tab and settles after Stop', async () => {
     const session = reviewer.id + '-first'
+    const runId = 'restored-run'
     let running = true
     let finishStop!: () => void
     const stopResponse = new Promise<void>(resolve => { finishStop = resolve })
@@ -770,7 +771,7 @@ test('a restored coworker run shows current activity only in its own tab and set
             running = false
             return Response.json({ status: 'cancelled' })
         }
-        return Response.json({ running: id === session && running })
+        return Response.json({ running: id === session && running, runId: id === session && running ? runId : null })
     }, true, undefined, id => [{
         id: 'engine-' + id,
         role: 'assistant',

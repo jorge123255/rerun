@@ -45,6 +45,7 @@ export type DesktopCoworkerOverviewRootMountProps = {
     onRename?: (identity: DesktopOverviewIdentity, name: string) => Promise<void>
     closeControl?: DesktopPanelCloseControl
     onClose: () => void
+    onCoveredChange?: (covered: boolean) => void
     onShare?: () => void
     onDelete?: (identity: DesktopOverviewIdentity, confirmationName: string) => void | Promise<void>
     onOpenComputer?: () => void
@@ -72,6 +73,7 @@ export function DesktopCoworkerOverviewRootMount(props: DesktopCoworkerOverviewR
             mood={props.mood}
             loadingSlot={props.loadingSlot}
             onClose={props.onClose}
+            onCoveredChange={props.onCoveredChange}
             onShare={props.onShare}
             onDelete={props.onDelete}
             onOpenComputer={props.onOpenComputer}
