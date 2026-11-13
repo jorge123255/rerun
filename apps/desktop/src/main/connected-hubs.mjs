@@ -21,6 +21,7 @@ import { attachDesktopContextMenu, externalDesktopLink } from './window-context-
 
 const pickerPage = new URL('./connected-hub.html', import.meta.url)
 const offlinePage = new URL('./connected-hub-offline.html', import.meta.url)
+const downloadPage = 'https://rerun.build/download'
 const preload = fileURLToPath(new URL('./connected-hub-preload.cjs', import.meta.url))
 const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads', 'notifications', 'badge', 'settings', 'oauth', 'locale']
 
@@ -88,7 +89,11 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         && event.senderFrame && event.senderFrame === picker.webContents.mainFrame && event.senderFrame.url === pickerPage.href
     function offlineSender(event) {
         const entry = windows.get(event.sender)
-        return available() && entry?.recovery.onOfflinePage() && event.senderFrame === entry.contents.mainFrame ? entry : null
+        return available() && event.senderFrame && entry?.recovery.onOfflinePage() && event.senderFrame === entry.contents.mainFrame ? entry : null
+    }
+    function incompatibleSender(event) {
+        const entry = offlineSender(event)
+        return entry?.recovery.state()?.reason === 'too-old' ? entry : null
     }
     function hubSender(event) {
         const entry = windows.get(event.sender)
@@ -434,7 +439,8 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         const offline = offlineSender(event)
         if (offline) {
             offline.locale = language(offline.origin)
-            event.returnValue = { audience: 'hub-offline', copy: hubOfflineCopy(offline.locale) }
+            event.returnValue = { audience: 'hub-offline', copy: hubOfflineCopy(offline.locale),
+                appStore: process.mas === true, updatesAvailable: updates?.enabled() === true }
             return
         }
         if (quickAsk.sender(event)) {
@@ -465,6 +471,25 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     ipcMain.handle('hub:offline-retry', async event => {
         const entry = offlineSender(event)
         return entry ? hubRecoveryView(entry.locale, await entry.recovery.retry()) : null
+    })
+    ipcMain.handle('hub:offline-download', event => {
+        const entry = incompatibleSender(event)
+        if (process.mas || !entry?.window.isVisible() || !entry.window.isFocused()) return false
+        return shell.openExternal(downloadPage).then(() => true, () => false)
+    })
+    ipcMain.handle('hub:offline-update-state', event =>
+        updates?.enabled() && incompatibleSender(event) ? updateState(updates.state()) : null)
+    ipcMain.handle('hub:offline-update-check', async event => {
+        if (updates?.enabled() && incompatibleSender(event)) await updates.checkForUpdates(false)
+    })
+    ipcMain.handle('hub:offline-update-install', event => {
+        const entry = incompatibleSender(event)
+        if (!updates?.enabled() || !entry?.window.isVisible() || !entry.window.isFocused()) return false
+        const frame = event.senderFrame
+        const scope = entry.scope
+        return updates.offerInstall({ parent: entry.window, isCurrent: () =>
+            entry.scope === scope && entry.contents.mainFrame === frame && incompatibleSender(event) === entry
+            && entry.window.isVisible() && canRestartForUpdate() })
     })
     for (const [channel, action] of [
         ['hub:window-state', entry => stateOf(entry.window)],
@@ -527,8 +552,12 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             if (!updates?.enabled()) return
             const value = updateState(state)
             for (const entry of windows.values()) {
-                if (!entry.native || !currentNative(entry, entry.native)) continue
-                try { entry.native.frame.send('hub:update-state', value) } catch { /* A renderer can close before delivery. */ }
+                try {
+                    const frame = entry.contents.mainFrame
+                    const offline = frame && incompatibleSender({ sender: entry.contents, senderFrame: frame })
+                    if (offline) frame.send('hub:offline-update-changed', value)
+                    else if (entry.native && currentNative(entry, entry.native)) entry.native.frame.send('hub:update-state', value)
+                } catch { /* A renderer can close before delivery. */ }
             }
         },
         openPicker,

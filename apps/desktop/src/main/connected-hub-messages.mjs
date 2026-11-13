@@ -34,6 +34,12 @@ export function hubOfflineCopy(locale) {
         title: t('offline.title'),
         retry: t('offline.retry'),
         retrying: t('offline.retrying'),
+        download: t('offline.download'),
+        appStore: t('offline.appStore'),
+        restart: t('updates.restartNow'),
+        checking: t('updates.checking'),
+        downloading: t('updates.downloading'),
+        failed: t('updates.failed'),
     }
 }
 

@@ -75,7 +75,9 @@
         "unavailable": "{host} antwortet gerade nicht. Die App versucht es von selbst erneut.",
         "retry": "Erneut versuchen",
         "retrying": "Erneuter Versuch…",
-        "incompatibleTitle": "Aktualisiere Rerun, um weiterzumachen"
+        "incompatibleTitle": "Aktualisiere Rerun, um weiterzumachen",
+        "download": "Rerun herunterladen",
+        "appStore": "Suche im App Store nach Updates."
     },
     "unload": {
         "message": "Diese Seite verlassen?",

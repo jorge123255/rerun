@@ -20,7 +20,14 @@ if (bootstrap?.audience === 'picker') {
         copy: bootstrap.copy,
         state: () => ipcRenderer.invoke('hub:offline-state'),
         retry: () => ipcRenderer.invoke('hub:offline-retry'),
+        ...(bootstrap.appStore ? { appStore: true } : { download: () => ipcRenderer.invoke('hub:offline-download') }),
         onState: callback => subscribe('hub:offline-state-changed', callback),
+        ...(bootstrap.updatesAvailable ? { update: {
+            getState: () => ipcRenderer.invoke('hub:offline-update-state'),
+            check: () => ipcRenderer.invoke('hub:offline-update-check'),
+            install: () => ipcRenderer.invoke('hub:offline-update-install'),
+            onState: callback => subscribe('hub:offline-update-changed', callback),
+        } } : {}),
     })
 } else if (bootstrap?.audience === 'hub-quick-ask') {
     contextBridge.exposeInMainWorld('rerunShell', {

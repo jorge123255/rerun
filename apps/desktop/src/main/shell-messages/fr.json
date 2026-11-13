@@ -75,7 +75,9 @@
         "unavailable": "{host} ne répond pas pour le moment. L’app réessaie toute seule.",
         "retry": "Réessayer",
         "retrying": "Nouvelle tentative…",
-        "incompatibleTitle": "Mettez Rerun à jour pour continuer"
+        "incompatibleTitle": "Mettez Rerun à jour pour continuer",
+        "download": "Télécharger Rerun",
+        "appStore": "Recherchez les mises à jour dans l’App Store."
     },
     "unload": {
         "message": "Quitter cette page ?",
