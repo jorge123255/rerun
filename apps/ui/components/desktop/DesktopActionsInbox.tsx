@@ -17,7 +17,7 @@ import { AlertCircleIcon, BellIcon, CheckCheckIcon, InboxIcon, Loader2Icon, Refr
 import { cn } from '@/lib/utils'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import type { DesktopAgentView } from './DesktopApp'
-import { useDesktopCompletions } from './useDesktopCompletions'
+import { useDesktopCompletions, type DesktopCompletionsController } from './useDesktopCompletions'
 import { useDesktopNotificationPrefs } from '@/lib/desktop/use-notification-prefs'
 import { DesktopInboxRowMenu } from './DesktopInboxRowMenu'
 import { useDesktopPendingInbox, type DesktopPendingInboxRead } from './useDesktopPendingInbox'
@@ -221,22 +221,29 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
  * decline; marking pending read is explicit and never answers; a Done row is additionally
  * acknowledged with the exact completion IDs it displayed.
  */
-export function DesktopActionsInbox({ agents, onOpenConversation, visibleSessionId, workspaceId, launchNonce, hidden = false, onOpenNotificationSettings, open: openProp, onOpenChange, className }: DesktopActionsInboxProps) {
-    const { language, t } = useDesktopLocale()
+export function DesktopActionsInbox(props: DesktopActionsInboxProps & { completions?: DesktopCompletionsController }) {
+    return props.completions
+        ? <DesktopActionsInboxView {...props} completions={props.completions} />
+        : <StandaloneActionsInbox {...props} />
+}
+
+function StandaloneActionsInbox(props: DesktopActionsInboxProps) {
     const [internalOpen, setInternalOpen] = useState(false)
-    const open = !hidden && (openProp ?? internalOpen)
-    if (hidden && internalOpen) setInternalOpen(false)
+    if (props.hidden && internalOpen) setInternalOpen(false)
+    const open = !props.hidden && (props.open ?? internalOpen)
+    const whileHidden = !!(props.workspaceId && props.launchNonce && desktopInboxBadge())
+    const completions = useDesktopCompletions(open, props.agents?.map(agent => agent.id), props.visibleSessionId, true, whileHidden)
+    return <DesktopActionsInboxView {...props} open={open} onOpenChange={props.onOpenChange ?? setInternalOpen} completions={completions} />
+}
+
+function DesktopActionsInboxView({ agents, onOpenConversation, visibleSessionId, workspaceId, launchNonce, hidden = false, onOpenNotificationSettings, open: openProp, onOpenChange, className, completions }: DesktopActionsInboxProps & { completions: DesktopCompletionsController }) {
+    const { language, t } = useDesktopLocale()
+    const open = !hidden && !!openProp
     const setInboxBadge = workspaceId && launchNonce ? desktopInboxBadge() : undefined
     const whileHidden = typeof setInboxBadge === 'function'
     const [rowMenuOpen, setRowMenuOpen] = useState(false)
     const { ruleOf, ready: prefsReady, loading: prefsLoading, changeCoworkerRule } = useDesktopNotificationPrefs(open && !!workspaceId && !!onOpenNotificationSettings)
-    const change = useCallback(
-        (next: boolean) => {
-            if (onOpenChange) onOpenChange(next)
-            else setInternalOpen(next)
-        },
-        [onOpenChange]
-    )
+    const change = useCallback((next: boolean) => { onOpenChange?.(next) }, [onOpenChange])
     // Original WorkspaceInbox keeps its collapsed pill current. Observe while visible even when
     // folded; each hook still requires an open panel for an explicit mark-read action.
     const rowMenu = (item: { agentId: string; agentName: string }) => workspaceId && onOpenNotificationSettings
@@ -253,9 +260,6 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
         return agent ? [{ ...item, agentName: agent.name, agentEnabled: agent.enabled !== false }] : []
     }), [received, roster])
     const unavailableAgentIds = unavailable.filter(id => !roster || roster.has(id))
-    // Finished runs: a separate bounded read that marks itself read through the explicit mutation.
-    // Root's visible conversation applies the original read-on-visible semantics.
-    const completions = useDesktopCompletions(open, agents?.map(agent => agent.id), visibleSessionId, true, whileHidden)
     const doneItems = useMemo(() => completions.items.flatMap(item => {
         if (!roster) return [item]
         const agent = roster.get(item.agentId)

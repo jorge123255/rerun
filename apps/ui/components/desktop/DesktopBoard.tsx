@@ -1,7 +1,7 @@
 import { useDesktopLocale } from './DesktopLocale'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { CHROME_SIZE, ChromeBar, ChromeButton, ChromeDivider } from '@rerun/ui/chrome'
-import type { ContainerCellRect, GridPosition, IsoCamera, ResizePatch, TileCountdown, TileStyle } from '@rerun/ui/iso-grid'
+import type { ContainerCellRect, GridPosition, IsoCamera, ResizePatch, TileCountdown, TileResults, TileStyle } from '@rerun/ui/iso-grid'
 import { IsoGrid, SPACE_COLOR, agentTileStyle, disabledAgentTileStyle, DISABLED_AGENT_LABEL, type Container, type Tile } from '@rerun/ui/iso-grid'
 import { Plus } from 'lucide-react'
 import type { DesktopAgentView } from './DesktopApp'
@@ -13,6 +13,9 @@ import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { DesktopBoardMenu } from './DesktopBoardMenu'
 import { DesktopFindChat } from './DesktopFindChat'
 import { DesktopActionsInbox } from './DesktopActionsInbox'
+import { useDesktopCompletions } from './useDesktopCompletions'
+import { desktopInboxBadge } from '@/lib/desktop/notification-bridge'
+import type { DesktopCompletionItem } from '@/lib/desktop/completed-actions'
 import { Shimmer } from '@/components/ai-elements/shimmer'
 import { duplicateAgentName } from '@/lib/copy-name'
 import { canPlaceDesktopCopy, desktopBoardLayout } from '@/lib/desktop/board-layout'
@@ -89,8 +92,6 @@ export function DesktopBoard({ activitySnapshot, routineCountdowns, agents, work
 }) {
     const localActivity = useBoardActivity(useMemo(() => agents.map(agent => agent.id), [agents]), !activitySnapshot)
     const { statuses: activity, attention } = activitySnapshot ?? localActivity
-    const openState = useRef({ agents, activity, attention, onOpen, onOpenConversation })
-    openState.current = { agents, activity, attention, onOpen, onOpenConversation }
     const attentionCounts = useMemo(() => {
         const counts = new Map<string, number>()
         for (const item of attention.items) counts.set(item.agentId, (counts.get(item.agentId) ?? 0) + 1)
@@ -158,20 +159,50 @@ export function DesktopBoard({ activitySnapshot, routineCountdowns, agents, work
     const gestureGeneration = gestureIdentity.current.generation
     const placing = !!placement
     useEffect(() => { onPlacementChange?.(placing) }, [placing, onPlacementChange])
+    const [inboxOpen, setInboxOpen] = useState(false)
+    if (placing && inboxOpen) setInboxOpen(false)
+    const completions = useDesktopCompletions(inboxOpen && !placing, agents.map(agent => agent.id),
+        placing ? null : visibleSessionId, !!onOpenConversation, !!(workspaceId && launchNonce && desktopInboxBadge()))
+    const resultsByAgent = useMemo(() => {
+        const groups = new Map<string, { latest: DesktopCompletionItem; results: TileResults }>()
+        if (completions.status !== 'ready') return groups
+        const unavailable = new Set(completions.unavailableAgentIds)
+        for (const item of completions.items) {
+            const at = Date.parse(item.completedAt)
+            if (!item.agentEnabled || unavailable.has(item.agentId) || !Number.isFinite(at)) continue
+            const group = groups.get(item.agentId) ?? { latest: item, results: { count: 0, items: [] } }
+            group.results.count += item.count
+            group.results.items.push({ label: item.title, count: item.count, at })
+            groups.set(item.agentId, group)
+        }
+        return groups
+    }, [completions.status, completions.items, completions.unavailableAgentIds])
+    const openState = useRef({ agents, activity, attention, resultsByAgent, onOpen, onOpenConversation, completions })
+    openState.current = { agents, activity, attention, resultsByAgent, onOpen, onOpenConversation, completions }
     const submitting = useRef(false)
     const section = useRef<HTMLElement>(null)
     const placeButton = useRef<HTMLButtonElement>(null)
     const layout = useMemo(() => desktopBoardLayout(agents), [agents])
     const renderedBoard = useMemo(() => board && preview?.revision === board.revision ? previewDesktopSpace(board, preview.spaceId, preview.rect, preview.moving) : board, [board, preview])
     const { tiles, containers } = useMemo(() => {
+        const tilePresentation = (agent: DesktopAgentView) => {
+            const status = activity[agent.id] ?? 'unknown'
+            const results = status === 'idle' ? resultsByAgent.get(agent.id)?.results : undefined
+            const style = agent.enabled === false ? disabledAgentTileStyle(agent.name)
+                : tileStyle(status, agent.name, attentionCounts.get(agent.id) ?? 0, routineCountdowns?.get(agent.id), results)
+            return {
+                style,
+                ariaLabel: t('openCoworker', { name: agent.name }) + (attentionCounts.has(agent.id) ? ', ' + t('needs') : '')
+                    + (style.results ? ', ' + t('actions.doneCount', { count: style.results.count }) : ''),
+            }
+        }
         if (renderedBoard) {
             const memberships = new Map(renderedBoard.placements.map(placed => [placed.agentId, placed]))
             const tiles: Tile[] = agents.flatMap(agent => {
                 const placed = memberships.get(agent.id)
                 if (!placed || !renderedBoard.spaces.some(space => space.id === placed.spaceId)) return []
                 return [{ id: agent.id, position: { col: placed.col, row: placed.row }, span: 2, containerId: placed.spaceId,
-                    style: agent.enabled === false ? disabledAgentTileStyle(agent.name) : tileStyle(activity[agent.id] ?? 'unknown', agent.name, attentionCounts.get(agent.id) ?? 0, routineCountdowns?.get(agent.id)),
-                    ariaLabel: t('openCoworker', { name: agent.name }) + (attentionCounts.has(agent.id) ? ', ' + t('needs') : '') }]
+                    ...tilePresentation(agent) }]
             })
             const containers: Container[] = renderedBoard.spaces.length ? renderedBoard.spaces.map((space, index) => ({
                 ...space, label: space.name, color: preview?.spaceId === space.id && board && !desktopSpaceRectAllowed(board, space.id, preview.rect, preview.moving) ? '#ef4444' : SPACE_COLOR,
@@ -185,8 +216,7 @@ export function DesktopBoard({ activitySnapshot, routineCountdowns, agents, work
             position: layout.positions.get(agent.id)!,
             span: 2,
             containerId: 'team',
-            style: agent.enabled === false ? disabledAgentTileStyle(agent.name) : tileStyle(activity[agent.id] ?? 'unknown', agent.name, attentionCounts.get(agent.id) ?? 0, routineCountdowns?.get(agent.id)),
-            ariaLabel: t('openCoworker', { name: agent.name }) + (attentionCounts.has(agent.id) ? ', ' + t('needs') : ''),
+            ...tilePresentation(agent),
         }))
         const box: Container = {
             id: 'team', label: agents.length ? workspaceName : null, color: SPACE_COLOR,
@@ -195,18 +225,22 @@ export function DesktopBoard({ activitySnapshot, routineCountdowns, agents, work
             placeholderLabel: t('creation.first'),
         }
         return { tiles, containers: [box] }
-    }, [agents, workspaceName, activity, attentionCounts, routineCountdowns, layout, renderedBoard, preview, board, t])
+    }, [agents, workspaceName, activity, attentionCounts, routineCountdowns, resultsByAgent, layout, renderedBoard, preview, board, t])
 
     useEffect(() => { if (placement?.requestId) placeButton.current?.focus({ preventScroll: true }) }, [placement?.requestId])
 
     function openCoworker(id: string) {
-        const { agents, activity, attention, onOpen, onOpenConversation } = openState.current
+        const { agents, activity, attention, resultsByAgent, onOpen, onOpenConversation, completions } = openState.current
         const agent = agents.find(agent => agent.id === id)
-        if (!agent) return
+        if (!agent || isDesktopQuitting()) return
         const status = activity[id]
-        const target = status && status !== 'unknown' && status !== 'unreachable' ? latestBoardAttention(attention, id) : undefined
-        if (target && onOpenConversation) onOpenConversation({ id: target.sessionId, agentId: agent.id, agentName: agent.name, title: target.title })
-        else onOpen(id)
+        const pending = status && status !== 'unknown' && status !== 'unreachable' ? latestBoardAttention(attention, id) : undefined
+        const result = !pending && status === 'idle' && agent.enabled !== false ? resultsByAgent.get(id)?.latest : undefined
+        const target = pending ?? result
+        completions.readResultWhenVisible(onOpenConversation ? result ?? null : null)
+        if (target && onOpenConversation) {
+            onOpenConversation({ id: target.sessionId, agentId: agent.id, agentName: agent.name, title: target.title })
+        } else onOpen(id)
     }
 
     function beginCopy(agent: DesktopAgentView) {
@@ -448,7 +482,7 @@ export function DesktopBoard({ activitySnapshot, routineCountdowns, agents, work
                     <div className="flex items-end gap-2 pr-[var(--desktop-left-orb-width,0px)]">
                         <div ref={cornerActions} className="flex w-max items-end gap-2 empty:hidden">
                             {onOpenConversation && <DesktopActionsInbox className="pointer-events-auto" agents={agents} onOpenConversation={onOpenConversation} visibleSessionId={placement ? null : visibleSessionId}
-                                workspaceId={workspaceId} launchNonce={launchNonce} hidden={!!placement} onOpenNotificationSettings={onOpenNotificationSettings} />}
+                                workspaceId={workspaceId} launchNonce={launchNonce} completions={completions} open={inboxOpen} onOpenChange={setInboxOpen} hidden={placing} onOpenNotificationSettings={onOpenNotificationSettings} />}
                             {gettingStarted}
                         </div>
                     </div>
@@ -511,11 +545,11 @@ export function DesktopBoard({ activitySnapshot, routineCountdowns, agents, work
 }
 
 // Rerun's agentTileStyle: working shimmers amber, a failed read uses the offline tile with an honest label.
-function tileStyle(status: BoardActivityStatus, name: string, attentionCount: number, countdown?: TileCountdown): TileStyle {
+function tileStyle(status: BoardActivityStatus, name: string, attentionCount: number, countdown?: TileCountdown, results?: TileResults): TileStyle {
     if (status === 'working' || status === 'waiting_human') return { ...agentTileStyle(status, name, attentionCount), countdown }
     if (status === 'unreachable' || status === 'unknown') {
         const style = agentTileStyle('offline', name)
         return { ...style, status: { label: ACTIVITY_LABEL[status], tone: style.status?.tone ?? 'neutral' } }
     }
-    return { ...agentTileStyle('idle', name), countdown }
+    return { ...agentTileStyle('idle', name), countdown, results }
 }

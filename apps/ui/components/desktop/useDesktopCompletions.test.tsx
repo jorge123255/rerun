@@ -202,3 +202,25 @@ test('older-page failure retains usable rows and cursor for retry', async () => 
     await act(async () => { h.value.loadMore() })
     expect(h.value.status).toBe('ready'); expect(h.value.items).toHaveLength(2)
 })
+
+test('a tile reads only its selected group after the exact conversation becomes visible', async () => {
+    const group = item('schedule', { source: 'schedule', slug: 'nightly', sessionIds: ['s1', 's2'], completionIds: ['one', 'two'], count: 2 })
+    let rows = [group, item('unrelated', { sessionId: 'other', sessionIds: ['other'] })]
+    const writes: string[][] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/read')) {
+            writes.push(JSON.parse(String(init?.body)).completionIds)
+            return Response.json({ marked: 2 })
+        }
+        return page(rows)
+    }))
+    const h = await mount()
+    await act(async () => h.value.readResultWhenVisible(group))
+    expect(writes).toEqual([])
+    rows = [{ ...group, completionIds: ['new', 'one', 'two'], sessionIds: ['s-new', 's1', 's2'],
+        sessionId: 's-new', completedAt: '2026-11-04T12:01:00.000Z', count: 3 }, rows[1]]
+    await tick()
+    await h.render(false, ['a'], 's1')
+    expect(writes).toEqual([['one', 'two']])
+    expect(h.value.items.flatMap(row => row.completionIds)).toEqual(['new', 'unrelated'])
+})

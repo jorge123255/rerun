@@ -22,6 +22,7 @@ export type DesktopCompletionsController = DesktopCompletionsState & {
     retry: () => void
     loadMore: () => void
     markRead: (item: DesktopCompletionItem) => void
+    readResultWhenVisible: (item: DesktopCompletionItem | null) => void
     // `exact` (the confirmation's snapshot) makes the whole-list mark acknowledge only those IDs;
     // with no argument it keeps the click-time capture of whatever is displayed.
     markAllRead: (exact?: string[]) => void
@@ -63,6 +64,7 @@ export function useDesktopCompletions(active = true, agentIds?: readonly string[
     const stateRef = useRef(state)
     stateRef.current = state
     const [seenVersion, setSeenVersion] = useState(0)
+    const [openingResult, setOpeningResult] = useState<{ scope: string; item: DesktopCompletionItem; fromSessionId: string | null } | null>(null)
     const seen = useRef(new Set<string>())
     const pending = useRef(new Set<string>())
     const failed = useRef(new Set<string>())
@@ -158,6 +160,9 @@ export function useDesktopCompletions(active = true, agentIds?: readonly string[
         const live = displayed.current.find(row => row.id === item.id && row.agentId === item.agentId && row.sessionId === item.sessionId)
         if (live) void postSeen(item.completionIds.filter(id => live.completionIds.includes(id)))
     }, [active, current, postSeen])
+    const readResultWhenVisible = useCallback((item: DesktopCompletionItem | null) => {
+        if (current() && !isDesktopQuitting()) setOpeningResult(item ? { scope, item, fromSessionId: visibleSessionId ?? null } : null)
+    }, [current, scope, visibleSessionId])
     const markAllRead = useCallback((exact?: string[]) => {
         if (!active || !current()) return
         // With no argument this keeps the click-time capture; with `exact` (the confirmation's
@@ -169,6 +174,19 @@ export function useDesktopCompletions(active = true, agentIds?: readonly string[
     useEffect(() => {
         const acknowledge = () => {
             if (!current() || !visibleSessionId || !canAcknowledgeVisibleConversation()) return
+            if (openingResult && (openingResult.scope !== scope || (openingResult.fromSessionId !== visibleSessionId && openingResult.item.sessionId !== visibleSessionId))) {
+                setOpeningResult(null)
+            } else if (openingResult?.item.sessionId === visibleSessionId) {
+                const opened = openingResult.item
+                const live = stateRef.current.status === 'ready' && !stateRef.current.unavailableAgentIds.includes(opened.agentId)
+                    ? displayed.current.find(item => item.id === opened.id && item.agentId === opened.agentId) : undefined
+                // The tile click selects the displayed group. A newer completion in the same
+                // group stays unread, and a failed navigation never acknowledges its rows.
+                if (live) {
+                    void postSeen(opened.completionIds.filter(id => live.completionIds.includes(id) && !failed.current.has(id)))
+                    setOpeningResult(null)
+                }
+            }
             // Mixed-session scheduled groups cannot be individually mapped from this contract.
             // Leave them unread rather than clear completions the user has not viewed.
             const matching = displayed.current.filter(item => item.sessionId === visibleSessionId && item.sessionIds.every(id => id === visibleSessionId))
@@ -181,7 +199,7 @@ export function useDesktopCompletions(active = true, agentIds?: readonly string[
         observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['inert', 'aria-hidden', 'open', 'hidden'] })
         const unsubscribe = subscribeDraftShutdown(acknowledge)
         return () => { document.removeEventListener('visibilitychange', acknowledge); window.removeEventListener('focus', acknowledge); observer.disconnect(); unsubscribe() }
-    }, [current, items, postSeen, visibleSessionId])
+    }, [current, items, openingResult, postSeen, scope, visibleSessionId])
 
     const retry = useCallback(() => {
         if (!active || !current()) return
@@ -190,5 +208,5 @@ export function useDesktopCompletions(active = true, agentIds?: readonly string[
         void read(false, state.windowFull)
     }, [active, current, items, postSeen, read, state.windowFull])
     const loadMore = useCallback(() => { if (active && current()) void read(true) }, [active, current, read])
-    return { ...(state.scope === scope ? state : empty()), items, readError: items.some(item => item.completionIds.some(id => failed.current.has(id))), retry, loadMore, markRead, markAllRead }
+    return { ...(state.scope === scope ? state : empty()), items, readError: items.some(item => item.completionIds.some(id => failed.current.has(id))), retry, loadMore, markRead, markAllRead, readResultWhenVisible }
 }
