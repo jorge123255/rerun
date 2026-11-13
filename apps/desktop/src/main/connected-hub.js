@@ -6,6 +6,8 @@ const cancel = document.querySelector('#cancel')
 const error = document.querySelector('#connection-error')
 const picker = window.rerunHubPicker
 const copy = picker?.copy
+let connecting = false
+let edited = false
 if (copy) {
     document.documentElement.lang = copy.locale
     document.title = copy.title
@@ -16,25 +18,44 @@ if (copy) {
     cloud.textContent = copy.useCloud
     cancel.textContent = copy.cancel
 }
-void picker?.initialOrigin().then(origin => { if (!address.value && origin) address.value = origin }, () => {})
-address.addEventListener('input', () => {
+function updateSubmit() {
+    submit.disabled = !picker || connecting || !address.value.trim()
+}
+function clearError() {
     error.hidden = true
     address.removeAttribute('aria-invalid')
+    address.removeAttribute('aria-describedby')
+}
+void picker?.initialOrigin().then(origin => {
+    if (!edited && !address.value && origin) address.value = origin
+    updateSubmit()
+}, () => {})
+address.addEventListener('input', () => {
+    edited = true
+    clearError()
+    updateSubmit()
 })
 async function connect(useCloud) {
-    if (submit.disabled || !picker) return
-    error.hidden = true
-    address.removeAttribute('aria-invalid')
-    submit.disabled = cloud.disabled = address.disabled = true
+    const target = address.value.trim()
+    if (connecting || !picker || (!useCloud && !target)) return
+    clearError()
+    connecting = true
+    cloud.disabled = address.disabled = true
+    updateSubmit()
     const button = useCloud ? cloud : submit
     button.textContent = copy.connecting
     try {
-        const result = await (useCloud ? picker.connectCloud() : picker.connect(address.value))
+        const result = await (useCloud ? picker.connectCloud() : picker.connect(target))
         if (result.ok) return
         error.textContent = result.message ?? copy.unreachable
     } catch { error.textContent = copy.unreachable }
-    if (!useCloud) address.setAttribute('aria-invalid', 'true')
-    submit.disabled = cloud.disabled = address.disabled = false
+    if (!useCloud) {
+        address.setAttribute('aria-invalid', 'true')
+        address.setAttribute('aria-describedby', error.id)
+    }
+    connecting = false
+    cloud.disabled = address.disabled = false
+    updateSubmit()
     button.textContent = useCloud ? copy.useCloud : copy.connect
     error.hidden = false
     const retryTarget = useCloud ? cloud : address

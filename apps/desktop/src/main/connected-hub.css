@@ -1,10 +1,61 @@
-body { padding: 36px; }
-h1 { font-size: 32px; margin: 0 0 12px; }
-p { color: #c5c8c4; font-size: 14px; line-height: 1.5; margin: 0 0 24px; }
-form { display: grid; gap: 10px; }
-label { font-size: 14px; }
-input { min-width: 0; padding: 12px; border: 1px solid #525752; border-radius: 9px; color: inherit; background: #202322; font: inherit; }
-input:focus-visible { outline: 2px solid #c6e581; outline-offset: 2px; }
-input[aria-invalid="true"] { border-color: #f5a898; }
-button { margin-top: 8px; }
-#connection-error { color: #ffc0b3; margin: 0; }
+.server-picker { padding: 20px 28px; }
+.server-picker main {
+    width: min(100%, 380px);
+    text-align: center;
+}
+.server-picker .foreman { display: block; margin: 0 auto 8px; }
+.server-picker h1 {
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -.035em;
+    line-height: 1.2;
+    margin: 0;
+    text-wrap: balance;
+}
+.server-picker main > p {
+    color: var(--auth-muted);
+    font-size: 14px;
+    line-height: 1.45;
+    margin: 8px 0 20px;
+    text-wrap: balance;
+}
+.server-picker form { display: grid; gap: 8px; }
+.server-picker label { font-size: 13px; font-weight: 600; text-align: start; }
+.server-picker input {
+    min-width: 0;
+    min-height: 46px;
+    padding: 8px 14px;
+    border: 1px solid var(--auth-border);
+    border-radius: 14px;
+    color: inherit;
+    background: var(--auth-card);
+    font: inherit;
+}
+.server-picker input::placeholder { color: var(--auth-muted); }
+.server-picker input:focus-visible {
+    outline: 2px solid light-dark(#4d34f7, #b7a8ff);
+    outline-offset: 2px;
+}
+.server-picker input[aria-invalid="true"] { border-color: light-dark(#b70013, #ff9294); }
+.server-picker #connection-error {
+    color: light-dark(#b70013, #ff9294);
+    font-size: 13px;
+    line-height: 1.4;
+    text-align: start;
+    overflow-wrap: anywhere;
+    margin: 4px 0;
+}
+.server-picker button[type="submit"] { margin-top: 6px; }
+.server-picker #cancel {
+    justify-self: center;
+    min-height: 36px;
+    border-color: transparent;
+    background: transparent;
+    color: var(--auth-muted);
+    font-weight: 500;
+}
+@media (max-height: 470px) {
+    .server-picker { padding-block: 14px; }
+    .server-picker .foreman { width: 42px; height: auto; }
+    .server-picker main > p { margin-bottom: 15px; }
+}

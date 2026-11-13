@@ -19,15 +19,17 @@ button:disabled { cursor: default; opacity: .65; }
 [hidden] { display: none; }
 
 /* The welcome sheet uses the iPhone sign-in palette. The original board artwork is bundled below. */
-:root:has(body.welcome) {
+:root:has(body.auth-surface) {
     color-scheme: light dark;
     background: light-dark(#f8f8f8, #0a0a0a);
     color: light-dark(#0a0a0a, #fafafa);
 }
+body.auth-surface {
+    --auth-card: light-dark(#fff, #171717);
+    --auth-border: light-dark(#e4e4e4, #ffffff1a);
+    --auth-muted: light-dark(#626262, #a1a1a1);
+}
 body.welcome {
-    --welcome-card: light-dark(#fff, #171717);
-    --welcome-border: light-dark(#e4e4e4, #ffffff1a);
-    --welcome-muted: light-dark(#626262, #a1a1a1);
     position: relative;
     align-items: end;
     isolation: isolate;
@@ -49,9 +51,9 @@ body.welcome {
 .welcome main {
     position: relative;
     width: min(100%, 464px);
-    border: 1px solid var(--welcome-border);
+    border: 1px solid var(--auth-border);
     border-radius: 24px;
-    background: var(--welcome-card);
+    background: var(--auth-card);
     padding: 46px 30px 16px;
     text-align: center;
     box-shadow: 0 16px 54px light-dark(#00000015, #0009);
@@ -75,11 +77,11 @@ body.welcome {
     margin: 9px 0 0;
     font-size: 14px;
     line-height: 1.45;
-    color: var(--welcome-muted);
+    color: var(--auth-muted);
 }
 .welcome .actions { display: grid; gap: 8px; margin: 22px 0 0; }
 .welcome .actions:not(:has(button:not([hidden]))) { display: none; }
-.welcome button {
+.auth-surface button {
     min-height: 46px;
     border: 1px solid transparent;
     border-radius: 14px;
@@ -89,21 +91,21 @@ body.welcome {
     font-weight: 600;
     padding: 8px 16px;
 }
-.welcome button.secondary {
-    border-color: var(--welcome-border);
-    background: var(--welcome-card);
+.auth-surface button.secondary {
+    border-color: var(--auth-border);
+    background: var(--auth-card);
     color: inherit;
 }
-.welcome button:enabled:hover { filter: brightness(light-dark(1.08, .9)); }
-.welcome button.secondary:enabled:hover { background: light-dark(#f3f3f3, #232323); }
-.welcome button:focus-visible { outline: 2px solid light-dark(#4d34f7, #b7a8ff); outline-offset: 2px; }
+.auth-surface button:enabled:hover { filter: brightness(light-dark(1.08, .9)); }
+.auth-surface button.secondary:enabled:hover { background: light-dark(#f3f3f3, #232323); }
+.auth-surface button:focus-visible { outline: 2px solid light-dark(#4d34f7, #b7a8ff); outline-offset: 2px; }
 .welcome .connection-error { margin: 12px 0 0; font-size: 13px; color: light-dark(#b70013, #ff9294); }
-.welcome .footnote { margin: 16px auto 0; color: var(--welcome-muted); }
+.welcome .footnote { margin: 16px auto 0; color: var(--auth-muted); }
 .welcome #quit {
     min-height: 36px;
     margin: 9px 0 0;
     border-color: transparent;
-    color: var(--welcome-muted);
+    color: var(--auth-muted);
     font-size: 13px;
     font-weight: 500;
 }
