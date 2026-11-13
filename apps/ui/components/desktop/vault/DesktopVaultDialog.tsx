@@ -1,5 +1,6 @@
 'use client'
 
+import { DesktopMcpOAuthAuthorize } from '../mcp/DesktopMcpOAuthAuthorize'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowLeft, ChevronRight, KeyRound, Plug, Plus } from 'lucide-react'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
@@ -140,12 +141,13 @@ function SecretForm({ busy, onSubmit }: { busy: boolean; onSubmit: (input: { nam
     </form>
 }
 
-type ServerCredential = { bearer: string; header?: { name: string; value: string } }
+type ServerCredential = { bearer: string; browserSignIn?: true; header?: { name: string; value: string } }
 
 function readServerCredential(form: HTMLFormElement, data: FormData): ServerCredential {
     const value = String(data.get('credential') ?? '')
     const field = form.elements.namedItem('credential')
     if (field instanceof HTMLInputElement) field.value = ''
+    if (data.get('authentication') === 'browser') return { bearer: '', browserSignIn: true }
     return data.get('authentication') === 'header'
         ? { bearer: '', header: { name: String(data.get('headerName')), value } }
         : { bearer: data.get('authentication') === 'bearer' ? value : '' }
@@ -158,11 +160,12 @@ function ServerCredentialFields({ busy, initial = 'none', headerName }: { busy: 
             <select name="authentication" className="block h-9 w-full rounded-md border bg-background px-2 text-sm" value={mode} onChange={event => setMode(event.target.value)}>
                 <option value="none">None</option>
                 <option value="bearer">Bearer token</option>
+                <option value="browser">Browser sign-in</option>
                 <option value="header">Custom header</option>
             </select>
         </label>
         {mode === 'header' && <label className="block space-y-1 text-sm">Header name<Input name="headerName" placeholder="X-API-Key" required maxLength={128} defaultValue={headerName} /></label>}
-        {mode !== 'none' && <label className="block space-y-1 text-sm">{mode === 'header' ? 'Header value' : 'Bearer token'}
+        {(mode === 'header' || mode === 'bearer') && <label className="block space-y-1 text-sm">{mode === 'header' ? 'Header value' : 'Bearer token'}
             <Input key={mode} name="credential" type="password" autoComplete="new-password" required maxLength={8192} />
         </label>}
     </fieldset>
@@ -272,7 +275,7 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
         <header>
             <h3 className="font-medium">{entry.name}</h3>
             <p className="font-mono text-sm text-muted-foreground">{'kind' in entry ? entry.kind === 'program' ? entry.executable : entry.url : entry.variable}</p>
-            {server && <p className="text-sm text-muted-foreground">{server.headerName ? `Header configured: ${server.headerName}` : server.hasBearer ? 'Bearer token configured' : 'No authentication configured'}</p>}
+            {server && <p className="text-sm text-muted-foreground">{server.headerName ? `Header configured: ${server.headerName}` : server.hasBearer ? 'Bearer token configured' : server.browserSignIn ? 'Browser sign-in' : 'No authentication configured'}</p>}
         </header>
         <fieldset disabled={busy} className="space-y-3 border-t pt-4">
             <legend className="text-sm font-medium">Coworkers</legend>
@@ -285,6 +288,13 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
             </label>)}
             <Button size="sm" disabled={busy || !changed} onClick={() => onSubmit({ operation: 'share', ...target, agentIds, sharedWithAll })}>Save assignments</Button>
         </fieldset>
+        {server?.browserSignIn && <div className="space-y-2 border-t pt-4">
+            <DesktopMcpOAuthAuthorize vaultId={server.id} name={server.name} revision={server.revision} active={!busy && !replace} />
+            <ConfirmDialog title="Disconnect browser sign-in?" description="Coworkers will need you to sign in again before using this server."
+                confirmLabel="Disconnect" pending={busy} onConfirm={() => onSubmit({ operation: 'clear-server-oauth', ...target })}>
+                <Button size="sm" variant="outline" disabled={busy}>Disconnect browser sign-in</Button>
+            </ConfirmDialog>
+        </div>}
         {program && <ProgramCredentials entry={program} busy={busy} onSubmit={onSubmit} />}
         <div className="flex flex-wrap gap-2 border-t pt-4">
             <Button variant="outline" size="sm" disabled={busy} onClick={() => setReplace(!replace)}>{program ? 'Review program' : server ? 'Change authentication' : 'Replace value'}</Button>
@@ -299,7 +309,10 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
             const form = event.currentTarget
             if (server) {
                 const credential = readServerCredential(form, new FormData(form))
-                onSubmit(credential.header ? { operation: 'replace-server-header', ...target, header: credential.header }
+                if (credential.browserSignIn) {
+                    if (server.browserSignIn) setReplace(false)
+                    else onSubmit({ operation: 'enable-server-oauth', ...target })
+                } else onSubmit(credential.header ? { operation: 'replace-server-header', ...target, header: credential.header }
                     : { operation: 'replace-server-bearer', ...target, bearer: credential.bearer })
             } else {
                 const field = form.elements.namedItem('value')
@@ -309,7 +322,7 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
                 }
             }
         }}>
-            {server ? <ServerCredentialFields busy={busy} headerName={server.headerName} initial={server.headerName ? 'header' : server.hasBearer ? 'bearer' : 'none'} />
+            {server ? <ServerCredentialFields busy={busy} headerName={server.headerName} initial={server.headerName ? 'header' : server.hasBearer ? 'bearer' : server.browserSignIn ? 'browser' : 'none'} />
                 : <label className="block space-y-1 text-sm">New secret value<Input name="value" type="password" autoComplete="new-password" required maxLength={16384} disabled={busy} /></label>}
             <Button type="submit" size="sm" disabled={busy}>{server ? 'Save authentication' : 'Save new value'}</Button>
         </form>}

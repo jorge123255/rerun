@@ -175,10 +175,15 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   const signal=AbortSignal.any([stop,controller.signal,AbortSignal.timeout(30_000)])
   try {
    const server=await authority(agent,name,revision,signal,ticket.assertCurrent)
-   const token=await abortable(store.readOAuth(agent,name),signal);ticket.assertCurrent()
-   if(!token)return null
    const joining=refreshes.get(key(agent,name))
    if(joining){const result=await abortable(joining,signal);await authority(agent,name,revision,signal,ticket.assertCurrent);return result}
+   const expected=await abortable(credentials?.browserCredentialState(agent,name) ?? Promise.resolve(null),signal)
+   const token=await abortable(store.readOAuth(agent,name),signal);ticket.assertCurrent()
+   if(!token)return null
+   if(credentials){
+    const current=await abortable(credentials.browserCredentialState(agent,name),signal)
+    if(!expected || !current || current.registrationId!==server.id || current.revision!==revision || current.resource!==server.url || current.sealed!==expected.sealed)throw new Error('MCP credential changed')
+   }
    if(token.refreshPending)throw new Error('Refresh acknowledgement unavailable; reconnect required')
    if(token.resource!==server.url)throw new Error('OAuth resource mismatch')
    if(token.expiresAt>Date.now()+60_000)return token.accessToken
@@ -190,12 +195,16 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
      const fresh=await discoverLoopbackOAuth(server.url,signal,json)
      if(fresh.issuer!==token.issuer || fresh.token!==token.tokenEndpoint)throw new Error('OAuth issuer changed')
      await authority(agent,name,revision,signal,ticket.assertCurrent)
-     await abortable(store.writeOAuth(agent,name,revision,{...token,refreshPending:randomBytes(24).toString('base64url')},signal),signal)
+     const marked={...token,refreshPending:randomBytes(24).toString('base64url')}
+     let markedSeal:string|undefined
+     if(credentials && expected)markedSeal=await abortable(credentials.replaceOAuth(agent,name,expected,marked,signal),signal)
+     else await abortable(store.writeOAuth(agent,name,revision,marked,signal),signal)
      await authority(agent,name,revision,signal,ticket.assertCurrent)
      const result=await json(token.tokenEndpoint,signal,new URLSearchParams({grant_type:'refresh_token',refresh_token:token.refreshToken,client_id:token.clientId,resource:token.resource}))
      const next=tokens(result,fresh,token.clientId,token)
      await authority(agent,name,revision,signal,ticket.assertCurrent)
-     await abortable(store.writeOAuth(agent,name,revision,next,signal),signal)
+     if(credentials && expected && markedSeal)await abortable(credentials.replaceOAuth(agent,name,{...expected,sealed:markedSeal},next,signal),signal)
+     else await abortable(store.writeOAuth(agent,name,revision,next,signal),signal)
      await authority(agent,name,revision,signal,ticket.assertCurrent)
      return next.accessToken
     })()

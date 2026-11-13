@@ -29,7 +29,9 @@ export const desktopVaultMutation = z.discriminatedUnion('operation', [
     z.strictObject({ operation: z.literal('replace-program'), ...target, executable, args }),
     z.strictObject({ operation: z.literal('set-program-credential'), ...target, variable: desktopVaultProgramVariable, value: desktopVaultProgramValue }),
     z.strictObject({ operation: z.literal('remove-program-credential'), ...target, variable: desktopVaultProgramVariable }),
-    z.strictObject({ operation: z.literal('create-server'), name: serverName, url: serverUrl, bearer, header: credentialHeader.optional() }).refine(input => !(input.bearer && input.header)),
+    z.strictObject({ operation: z.literal('create-server'), name: serverName, url: serverUrl, bearer, browserSignIn: z.literal(true).optional(), header: credentialHeader.optional() }).refine(input => Number(!!input.bearer) + Number(!!input.header) + Number(!!input.browserSignIn) <= 1),
+    z.strictObject({ operation: z.literal('enable-server-oauth'), ...target }),
+    z.strictObject({ operation: z.literal('clear-server-oauth'), ...target }),
     z.strictObject({ operation: z.literal('replace-server-bearer'), ...target, bearer }),
     z.strictObject({ operation: z.literal('replace-server-header'), ...target, header: credentialHeader }),
     z.strictObject({ operation: z.literal('replace'), ...target, value }),
@@ -40,7 +42,7 @@ export const desktopVaultMutation = z.discriminatedUnion('operation', [
 export type DesktopVaultMutation = z.infer<typeof desktopVaultMutation>
 
 const secretEntry = z.strictObject({ ...target, name, variable, ...sharing })
-const mcpEntry = z.strictObject({ ...target, name: serverName, kind: z.literal('mcp'), url: serverUrl, hasBearer: z.boolean(), headerName: credentialHeaderName.optional(), ...sharing })
+const mcpEntry = z.strictObject({ ...target, name: serverName, kind: z.literal('mcp'), url: serverUrl, hasBearer: z.boolean(), browserSignIn: z.literal(true).optional(), headerName: credentialHeaderName.optional(), ...sharing })
 const programEntry = z.strictObject({ ...target, name: serverName, kind: z.literal('program'), executable, args, credentialNames: z.array(desktopVaultProgramVariable).max(desktopVaultProgramCredentialLimit), ...sharing })
 export const desktopVaultEntry = z.union([secretEntry, mcpEntry, programEntry])
 export const desktopVaultListing = z.strictObject({

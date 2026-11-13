@@ -1,3 +1,4 @@
+import { assertDesktopWorkspaceAdmission } from './workspace-admission'
 import { assignedVaultMcpPrograms, vaultProgramMaterials } from './vault/mcp-programs'
 import { desktopVaultMcpRuntime } from './vault/mcp-runtime'
 import { createDesktopSecretCrypto } from './secret-requests/crypto'
@@ -262,7 +263,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
             return write()
         })),
     })
-    const vaultMcp = desktopVaultMcpRuntime(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId, access, entry.shutdown.signal)
+    const vaultMcp = desktopVaultMcpRuntime(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId, access, entry.shutdown.signal, undefined, () => assertDesktopWorkspaceAdmission(runtime))
     const bridge = desktopMcpBridge(store, remote, authorizeRun, {
         async tools(owner, run, signal) {
             return [...await sse.tools(owner, run, signal), ...await vaultMcp.tools(owner, signal)]
@@ -271,7 +272,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     })
     const deviceReview = bindTrustedMcpDeviceMethodReview({ runtime, db, key: masterKey, store, shutdown: entry.shutdown.signal })
     entry.shutdown.signal.addEventListener('abort', deviceReview.dispose, { once: true })
-    return { store, references, runtime: remote, bridge, access, authorizeRun, deviceReview, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),
+    return { store, references, runtime: remote, bridge, vaultOAuth: vaultMcp.oauth, access, authorizeRun, deviceReview, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),
         browserApprovals: (scope: Omit<Parameters<typeof createDesktopMcpBrowserApprovals>[3], 'workspaceId'>) =>
             createDesktopMcpBrowserApprovals(db, store, masterKey, { ...scope, workspaceId: String(runtime.workspaceId) }),
         localRuntime, localBridge, localApi: stdioApi(localStore, localRuntime, localAuthority), writebackApi: nativeWritebackApi(writeback),

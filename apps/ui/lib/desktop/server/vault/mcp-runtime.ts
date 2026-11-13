@@ -7,17 +7,20 @@ import { remoteMcpRuntime, type McpAccess, type McpNetwork } from '../mcp/remote
 import { emptyMcpMaterialLease, type DesktopMcpMaterialSource } from '../mcp-secret-references/lease'
 import { remoteMcpTools } from '../mcp/tools'
 import type { DesktopSecretCrypto } from '../secret-requests/crypto'
+import type { OAuthJson } from '../mcp/oauth-network'
+import { vaultMcpOAuth } from './mcp-oauth'
 import { vaultMcpHttps } from './mcp-network'
 
-export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, access: McpAccess, shutdown: AbortSignal, network: McpNetwork = vaultMcpHttps) {
+export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, access: McpAccess, shutdown: AbortSignal, network: McpNetwork = vaultMcpHttps, assertWorkspace = () => {}, oauthJson?: OAuthJson) {
     const lifecycle = remoteMcpLifecycle()
-    const close = () => lifecycle.shutdown()
+    const oauth = vaultMcpOAuth(db, crypto, workspaceId, assertWorkspace, oauthJson)
+    const close = () => { oauth.shutdown(); lifecycle.shutdown() }
     shutdown.addEventListener('abort', close, { once: true })
     if (shutdown.aborted) close()
 
     async function assigned(agentId: string, name?: string) {
         return (await db.execute({
-            sql: `SELECT s.id,s.name,s.url,s.revision,s.credential_revision,s.credential_header,s.sealed IS NOT NULL AS has_credential
+            sql: `SELECT s.id,s.name,s.url,s.revision,s.credential_revision,s.credential_header,s.oauth_enabled,s.sealed IS NOT NULL AS has_credential
                 FROM desktop_vault_mcp_servers s JOIN desktop_agents a ON a.id=? AND a.workspace_id=1
                 WHERE (? IS NULL OR s.name=?)
                 AND NOT EXISTS (SELECT 1 FROM desktop_deletions d WHERE d.agent_id=a.id OR d.engine_agent_id=a.engine_agent_id)
@@ -43,7 +46,7 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
     }
     const material: DesktopMcpMaterialSource = async (owner, name, revision, _phase, signal) => {
         const check = async () => {
-            signal.throwIfAborted()
+            signal.throwIfAborted(); assertWorkspace()
             const permission = await access(owner)
             const [row] = await assigned(owner, name)
             signal.throwIfAborted()
@@ -51,8 +54,25 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
             return row
         }
         const row = await check()
-        if (row.has_credential !== 1) return emptyMcpMaterialLease()
         const { id, url } = view(row)
+        if (row.oauth_enabled === 1) {
+            const token = await oauth.credential(id!, name, revision, signal)
+            if (!token) throw new Error('Sign in to this MCP server in the Vault')
+            const lease = emptyMcpMaterialLease()
+            const bytes = new TextEncoder().encode(token)
+            lease.material.headers.Authorization = `Bearer ${token}`
+            lease.check = async () => {
+                await check()
+                const current = await oauth.readOAuth(id!, name)
+                if (current?.accessToken !== token || current.refreshPending || current.expiresAt <= Date.now()) throw new Error('Vault OAuth credential changed')
+                await check()
+            }
+            lease.protect = result => redactDesktopMcpSecretValue(result, [bytes])
+            lease.release = async () => { bytes.fill(0); delete lease.material.headers.Authorization }
+            try { await lease.check(); return lease }
+            catch (error) { await lease.release(); throw error }
+        }
+        if (row.has_credential !== 1) return emptyMcpMaterialLease()
         const credentialRevision = String(row.credential_revision)
         const header = typeof row.credential_header === 'string' ? row.credential_header : null
         const sealed = (await db.execute({
@@ -80,6 +100,7 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
     }
     const runtime = remoteMcpRuntime(store, access, network, undefined, material)
     return {
+        oauth,
         tools: (owner: string, signal: AbortSignal) => remoteMcpTools(owner, store, runtime, AbortSignal.any([signal, shutdown])),
     }
 }

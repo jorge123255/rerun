@@ -12,6 +12,7 @@ import { initializeDesktopRound47 } from '../round47-schema'
 import { initializeDesktopRound48 } from '../round48-schema'
 import { initializeDesktopRound49 } from '../round49-schema'
 import { initializeDesktopRound50 } from '../round50-schema'
+import { initializeDesktopRound51 } from '../round51-schema'
 import { stdioRuntime } from '../mcp-stdio/runtime'
 import { stdioStore } from '../mcp-stdio/store'
 import { assignedVaultMcpPrograms, vaultProgramMaterials } from './mcp-programs'
@@ -52,6 +53,7 @@ async function fixture(migrate = true, headerMigration = true) {
     if (headerMigration) await initializeDesktopRound48(db)
     await initializeDesktopRound49(db)
     await initializeDesktopRound50(db)
+    await initializeDesktopRound51(db)
     return { db, root, file, open, vault: desktopVault(db, crypto, 7) }
 }
 
@@ -77,7 +79,7 @@ test('upgrades a prior workspace, saves redacted metadata, rotates ciphertext, a
             await initializeDesktopRound45(reopened)
             await initializeDesktopRound46(reopened)
             expect(await desktopVault(reopened, crypto, 7).list()).toEqual(updated)
-            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }, { version: 48 }, { version: 49 }, { version: 50 }])
+            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }, { version: 48 }, { version: 49 }, { version: 50 }, { version: 51 }])
             expect((await reopened.execute('PRAGMA foreign_key_check')).rows).toEqual([])
         } finally { reopened.close() }
         expect((await readFile(f.file)).includes(secret)).toBe(false)
@@ -520,4 +522,83 @@ test('local program credentials stay scoped to the assigned entry and revisions'
             expect((await readFile(f.file)).includes(secret)).toBe(false)
         } finally { reopen.close() }
     } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('Vault browser sign-in persists one shared OAuth lineage and rejects callbacks after disconnect', async () => {
+    const f = await fixture()
+    const shutdown = new AbortController()
+    const signal = AbortSignal.timeout(10000)
+    const resource = 'https://93.184.216.34/mcp'
+    const issuer = 'https://93.184.216.34/'
+    const firstToken = 'fixture-access-before-refresh'
+    const refreshToken = 'fixture-refresh-private'
+    const rotatedToken = 'fixture-access-after-refresh'
+    let exchanges = 0, refreshes = 0, networkRequests = 0
+    let opened: ReturnType<typeof f.open> | undefined
+    const json: import('../mcp/oauth-network').OAuthJson = async (url, _signal, body) => {
+        if (url.includes('oauth-protected-resource')) return { resource, authorization_servers: [issuer] }
+        if (url.includes('oauth-authorization-server')) return {
+            issuer, authorization_endpoint: issuer + 'authorize', token_endpoint: issuer + 'token', registration_endpoint: issuer + 'register',
+            token_endpoint_auth_methods_supported: ['none'], code_challenge_methods_supported: ['S256'], response_types_supported: ['code'],
+            authorization_response_iss_parameter_supported: true,
+        }
+        if (url.endsWith('/register')) return { client_id: 'fixture-public-client', token_endpoint_auth_method: 'none', redirect_uris: (body as Record<string, unknown>).redirect_uris }
+        if (body instanceof URLSearchParams && body.get('grant_type') === 'authorization_code') {
+            exchanges++
+            expect(body.get('code_verifier')).toHaveLength(43)
+            return { access_token: firstToken, refresh_token: refreshToken, token_type: 'Bearer', expires_in: 30 }
+        }
+        expect((body as URLSearchParams).get('refresh_token')).toBe(refreshToken)
+        refreshes++
+        return { access_token: rotatedToken, refresh_token: 'fixture-rotated-refresh', token_type: 'Bearer', expires_in: 3600 }
+    }
+    const network: McpNetwork = async (_url, init, guard) => {
+        await guard()
+        networkRequests++
+        expect(new Headers(init.headers).get('authorization')).toBe('Bearer ' + rotatedToken)
+        const body = JSON.parse(init.body!)
+        const result = body.method === 'initialize' ? { protocolVersion: '2025-03-26' }
+            : body.method === 'tools/list' ? { tools: [{ name: 'check', inputSchema: { type: 'object' }, description: rotatedToken }] }
+            : { content: [{ type: 'text', text: rotatedToken }] }
+        return body.id === undefined ? new Response(null, { status: 202 }) : Response.json({ jsonrpc: '2.0', id: body.id, result })
+    }
+    const access = async () => ({ enabled: true, granted: true })
+    try {
+        const [entry] = (await f.vault.mutate({ operation: 'create-server', name: 'browser', url: resource, bearer: '', browserSignIn: true }, allow)).entries
+        const [one] = (await f.vault.assignCoworker(firstAgent, { id: entry.id, revision: entry.revision, attached: true }, allow)).attached
+        const [two] = (await f.vault.assignCoworker(secondAgent, { id: entry.id, revision: one.revision, attached: true }, allow)).attached
+        const original = desktopVaultMcpRuntime(f.db, crypto, 7, access, shutdown.signal, network, allow, json)
+        expect(await original.tools(firstAgent, signal)).toEqual([])
+        expect(networkRequests).toBe(0)
+        const started = await original.oauth.start(entry.id, entry.name, two.revision, signal)
+        const authorization = new URL(started.authorizationUrl!)
+        expect(authorization.searchParams.get('code_challenge_method')).toBe('S256')
+        const callback = new URL(authorization.searchParams.get('redirect_uri')!)
+        callback.search = new URLSearchParams({ code: 'test-code', iss: issuer, state: 'wrong-state' }).toString()
+        expect((await fetch(callback, { signal })).status).toBe(400)
+        expect(exchanges).toBe(0)
+        callback.searchParams.set('state', authorization.searchParams.get('state')!)
+        expect((await fetch(callback, { signal })).status).toBe(200)
+        expect(exchanges).toBe(1)
+        opened = f.open()
+        const restarted = desktopVaultMcpRuntime(opened, crypto, 7, access, shutdown.signal, network, allow, json)
+        expect(await restarted.oauth.status(entry.id, entry.name, two.revision, signal)).toEqual({ state: 'connected' })
+        const [[toolA], [toolB]] = await Promise.all([restarted.tools(firstAgent, signal), restarted.tools(secondAgent, signal)])
+        expect(refreshes).toBe(1)
+        expect(toolA.description).toBe('[redacted]')
+        expect(JSON.stringify(await toolB.execute({}, signal))).toContain('[redacted]')
+        expect(await restarted.tools(foreignAgent, signal)).toEqual([])
+        const encrypted = await readFile(f.file)
+        for (const token of [firstToken, refreshToken, rotatedToken]) expect(encrypted.includes(token)).toBe(false)
+
+        const reconnect = await restarted.oauth.start(entry.id, entry.name, two.revision, signal)
+        const pending = new URL(reconnect.authorizationUrl!)
+        const [cleared] = (await f.vault.mutate({ operation: 'clear-server-oauth', id: entry.id, revision: two.revision }, allow)).entries
+        const stale = new URL(pending.searchParams.get('redirect_uri')!)
+        stale.search = new URLSearchParams({ code: 'old-code', iss: issuer, state: pending.searchParams.get('state')! }).toString()
+        expect((await fetch(stale, { signal })).status).toBe(400)
+        expect(exchanges).toBe(1)
+        await expect(toolA.execute({}, signal)).rejects.toThrow()
+        expect(await restarted.oauth.status(entry.id, entry.name, cleared.revision, signal)).toEqual({ state: 'idle' })
+    } finally { shutdown.abort(); opened?.close(); f.db.close(); await rm(f.root, { recursive: true, force: true }) }
 })
