@@ -43,7 +43,8 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
     const newCoworker = t('workspaceView.newCoworker')
 
     return <aside data-testid="desktop-simple-sidebar" className="flex h-full min-h-0 w-full flex-col">
-        <div className="flex h-14 shrink-0 items-center border-b border-border px-2">{workspaceMenu}</div>
+        {/* Narrow enough that the menu's provider status folds to its icon and the workspace keeps its name. */}
+        <div className="@container/board-header flex h-14 shrink-0 items-center border-b border-border px-2">{workspaceMenu}</div>
         {onSearch && <div className="px-3 pt-2">
             <button type="button" disabled={disabled} onClick={onSearch} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50">
                 <Search className="size-4 shrink-0" />

@@ -949,7 +949,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     <div className="flex min-w-0 flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">{t('workspaceView.chat.pick')}</div>
                 </div>}
                 {!controlCenterDisabled && !panelOpen && !foremanEngaged && <DesktopForemanDock open={foremanOpen} onToggle={engageForeman} />}
-                {foremanEngaged && <div className="pointer-events-none absolute inset-2 z-40 grid min-h-0" style={{ gridTemplateColumns: `${foremanLeftTrack}px minmax(0,1fr) ${foremanRightTrack}px` }}>
+                {foremanEngaged && <div className="pointer-events-none absolute inset-2 z-40 grid min-h-0" style={{ left: simple ? 296 : undefined, gridTemplateColumns: `${foremanLeftTrack}px minmax(0,1fr) ${foremanRightTrack}px` }}>
 
                     <DesktopForemanPanel key={foremanTarget?.chatId ?? 'home'} target={foremanTarget}
                         onSelectConversation={runtimeWorkspaceId !== null ? openForemanConversation : undefined}
