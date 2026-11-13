@@ -212,7 +212,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
                 return
             }
             pendingOpen = null
-            connecting?.abort()
+            connecting?.controller.abort()
             connecting = null
             if (available() && owner && !owner.isDestroyed() && owner.isVisible()) show(owner)
         })
@@ -445,16 +445,17 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     }
 
     async function connect(address, { path = null, parent, remember = true, signal, reveal, recoverIncompatible = false } = {}) {
-        if (!available() || connecting || signal?.aborted) return { ok: false, reason: 'busy' }
+        if (!available() || (connecting && !connecting.lifetime.aborted) || signal?.aborted) return { ok: false, reason: 'busy' }
         const origin = normalizeHubOrigin(address)
         if (!origin) return { ok: false, reason: 'invalid' }
         const controller = new AbortController()
-        connecting = controller
         const lifetime = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+        connecting = { controller, lifetime }
         try {
             const desktopSession = session.fromPartition(hubPartition(origin))
             const result = await checkHub(origin, version, desktopSession.fetch.bind(desktopSession),
                 AbortSignal.any([lifetime, AbortSignal.timeout(8000)]))
+            lifetime.throwIfAborted()
             let issue = null
             if (!result.ok) {
                 if (result.reason === 'unreachable' && await savedOrigin() === origin) issue = { reason: 'offline' }
@@ -469,6 +470,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             if (!await openHub(origin, desktopSession, request?.path ?? path, { signal: opening, issue, reveal })) {
                 return { ok: false, reason: 'unreachable' }
             }
+            lifetime.throwIfAborted()
             if (request && pendingOpen === request) pendingOpen = null
             // Opening a link or restoring a server must not change the startup preference.
             const remembered = remember && await atomicPrivateJSON(file, { origin }).then(() => true, () => false)
@@ -480,7 +482,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             return { ok: true }
         } catch { return { ok: false, reason: 'unreachable' } }
         finally {
-            if (connecting === controller) connecting = null
+            if (connecting?.controller === controller) connecting = null
             if (!picker && pendingOpen) void openPendingLink()
         }
     }
@@ -657,7 +659,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             else if (focused !== picker) return false
             return true
         },
-        openCloud: () => connect(RERUN_CLOUD_ORIGIN),
+        openCloud: signal => connect(RERUN_CLOUD_ORIGIN, { signal }),
         async reopenRemembered(options) {
             const origin = await savedOrigin()
             if (!origin || !available() || picker || openingLink || pendingOpen || connecting) return false
@@ -728,7 +730,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         async closeAll() {
             serviceSignIn.cancelAll()
             pendingOpen = null
-            connecting?.abort()
+            connecting?.controller.abort()
             quickAsk.reset()
             for (const entry of [...windows.values()]) {
                 if (entry.window.isDestroyed()) continue

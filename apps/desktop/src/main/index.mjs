@@ -59,6 +59,7 @@ let activeWorkspaceId
 let connectedHubs
 let pendingHubLink
 let reopeningHub
+let openingStartupCloud
 let deferringStartupWindow = false
 let transitioning = false
 let quitting = false
@@ -404,6 +405,7 @@ async function launch() {
             },
             openHubPicker: (_item, candidate) => {
                 reopeningHub?.controller.abort()
+                openingStartupCloud?.abort()
                 leaveLocalUnlock()
                 connectedHubs.openPicker(workspaceMenuTarget(candidate))
             },
@@ -452,18 +454,27 @@ async function launch() {
         ipcMain.handle('desktop:startup-local', event => onStartupPage(event) && bootStatus.state === 'choose' && openLocalWorkspace())
         ipcMain.handle('desktop:startup-cloud', async event => {
             if (!canConnectToServer(event)) return { ok: false }
-            const restore = reopeningHub
-            restore?.controller.abort()
-            await restore?.promise
-            if (!canConnectToServer(event)) return { ok: false }
-            leaveLocalUnlock()
-            const locale = shellLanguage.forScope('local')
-            const result = await connectedHubs.openCloud()
-            return result.ok ? result : { ...result, message: hubConnectionError(locale, result) }
+            if (openingStartupCloud && !openingStartupCloud.signal.aborted) return { ok: false, reason: 'busy' }
+            const attempt = new AbortController()
+            openingStartupCloud = attempt
+            try {
+                const restore = reopeningHub
+                restore?.controller.abort()
+                await restore?.promise
+                if (attempt.signal.aborted || !canConnectToServer(event)) return { ok: false, reason: 'cancelled' }
+                leaveLocalUnlock()
+                const locale = shellLanguage.forScope('local')
+                const result = await connectedHubs.openCloud(attempt.signal)
+                if (attempt.signal.aborted) return { ok: false, reason: 'cancelled' }
+                return result.ok ? result : { ...result, message: hubConnectionError(locale, result) }
+            } finally {
+                if (openingStartupCloud === attempt) openingStartupCloud = null
+            }
         })
         ipcMain.handle('desktop:startup-connect', event => {
             if (!canConnectToServer(event)) return false
             reopeningHub?.controller.abort()
+            openingStartupCloud?.abort()
             leaveLocalUnlock()
             connectedHubs.openPicker(window)
             return true
@@ -691,6 +702,7 @@ async function openLocalWorkspace() {
 
 async function startLocalWorkspace() {
     if (quitting || openingLocalWorkspace || supervisor) return false
+    openingStartupCloud?.abort()
     const attempt = new AbortController()
     openingLocalWorkspace = attempt
     try {

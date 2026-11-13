@@ -55,7 +55,7 @@ signInCloud.addEventListener('click', async () => {
     signInCloud.disabled = false
     if (choices) {
         signInCloud.textContent = choices.cloud
-        if (!result.ok) {
+        if (!result.ok && result.reason !== 'cancelled') {
             cloudError.textContent = result.message ?? choices.unreachable
             cloudError.hidden = false
         }
