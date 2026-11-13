@@ -10,9 +10,10 @@ import { DesktopServiceAccountForm } from '../services/accounts/DesktopServiceAc
 
 type CatalogApp = { slug: string; name: string; summary: string; methods: ServiceAccountMethod[] }
 
-export function DesktopVaultCatalog({ slug, busy, onSave, onCancel }: {
+export function DesktopVaultCatalog({ slug, busy, replacesSignIn, onSave, onCancel }: {
     slug?: string
     busy: boolean
+    replacesSignIn?: boolean
     onSave: (slug: string, methodId: string, values: Record<string, string>) => Promise<void>
     onCancel: () => void
 }) {
@@ -46,8 +47,10 @@ export function DesktopVaultCatalog({ slug, busy, onSave, onCancel }: {
             <h3 className="font-medium">{app.name}</h3>
             {app.summary && <p className="text-sm text-muted-foreground">{app.summary}</p>}
         </header>
+        {replacesSignIn && <p className="text-sm text-muted-foreground">Saving authentication will replace this app’s current browser sign-in.</p>}
         <DesktopServiceAccountForm identity={app.slug} methods={app.methods} saved={null}
             disabled={busy} submitLabel={slug ? 'Save authentication' : 'Save app'}
+            oauthSubmitLabel={slug ? 'Save authentication' : 'Set up browser sign-in'}
             onSubmit={(methodId, values) => onSave(app.slug, methodId, values)}
             onCancel={slug ? onCancel : () => setSelected(null)} />
     </div>

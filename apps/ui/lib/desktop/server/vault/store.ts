@@ -249,11 +249,12 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         catch { throw new DesktopHttpError(400, 'Check the app’s authentication fields and try again.') }
                         if (entry.name !== connection.name || entry.url !== connection.url) throw new DesktopHttpError(409, 'This method uses a different server. Add a new Vault entry to review it.')
                         const sealed = await sealServerCredential(entry.id, entry.url, revision, connection.header ? { header: connection.header } : { bearer: connection.bearer })
-                        await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET revision=?,credential_revision=?,sealed=?,credential_header=?,catalog_method=?,catalog_name=? WHERE id=?',
-                            args: [revision, revision, sealed, connection.header?.name ?? null, input.methodId, connection.displayName, entry.id] })
+                        await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_oauth WHERE item_id=?', args: [entry.id] })
+                        await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET revision=?,credential_revision=?,sealed=?,credential_header=?,oauth_enabled=?,catalog_method=?,catalog_name=? WHERE id=?',
+                            args: [revision, revision, sealed, connection.header?.name ?? null, Number(connection.browserSignIn === true), input.methodId, connection.displayName, entry.id] })
                     } else if (input.operation === 'enable-server-oauth' || input.operation === 'clear-server-oauth') {
                         if (!('kind' in entry) || entry.kind !== 'mcp') throw new DesktopHttpError(400, 'This entry is not an HTTPS MCP server.')
-                        if (entry.catalog) throw new DesktopHttpError(400, 'This entry uses catalog authentication.')
+                        if (entry.catalog && input.operation === 'enable-server-oauth') throw new DesktopHttpError(400, 'Choose a supported authentication method for this app.')
                         if (input.operation === 'clear-server-oauth' && !entry.browserSignIn) throw new DesktopHttpError(409, 'Browser sign-in is off.')
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_oauth WHERE item_id=?', args: [entry.id] })
                         await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET oauth_enabled=1,sealed=NULL,credential_header=NULL,revision=? WHERE id=?', args: [revision, entry.id] })

@@ -192,8 +192,9 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (new Set(names).size !== names.length || names.some(name => !/^[\w.-]{1,128}$/.test(name) || reserved.has(name) || prefixes.some(prefix => name.startsWith(`${prefix}_`)))) throw new Error('Service tool conflicts with another tool')
         signal.throwIfAborted()
     }, fetch, undefined, (owner, signal) => desktopServiceSkillRestartScope(runtime, owner, signal))
+    const vaultMcp = desktopVaultMcpRuntime(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId, access, entry.shutdown.signal, undefined, () => assertDesktopWorkspaceAdmission(runtime))
     const vaultCatalog = desktopVaultMcpRuntime(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId,
-        owner => access(owner, 'services'), entry.shutdown.signal, undefined, () => assertDesktopWorkspaceAdmission(runtime), undefined, 'catalog')
+        owner => access(owner, 'services'), entry.shutdown.signal, undefined, () => assertDesktopWorkspaceAdmission(runtime), undefined, 'catalog', vaultMcp.oauth)
     const servicesBridge = serviceEngineBridge(installedServices, services, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'services')
         return (await historicalOwner(identity, signal)).owner.id
@@ -267,7 +268,6 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
             return write()
         })),
     })
-    const vaultMcp = desktopVaultMcpRuntime(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId, access, entry.shutdown.signal, undefined, () => assertDesktopWorkspaceAdmission(runtime))
     const bridge = desktopMcpBridge(store, remote, authorizeRun, {
         async tools(owner, run, signal) {
             return [...await sse.tools(owner, run, signal), ...await vaultMcp.tools(owner, signal)]

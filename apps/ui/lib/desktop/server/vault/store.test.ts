@@ -529,11 +529,11 @@ test('local program credentials stay scoped to the assigned entry and revisions'
     } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
 })
 
-test('Vault browser sign-in persists one shared OAuth lineage and rejects callbacks after disconnect', async () => {
+test.each(['custom', 'catalog'] as const)('%s Vault browser sign-in shares a credential and refuses stale callbacks', async mode => {
     const f = await fixture()
     const shutdown = new AbortController()
     const signal = AbortSignal.timeout(10000)
-    const resource = 'https://93.184.216.34/mcp'
+    const resource = mode === 'catalog' ? 'https://mcp.linear.app/mcp' : 'https://93.184.216.34/mcp'
     const issuer = 'https://93.184.216.34/'
     const firstToken = 'fixture-access-before-refresh'
     const refreshToken = 'fixture-refresh-private'
@@ -569,11 +569,19 @@ test('Vault browser sign-in persists one shared OAuth lineage and rejects callba
     }
     const access = async () => ({ enabled: true, granted: true })
     try {
-        const [entry] = (await f.vault.mutate({ operation: 'create-server', name: 'browser', url: resource, bearer: '', browserSignIn: true }, allow)).entries
+        const [entry] = (await f.vault.mutate(mode === 'catalog'
+            ? { operation: 'add-app', slug: 'linear', methodId: 'oauth', values: {} }
+            : { operation: 'create-server', name: 'browser', url: resource, bearer: '', browserSignIn: true }, allow)).entries
+        expect(entry).toMatchObject({ kind: 'mcp', url: resource, browserSignIn: true })
+        if (mode === 'catalog') expect(entry).toHaveProperty('catalog.methodId', 'oauth')
+        const toolsMode = mode === 'catalog' ? 'catalog' : 'mcp'
         const [one] = (await f.vault.assignCoworker(firstAgent, { id: entry.id, revision: entry.revision, attached: true }, allow)).attached
         const [two] = (await f.vault.assignCoworker(secondAgent, { id: entry.id, revision: one.revision, attached: true }, allow)).attached
         const original = desktopVaultMcpRuntime(f.db, crypto, 7, access, shutdown.signal, network, allow, json)
-        expect(await original.tools(firstAgent, signal)).toEqual([])
+        const caller = mode === 'catalog'
+            ? desktopVaultMcpRuntime(f.db, crypto, 7, access, shutdown.signal, network, allow, undefined, toolsMode, original.oauth)
+            : original
+        expect(await caller.tools(firstAgent, signal)).toEqual([])
         expect(networkRequests).toBe(0)
         const started = await original.oauth.start(entry.id, entry.name, two.revision, signal)
         const authorization = new URL(started.authorizationUrl!)
@@ -586,7 +594,10 @@ test('Vault browser sign-in persists one shared OAuth lineage and rejects callba
         expect((await fetch(callback, { signal })).status).toBe(200)
         expect(exchanges).toBe(1)
         opened = f.open()
-        const restarted = desktopVaultMcpRuntime(opened, crypto, 7, access, shutdown.signal, network, allow, json)
+        const restartedOwner = desktopVaultMcpRuntime(opened, crypto, 7, access, shutdown.signal, network, allow, json)
+        const restarted = mode === 'catalog'
+            ? desktopVaultMcpRuntime(opened, crypto, 7, access, shutdown.signal, network, allow, undefined, toolsMode, restartedOwner.oauth)
+            : restartedOwner
         expect(await restarted.oauth.status(entry.id, entry.name, two.revision, signal)).toEqual({ state: 'connected' })
         const [[toolA], [toolB]] = await Promise.all([restarted.tools(firstAgent, signal), restarted.tools(secondAgent, signal)])
         expect(refreshes).toBe(1)
@@ -605,6 +616,18 @@ test('Vault browser sign-in persists one shared OAuth lineage and rejects callba
         expect(exchanges).toBe(1)
         await expect(toolA.execute({}, signal)).rejects.toThrow()
         expect(await restarted.oauth.status(entry.id, entry.name, cleared.revision, signal)).toEqual({ state: 'idle' })
+        expect(cleared.agentIds).toEqual([firstAgent, secondAgent].sort())
+        if (mode === 'catalog') {
+            const [keyMode] = (await f.vault.mutate({ operation: 'configure-app', id: entry.id, revision: cleared.revision,
+                methodId: 'api-key', values: { LINEAR_API_KEY: 'lin_test-fixture' } }, allow)).entries
+            expect(keyMode).toMatchObject({ hasBearer: true, catalog: { methodId: 'api-key' }, agentIds: cleared.agentIds })
+            expect(keyMode).not.toHaveProperty('browserSignIn')
+            await expect(restarted.oauth.status(entry.id, entry.name, keyMode.revision, signal)).rejects.toThrow()
+            const [browserMode] = (await f.vault.mutate({ operation: 'configure-app', id: entry.id, revision: keyMode.revision,
+                methodId: 'oauth', values: {} }, allow)).entries
+            expect(browserMode).toMatchObject({ hasBearer: false, browserSignIn: true, catalog: { methodId: 'oauth' }, agentIds: cleared.agentIds })
+            expect(await restarted.oauth.status(entry.id, entry.name, browserMode.revision, signal)).toEqual({ state: 'idle' })
+        }
     } finally { shutdown.abort(); opened?.close(); f.db.close(); await rm(f.root, { recursive: true, force: true }) }
 })
 
@@ -622,9 +645,9 @@ test('a catalog app keeps its encrypted key and limits tools to current Apps gra
         expect(microsoft.methods[0].inputs).toEqual([])
         const [keyless] = (await f.vault.mutate({ operation: 'add-app', slug: microsoft.slug, methodId: microsoft.methods[0].id, values: {} }, allow)).entries
         expect(keyless).toMatchObject({ name: 'microsoft-learn', hasBearer: false, catalog: { name: 'Microsoft Learn' } })
-        expect(vaultCatalog('linear').find(app => app.slug === 'linear')?.methods.map(method => method.kind)).toEqual(['key'])
-        expect(catalog.methods.map(method => method.id)).toEqual([methodId])
-        await expect(f.vault.mutate({ operation: 'add-app', slug, methodId: 'oauth', values: {} }, allow)).rejects.toMatchObject({ status: 400 })
+        expect(vaultCatalog('linear').find(app => app.slug === 'linear')?.methods.map(method => method.kind)).toEqual(['oauth', 'key'])
+        expect(catalog.methods.map(method => method.id)).toContain(methodId)
+        await expect(f.vault.mutate({ operation: 'add-app', slug, methodId: 'oauth', values }, allow)).rejects.toMatchObject({ status: 400 })
         const saved = (await f.vault.mutate({ operation: 'add-app', slug, methodId, values }, allow)).entries.find(item => item.name === 'agentmail')!
         expect(saved).toMatchObject({ catalog: { slug, methodId, name: catalog.name }, headerName: 'x-api-key', hasBearer: false, agentIds: [] })
         const [entry] = (await f.vault.assignCoworker(firstAgent, { id: saved.id, revision: saved.revision, attached: true }, allow)).attached

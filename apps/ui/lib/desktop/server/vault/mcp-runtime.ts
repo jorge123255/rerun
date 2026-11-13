@@ -11,10 +11,10 @@ import type { OAuthJson } from '../mcp/oauth-network'
 import { vaultMcpOAuth } from './mcp-oauth'
 import { vaultMcpHttps } from './mcp-network'
 
-export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, access: McpAccess, shutdown: AbortSignal, network: McpNetwork = vaultMcpHttps, assertWorkspace = () => {}, oauthJson?: OAuthJson, mode: 'mcp' | 'catalog' = 'mcp') {
+export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, access: McpAccess, shutdown: AbortSignal, network: McpNetwork = vaultMcpHttps, assertWorkspace = () => {}, oauthJson?: OAuthJson, mode: 'mcp' | 'catalog' = 'mcp', sharedOAuth?: ReturnType<typeof vaultMcpOAuth>) {
     const lifecycle = remoteMcpLifecycle()
-    const oauth = vaultMcpOAuth(db, crypto, workspaceId, assertWorkspace, oauthJson)
-    const close = () => { oauth.shutdown(); lifecycle.shutdown() }
+    const oauth = sharedOAuth ?? vaultMcpOAuth(db, crypto, workspaceId, assertWorkspace, oauthJson)
+    const close = () => { if (!sharedOAuth) oauth.shutdown(); lifecycle.shutdown() }
     shutdown.addEventListener('abort', close, { once: true })
     if (shutdown.aborted) close()
 
@@ -111,7 +111,11 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
                 await authorizeRun(init.signal)
                 await guard()
             })
-            const scopedRuntime = remoteMcpRuntime(store, access, guardedNetwork, undefined, material)
+            const scopedMaterial: DesktopMcpMaterialSource = async (owner, name, revision, phase, signal) => {
+                await authorizeRun(signal)
+                return material(owner, name, revision, phase, signal)
+            }
+            const scopedRuntime = remoteMcpRuntime(store, access, guardedNetwork, undefined, scopedMaterial)
             return remoteMcpTools(owner, store, scopedRuntime, active)
         },
     }

@@ -80,7 +80,10 @@ function Authorization({agentId,vaultId,name,revision,active=true}:Props) {
  },[status,action,active,visible,pending])
  const busy=pending==='start'||pending==='cancel'
  return <div className="space-y-2 py-1" aria-label={`Authorization for ${name}`}>
-  {status.state==='connected'?<div className="flex items-center gap-2 text-sm text-green-600"><CheckCircle2Icon className="size-3.5"/>Connected</div>:<>
+  {status.state==='connected'?<>
+   <div className="flex items-center gap-2 text-sm text-green-600"><CheckCircle2Icon className="size-3.5"/>Connected</div>
+   {vaultId&&<Button variant="outline" size="sm" disabled={!active||!visible||!!pending} onClick={()=>action('start')}>Reconnect</Button>}
+  </>:<>
    {(status.state==='error'||status.state==='unsupported')&&<p role="alert" className="flex items-start gap-2 text-sm text-destructive break-words"><XCircleIcon className="size-3.5 shrink-0"/>{status.message}</p>}
    <Button variant="outline" size="sm" className="w-full" disabled={!active||!visible||busy||status.state==='waiting'||pending==='status'} onClick={()=>action('start')}>
     {busy||status.state==='waiting'?<Loader2Icon className="size-3.5 animate-spin mr-1.5"/>:<ExternalLinkIcon className="size-3.5 mr-1.5"/>}

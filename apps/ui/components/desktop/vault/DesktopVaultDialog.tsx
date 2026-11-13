@@ -42,6 +42,8 @@ export function DesktopVaultDialog({ onClose }: { onClose: () => void }) {
     </Dialog>
 }
 
+type VaultDestination = string | ((listing: DesktopVaultListing) => string)
+
 function VaultPanel() {
     const [listing, setListing] = useState<DesktopVaultListing | null>(null)
     const [page, setPage] = useState('list')
@@ -49,7 +51,7 @@ function VaultPanel() {
     const [error, setError] = useState('')
     const [busy, setBusy] = useState(true)
     const flight = useRef<AbortController | null>(null)
-    async function run(input?: DesktopVaultMutation, next?: string, showError = true) {
+    async function run(input?: DesktopVaultMutation, next?: VaultDestination, showError = true) {
         if (flight.current) return new Error('Another Vault request is in progress.')
         const controller = new AbortController()
         flight.current = controller
@@ -59,7 +61,7 @@ function VaultPanel() {
             const result = await requestVault(controller.signal, input)
             if (controller.signal.aborted) return new Error('The Vault request was cancelled.')
             setListing(result)
-            if (next) setPage(next)
+            if (next) setPage(typeof next === 'function' ? next(result) : next)
             return null
         } catch (cause) {
             const failure = cause instanceof Error ? cause : new Error('Could not save the Vault change.')
@@ -100,7 +102,10 @@ function VaultPanel() {
                 : page === 'add' ? <SecretForm busy={busy} onSubmit={fields => void run({ operation: 'create', ...fields }, 'list')} />
                 : page === 'add-app' ? <DesktopVaultCatalog busy={busy} onCancel={() => navigate('list')}
                     onSave={async (slug, methodId, values) => {
-                        const failure = await run({ operation: 'add-app', slug, methodId, values }, 'list', false)
+                        const previousIds = new Set(listing.entries.map(item => item.id))
+                        const failure = await run({ operation: 'add-app', slug, methodId, values },
+                            saved => saved.entries.find(item => !previousIds.has(item.id)
+                                && 'kind' in item && item.kind === 'mcp' && item.catalog?.slug === slug)?.id ?? 'list', false)
                         if (failure) throw failure
                     }} />
                 : page === 'add-server' ? <ServerForm busy={busy} onSubmit={fields => void run({ operation: 'create-server', ...fields }, 'list')} />
@@ -285,7 +290,7 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
     entry: DesktopVaultEntry
     coworkers: DesktopVaultListing['coworkers']
     busy: boolean
-    onSubmit: (input: DesktopVaultMutation, next?: string, showError?: boolean) => Promise<Error | null>
+    onSubmit: (input: DesktopVaultMutation, next?: VaultDestination, showError?: boolean) => Promise<Error | null>
 }) {
     const [agentIds, setAgentIds] = useState(entry.agentIds)
     const [sharedWithAll, setSharedWithAll] = useState(entry.sharedWithAll)
@@ -315,7 +320,7 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
         </fieldset>
         {server?.browserSignIn && <div className="space-y-2 border-t pt-4">
             <DesktopMcpOAuthAuthorize vaultId={server.id} name={server.name} revision={server.revision} active={!busy && !replace} />
-            <ConfirmDialog title="Disconnect browser sign-in?" description="Coworkers will need you to sign in again before using this server."
+            <ConfirmDialog title="Disconnect browser sign-in?" description="Coworkers will need you to sign in again before using this connection."
                 confirmLabel="Disconnect" pending={busy} onConfirm={() => onSubmit({ operation: 'clear-server-oauth', ...target })}>
                 <Button size="sm" variant="outline" disabled={busy}>Disconnect browser sign-in</Button>
             </ConfirmDialog>
@@ -330,6 +335,7 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
         </div>
         {replace && program && <ProgramForm busy={busy} entry={program} onSave={fields => onSubmit({ operation: 'replace-program', ...target, executable: fields.executable, args: fields.args })} />}
         {replace && server?.catalog && <DesktopVaultCatalog slug={server.catalog.slug} busy={busy}
+            replacesSignIn={server.browserSignIn}
             onCancel={() => setReplace(false)} onSave={async (_slug, methodId, values) => {
                 const failure = await onSubmit({ operation: 'configure-app', ...target, methodId, values }, undefined, false)
                 if (failure) throw failure
