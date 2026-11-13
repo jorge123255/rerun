@@ -160,12 +160,17 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         try {
             const origin = await savedOrigin()
             if (!available() || picker || connecting || pendingOpen !== request) return
-            if (!origin) { openPicker(); return }
+            if (!origin) {
+                openPicker()
+                return 'picker'
+            }
             pendingOpen = null
             const result = await connect(origin, { path: request.path, remember: false })
-            if (!result.ok && available()) {
+            if (result.ok) return 'workspace'
+            if (available()) {
                 pendingOpen ??= request
                 openPicker()
+                return 'picker'
             }
         } finally {
             openingLink = false
@@ -443,11 +448,9 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
                 return { ok: false, reason: 'unreachable' }
             }
             if (request && pendingOpen === request) pendingOpen = null
-            if (remember) {
-                // The connection is usable even if the convenience of remembering its address fails.
-                const remembered = await atomicPrivateJSON(file, { origin }).then(() => true, () => false)
-                await onConnect?.({ remembered })
-            }
+            // Opening a link or restoring a server must not change the startup preference.
+            const remembered = remember && await atomicPrivateJSON(file, { origin }).then(() => true, () => false)
+            await onConnect?.({ remembered })
             if (parent && !parent.isDestroyed()) {
                 acceptedPicker = parent
                 setTimeout(() => { if (!parent.isDestroyed()) parent.close() }, 0)
@@ -688,7 +691,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
                 return
             }
             pendingOpen = { path: link.path }
-            await openPendingLink()
+            return openPendingLink()
         },
         async closeAll() {
             serviceSignIn.cancelAll()

@@ -127,6 +127,7 @@ function leaveLocalUnlock() {
     publishBootStatus(workspaceChoiceStatus())
 }
 function reportStartupError(error) {
+    deferringStartupWindow = false
     const secureStorageBlocked = mac && error instanceof DesktopSecureStorageError
     if (supervisor) supervisor.publish('error', 'verificationFailed')
     else if (secureStorageBlocked) {
@@ -278,9 +279,10 @@ else {
         const link = parseHubLink(address)
         if (!link) return
         event.preventDefault()
-        if (link.kind === 'open') reopeningHub?.controller.abort()
-        if (connectedHubs) void connectedHubs.openLink(link).catch(() => {})
-        else if (link.kind === 'open') pendingHubLink = link
+        if (link.kind === 'open' && (!connectedHubs || deferringStartupWindow)) {
+            pendingHubLink = link
+            reopeningHub?.controller.abort()
+        } else if (connectedHubs) void connectedHubs.openLink(link).catch(() => {})
     })
     app.on('second-instance', showWorkspaceWindow)
     app.on('activate', showWorkspaceWindow)
@@ -345,7 +347,7 @@ function resumeBoard(board) {
 }
 
 async function launch() {
-    const openRememberedHub = !pendingHubLink
+    deferringStartupWindow = mac
     if (mac) {
         startupWorkspace = await loadStartupWorkspace(dataRoot)
         if (app.isPackaged && !registerHubProtocol(app)) console.warn('Could not register Rerun development links with macOS.')
@@ -377,11 +379,6 @@ async function launch() {
                 shellLanguage.select(connectedHubs.languageScopeOf(candidate) ?? 'local')
             }
         })
-        if (pendingHubLink) {
-            const link = pendingHubLink
-            pendingHubLink = null
-            void connectedHubs.openLink(link).catch(() => {})
-        }
         app.once('will-quit', shortcutPreference.unregister)
         const refreshApplicationMenu = () => installMacApplicationMenu({
             Menu, appName: app.name, isDesktopPage, locale: shellLanguage.locale(),
@@ -658,20 +655,28 @@ async function launch() {
     const existingLocal = !mac || await hasLocalWorkspace(dataRoot)
     const restoreConnected = startupWorkspace?.selection() === 'connected'
     if (mac) {
-        bootStatus = existingLocal && !restoreConnected
+        bootStatus = existingLocal && !restoreConnected && !pendingHubLink
             ? { state: 'starting', messageKey: 'keychainPrompt' } : workspaceChoiceStatus()
     }
-    // Let a remembered server or its recovery window take over startup.
     let openedHub = false
-    deferringStartupWindow = mac
+    let linkResult
     try {
         await window.loadFile(startup)
-        if (openRememberedHub && (restoreConnected || !existingLocal)) openedHub = await reopenRememberedHub()
+        if (!pendingHubLink && (restoreConnected || !existingLocal)) openedHub = await reopenRememberedHub()
+        while (pendingHubLink && !quitting) {
+            const link = pendingHubLink
+            pendingHubLink = null
+            publishBootStatus(workspaceChoiceStatus())
+            linkResult = await connectedHubs.openLink(link)
+        }
     } finally {
         deferringStartupWindow = false
     }
-    if (mac && !openedHub && showWindowOnReady && !quitting) showMainWindow()
-    if (existingLocal && !restoreConnected) await startLocalWorkspace()
+    if (mac && !openedHub && linkResult !== 'workspace' && showWindowOnReady && !quitting) {
+        if (linkResult === 'picker') window.showInactive()
+        else showMainWindow()
+    }
+    if (existingLocal && !restoreConnected && !linkResult) await startLocalWorkspace()
 }
 
 async function openLocalWorkspace() {
