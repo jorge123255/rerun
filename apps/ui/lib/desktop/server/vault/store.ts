@@ -73,6 +73,16 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                             }
                             const other = listing.entries.find(row => row.id !== entry.id && row.variable === entry.variable && overlaps(row, { ...input, agentIds }))
                             if (other) throw new DesktopHttpError(409, `A coworker would receive ${entry.variable} from both ${entry.name} and ${other.name}.`, 'vault_conflict')
+                            const targets = new Set(input.sharedWithAll ? listing.coworkers.map(agent => agent.id) : agentIds)
+                            if (targets.size) {
+                                const privateCredentials = await tx.execute({
+                                    sql: 'SELECT agent_id FROM desktop_secret_credentials WHERE key=?',
+                                    args: [entry.variable],
+                                })
+                                if (privateCredentials.rows.some(row => targets.has(String(row.agent_id)))) {
+                                    throw new DesktopHttpError(409, `A selected coworker already has a private credential named ${entry.variable}.`, 'vault_conflict')
+                                }
+                            }
                             await tx.execute({ sql: 'DELETE FROM desktop_vault_attachments WHERE item_id=?', args: [entry.id] })
                             for (const id of agentIds) await tx.execute({ sql: 'INSERT INTO desktop_vault_attachments(item_id,agent_id) VALUES(?,?)', args: [entry.id, id] })
                             await tx.execute({ sql: 'UPDATE desktop_vault_secrets SET revision=?,shared_with_all=? WHERE id=?', args: [revision, Number(input.sharedWithAll), entry.id] })

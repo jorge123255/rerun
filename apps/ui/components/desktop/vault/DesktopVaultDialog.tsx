@@ -147,7 +147,7 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
         </header>
         <fieldset disabled={busy} className="space-y-3 border-t pt-4">
             <legend className="text-sm font-medium">Coworkers</legend>
-            <p className="text-sm text-muted-foreground">Assignments are saved here. Coworker runs cannot use Vault secrets yet.</p>
+            <p className="text-sm text-muted-foreground">Assigned coworkers can use these variables in approved MCP credential references.</p>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sharedWithAll} onChange={event => setSharedWithAll(event.target.checked)} />Every coworker</label>
             {coworkers.map(coworker => <label key={coworker.id} className="flex items-center gap-2 text-sm">
                 <input type="checkbox" disabled={sharedWithAll} checked={sharedWithAll || agentIds.includes(coworker.id)}

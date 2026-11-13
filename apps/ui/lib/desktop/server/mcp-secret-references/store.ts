@@ -99,7 +99,14 @@ export function createDesktopMcpSecretReferenceStore(db: Client, ports: {
     authority: DesktopMcpSecretReferenceAuthority
     captureAuthority: (agentId: string) => Promise<() => void>
     commitPublicConfig: DesktopMcpPublicConfigPort['commit']
+    readVersion?: (executor: DesktopMcpSecretReferenceExecutor, agentId: string, key: string) => Promise<number | undefined>
 }) {
+    const readVersion = ports.readVersion ?? (async (executor, agentId, key) => {
+        const row = (await executor.execute({
+            sql: 'SELECT version FROM desktop_secret_credentials WHERE agent_id = ? AND key = ?', args: [agentId, key],
+        })).rows[0]
+        return row ? Number(row.version) : undefined
+    })
     return {
         async reconcile(input: DesktopMcpSecretReferenceSave): Promise<DesktopMcpSecretReferenceSaveResult> {
             const save = desktopMcpSecretReferenceSaveSchema.parse(input)
@@ -216,11 +223,8 @@ export function createDesktopMcpSecretReferenceStore(db: Client, ports: {
                 const names = [...new Set(plan.references.map(reference => reference.name))]
                 const versions = new Map<string, number>()
                 for (const name of names) {
-                    const row = (await executor.execute({
-                        sql: 'SELECT version FROM desktop_secret_credentials WHERE agent_id = ? AND key = ?',
-                        args: [save.agentId, name],
-                    })).rows[0]
-                    if (row) versions.set(name, Number(row.version))
+                    const version = await readVersion(executor, save.agentId, name)
+                    if (version !== undefined) versions.set(name, version)
                 }
                 const now = new Date().toISOString()
                 const bindingRevision = save.expectedBindingRevision + 1

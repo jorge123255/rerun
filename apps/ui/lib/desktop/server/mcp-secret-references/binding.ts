@@ -4,6 +4,7 @@ import type { Client } from '@libsql/client'
 import { desktopMcpSecretReferencePlan, type DesktopMcpSecretReferenceOwner, type DesktopMcpSecretReferenceConfig, type DesktopMcpSecretReferenceSave } from '@rerun/contracts'
 import { createDesktopSecretCrypto } from '../secret-requests/crypto'
 import { createDesktopSecretRequestStore } from '../secret-requests/store'
+import { desktopVaultMcpOpener, readDesktopMcpCredentialVersion } from '../vault/mcp-credentials'
 import { createDesktopMcpSecretLookup } from './lookup'
 import { createDesktopMcpSecretReferenceStore, DesktopMcpSecretReferenceConflict } from './store'
 import { withDesktopMcpSecrets } from './resolve'
@@ -13,15 +14,20 @@ export function createCanonicalMcpSecretReferences(deps: {
     db: Client
     key(): Buffer
     origin: string
+    workspaceId: number
     shutdown: AbortSignal
     owner(agentId: string, signal: AbortSignal): Promise<DesktopMcpSecretReferenceOwner & { remoteMcpGranted: boolean; check(): void }>
     mutate<T>(agentId: string, serverName: string, work: () => Promise<T>): Promise<T>
     configuration(agentId: string, serverName: string): Promise<{ revision: string; config: DesktopMcpSecretReferenceConfig }>
 }) {
-    const lookup = createDesktopMcpSecretLookup(deps.db, createDesktopSecretRequestStore(deps.db, createDesktopSecretCrypto(deps.key)))
+    const crypto = createDesktopSecretCrypto(deps.key)
+    const privateOpener = createDesktopSecretRequestStore(deps.db, crypto)
+    const lookup = createDesktopMcpSecretLookup(deps.db, desktopVaultMcpOpener(deps.db, crypto, deps.workspaceId, privateOpener),
+        (id, key) => readDesktopMcpCredentialVersion(deps.db, id, key))
     const authority = { currentOwner: async (id: string) => deps.owner(id, AbortSignal.any([deps.shutdown, AbortSignal.timeout(5000)])) }
     const records = createDesktopMcpSecretReferenceStore(deps.db, {
         authority,
+        readVersion: readDesktopMcpCredentialVersion,
         captureAuthority: async id => {
             const current = await deps.owner(id, AbortSignal.any([deps.shutdown, AbortSignal.timeout(5000)]))
             return () => { deps.shutdown.throwIfAborted(); current.check() }
@@ -63,8 +69,8 @@ export function createCanonicalMcpSecretReferences(deps: {
             if (current.revision !== revision || currentHead?.configRevision !== revision || currentHead.bindingRevision !== head.bindingRevision || currentHead.fingerprint !== head.fingerprint) throw new Error('MCP credential configuration changed')
             for (const binding of bindings) {
                 if (binding.status !== 'bound' || binding.secretVersion === null) throw new Error('MCP credentials are pending')
-                const row = (await deps.db.execute({ sql: 'SELECT version FROM desktop_secret_credentials WHERE agent_id=? AND key=?', args: [agentId, binding.secretName] })).rows[0]
-                if (!row || Number(row.version) !== binding.secretVersion) throw new Error('MCP credentials changed; review the reference again')
+                const version = await readDesktopMcpCredentialVersion(deps.db, agentId, binding.secretName)
+                if (version !== binding.secretVersion) throw new Error('MCP credentials changed; review the reference again')
             }
             signal.throwIfAborted(); if (!settled) acquisitionSignal.throwIfAborted(); owner.check()
         }

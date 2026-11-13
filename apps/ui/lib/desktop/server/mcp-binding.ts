@@ -218,7 +218,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (row.transport === 'sse' && row.id) await sse.dispose(owner, row.id)
     })
     const references = createCanonicalMcpSecretReferences({
-        db, key: masterKey, origin: 'desktop-workspace-1', shutdown: entry.shutdown.signal,
+        db, key: masterKey, origin: 'desktop-workspace-1', workspaceId: runtime.workspaceId, shutdown: entry.shutdown.signal,
         async owner(id, signal) {
             const current = await currentOwner(id, signal)
             const grants = current.config.tools.desktopToolGrants

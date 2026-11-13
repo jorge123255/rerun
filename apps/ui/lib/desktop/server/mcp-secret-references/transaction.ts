@@ -3,6 +3,7 @@ import 'server-only'
 import { createHash } from 'node:crypto'
 import { desktopMcpSecretReferenceCanonical, desktopMcpSecretReferencePlan, desktopMcpSecretReferencePublicConfig } from '@rerun/contracts'
 import type { DesktopMcpSecretReferenceExecutor } from './store'
+import { readDesktopMcpCredentialVersion } from '../vault/mcp-credentials'
 
 /** Used inside the proposal's existing config+effect transaction, never as a second save. */
 export async function adoptDesktopMcpReferences(tx: DesktopMcpSecretReferenceExecutor, input: { agentId: string; serverName: string; configRevision: string; origin: string; config: unknown; check(): void }) {
@@ -14,8 +15,8 @@ export async function adoptDesktopMcpReferences(tx: DesktopMcpSecretReferenceExe
     const versions = new Map<string, number>()
     const names = [...new Set(plan.references.map(reference => reference.name))]
     for (const key of names) {
-        const row = (await tx.execute({ sql: 'SELECT version FROM desktop_secret_credentials WHERE agent_id=? AND key=?', args: [input.agentId, key] })).rows[0]
-        if (row) versions.set(key, Number(row.version))
+        const version = await readDesktopMcpCredentialVersion(tx, input.agentId, key)
+        if (version !== undefined) versions.set(key, version)
     }
     await tx.execute({ sql: 'DELETE FROM desktop_mcp_secret_references WHERE agent_id=? AND server_name=?', args: [input.agentId, input.serverName] })
     for (const reference of plan.references) {

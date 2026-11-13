@@ -23,7 +23,16 @@ export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProc
  }
  store.bindStop((owner,name)=>stopEntries(owner,name))
  function arm(entry:Entry){clearTimeout(entry.idle);entry.idle=setTimeout(()=>{void stopEntries(entry.owner,entry.name).catch(()=>{})},10*60_000);entry.idle.unref?.()}
- async function guard(entry:Entry,run:StdioRun|undefined,signal:AbortSignal){entry.check();signal.throwIfAborted();await entry.material?.check();if(entry.process?.closed())throw new Error('Local MCP disconnected');const access=await abortable(authorize(entry.owner,'use',run,signal),signal),connection=await abortable(store.read(entry.owner,entry.name),signal);entry.check();signal.throwIfAborted();if(connection.revision!==entry.revision || entry.cwd!==undefined && access.cwd!==entry.cwd)throw new Error('Local connection changed');return {access,connection}}
+ async function guard(entry:Entry,run:StdioRun|undefined,signal:AbortSignal){
+  entry.check();signal.throwIfAborted()
+  try { await entry.material?.check() }
+  catch (error) { entry.controller.abort(); throw error }
+  if(entry.process?.closed())throw new Error('Local MCP disconnected')
+  const access=await abortable(authorize(entry.owner,'use',run,signal),signal),connection=await abortable(store.read(entry.owner,entry.name),signal)
+  entry.check();signal.throwIfAborted()
+  if(connection.revision!==entry.revision || entry.cwd!==undefined && access.cwd!==entry.cwd)throw new Error('Local connection changed')
+  return {access,connection}
+ }
  function connect(owner:string,name:string,revision:string,run:StdioRun|undefined):Entry{
   if(closed)throw new Error('Local MCP stopped')
   const slot=key(owner,name),existing=entries.get(slot)
