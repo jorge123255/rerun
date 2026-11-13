@@ -213,6 +213,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     useEffect(() => {
         if (theme !== preference) setTheme(preference)
     }, [theme, preference, setTheme])
+    useEffect(() => {
+        if (resolvedTheme !== 'light' && resolvedTheme !== 'dark') return
+        const native = (window as Window & { desktopApp?: { setAppearance?: (value: 'light' | 'dark') => void } }).desktopApp
+        native?.setAppearance?.(resolvedTheme)
+    }, [resolvedTheme])
     const [providers, setProviders] = useState<ConnectionsList>({ connections: initialData.connections, default: initialData.default })
     const providerRead = useRef<AbortController | null>(null)
     const refreshProviders = useCallback(async () => {

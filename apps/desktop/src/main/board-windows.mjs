@@ -45,6 +45,7 @@ export function createBoardWindows({ startupUrl, isDesktopPage }) {
 
     function invalidate(entry) {
         entry.epoch = randomUUID()
+        entry.appearance = null
         entry.drafts.reset()
     }
 
@@ -91,7 +92,7 @@ export function createBoardWindows({ startupUrl, isDesktopPage }) {
         register(window, { primary }) {
             const contents = window.webContents
             const entry = { window, contents, primary, drafts: new BeforeQuitDrafts(), epoch: randomUUID(),
-                runtime: null, rendererCrash: null, rendererFailure: null }
+                runtime: null, appearance: null, rendererCrash: null, rendererFailure: null }
             entries.set(contents, entry)
             contents.once('destroyed', () => {
                 entries.delete(contents)

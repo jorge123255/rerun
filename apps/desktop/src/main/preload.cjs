@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld('desktopApp', {
         setLanguage: locale => {
             if (typeof locale === 'string' && locale.length <= 5) ipcRenderer.send('desktop:language', locale)
         },
+        setAppearance: appearance => {
+            if (appearance === 'light' || appearance === 'dark') ipcRenderer.send('desktop:appearance', appearance)
+        },
         macSettings: {
             read: () => ipcRenderer.invoke('desktop:mac-settings'),
             setOpenAtLogin: enabled => {

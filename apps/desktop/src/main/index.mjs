@@ -78,7 +78,7 @@ const quickAsk = createQuickAskWindow({ app, BrowserWindow, screen, showBoard: s
 })
 const windowFind = createWindowFind({ WebContentsView, scopeOf: candidate => boardContext(candidate)?.rendererEpoch ?? connectedHubs?.scopeOf(candidate),
     language: candidate => shellLanguage?.forScope(connectedHubs?.languageScopeOf(candidate) ?? 'local'),
-    appearance: candidate => connectedHubs?.appearanceOf(candidate) ?? null,
+    appearance: candidate => boards.get(candidate)?.appearance ?? connectedHubs?.appearanceOf(candidate) ?? null,
     topInset: candidate => mac && !candidate.isFullScreen() ? 28 : 0,
 })
 function boardContext(candidate) {
@@ -456,6 +456,13 @@ async function launch() {
             try {
                 const board = trusted(event)
                 if (boardContext(board.window)) shellLanguage.set('local', value)
+            } catch { /* Ignore untrusted frames. */ }
+        })
+        ipcMain.on('desktop:appearance', (event, value) => {
+            if (value !== 'light' && value !== 'dark') return
+            try {
+                const board = trusted(event)
+                if (boardContext(board.window)) board.appearance = value
             } catch { /* Ignore untrusted frames. */ }
         })
         ipcMain.handle('desktop:mac-fullscreen', event => (boards.recoveryPage(event, runtime) ?? trusted(event)).window.isFullScreen())
