@@ -192,10 +192,14 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (new Set(names).size !== names.length || names.some(name => !/^[\w.-]{1,128}$/.test(name) || reserved.has(name) || prefixes.some(prefix => name.startsWith(`${prefix}_`)))) throw new Error('Service tool conflicts with another tool')
         signal.throwIfAborted()
     }, fetch, undefined, (owner, signal) => desktopServiceSkillRestartScope(runtime, owner, signal))
+    const vaultCatalog = desktopVaultMcpRuntime(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId,
+        owner => access(owner, 'services'), entry.shutdown.signal, undefined, () => assertDesktopWorkspaceAdmission(runtime), undefined, 'catalog')
     const servicesBridge = serviceEngineBridge(installedServices, services, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'services')
         return (await historicalOwner(identity, signal)).owner.id
-    }, (owner, identity, signal) => serviceTransports.releaseRun(owner, identity, signal))
+    }, (owner, identity, signal) => serviceTransports.releaseRun(owner, identity, signal), (owner, identity, signal) => vaultCatalog.tools(owner, signal, async active => {
+        if (await authorizeRun(identity, active, 'services') !== owner) throw new Error('Service run owner changed')
+    }))
     const accounts = await canonicalServiceAccounts(runtime, installedServices, services, masterKey, {
         additionalTransport: (record, run, signal) => serviceTransports?.service(record, run, signal),
         oauthCredential: (record, run, signal) => serviceOAuth.credentialFor(record, run, signal),

@@ -54,17 +54,26 @@ export function DesktopCoworkerVault({ agentId, query }: { agentId: string; quer
         return () => { pending.current?.abort(); pending.current = null }
     }, [request])
 
-    const detail = (entry: Entry) => 'kind' in entry ? entry.kind === 'program' ? 'Local MCP program' : `MCP · ${entry.headerName ? `Header configured: ${entry.headerName}` : entry.hasBearer ? 'Bearer token configured' : entry.browserSignIn ? 'Browser sign-in managed in Vault' : 'No authentication configured'}` : entry.variable
-    const matches = (entry: Entry) => `${entry.name} ${detail(entry)}`.toLowerCase().includes(query.trim().toLowerCase())
+    const title = (entry: Entry) => 'kind' in entry && entry.kind === 'mcp' ? entry.catalog?.name ?? entry.name : entry.name
+    function detail(entry: Entry) {
+        if (!('kind' in entry)) return entry.variable
+        if (entry.kind === 'program') return 'Local MCP program'
+        const auth = entry.headerName ? `Header configured: ${entry.headerName}`
+            : entry.hasBearer ? 'Bearer token configured'
+            : entry.browserSignIn ? 'Browser sign-in managed in Vault'
+            : 'No authentication configured'
+        return `${entry.catalog ? 'App' : 'MCP'} · ${auth}`
+    }
+    const matches = (entry: Entry) => `${title(entry)} ${detail(entry)}`.toLowerCase().includes(query.trim().toLowerCase())
     const attached = listing?.attached.filter(matches) ?? []
     const available = listing?.available.filter(matches) ?? []
     const row = (entry: Entry, attached: boolean) => (
-        <PanelRow key={entry.id} title={entry.name}
+        <PanelRow key={entry.id} title={title(entry)}
             description={entry.sharedWithAll ? `${detail(entry)} · Shared with every coworker` : detail(entry)}
             leading={'kind' in entry ? <Plug className="size-4" /> : <KeyRound className="size-4" />}
             actions={<>
                 {attached && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">Vault</span>}
-                <Button size="sm" variant="outline" aria-label={`${attached ? 'Remove' : 'Add'} ${entry.name}`}
+                <Button size="sm" variant="outline" aria-label={`${attached ? 'Remove' : 'Add'} ${title(entry)}`}
                     disabled={busy || entry.sharedWithAll}
                     onClick={() => submit({ id: entry.id, revision: entry.revision, attached: !attached })}>
                     {attached ? 'Remove' : 'Add'}

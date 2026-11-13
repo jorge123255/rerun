@@ -11,7 +11,7 @@ import type { OAuthJson } from '../mcp/oauth-network'
 import { vaultMcpOAuth } from './mcp-oauth'
 import { vaultMcpHttps } from './mcp-network'
 
-export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, access: McpAccess, shutdown: AbortSignal, network: McpNetwork = vaultMcpHttps, assertWorkspace = () => {}, oauthJson?: OAuthJson) {
+export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, access: McpAccess, shutdown: AbortSignal, network: McpNetwork = vaultMcpHttps, assertWorkspace = () => {}, oauthJson?: OAuthJson, mode: 'mcp' | 'catalog' = 'mcp') {
     const lifecycle = remoteMcpLifecycle()
     const oauth = vaultMcpOAuth(db, crypto, workspaceId, assertWorkspace, oauthJson)
     const close = () => { oauth.shutdown(); lifecycle.shutdown() }
@@ -22,13 +22,16 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
         return (await db.execute({
             sql: `SELECT s.id,s.name,s.url,s.revision,s.credential_revision,s.credential_header,s.oauth_enabled,s.sealed IS NOT NULL AS has_credential
                 FROM desktop_vault_mcp_servers s JOIN desktop_agents a ON a.id=? AND a.workspace_id=1
-                WHERE (? IS NULL OR s.name=?)
+                WHERE (? IS NULL OR s.name=?) AND (s.catalog_slug IS NOT NULL)=?
                 AND NOT EXISTS (SELECT 1 FROM desktop_deletions d WHERE d.agent_id=a.id OR d.engine_agent_id=a.engine_agent_id)
                 AND (s.shared_with_all=1 OR EXISTS (SELECT 1 FROM desktop_vault_mcp_attachments t WHERE t.item_id=s.id AND t.agent_id=a.id))
                 AND NOT EXISTS (SELECT 1 FROM desktop_remote_mcp p WHERE p.agent_id=a.id AND p.name=s.name)
                 AND NOT EXISTS (SELECT 1 FROM desktop_mcp_stdio p WHERE p.owner=a.id AND p.name=s.name)
+                ${mode === 'catalog' ? `AND NOT EXISTS (
+                    SELECT 1 FROM desktop_service_installs p WHERE p.owner=a.id AND json_extract(p.plan,'$.serverName')=s.name
+                )` : ''}
                 ORDER BY s.name`,
-            args: [agentId, name ?? null, name ?? null],
+            args: [agentId, name ?? null, name ?? null, Number(mode === 'catalog')],
         })).rows
     }
     function view(row: Awaited<ReturnType<typeof assigned>>[number]): RemoteServer {
@@ -101,6 +104,15 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
     const runtime = remoteMcpRuntime(store, access, network, undefined, material)
     return {
         oauth,
-        tools: (owner: string, signal: AbortSignal) => remoteMcpTools(owner, store, runtime, AbortSignal.any([signal, shutdown])),
+        tools(owner: string, signal: AbortSignal, authorizeRun?: (signal: AbortSignal) => Promise<void>) {
+            const active = AbortSignal.any([signal, shutdown])
+            if (!authorizeRun) return remoteMcpTools(owner, store, runtime, active)
+            const guardedNetwork: McpNetwork = (input, init, guard) => network(input, init, async () => {
+                await authorizeRun(init.signal)
+                await guard()
+            })
+            const scopedRuntime = remoteMcpRuntime(store, access, guardedNetwork, undefined, material)
+            return remoteMcpTools(owner, store, scopedRuntime, active)
+        },
     }
 }

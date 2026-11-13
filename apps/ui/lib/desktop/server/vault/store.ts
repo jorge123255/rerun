@@ -2,6 +2,7 @@ import 'server-only'
 import { randomUUID } from 'node:crypto'
 import type { Client, Transaction } from '@libsql/client'
 import { desktopCoworkerVaultListing, desktopVaultListing, desktopVaultProgramCredentialLimit, type DesktopCoworkerVaultMutation, type DesktopCoworkerVaultEntry, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '../../vault'
+import { compileVaultCatalogApp } from './catalog'
 import { DesktopHttpError } from '../auth'
 import { executableIdentity } from '../mcp-stdio/process'
 import { endpoint } from '../mcp/model'
@@ -28,7 +29,10 @@ async function readVault(tx: Transaction) {
         id: String(row.id), name: String(row.name), variable: String(row.variable), revision: String(row.revision),
         sharedWithAll: row.shared_with_all === 1, agentIds: attachments.get(String(row.id)) ?? [],
     }))
-    const servers = (await tx.execute('SELECT id,name,url,revision,sealed IS NOT NULL AND credential_header IS NULL AS has_bearer,credential_header,oauth_enabled,shared_with_all FROM desktop_vault_mcp_servers ORDER BY name,id')).rows.map(row => ({
+    const servers = (await tx.execute('SELECT id,name,url,revision,sealed IS NOT NULL AND credential_header IS NULL AS has_bearer,credential_header,oauth_enabled,catalog_slug,catalog_method,catalog_name,shared_with_all FROM desktop_vault_mcp_servers ORDER BY name,id')).rows.map(row => ({
+        ...(typeof row.catalog_slug === 'string' && typeof row.catalog_method === 'string' && typeof row.catalog_name === 'string' && {
+            catalog: { slug: row.catalog_slug, methodId: row.catalog_method, name: row.catalog_name },
+        }),
         kind: 'mcp', id: String(row.id), name: String(row.name), url: String(row.url), revision: String(row.revision),
         sharedWithAll: row.shared_with_all === 1, hasBearer: row.has_bearer === 1, ...(row.oauth_enabled === 1 && { browserSignIn: true }), ...(typeof row.credential_header === 'string' && { headerName: row.credential_header }), agentIds: attachments.get(String(row.id)) ?? [],
     }))
@@ -141,17 +145,29 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         sql: 'INSERT INTO desktop_vault_mcp_programs(id,name,executable,args,executable_identity,revision) VALUES(?,?,?,?,?,?)',
                         args: [randomUUID(), input.name, input.executable, JSON.stringify(input.args), approvedExecutable!, revision],
                     })
-                } else if (input.operation === 'create-server') {
+                } else if (input.operation === 'create-server' || input.operation === 'add-app') {
+                    let connection: Extract<DesktopVaultMutation, { operation: 'create-server' }>
+                    let catalogName: string | null = null
                     let url: string
-                    try { url = oauthHttps(endpoint(input.url)).href }
-                    catch { throw new DesktopHttpError(400, 'Enter a public HTTPS MCP endpoint without a query or credentials.') }
-                    if (listing.entries.some(entry => 'kind' in entry && entry.name === input.name)) {
+                    try {
+                        if (input.operation === 'add-app') {
+                            const app = compileVaultCatalogApp(input.slug, input.methodId, input.values)
+                            catalogName = app.displayName
+                            connection = app
+                        } else connection = input
+                        url = oauthHttps(endpoint(connection.url)).href
+                    } catch {
+                        throw new DesktopHttpError(400, input.operation === 'add-app' ? 'Check the app’s authentication fields and try again.' : 'Enter a public HTTPS MCP endpoint without a query or credentials.')
+                    }
+                    if (listing.entries.some(entry => 'kind' in entry && entry.name === connection.name)) {
                         throw new DesktopHttpError(409, 'An MCP server already uses this name in the Vault.', 'vault_conflict')
                     }
                     const id = randomUUID()
+                    const sealed = await sealServerCredential(id, url, revision, connection.header ? { header: connection.header } : { bearer: connection.bearer })
                     await tx.execute({
-                        sql: 'INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,sealed,credential_header,oauth_enabled) VALUES(?,?,?,?,?,?,?,?)',
-                        args: [id, input.name, url, revision, revision, await sealServerCredential(id, url, revision, input.header ? { header: input.header } : { bearer: input.bearer }), input.header?.name ?? null, Number(input.browserSignIn === true)],
+                        sql: 'INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,sealed,credential_header,oauth_enabled,catalog_slug,catalog_method,catalog_name) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                        args: [id, connection.name, url, revision, revision, sealed, connection.header?.name ?? null, Number(connection.browserSignIn === true),
+                            input.operation === 'add-app' ? input.slug : null, input.operation === 'add-app' ? input.methodId : null, catalogName],
                     })
                 } else {
                     const entry = listing.entries.find(row => row.id === input.id)
@@ -165,15 +181,18 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         const targets = new Set((input.sharedWithAll ? listing.coworkers.map(agent => agent.id) : agentIds)
                             .filter(id => !entry.sharedWithAll && !entry.agentIds.includes(id)))
                         const server = 'kind' in entry
-                        if (server) {
+                        if (server && targets.size) {
+                            const catalogApp = entry.kind === 'mcp' && !!entry.catalog
                             const collisions = await tx.execute({
-                                sql: 'SELECT agent_id FROM desktop_remote_mcp WHERE name=? UNION ALL SELECT owner AS agent_id FROM desktop_mcp_stdio WHERE name=?',
-                                args: [entry.name, entry.name],
+                                sql: `SELECT agent_id FROM desktop_remote_mcp WHERE name=?
+                                    UNION ALL SELECT owner AS agent_id FROM desktop_mcp_stdio WHERE name=?
+                                    ${catalogApp ? "UNION ALL SELECT owner AS agent_id FROM desktop_service_installs WHERE json_extract(plan,'$.serverName')=?" : ''}`,
+                                args: catalogApp ? [entry.name, entry.name, entry.name] : [entry.name, entry.name],
                             })
                             if (collisions.rows.some(row => targets.has(String(row.agent_id)))) {
                                 throw new DesktopHttpError(409, `A selected coworker already has an MCP server named ${entry.name}.`, 'vault_conflict')
                             }
-                        } else {
+                        } else if (!server) {
                             const other = listing.entries.find(row => !('kind' in row) && row.id !== entry.id && row.variable === entry.variable && overlaps(row, { ...input, agentIds }))
                             if (other) throw new DesktopHttpError(409, `A coworker would receive ${entry.variable} from both ${entry.name} and ${other.name}.`, 'vault_conflict')
                             if (targets.size) {
@@ -223,13 +242,24 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                             await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_program_credentials WHERE item_id=? AND name=?', args: [entry.id, input.variable] })
                         }
                         await tx.execute({ sql: 'UPDATE desktop_vault_mcp_programs SET revision=? WHERE id=?', args: [revision, entry.id] })
+                    } else if (input.operation === 'configure-app') {
+                        if (!('kind' in entry) || entry.kind !== 'mcp' || !entry.catalog) throw new DesktopHttpError(400, 'This entry is not a catalog app.')
+                        let connection: ReturnType<typeof compileVaultCatalogApp>
+                        try { connection = compileVaultCatalogApp(entry.catalog.slug, input.methodId, input.values) }
+                        catch { throw new DesktopHttpError(400, 'Check the app’s authentication fields and try again.') }
+                        if (entry.name !== connection.name || entry.url !== connection.url) throw new DesktopHttpError(409, 'This method uses a different server. Add a new Vault entry to review it.')
+                        const sealed = await sealServerCredential(entry.id, entry.url, revision, connection.header ? { header: connection.header } : { bearer: connection.bearer })
+                        await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET revision=?,credential_revision=?,sealed=?,credential_header=?,catalog_method=?,catalog_name=? WHERE id=?',
+                            args: [revision, revision, sealed, connection.header?.name ?? null, input.methodId, connection.displayName, entry.id] })
                     } else if (input.operation === 'enable-server-oauth' || input.operation === 'clear-server-oauth') {
                         if (!('kind' in entry) || entry.kind !== 'mcp') throw new DesktopHttpError(400, 'This entry is not an HTTPS MCP server.')
+                        if (entry.catalog) throw new DesktopHttpError(400, 'This entry uses catalog authentication.')
                         if (input.operation === 'clear-server-oauth' && !entry.browserSignIn) throw new DesktopHttpError(409, 'Browser sign-in is off.')
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_oauth WHERE item_id=?', args: [entry.id] })
                         await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET oauth_enabled=1,sealed=NULL,credential_header=NULL,revision=? WHERE id=?', args: [revision, entry.id] })
                     } else if (input.operation === 'replace-server-bearer' || input.operation === 'replace-server-header') {
                         if (!('kind' in entry) || entry.kind !== 'mcp') throw new DesktopHttpError(400, 'This entry is not an HTTPS MCP server.')
+                        if (entry.catalog) throw new DesktopHttpError(400, 'This entry uses catalog authentication.')
                         const sealed = await sealServerCredential(entry.id, entry.url, revision, input)
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_oauth WHERE item_id=?', args: [entry.id] })
                         await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET revision=?,credential_revision=?,sealed=?,credential_header=?,oauth_enabled=0 WHERE id=?', args: [revision, revision, sealed, 'header' in input ? input.header.name : null, entry.id] })

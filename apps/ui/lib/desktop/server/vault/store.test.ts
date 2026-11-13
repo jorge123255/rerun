@@ -13,6 +13,9 @@ import { initializeDesktopRound48 } from '../round48-schema'
 import { initializeDesktopRound49 } from '../round49-schema'
 import { initializeDesktopRound50 } from '../round50-schema'
 import { initializeDesktopRound51 } from '../round51-schema'
+import { initializeDesktopRound52 } from '../round52-schema'
+import { desktopServicesSchema } from '../services/schema'
+import { vaultCatalog } from './catalog'
 import { stdioRuntime } from '../mcp-stdio/runtime'
 import { stdioStore } from '../mcp-stdio/store'
 import { assignedVaultMcpPrograms, vaultProgramMaterials } from './mcp-programs'
@@ -54,6 +57,8 @@ async function fixture(migrate = true, headerMigration = true) {
     await initializeDesktopRound49(db)
     await initializeDesktopRound50(db)
     await initializeDesktopRound51(db)
+    await initializeDesktopRound52(db)
+    await db.executeMultiple(desktopServicesSchema)
     return { db, root, file, open, vault: desktopVault(db, crypto, 7) }
 }
 
@@ -79,7 +84,7 @@ test('upgrades a prior workspace, saves redacted metadata, rotates ciphertext, a
             await initializeDesktopRound45(reopened)
             await initializeDesktopRound46(reopened)
             expect(await desktopVault(reopened, crypto, 7).list()).toEqual(updated)
-            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }, { version: 48 }, { version: 49 }, { version: 50 }, { version: 51 }])
+            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }, { version: 48 }, { version: 49 }, { version: 50 }, { version: 51 }, { version: 52 }])
             expect((await reopened.execute('PRAGMA foreign_key_check')).rows).toEqual([])
         } finally { reopened.close() }
         expect((await readFile(f.file)).includes(secret)).toBe(false)
@@ -601,4 +606,80 @@ test('Vault browser sign-in persists one shared OAuth lineage and rejects callba
         await expect(toolA.execute({}, signal)).rejects.toThrow()
         expect(await restarted.oauth.status(entry.id, entry.name, cleared.revision, signal)).toEqual({ state: 'idle' })
     } finally { shutdown.abort(); opened?.close(); f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('a catalog app keeps its encrypted key and limits tools to current Apps grants and assignments', async () => {
+    const f = await fixture()
+    const shutdown = new AbortController()
+    try {
+        const slug = 'agentmail', methodId = 'api-key'
+        const token = 'am_synthetic-catalog-fixture'
+        const values = { AGENTMAIL_API_KEY: token }
+        const [catalog] = vaultCatalog('agentmail').filter(app => app.slug === slug)
+        expect(catalog.name).toBe('AgentMail')
+        const microsoft = vaultCatalog('microsoft').find(app => app.slug === 'microsoft')!
+        expect(microsoft.methods).toHaveLength(1)
+        expect(microsoft.methods[0].inputs).toEqual([])
+        const [keyless] = (await f.vault.mutate({ operation: 'add-app', slug: microsoft.slug, methodId: microsoft.methods[0].id, values: {} }, allow)).entries
+        expect(keyless).toMatchObject({ name: 'microsoft-learn', hasBearer: false, catalog: { name: 'Microsoft Learn' } })
+        expect(vaultCatalog('linear').find(app => app.slug === 'linear')?.methods.map(method => method.kind)).toEqual(['key'])
+        expect(catalog.methods.map(method => method.id)).toEqual([methodId])
+        await expect(f.vault.mutate({ operation: 'add-app', slug, methodId: 'oauth', values: {} }, allow)).rejects.toMatchObject({ status: 400 })
+        const saved = (await f.vault.mutate({ operation: 'add-app', slug, methodId, values }, allow)).entries.find(item => item.name === 'agentmail')!
+        expect(saved).toMatchObject({ catalog: { slug, methodId, name: catalog.name }, headerName: 'x-api-key', hasBearer: false, agentIds: [] })
+        const [entry] = (await f.vault.assignCoworker(firstAgent, { id: saved.id, revision: saved.revision, attached: true }, allow)).attached
+        await expect(f.vault.mutate({ operation: 'replace-server-bearer', id: entry.id, revision: entry.revision, bearer: token }, allow)).rejects.toMatchObject({ status: 400 })
+        const reopened = f.open()
+        try {
+            let granted = false, requests = 0, expectedToken = token
+            const network: McpNetwork = async (url, init, guard) => {
+                expect(url).toBe('https://mcp.agentmail.to/mcp')
+                await guard()
+                requests++
+                expect(new Headers(init.headers).get('x-api-key')).toBe(expectedToken)
+                const body = JSON.parse(init.body!)
+                const result = body.method === 'initialize' ? { protocolVersion: '2025-03-26' }
+                    : body.method === 'tools/list' ? { tools: [{ name: 'list', inputSchema: { type: 'object' } }] }
+                    : { content: [{ type: 'text', text: 'ready ' + expectedToken }] }
+                return body.id === undefined ? new Response(null, { status: 202 }) : Response.json({ jsonrpc: '2.0', id: body.id, result })
+            }
+            const services = desktopVaultMcpRuntime(reopened, crypto, 7, async () => ({ enabled: true, granted }), shutdown.signal, network, allow, undefined, 'catalog')
+            const mcp = desktopVaultMcpRuntime(reopened, crypto, 7, async () => ({ enabled: true, granted: true }), shutdown.signal, network)
+            expect(await mcp.tools(firstAgent, shutdown.signal)).toEqual([])
+            expect(await services.tools(secondAgent, shutdown.signal)).toEqual([])
+            expect(await services.tools(foreignAgent, shutdown.signal)).toEqual([])
+            await expect(services.tools(firstAgent, shutdown.signal)).rejects.toThrow()
+            expect(requests).toBe(0)
+            granted = true
+            let active = true
+            const [tool] = await services.tools(firstAgent, shutdown.signal, async () => {
+                if (!active) throw new Error('Service run stopped')
+            })
+            expect(tool.name).toBe('agentmail_list')
+            const result = JSON.stringify(await tool.execute({}, shutdown.signal))
+            expect(result).toMatch(/ready.*redacted/i)
+            expect(result).not.toContain(token)
+            granted = false
+            const before = requests
+            await expect(tool.execute({}, shutdown.signal)).rejects.toThrow()
+            expect(requests).toBe(before)
+            granted = true
+            active = false
+            await expect(tool.execute({}, shutdown.signal)).rejects.toThrow()
+            expect(requests).toBe(before)
+            active = true
+            expectedToken = 'am_rotated-catalog-fixture'
+            const [rotated] = (await f.vault.mutate({ operation: 'configure-app', id: entry.id, revision: entry.revision, methodId, values: { AGENTMAIL_API_KEY: expectedToken } }, allow)).entries
+            expect(rotated.agentIds).toEqual([firstAgent])
+            await expect(tool.execute({}, shutdown.signal)).rejects.toThrow()
+            expect(requests).toBe(before)
+            const [updatedTool] = await services.tools(firstAgent, shutdown.signal)
+            expect(JSON.stringify(await updatedTool.execute({}, shutdown.signal))).toMatch(/ready.*redacted/i)
+            await f.vault.assignCoworker(firstAgent, { id: rotated.id, revision: rotated.revision, attached: false }, allow)
+            await expect(updatedTool.execute({}, shutdown.signal)).rejects.toThrow()
+            expect(await services.tools(firstAgent, shutdown.signal)).toEqual([])
+            expect((await readFile(f.file)).includes(token)).toBe(false)
+            expect((await readFile(f.file)).includes(expectedToken)).toBe(false)
+        } finally { shutdown.abort(); reopened.close() }
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
 })
