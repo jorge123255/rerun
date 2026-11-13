@@ -38,11 +38,12 @@ import notifications from '@rerun/i18n/messages/en/notifications.json'
 import mobileChat from '@rerun/i18n/messages/en/mobileChat.json'
 import mobileSettings from '@rerun/i18n/messages/en/mobileSettings.json'
 import services from '@rerun/i18n/messages/en/services.json'
+import templates from '@rerun/i18n/messages/en/templates.json'
 import subRuns from '@rerun/i18n/messages/en/subRuns.json'
 import workspace from '@rerun/i18n/messages/en/workspace.json'
 import ui from '@rerun/i18n/messages/en/ui.json'
 
-const englishSource = { account, agent, brain, builder, changelog, chat, common, connections, data, dialogs, files, foreman, kit, layout, mobileChat, mobileSettings, notifications, services, subRuns, workspace, ui }
+const englishSource = { account, agent, brain, builder, changelog, chat, common, connections, data, dialogs, files, foreman, kit, layout, mobileChat, mobileSettings, notifications, services, subRuns, templates, workspace, ui }
 type DesktopMessageSource = typeof englishSource
 
 const desktopSetupAuthorCopy = {
@@ -472,6 +473,11 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         notifications: source.layout.workspaceMenu.notifications,
         shortcuts: source.layout.menu.shortcuts,
         templates: source.layout.workspaceMenu.templates,
+        templateLibrary: {
+            ...source.templates.library,
+            categories: source.templates.categories,
+            newTemplate: source.templates.expert.list.newTemplate,
+        },
         addCoworker: source.mobileSettings.notifications.perCoworker.add,
         general: source.agent.openChatsTabs.general,
         threads: source.agent.agentChatsList.title,

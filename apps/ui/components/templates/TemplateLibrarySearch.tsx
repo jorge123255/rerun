@@ -5,16 +5,20 @@ import { SearchIcon, XIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
 // `/` reaches the field from anywhere in the library, except from another field.
-export function TemplateLibrarySearch({ value, onChange, className }: { value: string; onChange: (value: string) => void; className?: string }) {
+export function TemplateLibrarySearch({ value, onChange, className, labels }: { value: string; onChange: (value: string) => void; className?: string; labels?: { placeholder: string; clear: string } }) {
     const inputRef = useRef<HTMLInputElement>(null)
 
     useEffect(() => {
         function onKeyDown(event: KeyboardEvent) {
-            if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return
+            if (event.defaultPrevented || event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return
             const target = event.target as HTMLElement | null
             if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
-            event.preventDefault()
-            inputRef.current?.focus()
+            const input = inputRef.current
+            if (!input || !input.getClientRects().length || input.closest('[hidden], [inert], [aria-hidden="true"]')) return
+            const dialog = input.closest('[role="dialog"]')
+            if (dialog && !dialog.contains(target)) return
+            input.focus()
+            if (document.activeElement === input) event.preventDefault()
         }
         document.addEventListener('keydown', onKeyDown)
         return () => document.removeEventListener('keydown', onKeyDown)
@@ -27,12 +31,12 @@ export function TemplateLibrarySearch({ value, onChange, className }: { value: s
                 ref={inputRef}
                 value={value}
                 onChange={event => onChange(event.target.value)}
-                placeholder="Search templates"
-                aria-label="Search templates"
+                placeholder={labels?.placeholder ?? 'Search templates'}
+                aria-label={labels?.placeholder ?? 'Search templates'}
                 className="min-w-0 flex-1 bg-transparent text-[13px] outline-hidden placeholder:text-muted-foreground"
             />
             {value ? (
-                <button type="button" aria-label="Clear search" onClick={() => onChange('')} className="flex size-4 items-center justify-center rounded text-muted-foreground hover:text-foreground">
+                <button type="button" aria-label={labels?.clear ?? 'Clear search'} onClick={() => { onChange(''); inputRef.current?.focus() }} className="flex size-4 items-center justify-center rounded text-muted-foreground hover:text-foreground">
                     <XIcon className="size-3" />
                 </button>
             ) : (
