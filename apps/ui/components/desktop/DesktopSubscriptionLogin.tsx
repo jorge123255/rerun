@@ -5,6 +5,7 @@ import {
     type DesktopSubscriptionLoginSnapshot,
     type DesktopSubscriptionProvider,
 } from '@rerun/contracts'
+import { DesktopDeviceCode } from './DesktopDeviceCode'
 import { Button } from '@/components/ui/button'
 
 const names = { 'grok-build': 'Grok Build', 'kimi-code': 'Kimi Code' } as const
@@ -95,7 +96,7 @@ export function DesktopSubscriptionLogin({ only, onConnectionsChanged }: { only?
                 <h2 className="font-semibold">{name}</h2>
                 {state.phase === 'waiting' ? <>
                     <p className="text-sm">Open the verification page and enter this one-time code.</p>
-                    <output aria-label={`${name} device code`} className="block select-all font-mono text-xl font-semibold tracking-widest">{state.userCode}</output>
+                    <DesktopDeviceCode key={state.userCode} code={state.userCode} label={`${name} device code`} />
                     <a className="text-sm font-medium underline" href={state.verificationUrl} target="_blank" rel="noreferrer">Open {name} verification</a>
                     <p role="status" className="text-xs text-muted-foreground">Waiting for approval</p>
                     <Button type="button" variant="outline" disabled={pending} onClick={() => send('cancel')}>Cancel sign-in</Button>

@@ -50,6 +50,14 @@ const desktopChangelogCopy = {
     de: { loading: 'Neuigkeiten werden geladen…', unavailable: 'Neuigkeiten konnten nicht geladen werden. Versuche es erneut, sobald du online bist.', empty: 'Es wurden keine Neuigkeiten veröffentlicht.', readUpdate: 'Vollständige Neuigkeit lesen', retry: 'Erneut versuchen', saved: 'Gespeicherte Neuigkeiten werden angezeigt.' },
 }
 
+const copyDeviceCodeFailure = {
+    en: 'Could not copy the code. Select it to copy it manually.',
+    fr: 'Impossible de copier le code. Sélectionnez-le pour le copier manuellement.',
+    es: 'No se pudo copiar el código. Selecciónalo para copiarlo manualmente.',
+    pt: 'Não foi possível copiar o código. Selecione-o para copiar manualmente.',
+    de: 'Der Code konnte nicht kopiert werden. Wähle ihn aus, um ihn manuell zu kopieren.',
+} satisfies Record<Locale, string>
+
 const aiProviderTool = {
     en: { label: 'See its AI providers', description: 'Read the model in use, workspace provider availability, and reported subscription limits.' },
     fr: { label: "Voir ses fournisseurs d'IA", description: 'Consulter le modèle utilisé, les fournisseurs de l’espace de travail et les limites d’abonnement connues.' },
@@ -321,6 +329,11 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         closeDialog: source.kit.close,
         workspaceSettings: source.workspace.settings.title,
         providers: source.layout.workspaceMenu.aiProviders,
+        deviceCode: {
+            copy: source.connections.chatgpt.copyCode,
+            copied: source.connections.chatgpt.copied,
+            copyFailed: copyDeviceCodeFailure[locale],
+        },
         defaultModel: source.connections.models.defaultModel,
         workspace: source.workspace.settings.fallbackName,
         notifications: source.layout.workspaceMenu.notifications,
