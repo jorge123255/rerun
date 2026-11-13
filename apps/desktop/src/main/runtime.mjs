@@ -116,7 +116,3 @@ export function childEnvironment(parent = process.env) {
     }
     return { ...clean, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', NODE_ENV: 'production', NEXT_TELEMETRY_DISABLED: '1' }
 }
-
-export function publicStatus(state, message = '') {
-    return { state, message }
-}

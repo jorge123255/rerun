@@ -7,15 +7,26 @@ const cloudError = document.getElementById('cloud-error')
 const connectServer = document.getElementById('connect-server')
 const localFootnote = document.getElementById('local-footnote')
 const titlebar = document.getElementById('mac-titlebar')
+const quit = document.getElementById('quit')
+let copy
 let choices = null
 if (window.desktopApp.onMacFullscreen) {
     titlebar.hidden = false
     window.desktopApp.onMacFullscreen(fullscreen => { titlebar.hidden = fullscreen })
 }
 function update(status) {
+    if (status.copy) {
+        copy = status.copy
+        document.documentElement.lang = copy.locale
+        document.getElementById('preview').textContent = copy.preview
+        document.getElementById('heading-first').textContent = copy.headingFirst
+        document.getElementById('heading-second').textContent = copy.headingSecond
+        quit.textContent = copy.quit
+        localFootnote.textContent = copy.footnote
+    }
     message.textContent = status.message || (status.state === 'ready' ? 'Opening your workspace…' : 'Preparing your local workspace…')
     retry.hidden = status.state !== 'error'
-    retry.textContent = status.retryLabel ?? defaultRetryLabel
+    retry.textContent = status.retryLabel ?? copy?.retry ?? defaultRetryLabel
     choices = status.choices ?? null
     runLocally.hidden = !choices?.local
     signInCloud.hidden = connectServer.hidden = !choices
@@ -53,5 +64,9 @@ signInCloud.addEventListener('click', async () => {
     }
 })
 connectServer.addEventListener('click', () => { void window.desktopApp.connectToServer().catch(() => {}) })
-retry.addEventListener('click', () => { retry.hidden = true; window.desktopApp.retry().catch(() => update({ state: 'error', message: 'The local services could not restart. Quit and reopen the app.' })) })
-document.getElementById('quit').addEventListener('click', () => window.desktopApp.quit())
+retry.addEventListener('click', () => {
+    retry.hidden = true
+    void window.desktopApp.retry().catch(() => update({ state: 'error',
+        message: copy?.retryFailed ?? 'The local services could not restart. Quit and reopen the app.' }))
+})
+quit.addEventListener('click', () => window.desktopApp.quit())

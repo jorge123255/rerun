@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { loadShellLanguage, shellLocale, shellText } from '../src/main/shell-language.mjs'
+import { loadShellLanguage, localizeStartupStatus, shellLocale, shellText } from '../src/main/shell-language.mjs'
 
 test('Mac menus use a supported system language and only apply the active scope', async t => {
     const dataRoot = await mkdtemp(join(tmpdir(), 'rerun-shell-language-'))
@@ -49,4 +49,27 @@ test('Keychain startup guidance follows the selected Mac language', () => {
         assert.notEqual(translated('startup.keychainPrompt'), english('startup.keychainPrompt'))
         assert.notEqual(translated('startup.keychainBlocked'), english('startup.keychainBlocked'))
     }
+})
+
+test('every shell language translates startup, service failure, and renderer recovery', () => {
+    const cases = [
+        { state: 'ready' },
+        { state: 'starting', messageKey: 'starting' },
+        { state: 'error', messageKey: 'servicesFailed' },
+        { state: 'error', messageKey: 'rendererClosed' },
+        { state: 'error', messageKey: 'switchRecovery' },
+    ]
+    for (const locale of ['de', 'es', 'fr', 'pt']) {
+        for (const status of cases) {
+            const translated = localizeStartupStatus(locale, status)
+            const english = localizeStartupStatus('en', status)
+            assert.equal(translated.state, status.state)
+            assert.equal(translated.copy.locale, locale)
+            assert.notEqual(translated.message, english.message)
+            for (const field of ['headingFirst', 'headingSecond', 'quit', 'retry', 'footnote']) {
+                assert.notEqual(translated.copy[field], english.copy[field])
+            }
+        }
+    }
+    assert.deepEqual(localizeStartupStatus('ja', cases[0]), localizeStartupStatus('en', cases[0]))
 })

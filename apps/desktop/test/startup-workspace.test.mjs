@@ -6,18 +6,20 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
 import { configureStartupProfile, hasLocalWorkspace, loadStartupWorkspace } from '../src/main/startup-workspace.mjs'
+import { localizeStartupStatus } from '../src/main/shell-language.mjs'
 
-test('the startup preload forwards the localized retry label', async () => {
+test('the startup preload forwards the localized copy and retry label', async () => {
     const source = await readFile(new URL('../src/main/preload.cjs', import.meta.url), 'utf8')
     const ipcRenderer = new EventEmitter()
     let desktopApp
     const contextBridge = { exposeInMainWorld: (_name, api) => { desktopApp = api } }
     runInNewContext(source, { process: { platform: 'darwin' }, require: () => ({ contextBridge, ipcRenderer }) })
-    const labels = []
-    desktopApp.onStatus(status => labels.push(status.retryLabel))
-    ipcRenderer.emit('desktop:status', {}, { state: 'error', retryLabel: 'Restart Rerun' })
+    const received = []
+    desktopApp.onStatus(status => received.push([status.retryLabel, status.copy]))
+    const status = localizeStartupStatus('fr', { state: 'error', messageKey: 'keychainBlocked', retryLabel: 'Redémarrer Rerun' })
+    ipcRenderer.emit('desktop:status', {}, status)
     ipcRenderer.emit('desktop:status', {}, { state: 'starting' })
-    assert.deepEqual(labels, ['Restart Rerun', undefined])
+    assert.deepEqual(received, [['Redémarrer Rerun', status.copy], [undefined, undefined]])
 })
 
 test('a development profile uses separate storage and packaged builds keep the installed profile', async t => {
@@ -112,7 +114,8 @@ test('the startup screen routes each choice separately and keeps the latest stat
             return new Promise(resolve => { finishCloud = resolve })
         },
     }
-    runInNewContext(source, { document: { getElementById }, window: { desktopApp } })
+    const documentElement = { lang: 'en' }
+    runInNewContext(source, { document: { getElementById, documentElement }, window: { desktopApp } })
     const choices = { state: 'choose', message: 'Choose a workspace', choices: {
         local: 'Run on This Mac', connect: 'Connect to a Server', cloud: 'Sign in to Rerun Cloud',
         connecting: 'Connecting…', unreachable: 'Nothing answered at this address.',
@@ -161,4 +164,12 @@ test('the startup screen routes each choice separately and keeps the latest stat
     elements.get('retry').click()
     elements.get('connect-server').click()
     assert.deepEqual(calls.slice(-2), ['retry', 'server'])
+
+    notify(localizeStartupStatus('fr-CA', { state: 'error', messageKey: 'rendererClosed' }))
+    assert.equal(documentElement.lang, 'fr')
+    assert.equal(elements.get('heading-first').textContent, 'Vos coworkers.')
+    assert.equal(elements.get('quit').textContent, 'Quitter')
+    assert.equal(elements.get('retry').textContent, 'Réessayer')
+    assert.match(elements.get('message').textContent, /fermée de façon inattendue/)
+    assert.equal(elements.get('local-footnote').hidden, false)
 })

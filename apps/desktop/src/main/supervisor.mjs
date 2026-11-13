@@ -5,7 +5,7 @@ import { createServer } from 'node:net'
 import { isAbsolute, resolve } from 'node:path'
 import { lstat, rm, realpath } from 'node:fs/promises'
 import { workspaceDirectory, validWorkspaceId } from './workspaces/paths.mjs'
-import { atomicPrivateJSON, bindWorkspace, childEnvironment, publicStatus, PROTOCOL_VERSION, workspaceIdentity } from './runtime.mjs'
+import { atomicPrivateJSON, bindWorkspace, childEnvironment, PROTOCOL_VERSION, workspaceIdentity } from './runtime.mjs'
 
 const wait = ms => new Promise(done => setTimeout(done, ms))
 const SHUTDOWN_DIAGNOSTIC_EVENTS = new Set([
@@ -29,7 +29,7 @@ export class RuntimeSupervisor extends EventEmitter {
         // Engine drains include a 25-second isolated-screen close plus final worker cleanup.
         // Wait for their acknowledgement without treating a legitimate drain as a failure.
         this.children = new Set()
-        this.status = publicStatus('stopped')
+        this.status = { state: 'stopped' }
         this.operation = null
         this.stopping = false
         this.shutdownEvents = []
@@ -74,8 +74,8 @@ export class RuntimeSupervisor extends EventEmitter {
         }).catch(() => {}) // Diagnostics must never change shutdown success or failure.
     }
 
-    publish(state, message = '') {
-        this.status = publicStatus(state, message)
+    publish(state, messageKey) {
+        this.status = { state, messageKey }
         this.emit('status', this.status)
     }
 
@@ -101,7 +101,7 @@ export class RuntimeSupervisor extends EventEmitter {
             this.children.delete(child)
             if (!this.cleaning && !this.stopping && this.status.state === 'starting') startup?.abort()
             if (!this.stopping && this.status.state === 'ready') {
-                this.publish('error', 'A local service stopped. Retry to restart the app services.')
+                this.publish('error', 'serviceStopped')
                 void this.stop({ preserveError: true }).catch(() => {})
             }
         })
@@ -127,7 +127,7 @@ export class RuntimeSupervisor extends EventEmitter {
 
     async startServices() {
         this.stopping = false
-        this.publish('starting', 'Starting your local workspace…')
+        this.publish('starting', 'starting')
         const workspaceId = this.workspaceId ?? 1
         const installRoot = await realpath(this.root)
         const engineRoot = await bindWorkspace(installRoot, this.identity, workspaceId)
@@ -179,8 +179,8 @@ export class RuntimeSupervisor extends EventEmitter {
                 await this.stopChildren()
                 if (attempt === 2 || this.stopping) {
                     await rm(resolve(this.root, 'runtime.json'), { force: true })
-                    this.publish('error', 'The local services could not start. Retry, or check the bundled runtime installation.')
-                    throw new Error(this.status.message)
+                    this.publish('error', 'servicesFailed')
+                    throw new Error('The local services could not start')
                 }
             }
         }
@@ -316,7 +316,7 @@ export class RuntimeSupervisor extends EventEmitter {
         this.shutdownDiagnostic('stop-requested')
         this.stopping = true
         this.startupAbort?.abort()
-        if (!preserveError) this.publish('stopping', 'Closing local services…')
+        if (!preserveError) this.publish('stopping', 'stopping')
         try {
             if (this.runtime && this.toolsDrainedRuntime !== this.runtime) await this.confirmToolsStopped(this.runtime)
             if (!await this.stopChildren(false)) throw new Error('Local service cleanup was not confirmed')
@@ -332,7 +332,7 @@ export class RuntimeSupervisor extends EventEmitter {
             this.shutdownDiagnostic('stop-failed', undefined, { confirmed: false })
             await this.shutdownDiagnosticWrites
             this.stopping = false
-            this.publish('error', 'A local program or service could not confirm it stopped. Quit was cancelled. Try again before reopening the workspace.')
+            this.publish('error', 'shutdownFailed')
             throw error
         }
     }

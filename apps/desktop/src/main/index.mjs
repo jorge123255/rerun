@@ -15,7 +15,7 @@ import { desktopMicrophonePermissions } from './media-permissions.mjs'
 import { createDesktopFileSaves, safeDisplayedImageError } from './result-files.mjs'
 import { installMacApplicationMenu } from './application-menu.mjs'
 import { approvedQuitAction, BUILD_RELEASE, createMacUpdater } from './mac-updates.mjs'
-import { loadShellLanguage, shellText } from './shell-language.mjs'
+import { loadShellLanguage, localizeStartupStatus, shellText } from './shell-language.mjs'
 import { createMacMenuBar, macLoginItemSettings, setMacOpenAtLogin } from './mac-menu-bar.mjs'
 import { attachDesktopContextMenu, externalDesktopLink } from './window-context-menu.mjs'
 import { createWindowFind } from './window-find.mjs'
@@ -65,11 +65,11 @@ let quittingNow = false
 let phonePairing
 let openingLocalWorkspace
 let startupWorkspace
-let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
+let bootStatus = { state: 'starting' }
 const profile = 'persist:rerun-desktop-local'
 const boards = createBoardWindows({ startupUrl: pathToFileURL(startup).href, isDesktopPage })
 const rendererCrashInterval = 60_000
-const rendererFailureStatus = { state: 'error', message: 'The workspace window closed unexpectedly. Try reopening it.' }
+const rendererFailureStatus = { state: 'error', messageKey: 'rendererClosed' }
 const changingBoards = new Set()
 const phonePairingWindow = createPhonePairingWindow({ BrowserWindow })
 const quickAsk = createQuickAskWindow({ app, BrowserWindow, screen, showBoard: showMainWindow,
@@ -111,11 +111,13 @@ function startupChoices(includeLocal = true) {
 }
 function publishBootStatus(status) {
     bootStatus = status
-    if (window && !window.isDestroyed()) window.webContents.send('desktop:status', bootStatus)
+    if (window && !window.isDestroyed()) window.webContents.send('desktop:status', startupStatus(bootStatus))
+}
+function startupStatus(status) {
+    return localizeStartupStatus(shellLanguage?.forScope('local'), status)
 }
 function workspaceChoiceStatus() {
-    const t = shellText(shellLanguage?.forScope('local'))
-    return { state: 'choose', message: t('startup.chooseWorkspace'), choices: startupChoices() }
+    return { state: 'choose', messageKey: 'chooseWorkspace', choices: startupChoices() }
 }
 function leaveLocalUnlock() {
     if (bootStatus.state !== 'keychain') return
@@ -125,12 +127,12 @@ function leaveLocalUnlock() {
 }
 function reportStartupError(error) {
     const secureStorageBlocked = mac && error instanceof DesktopSecureStorageError
-    if (supervisor) supervisor.publish('error', 'Workspace state could not be verified. Restore the workspace state before retrying.')
+    if (supervisor) supervisor.publish('error', 'verificationFailed')
     else if (secureStorageBlocked) {
         const t = shellText(shellLanguage?.forScope('local'))
-        publishBootStatus({ state: 'error', message: t('startup.keychainBlocked'), choices: startupChoices(false),
+        publishBootStatus({ state: 'error', messageKey: 'keychainBlocked', choices: startupChoices(false),
             retryLabel: t('startup.restartToRetry') })
-    } else publishBootStatus({ state: 'error', message: 'Desktop setup failed. Check that this app has a complete bundled runtime and access to secure storage.' })
+    } else publishBootStatus({ state: 'error', messageKey: 'setupFailed' })
 }
 function showMainWindow() {
     showWindowOnReady = true
@@ -418,9 +420,9 @@ async function launch() {
     }
     await prepareWorkspaceWindow(1, false)
     ipcMain.handle('desktop:status', event => {
-        if (boards.recoveryPage(event, runtime)) return rendererFailureStatus
+        if (boards.recoveryPage(event, runtime)) return startupStatus(rendererFailureStatus)
         trusted(event)
-        return supervisor?.status ?? bootStatus
+        return startupStatus(supervisor?.status ?? bootStatus)
     })
     if (mac) {
         const onStartupPage = event => {
@@ -637,9 +639,8 @@ async function launch() {
     const existingLocal = !mac || await hasLocalWorkspace(dataRoot)
     const restoreConnected = startupWorkspace?.selection() === 'connected'
     if (mac) {
-        const t = shellText(shellLanguage.forScope('local'))
         bootStatus = existingLocal && !restoreConnected
-            ? { state: 'starting', message: t('startup.keychainPrompt') } : workspaceChoiceStatus()
+            ? { state: 'starting', messageKey: 'keychainPrompt' } : workspaceChoiceStatus()
     }
     await window.loadFile(startup)
     if (openRememberedHub && (restoreConnected || !existingLocal)) await reopenRememberedHub()
@@ -658,11 +659,11 @@ async function startLocalWorkspace() {
     const attempt = new AbortController()
     openingLocalWorkspace = attempt
     try {
-        if (mac) publishBootStatus({ state: 'keychain', message: shellText(shellLanguage.forScope('local'))('startup.keychainPrompt'),
+        if (mac) publishBootStatus({ state: 'keychain', messageKey: 'keychainPrompt',
             choices: startupChoices(false) })
         const identity = await loadIdentityFromSafeStorage(dataRoot, safeStorage, { signal: attempt.signal })
         if (attempt.signal.aborted || quitting) return false
-        publishBootStatus({ state: 'starting', message: 'Preparing local runtime…' })
+        publishBootStatus({ state: 'starting' })
         await initializeLocalWorkspace(identity)
         return true
     } catch (error) {
@@ -697,7 +698,8 @@ async function initializeLocalWorkspace(identity) {
         // replaced by a health response. Missing transitions fail before any effect.
     })
     supervisor.on('status', status => {
-        for (const board of boards.list()) board.contents.send('desktop:status', status)
+        const localized = startupStatus(status)
+        for (const board of boards.list()) board.contents.send('desktop:status', localized)
         if (status.state === 'error') {
             retireAdditionalBoards()
             runtime = null
@@ -949,13 +951,13 @@ async function startWorkspace() {
     try {
         const selected = await workspaces.coldLaunchTarget()
         if (!selected.ok) {
-            supervisor.publish('error', 'A workspace switch needs recovery. Choose Retry to recover the same workspace.')
+            supervisor.publish('error', 'switchRecovery')
             return
         }
         await supervisor.startFor(selected.workspaceId, selected.workspace)
         await displayWorkspace()
     } catch {
-        supervisor.publish('error', 'This workspace could not open safely. Choose Retry to try again.')
+        supervisor.publish('error', 'openFailed')
     }
 }
 async function runWorkspaceTransition(operation) {
@@ -971,13 +973,13 @@ async function runWorkspaceTransition(operation) {
         else if (supervisor.runtime !== previous || (await workspaces.reconcile()).requiresManualRecovery) {
             runtime = null
             await window.loadFile(startup)
-            supervisor.publish('error', 'A workspace switch needs recovery. Choose Retry to recover the same workspace.')
+            supervisor.publish('error', 'switchRecovery')
         }
         return result
     } catch {
         runtime = null
         await window.loadFile(startup)
-        supervisor.publish('error', 'Workspace state needs recovery. Choose Retry to try again.')
+        supervisor.publish('error', 'stateRecovery')
         return { ok: false, code: 'path_corrupt', message: 'Workspace state needs recovery before continuing.' }
     } finally { transitioning = false; flushNotificationClicks() }
 }

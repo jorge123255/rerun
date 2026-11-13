@@ -28,6 +28,20 @@ export function shellCopy(value, section) {
     return { ...en[section], ...messages[locale][section], locale }
 }
 
+export function localizeStartupStatus(value, { state, messageKey, ...status }) {
+    const locale = shellLocale(value) ?? 'en'
+    const t = shellText(locale)
+    return {
+        ...status, state,
+        message: t('startup.' + (messageKey ?? (state === 'ready' ? 'opening' : 'preparing'))),
+        copy: {
+            locale, preview: t('startup.preview'), headingFirst: t('startup.headingFirst'),
+            headingSecond: t('startup.headingSecond'), quit: t('startup.quit'), footnote: t('startup.footnote'),
+            retry: t('offline.retry'), retryFailed: t('startup.retryFailed'),
+        },
+    }
+}
+
 export async function loadShellLanguage({ dataRoot, systemLanguages, currentScope, onChange }) {
     const file = join(dataRoot, 'shell-language.json')
     const saved = await readJSON(file).catch(() => null)
