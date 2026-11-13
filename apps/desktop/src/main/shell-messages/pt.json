@@ -54,6 +54,7 @@
         "openAtLogin": "Abrir ao iniciar sessão"
     },
     "server": {
+        "changeServer": "Trocar de servidor…",
         "cancel": "Cancelar",
         "label": "Endereço do servidor",
         "connect": "Conectar",

@@ -44,14 +44,21 @@ export function hubOfflineCopy(locale) {
     }
 }
 
+export function canChangeRecoveryServer(reason) {
+    return reason === 'not-rerun' || reason === 'unsupported'
+}
+
 export function hubRecoveryView(locale, issue) {
     if (!issue) return null
     const t = shellText(locale)
     const { reason, host, minimum } = issue
     if (reason === 'renderer-crashed') return { reason, title: t('offline.crashedTitle'), message: t('offline.crashedBody') }
-    const title = t(reason === 'too-old' ? 'offline.incompatibleTitle' : 'offline.title')
+    const canChangeServer = canChangeRecoveryServer(reason)
+    let title = t('offline.title')
+    if (reason === 'too-old') title = t('offline.incompatibleTitle')
+    if (canChangeServer) title = t('server.title')
     const message = reason === 'unavailable' || reason === 'offline'
         ? t(reason === 'unavailable' ? 'offline.unavailable' : 'offline.body', { host })
         : hubConnectionError(locale, { reason, minimum })
-    return { reason, title, message }
+    return { reason, title, message, ...(canChangeServer && { changeServer: t('server.changeServer') }) }
 }

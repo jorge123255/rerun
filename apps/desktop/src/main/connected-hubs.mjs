@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { createHash, randomUUID } from 'node:crypto'
 import { checkHub, hubPartition, hubWindowAddress, HUB_API_VERSION, isPublishedPageHandoff, normalizeHubOrigin, parseHubWorkspaceId, RERUN_CLOUD_ORIGIN, sameHub } from './connected-hub-policy.mjs'
 import { cascadeWindowBounds } from './board-windows.mjs'
-import { hubConnectionError, hubOfflineCopy, hubPickerCopy, hubRecoveryView } from './connected-hub-messages.mjs'
+import { canChangeRecoveryServer, hubConnectionError, hubOfflineCopy, hubPickerCopy, hubRecoveryView } from './connected-hub-messages.mjs'
 import { shellText } from './shell-language.mjs'
 import { macWorkspaceMinimumSize, restoreWindowZoom } from './window-placement.mjs'
 import { hideWorkspaceWindow, revealWorkspaceWindow as show } from './window-visibility.mjs'
@@ -431,7 +431,9 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             let issue = null
             if (!result.ok) {
                 if (result.reason === 'unreachable' && await savedOrigin() === origin) issue = { reason: 'offline' }
-                else if (restoring && result.reason === 'too-old') issue = { reason: result.reason, minimum: result.minimum }
+                else if (restoring && (result.reason === 'too-old' || canChangeRecoveryServer(result.reason))) {
+                    issue = { reason: result.reason, minimum: result.minimum }
+                }
                 else return result
             }
             if (!available() || (parent && picker !== parent)) return { ok: false, reason: 'busy' }
@@ -510,6 +512,10 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     ipcMain.handle('hub:offline-retry', async event => {
         const entry = offlineSender(event)
         return entry ? hubRecoveryView(entry.locale, await entry.recovery.retry()) : null
+    })
+    ipcMain.handle('hub:offline-change-server', event => {
+        const entry = offlineSender(event)
+        if (entry?.window.isVisible() && canChangeRecoveryServer(entry.recovery.state()?.reason)) openPicker(entry.window)
     })
     ipcMain.handle('hub:offline-download', event => {
         const entry = incompatibleSender(event)

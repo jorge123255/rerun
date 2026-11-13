@@ -2,6 +2,7 @@ const bridge = window.rerunHubOffline
 const title = document.querySelector('#title')
 const message = document.querySelector('#message')
 const button = document.querySelector('#retry')
+const changeServer = document.querySelector('#change-server')
 const download = document.querySelector('#download')
 const install = document.querySelector('#install')
 const updateStatus = document.querySelector('#update-status')
@@ -38,6 +39,8 @@ function render(value) {
     issue = value
     document.title = title.textContent = value.title
     message.textContent = value.message
+    changeServer.textContent = value.changeServer ?? ''
+    changeServer.hidden = !value.changeServer
     renderUpdate()
     if (becameIncompatible && updater) {
         void updater.getState().then(state => {
@@ -65,6 +68,7 @@ updater?.onState(state => { updateEventReceived = true; update = state; renderUp
 void bridge?.state().then(render, () => {})
 button.disabled = !bridge
 button.addEventListener('click', () => void retry(true))
+changeServer.addEventListener('click', () => { void bridge?.changeServer().catch(() => {}) })
 download.addEventListener('click', () => { void bridge?.download?.().catch(() => {}) })
 install.addEventListener('click', async () => {
     if (install.disabled) return

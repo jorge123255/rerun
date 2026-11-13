@@ -26,5 +26,13 @@ test('recovery renders the matching condition while retaining only the retry rea
     assert.notEqual(offline.title, old.title)
     assert.match(old.message, /7\.2\.1/)
     assert.deepEqual(Object.keys(old), ['reason', 'title', 'message'])
+    assert.equal(down.changeServer, undefined)
+    assert.equal(offline.changeServer, undefined)
     assert.equal(hubRecoveryView('es', null), null)
+    for (const reason of ['not-rerun', 'unsupported']) {
+        assert.deepEqual(hubRecoveryView('es', { reason }), {
+            reason, title: hubPickerCopy('es').title,
+            message: hubConnectionError('es', { reason }), changeServer: 'Cambiar de servidor…',
+        })
+    }
 })

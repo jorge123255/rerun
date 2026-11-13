@@ -54,6 +54,7 @@
         "openAtLogin": "Bei der Anmeldung öffnen"
     },
     "server": {
+        "changeServer": "Server wechseln…",
         "cancel": "Abbrechen",
         "label": "Serveradresse",
         "connect": "Verbinden",

@@ -54,6 +54,7 @@
         "openAtLogin": "Ouvrir à la connexion"
     },
     "server": {
+        "changeServer": "Changer de serveur…",
         "cancel": "Annuler",
         "label": "Adresse du serveur",
         "connect": "Se connecter",

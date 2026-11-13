@@ -54,6 +54,7 @@
         "openAtLogin": "Open at Login"
     },
     "server": {
+        "changeServer": "Change Server…",
         "cancel": "Cancel",
         "label": "Server address",
         "connect": "Connect",

@@ -22,6 +22,7 @@ if (bootstrap?.audience === 'picker') {
         appearance: bootstrap.appearance === 'light' ? 'light' : 'dark',
         state: () => ipcRenderer.invoke('hub:offline-state'),
         retry: () => ipcRenderer.invoke('hub:offline-retry'),
+        changeServer: () => ipcRenderer.invoke('hub:offline-change-server'),
         ...(bootstrap.appStore ? { appStore: true } : { download: () => ipcRenderer.invoke('hub:offline-download') }),
         onState: callback => subscribe('hub:offline-state-changed', callback),
         ...(bootstrap.updatesAvailable ? { update: {
