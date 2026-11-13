@@ -26,7 +26,7 @@ function statusOf(status: BoardActivityStatus | undefined): AgentStatus {
  * The left column of the Simple view: the workspace, search, then the Chief of Staff and one tile
  * per coworker, the most recently active first.
  */
-export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenCard, onOpenForeman, onSearch, onNewCoworker }: {
+export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenCard, onOpenForeman, onSearch, onNewCoworker, inboxSlot }: {
     workspaceMenu: ReactNode
     agents: DesktopAgentView[]
     statuses: Record<string, BoardActivityStatus>
@@ -36,6 +36,8 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
     disabled?: boolean
     onOpenCoworker: (agentId: string) => void
     onOpenCard?: (agentId: string) => void
+    // The board's Actions inbox is shown here while the list hides the board.
+    inboxSlot?: (element: HTMLElement | null) => void
     onOpenForeman?: () => void
     onSearch?: () => void
     onNewCoworker: () => void
@@ -53,6 +55,7 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
                 <span className="truncate">{t('workspaceView.list.search')}</span>
             </button>
         </div>}
+        {inboxSlot && <div ref={inboxSlot} data-testid="desktop-simple-inbox" className="flex px-3 pt-1 empty:hidden" />}
         <div className="flex items-center justify-between gap-2 pt-3 pr-3 pb-1 pl-5">
             <h2 className="text-xs font-medium text-muted-foreground">{t('workspaceView.list.label')}</h2>
             <TooltipLabeled label={newCoworker}>

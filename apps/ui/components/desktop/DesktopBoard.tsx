@@ -1,5 +1,6 @@
 import { useDesktopLocale } from './DesktopLocale'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { CHROME_SIZE, ChromeBar, ChromeButton, ChromeDivider } from '@rerun/ui/chrome'
 import type { ContainerCellRect, GridPosition, IsoCamera, ResizePatch, TileCountdown, TileResults, TileStyle } from '@rerun/ui/iso-grid'
 import { IsoGrid, SPACE_COLOR, agentTileStyle, disabledAgentTileStyle, DISABLED_AGENT_LABEL, type Container, type Tile } from '@rerun/ui/iso-grid'
@@ -40,7 +41,7 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ activitySnapshot, routineCountdowns, agents, workspaceName, workspaceMenu, gettingStarted, selectedAgentId, visibleSessionId, workspaceId, launchNonce, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onOpenSettings, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
+export function DesktopBoard({ inboxSlot, activitySnapshot, routineCountdowns, agents, workspaceName, workspaceMenu, gettingStarted, selectedAgentId, visibleSessionId, workspaceId, launchNonce, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onOpenSettings, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
     activitySnapshot?: BoardActivitySnapshot
     routineCountdowns?: ReadonlyMap<string, TileCountdown>
     agents: DesktopAgentView[]
@@ -68,6 +69,8 @@ export function DesktopBoard({ activitySnapshot, routineCountdowns, agents, work
     onCreate: (spaceId?: string) => void
     onDismiss?: () => void
     onOpenConversation?: (hit: DesktopConversationHit) => void
+    // Where the Actions inbox shows while the board is hidden behind the Simple view's list.
+    inboxSlot?: HTMLElement | null
     onPlacementChange?: (placing: boolean) => void
     board?: DesktopBoardState
     onBoardCommand?: (command: DesktopSpaceCommand) => Promise<void>
@@ -481,8 +484,12 @@ export function DesktopBoard({ activitySnapshot, routineCountdowns, agents, work
                 <div className="grid items-end gap-2 grid-cols-[minmax(max-content,1fr)_minmax(0,max-content)_minmax(var(--desktop-right-orb-width,var(--desktop-idle-orb-width,0px)),1fr)]">
                     <div className="flex items-end gap-2 pr-[var(--desktop-left-orb-width,0px)]">
                         <div ref={cornerActions} className="flex w-max items-end gap-2 empty:hidden">
-                            {onOpenConversation && <DesktopActionsInbox className="pointer-events-auto" agents={agents} onOpenConversation={onOpenConversation} visibleSessionId={placement ? null : visibleSessionId}
-                                workspaceId={workspaceId} launchNonce={launchNonce} completions={completions} open={inboxOpen} onOpenChange={setInboxOpen} hidden={placing} onOpenNotificationSettings={onOpenNotificationSettings} />}
+                            {onOpenConversation && (() => {
+                                const inbox = <DesktopActionsInbox className="pointer-events-auto" agents={agents} onOpenConversation={onOpenConversation} visibleSessionId={placement ? null : visibleSessionId}
+                                    workspaceId={workspaceId} launchNonce={launchNonce} completions={completions} open={inboxOpen} onOpenChange={setInboxOpen} hidden={placing} onOpenNotificationSettings={onOpenNotificationSettings} />
+                                // One inbox, wherever it shows: its reads and what was already seen stay with it.
+                                return inboxSlot ? createPortal(inbox, inboxSlot) : inbox
+                            })()}
                             {gettingStarted}
                         </div>
                     </div>
