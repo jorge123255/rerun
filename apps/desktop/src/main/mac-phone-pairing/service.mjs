@@ -85,7 +85,8 @@ export function createMacPhonePairingService({
         const workspaceNames = new Map(workspaces
             .filter(workspace => workspace.pathStatus === 'ready')
             .map(workspace => [workspace.workspaceId, workspace.name]))
-        const selectedWorkspaceId = getRuntime()?.workspaceId ?? null
+        const runtime = getRuntime()
+        const selectedWorkspaceId = runtime?.workspaceId ?? null
         const at = now()
         const devices = deviceStore.devices.filter(device => device.status !== DEVICE_STATUS.pending
             || (device.workspaceId === selectedWorkspaceId && transport?.inScope(device)
@@ -107,6 +108,7 @@ export function createMacPhonePairingService({
             lanAddress: current.lanAddress ?? null,
             lanAddresses: localPairingAddresses(),
             listening: Boolean(address),
+            activeOfferId: runtime && address ? offers.activeId(runtime) : null,
             bindHost: address?.host ?? null,
             origin: address?.origin ?? null,
             selectedWorkspaceId,
@@ -153,7 +155,7 @@ export function createMacPhonePairingService({
             if (!workspace || getRuntime() !== current) throw refusal(ERRORS.not_found)
             return offers.issue({
                 workspaceId: current.workspaceId, macId: installId, fingerprint, origin: transport.address().origin,
-                certificateFingerprint: transport.certificateFingerprint,
+                certificateFingerprint: transport.certificateFingerprint, runtime: current,
             })
         }),
         devices: async () => listPublicDevices(await store()),

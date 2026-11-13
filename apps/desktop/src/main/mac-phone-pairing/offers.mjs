@@ -3,19 +3,17 @@ import { hashSecret, randomSecret, secretMatches } from './crypto.mjs'
 import { DEFAULT_OFFER_TTL_MS, MAX_OFFER_TTL_MS, PROTOCOL_VERSION, SERVICE_NAME } from './protocol.mjs'
 
 export function createOfferBook({ now = Date.now, ttlMs = DEFAULT_OFFER_TTL_MS } = {}) {
-    const offers = new Map()
+    let current = null
     const lifetime = Math.min(Math.max(1, ttlMs), MAX_OFFER_TTL_MS)
 
-    function prune(at) {
-        for (const [id, offer] of offers) {
-            if (offer.used || offer.expiresAt <= at) offers.delete(id)
-        }
+    function active(at) {
+        if (current && current.expiresAt <= at) current = null
+        return current
     }
 
     return {
-        issue({ workspaceId, macId, fingerprint, origin, certificateFingerprint }) {
+        issue({ workspaceId, macId, fingerprint, origin, certificateFingerprint, runtime }) {
             const at = now()
-            prune(at)
             const secret = randomSecret()
             const offer = {
                 offerId: randomUUID(),
@@ -24,10 +22,10 @@ export function createOfferBook({ now = Date.now, ttlMs = DEFAULT_OFFER_TTL_MS }
                 fingerprint,
                 secretHash: hashSecret(secret),
                 expiresAt: at + lifetime,
-                used: false,
+                runtime,
                 origin,
             }
-            offers.set(offer.offerId, offer)
+            current = offer
             return {
                 version: PROTOCOL_VERSION,
                 kind: SERVICE_NAME,
@@ -45,23 +43,19 @@ export function createOfferBook({ now = Date.now, ttlMs = DEFAULT_OFFER_TTL_MS }
 
         // Every presented secret is hashed and compared in constant time. A miss,
         // an expiry, or a second use all collapse to the same invalid_offer result.
-        redeem({ offerId, macId, fingerprint, secret }) {
-            const at = now()
-            prune(at)
-            const offer = typeof offerId === 'string' ? offers.get(offerId) : null
-            const dummy = offer ?? { secretHash: '0'.repeat(64), used: true, expiresAt: 0, macId: '', fingerprint: '', workspaceId: 0, offerId: '' }
-            const matches = secretMatches(secret, dummy.secretHash)
-            const identity = dummy.macId === macId && dummy.fingerprint === fingerprint
-            if (!offer || offer.used || offer.expiresAt <= at || !matches || !identity) return null
-            offer.used = true
-            offers.delete(offer.offerId)
-            return { offerId: offer.offerId, workspaceId: offer.workspaceId, macId: offer.macId, fingerprint: offer.fingerprint, origin: offer.origin }
+        redeem({ offerId, macId, fingerprint, secret }, runtime) {
+            const offer = active(now())
+            const matches = secretMatches(secret, offer?.secretHash ?? '0'.repeat(64))
+            if (!offer || offer.offerId !== offerId || offer.runtime !== runtime
+                || offer.macId !== macId || offer.fingerprint !== fingerprint || !matches) return null
+            current = null
+            return { workspaceId: offer.workspaceId, origin: offer.origin }
         },
 
-        size() {
-            prune(now())
-            return offers.size
+        activeId(runtime) {
+            const offer = active(now())
+            return offer && offer.runtime === runtime ? offer.offerId : null
         },
-        clear() { offers.clear() },
+        clear() { current = null },
     }
 }

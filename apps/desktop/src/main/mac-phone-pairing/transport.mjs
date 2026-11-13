@@ -139,7 +139,7 @@ export function createPairingTransport({
     async function redeem(response, body) {
         if (!(await enabled())) return fail(response, ERRORS.disabled, 403)
         const current = getRuntime()
-        const offer = offers.redeem(body)
+        const offer = offers.redeem(body, current)
         if (!current || !offer || offer.origin !== address()?.origin || offer.workspaceId !== current.workspaceId) return fail(response, ERRORS.invalid_offer)
         const store = await getStore()
         if (getRuntime() !== current) return fail(response, ERRORS.invalid_offer)

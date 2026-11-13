@@ -478,6 +478,37 @@ test('pairing success lists coworkers and opens a saved chat through existing de
     await service.stop()
 })
 
+test('only the latest unused code is current and replacing it preserves pending approvals', async t => {
+    const root = await dataRoot(t)
+    const { service, time, setSelected } = createService(t, root)
+    await service.setPhoneAccessEnabled(true)
+    const first = await service.createOffer(1)
+    const replacement = await service.createOffer(1)
+    const phone = createMacPairingClient({ storage: createMemoryStorage() })
+    await assert.rejects(() => phone.connectToThisMac(first), { status: 401, message: 'invalid_offer' })
+
+    const status = await service.status()
+    assert.equal(status.activeOfferId, replacement.offerId)
+    assert.equal(JSON.stringify(status).includes(replacement.secret), false)
+    const pending = await phone.connectToThisMac(replacement)
+    assert.equal((await service.status()).activeOfferId, null)
+
+    const fresh = await service.createOffer(1)
+    assert.equal((await service.status()).activeOfferId, fresh.offerId)
+    assert.equal((await phone.waitForApproval()).status, 'pending')
+    time.advance(fresh.ttlMs)
+    assert.equal((await service.status()).activeOfferId, null)
+    await assert.rejects(() => createMacPairingClient({ storage: createMemoryStorage() }).connectToThisMac(fresh),
+        { status: 401, message: 'invalid_offer' })
+    assert((await service.devices()).some(device => device.deviceId === pending.deviceId))
+
+    const previousRuntime = await service.createOffer(1)
+    setSelected(1) // A restarted workspace has the same ID but a different runtime.
+    assert.equal((await service.status()).activeOfferId, null)
+    await assert.rejects(() => createMacPairingClient({ storage: createMemoryStorage() }).connectToThisMac(previousRuntime),
+        { status: 401, message: 'invalid_offer' })
+})
+
 test('an expired offer is refused', async t => {
     const root = await dataRoot(t)
     const workspace = await startWorkspaceFixture()

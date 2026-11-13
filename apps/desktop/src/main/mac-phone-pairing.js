@@ -65,6 +65,7 @@ function row(device, actionLabel, action) {
 }
 
 async function refresh() {
+    const offerAtRead = displayedOffer
     const status = await window.desktopApp.phonePairing.status()
     updateCopy(status.copy)
     selectedWorkspaceId = status.selectedWorkspaceId ?? null
@@ -73,12 +74,11 @@ async function refresh() {
     openLocal.disabled = ready
     controls.hidden = !ready
     enable.disabled = updating || !ready
-    if (displayedOffer && (!ready || !status.listening || status.selectedWorkspaceId !== displayedOffer.workspaceId
-        || status.origin !== displayedOffer.origin
-        || Date.parse(displayedOffer.expiresAt) <= Date.now())) {
+    if (offerAtRead && displayedOffer === offerAtRead && status.activeOfferId !== offerAtRead.offerId) {
         displayedOffer = null
         code.hidden = true
         qr.removeAttribute('src')
+        manual.open = false
         offer.textContent = ''
     }
     if (!ready) return
