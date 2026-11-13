@@ -508,27 +508,28 @@ async function launch() {
                 if (boardContext(board.window)) shellLanguage.set('local', value)
             } catch { /* Ignore untrusted frames. */ }
         })
-        ipcMain.on('desktop:appearance', (event, value) => {
-            if (value !== 'light' && value !== 'dark') return
-            try {
-                const board = trusted(event)
-                if (boardContext(board.window)) board.appearance = value
-            } catch { /* Ignore untrusted frames. */ }
-        })
-        ipcMain.handle('desktop:mac-fullscreen', event => (boards.recoveryPage(event, runtime) ?? trusted(event)).window.isFullScreen())
-        const assertBoard = (event, { readWhileMounting = false } = {}) => {
-            trusted(event)
-            const mounting = readWhileMounting && runtime === mountingWorkspaceRuntime
+        const assertBoard = (event, { allowMounting = false } = {}) => {
+            const board = trusted(event)
+            const mounting = allowMounting && runtime === mountingWorkspaceRuntime
             if (quitting || (transitioning && !mounting) || !runtimeScope() || !isDesktopPage(event.senderFrame.url)) {
                 throw new Error('The workspace is unavailable')
             }
+            return board
         }
+        ipcMain.on('desktop:appearance', (event, value) => {
+            if (value !== 'light' && value !== 'dark') return
+            try {
+                const board = assertBoard(event, { allowMounting: true })
+                if (!changingBoards.has(board.window)) board.appearance = value
+            } catch { /* Ignore untrusted frames. */ }
+        })
+        ipcMain.handle('desktop:mac-fullscreen', event => (boards.recoveryPage(event, runtime) ?? trusted(event)).window.isFullScreen())
         const localMacSettings = () => ({
             openAtLogin: macLoginItemSettings(app)?.openAtLogin ?? null,
             version: app.isPackaged ? app.getVersion() : null,
             updatesAvailable: macUpdates?.enabled() === true,
         })
-        ipcMain.handle('desktop:mac-settings', event => { assertBoard(event, { readWhileMounting: true }); return localMacSettings() })
+        ipcMain.handle('desktop:mac-settings', event => { assertBoard(event, { allowMounting: true }); return localMacSettings() })
         ipcMain.handle('desktop:mac-set-open-at-login', (event, enabled) => {
             assertBoard(event)
             setMacOpenAtLogin(app, enabled)
@@ -538,14 +539,14 @@ async function launch() {
             assertBoard(event)
             phonePairingWindow.open()
         })
-        ipcMain.handle('desktop:update-state', event => { assertBoard(event, { readWhileMounting: true }); return macUpdates?.state() ?? { status: 'idle' } })
+        ipcMain.handle('desktop:update-state', event => { assertBoard(event, { allowMounting: true }); return macUpdates?.state() ?? { status: 'idle' } })
         ipcMain.handle('desktop:update-check', event => { assertBoard(event); return macUpdates?.checkForUpdates(false) ?? { status: 'idle' } })
         ipcMain.handle('desktop:update-install', event => {
             assertBoard(event)
             if (changingBoards.size) return false
             return macUpdates?.requestRestart() ?? false
         })
-        ipcMain.handle('desktop:quick-ask-settings', event => { assertBoard(event, { readWhileMounting: true }); return shortcutPreference.state() })
+        ipcMain.handle('desktop:quick-ask-settings', event => { assertBoard(event, { allowMounting: true }); return shortcutPreference.state() })
         ipcMain.handle('desktop:quick-ask-set-shortcut', (event, enabled) => {
             assertBoard(event)
             return shortcutPreference.change(enabled, () => assertBoard(event))
@@ -1042,8 +1043,8 @@ async function displayWorkspace() {
     runtime = current
     if (activeWorkspaceId !== current.workspaceId) await prepareWorkspaceWindow(current.workspaceId)
     await activeSession.cookies.set({ url: current.app.origin, name: 'rerun-desktop-session', value: current.app.sessionToken, httpOnly: true, sameSite: 'strict', path: '/' })
-    // The replacement board reads app preferences as soon as it mounts, before the
-    // switch promise settles. The outgoing runtime never receives this allowance.
+    // The new board reads app preferences and reports its appearance on mount.
+    // Only the incoming runtime can use these calls before the switch settles.
     if (transitioning) mountingWorkspaceRuntime = current
     await loadBoard(boards.get(window), current)
     await Promise.all(extraBounds.map(bounds => openAdditionalBoard(bounds)))
