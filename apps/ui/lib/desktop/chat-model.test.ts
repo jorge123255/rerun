@@ -73,6 +73,15 @@ describe('desktop model selection', () => {
         expect(view({ ...grok, customReasoning: undefined })).toMatchObject({ reasoningUnavailable: true })
     })
 
+    it('keeps an unbound coworker pin visible as unavailable instead of projecting the workspace default', () => {
+        const view = buildDesktopModelView({
+            connections: [codex], workspace, coworker: { connectionId: null, provider: 'anthropic', model: 'saved-legacy-model' }, conversation: null,
+        })
+        expect(view.effective).toMatchObject({
+            source: 'coworker', connectionId: null, model: 'saved-legacy-model', available: false,
+        })
+    })
+
     it('resolves a conversation, then a coworker pin, then the workspace, and leaves an unavailable choice in place', () => {
         const input = {
             connections: [local, codex, connection({ id: 'off', provider: 'openai', models: ['hidden'], connected: false }), connection({ id: 'empty', provider: 'google', models: [] })],

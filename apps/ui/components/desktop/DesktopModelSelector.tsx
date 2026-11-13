@@ -13,6 +13,8 @@ import { desktopModelViewSchema, type DesktopModelPick, type DesktopModelView } 
 import { cn } from '@/lib/utils'
 import { useDesktopLocale } from './DesktopLocale'
 
+export type DesktopModelBlock = 'setup' | 'unavailable' | 'reasoning'
+
 type Props = {
     agentId: string
     sessionId: string | null
@@ -22,7 +24,8 @@ type Props = {
     onOpenSettings?: () => void
     onConversationChoice?: (choice: DesktopModelPick | undefined) => void
     onReady?: (ready: boolean) => void
-    onSetupRequired?: (required: boolean) => void
+    onBlocked?: (reason: DesktopModelBlock | null) => void
+    openRequest?: number
 }
 
 function modelUrl(agentId: string, sessionId: string | null) {
@@ -43,7 +46,7 @@ export function DesktopModelSelector(props: Props) {
     return <ChatModelMenu key={JSON.stringify([props.agentId, props.sessionId])} {...props} />
 }
 
-function ChatModelMenu({ agentId, sessionId, disabled, active = true, connections, onOpenSettings, onConversationChoice, onReady, onSetupRequired }: Props) {
+function ChatModelMenu({ agentId, sessionId, disabled, active = true, connections, onOpenSettings, onConversationChoice, onReady, onBlocked, openRequest }: Props) {
     const { t } = useDesktopLocale()
     const [open, setOpen] = useState(false)
     const [state, setState] = useState<DesktopModelView | null>(null)
@@ -53,8 +56,14 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, connection
     const titleId = useId()
     const descriptionId = useId()
     const reported = useRef<string | null>(null)
+    const handledOpen = useRef(openRequest)
     const version = useRef(0)
     const current = state
+    useEffect(() => {
+        if (!active || openRequest === handledOpen.current) return
+        handledOpen.current = openRequest
+        setOpen(true)
+    }, [active, openRequest])
 
     const load = useCallback(async (signal?: AbortSignal) => {
         const response = await fetch(modelUrl(agentId, sessionId), { signal, cache: 'no-store' })
@@ -115,9 +124,11 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, connection
             && pending.connectionId === current.workspace?.connectionId && pending.model === current.workspace.model,
     } : current?.effective
     const setupRequired = !!current && !current.workspace
-    const ready = !!effective?.available && !setupRequired && !effective.reasoningUnavailable && !saving && !error
+    const blocked = setupRequired ? 'setup' : effective?.reasoningUnavailable ? 'reasoning'
+        : effective?.model && !effective.available ? 'unavailable' : null
+    const ready = !!effective?.available && !blocked && !saving && !error
     useEffect(() => { onReady?.(ready) }, [ready, onReady])
-    useEffect(() => { onSetupRequired?.(setupRequired) }, [setupRequired, onSetupRequired])
+    useEffect(() => { onBlocked?.(blocked) }, [blocked, onBlocked])
     const busy = disabled || saving
     const usage = useDesktopModelPillUsage(effective, connections, active)
     const sourceLabel = effective && t(effective.source === 'workspace' ? 'modelPicker.workspaceDefault'
@@ -139,7 +150,7 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, connection
 
     const trigger = (
         <PopoverTrigger asChild>
-            <Button type="button" size="sm" variant="ghost" className="min-w-0 gap-1 text-xs" disabled={busy && !open}
+            <Button type="button" size="sm" variant="ghost" className={cn('min-w-0 gap-1 text-xs', blocked && 'text-destructive')} disabled={busy && !open}
                 aria-label={[label, sourceLabel, usage?.label].filter(Boolean).join(' · ')}>
                 {usage ? <UsageRing usage={usage}><ProviderIcon provider={effective?.provider} /></UsageRing>
                     : <ProviderIcon provider={effective?.provider} className="size-3.5 shrink-0" />}

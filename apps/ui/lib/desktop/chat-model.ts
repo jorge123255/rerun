@@ -140,7 +140,7 @@ export function buildDesktopModelView(input: {
         available: !!usableConnection(connections, input.conversation),
     } : null
     const source: DesktopModelSource = conversation ? 'conversation' : coworker ? 'coworker' : 'workspace'
-    const selected = source === 'conversation' ? input.conversation : source === 'coworker' && input.coworker?.connectionId ? { connectionId: input.coworker.connectionId, model: coworker!.model } : input.workspace
+    const selected = input.conversation ?? pinned ?? input.workspace
     const selectedConnection = usableConnection(connections, selected) ?? (selected ? connections.find(item => item.id === selected.connectionId) ?? null : null)
     const model = selected?.model ?? null
     const available = !!usableConnection(connections, selected)
@@ -158,7 +158,7 @@ export function buildDesktopModelView(input: {
         conversation,
         effective: {
             source,
-            connectionId: selectedConnection?.id ?? selected?.connectionId ?? null,
+            connectionId: selectedConnection?.id ?? (selected?.connectionId || null),
             provider: selectedConnection?.provider ?? coworker?.provider ?? null,
             name: selectedConnection?.name ?? providerName(selectedConnection?.provider ?? coworker?.provider ?? null),
             model,

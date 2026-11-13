@@ -109,7 +109,7 @@ import { useDesktopComposerImageUploads } from '@/lib/desktop/use-composer-image
 import { DESKTOP_UPLOAD_ACCEPT } from '@/lib/desktop/composer-upload'
 import { useDesktopComposerUploads } from '@/lib/desktop/use-composer-uploads'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
-import { DesktopModelSelector } from './DesktopModelSelector'
+import { DesktopModelSelector, type DesktopModelBlock } from './DesktopModelSelector'
 import type { DesktopModelPick } from '@/lib/desktop/chat-model'
 import { QueuedMessagePill } from '@/components/chat/QueuedMessagePill'
 import { shouldFlush, shouldKeepQueued } from '@/lib/chat/queued-message'
@@ -512,7 +512,12 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     useEffect(() => { queueScope.current = queue.key; return () => { queueScope.current = '' } }, [queue.key])
     const [queueNotice, setQueueNotice] = useState<keyof typeof queueCopy>()
     const [modelReady, setModelReady] = useState(false)
-    const [modelSetupRequired, setModelSetupRequired] = useState(false)
+    const [modelBlock, setModelBlock] = useState<DesktopModelBlock | null>(null)
+    const [openModelRequest, setOpenModelRequest] = useState(0)
+    function resolveModelBlock(block: DesktopModelBlock) {
+        if (block === 'unavailable' || !onOpenModelSettings) setOpenModelRequest(value => value + 1)
+        else onOpenModelSettings()
+    }
     const [sendQueuedId, setSendQueuedId] = useState<string | null>(null)
     const flushingQueue = useRef<string | null>(null)
     const restoredQueues = useRef(new Set<string>())
@@ -934,15 +939,15 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     if (submissionScope.current.key !== submissionKey) submissionScope.current = { key: submissionKey, epoch: submissionScope.current.epoch + 1 }
     const submissionMounted = useRef(true)
     useEffect(() => { submissionMounted.current = true; return () => { submissionMounted.current = false } }, [])
-    const submissionCurrent = useRef({ active, input, draft, generating, busy, queue, liveRunId, engineRunning, inactive, stopping, ready, requestBlocked, pendingRequest, modelSetupRequired })
-    submissionCurrent.current = { active, input, draft, generating, busy, queue, liveRunId, engineRunning, inactive, stopping, ready, requestBlocked, pendingRequest, modelSetupRequired }
+    const submissionCurrent = useRef({ active, input, draft, generating, busy, queue, liveRunId, engineRunning, inactive, stopping, ready, requestBlocked, pendingRequest, modelBlock })
+    submissionCurrent.current = { active, input, draft, generating, busy, queue, liveRunId, engineRunning, inactive, stopping, ready, requestBlocked, pendingRequest, modelBlock }
 
     async function submit(event: React.FormEvent) {
         event.preventDefault()
         const text = composer.current.text.trim()
         if (!active || !draft.loaded || draft.error || isDesktopQuitting() || preparingSubmit.current || (requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || (quickReplyRequest.current && !(generating && quickReplyRequest.current.accepted)) || inactive || (!text && !attachmentPaths.length && !documents.attachments.length && !uploadsBusy()) || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current || pendingAttachment.current) return
-        if (modelSetupRequired && !generating && !queue.queued) {
-            onOpenModelSettings?.()
+        if (modelBlock && !generating && !queue.queued) {
+            resolveModelBlock(modelBlock)
             return
         }
         const intent = submissionScope.current
@@ -990,8 +995,8 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                 if (!live.generating && currentIntent()) setSendQueuedId(item.id)
                 return
             }
-            if (live.modelSetupRequired) {
-                onOpenModelSettings?.()
+            if (live.modelBlock) {
+                resolveModelBlock(live.modelBlock)
                 return
             }
             setLiveSessionId(null)
@@ -1820,7 +1825,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                     <div className="flex min-w-0 items-center justify-between gap-2 px-1.5 pb-1.5">
                         <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
                             connections={connections} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel}
-                            onReady={setModelReady} onSetupRequired={setModelSetupRequired} />
+                            onReady={setModelReady} onBlocked={setModelBlock} openRequest={openModelRequest} />
                         <div className="flex shrink-0 items-center gap-1">
                             <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={uploadDisabled || uploadsActive}
                                 paths={textAttachments} onChange={paths => {

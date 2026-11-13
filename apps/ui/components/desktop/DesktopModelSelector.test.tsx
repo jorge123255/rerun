@@ -125,16 +125,16 @@ test('opens model setup directly in the workspace language after an empty model 
     vi.stubGlobal('fetch', fetcher)
     const onOpenSettings = vi.fn()
     const onReady = vi.fn()
-    const onSetupRequired = vi.fn()
+    const onBlocked = vi.fn()
     const language = { locale: 'fr' as const, preference: 'fr' as const, messages: desktopMessages('fr', await loadMessages('fr')) }
     container = document.body.appendChild(document.createElement('div'))
     root = createRoot(container)
     await act(async () => root.render(<DesktopLocale initial={language}>
-        <DesktopModelSelector agentId="alice" sessionId="open" onOpenSettings={onOpenSettings} onReady={onReady} onSetupRequired={onSetupRequired} />
+        <DesktopModelSelector agentId="alice" sessionId="open" onOpenSettings={onOpenSettings} onReady={onReady} onBlocked={onBlocked} />
     </DesktopLocale>))
     await click(language.messages.modelPicker.setUp)
     expect(onOpenSettings).toHaveBeenCalledOnce()
-    expect(onSetupRequired).toHaveBeenLastCalledWith(true)
+    expect(onBlocked).toHaveBeenLastCalledWith('setup')
     expect(onReady).toHaveBeenLastCalledWith(false)
     expect(fetcher).toHaveBeenCalledOnce()
     expect(document.querySelector('[role="dialog"]')).toBeNull()
@@ -149,22 +149,22 @@ test('keeps a saved chat choice through missing workspace setup and admits it wh
     const fetcher = vi.fn().mockResolvedValueOnce(Response.json(snapshot(false))).mockResolvedValueOnce(Response.json(snapshot(true)))
     vi.stubGlobal('fetch', fetcher)
     const onReady = vi.fn()
-    const onSetupRequired = vi.fn()
+    const onBlocked = vi.fn()
     const onConversationChoice = vi.fn()
     container = document.body.appendChild(document.createElement('div'))
     root = createRoot(container)
     const render = (active: boolean) => act(async () => root.render(<DesktopModelSelector agentId="alice" sessionId="open"
-        active={active} onReady={onReady} onSetupRequired={onSetupRequired} onConversationChoice={onConversationChoice} />))
+        active={active} onReady={onReady} onBlocked={onBlocked} onConversationChoice={onConversationChoice} />))
     await render(true)
     expect(button('Local · model-chat')).toBeTruthy()
     expect(onConversationChoice).toHaveBeenCalledExactlyOnceWith(choice)
     expect(onReady).toHaveBeenLastCalledWith(false)
-    expect(onSetupRequired).toHaveBeenLastCalledWith(true)
+    expect(onBlocked).toHaveBeenLastCalledWith('setup')
     await render(false)
     await render(true)
     expect(button('Local · model-chat')).toBeTruthy()
     expect(onReady).toHaveBeenLastCalledWith(true)
-    expect(onSetupRequired).toHaveBeenLastCalledWith(false)
+    expect(onBlocked).toHaveBeenLastCalledWith(null)
     expect(onConversationChoice).toHaveBeenCalledTimes(1)
     expect(fetcher.mock.calls.every(([, options]) => !options.method)).toBe(true)
 })
@@ -199,16 +199,21 @@ test('shows a review message for a stale custom effort on the board picker', asy
     expect(document.body.textContent).not.toContain('this model’s default')
 })
 
-test('changing the model keeps the typed draft of an already open chat', async () => {
+test('Send opens the picker for a retired model and preserves the draft until a replacement is chosen', async () => {
     coworker = null
     conversations = { open: null }
     patches.length = 0
+    const sent = vi.fn()
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === '/api/desktop/chat') {
+            sent()
+            return Response.json({ error: 'No provider call expected' }, { status: 409 })
+        }
         if (String(url).endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (String(url).endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (String(url).includes('/model')) {
             if (init?.method === 'PATCH') patches.push(JSON.parse(String(init.body)))
-            return Response.json(view(patches.some(body => (body as { action?: string }).action === 'conversation') ? { connectionId: 'local', model: 'model-chat' } : null))
+            return Response.json(view(patches.some(body => (body as { action?: string }).action === 'conversation') ? { connectionId: 'local', model: 'model-chat' } : { connectionId: 'local', model: 'model-retired' }))
         }
         if (String(url).endsWith('/messages')) return Response.json({ messages: [{ id: 'saved', role: 'assistant', parts: [{ type: 'text', text: 'Saved answer' }] }] })
         if (String(url).endsWith('/stop')) return Response.json({ running: false })
@@ -229,7 +234,12 @@ test('changing the model keeps the typed draft of an already open chat', async (
         Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(composer, 'Keep this draft')
         composer.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    await click('Local · model-workspace')
+    expect(button('Unavailable · model-retired')).toBeTruthy()
+    await act(async () => composer.form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+    expect(sent).not.toHaveBeenCalled()
+    expect(patches).toEqual([])
+    expect(document.body.textContent).toContain('This saved model is no longer offered.')
+    expect(composer.value).toBe('Keep this draft')
     await click('model-chat')
     expect(patches.at(-1)).toMatchObject({ action: 'conversation', sessionId: 'open', model: 'model-chat' })
     expect(composer.value).toBe('Keep this draft')
