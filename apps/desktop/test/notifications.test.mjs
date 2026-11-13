@@ -141,3 +141,15 @@ test('discarding one hub document settles pending notices and leaves a different
     assert.deepEqual(clicks, ['second'])
     native.close()
 })
+
+test('closing notices at app quit settles pending receipts even if the OS close throws', async () => {
+    class Notification extends EventEmitter {
+        static isSupported() { return true }
+        show() {}
+        close() { throw new Error('Already gone') }
+    }
+    const bridge = createDesktopNotifications({ Notification, onClick: () => assert.fail('Unexpected click') })
+    const result = bridge.notify(payload)
+    bridge.close()
+    assert.deepEqual(await result, { status: 'unknown', diagnostic: 'closed-before-acceptance' })
+})

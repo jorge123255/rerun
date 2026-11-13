@@ -77,7 +77,10 @@ export function createNativeNotifications({ Notification, timeoutMs = 5000, now 
             try { entry.notice.close() } catch { /* Already closed by the OS. */ }
         }
     }
-    return { notify, discard, close() { closed = true; for (const { notice } of active.values()) notice.close(); active.clear() } }
+    return { notify, discard, close() {
+        closed = true
+        for (const scope of new Set([...active.values()].map(entry => entry.scope))) discard(scope)
+    } }
 }
 
 export function createDesktopNotifications({ onClick, ...dependencies }) {

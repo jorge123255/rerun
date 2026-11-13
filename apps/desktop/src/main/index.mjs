@@ -1,11 +1,12 @@
 import * as electron from 'electron'
+import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createWorkspaceCoordinator, seedLegacyCatalog, getWorkspace } from './workspaces/index.mjs'
 import { DesktopSecureStorageError, loadBundle, loadIdentityFromSafeStorage, workspaceIdentity } from './runtime.mjs'
 import { RuntimeSupervisor } from './supervisor.mjs'
 import { createDesktopNotifications } from './notifications.mjs'
-import { createNotificationClickHandoff } from './notification-click-handoff.mjs'
+import { createNotificationClickHandoff, routeDesktopNotificationClick } from './notification-click-handoff.mjs'
 import { completeDesktopQuit } from './before-quit.mjs'
 import { createDesktopTemplateFiles } from './templates.mjs'
 import { createDesktopCoworkerShareFiles } from './coworker-share-files.mjs'
@@ -104,7 +105,7 @@ const remoteMachineIpc = createRemoteMachineIpc({ trusted: trustedPrimary, conte
 } })
 const clickHandoff = createNotificationClickHandoff()
 let clickReady = null
-let desktopNotifications = createNotices()
+const desktopNotifications = createDesktopNotifications({ Notification, onClick: openDesktopNotice })
 let localUnread = 0
 let hubUnread = 0
 function startupChoices(includeLocal = true) {
@@ -266,14 +267,17 @@ function flushNotificationClicks() {
         return true
     })
 }
-function createNotices() { return createDesktopNotifications({ Notification, onClick: (target, scope) => {
-    const current = clickScope()
-    if (!scope || !current || scope.workspaceId !== current.workspaceId || scope.launchNonce !== current.launchNonce) return
-    showMainWindow()
-    // Bind the click to the runtime that originally submitted the notice, even after reload.
-    clickHandoff.accept(target, scope)
-    flushNotificationClicks()
-} }) }
+function openDesktopNotice(target, scope) {
+    void routeDesktopNotificationClick(target, scope, {
+        currentScope: clickScope,
+        switchWorkspace: workspaceId => runWorkspaceTransition(() => workspaces.switchTo({ workspaceId, requestId: randomUUID() })),
+        deliver(target, scope) {
+            showMainWindow()
+            clickHandoff.accept(target, scope)
+            flushNotificationClicks()
+        },
+    }).catch(() => {})
+}
 
 let refreshUpdateSurfaces = () => {}
 const macUpdates = mac && !process.mas ? createMacUpdater({
@@ -328,7 +332,7 @@ else {
                 await shellLanguage?.flush()
                 await startupWorkspace?.flush()
             },
-            quit: () => { clickHandoff.stop(); quittingNow = true; approvedQuitAction(macUpdates, app) },
+            quit: () => { clickHandoff.stop(); desktopNotifications.close(); quittingNow = true; approvedQuitAction(macUpdates, app) },
             cancelled: resumeAfterCancelledQuit,
         }).catch(() => { if (!quittingNow) resumeAfterCancelledQuit() })
     })
@@ -860,8 +864,6 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
         ? (old && captureWindowPlacement(old)) || await windowPlacements.restore(boardPlacement)
         : { bounds: old && !old.isDestroyed() ? old.getBounds() : null }
     if (old && !old.isDestroyed()) old.destroy()
-    desktopNotifications.close()
-    desktopNotifications = createNotices()
     window = createBoardWindow(desktopSession, placement.bounds, { primary: true, showOnReady: load || !mac }).window
     if (windowPlacements) {
         restoreWindowZoom(window, placement.maximized)

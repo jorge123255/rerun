@@ -12,6 +12,23 @@ function scopeOf(scope) {
     return { workspaceId: scope.workspaceId, launchNonce: scope.launchNonce }
 }
 
+// The click comes from a notice owned by this process. Only its workspace is carried across a
+// switch. The target renderer still validates the exact conversation against its own live data.
+export async function routeDesktopNotificationClick(value, submittedScope, { currentScope, switchWorkspace, deliver }) {
+    const target = notificationClickTarget(value)
+    const submitted = scopeOf(submittedScope)
+    let current = scopeOf(currentScope())
+    if (!target || !submitted || !current) return false
+    if (current.workspaceId !== submitted.workspaceId) {
+        const result = await switchWorkspace(submitted.workspaceId)
+        if (!result?.ok) return false
+        current = scopeOf(currentScope())
+        if (current?.workspaceId !== submitted.workspaceId) return false
+    }
+    deliver(target, current)
+    return true
+}
+
 export function createNotificationClickHandoff() {
     let held = []
     let delivered = []
