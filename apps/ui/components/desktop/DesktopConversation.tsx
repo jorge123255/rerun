@@ -635,7 +635,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     const resumeSession = useRef(sessionId)
     const resumeRun = useRef<string | null>(null)
     resumeSession.current = sessionId
-    resumeRun.current = liveRunId ?? (engineRunning.id === sessionId ? engineRunning.runId ?? null : null)
+    resumeRun.current = (liveSessionId === sessionId ? liveRunId : null) ?? (engineRunning.id === sessionId ? engineRunning.runId ?? null : null)
     const [reconnectNote, setReconnectNote] = useState<string | null>(null)
     const reconnecting = useRunReconnect({
         error,
@@ -644,8 +644,12 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
             const currentSession = resumeSession.current
             const runId = resumeRun.current
             if (!currentSession || !runId) return null
+            const target = { sessionId: currentSession, runId }
+            resumeTarget.current = target
+            const isCurrent = () => resumeTarget.current === target && resumeSession.current === currentSession
             return {
                 runId,
+                isCurrent,
                 getRun: async () => {
                     const response = await fetch(`/api/desktop/sessions/${encodeURIComponent(currentSession)}/stop`, { cache: 'no-store' })
                     const body = await response.json().catch(() => null)
@@ -656,7 +660,12 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                     return { status: 'done' }
                 },
                 fetchMessages: async () => (await historyFor(currentSession, AbortSignal.timeout(15000))).messages,
-                onSettled: ({ errored, errorText }) => { if (errored && errorText) setReconnectNote(errorText) },
+                onSettled: ({ errored, errorText }) => {
+                    // Re-read the transcript and pending cards together before allowing a new turn.
+                    setHistory(current => current.id === currentSession ? { id: currentSession } : current)
+                    setAttempt(n => n + 1)
+                    if (errored && errorText) setReconnectNote(errorText)
+                },
             }
         },
         resumeStream,
@@ -736,7 +745,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     const webhookOwns = (kind: TriggerRequestView['link']['kind'], id: string | undefined) => !!wrappedWebhook && wrappedWebhook.link.kind === kind && wrappedWebhook.link.requestId === id
     const pendingRequest = question || approval || takeover || (serviceRequest ? { id: serviceRequest.serviceRequestId, toolCallId: serviceRequest.source.toolCallId } : null) || (secretRequest ? { id: secretRequest.requestId, toolCallId: secretRequest.source.toolCallId } : null) || (mcpRequest ? { id: mcpRequest.requestId, toolCallId: mcpRequest.source.toolCallId } : null)
     // Every pending request must be known before a later turn or an automatic queue flush.
-    const requestBlocked = setupBlocked || !!sessionId && (question !== null || approval !== null || takeover !== null || serviceRequest !== null || secretRequest !== null || mcpSignIn === undefined || !!mcpRequest)
+    const requestBlocked = reconnecting || setupBlocked || !!sessionId && (question !== null || approval !== null || takeover !== null || serviceRequest !== null || secretRequest !== null || mcpSignIn === undefined || !!mcpRequest)
     const canRegenerate = draft.loaded && !draft.error && !draft.quitting && !quickReplyBusy && !requestBlocked && !inactive && !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping && !queue.queued && !queue.pending
     const feedback = useDesktopReplyFeedback(agent.id, sessionId, active)
     const stopTarget = busy ? liveSessionId : runInFlight ? sessionId : null

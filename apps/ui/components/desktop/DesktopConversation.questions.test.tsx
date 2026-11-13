@@ -9,9 +9,10 @@ import type { DesktopQueuedMessage } from '@/lib/desktop/queued-message'
 import { DesktopConversation, type ComposerDraft } from './DesktopConversation'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-const chat = vi.hoisted(() => ({ messages: [] as UIMessage[], status: 'ready', error: undefined as Error | undefined, sendMessage: vi.fn(), stop: vi.fn(), setMessages: vi.fn(), clearError: vi.fn() }))
+const chat = vi.hoisted(() => ({ messages: [] as UIMessage[], status: 'ready', error: undefined as Error | undefined, sendMessage: vi.fn(), stop: vi.fn(), setMessages: vi.fn(), clearError: vi.fn(), resumeStream: vi.fn() }))
 let transportFetch: typeof fetch
-vi.mock('@ai-sdk/react', () => ({ useChat: ({ transport }: { transport: { fetch: typeof fetch } }) => { transportFetch = transport.fetch; return chat } }))
+let prepareReconnect: () => { api: string }
+vi.mock('@ai-sdk/react', () => ({ useChat: ({ transport }: { transport: { fetch: typeof fetch; prepareReconnectToStreamRequest: typeof prepareReconnect } }) => { transportFetch = transport.fetch; prepareReconnect = transport.prepareReconnectToStreamRequest; return chat } }))
 vi.mock('./DesktopModelSelector', () => ({ DesktopModelSelector: ({ onReady }: { onReady?: (ready: boolean) => void }) => { useEffect(() => onReady?.(true), [onReady]); return null } }))
 
 const agent = { id: 'agent', name: 'Researcher', description: '', createdAt: '', updatedAt: '' }
@@ -41,6 +42,7 @@ beforeEach(() => {
     running = false; streamAfterSend = false
     chat.messages = []; chat.status = 'ready'; chat.error = undefined
     chat.sendMessage.mockReset(); chat.setMessages.mockReset(); chat.stop.mockReset(); onChatSession.mockReset()
+    chat.resumeStream.mockReset()
     chat.clearError.mockImplementation(() => { chat.error = undefined })
     chat.stop.mockImplementation(() => { chat.status = 'ready' })
     readQuestion = async sessionId => Response.json({ question: questions.get(sessionId) ?? null })
@@ -137,6 +139,39 @@ test('loads the saved original question form, sends only indexed answers to its 
     expect(composer().form!.hidden).toBe(false)
     expect(button('Remove attachment notes.md')).toBeDefined()
     expect(onChatSession).toHaveBeenCalledWith('one', undefined)
+})
+
+test('reconnects the acknowledged run and reloads its saved question without a second send', async () => {
+    questions.set('one', null)
+    await render('one', { text: 'Keep this draft' })
+    await act(async () => {
+        await transportFetch('/api/desktop/chat', { method: 'POST', body: JSON.stringify({ sessionId: 'one', text: 'Find a color' }) })
+    })
+    chat.status = 'streaming'
+    await render()
+    chat.resumeStream.mockImplementation(async () => {
+        questions.set('one', question)
+        await transportFetch(prepareReconnect().api)
+    })
+    const fetchBeforeDrop = globalThis.fetch
+    const resumes: string[] = []
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes('/resume?')) {
+            resumes.push(String(input))
+            return Promise.resolve(new Response(null, { status: 204 }))
+        }
+        return fetchBeforeDrop(input, init)
+    }))
+    chat.error = new Error('Connection interrupted')
+    chat.status = 'error'
+    await render()
+
+    expect(resumes).toEqual(['/api/desktop/sessions/one/resume?runId=first-run'])
+    expect(container.querySelector('[data-hitl="option-0"]')).not.toBeNull()
+    expect(composer().form!.hidden).toBe(true)
+    expect(composer().value).toBe('Keep this draft')
+    expect(normalPosts).toHaveLength(1)
+    expect(questionPosts).toHaveLength(0)
 })
 
 test('a newly pending question rejects an ordinary send without losing its typed draft', async () => {
