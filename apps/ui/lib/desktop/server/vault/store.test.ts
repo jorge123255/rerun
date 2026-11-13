@@ -1,6 +1,6 @@
 import { createClient } from '@libsql/client'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
@@ -10,6 +10,10 @@ import { initializeDesktopRound45 } from '../round45-schema'
 import { initializeDesktopRound46 } from '../round46-schema'
 import { initializeDesktopRound47 } from '../round47-schema'
 import { initializeDesktopRound48 } from '../round48-schema'
+import { initializeDesktopRound49 } from '../round49-schema'
+import { stdioRuntime } from '../mcp-stdio/runtime'
+import { stdioStore } from '../mcp-stdio/store'
+import { assignedVaultMcpPrograms } from './mcp-programs'
 import { desktopVaultMcpRuntime } from './mcp-runtime'
 import type { McpNetwork } from '../mcp/remote'
 import { createCanonicalMcpSecretReferences } from '../mcp-secret-references/binding'
@@ -36,7 +40,8 @@ async function fixture(migrate = true, headerMigration = true) {
         CREATE TABLE desktop_deletions (agent_id TEXT NOT NULL, completed INTEGER NOT NULL, engine_agent_id TEXT);
         CREATE TABLE desktop_remote_mcp (agent_id TEXT NOT NULL,name TEXT NOT NULL);
         CREATE TABLE desktop_secret_credentials (agent_id TEXT NOT NULL,key TEXT NOT NULL,version INTEGER NOT NULL,sealed_value TEXT NOT NULL);
-        CREATE TABLE desktop_mcp_stdio (owner TEXT NOT NULL,name TEXT NOT NULL,executable TEXT NOT NULL,args TEXT NOT NULL,revision TEXT NOT NULL);`)
+        CREATE TABLE desktop_mcp_stdio (owner TEXT NOT NULL,name TEXT NOT NULL,executable TEXT NOT NULL,args TEXT NOT NULL,revision TEXT NOT NULL);
+        CREATE TABLE desktop_mcp_stdio_calls(owner TEXT NOT NULL,run_id TEXT NOT NULL,call_id TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(owner,run_id,call_id));`)
     await db.batch([firstAgent, secondAgent, foreignAgent].map((id, i) => ({
         sql: 'INSERT INTO desktop_agents(id,name,workspace_id) VALUES (?,?,?)', args: [id, ['First', 'Second', 'Foreign'][i], i === 2 ? 2 : 1],
     })), 'write')
@@ -44,6 +49,7 @@ async function fixture(migrate = true, headerMigration = true) {
     if (migrate) await initializeDesktopRound46(db)
     await initializeDesktopRound47(db)
     if (headerMigration) await initializeDesktopRound48(db)
+    await initializeDesktopRound49(db)
     return { db, root, file, open, vault: desktopVault(db, crypto, 7) }
 }
 
@@ -69,7 +75,7 @@ test('upgrades a prior workspace, saves redacted metadata, rotates ciphertext, a
             await initializeDesktopRound45(reopened)
             await initializeDesktopRound46(reopened)
             expect(await desktopVault(reopened, crypto, 7).list()).toEqual(updated)
-            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }, { version: 48 }])
+            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }, { version: 48 }, { version: 49 }])
             expect((await reopened.execute('PRAGMA foreign_key_check')).rows).toEqual([])
         } finally { reopened.close() }
         expect((await readFile(f.file)).includes(secret)).toBe(false)
@@ -401,4 +407,65 @@ test('round 48 retains the old bearer ciphertext and its workspace revision', as
             .toEqual([{ revision, credential_revision: revision, sealed, credential_header: null }])
         expect((await f.vault.list()).entries).toEqual([{ kind: 'mcp', id, name: 'legacy', url, revision, sharedWithAll: false, agentIds: [], hasBearer: true }])
     } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('Vault local programs use the existing run grant, are pinned to the reviewed executable, and refuse detached calls', async () => {
+    const f = await fixture()
+    const root = await realpath(f.root)
+    const executable = join(root, 'qa-mcp-program')
+    const alias = join(root, 'program-alias')
+    const signal = AbortSignal.timeout(15000)
+    const identity = { engineAgentId: 'fixture-engine', sessionId: 'fixture-chat', runId: 'fixture-run' }
+    let granted = false
+    const store = stdioStore(f.db)
+    const runtime = stdioRuntime(store, async (owner, action, run) => {
+        if (action === 'use' && (!granted || owner !== firstAgent || !run)) throw new Error('Local MCP grant is off')
+        return { cwd: root }
+    }, undefined, undefined, owner => assignedVaultMcpPrograms(f.db, owner))
+    try {
+        const node = await realpath(process.execPath)
+        const fixtureBody = `#!${node}
+const lines = require('node:readline').createInterface({ input: process.stdin })
+lines.on('line', line => {
+    const { id, method } = JSON.parse(line)
+    if (id === undefined) return
+    const result = method === 'initialize' ? { protocolVersion: '2025-03-26' }
+        : method === 'tools/list' ? { tools: [{ name: 'check', inputSchema: { type: 'object' } }] }
+        : { content: [{ type: 'text', text: process.argv[2] }] }
+    console.log(JSON.stringify({ jsonrpc: '2.0', id, result }))
+})
+`
+        await writeFile(executable, fixtureBody, { mode: 0o700 })
+        await symlink(executable, alias)
+        const draft = { operation: 'create-program', name: 'qa-check', executable, args: ['two words'] } as const
+        expect(desktopVaultMutation.safeParse({ ...draft, executable: 'relative/path' }).success).toBe(false)
+        expect(desktopVaultMutation.safeParse({ ...draft, args: ['${VAULT_TOKEN}'] }).success).toBe(false)
+        for (const path of [alias, '/bin/sh']) {
+            await expect(f.vault.mutate(desktopVaultMutation.parse({ ...draft, executable: path }), allow)).rejects.toMatchObject({ status: 400 })
+        }
+        const [saved] = (await f.vault.mutate(desktopVaultMutation.parse(draft), allow)).entries
+        expect(saved).toMatchObject({ kind: 'program', executable, args: ['two words'], agentIds: [] })
+        const [attached] = (await f.vault.assignCoworker(firstAgent, { id: saved.id, revision: saved.revision, attached: true }, allow)).attached
+        expect(attached).not.toHaveProperty('args')
+        expect(attached).not.toHaveProperty('approvedExecutable')
+        await expect(runtime.tools(firstAgent, identity, signal)).rejects.toThrow()
+        expect(await runtime.tools(secondAgent, identity, signal)).toEqual([])
+        expect(await runtime.tools(foreignAgent, identity, signal)).toEqual([])
+        granted = true
+        const [tool] = await runtime.tools(firstAgent, identity, signal)
+        expect(tool.name).toBe('qa-check_check')
+        expect(JSON.stringify(await tool.execute({}, 'first', signal))).toContain('two words')
+        await f.vault.assignCoworker(firstAgent, { id: saved.id, revision: attached.revision, attached: false }, allow)
+        await expect(tool.execute({}, 'detached', signal)).rejects.toThrow()
+        expect(await runtime.tools(firstAgent, identity, signal)).toEqual([])
+        const [available] = (await f.vault.forCoworker(firstAgent)).available
+        const [reattached] = (await f.vault.assignCoworker(firstAgent, { id: saved.id, revision: available.revision, attached: true }, allow)).attached
+        await writeFile(executable, fixtureBody + '\n// replacement\n')
+        await chmod(executable, 0o700)
+        await expect(runtime.tools(firstAgent, identity, signal)).rejects.toThrow()
+        await f.vault.mutate({ operation: 'replace-program', id: saved.id, revision: reattached.revision, executable, args: ['reviewed'] }, allow)
+        const [reviewed] = await runtime.tools(firstAgent, { ...identity, runId: 'after-review' }, signal)
+        expect(JSON.stringify(await reviewed.execute({}, 'reviewed', signal))).toContain('reviewed')
+        expect((await store.list(firstAgent))).toEqual([])
+    } finally { await runtime.shutdown(); f.db.close(); await rm(f.root, { recursive: true, force: true }) }
 })

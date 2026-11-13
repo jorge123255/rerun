@@ -85,7 +85,7 @@ function VaultPanel() {
     const entry = listing?.entries.find(item => item.id === page)
     const navigate = (next: string) => { setError(''); setPage(next) }
     const stepKey = entry?.id ?? page
-    const filtered = listing?.entries.filter(item => `${item.name} ${'kind' in item ? item.url : item.variable}`.toLowerCase().includes(query.trim().toLowerCase()))
+    const filtered = listing?.entries.filter(item => `${item.name} ${'kind' in item ? item.kind === 'program' ? item.executable : item.url : item.variable}`.toLowerCase().includes(query.trim().toLowerCase()))
     const alert = error && <p className="text-sm text-destructive" role="alert">{error}</p>
     return <PanelSteps stepKey={stepKey} depth={stepKey === 'list' ? 0 : 1}>
         <PanelScroller className="space-y-4 p-4">
@@ -94,6 +94,7 @@ function VaultPanel() {
             {!listing ? (error ? <Button variant="outline" disabled={busy} onClick={() => void run()}>Try again</Button> : <p role="status">Loading Vault…</p>)
                 : page === 'add' ? <SecretForm busy={busy} onSubmit={fields => void run({ operation: 'create', ...fields }, 'list')} />
                 : page === 'add-server' ? <ServerForm busy={busy} onSubmit={fields => void run({ operation: 'create-server', ...fields }, 'list')} />
+                : page === 'add-program' ? <ProgramForm busy={busy} onSave={fields => void run({ operation: 'create-program', ...fields }, 'list')} />
                 : entry ? <VaultDetail key={entry.revision} entry={entry} coworkers={listing.coworkers} busy={busy} onSubmit={run} />
                 : <>
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -101,6 +102,7 @@ function VaultPanel() {
                         <div className="flex flex-wrap gap-2">
                             <Button variant="outline" size="sm" disabled={busy} onClick={() => navigate('add')}><Plus />Add secret</Button>
                             <Button variant="outline" size="sm" disabled={busy} onClick={() => navigate('add-server')}><Plus />Add MCP server</Button>
+                            <Button variant="outline" size="sm" disabled={busy} onClick={() => navigate('add-program')}><Plus />Add local program</Button>
                         </div>
                     </div>
                     {listing.entries.length >= 8 && <Input aria-label="Search Vault" placeholder="Search Vault" value={query} onChange={event => setQuery(event.target.value)} />}
@@ -111,7 +113,7 @@ function VaultPanel() {
                             return !!items?.length && <section key={label} className="space-y-2">
                                 <h4 className="text-xs font-medium uppercase text-muted-foreground">{label}</h4>
                                 {items.map(item => <PanelRow key={item.id} leading={servers ? <Plug className="size-4" /> : <KeyRound className="size-4" />} title={item.name}
-                                    description={`${'kind' in item ? item.url : item.variable} · ${item.sharedWithAll ? 'Every coworker' : item.agentIds.length ? `${item.agentIds.length} assigned` : 'Unassigned'}`}
+                                    description={`${'kind' in item ? item.kind === 'program' ? item.executable : item.url : item.variable} · ${item.sharedWithAll ? 'Every coworker' : item.agentIds.length ? `${item.agentIds.length} assigned` : 'Unassigned'}`}
                                     actions={<ChevronRight className="size-4" />} onClick={() => navigate(item.id)} />)}
                             </section>
                         })}
@@ -182,6 +184,32 @@ function ServerForm({ busy, onSubmit }: { busy: boolean; onSubmit: (input: { nam
     </form>
 }
 
+type ProgramFields = { name: string; executable: string; args: string[] }
+
+function ProgramForm({ busy, entry, onSave }: {
+    busy: boolean; entry?: Extract<DesktopVaultEntry, { kind: 'program' }>; onSave: (input: ProgramFields) => void
+}) {
+    function submit(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault()
+        const data = new FormData(event.currentTarget)
+        onSave({
+            name: entry?.name ?? String(data.get('name')),
+            executable: String(data.get('executable')),
+            args: String(data.get('arguments')).split('\n').filter(Boolean),
+        })
+    }
+    return <form onSubmit={submit} className="space-y-4">
+        <h3 className="font-medium">{entry ? 'Review local program' : 'Add local program'}</h3>
+        {!entry && <label className="block space-y-1 text-sm">Name<Input name="name" required maxLength={64} pattern="[A-Za-z0-9_\-]+" disabled={busy} /></label>}
+        <label className="block space-y-1 text-sm">Executable path<Input name="executable" defaultValue={entry?.executable} required maxLength={4096} placeholder="/absolute/path/to/installed-server" disabled={busy} /></label>
+        <label className="block space-y-1 text-sm">Arguments, one per line
+            <textarea name="arguments" defaultValue={entry?.args.join('\n')} disabled={busy} className="block min-h-20 w-full rounded-md border bg-background p-2 font-mono text-sm" />
+        </label>
+        <p className="text-xs text-muted-foreground">Choose a program you trust. It runs with your Mac user’s access. Keep secrets out of arguments. Coworkers also need the Local MCP programs permission.</p>
+        <Button type="submit" disabled={busy}>{entry ? 'Save reviewed program' : 'Save local program'}</Button>
+    </form>
+}
+
 function VaultDetail({ entry, coworkers, busy, onSubmit }: {
     entry: DesktopVaultEntry
     coworkers: DesktopVaultListing['coworkers']
@@ -191,19 +219,20 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
     const [agentIds, setAgentIds] = useState(entry.agentIds)
     const [sharedWithAll, setSharedWithAll] = useState(entry.sharedWithAll)
     const [replace, setReplace] = useState(false)
-    const server = 'kind' in entry ? entry : null
+    const server = 'kind' in entry && entry.kind === 'mcp' ? entry : null
+    const program = 'kind' in entry && entry.kind === 'program' ? entry : null
     const target = { id: entry.id, revision: entry.revision }
     const changed = sharedWithAll !== entry.sharedWithAll || agentIds.length !== entry.agentIds.length || agentIds.some(id => !entry.agentIds.includes(id))
     const users = entry.sharedWithAll ? 'every coworker' : coworkers.filter(coworker => entry.agentIds.includes(coworker.id)).map(coworker => coworker.name).join(', ')
     return <div className="space-y-5">
         <header>
             <h3 className="font-medium">{entry.name}</h3>
-            <p className="font-mono text-sm text-muted-foreground">{'kind' in entry ? entry.url : entry.variable}</p>
+            <p className="font-mono text-sm text-muted-foreground">{'kind' in entry ? entry.kind === 'program' ? entry.executable : entry.url : entry.variable}</p>
             {server && <p className="text-sm text-muted-foreground">{server.headerName ? `Header configured: ${server.headerName}` : server.hasBearer ? 'Bearer token configured' : 'No authentication configured'}</p>}
         </header>
         <fieldset disabled={busy} className="space-y-3 border-t pt-4">
             <legend className="text-sm font-medium">Coworkers</legend>
-            <p className="text-sm text-muted-foreground">{server ? 'Assigned coworkers can use this server when their MCP permission is on.' : 'Assigned coworkers can use this variable in approved MCP credential references.'}</p>
+            <p className="text-sm text-muted-foreground">{program ? 'Assigned coworkers can run this program when their Local MCP programs permission is on.' : server ? 'Assigned coworkers can use this server when their MCP permission is on.' : 'Assigned coworkers can use this variable in approved MCP credential references.'}</p>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sharedWithAll} onChange={event => setSharedWithAll(event.target.checked)} />Every coworker</label>
             {coworkers.map(coworker => <label key={coworker.id} className="flex items-center gap-2 text-sm">
                 <input type="checkbox" disabled={sharedWithAll} checked={sharedWithAll || agentIds.includes(coworker.id)}
@@ -213,13 +242,14 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
             <Button size="sm" disabled={busy || !changed} onClick={() => onSubmit({ operation: 'share', ...target, agentIds, sharedWithAll })}>Save assignments</Button>
         </fieldset>
         <div className="flex flex-wrap gap-2 border-t pt-4">
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => setReplace(!replace)}>{server ? 'Change authentication' : 'Replace value'}</Button>
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => setReplace(!replace)}>{program ? 'Review program' : server ? 'Change authentication' : 'Replace value'}</Button>
             <ConfirmDialog title={`Delete “${entry.name}”?`} description={users ? `This removes the entry and its assignment for ${users}.` : 'This removes the entry from this workspace.'}
-                confirmLabel={server ? 'Delete MCP server' : 'Delete secret'} pending={busy} onConfirm={() => onSubmit({ operation: 'delete', ...target }, 'list')}>
-                <Button variant="outline" size="sm" disabled={busy}>{server ? 'Delete MCP server' : 'Delete secret'}</Button>
+                confirmLabel={program ? 'Delete local program' : server ? 'Delete MCP server' : 'Delete secret'} pending={busy} onConfirm={() => onSubmit({ operation: 'delete', ...target }, 'list')}>
+                <Button variant="outline" size="sm" disabled={busy}>{program ? 'Delete local program' : server ? 'Delete MCP server' : 'Delete secret'}</Button>
             </ConfirmDialog>
         </div>
-        {replace && <form className="space-y-3" onSubmit={event => {
+        {replace && program && <ProgramForm busy={busy} entry={program} onSave={fields => onSubmit({ operation: 'replace-program', ...target, executable: fields.executable, args: fields.args })} />}
+        {replace && !program && <form className="space-y-3" onSubmit={event => {
             event.preventDefault()
             const form = event.currentTarget
             if (server) {

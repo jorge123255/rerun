@@ -3,14 +3,14 @@ import { emptyMcpMaterialLease, type DesktopMcpMaterialLease, type DesktopMcpMat
 import {createHash} from 'node:crypto'
 import {realpath} from 'node:fs/promises'
 import {abortable} from '../mcp/remote'
-import type {StdioStore} from './store'
+import type {StdioConnection,StdioStore} from './store'
 import {executableIdentity,spawnStdio,type StdioSpawn} from './process'
 export type StdioRun={engineAgentId:string;sessionId:string;runId:string}
 export type StdioAuthority=(owner:string,action:'manage'|'use',run:StdioRun|undefined,signal:AbortSignal)=>Promise<{cwd:string}>
 type Tool={name:string;description?:string;inputSchema:Record<string,unknown>}
 type Process=ReturnType<typeof spawnStdio>
 type Entry={material?:DesktopMcpMaterialLease;owner:string;name:string;revision:string;users:Set<string>;controller:AbortController;check:()=>void;release:()=>void;opening:Promise<{process:Process;tools:Tool[];fingerprint:string;cwd:string}>;process?:Process;tail:Promise<unknown>;cwd?:string;idle?:ReturnType<typeof setTimeout>}
-export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProcess?:StdioSpawn,materials?:DesktopMcpMaterialSource){
+export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProcess?:StdioSpawn,materials?:DesktopMcpMaterialSource,vaultPrograms?:(owner:string)=>Promise<StdioConnection[]>){
  const entries=new Map<string,Entry>(),retired=new Set<Entry>();let closed=false
  const key=(owner:string,name:string)=>JSON.stringify([owner,name])
  const runKey=(run:StdioRun)=>JSON.stringify([run.engineAgentId,run.sessionId,run.runId])
@@ -23,15 +23,27 @@ export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProc
  }
  store.bindStop((owner,name)=>stopEntries(owner,name))
  function arm(entry:Entry){clearTimeout(entry.idle);entry.idle=setTimeout(()=>{void stopEntries(entry.owner,entry.name).catch(()=>{})},10*60_000);entry.idle.unref?.()}
+ async function connectionsFor(owner:string,run?:StdioRun){
+  const direct=await store.list(owner)
+  if(!run || !vaultPrograms)return direct
+  const assigned=await vaultPrograms(owner)
+  if(direct.length+assigned.length>16)throw new Error('Too many local connections')
+  if(assigned.some(server=>direct.some(existing=>existing.name===server.name)))throw new Error('Conflicting local connection names')
+  return [...direct,...assigned]
+ }
  async function guard(entry:Entry,run:StdioRun|undefined,signal:AbortSignal){
   entry.check();signal.throwIfAborted()
-  try { await entry.material?.check() }
-  catch (error) { entry.controller.abort(); throw error }
-  if(entry.process?.closed())throw new Error('Local MCP disconnected')
-  const access=await abortable(authorize(entry.owner,'use',run,signal),signal),connection=await abortable(store.read(entry.owner,entry.name),signal)
-  entry.check();signal.throwIfAborted()
-  if(connection.revision!==entry.revision || entry.cwd!==undefined && access.cwd!==entry.cwd)throw new Error('Local connection changed')
-  return {access,connection}
+  try {
+   await entry.material?.check()
+   if(entry.process?.closed())throw new Error('Local MCP disconnected')
+   const access=await abortable(authorize(entry.owner,'use',run,signal),signal)
+   const connection=run
+    ? (await abortable(connectionsFor(entry.owner,run),signal)).find(server=>server.name===entry.name)
+    : await abortable(store.read(entry.owner,entry.name),signal)
+   entry.check();signal.throwIfAborted()
+   if(connection?.revision!==entry.revision || entry.cwd!==undefined && access.cwd!==entry.cwd)throw new Error('Local connection changed')
+   return {access,connection}
+  } catch (error) { entry.controller.abort(); throw error }
  }
  function connect(owner:string,name:string,revision:string,run:StdioRun|undefined):Entry{
   if(closed)throw new Error('Local MCP stopped')
@@ -50,11 +62,14 @@ export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProc
    if(cwd!==first.access.cwd)throw new Error('Local MCP working directory must be canonical')
    const fingerprint=await executableIdentity(first.connection.executable,signal)
    const final=await guard(entry,run,signal)
+   if(final.connection.approvedExecutable && final.connection.approvedExecutable!==fingerprint)throw new Error('Review the changed Vault executable before using it')
    if(final.access.cwd!==cwd)throw new Error('Local MCP owner changed')
    entry.cwd=cwd
    entry.check();signal.throwIfAborted()
-   entry.material=materials?await materials(owner,name,revision,'discovery',controller.signal):emptyMcpMaterialLease()
-   await guard(entry,run,signal);entry.check();signal.throwIfAborted()
+   entry.material=materials && !final.connection.approvedExecutable?await materials(owner,name,revision,'discovery',controller.signal):emptyMcpMaterialLease()
+   await guard(entry,run,signal)
+   if(final.connection.approvedExecutable && await executableIdentity(final.connection.executable,signal)!==fingerprint)throw new Error('Local executable changed')
+   entry.check();signal.throwIfAborted()
    const resolved=entry.material.configured?{...first.connection,args:[...entry.material.material.args]}:first.connection
    const process=spawnStdio(resolved,cwd,controller.signal,spawnProcess,entry.material.material.env);entry.process=process
    const stop=()=>controller.abort();signal.addEventListener('abort',stop,{once:true})
@@ -98,9 +113,13 @@ export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProc
   async probe(owner:string,name:string,revision:string,signal:AbortSignal){const entry=connect(owner,name,revision,undefined);return operation(entry,undefined,signal,async session=>({tools:session.tools}))},
   async tools(owner:string,run:StdioRun,signal:AbortSignal,admissionSignal:AbortSignal=signal){
    if(closed)throw new Error('Local MCP stopped')
-   const connections=await abortable(store.list(owner),admissionSignal),definitions=[]
+   const connections=await abortable(connectionsFor(owner,run),admissionSignal),definitions=[]
    for(const connection of connections){
     admissionSignal.throwIfAborted();signal.throwIfAborted()
+    const previous=entries.get(key(owner,connection.name))
+    if(previous && previous.revision!==connection.revision){
+     await abortable(stopEntries(owner,connection.name),admissionSignal)
+    }
     const entry=connect(owner,connection.name,connection.revision,run)
     entry.users.add(runKey(run))
     const listed=await operation(entry,run,admissionSignal,async session=>session.tools)

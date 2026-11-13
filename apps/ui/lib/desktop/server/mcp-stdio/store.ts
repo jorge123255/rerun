@@ -4,7 +4,7 @@ import type {Client} from '@libsql/client'
 import {z} from 'zod'
 import {remoteMcpLifecycle} from '../mcp/lifecycle'
 export const stdioInput=z.object({name:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),executable:z.string().min(1).max(4096).refine(p=>p.startsWith('/')&&!/[\x00-\x1f\x7f]/.test(p)),args:z.array(z.string().max(4096).refine(s=>!s.includes('\0'))).max(64),revision:z.string().uuid().optional()}).strict()
-export type StdioConnection=z.infer<typeof stdioInput>&{revision:string;transport:'stdio'}
+export type StdioConnection=z.infer<typeof stdioInput>&{revision:string;transport:'stdio';approvedExecutable?:string}
 export {stdioSchema} from './schema'
 export function stdioStore(db:Client){
  const lifecycle=remoteMcpLifecycle()

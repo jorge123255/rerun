@@ -1,3 +1,4 @@
+import { assignedVaultMcpPrograms } from './vault/mcp-programs'
 import { desktopVaultMcpRuntime } from './vault/mcp-runtime'
 import { createDesktopSecretCrypto } from './secret-requests/crypto'
 import { shutdownDesktopForeman } from './foreman/binding'
@@ -166,7 +167,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         current.check()
         return { cwd: current.workspaceRoot }
     }
-    const localRuntime = stdioRuntime(localStore, localAuthority, undefined, material)
+    const localRuntime = stdioRuntime(localStore, localAuthority, undefined, material, owner => assignedVaultMcpPrograms(db, owner))
     const localBridge = stdioEngineBridge(localRuntime, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'localMcpStdio')
         return (await historicalOwner(identity, signal)).owner.id
