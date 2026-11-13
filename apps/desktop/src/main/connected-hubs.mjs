@@ -165,7 +165,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
                 return 'picker'
             }
             pendingOpen = null
-            const result = await connect(origin, { path: request.path, remember: false })
+            const result = await connect(origin, { path: request.path, remember: false, recoverIncompatible: true })
             if (result.ok) return 'workspace'
             if (available()) {
                 pendingOpen ??= request
@@ -437,7 +437,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         })
     }
 
-    async function connect(address, { path = null, parent, remember = true, signal, reveal, restoring = false } = {}) {
+    async function connect(address, { path = null, parent, remember = true, signal, reveal, recoverIncompatible = false } = {}) {
         if (!available() || connecting || signal?.aborted) return { ok: false, reason: 'busy' }
         const origin = normalizeHubOrigin(address)
         if (!origin) return { ok: false, reason: 'invalid' }
@@ -451,7 +451,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             let issue = null
             if (!result.ok) {
                 if (result.reason === 'unreachable' && await savedOrigin() === origin) issue = { reason: 'offline' }
-                else if (restoring && (result.reason === 'too-old' || isIncompatibleHub(result.reason))) {
+                else if (recoverIncompatible && (result.reason === 'too-old' || isIncompatibleHub(result.reason))) {
                     issue = { reason: result.reason, minimum: result.minimum }
                 }
                 else return result
@@ -644,7 +644,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         async reopenRemembered(options) {
             const origin = await savedOrigin()
             if (!origin || !available() || picker || openingLink || pendingOpen || connecting) return false
-            return (await connect(origin, { ...options, remember: false, restoring: true })).ok
+            return (await connect(origin, { ...options, remember: false, recoverIncompatible: true })).ok
         },
         ownsWindow: window => !!entryFor(window),
         focusWindow(window) {
