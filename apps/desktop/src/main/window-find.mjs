@@ -5,7 +5,7 @@ const page = new URL('./find.html', import.meta.url)
 const preload = fileURLToPath(new URL('./find-preload.cjs', import.meta.url))
 const width = 380, height = 52, margin = 12
 
-export function createWindowFind({ WebContentsView, scopeOf, topInset, language = () => 'en' }) {
+export function createWindowFind({ WebContentsView, scopeOf, topInset, language = () => 'en', appearance = () => null }) {
     let current
     const active = entry => current === entry && !entry.view.webContents.isDestroyed() && scopeOf(entry.window) === entry.scope
     const trusted = event => current && active(current) && event.sender === current.view.webContents
@@ -13,7 +13,10 @@ export function createWindowFind({ WebContentsView, scopeOf, topInset, language 
 
     function focus(entry) {
         entry.view.webContents.focus()
-        entry.view.webContents.send('desktop:find-focus', shellCopy(language(entry.window), 'find'))
+        entry.view.webContents.send('desktop:find-focus', {
+            ...shellCopy(language(entry.window), 'find'),
+            appearance: appearance(entry.window),
+        })
     }
 
     function close(window, focus = false) {

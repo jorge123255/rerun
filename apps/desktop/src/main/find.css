@@ -1,4 +1,6 @@
 :root { color-scheme: light dark; font: 13px system-ui, sans-serif; }
+:root[data-appearance="light"] { color-scheme: light; }
+:root[data-appearance="dark"] { color-scheme: dark; }
 body { margin: 0; padding: 3px; background: transparent; }
 form {
     box-sizing: border-box; display: flex; align-items: center; gap: 4px; height: 44px;

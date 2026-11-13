@@ -78,6 +78,7 @@ const quickAsk = createQuickAskWindow({ app, BrowserWindow, screen, showBoard: s
 })
 const windowFind = createWindowFind({ WebContentsView, scopeOf: candidate => boardContext(candidate)?.rendererEpoch ?? connectedHubs?.scopeOf(candidate),
     language: candidate => shellLanguage?.forScope(connectedHubs?.languageScopeOf(candidate) ?? 'local'),
+    appearance: candidate => connectedHubs?.appearanceOf(candidate) ?? null,
     topInset: candidate => mac && !candidate.isFullScreen() ? 28 : 0,
 })
 function boardContext(candidate) {

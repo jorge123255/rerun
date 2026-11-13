@@ -8,7 +8,7 @@ import { shellCopy } from '../src/main/shell-language.mjs'
 import { createWindowFind } from '../src/main/window-find.mjs'
 
 test('page Find accepts only its sandboxed frame and discards stale requests and scopes', async () => {
-    let scope = 'workspace-renderer', lastRequest = 0, currentView, fullscreen = false, visible = true
+    let scope = 'workspace-renderer', lastRequest = 0, currentView, fullscreen = false, visible = true, appearance = 'light'
     const positions = []
     const calls = []
     const contents = Object.assign(new EventEmitter(), {
@@ -43,7 +43,8 @@ test('page Find accepts only its sandboxed frame and discards stale requests and
         setBackgroundColor() {}
         setBounds(bounds) { positions.push(bounds) }
     }
-    const find = createWindowFind({ WebContentsView: View, scopeOf: owner => owner === window ? scope : null, topInset: () => fullscreen ? 0 : 28, language: () => 'fr' })
+    const find = createWindowFind({ WebContentsView: View, scopeOf: owner => owner === window ? scope : null,
+        topInset: () => fullscreen ? 0 : 28, language: () => 'fr', appearance: () => appearance })
     find.open(window)
     await Promise.resolve()
     assert.deepEqual(positions, [{ x: 508, y: 40, width: 380, height: 52 }])
@@ -59,7 +60,11 @@ test('page Find accepts only its sandboxed frame and discards stale requests and
     assert.deepEqual(positions.at(-1), { x: 508, y: 40, width: 380, height: 52 })
     const sender = currentView.webContents
     const event = { sender, senderFrame: sender.mainFrame }
-    assert.deepEqual(calls.splice(0), [['desktop:find-focus', shellCopy('fr','find')]])
+    assert.deepEqual(calls.splice(0), [['desktop:find-focus', { ...shellCopy('fr', 'find'), appearance: 'light' }]])
+    appearance = 'dark'
+    find.open(window)
+    assert.equal(currentView.webContents, sender)
+    assert.deepEqual(calls.splice(0), [['desktop:find-focus', { ...shellCopy('fr', 'find'), appearance: 'dark' }]])
     find.search({ sender, senderFrame: {} }, { text: 'foreign' })
     find.search(event, { text: 'x'.repeat(501) })
     assert.deepEqual(calls, [])

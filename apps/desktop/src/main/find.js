@@ -32,6 +32,8 @@ find.onFocus(value => {
     if (value) {
         copy = value
         document.documentElement.lang = copy.locale
+        if (copy.appearance === 'light' || copy.appearance === 'dark') document.documentElement.dataset.appearance = copy.appearance
+        else delete document.documentElement.dataset.appearance
         document.title = query.placeholder = copy.placeholder
         form.setAttribute('aria-label', copy.placeholder)
         query.setAttribute('aria-label', copy.placeholder)
