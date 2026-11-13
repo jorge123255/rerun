@@ -1409,10 +1409,10 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
             }} />, { kind: 'takeover', label: t('chatRequestCue.takeover') })
     }
     const transcriptActive = active && !cardOpen && !detailPanel && !chatsOpen
-    const waitingCard = transcriptActive && ready && !generating && !stopping && !draft.quitting
+    const waitingCard = ready && !generating && !stopping && !draft.quitting
         ? requestCards.find(card => card.cue) : undefined
     const cueKey = waitingCard ? JSON.stringify([workspaceId, agent.id, sessionId, tabUid, waitingCard.key]) : null
-    const pendingBlock = useArriveByTop(conversationScroll, cueKey, arrival)
+    const pendingBlock = useArriveByTop(conversationScroll, cueKey, arrival, transcriptActive)
     const lastArrival = useRef<DesktopChatRequest | null>(null)
     useEffect(() => {
         const conversation = conversationScroll.current
