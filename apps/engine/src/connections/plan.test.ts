@@ -14,13 +14,14 @@ const { createConnection } = await import('./store.js')
 const { allowedModel, readBoxPlan, writeBoxPlan } = await import('./plan.js')
 const { defaultModelOf, resolveConfiguredModel, resolveRunModel } = await import('../agents/availability.js')
 
-async function pinnedAgent(provider: Provider, model: string): Promise<LoadedAgent> {
-    const connection = await createConnection({ name: provider, provider, models: DEFAULT_CONNECTION_MODELS[provider], extraModels: [], keys: {} })
+async function pinnedAgent(provider: Provider, model: string, models = DEFAULT_CONNECTION_MODELS[provider]): Promise<LoadedAgent> {
+    const connection = await createConnection({ name: provider, provider, models, extraModels: [], keys: {} })
     const config = agentConfigSchema.parse({ name: 'a1', connectionId: connection.id, provider, model })
     return { id: 'a1', config, soul: '', install: '', env: {}, resolved: await resolveConfiguredModel(config) }
 }
 
 afterEach(async () => {
+    vi.unstubAllEnvs()
     await writeBoxPlan({ premiumModels: true })
     await rm(connectionsDir(), { recursive: true, force: true })
 })
@@ -95,4 +96,20 @@ describe('model resolution on a trial box', () => {
         const fresh = await import('./plan.js')
         expect(fresh.readBoxPlan()).toEqual({ premiumModels: true })
     })
+})
+
+it('keeps local Mac model selections even with a legacy trial plan on disk', async () => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    vi.stubEnv('RERUN_DESKTOP_SECRET_KEY', '0'.repeat(64))
+    await writeBoxPlan({ premiumModels: false })
+    const model = 'anthropic/claude-opus-5.5'
+    const agent = await pinnedAgent('openrouter', model, [model, 'anthropic/claude-sonnet-5.5', 'openai/gpt-6-astra'])
+
+    expect(agent.resolved.model).toBe(model)
+    expect(defaultModelOf(agent.resolved.connection!)).toBe(model)
+    expect(await resolveRunModel(agent, { model: 'openai/gpt-6-astra' })).toMatchObject({
+        provider: 'openrouter',
+        model: 'openai/gpt-6-astra',
+    })
+    expect(readBoxPlan()).toEqual({ premiumModels: false })
 })
