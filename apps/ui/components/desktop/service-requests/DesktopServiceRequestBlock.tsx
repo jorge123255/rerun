@@ -220,23 +220,33 @@ function ServiceRequestBlock(props: DesktopServiceRequestBlockProps) {
         if (!owner || !current(owner) || busy.current || !fresh.current || !saved || attempt || accepted || saved.retry.phase !== 'open') return
         busy.current = true
         fresh.current = false
+        const catalog = saved.services[saved.currentIndex].catalog
+        const destination = 'vaultSetup' in catalog && catalog.vaultSetup ? 'vault' as const : undefined
+        let account: { key: string; revision: string } | undefined
         const opened = { controller: new AbortController(), cancelled: false }
         flow.current = opened
         setConfiguring(true)
         setError('')
         try {
             const result = await latest.current.onOpenApps({ agentId: scope.agentId, slug: saved.services[saved.currentIndex].slug,
-                serviceRequestId: scope.serviceRequestId, sourceFingerprint: scope.source.fingerprint, signal: opened.controller.signal })
-            if (result.status !== 'closed') throw new Error('Apps flow did not close.')
+                serviceRequestId: scope.serviceRequestId, sourceFingerprint: scope.source.fingerprint, signal: opened.controller.signal, ...(destination && { destination }) })
+            account = result.account
         } catch {
             if (current(owner) && !opened.cancelled) setError('Apps setup could not be confirmed. Refresh this request before choosing a connection.')
         } finally {
             if (current(owner) && flow.current === opened) {
-                await refresh(owner)
+                const next = await refresh(owner)
                 flow.current = null
                 setConfiguring(false)
-            }
-            busy.current = false
+                busy.current = false
+                if (account && next && current(owner) && !opened.cancelled) {
+                    const row = next.services[next.currentIndex]
+                    if (row.slug === saved.services[saved.currentIndex].slug
+                        && row.vaultAccounts?.some(item => item.key === account?.key && item.revision === account.revision)) {
+                        await decide('vault', undefined, account)
+                    } else setError('This account is unavailable for the request. Check its connection and the coworker’s Apps permission.')
+                }
+            } else busy.current = false
         }
     }
 
@@ -261,11 +271,11 @@ function ServiceRequestBlock(props: DesktopServiceRequestBlockProps) {
     return <div className="min-w-0 space-y-2">
         <DesktopServiceSuggestionCard name={named?.name ?? row.slug} slug={row.slug} reason={row.reason} icon={named?.icon ?? null} category={named?.category ?? 'other'}
             current={detail.currentIndex} count={detail.services.length} selected={selected} skipped={choice.choice === 'skip'}
-            unavailableReason={unavailableReason} newAccount={vaultAccounts.length > 0} connectionMessage={row.connectionsStatus === 'unavailable' ? 'Connection state is unavailable. Refresh before finishing.'
+            unavailableReason={unavailableReason} newAccount={vaultAccounts.length > 0} vaultSetup={named?.vaultSetup} connectionMessage={row.connectionsStatus === 'unavailable' ? 'Connection state is unavailable. Refresh before finishing.'
                 : choice.choice === 'use-connection' && !selected[detail.currentIndex] ? 'The selected connection changed or is no longer usable. Choose a current connection or Skip.'
                     : vaultAccounts.length ? 'Choose an account from the Vault or connect a new one.'
-                    : connection ? 'Current connection is healthy and available to this coworker.' : 'Configure and probe a connection in Apps. Apps permission is managed there.'}
-            canConnect={!!named?.methods.some(method => method.supported)} canUseConnection={!!connection}
+                    : connection ? 'Current connection is healthy and available to this coworker.' : named?.vaultSetup ? 'Connect an account in the workspace Vault.' : 'Configure and probe a connection in Apps. Apps permission is managed there.'}
+            canConnect={!!named?.vaultSetup || !!named?.methods.some(method => method.supported)} canUseConnection={!!connection}
             canAdvance={detail.currentIndex < detail.services.length - 1 || canFinish(detail, nextChoices)} configuring={configuring} busy={working}
             disabled={locked} inline={props.inline} onConnect={() => { void connect() }} onCancel={() => { if (flow.current) { flow.current.cancelled = true; flow.current.controller.abort() } }}
             onSkip={() => { void decide('skip') }} onAdvance={() => { void decide('advance') }} onSelect={index => { void decide('select', index) }} />

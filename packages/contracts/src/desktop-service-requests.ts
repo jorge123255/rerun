@@ -55,6 +55,7 @@ function catalogDetails(status: 'available' | 'unsupported-auth') {
         authentication: z.enum(['supported', 'unsupported']),
         unsupportedReason: z.string().max(300).optional(),
         methods: z.array(methodSchema).max(20),
+        vaultSetup: z.literal(true).optional(),
     })
 }
 export const desktopServiceRequestCatalogSchema = z.discriminatedUnion('status', [

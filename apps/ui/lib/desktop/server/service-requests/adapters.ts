@@ -10,6 +10,7 @@ import { getDesktopRemoteMcpService } from '../mcp-binding'
 import type { DesktopRuntime } from '../runtime'
 import type { DesktopAgent, DesktopSession } from '../store'
 import { getDesktopServiceManifest } from '../services/catalog/index'
+import { vaultCatalogMethods } from '../vault/catalog'
 import { accountMethodAvailability } from '../services/accounts/availability'
 import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 import { attachServiceVaultAccounts, readServiceVaultAccounts, vaultConnection } from './vault'
@@ -41,6 +42,7 @@ export async function describeDesktopServiceRequestCatalog(slug: string): Promis
             name, category, summary: record.summary, icon: record.icon && record.icon.length <= 2_000 ? record.icon : null,
             verified: record.verified === true, connected: false, authentication: supported ? 'supported' : 'unsupported',
             ...(unsupportedReason ? { unsupportedReason } : {}), methods,
+            ...(vaultCatalogMethods(record).length > 0 && { vaultSetup: true as const }),
         }
     } catch (error) {
         const message = error instanceof Error ? error.message : ''

@@ -31,27 +31,32 @@ async function requestVault(signal: AbortSignal, input?: VaultRequest) {
     return desktopVaultListing.parse(await response.json())
 }
 
-export function DesktopVaultDialog({ onClose }: { onClose: () => void }) {
+type SuggestedApp = { slug: string; onUse: (account: { key: string; revision: string }) => void }
+
+export function DesktopVaultDialog({ onClose, suggestedApp }: { onClose: () => void; suggestedApp?: SuggestedApp }) {
+    const opener = useRef<HTMLElement | null>(typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null)
     return <Dialog open onOpenChange={open => { if (!open) onClose() }}>
         <PanelDialogContent className="sm:h-[min(48rem,90dvh)] sm:max-w-2xl"
             onCloseAutoFocus={event => {
                 event.preventDefault()
-                document.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')?.focus({ preventScroll: true })
+                const target = suggestedApp && opener.current?.isConnected ? opener.current
+                    : document.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
+                target?.focus({ preventScroll: true })
             }}>
             <DialogHeader className="border-b px-4 py-4 pr-12">
-                <DialogTitle>Vault</DialogTitle>
+                <DialogTitle>{suggestedApp ? 'Add account to Vault' : 'Vault'}</DialogTitle>
                 <DialogDescription>Store apps, MCP servers, and secrets for this workspace and choose their coworkers.</DialogDescription>
             </DialogHeader>
-            <VaultPanel />
+            <VaultPanel suggestedApp={suggestedApp} onClose={onClose} />
         </PanelDialogContent>
     </Dialog>
 }
 
 type VaultDestination = string | ((listing: DesktopVaultListing) => string)
 
-function VaultPanel() {
+function VaultPanel({ suggestedApp, onClose }: { suggestedApp?: SuggestedApp; onClose: () => void }) {
     const [listing, setListing] = useState<DesktopVaultListing | null>(null)
-    const [page, setPage] = useState('list')
+    const [page, setPage] = useState(suggestedApp ? 'add-app' : 'list')
     const [query, setQuery] = useState('')
     const [error, setError] = useState('')
     const [busy, setBusy] = useState(true)
@@ -105,21 +110,25 @@ function VaultPanel() {
     const alert = error && <p className="text-sm text-destructive" role="alert">{error}</p>
     return <PanelSteps stepKey={stepKey} depth={stepKey === 'list' ? 0 : 1}>
         <PanelScroller className="space-y-4 p-4">
-            {stepKey !== 'list' && <Button variant="ghost" size="sm" disabled={busy} onClick={() => navigate('list')}><ArrowLeft />Back</Button>}
+            {!suggestedApp && stepKey !== 'list' && <Button variant="ghost" size="sm" disabled={busy} onClick={() => navigate('list')}><ArrowLeft />Back</Button>}
             {alert}
             {!listing ? (error ? <Button variant="outline" disabled={busy} onClick={() => void run()}>Try again</Button> : <p role="status">Loading Vault…</p>)
                 : page === 'add' ? <SecretForm busy={busy} onSubmit={fields => void run({ operation: 'create', ...fields }, 'list')} />
-                : page === 'add-app' ? <DesktopVaultCatalog busy={busy} existingAccounts={accounts} onCancel={() => navigate('list')}
+                : page === 'add-app' ? <DesktopVaultCatalog slug={suggestedApp?.slug} busy={busy} existingAccounts={accounts} onCancel={suggestedApp ? onClose : () => navigate('list')}
                     onSave={async (slug, methodId, values, account) => {
                         const previousIds = new Set(listing.entries.map(item => item.id))
-                        const failure = await run({ operation: 'add-app', slug, methodId, values, ...account },
-                            saved => saved.entries.find(item => !previousIds.has(item.id)
-                                && 'kind' in item && item.kind === 'mcp' && item.catalog?.slug === slug)?.id ?? 'list', false)
+                        const failure = await run({ operation: 'add-app', slug, methodId, values, ...account }, saved => {
+                            const added = saved.entries.filter(item => !previousIds.has(item.id)
+                                && 'kind' in item && item.kind === 'mcp' && item.catalog?.slug === slug)
+                            return added.length === 1 ? added[0].id : 'list'
+                        }, false)
                         if (failure) throw failure
                     }} />
                 : page === 'add-server' ? <ServerForm busy={busy} onSubmit={fields => void run({ operation: 'create-server', ...fields }, 'list')} />
                 : page === 'add-program' ? <ProgramForm busy={busy} onSave={fields => void run({ operation: 'create-program', ...fields }, 'list')} />
-                : entry ? <VaultDetail key={entry.revision} entry={entry} coworkers={listing.coworkers} busy={busy} onSubmit={run} />
+                : entry ? <VaultDetail key={entry.revision} entry={entry} coworkers={listing.coworkers} busy={busy} onSubmit={run}
+                    onUseInChat={suggestedApp && (() => suggestedApp.onUse({ key: 'vault:' + entry.id, revision: entry.revision }))} />
+                : suggestedApp ? <Button variant="outline" onClick={onClose}>Return to chat</Button>
                 : <>
                     <div className="flex flex-wrap items-center justify-between gap-2">
                         <h3 className="font-medium">Vault entries</h3>
@@ -297,9 +306,10 @@ function ProgramCredentials({ entry, busy, onSubmit }: {
     </section>
 }
 
-function VaultDetail({ entry, coworkers, busy, onSubmit }: {
+function VaultDetail({ entry, coworkers, busy, onSubmit, onUseInChat }: {
     entry: DesktopVaultEntry
     coworkers: DesktopVaultListing['coworkers']
+    onUseInChat?: () => void
     busy: boolean
     onSubmit: (input: VaultRequest, next?: VaultDestination, showError?: boolean) => Promise<Error | null>
 }) {
@@ -324,8 +334,10 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
             {server.catalog.health?.message && <p className="text-sm text-muted-foreground">{server.catalog.health.message}</p>}
             <Button size="sm" variant="outline" disabled={busy || replace || renaming}
                 onClick={() => void onSubmit({ operation: 'check-health', ...target })}>Check connection</Button>
+            {onUseInChat && server.catalog.health?.state === 'healthy' && !!server.catalog.health.toolCount
+                && <Button size="sm" disabled={busy} onClick={onUseInChat}>Use in chat</Button>}
         </section>}
-        <fieldset disabled={busy} className="space-y-3 border-t pt-4">
+        {!onUseInChat && <fieldset disabled={busy} className="space-y-3 border-t pt-4">
             <legend className="text-sm font-medium">Coworkers</legend>
             <p className="text-sm text-muted-foreground">{program ? 'Assigned coworkers can run this program when their Local MCP programs permission is on.' : server?.catalog ? 'Assigned coworkers can use this app when their Apps permission is on.' : server ? 'Assigned coworkers can use this server when their MCP permission is on.' : 'Assigned coworkers can use this variable in approved MCP credential references.'}</p>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sharedWithAll} onChange={event => setSharedWithAll(event.target.checked)} />Every coworker</label>
@@ -335,7 +347,7 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
                 {coworker.name}
             </label>)}
             <Button size="sm" disabled={busy || !changed} onClick={() => onSubmit({ operation: 'share', ...target, agentIds, sharedWithAll })}>Save assignments</Button>
-        </fieldset>
+        </fieldset>}
         {server?.browserSignIn && <div className="space-y-2 border-t pt-4">
             <DesktopMcpOAuthAuthorize vaultId={server.id} name={server.name} revision={server.revision} active={!busy && !replace && !renaming} />
             <ConfirmDialog title="Disconnect browser sign-in?" description="Coworkers will need you to sign in again before using this connection."
@@ -363,7 +375,7 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
             <Button type="submit" size="sm" disabled={busy}>Save account name</Button>
         </form>}
         {replace && program && <ProgramForm busy={busy} entry={program} onSave={fields => onSubmit({ operation: 'replace-program', ...target, executable: fields.executable, args: fields.args })} />}
-        {replace && server?.catalog && <DesktopVaultCatalog slug={server.catalog.slug} busy={busy}
+        {replace && server?.catalog && <DesktopVaultCatalog slug={server.catalog.slug} editing busy={busy}
             replacesSignIn={server.browserSignIn}
             onCancel={() => setReplace(false)} onSave={async (_slug, methodId, values) => {
                 const failure = await onSubmit({ operation: 'configure-app', ...target, methodId, values }, undefined, false)

@@ -10,8 +10,9 @@ import { DesktopServiceAccountForm } from '../services/accounts/DesktopServiceAc
 
 type CatalogApp = { slug: string; name: string; summary: string; multiInstance: boolean; methods: ServiceAccountMethod[] }
 
-export function DesktopVaultCatalog({ slug, busy, replacesSignIn, existingAccounts, onSave, onCancel }: {
+export function DesktopVaultCatalog({ slug, editing = false, busy, replacesSignIn, existingAccounts, onSave, onCancel }: {
     slug?: string
+    editing?: boolean
     busy: boolean
     replacesSignIn?: boolean
     existingAccounts?: Record<string, string[]>
@@ -56,22 +57,22 @@ export function DesktopVaultCatalog({ slug, busy, replacesSignIn, existingAccoun
                     <h3 className="font-medium">{app.name}</h3>
                     {app.summary && <p className="text-sm text-muted-foreground">{app.summary}</p>}
                 </header>
-                {!slug && accounts.length > 0 && !app.multiInstance
+                {!editing && accounts.length > 0 && !app.multiInstance
                     ? <p className="text-sm text-muted-foreground">This app already has an account in the Vault.</p>
                     : <>
-                        {!slug && <label className="block space-y-1 text-sm">
+                        {!editing && <label className="block space-y-1 text-sm">
                             Account name
                             <Input maxLength={120} disabled={busy} placeholder={accounts.length ? app.name + ' ' + number : app.name}
                                 value={label} onChange={event => setLabel(event.target.value)} />
                         </label>}
                         {replacesSignIn && <p className="text-sm text-muted-foreground">Saving authentication will replace this app’s current browser sign-in.</p>}
                         <DesktopServiceAccountForm identity={app.slug} methods={app.methods} saved={null}
-                            disabled={busy} submitLabel={slug ? 'Save authentication' : 'Save app'}
-                            oauthSubmitLabel={slug ? 'Save authentication' : 'Set up browser sign-in'}
-                            onSubmit={(methodId, values) => onSave(app.slug, methodId, values, slug ? undefined : {
+                            disabled={busy} submitLabel={editing ? 'Save authentication' : 'Save app'}
+                            oauthSubmitLabel={editing ? 'Save authentication' : 'Set up browser sign-in'}
+                            onSubmit={(methodId, values) => onSave(app.slug, methodId, values, editing ? undefined : {
                                 ...(label.trim() && { label: label.trim() }), expectedAccounts: accounts.length,
                             })}
-                            onCancel={slug ? onCancel : clearSelection} />
+                            onCancel={slug || editing ? onCancel : clearSelection} />
                     </>}
             </div>
         )

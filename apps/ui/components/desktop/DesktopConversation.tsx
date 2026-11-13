@@ -89,6 +89,7 @@ import { DesktopScheduledRunBlock } from './DesktopScheduledRunBlock'
 import { DesktopCoworkerTools } from './DesktopCoworkerTools'
 import { DesktopNativeWritebackReview } from './DesktopNativeWritebackReview'
 import { DesktopCoworkerMcpDialog } from './DesktopCoworkerMcpDialog'
+import { DesktopVaultDialog } from './vault/DesktopVaultDialog'
 import { DesktopServicesDialog } from './services/DesktopServicesDialog'
 import { DesktopCoworkerMonitoring } from './DesktopCoworkerMonitoring'
 import { useDesktopPanelCloseGuard, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
@@ -255,19 +256,19 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     const serviceStream = useRef<AcceptedService | null>(null)
     const serviceOwner = useRef({agentId:agent.id,sessionId,active})
     serviceOwner.current = {agentId:agent.id,sessionId,active}
-    type AppsFlow = {token:string; slug:string; settle:(error?:Error)=>void}
+    type AppsFlow = {token:string; slug:string; destination?: 'vault'; settle:(error?:Error, account?: { key: string; revision: string })=>void}
     const appsFlow = useRef<AppsFlow|null>(null)
     const [serviceApps, setServiceApps] = useState<AppsFlow|null>(null)
     const openServiceApps: DesktopOpenApps = input => new Promise((resolve,reject) => {
         if (input.signal.aborted || input.agentId !== agent.id || !active || appsFlow.current || isDesktopQuitting()) { reject(new Error('This app request is no longer active.')); return }
         const token = crypto.randomUUID()
         const abort = () => flow.settle(new Error('App connection cancelled.'))
-        const flow: AppsFlow = {token,slug:input.slug,settle:error=>{
+        const flow: AppsFlow = {token,slug:input.slug,destination:input.destination,settle:(error, account)=>{
             input.signal.removeEventListener('abort',abort)
             if(appsFlow.current?.token!==token)return
             appsFlow.current=null
             setServiceApps(current=>current?.token===token?null:current)
-            if(error)reject(error);else resolve({status:'closed'})
+            if(error)reject(error);else resolve({status:'closed', account})
         }}
         appsFlow.current=flow;setServiceApps(flow)
         input.signal.addEventListener('abort',abort,{once:true})
@@ -1735,7 +1736,10 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
             </Conversation>
             </div>
 
-            <DesktopServicesDialog agent={agent} hideTrigger focusSlug={serviceApps?.slug} focusRequestKey={serviceApps?.token} dialogControl={{open:detailPanel==='services'||!!serviceApps,onOpenChange:open=>{
+            {serviceApps?.destination === 'vault' && <DesktopVaultDialog
+                onClose={() => serviceApps.settle()}
+                suggestedApp={{ slug: serviceApps.slug, onUse: account => serviceApps.settle(undefined, account) }} />}
+            <DesktopServicesDialog agent={agent} hideTrigger focusSlug={serviceApps?.slug} focusRequestKey={serviceApps?.token} dialogControl={{open:detailPanel==='services'||!!serviceApps&&serviceApps.destination!=='vault',onOpenChange:open=>{
                 if(!open){serviceApps?.settle();if(detailPanel==='services')setDetailPanel(null)}else if(!serviceApps)setDetailPanel('services')
             }}} />
             <IsolatedScreenDialog open={active && screenOpen !== null} onOpenChange={open => { if (!open) setScreenOpen(null) }} agentId={agent.id} title={`${agent.name}’s browser`}

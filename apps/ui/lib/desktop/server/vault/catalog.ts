@@ -26,7 +26,7 @@ function parseConnection(fields: object, displayName: string) {
     return { ...connection, displayName }
 }
 
-function availableMethods({ manifest, details }: ReturnType<typeof getDesktopServiceManifest>) {
+export function vaultCatalogMethods({ manifest, details }: ReturnType<typeof getDesktopServiceManifest>) {
     return details.authMethods.flatMap(method => {
         const availability = details.availability.find(item => item.id === method.id)
         const direct = (method.kind === 'key' || method.kind === 'none')
@@ -46,14 +46,14 @@ function availableMethods({ manifest, details }: ReturnType<typeof getDesktopSer
 
 export function vaultCatalog(query: string) {
     return listDesktopServiceCatalog({ query, limit: 500 }).services.flatMap(row => {
-        const methods = availableMethods(getDesktopServiceManifest(row.slug))
+        const methods = vaultCatalogMethods(getDesktopServiceManifest(row.slug))
         return methods.length ? [{ slug: row.slug, name: row.name, summary: row.summary, multiInstance: row.multiInstance, methods }] : []
     })
 }
 
 export function compileVaultCatalogApp(slug: string, methodId: string, values: Record<string, string>, instanceId?: string) {
     const catalog = getDesktopServiceManifest(slug)
-    if (!availableMethods(catalog).some(item => item.id === methodId)) throw new Error('Unsupported catalog method')
+    if (!vaultCatalogMethods(catalog).some(item => item.id === methodId)) throw new Error('Unsupported catalog method')
     return compileConnection(catalog.manifest, methodId, values, instanceId)
 }
 
