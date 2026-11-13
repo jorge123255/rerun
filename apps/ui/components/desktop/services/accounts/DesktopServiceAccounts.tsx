@@ -24,6 +24,7 @@ import { ServiceTransportConnection } from '../transports/ServiceTransportConnec
 import { serviceOAuthClient } from '@/lib/desktop/service-oauth-client'
 import { desktopServiceTransportClient } from '@/lib/desktop/service-transports-client'
 import { DesktopServiceAccountForm } from './DesktopServiceAccountForm'
+import { DesktopVaultDialog } from '../../vault/DesktopVaultDialog'
 import { DesktopCoworkerVault } from '../../vault/DesktopCoworkerVault'
 
 function libraryService(row: ServiceAccountLibraryRow): ServiceSearchResult {
@@ -47,6 +48,8 @@ function Accounts({ agentId, focusSlug, focusRequestKey }: { agentId: string; fo
     const [client, setClient] = useState<DesktopServiceAccountsClient | null>(null)
     const [accounts, setAccounts] = useState<DesktopServiceAccountView[]>([])
     const [catalog, setCatalog] = useState<ServiceAccountLibraryRow[]>([])
+    const [vaultApp, setVaultApp] = useState<string | null>(null)
+    const [vaultRefresh, setVaultRefresh] = useState(0)
     const [detail, setDetail] = useState<ServiceAccountDetail | null>(null)
     const [selected, setSelected] = useState<string | null>(null)
     const [query, setQuery] = useState('')
@@ -112,6 +115,11 @@ function Accounts({ agentId, focusSlug, focusRequestKey }: { agentId: string; fo
         try {
             const next = await client.detail(slug)
             if (source.current !== client || current !== epoch.current) return
+            if (!accountKey && next.vaultManaged && !next.accounts.length) {
+                setVaultApp(slug)
+                setError('')
+                return
+            }
             setDetail(next)
             const key = accountKey ?? next.accounts.find(account => account.key === slug)?.key ?? next.accounts[0]?.key ?? `new:${slug}`
             selection.current = key
@@ -175,6 +183,11 @@ function Accounts({ agentId, focusSlug, focusRequestKey }: { agentId: string; fo
     const editor = detail && selected
     return (
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col" data-state={loading ? 'loading' : error ? 'unavailable' : accounts.length || catalog.length ? 'ready' : 'empty'}>
+            {vaultApp && <DesktopVaultDialog coworkerApp={vaultApp} onClose={() => {
+                setVaultApp(null)
+                setVaultRefresh(value => value + 1)
+                void load()
+            }} />}
             <PanelSteps stepKey={editor ? `setup:${selected}` : 'list'} depth={editor ? 1 : 0}>
             {editor ? (
                 <PanelEditorShell>
@@ -250,7 +263,7 @@ function Accounts({ agentId, focusSlug, focusRequestKey }: { agentId: string; fo
                                 </PanelList>
                             ) : !error && <EmptyState icon={UnplugIcon} title="No apps installed" description="Add an app from the Library to extend this coworker’s tools." />}
                         </PanelSection>
-                        <DesktopCoworkerVault key={agentId} agentId={agentId} query={query} />
+                        <DesktopCoworkerVault key={vaultRefresh} agentId={agentId} query={query} />
                         <PanelSection label="Library">
                             {loading && !catalog.length ? <SkeletonPanelRows rows={6} leading /> : catalog.length ? (
                                 <ServiceList services={catalog.map(libraryService)} onInstall={slug => void openSlug(slug)} onAddAccount={slug => { const row = catalog.find(item => item.slug === slug); if (row?.addAccount) void openSlug(slug, `additional:${slug}`) }} />

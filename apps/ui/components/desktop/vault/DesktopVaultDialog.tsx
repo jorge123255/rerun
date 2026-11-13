@@ -33,28 +33,28 @@ async function requestVault(signal: AbortSignal, input?: VaultRequest) {
 
 type SuggestedApp = { slug: string; onUse: (account: { key: string; revision: string }) => void }
 
-export function DesktopVaultDialog({ onClose, suggestedApp }: { onClose: () => void; suggestedApp?: SuggestedApp }) {
+export function DesktopVaultDialog({ onClose, suggestedApp, coworkerApp }: { onClose: () => void; suggestedApp?: SuggestedApp; coworkerApp?: string }) {
     const opener = useRef<HTMLElement | null>(typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null)
     return <Dialog open onOpenChange={open => { if (!open) onClose() }}>
         <PanelDialogContent className="sm:h-[min(48rem,90dvh)] sm:max-w-2xl"
             onCloseAutoFocus={event => {
                 event.preventDefault()
-                const target = suggestedApp && opener.current?.isConnected ? opener.current
+                const target = (suggestedApp || coworkerApp) && opener.current?.isConnected ? opener.current
                     : document.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                 target?.focus({ preventScroll: true })
             }}>
             <DialogHeader className="border-b px-4 py-4 pr-12">
-                <DialogTitle>{suggestedApp ? 'Add account to Vault' : 'Vault'}</DialogTitle>
+                <DialogTitle>{suggestedApp ? 'Add account to Vault' : coworkerApp ? 'Manage app in Vault' : 'Vault'}</DialogTitle>
                 <DialogDescription>Store apps, MCP servers, and secrets for this workspace and choose their coworkers.</DialogDescription>
             </DialogHeader>
-            <VaultPanel suggestedApp={suggestedApp} onClose={onClose} />
+            <VaultPanel suggestedApp={suggestedApp} coworkerApp={coworkerApp} onClose={onClose} />
         </PanelDialogContent>
     </Dialog>
 }
 
 type VaultDestination = string | ((listing: DesktopVaultListing) => string)
 
-function VaultPanel({ suggestedApp, onClose }: { suggestedApp?: SuggestedApp; onClose: () => void }) {
+function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: SuggestedApp; coworkerApp?: string; onClose: () => void }) {
     const [listing, setListing] = useState<DesktopVaultListing | null>(null)
     const [page, setPage] = useState(suggestedApp ? 'add-app' : 'list')
     const [query, setQuery] = useState('')
@@ -106,7 +106,9 @@ function VaultPanel({ suggestedApp, onClose }: { suggestedApp?: SuggestedApp; on
     const entry = listing?.entries.find(item => item.id === page)
     const navigate = (next: string) => { setError(''); setPage(next) }
     const stepKey = entry?.id ?? page
-    const filtered = listing?.entries.filter(item => `${entryTitle(item)} ${entrySubtitle(item)}`.toLowerCase().includes(query.trim().toLowerCase()))
+    const filtered = listing?.entries.filter(item => (
+        !coworkerApp || 'kind' in item && item.kind === 'mcp' && item.catalog?.slug === coworkerApp
+    ) && `${entryTitle(item)} ${entrySubtitle(item)}`.toLowerCase().includes(query.trim().toLowerCase()))
     const alert = error && <p className="text-sm text-destructive" role="alert">{error}</p>
     return <PanelSteps stepKey={stepKey} depth={stepKey === 'list' ? 0 : 1}>
         <PanelScroller className="space-y-4 p-4">
@@ -114,7 +116,7 @@ function VaultPanel({ suggestedApp, onClose }: { suggestedApp?: SuggestedApp; on
             {alert}
             {!listing ? (error ? <Button variant="outline" disabled={busy} onClick={() => void run()}>Try again</Button> : <p role="status">Loading Vault…</p>)
                 : page === 'add' ? <SecretForm busy={busy} onSubmit={fields => void run({ operation: 'create', ...fields }, 'list')} />
-                : page === 'add-app' ? <DesktopVaultCatalog slug={suggestedApp?.slug} busy={busy} existingAccounts={accounts} onCancel={suggestedApp ? onClose : () => navigate('list')}
+                : page === 'add-app' ? <DesktopVaultCatalog slug={suggestedApp?.slug ?? coworkerApp} busy={busy} existingAccounts={accounts} onCancel={suggestedApp ? onClose : () => navigate('list')}
                     onSave={async (slug, methodId, values, account) => {
                         const previousIds = new Set(listing.entries.map(item => item.id))
                         const failure = await run({ operation: 'add-app', slug, methodId, values, ...account }, saved => {
@@ -131,16 +133,19 @@ function VaultPanel({ suggestedApp, onClose }: { suggestedApp?: SuggestedApp; on
                 : suggestedApp ? <Button variant="outline" onClick={onClose}>Return to chat</Button>
                 : <>
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="font-medium">Vault entries</h3>
+                        <h3 className="font-medium">{coworkerApp ? 'App accounts' : 'Vault entries'}</h3>
                         <div className="flex flex-wrap gap-2">
-                            <Button variant="outline" size="sm" disabled={busy} onClick={() => navigate('add-app')}><Plus />Add app</Button>
-                            <Button variant="outline" size="sm" disabled={busy} onClick={() => navigate('add')}><Plus />Add secret</Button>
-                            <Button variant="outline" size="sm" disabled={busy} onClick={() => navigate('add-server')}><Plus />Add MCP server</Button>
-                            <Button variant="outline" size="sm" disabled={busy} onClick={() => navigate('add-program')}><Plus />Add local program</Button>
+                            <Button variant="outline" size="sm" disabled={busy} onClick={() => navigate('add-app')}><Plus />{coworkerApp ? 'Add account' : 'Add app'}</Button>
+                            {!coworkerApp && <>
+                                <Button variant="outline" size="sm" disabled={busy} onClick={() => navigate('add')}><Plus />Add secret</Button>
+                                <Button variant="outline" size="sm" disabled={busy} onClick={() => navigate('add-server')}><Plus />Add MCP server</Button>
+                                <Button variant="outline" size="sm" disabled={busy} onClick={() => navigate('add-program')}><Plus />Add local program</Button>
+                            </>}
                         </div>
                     </div>
-                    {listing.entries.length >= 8 && <Input aria-label="Search Vault" placeholder="Search Vault" value={query} onChange={event => setQuery(event.target.value)} />}
-                    {listing.entries.length === 0 ? <p className="text-sm text-muted-foreground">No entries in this workspace.</p>
+                    {!coworkerApp && listing.entries.length >= 8 && <Input aria-label="Search Vault" placeholder="Search Vault" value={query} onChange={event => setQuery(event.target.value)} />}
+                    {coworkerApp && filtered?.length === 0 ? <p className="text-sm text-muted-foreground">No accounts for this app in the Vault.</p>
+                        : listing.entries.length === 0 ? <p className="text-sm text-muted-foreground">No entries in this workspace.</p>
                         : filtered?.length === 0 ? <p className="text-sm text-muted-foreground">No matching entries.</p>
                         : (['Apps', 'MCP servers', 'Secrets'] as const).map(label => {
                             const items = filtered?.filter(item => entryGroup(item) === label)

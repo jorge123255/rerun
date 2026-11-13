@@ -175,3 +175,21 @@ it('quarantines an unreadable installation without accepting its version or stop
     await expect(h.store.read('owner', 'unknown')).rejects.toThrow('Unsupported service installation version')
     expect(h.observed).toHaveLength(0)
 })
+
+it('routes a migrated app to the Vault without allowing a stale legacy install to reuse its private row', async () => {
+    const h = await setup()
+    const installed = await h.feature.mutate('owner', install(), signal())
+    await h.db.execute({
+        sql: 'INSERT INTO desktop_vault_catalog_adoptions(installation_id,owner,engine_id,item_id,item_revision) VALUES(?,?,?,?,?)',
+        args: [installed.installationId!, 'owner', 'engine', crypto.randomUUID(), crypto.randomUUID()],
+    })
+    const detail = await h.feature.detail('owner', 'fixture', signal())
+    expect(detail).toMatchObject({ accounts: [], vaultManaged: true })
+    const response = await h.feature.handle(new Request('http://localhost/services', {
+        method: 'POST', body: JSON.stringify(install('new', 'different-key')),
+    }), 'owner')
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'This app moved to Vault. Add or choose an account there.' })
+    expect(await h.store.read('owner', 'fixture')).toMatchObject({ id: installed.installationId, revision: installed.revision })
+    expect(h.observed).toHaveLength(0)
+})

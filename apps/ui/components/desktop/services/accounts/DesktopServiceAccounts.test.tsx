@@ -14,6 +14,10 @@ const state = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/desktop/service-accounts-client', () => ({ createDesktopServiceAccountsClient: () => state }))
 vi.mock('@/components/ui/panel-steps', () => ({ PanelSteps: ({ children }: { children: ReactNode }) => children }))
+vi.mock('../../vault/DesktopVaultDialog', () => ({
+    DesktopVaultDialog: ({ coworkerApp, onClose }: { coworkerApp: string; onClose: () => void }) =>
+        <div role="dialog" aria-label={coworkerApp}><button onClick={onClose}>Close Vault</button></div>,
+}))
 import { DesktopServiceAccounts } from './DesktopServiceAccounts'
 import { DesktopCoworkerServices } from '../DesktopCoworkerServices'
 
@@ -119,4 +123,17 @@ it('adds and removes assigned secrets from the Apps list and explains shared ent
         method: 'POST', body: JSON.stringify({ id: item.id, revision: saved.revision, attached: false }),
     }))
     expect(button('Add Release key')).not.toBeNull()
+})
+
+
+it('opens the migrated app in Vault and refreshes the Apps list when it closes', async () => {
+    state.detail.mockResolvedValue({ ...details(), accounts: [], vaultManaged: true })
+    const host = await render([row(null, false, false)])
+    await act(async () => { [...host.querySelectorAll('button')].find(button => button.textContent === 'Install')!.click() })
+    expect(host.querySelector('[role="dialog"][aria-label="fixture"]')).not.toBeNull()
+    expect(host.querySelector('[data-account-key]')).toBeNull()
+    const before = vaultRequest.mock.calls.length
+    await act(async () => { [...host.querySelectorAll('button')].find(button => button.textContent === 'Close Vault')!.click() })
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    expect(vaultRequest).toHaveBeenCalledTimes(before + 1)
 })

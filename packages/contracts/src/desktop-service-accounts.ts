@@ -39,6 +39,7 @@ export const DESKTOP_SERVICE_ACCOUNT_MESSAGES = {
     limit: DESKTOP_SERVICE_ACCOUNT_LIMIT_MESSAGE,
     notMulti: 'This app does not accept another account.',
     needBase: 'Install the app before adding an account.',
+    vaultManaged: 'This app moved to Vault. Add or choose an account there.',
     baseExists: 'The base account already exists. Add an account or save the existing one.',
     method: 'This authentication method is unavailable on this Mac.',
     unknownService: 'Unknown service',
