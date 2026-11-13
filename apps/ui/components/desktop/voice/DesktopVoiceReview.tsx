@@ -11,26 +11,29 @@ import { desktopVoiceAudioReference } from '@/lib/desktop/voice/voice'
 import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopVoiceSeek } from './DesktopVoiceWaveform'
 
-export function DesktopVoiceReview({ scope, take, draft, error }: {
+export function DesktopVoiceReview({ scope, take, draft, error, active }: {
     scope: DesktopVoiceScope
     take: DesktopVoiceRecordingTake | null
     draft: DesktopVoiceDraft | null
     error: string | null
+    active: boolean
 }) {
     const { t } = useDesktopLocale()
     const durationMs = take?.durationMs ?? draft?.recording.durationMs ?? 0
     const levels = take?.levels ?? draft?.recording.levels ?? []
-    const srcUrl = take ? null : draft ? desktopVoiceAudioReference(scope, draft.attemptId) : null
-    const playback = useDesktopVoicePlayback({ srcUrl, blob: take?.blob, ownerKey: `${scope.agentId}:${scope.tabUid}:${draft?.attemptId ?? 'local'}` })
+    // An authenticated first-turn recovery can return a draft from before the tab had a session.
+    const srcUrl = active && !take && draft ? desktopVoiceAudioReference(draft.scope, draft.attemptId) : null
+    const playback = useDesktopVoicePlayback({ srcUrl, blob: active ? take?.blob : null,
+        ownerKey: JSON.stringify([scope.agentId, scope.tabUid, scope.sessionId, draft?.attemptId]) })
 
     return <div className="flex w-full min-w-0 flex-col gap-2 px-3 py-2">
         <div className="flex min-w-0 items-center gap-2.5">
-            <button type="button" onClick={() => void playback.toggle()} disabled={playback.loading || (!take && !draft)} aria-label={t(playback.playing ? 'voicePause' : 'voicePlay')} className="relative flex size-8 shrink-0 items-center justify-center rounded-full bg-foreground/10 text-foreground hover:bg-foreground/20 disabled:opacity-50">
+            <button type="button" onClick={() => void playback.toggle()} disabled={!active || playback.loading || (!take && !draft)} aria-label={t(playback.playing ? 'voicePause' : 'voicePlay')} className="relative flex size-8 shrink-0 items-center justify-center rounded-full bg-foreground/10 text-foreground hover:bg-foreground/20 disabled:opacity-50">
                 {playback.loading ? <Spinner /> : playback.playing ? <PauseIcon className="size-4" /> : <Play className="size-4" />}
             </button>
             <DesktopVoiceSeek peaks={levels.length ? levels : Array.from({ length: PEAK_COUNT }, () => 0.25)}
                 elapsedMs={playback.elapsedMs} durationMs={durationMs} label={t('voiceSeek')}
-                disabled={!playback.loaded} onSeek={playback.seek} className="flex-1 text-foreground sm:max-w-56" />
+                disabled={!active || !playback.loaded} onSeek={playback.seek} className="flex-1 text-foreground sm:max-w-56" />
             <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{formatVoiceDuration(playback.playing || playback.elapsedMs > 0 ? playback.elapsedMs : durationMs)}</span>
             <audio ref={playback.audioRef} preload="none" className="hidden" {...playback.audioProps} />
         </div>

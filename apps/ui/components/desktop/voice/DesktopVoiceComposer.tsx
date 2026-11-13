@@ -26,7 +26,7 @@ export function DesktopVoiceComposer({ agentId, tabUid, sessionId, besideSend = 
     const scope = { agentId, tabUid, sessionId }
     const review = voice.status === 'starting' || voice.status === 'recording'
             ? <DesktopVoiceRecorderBar status={voice.status} stream={voice.stream} getLiveState={voice.getLiveState} />
-            : voice.status === 'idle' || voice.status === 'sent' ? null : <DesktopVoiceReview scope={scope} take={voice.take} draft={voice.draft} error={voice.error} />
+            : voice.status === 'idle' || voice.status === 'sent' ? null : <DesktopVoiceReview scope={scope} take={voice.take} draft={voice.draft} error={voice.error} active={active} />
     return <TooltipProvider><div className="relative flex min-w-0 shrink-0 items-center gap-2">
         {reviewTarget ? createPortal(review, reviewTarget) : review}
         <div className="flex shrink-0 items-center gap-1">
