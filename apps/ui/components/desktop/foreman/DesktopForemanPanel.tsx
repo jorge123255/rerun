@@ -1,5 +1,6 @@
 'use client'
 
+import { cn } from '@/lib/utils'
 import { ProviderErrorNotice } from '@/components/chat/ProviderErrorNotice'
 
 import { useDesktopLocale } from '../DesktopLocale'
@@ -76,7 +77,7 @@ export function DesktopForemanPanel(props: DesktopForemanPanelProps) {
     }, [retry, props.target])
     useEffect(() => { if (error && props.command) props.command.settle(new Error(error)) }, [error, props.command])
     if (initial) return <ConnectedForeman key={`${initial.chat.workspaceId}:${initial.chat.chatId}`} {...props} initial={initial} />
-    return <section className={props.className} aria-label={t('foreman.name')}><div className="flex min-h-40 flex-col items-start gap-3 rounded-3xl border bg-background p-5"><p role={error ? 'alert' : 'status'}>{error ?? t('foreman.opening')}</p>{error && <Button size="sm" onClick={() => setRetry(value => value + 1)}>{t('creation.tryAgain')}</Button>}<Button size="sm" variant="ghost" onClick={props.onClose}>{t('foreman.close')}</Button></div></section>
+    return <section className={cn(props.className, 'pointer-events-none col-span-full flex items-center justify-center')} aria-label={t('foreman.name')}><div className="pointer-events-auto flex min-h-40 flex-col items-start gap-3 rounded-3xl border bg-background p-5"><p role={error ? 'alert' : 'status'}>{error ?? t('foreman.opening')}</p>{error && <Button size="sm" onClick={() => setRetry(value => value + 1)}>{t('creation.tryAgain')}</Button>}<Button size="sm" variant="ghost" onClick={props.onClose}>{t('foreman.close')}</Button></div></section>
 }
 function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { initial: DesktopForemanClientState }) {
     const { t } = useDesktopLocale()
@@ -187,7 +188,9 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         })().catch(error => command.settle(error instanceof Error ? error : new Error('Could not ask your Chief of Staff.')))
     }, [client, props.command, initial, intakeOpen, intakeEligible, intake.restored])
     const close = useCallback(() => { if (active.current) current.current.onClose() }, [])
-    if (!client) return <div role="status" className={props.className}>{t('foreman.opening')}</div>
+    // The panel sits in a grid whose side tracks are empty until the column reports its place: the
+    // notice spans it all rather than being squeezed into the first track.
+    if (!client) return <div role="status" className={cn(props.className, 'pointer-events-none col-span-full flex items-center justify-center px-6 text-center text-sm text-muted-foreground')}>{t('foreman.opening')}</div>
     const providers = props.providers
     const view = providers && buildDesktopModelView({
         connections: providers.connections.filter(connection => !connection.credentialRejected),
