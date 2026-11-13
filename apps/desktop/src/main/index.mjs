@@ -22,7 +22,7 @@ import { createWindowFind } from './window-find.mjs'
 import { createQuickAskWindow } from './quick-ask-window.mjs'
 import { loadQuickAskShortcut } from './quick-ask-shortcut.mjs'
 import { cascadeWindowBounds, createBoardWindows } from './board-windows.mjs'
-import { captureWindowPlacement, createWindowPlacements, restoreWindowZoom } from './window-placement.mjs'
+import { captureWindowPlacement, createWindowPlacements, macWorkspaceMinimumSize, restoreWindowZoom } from './window-placement.mjs'
 import { hideWorkspaceWindow, revealWorkspaceWindow } from './window-visibility.mjs'
 import { createConnectedHubs } from './connected-hubs.mjs'
 import { hubConnectionError } from './connected-hub-messages.mjs'
@@ -779,7 +779,8 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
 
 function createBoardWindow(desktopSession, bounds, primary = false) {
     const boardWindow = new BrowserWindow({
-        ...(bounds || { width: 1220, height: 820 }), minWidth: 720, minHeight: 520, show: false,
+        ...(bounds || { width: 1220, height: 820 }),
+        ...(mac ? macWorkspaceMinimumSize : { minWidth: 720, minHeight: 520 }), show: false,
         title: 'Rerun Desktop Preview', backgroundColor: '#101214',
         ...(mac ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 12, y: 8 } } : {}),
         webPreferences: { preload: resolve(directory, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, session: desktopSession },

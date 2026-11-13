@@ -5,7 +5,7 @@ import { checkHub, hubPartition, hubWindowAddress, HUB_API_VERSION, isPublishedP
 import { cascadeWindowBounds } from './board-windows.mjs'
 import { hubConnectionError, hubOfflineCopy, hubPickerCopy, hubRecoveryView } from './connected-hub-messages.mjs'
 import { shellText } from './shell-language.mjs'
-import { restoreWindowZoom } from './window-placement.mjs'
+import { macWorkspaceMinimumSize, restoreWindowZoom } from './window-placement.mjs'
 import { hideWorkspaceWindow, revealWorkspaceWindow as show } from './window-visibility.mjs'
 import { createHubAuth } from './connected-hub-auth.mjs'
 import { createHubDownloads, isHubDownload } from './connected-hub-downloads.mjs'
@@ -236,7 +236,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         const savedAppearance = await readJSON(appearancePath(origin)).catch(() => null)
         signal.throwIfAborted()
         const appearance = savedAppearance?.version === 1 ? appearanceOf(savedAppearance.appearance) : null
-        const window = new BrowserWindow({ ...(placement?.bounds ?? bounds), minWidth: 720, minHeight: 520, show: false,
+        const window = new BrowserWindow({ ...(placement?.bounds ?? bounds), ...macWorkspaceMinimumSize, show: false,
             title: 'Rerun', backgroundColor: backgroundFor(appearance ?? systemAppearance()),
             titleBarStyle: 'hidden', trafficLightPosition: { x: 12, y: 8 },
             // Keep the connected board's activity and unread updates running while it is hidden.

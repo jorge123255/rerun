@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { atomicPrivateJSON, readJSON } from './workspaces/paths.mjs'
 
 const defaultSize = { width: 1220, height: 820 }
+export const macWorkspaceMinimumSize = { minWidth: 360, minHeight: 480 }
 
 function validBounds(bounds) {
     return bounds && [bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isSafeInteger)
