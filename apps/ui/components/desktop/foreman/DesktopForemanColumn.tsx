@@ -232,7 +232,7 @@ export function DesktopForemanColumn({
     }
     const triggerRef = useRef<HTMLElement | null>(null)
     const mobile = useMediaQuery('(max-width: 767px)')
-    const wide = useMediaQuery('(min-width: 1024px)')
+    const wide = useMediaQuery('(min-width: 1280px)')
     const dockBinding = useDesktopForemanDockBinding({ chat, placement: ui.placement, dock: ui.dock ?? DEFAULT_DOCK_EXTRAS, setPlacement: foreman.setPlacement, setDock: foreman.setDock })
     const consumedFocus = useRef<string | undefined>(undefined)
     const changeOpen = useCallback((open: boolean) => {

@@ -1,5 +1,5 @@
 import { useDesktopLocale } from './DesktopLocale'
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { ChromeBar, ChromeButton, ChromeDivider } from '@rerun/ui/chrome'
 import type { ContainerCellRect, GridPosition, IsoCamera, ResizePatch, TileStyle } from '@rerun/ui/iso-grid'
 import { IsoGrid, SPACE_COLOR, agentTileStyle, disabledAgentTileStyle, DISABLED_AGENT_LABEL, type Container, type Tile } from '@rerun/ui/iso-grid'
@@ -21,6 +21,7 @@ import type { DesktopBoardState, DesktopSpaceCommand } from '@/lib/desktop/space
 import { isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 import { useBoardCoverStore } from '@/stores/board-cover.store'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { DesktopSpaceDialogs, type DesktopSpaceDialogTarget } from './DesktopSpaceDialogs'
 import { desktopSpaceAt, desktopSpaceLabel, desktopSpaceRectAllowed, firstDesktopSpacePosition, previewDesktopSpace } from './desktop-space-layout'
 
@@ -36,11 +37,12 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, workspaceId, launchNonce, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onOpenSettings, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
+export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, gettingStarted, selectedAgentId, visibleSessionId, workspaceId, launchNonce, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onOpenSettings, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
     activitySnapshot?: BoardActivitySnapshot
     agents: DesktopAgentView[]
     workspaceName: string
     workspaceMenu?: ReactNode
+    gettingStarted?: ReactNode
     selectedAgentId?: string | null
     visibleSessionId?: string | null
     workspaceId?: number | null
@@ -355,6 +357,23 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
         ;(box ?? add)?.focus({ preventScroll: true })
     }
 
+    const cornerActions = useRef<HTMLDivElement>(null)
+    useLayoutEffect(() => {
+        const row = cornerActions.current
+        const frame = row?.closest<HTMLElement>('[data-desktop-board-frame]')
+        if (!row || !frame) return
+        const measure = () => frame.style.setProperty('--board-corner-width', `${row.offsetWidth}px`)
+        const observer = new ResizeObserver(measure)
+        observer.observe(row)
+        measure()
+        return () => {
+            observer.disconnect()
+            frame.style.removeProperty('--board-corner-width')
+        }
+    }, [])
+
+    const canCreateCoworker = !baseBlocked && !spaceDialog && !covered && !creationChecking && !creationError
+    const canAddBox = !!board && !!onBoardCommand
     return (
         <section ref={section} data-testid="desktop-team-board" aria-label={t('board')} className="relative isolate min-h-0 min-w-0 flex-1"
             onPointerDownCapture={() => { resizeCanceled.current = false }} onPointerCancelCapture={() => { resizeCanceled.current = true }}
@@ -412,31 +431,57 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                 />
             }</DesktopBoardMenu>
             <div className="absolute top-4 left-4 z-40 flex items-start gap-2">{workspaceMenu}</div>
-            <div className="absolute bottom-4 left-4 z-40 flex max-w-[calc(100%-2rem)] flex-wrap items-end gap-2">
-            {onOpenConversation && <DesktopActionsInbox agents={agents} onOpenConversation={onOpenConversation} visibleSessionId={placement ? null : visibleSessionId}
-                workspaceId={workspaceId} launchNonce={launchNonce} hidden={!!placement} onOpenNotificationSettings={onOpenNotificationSettings} />}
-            <ChromeBar aria-label={t('boardActions')} role="group">
-                {placement ? <div className="flex min-w-0 items-center gap-2 pl-3">
-                    <div className="min-w-0" role="status">
-                        <Shimmer as="span" duration={1.6} className="block truncate text-sm font-medium">
-                            {placement.saving ? t('creation.placing', { name: placement.name }) : t('creation.chooseTile', { name: placement.name })}
-                        </Shimmer>
-                        {templatePlacement && !templatePlacement.submitted && <p className="text-xs text-muted-foreground">{templatePlacement.positions.length + 1} of {templatePlacement.template.agents.length} coworkers{templatePlacement.spaceId ? ' · Keep this team in the same Box' : ' · Choose a Box on the board'}</p>}
-                        {placement.error && <p className="text-xs text-destructive" role="alert">{placement.error}</p>}
+            {/* Measure compact mode inside the board space left by either side panel. */}
+            <div className="@container/board pointer-events-none absolute bottom-4 z-40"
+                style={{ left: panelInsetLeft + 16, right: panelInsetRight + 16 }}>
+                <div className="grid items-end gap-2 grid-cols-[minmax(max-content,1fr)_minmax(0,max-content)_minmax(var(--desktop-right-orb-width,var(--desktop-idle-orb-width,0px)),1fr)]">
+                    <div className="flex items-end gap-2 pr-[var(--desktop-left-orb-width,0px)]">
+                        <div ref={cornerActions} className="flex w-max items-end gap-2 empty:hidden">
+                            {onOpenConversation && <DesktopActionsInbox className="pointer-events-auto" agents={agents} onOpenConversation={onOpenConversation} visibleSessionId={placement ? null : visibleSessionId}
+                                workspaceId={workspaceId} launchNonce={launchNonce} hidden={!!placement} onOpenNotificationSettings={onOpenNotificationSettings} />}
+                            {gettingStarted}
+                        </div>
                     </div>
-                    {!suggestion && !placement.position && <p className="text-xs text-muted-foreground">{t('creation.noRoom')}</p>}
-                    <ChromeButton ref={placeButton} label={placement.position && !placement.saving ? 'Retry' : newCoworker || templatePlacement ? t('creation.place') : 'Place copy'} disabled={placement.saving || (!suggestion && !placement.position) || gridBlocked}
-                        onClick={() => { const position = placement.position ?? suggestion; if (position) void placeCopy(position) }} />
-                    {templatePlacement?.submitted ? <ChromeButton label="Review installation" disabled={placement.saving || gridBlocked} onClick={onReviewTemplate} />
-                        : <ChromeButton label={t('cancel')} disabled={placement.saving || newCoworker?.submitted} onClick={cancelCopy} />}
-                </div> : <>
-                    {onOpenConversation && <><DesktopFindChat onSelect={onOpenConversation} /><ChromeDivider /></>}
-                    <ChromeButton icon={Plus} label={t('addCoworker')} disabled={baseBlocked || !!spaceDialog || covered || creationChecking || !!creationError} onClick={() => onCreate()} />
-                    {board && onBoardCommand && <><ChromeDivider /><ChromeButton icon={Plus} label={t('addBox')} disabled={gridBlocked} onClick={() => openBoxDialog({ kind: 'create' })} /></>}
-                </>}
-            </ChromeBar>
-            {!placement && creationChecking && <p className="rounded-xl border bg-background px-3 py-2 text-xs text-muted-foreground" role="status">{t('creation.checkingBoard')}</p>}
-            {!placement && creationError && <div role="alert" className="flex max-w-sm items-center gap-2 rounded-xl border bg-background px-3 py-2 text-xs"><p>{creationError}</p><Button size="sm" variant="outline" disabled={creationChecking || gridBlocked} onClick={()=>void onRetryCreation?.()}>{t('creation.retryCheck')}</Button></div>}
+                    <ChromeBar aria-label={t('boardActions')} role="group" className="pointer-events-auto col-start-2 min-w-0">
+                        {placement ? <div className="flex min-w-0 max-w-full items-center gap-2 overflow-x-auto pl-3 [scrollbar-width:none]">
+                            <div className="min-w-0" role="status">
+                                <Shimmer as="span" duration={1.6} className="block truncate text-sm font-medium">
+                                    {placement.saving ? t('creation.placing', { name: placement.name }) : t('creation.chooseTile', { name: placement.name })}
+                                </Shimmer>
+                                {templatePlacement && !templatePlacement.submitted && <p className="text-xs text-muted-foreground">{templatePlacement.positions.length + 1} of {templatePlacement.template.agents.length} coworkers{templatePlacement.spaceId ? ' · Keep this team in the same Box' : ' · Choose a Box on the board'}</p>}
+                                {placement.error && <p className="text-xs text-destructive" role="alert">{placement.error}</p>}
+                            </div>
+                            {!suggestion && !placement.position && <p className="text-xs text-muted-foreground">{t('creation.noRoom')}</p>}
+                            <ChromeButton ref={placeButton} label={placement.position && !placement.saving ? 'Retry' : newCoworker || templatePlacement ? t('creation.place') : 'Place copy'} disabled={placement.saving || (!suggestion && !placement.position) || gridBlocked}
+                                onClick={() => { const position = placement.position ?? suggestion; if (position) void placeCopy(position) }} />
+                            {templatePlacement?.submitted ? <ChromeButton label="Review installation" disabled={placement.saving || gridBlocked} onClick={onReviewTemplate} />
+                                : <ChromeButton label={t('cancel')} disabled={placement.saving || newCoworker?.submitted} onClick={cancelCopy} />}
+                        </div> : <>
+                            {onOpenConversation && <><DesktopFindChat onSelect={onOpenConversation} compactOnBoard /><ChromeDivider /></>}
+                            <div className="contents @max-4xl/board:hidden">
+                                <ChromeButton icon={Plus} label={t('addCoworker')} disabled={!canCreateCoworker} onClick={() => onCreate()} />
+                                {canAddBox && <><ChromeDivider /><ChromeButton icon={Plus} label={t('addBox')} disabled={gridBlocked} onClick={() => openBoxDialog({ kind: 'create' })} /></>}
+                            </div>
+                            <div className="hidden shrink-0 @max-4xl/board:flex">
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <ChromeButton aria-label={t('boardUI.create')} icon={Plus} disabled={!canCreateCoworker && (!canAddBox || gridBlocked)} />
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent side="top" align="center" sideOffset={12} className="w-auto">
+                                        <DropdownMenuItem disabled={!canCreateCoworker} onSelect={() => onCreate()} className="gap-2 whitespace-nowrap">
+                                            <Plus className="size-4" />{t('addCoworker')}
+                                        </DropdownMenuItem>
+                                        {canAddBox && <DropdownMenuItem disabled={gridBlocked} onSelect={() => openBoxDialog({ kind: 'create' })} className="gap-2 whitespace-nowrap">
+                                            <Plus className="size-4" />{t('addBox')}
+                                        </DropdownMenuItem>}
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
+                            </div>
+                        </>}
+                    </ChromeBar>
+                </div>
+                {!placement && creationChecking && <p className="absolute bottom-full mb-2 rounded-xl border bg-background px-3 py-2 text-xs text-muted-foreground" role="status">{t('creation.checkingBoard')}</p>}
+                {!placement && creationError && <div role="alert" className="pointer-events-auto absolute bottom-full mb-2 flex max-w-sm items-center gap-2 rounded-xl border bg-background px-3 py-2 text-xs"><p>{creationError}</p><Button size="sm" variant="outline" disabled={creationChecking || gridBlocked} onClick={()=>void onRetryCreation?.()}>{t('creation.retryCheck')}</Button></div>}
             </div>
             {!spaceDialog && (commandError || boardError) && <div role="alert" className="absolute bottom-20 left-4 z-40 flex max-w-[calc(100%-2rem)] items-center gap-2 rounded-xl border bg-background px-3 py-2 text-sm shadow-sm">
                 <p>{commandError || boardError}</p>{(onRetryBoard || retryCommand.current) && <Button variant="outline" size="sm" disabled={baseBlocked} onClick={() => void retryBoard()}>Retry</Button>}

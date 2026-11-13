@@ -55,11 +55,13 @@ function FindChatPanel({ onSelect }: { onSelect: (hit: DesktopConversationHit) =
     </Command>
 }
 
-export function DesktopFindChat({ onSelect }: { onSelect: (hit: DesktopConversationHit) => void }) {
+export function DesktopFindChat({ onSelect, compactOnBoard = false }: { onSelect: (hit: DesktopConversationHit) => void; compactOnBoard?: boolean }) {
     const { t } = useDesktopLocale()
     const [open, setOpen] = useState(false)
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
-        <DialogTrigger asChild><ChromeButton icon={Search} label={t('boardUI.title')} /></DialogTrigger>
+        <DialogTrigger asChild><ChromeButton icon={Search} aria-label={t('boardUI.title')}
+            className={compactOnBoard ? '@max-4xl/board:w-(--chrome-control) @max-4xl/board:px-0' : undefined}
+            label={compactOnBoard ? <span className="@max-4xl/board:hidden">{t('boardUI.title')}</span> : t('boardUI.title')} /></DialogTrigger>
         <DialogContent closeLabel={t('closeDialog')} className="flex max-h-[85dvh] flex-col gap-3 overflow-hidden sm:max-w-xl">
             <DialogHeader className="shrink-0">
                 <DialogTitle>{t('boardUI.title')}</DialogTitle>

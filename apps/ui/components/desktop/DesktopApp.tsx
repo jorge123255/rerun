@@ -1,10 +1,11 @@
 'use client'
 
 import { useDesktopLocale } from './DesktopLocale'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
 import type { ThemePreference } from '@rerun/ui/theme'
+import { PARKED_ORB_SIZE } from '@rerun/ui/foreman'
 import { connectionsListSchema, PROVIDER_LABELS, type ConnectionsList, type Run, type SessionSource } from '@rerun/contracts'
 import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import type { SettingsChange } from '@/lib/desktop/settings'
@@ -791,6 +792,15 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setNotificationsTarget({ agentId: agentId ?? null })
     }
     const modelLabel = defaultProvider ? providers.default?.model : undefined
+    const gettingStarted = runtimeWorkspaceId !== null && initialData.runtimeLaunchNonce && <div hidden={!gettingStartedVisible} className="pointer-events-auto empty:hidden">
+        <DesktopGettingStartedPill key={runtimeWorkspaceId} workspaceId={runtimeWorkspaceId} visible={gettingStartedVisible}
+            onAddCoworker={() => showBoard(true)} onModelSettings={openSettings}
+            onOpenSchedules={() => {
+                const coworker = currentAgents.current.find(agent => agent.enabled !== false)
+                if (coworker) openCoworkerPanel(coworker.id, 'scheduled')
+                else showBoard(true)
+            }} />
+    </div>
     const workspaceMenu = <DesktopWorkspaceMenu workspaceName={workspaceName} {...savedIcon} profileName={profile.displayName} profilePhoto={desktopProfilePhotoUrl(profile.photoId)}
         navigationDisabled={creationNavigationBlocked || workspaceDialogActive || quitting} settingsDisabled={!creationSettingsAllowed || workspaceDialogActive || quitting}
         agents={agents} selected={panelOpen ? selectedAgentId : null} providerLabel={sidebarProvider && PROVIDER_LABELS[sidebarProvider.provider]}
@@ -813,10 +823,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     return (
         <main className="relative flex h-dvh w-full flex-col overflow-clip bg-frame text-foreground md:p-2">
             <DesktopMacUpdateBridge />
-            <div ref={boardFrame} inert={settings} aria-hidden={settings || undefined}
-                className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
+            <div ref={boardFrame} data-desktop-board-frame inert={settings}
+                style={{ '--desktop-idle-orb-width': !controlCenterDisabled && !panelOpen && !foremanEngaged ? `${PARKED_ORB_SIZE + 8}px` : '0px' } as CSSProperties} aria-hidden={settings || undefined}
+                className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow [--desktop-board-edge:16px] md:[--desktop-board-edge:25px]">
                 {runtimeWorkspaceId != null ? <FxBoardCameraBoundary workspaceId={runtimeWorkspaceId} currentWorkspace={() => runtimeWorkspaceId} persistence={cameraPersistence} bindFlush={flush => { cameraFlush.current = flush }}>{camera => (
-                <DesktopBoard activitySnapshot={boardActivity} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} recenterSignal={recenterSignal}
+                <DesktopBoard activitySnapshot={boardActivity} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
                     workspaceId={runtimeWorkspaceId} launchNonce={initialData.runtimeLaunchNonce} onOpenNotificationSettings={openNotifications}
                     cameraMountKey={camera.mountKey} initialCamera={camera.initialCamera} onCameraChange={camera.onCameraChange}
                     newBoxSignal={newBoxSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
@@ -832,7 +843,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     onOpenSettings={openBoardCoworkerSettings}
                     onRename={renameCoworker} onShare={agent => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting() && currentAgents.current.some(current => current.id === agent.id)) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) } }} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
-                )}</FxBoardCameraBoundary> : <DesktopBoard activitySnapshot={boardActivity} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} recenterSignal={recenterSignal}
+                )}</FxBoardCameraBoundary> : <DesktopBoard activitySnapshot={boardActivity} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
                     newBoxSignal={newBoxSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
                     board={boardState.board} onBoardCommand={initialData.board ? boardState.command : undefined}
                     boardSaving={boardState.saving} boardError={boardState.error} onRetryBoard={boardState.retry}
@@ -846,16 +857,6 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     onOpenSettings={openBoardCoworkerSettings}
                     onRename={renameCoworker} onShare={agent => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting() && currentAgents.current.some(current => current.id === agent.id)) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) } }} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />}
-                {runtimeWorkspaceId !== null && initialData.runtimeLaunchNonce && <div className="absolute bottom-4 left-4 z-30"
-                    hidden={!gettingStartedVisible}>
-                    <DesktopGettingStartedPill key={runtimeWorkspaceId} workspaceId={runtimeWorkspaceId} visible={gettingStartedVisible}
-                        onAddCoworker={() => showBoard(true)} onModelSettings={openSettings}
-                        onOpenSchedules={() => {
-                            const coworker = currentAgents.current.find(agent => agent.enabled !== false)
-                            if (coworker) openCoworkerPanel(coworker.id, 'scheduled')
-                            else showBoard(true)
-                        }} />
-                </div>}
                 {!controlCenterDisabled && !panelOpen && !foremanEngaged && <DesktopForemanDock open={foremanOpen} onToggle={engageForeman} />}
                 {foremanEngaged && <div className="pointer-events-none absolute inset-2 z-40 grid min-h-0" style={{ gridTemplateColumns: `${foremanLeftTrack}px minmax(0,1fr) ${foremanRightTrack}px` }}>
 

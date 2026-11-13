@@ -333,7 +333,7 @@ const workspaceCreationRecovery = {
 export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
     return {
         ...mac[locale],
-        boardUI: desktopBoardCopy[locale],
+        boardUI: { ...desktopBoardCopy[locale], create: source.builder.toolbar.create },
         macSettings: macSettingsCopy[locale],
         newWorkspace: {
             ...source.dialogs.createWorkspace,

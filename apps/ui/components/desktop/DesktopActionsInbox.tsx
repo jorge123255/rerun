@@ -158,7 +158,7 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
         return (
             <>
                 {open ? <Loader2Icon className="size-4 animate-spin" /> : <BellIcon className="size-4" />}
-                <span className="text-muted-foreground">{open ? t('actions.checking') : t('actions.pending')}</span>
+                <span className="text-muted-foreground @max-4xl/board:hidden">{open ? t('actions.checking') : t('actions.pending')}</span>
             </>
         )
     }
@@ -168,7 +168,7 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
         return (
             <>
                 <TriangleAlertIcon className="size-4 text-red-400" />
-                <span className="text-red-400">{failed ? t('actions.unavailable') : t('actions.partial')}</span>
+                <span className="text-red-400 @max-4xl/board:hidden">{failed ? t('actions.unavailable') : t('actions.partial')}</span>
             </>
         )
     }
@@ -180,13 +180,13 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
                     <BellIcon className="size-4" />
                     <span aria-hidden className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-red-500 ring-2 ring-card" />
                 </span>
-                <span className="tabular-nums">{t('actions.pendingCount', { count })}</span>
+                <span className="tabular-nums @max-4xl/board:hidden">{t('actions.pendingCount', { count })}</span>
             </span>
         )
     }
     if (doneCount > 0) {
         parts.push(
-            <span key="done" className="flex items-center gap-1 text-emerald-500">
+            <span key="done" className="flex items-center gap-1 text-emerald-500 @max-4xl/board:hidden">
                 <span className="tabular-nums">{t('actions.doneCount', { count: doneCount })}</span>
             </span>
         )
@@ -194,9 +194,10 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
     if (parts.length > 0) {
         return (
             <>
+                {count === 0 && <BellIcon className="hidden size-4 text-emerald-500 @max-4xl/board:block" />}
                 {parts.map((part, index) => (
                     <Fragment key={index}>
-                        {index > 0 && <span aria-hidden className="text-muted-foreground">·</span>}
+                        {index > 0 && <span aria-hidden className="text-muted-foreground @max-4xl/board:hidden">·</span>}
                         {part}
                     </Fragment>
                 ))}
@@ -206,7 +207,7 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
     return (
         <>
             <BellIcon className="size-4" />
-            <span className="text-muted-foreground">{hasMore ? t('actions.more') : t('actions.empty')}</span>
+            <span className="text-muted-foreground @max-4xl/board:hidden">{hasMore ? t('actions.more') : t('actions.empty')}</span>
         </>
     )
 }
@@ -392,7 +393,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
     return (
         <div ref={rootRef} className={cn('relative flex flex-col items-start', className)}>
             {open && (
-                <div id={cardId} role="region" aria-label={t('actions.region')} className="mb-2 flex w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+                <div id={cardId} role="region" aria-label={t('actions.region')} className="absolute bottom-full z-10 mb-2 flex w-[min(24rem,100cqw)] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
                     <div className="flex items-center justify-between gap-3 border-b border-border px-4 pt-3 pb-2">
                         <div className="flex items-baseline gap-2">
                             <h2 className="text-base font-semibold text-foreground">{t('actions.title')}</h2>
