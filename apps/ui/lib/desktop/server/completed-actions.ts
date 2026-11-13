@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import type { Client, Row } from '@libsql/client'
 import { z } from 'zod'
 import { completionIdentityOf, cursorOf, groupCompletions, parseCompletionIdentity, parseCursor,
-    type CompletionRow, type DesktopCompletionIdentity, type DesktopCompletionItem, type DesktopCompletions } from '../completed-actions'
+    type CompletionRow, type DesktopCompletionCursor, type DesktopCompletionIdentity, type DesktopCompletionItem, type DesktopCompletions } from '../completed-actions'
 import { listAgentCompletions, type EngineRunCompletion } from '@/lib/engine/client'
 import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
@@ -16,6 +16,7 @@ export { initializeDesktopCompletions, DESKTOP_COMPLETIONS_SCHEMA } from './comp
 export const DESKTOP_COMPLETIONS_CONCURRENCY = 4
 export const DESKTOP_COMPLETIONS_DEADLINE_MS = 2_500
 const DEFAULT_LIMIT = 20, MAX_LIMIT = 50
+const MAX_RAW_PAGES = 6
 type Owner = { id: string; engineId: string; name: string; enabled: boolean; deleting: boolean }
 type Raw = { row: EngineRunCompletion; owner: Owner }
 const ownerSql = `SELECT a.id,a.engine_agent_id,a.name,a.enabled,d.agent_id AS deleting FROM desktop_agents a
@@ -40,26 +41,19 @@ async function workers<T>(tasks: T[], signal: AbortSignal, work: (task: T) => Pr
     tasks.slice(next).forEach(skipped)
 }
 
-async function collect(runtime: DesktopRuntime, options: { limit: number; before?: string }): Promise<DesktopCompletions> {
-    const signal = AbortSignal.timeout(DESKTOP_COMPLETIONS_DEADLINE_MS)
-    const db = await openDesktopDatabase(runtime.dataRoot)
-    await initializeDesktopCompletions(db)
-    const cutoff = (await db.execute('SELECT enabled_at FROM desktop_completions_state WHERE id=1')).rows[0]
-    const enabledAt = String(cutoff.enabled_at)
-    const cursor = parseCursor(options.before)
-    if (options.before && !cursor) throw new DesktopHttpError(400, 'Invalid finished-runs cursor.')
-    const owners = [...ownersOf((await db.execute(ownerSql)).rows).values()]
-    const unavailable = new Set<string>(), raw: Raw[] = []
+async function readRawPage(runtime: DesktopRuntime, owners: Owner[], limit: number, cursor: DesktopCompletionCursor | null,
+    signal: AbortSignal, unavailable: Set<string>) {
+    const raw: Raw[] = []
     let hasUnfetched = false
     await workers(owners, signal, async owner => {
         if (owner.deleting) { unavailable.add(owner.id); return }
         try {
             const rows = await listAgentCompletions(engineOf(runtime), owner.engineId, {
-                limit: options.limit + 1, signal,
+                limit: limit + 1, signal,
                 ...(cursor ? { before: { completedAt: cursor.completedAt, id: cursor.id, inclusiveId: owner.id < cursor.agentId } } : {}),
             })
             if (rows.some(row => row.agentId !== owner.engineId || !Number.isFinite(Date.parse(row.completedAt)))) throw new Error('Invalid completion owner or timestamp')
-            if (rows.length > options.limit) hasUnfetched = true
+            if (rows.length > limit) hasUnfetched = true
             const seen = new Set<string>()
             for (const row of rows) if (!seen.has(row.id)) { seen.add(row.id); raw.push({ owner, row }) }
         } catch { unavailable.add(owner.id) }
@@ -68,11 +62,15 @@ async function collect(runtime: DesktopRuntime, options: { limit: number; before
     // Consume raw rows, including acknowledged/deleted-session rows, before folding. An old
     // member of one group must never advance the cursor past an unreturned conversation.
     raw.sort(rawOrder)
-    const page = raw.slice(0, options.limit)
+    const page = raw.slice(0, limit)
     const last = page.at(-1)
-    const nextCursor = last && (raw.length > page.length || hasUnfetched)
-        ? cursorOf({ completedAt: last.row.completedAt, id: last.row.id, agentId: last.owner.id }) : null
-    const ids = page.map(identity)
+    const next = last && (raw.length > page.length || hasUnfetched)
+        ? { completedAt: last.row.completedAt, id: last.row.id, agentId: last.owner.id } : null
+    return { page, next }
+}
+
+async function recoverScheduledChats(db: Client, runtime: DesktopRuntime, page: Raw[], enabledAt: string,
+    signal: AbortSignal, unavailable: Set<string>) {
     // New launches adopt before running. Recover an older/lost scheduled mapping before its
     // completed row is dropped, using the SAME bounded read deadline and existing cutoff.
     const scheduled = page.filter(item => item.row.source === 'schedule' && item.row.completedAt >= enabledAt)
@@ -98,6 +96,10 @@ async function collect(runtime: DesktopRuntime, options: { limit: number; before
             }
         }, item => unavailable.add(item.owner.id))
     }
+}
+
+async function readOwnedCompletions(db: Client, page: Raw[], enabledAt: string, unavailable: Set<string>) {
+    const ids = page.map(identity)
     const [ownerRows, sessionRows, seenRows] = await db.batch([
         ownerSql,
         { sql: `SELECT s.id,s.agent_id,s.engine_session_id,s.title FROM desktop_sessions s JOIN desktop_agents a ON a.id=s.agent_id
@@ -108,7 +110,7 @@ async function collect(runtime: DesktopRuntime, options: { limit: number; before
     const currentOwners = ownersOf(ownerRows.rows)
     const sessions = new Map(sessionRows.rows.map(row => [`${row.agent_id}\0${row.engine_session_id}`, row]))
     const seen = new Set(seenRows.rows.map(row => String(row.completion_id)))
-    const owned: CompletionRow[] = []
+    const owned: { raw: Raw; completion: CompletionRow }[] = []
     for (const item of page) {
         const owner = currentOwners.get(item.owner.id)
         if (!owner) continue
@@ -116,9 +118,53 @@ async function collect(runtime: DesktopRuntime, options: { limit: number; before
         if (item.row.completedAt < enabledAt) continue
         const session = sessions.get(`${owner.id}\0${item.row.sessionId}`), id = identity(item)
         if (!session || seen.has(id)) continue
-        owned.push({ ...item.row, id, agentId: owner.id, sessionId: String(session.id), title: String(session.title) })
+        owned.push({ raw: item, completion: { ...item.row, id, agentId: owner.id, sessionId: String(session.id), title: String(session.title) } })
     }
-    const items: DesktopCompletionItem[] = groupCompletions(owned).map(group => {
+    return { owned, currentOwners }
+}
+
+async function collect(runtime: DesktopRuntime, options: { limit: number; before?: string }): Promise<DesktopCompletions> {
+    const signal = AbortSignal.timeout(DESKTOP_COMPLETIONS_DEADLINE_MS)
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    await initializeDesktopCompletions(db)
+    const cutoff = (await db.execute('SELECT enabled_at FROM desktop_completions_state WHERE id=1')).rows[0]
+    const enabledAt = String(cutoff.enabled_at)
+    let cursor = parseCursor(options.before)
+    if (options.before && !cursor) throw new DesktopHttpError(400, 'Invalid finished-runs cursor.')
+    const initialOwners = ownersOf((await db.execute(ownerSql)).rows)
+    const owners = [...initialOwners.values()]
+    const unavailable = new Set<string>()
+    let candidates: Raw[] = []
+    let projection: Awaited<ReturnType<typeof readOwnedCompletions>> = { owned: [], currentOwners: initialOwners }
+
+    for (let scanned = 0; scanned < MAX_RAW_PAGES; scanned++) {
+        const { page, next } = await readRawPage(runtime, owners, options.limit, cursor, signal, unavailable)
+        // A partial later page cannot move past an owner whose rows were not read.
+        if (scanned > 0 && unavailable.size) {
+            projection = await readOwnedCompletions(db, candidates, enabledAt, unavailable)
+            break
+        }
+        await recoverScheduledChats(db, runtime, page, enabledAt, signal, unavailable)
+        // Recheck earlier candidates together with this page. An owner, chat or read receipt
+        // may have changed during the additional engine reads.
+        projection = await readOwnedCompletions(db, [...candidates, ...page], enabledAt, unavailable)
+        const selected = projection.owned.slice(0, options.limit)
+        const last = selected.at(-1)?.raw
+        if (last && projection.owned.length > options.limit) {
+            // Resume after the last returned terminal row. A raw page can contain more unread
+            // results than the remaining space in the caller's page.
+            projection.owned = selected
+            cursor = { completedAt: last.row.completedAt, id: last.row.id, agentId: last.owner.id }
+            break
+        }
+        cursor = next
+        if (!cursor || projection.owned.length === options.limit || unavailable.size || signal.aborted) break
+        candidates = selected.map(item => item.raw)
+    }
+
+    const { owned, currentOwners } = projection
+    const nextCursor = cursor ? cursorOf(cursor) : null
+    const items: DesktopCompletionItem[] = groupCompletions(owned.map(item => item.completion)).map(group => {
         const owner = currentOwners.get(group.agentId)!
         return { id: `done:${group.key}`, agentId: owner.id, agentName: owner.name, agentEnabled: owner.enabled,
             sessionId: group.sessionId, sessionIds: [...new Set(group.sessionIds)], title: group.title, message: group.message,
