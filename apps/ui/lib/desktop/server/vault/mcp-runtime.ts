@@ -12,7 +12,7 @@ import { vaultCatalogHealth } from './catalog-health'
 import { vaultMcpOAuth } from './mcp-oauth'
 import { vaultMcpHttps } from './mcp-network'
 
-export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, access: McpAccess, shutdown: AbortSignal, network: McpNetwork = vaultMcpHttps, assertWorkspace = () => {}, oauthJson?: OAuthJson, mode: 'mcp' | 'catalog' = 'mcp', sharedOAuth?: ReturnType<typeof vaultMcpOAuth>) {
+export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, access: McpAccess, shutdown: AbortSignal, network: McpNetwork = vaultMcpHttps, assertWorkspace = () => {}, oauthJson?: OAuthJson, mode: 'mcp' | 'catalog' = 'mcp', sharedOAuth?: ReturnType<typeof vaultMcpOAuth>, verifySkills?: (owner: string, itemId: string, signal: AbortSignal) => Promise<void>) {
     const lifecycle = remoteMcpLifecycle()
     const oauth = sharedOAuth ?? vaultMcpOAuth(db, crypto, workspaceId, assertWorkspace, oauthJson)
     const close = () => { if (!sharedOAuth) oauth.shutdown(); lifecycle.shutdown() }
@@ -30,6 +30,7 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
                 AND NOT EXISTS (SELECT 1 FROM desktop_mcp_stdio p WHERE p.owner=a.id AND p.name=s.name)
                 ${mode === 'catalog' ? `AND NOT EXISTS (
                     SELECT 1 FROM desktop_service_installs p WHERE p.owner=a.id AND json_extract(p.plan,'$.serverName')=s.name
+                    AND NOT EXISTS (SELECT 1 FROM desktop_vault_catalog_adoptions x WHERE x.installation_id=p.id)
                 )` : ''}
                 ORDER BY s.name`,
             args: [agentId, name ?? null, name ?? null, Number(mode === 'catalog')],
@@ -55,6 +56,8 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
             const [row] = await assigned(owner, name)
             signal.throwIfAborted()
             if (!permission.enabled || !permission.granted || row?.revision !== revision) throw new Error('Vault MCP authority changed')
+            await verifySkills?.(owner, String(row.id), signal)
+            signal.throwIfAborted(); assertWorkspace()
             return row
         }, signal, true)
 

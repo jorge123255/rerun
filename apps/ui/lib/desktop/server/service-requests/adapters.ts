@@ -79,7 +79,7 @@ export async function prepareDesktopServiceSeal(runtime: DesktopRuntime, ownerId
     const [db, service] = await Promise.all([openDesktopDatabase(runtime.dataRoot), getDesktopRemoteMcpService(runtime)])
     const authority = await service.services.current(ownerId, 'manage', undefined, signal)
     if (!authority.check) throw new DesktopHttpError(502, 'Current app permission could not be confirmed.')
-    const initial = await db.execute({ sql: 'SELECT id FROM desktop_service_installs WHERE owner = ? ORDER BY id LIMIT 65', args: [ownerId] })
+    const initial = await db.execute({ sql: 'SELECT id FROM desktop_service_installs s WHERE owner = ? AND NOT EXISTS (SELECT 1 FROM desktop_vault_catalog_adoptions x WHERE x.installation_id=s.id) ORDER BY id LIMIT 65', args: [ownerId] })
     if (initial.rows.length > 64) throw new DesktopHttpError(502, 'App connections could not be read.')
     const ids = initial.rows.map(row => String(row.id))
     const guards = [service.services.lifecycle.watch(ownerId, ''), ...ids.map(id => service.services.lifecycle.watch(ownerId, `svc-${id.replaceAll('-', '')}`))]
@@ -97,7 +97,7 @@ export async function prepareDesktopServiceSeal(runtime: DesktopRuntime, ownerId
         check()
         const owner = (await query.execute({ sql: 'SELECT engine_agent_id, enabled FROM desktop_agents WHERE id = ?', args: [ownerId] })).rows[0]
         if (!owner || owner.engine_agent_id !== authority.engineAgentId || Boolean(Number(owner.enabled)) !== authority.enabled) throw new DesktopHttpError(409, 'Coworker identity or permission changed. Refresh the conversation.')
-        const rows = await query.execute({ sql: 'SELECT id, key, revision, slug, state, engine_id, health, health_launch FROM desktop_service_installs WHERE owner = ? ORDER BY id LIMIT 65', args: [ownerId] })
+        const rows = await query.execute({ sql: 'SELECT id, key, revision, slug, state, engine_id, health, health_launch FROM desktop_service_installs s WHERE owner = ? AND NOT EXISTS (SELECT 1 FROM desktop_vault_catalog_adoptions x WHERE x.installation_id=s.id) ORDER BY id LIMIT 65', args: [ownerId] })
         if (JSON.stringify(rows.rows.map(row => String(row.id))) !== JSON.stringify(ids)) throw new DesktopHttpError(409, 'App connections changed. Refresh the card before finishing.')
         const now = Date.now()
         const connections = rows.rows.map(row => {

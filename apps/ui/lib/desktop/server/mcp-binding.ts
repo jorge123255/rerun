@@ -1,4 +1,5 @@
-import { assertDesktopWorkspaceAdmission } from './workspace-admission'
+import { adoptDesktopCatalogApps } from './vault/catalog-adoption'
+import { assertDesktopWorkspaceAdmission, desktopWorkspaceFrozen } from './workspace-admission'
 import { assignedVaultMcpPrograms, vaultProgramMaterials } from './vault/mcp-programs'
 import { desktopVaultMcpRuntime } from './vault/mcp-runtime'
 import { createDesktopSecretCrypto } from './secret-requests/crypto'
@@ -174,7 +175,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (action !== 'release') return authorizeRun(identity, signal, 'localMcpStdio')
         return (await historicalOwner(identity, signal)).owner.id
     })
-    const installedServices = serviceStore(db, masterKey)
+    const installedServices = serviceStore(db, masterKey, true)
     const serviceAuthority: ServiceAuthority = async (owner, action, identity, signal) => {
         const stop = AbortSignal.any([signal, entry.shutdown.signal])
         const current = identity ? await historicalOwner(identity, stop) : await currentOwner(owner, stop)
@@ -192,9 +193,18 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (new Set(names).size !== names.length || names.some(name => !/^[\w.-]{1,128}$/.test(name) || reserved.has(name) || prefixes.some(prefix => name.startsWith(`${prefix}_`)))) throw new Error('Service tool conflicts with another tool')
         signal.throwIfAborted()
     }, fetch, undefined, (owner, signal) => desktopServiceSkillRestartScope(runtime, owner, signal))
+    const verifyAdoptedSkills = async (owner: string, itemId: string, signal: AbortSignal) => {
+        const { rows } = await db.execute({
+            sql: `SELECT x.installation_id FROM desktop_vault_catalog_adoptions x
+                JOIN desktop_agents a ON a.id=x.owner AND a.engine_agent_id=x.engine_id
+                WHERE x.owner=? AND x.item_id=?`,
+            args: [owner, itemId],
+        })
+        for (const row of rows) await services.skillAuthority.assertReady(owner, String(row.installation_id), signal)
+    }
     const vaultMcp = desktopVaultMcpRuntime(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId, access, entry.shutdown.signal, undefined, () => assertDesktopWorkspaceAdmission(runtime))
     const vaultCatalog = desktopVaultMcpRuntime(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId,
-        owner => access(owner, 'services'), entry.shutdown.signal, undefined, () => assertDesktopWorkspaceAdmission(runtime), undefined, 'catalog', vaultMcp.oauth)
+        owner => access(owner, 'services'), entry.shutdown.signal, undefined, () => assertDesktopWorkspaceAdmission(runtime), undefined, 'catalog', vaultMcp.oauth, verifyAdoptedSkills)
     const servicesBridge = serviceEngineBridge(installedServices, services, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'services')
         return (await historicalOwner(identity, signal)).owner.id
@@ -247,6 +257,18 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     })
     // Offline reconciliation verifies canonical owned skills without replaying remote work.
     await services.reconcileOwners(entry.shutdown.signal)
+    // Runs and legacy app mutations share this process-wide initialization. Once
+    // it publishes, both tool paths can see the same committed adoption receipt.
+    if (!desktopWorkspaceFrozen(runtime)) await adoptDesktopCatalogApps({
+        db, workspaceId: runtime.workspaceId, key: masterKey,
+        assertCurrent() { entry.shutdown.signal.throwIfAborted(); assertDesktopWorkspaceAdmission(runtime) },
+        verifySkills: async record => {
+            const check = watchDesktopMcpOwner(runtime, record.owner)
+            await services.skillAuthority.assertReady(record.owner, record.id, entry.shutdown.signal)
+            check()
+            return check
+        },
+    })
     entry.shutdown.signal.throwIfAborted()
     const writeback = nativeWritebackService(db, async (identity, action, signal) => {
         const stop = AbortSignal.any([signal, entry.shutdown.signal])

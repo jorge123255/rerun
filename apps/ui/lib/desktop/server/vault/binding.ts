@@ -1,5 +1,6 @@
 import 'server-only'
 import { DesktopHttpError } from '../auth'
+import { getDesktopRemoteMcpService } from '../mcp-binding'
 import { openDesktopDatabase } from '../database'
 import type { DesktopRuntime } from '../runtime'
 import { createDesktopSecretCrypto } from '../secret-requests/crypto'
@@ -12,5 +13,9 @@ const crypto = createDesktopSecretCrypto(() => {
 })
 
 export async function openDesktopVault(runtime: DesktopRuntime) {
-    return desktopVault(await openDesktopDatabase(runtime.dataRoot), crypto, runtime.workspaceId, runtime.launchNonce)
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    // Vault can be the first app surface opened after an upgrade.
+    const { rows } = await db.execute('SELECT 1 FROM desktop_service_installs LIMIT 1')
+    if (rows.length) await getDesktopRemoteMcpService(runtime)
+    return desktopVault(db, crypto, runtime.workspaceId, runtime.launchNonce)
 }

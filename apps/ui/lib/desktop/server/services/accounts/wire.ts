@@ -26,7 +26,7 @@ export async function openDesktopServiceAccounts(
 ): Promise<AccountFeature> {
     const db = await openDesktopDatabase(runtime.dataRoot)
     await ensureDesktopServiceAccountSchema(db)
-    const canonicalStore = serviceStore(db, deps.keyReader)
+    const canonicalStore = serviceStore(db, deps.keyReader, true)
     const rawInstalls = serviceStoreInstalls(canonicalStore)
     const installs = deps.decorateInstalls ? deps.decorateInstalls(rawInstalls) : rawInstalls
     return accountFeature({

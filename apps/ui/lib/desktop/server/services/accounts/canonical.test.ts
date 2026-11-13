@@ -33,6 +33,7 @@ vi.mock('../skill-resources', async importOriginal => {
 })
 
 import { serviceManifestSchema } from '@/lib/services/manifest'
+import { vaultCatalogAdoptionSchema } from '../../round55-schema'
 import { desktopServicesSchema } from '../schema'
 import { serviceStore } from '../store'
 import { serviceSkillMigrationSql } from '../skill-journal'
@@ -50,7 +51,7 @@ const install = (kind: 'new' | 'additional' = 'new', token = 'private-fixture-to
 
 async function setup(withSkills = false) {
     const db = createClient({ url: 'file::memory:' })
-    await db.executeMultiple("CREATE TABLE desktop_agents(id TEXT PRIMARY KEY); INSERT INTO desktop_agents VALUES('owner');" + desktopServicesSchema + ';' + serviceSkillMigrationSql)
+    await db.executeMultiple("CREATE TABLE desktop_agents(id TEXT PRIMARY KEY); INSERT INTO desktop_agents VALUES('owner');" + desktopServicesSchema + ';' + serviceSkillMigrationSql + ';' + vaultCatalogAdoptionSchema)
     fixture.db = db
     fixture.manifest = serviceManifestSchema.parse({ slug: 'fixture', name: 'Fixture', category: 'dev', multiInstance: true,
         skills: withSkills ? [{ name: 'Usage', body: 'Use the fixture carefully.' }] : [],

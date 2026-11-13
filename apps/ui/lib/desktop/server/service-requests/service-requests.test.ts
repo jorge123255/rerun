@@ -307,7 +307,8 @@ it('commits the exact Vault assignment with the receipt and rolls back when anot
         CREATE TABLE desktop_deletions(agent_id TEXT,engine_agent_id TEXT);
         CREATE TABLE desktop_remote_mcp(agent_id TEXT,name TEXT);
         CREATE TABLE desktop_mcp_stdio(owner TEXT,name TEXT);
-        CREATE TABLE desktop_service_installs(owner TEXT,plan TEXT);
+        CREATE TABLE desktop_service_installs(id TEXT,owner TEXT,plan TEXT);
+        CREATE TABLE desktop_vault_catalog_adoptions(installation_id TEXT PRIMARY KEY);
         CREATE TABLE desktop_vault_mcp_servers(id TEXT PRIMARY KEY,name TEXT,revision TEXT,catalog_slug TEXT,catalog_label TEXT,catalog_name TEXT,oauth_enabled INTEGER,shared_with_all INTEGER);
         CREATE TABLE desktop_vault_mcp_oauth(item_id TEXT,generation TEXT);
         CREATE TABLE desktop_vault_mcp_attachments(item_id TEXT,agent_id TEXT,PRIMARY KEY(item_id,agent_id));

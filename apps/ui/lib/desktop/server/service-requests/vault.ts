@@ -19,7 +19,8 @@ export async function readServiceVaultAccounts(db: ServiceRequestDatabase, owner
               AND NOT EXISTS (SELECT 1 FROM desktop_deletions d WHERE d.agent_id=a.id OR d.engine_agent_id=a.engine_agent_id)
               AND NOT EXISTS (SELECT 1 FROM desktop_remote_mcp p WHERE p.agent_id=a.id AND p.name=s.name)
               AND NOT EXISTS (SELECT 1 FROM desktop_mcp_stdio p WHERE p.owner=a.id AND p.name=s.name)
-              AND NOT EXISTS (SELECT 1 FROM desktop_service_installs p WHERE p.owner=a.id AND json_extract(p.plan,'$.serverName')=s.name)
+              AND NOT EXISTS (SELECT 1 FROM desktop_service_installs p WHERE p.owner=a.id AND json_extract(p.plan,'$.serverName')=s.name
+                    AND NOT EXISTS (SELECT 1 FROM desktop_vault_catalog_adoptions x WHERE x.installation_id=p.id))
             ORDER BY s.catalog_slug,COALESCE(s.catalog_label,s.catalog_name),s.id`,
         args: [ownerId, launchNonce],
     })

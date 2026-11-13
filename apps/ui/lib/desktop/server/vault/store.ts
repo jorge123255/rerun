@@ -228,7 +228,7 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                             const collisions = await tx.execute({
                                 sql: `SELECT agent_id FROM desktop_remote_mcp WHERE name=?
                                     UNION ALL SELECT owner AS agent_id FROM desktop_mcp_stdio WHERE name=?
-                                    ${catalogApp ? "UNION ALL SELECT owner AS agent_id FROM desktop_service_installs WHERE json_extract(plan,'$.serverName')=?" : ''}`,
+                                    ${catalogApp ? "UNION ALL SELECT s.owner AS agent_id FROM desktop_service_installs s WHERE json_extract(s.plan,'$.serverName')=? AND NOT EXISTS (SELECT 1 FROM desktop_vault_catalog_adoptions x WHERE x.installation_id=s.id)" : ''}`,
                                 args: catalogApp ? [entry.name, entry.name, entry.name] : [entry.name, entry.name],
                             })
                             if (collisions.rows.some(row => targets.has(String(row.agent_id)))) {

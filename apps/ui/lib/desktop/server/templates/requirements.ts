@@ -7,7 +7,8 @@ import { DesktopHttpError } from '../auth'
 export async function readDesktopPortableSetupRequirements(db: Pick<Client, 'execute'>, owner: { id: string; engineAgentId: string }): Promise<DesktopTemplateRequirement[]> {
     const { rows } = await db.execute({
         sql: `SELECT 'service-reconnect' AS kind, slug AS name
-              FROM desktop_service_installs WHERE owner=? AND engine_id=? AND state != 'removed'
+              FROM desktop_service_installs i WHERE owner=? AND engine_id=? AND state != 'removed'
+              AND NOT EXISTS (SELECT 1 FROM desktop_vault_catalog_adoptions a WHERE a.installation_id=i.id)
             UNION
             SELECT 'service-reconnect', s.catalog_slug FROM desktop_vault_mcp_servers s
               WHERE s.catalog_slug IS NOT NULL AND (s.shared_with_all=1 OR EXISTS (
