@@ -59,6 +59,7 @@ let activeWorkspaceId
 let connectedHubs
 let pendingHubLink
 let reopeningHub
+let deferringStartupWindow = false
 let transitioning = false
 let quitting = false
 let quittingNow = false
@@ -151,6 +152,7 @@ function reopenRememberedHub() {
 function showWorkspaceWindow() {
     if (quitting) return
     showWindowOnReady = true
+    if (deferringStartupWindow) return
     for (const candidate of [BrowserWindow.getFocusedWindow(), lastWorkspaceWindow]) {
         if (connectedHubs?.focusWindow(candidate)) return
         if (boardContext(candidate)) { revealWorkspaceWindow(candidate); return }
@@ -361,7 +363,12 @@ async function launch() {
             available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate),
             setUnread: count => { hubUnread = count; publishMacUnread() }, desktopSettings, changeDesktopSettings,
             setLanguage: (scope, locale) => shellLanguage.set(scope, locale), language: scope => shellLanguage.forScope(scope),
-            onConnect: () => startupWorkspace.remember('connected'),
+            onConnect: ({ remembered }) => {
+                if (bootStatus.choices && !supervisor && !openingLocalWorkspace && window && !window.isDestroyed()) {
+                    hideWorkspaceWindow(window)
+                }
+                if (remembered) return startupWorkspace.remember('connected')
+            },
             systemAppearance: () => nativeTheme.shouldUseDarkColors ? 'dark' : 'light' })
         app.on('browser-window-focus', (_event, candidate) => {
             const hub = connectedHubs.ownsWindow(candidate)
@@ -654,8 +661,16 @@ async function launch() {
         bootStatus = existingLocal && !restoreConnected
             ? { state: 'starting', messageKey: 'keychainPrompt' } : workspaceChoiceStatus()
     }
-    await window.loadFile(startup)
-    if (openRememberedHub && (restoreConnected || !existingLocal)) await reopenRememberedHub()
+    // Let a remembered server or its recovery window take over startup.
+    let openedHub = false
+    deferringStartupWindow = mac
+    try {
+        await window.loadFile(startup)
+        if (openRememberedHub && (restoreConnected || !existingLocal)) openedHub = await reopenRememberedHub()
+    } finally {
+        deferringStartupWindow = false
+    }
+    if (mac && !openedHub && showWindowOnReady && !quitting) showMainWindow()
     if (existingLocal && !restoreConnected) await startLocalWorkspace()
 }
 
@@ -779,7 +794,7 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
     if (old && !old.isDestroyed()) old.destroy()
     desktopNotifications.close()
     desktopNotifications = createNotices()
-    window = createBoardWindow(desktopSession, placement.bounds, true).window
+    window = createBoardWindow(desktopSession, placement.bounds, { primary: true, showOnReady: load || !mac }).window
     if (windowPlacements) {
         restoreWindowZoom(window, placement.maximized)
         saveBoardPlacement = windowPlacements.track(boardPlacement, window)
@@ -789,7 +804,7 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
     if (load) await window.loadFile(startup)
 }
 
-function createBoardWindow(desktopSession, bounds, primary = false) {
+function createBoardWindow(desktopSession, bounds, { primary = false, showOnReady = true } = {}) {
     const boardWindow = new BrowserWindow({
         ...(bounds || { width: 1220, height: 820 }),
         ...(mac ? macWorkspaceMinimumSize : { minWidth: 720, minHeight: 520 }), show: false,
@@ -799,7 +814,7 @@ function createBoardWindow(desktopSession, bounds, primary = false) {
     })
     const board = boards.register(boardWindow, { primary })
     boardWindow.once('ready-to-show', () => {
-        if (primary ? showWindowOnReady && window === boardWindow : boards.ready(board, runtime)) boardWindow.show()
+        if (showOnReady && (primary ? showWindowOnReady && window === boardWindow : boards.ready(board, runtime))) boardWindow.show()
     })
     boardWindow.on('close', event => {
         if (quittingNow) return
