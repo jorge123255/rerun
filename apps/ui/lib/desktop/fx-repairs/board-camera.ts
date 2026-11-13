@@ -79,7 +79,10 @@ export class FxBoardCameraController {
     private clearTimer() { if (this.timer) clearTimeout(this.timer); this.timer = null }
     async flush(): Promise<boolean> {
         this.clearTimer()
-        if (!this.current() || !this.saved || ['uncertain', 'conflict', 'unavailable', 'loading'].includes(this.state.phase)) return false
+        if (!this.current()) return false
+        // A restore only reads the saved view. While it is loading, camera changes are not admitted.
+        if (this.state.phase === 'loading') return true
+        if (!this.saved || ['uncertain', 'conflict', 'unavailable'].includes(this.state.phase)) return false
         if (this.work) { const okay = await this.work; return okay ? this.flush() : false }
         if (!this.pending) return true
         this.attempt = { workspaceId: this.workspaceId, requestId: crypto.randomUUID(), expectedRevision: this.saved.revision, camera: this.pending }
