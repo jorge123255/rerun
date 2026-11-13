@@ -2,7 +2,8 @@ import 'server-only'
 import { randomUUID } from 'node:crypto'
 import type { Client, Transaction } from '@libsql/client'
 import { desktopCoworkerVaultListing, desktopVaultListing, desktopVaultProgramCredentialLimit, type DesktopCoworkerVaultMutation, type DesktopCoworkerVaultEntry, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '../../vault'
-import { compileVaultCatalogApp } from './catalog'
+import { compileVaultCatalogApp, vaultCatalogAllowsInstances } from './catalog'
+import { newServiceInstanceId } from '@/lib/services/instances'
 import { DesktopHttpError } from '../auth'
 import { executableIdentity } from '../mcp-stdio/process'
 import { endpoint } from '../mcp/model'
@@ -29,9 +30,13 @@ async function readVault(tx: Transaction) {
         id: String(row.id), name: String(row.name), variable: String(row.variable), revision: String(row.revision),
         sharedWithAll: row.shared_with_all === 1, agentIds: attachments.get(String(row.id)) ?? [],
     }))
-    const servers = (await tx.execute('SELECT id,name,url,revision,sealed IS NOT NULL AND credential_header IS NULL AS has_bearer,credential_header,oauth_enabled,catalog_slug,catalog_method,catalog_name,shared_with_all FROM desktop_vault_mcp_servers ORDER BY name,id')).rows.map(row => ({
+    const servers = (await tx.execute('SELECT id,name,url,revision,sealed IS NOT NULL AND credential_header IS NULL AS has_bearer,credential_header,oauth_enabled,catalog_slug,catalog_method,catalog_name,catalog_instance,catalog_label,shared_with_all FROM desktop_vault_mcp_servers ORDER BY name,id')).rows.map(row => ({
         ...(typeof row.catalog_slug === 'string' && typeof row.catalog_method === 'string' && typeof row.catalog_name === 'string' && {
-            catalog: { slug: row.catalog_slug, methodId: row.catalog_method, name: row.catalog_name },
+            catalog: {
+                slug: row.catalog_slug, methodId: row.catalog_method, name: row.catalog_name,
+                ...(typeof row.catalog_instance === 'string' && { instanceId: row.catalog_instance }),
+                ...(typeof row.catalog_label === 'string' && { label: row.catalog_label }),
+            },
         }),
         kind: 'mcp', id: String(row.id), name: String(row.name), url: String(row.url), revision: String(row.revision),
         sharedWithAll: row.shared_with_all === 1, hasBearer: row.has_bearer === 1, ...(row.oauth_enabled === 1 && { browserSignIn: true }), ...(typeof row.credential_header === 'string' && { headerName: row.credential_header }), agentIds: attachments.get(String(row.id)) ?? [],
@@ -75,6 +80,18 @@ function overlaps(a: DesktopVaultEntry, b: Pick<DesktopVaultEntry, 'agentIds' | 
     if (a.sharedWithAll) return b.agentIds.length > 0
     if (b.sharedWithAll) return a.agentIds.length > 0
     return a.agentIds.some(id => b.agentIds.includes(id))
+}
+
+function catalogAccounts(listing: DesktopVaultListing, slug: string) {
+    return listing.entries.flatMap(entry => 'kind' in entry && entry.kind === 'mcp' && entry.catalog?.slug === slug
+        ? [{ id: entry.id, displayName: entry.catalog.label ?? entry.catalog.name, instanceId: entry.catalog.instanceId }]
+        : [])
+}
+
+function checkAccountLabel(accounts: ReturnType<typeof catalogAccounts>, label: string) {
+    if (accounts.some(account => account.displayName.toLowerCase() === label.toLowerCase())) {
+        throw new DesktopHttpError(409, 'Choose a different name for this app account.', 'vault_conflict')
+    }
 }
 
 export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceId: number) {
@@ -147,16 +164,33 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                     })
                 } else if (input.operation === 'create-server' || input.operation === 'add-app') {
                     let connection: Extract<DesktopVaultMutation, { operation: 'create-server' }>
-                    let catalogName: string | null = null
+                    let catalogName: string | null = null, instanceId: string | undefined, catalogLabel: string | undefined
                     let url: string
                     try {
                         if (input.operation === 'add-app') {
-                            const app = compileVaultCatalogApp(input.slug, input.methodId, input.values)
+                            const accounts = catalogAccounts(listing, input.slug)
+                            if ((input.expectedAccounts ?? 0) !== accounts.length) {
+                                throw new DesktopHttpError(409, 'This app’s accounts changed. Reopen the Vault and try again.', 'vault_conflict')
+                            }
+                            if (accounts.length && !vaultCatalogAllowsInstances(input.slug)) {
+                                throw new DesktopHttpError(409, 'This app already has an account in the Vault.', 'vault_conflict')
+                            }
+                            if (accounts.length) instanceId = newServiceInstanceId(accounts.flatMap(account => account.instanceId ? [account.instanceId] : []))
+                            const app = compileVaultCatalogApp(input.slug, input.methodId, input.values, instanceId)
                             catalogName = app.displayName
+                            catalogLabel = input.label
+                            if (!catalogLabel && accounts.length) {
+                                const names = new Set(accounts.map(account => account.displayName.toLowerCase()))
+                                let number = 2
+                                while (names.has((catalogName + ' ' + number).toLowerCase())) number++
+                                catalogLabel = catalogName + ' ' + number
+                            }
+                            checkAccountLabel(accounts, catalogLabel ?? catalogName)
                             connection = app
                         } else connection = input
                         url = oauthHttps(endpoint(connection.url)).href
-                    } catch {
+                    } catch (error) {
+                        if (error instanceof DesktopHttpError) throw error
                         throw new DesktopHttpError(400, input.operation === 'add-app' ? 'Check the app’s authentication fields and try again.' : 'Enter a public HTTPS MCP endpoint without a query or credentials.')
                     }
                     if (listing.entries.some(entry => 'kind' in entry && entry.name === connection.name)) {
@@ -165,9 +199,9 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                     const id = randomUUID()
                     const sealed = await sealServerCredential(id, url, revision, connection.header ? { header: connection.header } : { bearer: connection.bearer })
                     await tx.execute({
-                        sql: 'INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,sealed,credential_header,oauth_enabled,catalog_slug,catalog_method,catalog_name) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                        sql: 'INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,sealed,credential_header,oauth_enabled,catalog_slug,catalog_method,catalog_name,catalog_instance,catalog_label) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
                         args: [id, connection.name, url, revision, revision, sealed, connection.header?.name ?? null, Number(connection.browserSignIn === true),
-                            input.operation === 'add-app' ? input.slug : null, input.operation === 'add-app' ? input.methodId : null, catalogName],
+                            input.operation === 'add-app' ? input.slug : null, input.operation === 'add-app' ? input.methodId : null, catalogName, instanceId ?? null, catalogLabel ?? null],
                     })
                 } else {
                     const entry = listing.entries.find(row => row.id === input.id)
@@ -242,10 +276,15 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                             await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_program_credentials WHERE item_id=? AND name=?', args: [entry.id, input.variable] })
                         }
                         await tx.execute({ sql: 'UPDATE desktop_vault_mcp_programs SET revision=? WHERE id=?', args: [revision, entry.id] })
+                    } else if (input.operation === 'rename-app') {
+                        if (!('kind' in entry) || entry.kind !== 'mcp' || !entry.catalog) throw new DesktopHttpError(400, 'This entry is not a catalog app.')
+                        checkAccountLabel(catalogAccounts(listing, entry.catalog.slug).filter(account => account.id !== entry.id), input.label)
+                        await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET revision=?,catalog_label=? WHERE id=?',
+                            args: [revision, input.label, entry.id] })
                     } else if (input.operation === 'configure-app') {
                         if (!('kind' in entry) || entry.kind !== 'mcp' || !entry.catalog) throw new DesktopHttpError(400, 'This entry is not a catalog app.')
                         let connection: ReturnType<typeof compileVaultCatalogApp>
-                        try { connection = compileVaultCatalogApp(entry.catalog.slug, input.methodId, input.values) }
+                        try { connection = compileVaultCatalogApp(entry.catalog.slug, input.methodId, input.values, entry.catalog.instanceId) }
                         catch { throw new DesktopHttpError(400, 'Check the app’s authentication fields and try again.') }
                         if (entry.name !== connection.name || entry.url !== connection.url) throw new DesktopHttpError(409, 'This method uses a different server. Add a new Vault entry to review it.')
                         const sealed = await sealServerCredential(entry.id, entry.url, revision, connection.header ? { header: connection.header } : { bearer: connection.bearer })

@@ -54,7 +54,7 @@ export function DesktopCoworkerVault({ agentId, query }: { agentId: string; quer
         return () => { pending.current?.abort(); pending.current = null }
     }, [request])
 
-    const title = (entry: Entry) => 'kind' in entry && entry.kind === 'mcp' ? entry.catalog?.name ?? entry.name : entry.name
+    const title = (entry: Entry) => 'kind' in entry && entry.kind === 'mcp' ? entry.catalog?.label ?? entry.catalog?.name ?? entry.name : entry.name
     function detail(entry: Entry) {
         if (!('kind' in entry)) return entry.variable
         if (entry.kind === 'program') return 'Local MCP program'
@@ -62,7 +62,7 @@ export function DesktopCoworkerVault({ agentId, query }: { agentId: string; quer
             : entry.hasBearer ? 'Bearer token configured'
             : entry.browserSignIn ? 'Browser sign-in managed in Vault'
             : 'No authentication configured'
-        return `${entry.catalog ? 'App' : 'MCP'} · ${auth}`
+        return `${entry.catalog ? entry.catalog.label ? entry.catalog.name : 'App' : 'MCP'} · ${auth}`
     }
     const matches = (entry: Entry) => `${title(entry)} ${detail(entry)}`.toLowerCase().includes(query.trim().toLowerCase())
     const attached = listing?.attached.filter(matches) ?? []

@@ -14,6 +14,7 @@ import { initializeDesktopRound49 } from '../round49-schema'
 import { initializeDesktopRound50 } from '../round50-schema'
 import { initializeDesktopRound51 } from '../round51-schema'
 import { initializeDesktopRound52 } from '../round52-schema'
+import { initializeDesktopRound53 } from '../round53-schema'
 import { desktopServicesSchema } from '../services/schema'
 import { vaultCatalog } from './catalog'
 import { stdioRuntime } from '../mcp-stdio/runtime'
@@ -33,7 +34,7 @@ const allow = () => {}
 const firstAgent = randomUUID(), secondAgent = randomUUID(), foreignAgent = randomUUID()
 const secret = 'fixture-value-never-in-a-projection'
 
-async function fixture(migrate = true, headerMigration = true) {
+async function fixture(migrate = true, headerMigration = true, namedAccounts = true) {
     const root = await mkdtemp(join(tmpdir(), 'rerun-desktop-vault-'))
     const file = join(root, 'app.db')
     const open = () => createClient({ url: `file:${file}` })
@@ -58,6 +59,7 @@ async function fixture(migrate = true, headerMigration = true) {
     await initializeDesktopRound50(db)
     await initializeDesktopRound51(db)
     await initializeDesktopRound52(db)
+    if (namedAccounts) await initializeDesktopRound53(db)
     await db.executeMultiple(desktopServicesSchema)
     return { db, root, file, open, vault: desktopVault(db, crypto, 7) }
 }
@@ -84,7 +86,7 @@ test('upgrades a prior workspace, saves redacted metadata, rotates ciphertext, a
             await initializeDesktopRound45(reopened)
             await initializeDesktopRound46(reopened)
             expect(await desktopVault(reopened, crypto, 7).list()).toEqual(updated)
-            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }, { version: 48 }, { version: 49 }, { version: 50 }, { version: 51 }, { version: 52 }])
+            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }, { version: 48 }, { version: 49 }, { version: 50 }, { version: 51 }, { version: 52 }, { version: 53 }])
             expect((await reopened.execute('PRAGMA foreign_key_check')).rows).toEqual([])
         } finally { reopened.close() }
         expect((await readFile(f.file)).includes(secret)).toBe(false)
@@ -704,5 +706,86 @@ test('a catalog app keeps its encrypted key and limits tools to current Apps gra
             expect((await readFile(f.file)).includes(token)).toBe(false)
             expect((await readFile(f.file)).includes(expectedToken)).toBe(false)
         } finally { shutdown.abort(); reopened.close() }
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+
+test('named catalog accounts keep independent credentials, revisions and assignments after reopening', async () => {
+    const f = await fixture()
+    const shutdown = new AbortController()
+    try {
+        const add = { operation: 'add-app' as const, slug: 'linear', methodId: 'api-key' }
+        const salesKey = 'lin_sales-isolated-fixture-key'
+        const supportKey = 'lin_support-isolated-fixture-key'
+        const [sales] = (await f.vault.mutate({ ...add, values: { LINEAR_API_KEY: salesKey } }, allow)).entries
+        const second = { ...add, label: 'Support Linear', expectedAccounts: 1, values: { LINEAR_API_KEY: supportKey } }
+        await expect(f.vault.mutate({ ...second, expectedAccounts: 0 }, allow)).rejects.toMatchObject({ status: 409 })
+        await expect(f.vault.mutate({ ...second, label: 'linear' }, allow)).rejects.toMatchObject({ status: 409 })
+        const results = await Promise.allSettled([f.vault.mutate(second, allow), f.vault.mutate(second, allow)])
+        expect(results.map(result => result.status)).toEqual(['fulfilled', 'rejected'])
+        const [support] = (await f.vault.list()).entries.filter(entry => entry.id !== sales.id)
+        expect(sales.name).toBe('linear')
+        expect(support).toMatchObject({ name: expect.stringMatching(/^linear-[a-z0-9]{6}$/),
+            catalog: { slug: 'linear', name: 'Linear', label: 'Support Linear', instanceId: expect.stringMatching(/^[a-z0-9]{6}$/) } })
+        await f.vault.assignCoworker(firstAgent, { id: sales.id, revision: sales.revision, attached: true }, allow)
+        const [assignedSupport] = (await f.vault.assignCoworker(secondAgent, { id: support.id, revision: support.revision, attached: true }, allow)).attached
+        const reopened = f.open()
+        try {
+            await initializeDesktopRound53(reopened)
+            const vault = desktopVault(reopened, crypto, 7)
+            const requestedKeys: string[] = []
+            const network: McpNetwork = async (url, init, guard) => {
+                expect(url).toBe('https://mcp.linear.app/mcp')
+                await guard()
+                requestedKeys.push(new Headers(init.headers).get('authorization') ?? '')
+                const body = JSON.parse(init.body!)
+                const result = body.method === 'initialize' ? { protocolVersion: '2025-03-26' }
+                    : body.method === 'tools/list' ? { tools: [{ name: 'read', inputSchema: { type: 'object' } }] }
+                    : { content: [] }
+                return body.id === undefined ? new Response(null, { status: 202 }) : Response.json({ jsonrpc: '2.0', id: body.id, result })
+            }
+            const runtime = desktopVaultMcpRuntime(reopened, crypto, 7, async () => ({ enabled: true, granted: true }), shutdown.signal,
+                network, allow, undefined, 'catalog')
+            const [salesTool] = await runtime.tools(firstAgent, shutdown.signal)
+            expect(salesTool.name).toBe('linear_read')
+            expect([...new Set(requestedKeys.splice(0))]).toEqual(['Bearer ' + salesKey])
+            const [supportTool] = await runtime.tools(secondAgent, shutdown.signal)
+            expect(supportTool.name).toBe(support.name + '_read')
+            expect([...new Set(requestedKeys.splice(0))]).toEqual(['Bearer ' + supportKey])
+            await expect(vault.mutate({ operation: 'rename-app', id: support.id, revision: support.revision, label: 'Support' }, allow))
+                .rejects.toMatchObject({ status: 409 })
+            const renamed = (await vault.mutate({ operation: 'rename-app', id: support.id, revision: assignedSupport.revision, label: 'Support' }, allow))
+                .entries.find(entry => entry.id === support.id)!
+            expect(renamed).toMatchObject({ name: support.name, catalog: { label: 'Support' }, agentIds: [secondAgent] })
+            await expect(supportTool.execute({}, shutdown.signal)).rejects.toThrow()
+            expect(requestedKeys).toEqual([])
+            expect(await salesTool.execute({}, shutdown.signal)).toMatchObject({ result: { content: [] } })
+            expect([...new Set(requestedKeys.splice(0))]).toEqual(['Bearer ' + salesKey])
+            const switched = (await vault.mutate({ operation: 'configure-app', id: support.id, revision: renamed.revision, methodId: 'oauth', values: {} }, allow))
+                .entries.find(entry => entry.id === support.id)
+            expect(switched).toMatchObject({ name: support.name, browserSignIn: true, catalog: { label: 'Support', methodId: 'oauth' }, agentIds: [secondAgent] })
+            expect(await runtime.tools(secondAgent, shutdown.signal)).toEqual([])
+            expect(requestedKeys).toEqual([])
+        } finally { shutdown.abort(); reopened.close() }
+        for (const key of [salesKey, supportKey]) expect((await readFile(f.file)).includes(key)).toBe(false)
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+
+test('the named-account migration keeps the original Vault app and OAuth identity', async () => {
+    const f = await fixture(true, true, false)
+    try {
+        const id = randomUUID(), revision = randomUUID()
+        await f.db.execute({
+            sql: 'INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,oauth_enabled,catalog_slug,catalog_method,catalog_name) VALUES(?,?,?,?,?,1,?,?,?)',
+            args: [id, 'linear', 'https://mcp.linear.app/mcp', revision, revision, 'linear', 'oauth', 'Linear'],
+        })
+        await f.db.execute({ sql: 'INSERT INTO desktop_vault_mcp_attachments(item_id,agent_id) VALUES(?,?)', args: [id, firstAgent] })
+        await initializeDesktopRound53(f.db)
+        await initializeDesktopRound53(f.db)
+        expect((await f.vault.list()).entries).toEqual([{
+            id, name: 'linear', url: 'https://mcp.linear.app/mcp', revision, kind: 'mcp', browserSignIn: true, hasBearer: false,
+            catalog: { slug: 'linear', methodId: 'oauth', name: 'Linear' }, agentIds: [firstAgent], sharedWithAll: false,
+        }])
     } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
 })

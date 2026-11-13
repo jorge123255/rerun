@@ -89,6 +89,10 @@ function VaultPanel() {
         })
         return () => { flight.current?.abort(); flight.current = null }
     }, [])
+    const accounts: Record<string, string[]> = {}
+    for (const item of listing?.entries ?? []) {
+        if ('kind' in item && item.kind === 'mcp' && item.catalog) (accounts[item.catalog.slug] ??= []).push(entryTitle(item))
+    }
     const entry = listing?.entries.find(item => item.id === page)
     const navigate = (next: string) => { setError(''); setPage(next) }
     const stepKey = entry?.id ?? page
@@ -100,10 +104,10 @@ function VaultPanel() {
             {alert}
             {!listing ? (error ? <Button variant="outline" disabled={busy} onClick={() => void run()}>Try again</Button> : <p role="status">Loading Vault…</p>)
                 : page === 'add' ? <SecretForm busy={busy} onSubmit={fields => void run({ operation: 'create', ...fields }, 'list')} />
-                : page === 'add-app' ? <DesktopVaultCatalog busy={busy} onCancel={() => navigate('list')}
-                    onSave={async (slug, methodId, values) => {
+                : page === 'add-app' ? <DesktopVaultCatalog busy={busy} existingAccounts={accounts} onCancel={() => navigate('list')}
+                    onSave={async (slug, methodId, values, account) => {
                         const previousIds = new Set(listing.entries.map(item => item.id))
-                        const failure = await run({ operation: 'add-app', slug, methodId, values },
+                        const failure = await run({ operation: 'add-app', slug, methodId, values, ...account },
                             saved => saved.entries.find(item => !previousIds.has(item.id)
                                 && 'kind' in item && item.kind === 'mcp' && item.catalog?.slug === slug)?.id ?? 'list', false)
                         if (failure) throw failure
@@ -139,12 +143,13 @@ function VaultPanel() {
 }
 
 function entryTitle(entry: DesktopVaultEntry) {
-    return 'kind' in entry && entry.kind === 'mcp' ? entry.catalog?.name ?? entry.name : entry.name
+    return 'kind' in entry && entry.kind === 'mcp' ? entry.catalog?.label ?? entry.catalog?.name ?? entry.name : entry.name
 }
 
 function entrySubtitle(entry: DesktopVaultEntry) {
     if (!('kind' in entry)) return entry.variable
-    return entry.kind === 'program' ? entry.executable : entry.url
+    if (entry.kind === 'program') return entry.executable
+    return entry.catalog?.label ? entry.catalog.name + ' · ' + entry.url : entry.url
 }
 
 function entryGroup(entry: DesktopVaultEntry) {
@@ -295,6 +300,7 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
     const [agentIds, setAgentIds] = useState(entry.agentIds)
     const [sharedWithAll, setSharedWithAll] = useState(entry.sharedWithAll)
     const [replace, setReplace] = useState(false)
+    const [renaming, setRenaming] = useState(false)
     const server = 'kind' in entry && entry.kind === 'mcp' ? entry : null
     const program = 'kind' in entry && entry.kind === 'program' ? entry : null
     const target = { id: entry.id, revision: entry.revision }
@@ -319,7 +325,7 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
             <Button size="sm" disabled={busy || !changed} onClick={() => onSubmit({ operation: 'share', ...target, agentIds, sharedWithAll })}>Save assignments</Button>
         </fieldset>
         {server?.browserSignIn && <div className="space-y-2 border-t pt-4">
-            <DesktopMcpOAuthAuthorize vaultId={server.id} name={server.name} revision={server.revision} active={!busy && !replace} />
+            <DesktopMcpOAuthAuthorize vaultId={server.id} name={server.name} revision={server.revision} active={!busy && !replace && !renaming} />
             <ConfirmDialog title="Disconnect browser sign-in?" description="Coworkers will need you to sign in again before using this connection."
                 confirmLabel="Disconnect" pending={busy} onConfirm={() => onSubmit({ operation: 'clear-server-oauth', ...target })}>
                 <Button size="sm" variant="outline" disabled={busy}>Disconnect browser sign-in</Button>
@@ -327,12 +333,23 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
         </div>}
         {program && <ProgramCredentials entry={program} busy={busy} onSubmit={onSubmit} />}
         <div className="flex flex-wrap gap-2 border-t pt-4">
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => setReplace(!replace)}>{program ? 'Review program' : server ? 'Change authentication' : 'Replace value'}</Button>
+            {server?.catalog && <Button variant="outline" size="sm" disabled={busy} onClick={() => { setReplace(false); setRenaming(!renaming) }}>Rename account</Button>}
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => { setRenaming(false); setReplace(!replace) }}>{program ? 'Review program' : server ? 'Change authentication' : 'Replace value'}</Button>
             <ConfirmDialog title={`Delete “${entryTitle(entry)}”?`} description={users ? `This removes the entry and its assignment for ${users}.` : 'This removes the entry from this workspace.'}
                 confirmLabel={deleteLabel} pending={busy} onConfirm={() => onSubmit({ operation: 'delete', ...target }, 'list')}>
                 <Button variant="outline" size="sm" disabled={busy}>{deleteLabel}</Button>
             </ConfirmDialog>
         </div>
+        {renaming && server?.catalog && <form className="space-y-2" onSubmit={event => {
+            event.preventDefault()
+            const label = String(new FormData(event.currentTarget).get('label')).trim()
+            if (label) void onSubmit({ operation: 'rename-app', ...target, label })
+        }}>
+            <label className="block space-y-1 text-sm">Account name
+                <Input name="label" defaultValue={entryTitle(entry)} required maxLength={120} disabled={busy} />
+            </label>
+            <Button type="submit" size="sm" disabled={busy}>Save account name</Button>
+        </form>}
         {replace && program && <ProgramForm busy={busy} entry={program} onSave={fields => onSubmit({ operation: 'replace-program', ...target, executable: fields.executable, args: fields.args })} />}
         {replace && server?.catalog && <DesktopVaultCatalog slug={server.catalog.slug} busy={busy}
             replacesSignIn={server.browserSignIn}
