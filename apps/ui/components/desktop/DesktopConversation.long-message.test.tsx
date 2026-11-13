@@ -129,10 +129,20 @@ test('folds a saved long message, keeps its attachment outside the fold and reve
             input.dispatchEvent(new Event('input', { bubbles: true }))
         })
         expect([...highlights.get('rerun-chat-find-current')!][0]?.toString()).toBe('example.com/…/result…')
+        const composer = container.querySelector<HTMLTextAreaElement>('form[data-slot="desktop-composer"] textarea')!
         await closeFind()
+        expect(document.activeElement).toBe(composer)
         expect(highlights.size).toBe(0)
         expect(viewport.style.maxHeight).toBe('384px')
         expect(toggle()!.textContent).toBe('Show more')
+
+        const card = container.querySelector<HTMLButtonElement>('[aria-label="Coworker card"]')!
+        await click(card)
+        const searchEvent = new Event('rerun-desktop-conversation-find', { cancelable: true })
+        await act(async () => { window.dispatchEvent(searchEvent) })
+        expect(searchEvent.defaultPrevented).toBe(false)
+        expect(container.querySelector('[aria-label="Find in conversation"]')).toBeNull()
+        await click(card)
 
         await act(async () => root.unmount())
         root = createRoot(container)

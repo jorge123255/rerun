@@ -1300,12 +1300,14 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     const uploadFileInput = useRef<HTMLInputElement>(null)
     const findTranscript = useRef<HTMLDivElement>(null)
     const [findOpen, setFindOpen] = useState(false)
-    const finding = findOpen && active
     const [editorOpen, setEditorOpen] = useState(false)
+    const transcriptActive = active && !cardOpen && !detailPanel && !chatsOpen
+    const canFind = transcriptActive && !editorOpen
+    const finding = findOpen && canFind
     const [editorSession, setEditorSession] = useState(0)
     const expandable = isLongMessage(input)
     useEffect(() => {
-        if (!active) return
+        if (!canFind) return
         const openFind = (event: Event) => {
             if (event.defaultPrevented) return
             event.preventDefault()
@@ -1313,7 +1315,14 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
         }
         window.addEventListener('rerun-desktop-conversation-find', openFind)
         return () => window.removeEventListener('rerun-desktop-conversation-find', openFind)
-    }, [active])
+    }, [canFind])
+
+    function closeFind() {
+        setFindOpen(false)
+        const form = composerForm.current
+        if (!canFind || !form || form.hidden) return
+        form.querySelector<HTMLTextAreaElement>('textarea:not([disabled])')?.focus({ preventScroll: true })
+    }
     const [uploadDragOver, setUploadDragOver] = useState(false)
     useEffect(() => {
         const form = composerForm.current
@@ -1480,7 +1489,6 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                 if (payload.action === 'done' || payload.action === 'skip') await decideTakeover(payload)
             }} />, { kind: 'takeover', label: t('chatRequestCue.takeover') })
     }
-    const transcriptActive = active && !cardOpen && !detailPanel && !chatsOpen
     const waitingCard = ready && !generating && !stopping && !draft.quitting
         ? requestCards.find(card => card.cue) : undefined
     const cueKey = waitingCard ? JSON.stringify([workspaceId, agent.id, sessionId, tabUid, waitingCard.key]) : null
@@ -1579,7 +1587,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
 
             <Conversation key={sessionId ?? 'new'} contextRef={conversationScroll} className="min-h-0" aria-label={t('chatMessages')}>
                 <ConversationContent className="gap-4 px-3.5 py-4">
-                    <DesktopConversationFind open={finding} onOpenChange={setFindOpen} transcript={findTranscript} />
+                    <DesktopConversationFind open={finding} onOpenChange={closeFind} transcript={findTranscript} />
                     {!ready && !historyError && !busy && <p role="status" className="text-sm text-muted-foreground">{t('openingSavedChat')}</p>}
                     {threadRows.leading.map(thread => <DesktopThreadBranch key={thread.id} thread={thread} needsYou={pendingChatSummaries?.has(thread.id)} onOpen={() => onSelectSession(thread.id, thread.title)} />)}
                     {ready && transcript.length === 0 && threadRows.leading.length === 0 && !busy && !setupBlocked && !historyError && (

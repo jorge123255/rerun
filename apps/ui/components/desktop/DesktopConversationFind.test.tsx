@@ -2,6 +2,9 @@
 import { act, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, test, vi } from 'vitest'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages } from '@/lib/desktop/locale'
+import { DesktopLocale } from './DesktopLocale'
 import { Conversation, ConversationContent } from '@/components/ai-elements/conversation'
 import { DesktopConversationFind } from './DesktopConversationFind'
 
@@ -83,5 +86,39 @@ test('Find counts and highlights visible text in this transcript, across inline 
         await act(async () => root.unmount())
         container.remove()
         vi.unstubAllGlobals()
+    }
+})
+
+test('uses the workspace language for Find controls and match counts', async () => {
+    const language = { locale: 'fr' as const, preference: 'fr' as const, messages: desktopMessages('fr', await loadMessages('fr')) }
+    const container = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(container)
+    function Harness() {
+        const transcript = useRef<HTMLDivElement>(null)
+        return <DesktopLocale initial={language}>
+            <Conversation><ConversationContent>
+                <DesktopConversationFind open onOpenChange={() => {}} transcript={transcript} />
+                <div ref={transcript}><p data-chat-find-message>Un résultat sauvegardé</p><p data-chat-find-message>Un autre résultat</p></div>
+            </ConversationContent></Conversation>
+        </DesktopLocale>
+    }
+    try {
+        await act(async () => root.render(<Harness />))
+        const field = container.querySelector('input')!
+        expect(field.placeholder).toBe('Rechercher dans la conversation')
+        expect(field.getAttribute('aria-label')).toBe(field.placeholder)
+        expect([...container.querySelectorAll('form button')].map(button => button.getAttribute('aria-label') || button.textContent))
+            .toEqual(['Précédent', 'Suivant', 'Fermer la recherche'])
+        const search = (query: string) => act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, query)
+            field.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+        await search('résultat')
+        expect(container.querySelector('[role="status"]')?.textContent).toBe('1 sur 2')
+        await search('introuvable')
+        expect(container.querySelector('[role="status"]')?.textContent).toBe('Aucun résultat')
+    } finally {
+        await act(async () => root.unmount())
+        container.remove()
     }
 })

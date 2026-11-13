@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { findTranscriptRanges, paintTranscriptFind } from '@/lib/desktop/transcript-find'
 import { XIcon } from '@/lib/icons'
+import { useDesktopLocale } from './DesktopLocale'
 
 type Matches = { query: string; ranges: Range[]; index: number }
 
@@ -14,6 +15,7 @@ export function DesktopConversationFind({ open, onOpenChange, transcript }: {
     onOpenChange: (open: boolean) => void
     transcript: RefObject<HTMLDivElement | null>
 }) {
+    const { t } = useDesktopLocale()
     const { scrollRef, stopScroll } = useStickToBottomContext()
     const [query, setQuery] = useState('')
     const [matches, setMatches] = useState<Matches | null>(null)
@@ -83,18 +85,21 @@ export function DesktopConversationFind({ open, onOpenChange, transcript }: {
 
     if (!open) return null
     const count = shown?.ranges.length ?? 0
-    const status = shown ? (count ? `${shown.index + 1} of ${count}` : 'No matches') : null
-    return <form ref={form} className="sticky top-0 z-20 mb-2 flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-border bg-background p-2"
+    const label = t('conversationFind.field')
+    const status = !shown ? null : count
+        ? t('conversationFind.count', { current: shown.index + 1, total: count })
+        : t('conversationFind.noMatches')
+    return <form ref={form} role="search" aria-label={label} className="sticky top-0 z-20 mb-2 flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-border bg-background p-2"
         onSubmit={event => { event.preventDefault(); move(1) }}>
-        <Input autoFocus value={query} aria-label="Find in conversation" placeholder="Find in conversation" className="h-8 min-w-0 flex-1" maxLength={200}
+        <Input autoFocus value={query} aria-label={label} placeholder={label} className="h-8 min-w-0 flex-1" maxLength={200}
             onChange={event => setQuery(event.target.value)}
             onKeyDown={event => {
                 if (event.key === 'Escape') { event.preventDefault(); close() }
                 if (event.key === 'Enter' && event.shiftKey) { event.preventDefault(); move(-1) }
             }} />
         <span className="text-xs text-muted-foreground" role="status">{status}</span>
-        <Button type="button" size="sm" variant="outline" disabled={!count} onClick={() => move(-1)}>Previous</Button>
-        <Button type="submit" size="sm" variant="outline" disabled={!count}>Next</Button>
-        <Button type="button" size="icon-sm" variant="ghost" aria-label="Close find" onClick={close}><XIcon className="size-4" /></Button>
+        <Button type="button" size="sm" variant="outline" disabled={!count} onClick={() => move(-1)}>{t('conversationFind.previous')}</Button>
+        <Button type="submit" size="sm" variant="outline" disabled={!count}>{t('conversationFind.next')}</Button>
+        <Button type="button" size="icon-sm" variant="ghost" aria-label={t('conversationFind.close')} onClick={close}><XIcon className="size-4" /></Button>
     </form>
 }

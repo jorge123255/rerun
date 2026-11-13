@@ -1,3 +1,4 @@
+import { desktopConversationFindCopy } from './i18n/conversation-find-messages'
 import { desktopNotificationMessages } from './i18n/notification-messages'
 import { desktopActionMessages } from './i18n/action-messages'
 import { desktopCreationMessages } from './i18n/creation-messages'
@@ -464,6 +465,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
             ...desktopModelPickerCopy[locale],
             manage: source.agent.modelPickerProviders.manage,
         },
+        conversationFind: desktopConversationFindCopy[locale],
         workspace: source.workspace.settings.fallbackName,
         notifications: source.layout.workspaceMenu.notifications,
         shortcuts: source.layout.menu.shortcuts,
