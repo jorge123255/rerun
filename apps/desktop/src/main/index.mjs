@@ -6,7 +6,7 @@ import { createWorkspaceCoordinator, seedLegacyCatalog, getWorkspace } from './w
 import { DesktopSecureStorageError, loadBundle, loadIdentityFromSafeStorage, workspaceIdentity } from './runtime.mjs'
 import { RuntimeSupervisor } from './supervisor.mjs'
 import { createDesktopNotifications } from './notifications.mjs'
-import { createNotificationClickHandoff, routeDesktopNotificationClick } from './notification-click-handoff.mjs'
+import { createNotificationClickHandoff, createNotificationClickRouter } from './notification-click-handoff.mjs'
 import { completeDesktopQuit } from './before-quit.mjs'
 import { createDesktopTemplateFiles } from './templates.mjs'
 import { createDesktopCoworkerShareFiles } from './coworker-share-files.mjs'
@@ -104,6 +104,16 @@ const remoteMachineIpc = createRemoteMachineIpc({ trusted: trustedPrimary, conte
         launchNonce: current.launchNonce, rendererEpoch: boards.get(window).epoch } }
 } })
 const clickHandoff = createNotificationClickHandoff()
+const clickRouter = createNotificationClickRouter({
+    canRoute: () => !quitting && !transitioning,
+    currentScope: clickScope,
+    switchWorkspace: workspaceId => runWorkspaceTransition(() => workspaces.switchTo({ workspaceId, requestId: randomUUID() })),
+    deliver(target, scope) {
+        showMainWindow()
+        clickHandoff.accept(target, scope)
+        flushNotificationClicks()
+    },
+})
 let clickReady = null
 const desktopNotifications = createDesktopNotifications({ Notification, onClick: openDesktopNotice })
 let localUnread = 0
@@ -268,15 +278,7 @@ function flushNotificationClicks() {
     })
 }
 function openDesktopNotice(target, scope) {
-    void routeDesktopNotificationClick(target, scope, {
-        currentScope: clickScope,
-        switchWorkspace: workspaceId => runWorkspaceTransition(() => workspaces.switchTo({ workspaceId, requestId: randomUUID() })),
-        deliver(target, scope) {
-            showMainWindow()
-            clickHandoff.accept(target, scope)
-            flushNotificationClicks()
-        },
-    }).catch(() => {})
+    if (!quitting) void clickRouter.accept(target, scope)
 }
 
 let refreshUpdateSurfaces = () => {}
@@ -1074,5 +1076,9 @@ async function runWorkspaceTransition(operation) {
         await window.loadFile(startup)
         supervisor.publish('error', 'stateRecovery')
         return { ok: false, code: 'path_corrupt', message: 'Workspace state needs recovery before continuing.' }
-    } finally { transitioning = false; flushNotificationClicks() }
+    } finally {
+        transitioning = false
+        void clickRouter.flush()
+        flushNotificationClicks()
+    }
 }

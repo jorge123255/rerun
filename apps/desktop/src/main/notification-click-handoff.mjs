@@ -29,6 +29,43 @@ export async function routeDesktopNotificationClick(value, submittedScope, { cur
     return true
 }
 
+// A click during a workspace change waits for a stable runtime. If multiple clicks
+// arrive before routing settles, the most recent one owns the navigation.
+export function createNotificationClickRouter({ canRoute, currentScope, switchWorkspace, deliver }) {
+    let pending
+    let routing = false
+
+    async function flush() {
+        if (routing) return
+        routing = true
+        try {
+            while (pending && canRoute()) {
+                const { target, scope } = pending
+                pending = null
+                try {
+                    await routeDesktopNotificationClick(target, scope, {
+                        currentScope, switchWorkspace,
+                        deliver: (value, bound) => { if (!pending) deliver(value, bound) },
+                    })
+                } catch { /* A failed route does not prevent the next click. */ }
+            }
+        } finally {
+            routing = false
+        }
+    }
+
+    return {
+        accept(value, submittedScope) {
+            const target = notificationClickTarget(value)
+            const scope = scopeOf(submittedScope)
+            if (!target || !scope) return
+            pending = { target, scope }
+            return flush()
+        },
+        flush,
+    }
+}
+
 export function createNotificationClickHandoff() {
     let held = []
     let delivered = []
