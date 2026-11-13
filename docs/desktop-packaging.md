@@ -12,7 +12,7 @@ pnpm install                                   # workspace deps incl. electron +
 pnpm desktop:install                           # update ~/Applications/Rerun Desktop Preview.app
 pnpm desktop:install --commit FULL_SHA          # install only this checked-out commit
 pnpm desktop:package                           # build a separate signed preview
-pnpm desktop:package -- --dmg                  # request the preview DMG
+pnpm desktop:package --dmg                     # build and verify the preview DMG
 pnpm desktop:stage                             # rebuild runtime resources for QA without making an .app
 pnpm desktop:verify                            # re-run runtime checks only
 ```
@@ -32,6 +32,9 @@ from an interrupted install on the next run. A kernel lock allows only one insta
 
 For agents reviewing code in separate worktrees, run `pnpm desktop:stage` for runtime QA.
 Use `pnpm desktop:package` when you need a separate signed preview.
+The DMG filename includes the build ID and target architecture. Packaging verifies
+the disk image, mounts it read-only, checks the app inside against the same source
+receipts and signature checks as the separate bundle, and detaches it.
 
 To run the staged app beside the installed preview on the same Mac, use a
 separate development profile:

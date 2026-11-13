@@ -31,15 +31,23 @@ test('the actual package entry forces stages, skips stage-only packaging and dis
             }`
         const signing = `export async function previewSigningArguments(){return ['-c.mac.identity=offline-fixture']}`
         const mas = `import {appendFileSync} from 'node:fs'; const record=(command,args)=>appendFileSync(process.env.PROVENANCE_TEST_REPORT,JSON.stringify({command,args})+'\\n'); export async function prepareMasDevelopment(){record('prepare-mas',[]);return {signingArgs:['-c.masDev.identity=offline-fixture']}} export async function verifyMasDevelopment(app){record('verify-mas',[app])}`
+        const image = `
+            import { appendFileSync } from 'node:fs'
+            export async function verifyPreviewDiskImage(path, verifyApp) {
+                appendFileSync(process.env.PROVENANCE_TEST_REPORT, JSON.stringify({ command: 'verify-image', args: [path] }) + '\\n')
+                await verifyApp('/mounted/Rerun Desktop Preview.app')
+            }`
         const install = `
             import { appendFileSync } from 'node:fs'
             export const bundleName = 'Rerun Desktop Preview.app'
             export async function verifyBundle(app, stamp) {
                 appendFileSync(process.env.PROVENANCE_TEST_REPORT,
                     JSON.stringify({ command: 'verify-bundle', args: [app, stamp] }) + '\\n')
-                if (process.env.PROVENANCE_STALE_RECEIPT) throw new Error('UI receipt does not match ' + stamp.sourceCommit)
+                if (process.env.PROVENANCE_STALE_RECEIPT || (process.env.PROVENANCE_STALE_DMG && app.startsWith('/mounted/'))) {
+                    throw new Error('UI receipt does not match ' + stamp.sourceCommit)
+                }
             }`
-        const modules = Object.fromEntries(Object.entries({ 'lib.mjs': stub, 'signing.mjs': signing, 'mas-development.mjs': mas, 'install.mjs': install })
+        const modules = Object.fromEntries(Object.entries({ 'lib.mjs': stub, 'signing.mjs': signing, 'mas-development.mjs': mas, 'install.mjs': install, 'preview-disk-image.mjs': image })
             .map(([file, source]) => [new URL(file, import.meta.url).href, source]))
         const hook = `const modules=${JSON.stringify(modules)}; export async function load(url,context,next){if(Object.hasOwn(modules,url))return {format:'module',shortCircuit:true,source:modules[url]};return next(url,context)}`
         const loader = join(root, 'loader.mjs')
@@ -71,13 +79,20 @@ test('the actual package entry forces stages, skips stage-only packaging and dis
                 const packaged = (await readFile(report, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
                 const builders = packaged.filter(call => call.command === 'npx')
                 const masDev = input.includes('--mas-dev')
+                const diskImage = input.includes('--dmg')
                 const target = ['--mac', ...(masDev ? ['mas-dev'] : input.length ? ['dmg'] : []), `--${arch}`]
                 const identity = masDev ? '-c.masDev.identity=offline-fixture' : '-c.mac.identity=offline-fixture'
+                const dmgName = `Rerun Desktop Preview-synthetic-mac-${arch}.dmg`
                 assert.equal(builders.length, 1)
-                assert.deepEqual(builders[0].args, ['--yes', 'electron-builder@26.18.1', ...target, '--publish', 'never', '--config', 'electron-builder.yml', identity, `-c.directories.output=${outputDir}`])
+                assert.deepEqual(builders[0].args, ['--yes', 'electron-builder@26.18.1', ...target, '--publish', 'never', '--config', 'electron-builder.yml', identity,
+                    `-c.directories.output=${outputDir}`, ...(diskImage ? [`-c.dmg.artifactName=${dmgName}`, '-c.dmg.writeUpdateInfo=false'] : [])])
                 assert.deepEqual(builders[0].options, { cwd: '/synthetic/apps/desktop' })
                 const destination = join(outputDir, masDev ? (arch === 'x64' ? 'mas-dev' : 'mas-dev-arm64') : appDirectory, 'Rerun Desktop Preview.app')
-                assert.deepEqual(packaged.filter(call => call.command === '/usr/bin/codesign').map(call => call.args.at(-1)), [destination])
+                const mounted = '/mounted/Rerun Desktop Preview.app'
+                const apps = diskImage ? [destination, mounted] : [destination]
+                assert.deepEqual(packaged.filter(call => call.command === '/usr/bin/codesign').map(call => call.args.at(-1)), apps)
+                assert.deepEqual(packaged.filter(call => call.command === 'verify-image').map(call => call.args[0]),
+                    diskImage ? [join(outputDir, dmgName)] : [])
                 const signature = packaged.findIndex(call => call.command === '/usr/bin/codesign')
                 assert(packaged[signature + 1].args[0].endsWith('/verify-electron.mjs'))
                 assert.equal(packaged[signature + 1].args[1], destination)
@@ -85,18 +100,19 @@ test('the actual package entry forces stages, skips stage-only packaging and dis
                     assert.equal(packaged[0].command, 'prepare-mas')
                     assert.deepEqual(packaged.at(-2), { command: 'verify-mas', args: [destination] })
                 }
-                assert.deepEqual(packaged.at(-1), { command: 'verify-bundle', args: [destination, {
+                assert.deepEqual(packaged.filter(call => call.command === 'verify-bundle'), apps.map(app => ({ command: 'verify-bundle', args: [app, {
                     protocolVersion: 1, sourceCommit: 'a'.repeat(40), buildId: 'synthetic', arch,
-                }] })
+                }] })))
             }
         }
-        for (const [env, message, builderInvoked] of [
+        for (const [env, message, builderInvoked, args = []] of [
             [{ PROVENANCE_CHANGE_AT: '2' }, /The source changed during staging/, false],
             [{ PROVENANCE_CHANGE_AT: '3' }, /The source changed during packaging/, true],
             [{ PROVENANCE_STALE_RECEIPT: '1' }, /UI receipt does not match/, true],
+            [{ PROVENANCE_STALE_DMG: '1' }, /UI receipt does not match/, true, ['--dmg']],
         ]) {
             await writeFile(report, '')
-            assert.throws(() => execFileSync(process.execPath, ['--loader', loader, packageEntry], {
+            assert.throws(() => execFileSync(process.execPath, ['--loader', loader, packageEntry, ...args], {
                 env: { ...process.env, PROVENANCE_TEST_REPORT: report, ...env }, stdio: ['ignore', 'pipe', 'pipe'],
             }), error => {
                 assert.match(String(error.stderr), message)
