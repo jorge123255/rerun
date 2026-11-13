@@ -7,6 +7,8 @@ import { PanelList, PanelSection } from '@/components/ui/panel-list'
 import { PanelRow } from '@/components/ui/panel-row'
 import { desktopCoworkerVaultListing, type DesktopCoworkerVaultListing, type DesktopCoworkerVaultMutation } from '@/lib/desktop/vault'
 
+import { vaultAccountHealthText } from './vault-account-health'
+
 type Entry = DesktopCoworkerVaultListing['attached'][number]
 
 export function DesktopCoworkerVault({ agentId, query }: { agentId: string; query: string }) {
@@ -70,6 +72,7 @@ export function DesktopCoworkerVault({ agentId, query }: { agentId: string; quer
     const row = (entry: Entry, attached: boolean) => (
         <PanelRow key={entry.id} title={title(entry)}
             description={entry.sharedWithAll ? `${detail(entry)} · Shared with every coworker` : detail(entry)}
+            footer={'kind' in entry && entry.kind === 'mcp' && entry.catalog ? vaultAccountHealthText(entry.catalog.health) : undefined}
             leading={'kind' in entry ? <Plug className="size-4" /> : <KeyRound className="size-4" />}
             actions={<>
                 {attached && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">Vault</span>}

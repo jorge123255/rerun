@@ -8,6 +8,7 @@ import { emptyMcpMaterialLease, type DesktopMcpMaterialSource } from '../mcp-sec
 import { remoteMcpTools } from '../mcp/tools'
 import type { DesktopSecretCrypto } from '../secret-requests/crypto'
 import type { OAuthJson } from '../mcp/oauth-network'
+import { vaultCatalogHealth } from './catalog-health'
 import { vaultMcpOAuth } from './mcp-oauth'
 import { vaultMcpHttps } from './mcp-network'
 
@@ -47,19 +48,21 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
         },
         async readOAuth() { return null },
     }
-    const material: DesktopMcpMaterialSource = async (owner, name, revision, _phase, signal) => {
-        const check = async () => {
+    const material: DesktopMcpMaterialSource = (owner, name, revision, _phase, signal) =>
+        credentials(async () => {
             signal.throwIfAborted(); assertWorkspace()
             const permission = await access(owner)
             const [row] = await assigned(owner, name)
             signal.throwIfAborted()
             if (!permission.enabled || !permission.granted || row?.revision !== revision) throw new Error('Vault MCP authority changed')
             return row
-        }
+        }, signal, true)
+
+    async function credentials(check: () => Promise<Awaited<ReturnType<typeof assigned>>[number]>, signal: AbortSignal, refresh: boolean) {
         const row = await check()
-        const { id, url } = view(row)
+        const { id, name, url, revision } = view(row)
         if (row.oauth_enabled === 1) {
-            const token = await oauth.credential(id!, name, revision, signal)
+            const token = refresh ? await oauth.credential(id!, name, revision, signal) : (await oauth.readOAuth(id!, name))?.accessToken
             if (!token) throw new Error('Sign in to this MCP server in the Vault')
             const lease = emptyMcpMaterialLease()
             const bytes = new TextEncoder().encode(token)
@@ -104,6 +107,43 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
     const runtime = remoteMcpRuntime(store, access, network, undefined, material)
     return {
         oauth,
+        catalogHealth(launchNonce: string) {
+            return vaultCatalogHealth(db, launchNonce, assertWorkspace, shutdown, async (account, signal) => {
+                const check = async () => {
+                    assertWorkspace()
+                    signal.throwIfAborted()
+                    const row = (await db.execute({
+                        sql: `SELECT s.id,s.name,s.url,s.revision,s.credential_revision,s.credential_header,s.oauth_enabled,
+                            s.sealed IS NOT NULL AS has_credential,o.generation
+                            FROM desktop_vault_mcp_servers s LEFT JOIN desktop_vault_mcp_oauth o ON o.item_id=s.id
+                            WHERE s.id=? AND s.name=? AND s.revision=? AND s.catalog_slug IS NOT NULL AND o.generation IS ?`,
+                        args: [account.id, account.name, account.revision, account.generation],
+                    })).rows[0]
+                    signal.throwIfAborted()
+                    assertWorkspace()
+                    if (!row) throw new Error('Vault app changed')
+                    return row
+                }
+                const row = await check()
+                if (row.oauth_enabled === 1) {
+                    const token = await oauth.readOAuth(account.id, account.name)
+                    if (!token) return 'signed-out'
+                    if (token.refreshPending || token.expiresAt <= Date.now()) return 'expired'
+                }
+                // The workspace owner explicitly checks one saved account. No coworker is
+                // assigned and the probe only initializes the connection and lists tools.
+                const probeStore = {
+                    lifecycle,
+                    async read() { return { ...view(await check()), bearer: '' } },
+                    async readOAuth() { return null },
+                }
+                const probeRuntime = remoteMcpRuntime(probeStore, async () => ({ enabled: true, granted: true }), network, undefined,
+                    (_owner, _name, _revision, _phase, active) => credentials(check, active, false))
+                const result = await probeRuntime.probe(account.id, account.name, account.revision, signal)
+                if (!result.tools) throw new Error('Vault app did not return its tools')
+                return result.tools.length
+            })
+        },
         tools(owner: string, signal: AbortSignal, authorizeRun?: (signal: AbortSignal) => Promise<void>) {
             const active = AbortSignal.any([signal, shutdown])
             if (!authorizeRun) return remoteMcpTools(owner, store, runtime, active)

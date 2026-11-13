@@ -12,5 +12,5 @@ const crypto = createDesktopSecretCrypto(() => {
 })
 
 export async function openDesktopVault(runtime: DesktopRuntime) {
-    return desktopVault(await openDesktopDatabase(runtime.dataRoot), crypto, runtime.workspaceId)
+    return desktopVault(await openDesktopDatabase(runtime.dataRoot), crypto, runtime.workspaceId, runtime.launchNonce)
 }

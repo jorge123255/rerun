@@ -1,7 +1,7 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
 import type { Client, Transaction } from '@libsql/client'
-import { desktopCoworkerVaultListing, desktopVaultListing, desktopVaultProgramCredentialLimit, type DesktopCoworkerVaultMutation, type DesktopCoworkerVaultEntry, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '../../vault'
+import { desktopCoworkerVaultListing, desktopVaultHealthReceipt, desktopVaultListing, desktopVaultProgramCredentialLimit, type DesktopCoworkerVaultMutation, type DesktopCoworkerVaultEntry, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '../../vault'
 import { compileVaultCatalogApp, vaultCatalogAllowsInstances } from './catalog'
 import { newServiceInstanceId } from '@/lib/services/instances'
 import { DesktopHttpError } from '../auth'
@@ -12,7 +12,7 @@ import { withRosterWrite } from '../roster-writes'
 import { vaultProgramCredentialContext } from './mcp-programs'
 import type { DesktopSecretCrypto } from '../secret-requests/crypto'
 
-async function readVault(tx: Transaction) {
+async function readVault(tx: Transaction, launchNonce: string) {
     const coworkers = (await tx.execute(`
         SELECT id,name FROM desktop_agents a WHERE workspace_id=1
         AND NOT EXISTS (SELECT 1 FROM desktop_deletions d WHERE d.agent_id=a.id AND d.completed=0)
@@ -30,12 +30,20 @@ async function readVault(tx: Transaction) {
         id: String(row.id), name: String(row.name), variable: String(row.variable), revision: String(row.revision),
         sharedWithAll: row.shared_with_all === 1, agentIds: attachments.get(String(row.id)) ?? [],
     }))
-    const servers = (await tx.execute('SELECT id,name,url,revision,sealed IS NOT NULL AND credential_header IS NULL AS has_bearer,credential_header,oauth_enabled,catalog_slug,catalog_method,catalog_name,catalog_instance,catalog_label,shared_with_all FROM desktop_vault_mcp_servers ORDER BY name,id')).rows.map(row => ({
+    const servers = (await tx.execute({
+        sql: `SELECT s.id,s.name,s.url,s.revision,s.sealed IS NOT NULL AND s.credential_header IS NULL AS has_bearer,
+            s.credential_header,s.oauth_enabled,s.catalog_slug,s.catalog_method,s.catalog_name,s.catalog_instance,s.catalog_label,s.shared_with_all,h.receipt
+            FROM desktop_vault_mcp_servers s LEFT JOIN desktop_vault_mcp_oauth o ON o.item_id=s.id
+            LEFT JOIN desktop_vault_catalog_health h ON h.item_id=s.id AND h.revision=s.revision
+                AND h.oauth_generation IS o.generation AND h.launch_nonce=?
+            ORDER BY s.name,s.id`, args: [launchNonce],
+    })).rows.map(row => ({
         ...(typeof row.catalog_slug === 'string' && typeof row.catalog_method === 'string' && typeof row.catalog_name === 'string' && {
             catalog: {
                 slug: row.catalog_slug, methodId: row.catalog_method, name: row.catalog_name,
                 ...(typeof row.catalog_instance === 'string' && { instanceId: row.catalog_instance }),
                 ...(typeof row.catalog_label === 'string' && { label: row.catalog_label }),
+                ...(typeof row.receipt === 'string' && { health: desktopVaultHealthReceipt.parse(JSON.parse(row.receipt)) }),
             },
         }),
         kind: 'mcp', id: String(row.id), name: String(row.name), url: String(row.url), revision: String(row.revision),
@@ -94,7 +102,7 @@ function checkAccountLabel(accounts: ReturnType<typeof catalogAccounts>, label: 
     }
 }
 
-export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceId: number) {
+export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, launchNonce = '') {
     async function seal(id: string, variable: string, revision: string, secret: string) {
         const bytes = Buffer.from(secret, 'utf8')
         try {
@@ -109,7 +117,7 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
 
     async function list() {
         const tx = await db.transaction('read')
-        try { return await readVault(tx) } finally { tx.close() }
+        try { return await readVault(tx, launchNonce) } finally { tx.close() }
     }
 
     function mutate(change: DesktopVaultMutation | (DesktopCoworkerVaultMutation & { operation: 'coworker'; agentId: string }), assertCurrent: () => void) {
@@ -125,7 +133,7 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
             const tx = await db.transaction('write')
             try {
                 const revision = randomUUID()
-                const listing = await readVault(tx)
+                const listing = await readVault(tx, launchNonce)
                 let input: DesktopVaultMutation
                 if (change.operation === 'coworker') {
                     requireCoworker(listing, change.agentId)
@@ -312,6 +320,7 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_program_credentials WHERE item_id=?', args: [entry.id] })
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_programs WHERE id=?', args: [entry.id] })
                     } else if ('kind' in entry) {
+                        await tx.execute({ sql: 'DELETE FROM desktop_vault_catalog_health WHERE item_id=?', args: [entry.id] })
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_attachments WHERE item_id=?', args: [entry.id] })
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_oauth WHERE item_id=?', args: [entry.id] })
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_servers WHERE id=?', args: [entry.id] })
@@ -320,7 +329,7 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_secrets WHERE id=?', args: [entry.id] })
                     }
                 }
-                const result = await readVault(tx)
+                const result = await readVault(tx, launchNonce)
                 assertCurrent()
                 await tx.commit()
                 return result

@@ -276,7 +276,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     })
     const deviceReview = bindTrustedMcpDeviceMethodReview({ runtime, db, key: masterKey, store, shutdown: entry.shutdown.signal })
     entry.shutdown.signal.addEventListener('abort', deviceReview.dispose, { once: true })
-    return { store, references, runtime: remote, bridge, vaultOAuth: vaultMcp.oauth, access, authorizeRun, deviceReview, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),
+    return { store, references, runtime: remote, bridge, vaultOAuth: vaultMcp.oauth, checkVaultCatalogHealth: vaultCatalog.catalogHealth(runtime.launchNonce), access, authorizeRun, deviceReview, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),
         browserApprovals: (scope: Omit<Parameters<typeof createDesktopMcpBrowserApprovals>[3], 'workspaceId'>) =>
             createDesktopMcpBrowserApprovals(db, store, masterKey, { ...scope, workspaceId: String(runtime.workspaceId) }),
         localRuntime, localBridge, localApi: stdioApi(localStore, localRuntime, localAuthority), writebackApi: nativeWritebackApi(writeback),

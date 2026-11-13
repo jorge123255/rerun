@@ -1,5 +1,6 @@
 'use client'
 
+import { vaultAccountHealthText } from './vault-account-health'
 import { DesktopVaultCatalog } from './DesktopVaultCatalog'
 import { DesktopMcpOAuthAuthorize } from '../mcp/DesktopMcpOAuthAuthorize'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
@@ -14,10 +15,14 @@ import { PanelSteps } from '@/components/ui/panel-steps'
 import { PanelScroller } from '@/components/ui/panel-list'
 import { desktopVaultListing, desktopVaultProgramCredentialLimit, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '@/lib/desktop/vault'
 
-async function requestVault(signal: AbortSignal, input?: DesktopVaultMutation) {
-    const response = await fetch('/api/desktop/vault', {
+type VaultRequest = DesktopVaultMutation | { operation: 'check-health'; id: string; revision: string }
+
+async function requestVault(signal: AbortSignal, input?: VaultRequest) {
+    const health = input?.operation === 'check-health'
+    const body = health ? { id: input.id, revision: input.revision } : input
+    const response = await fetch(health ? '/api/desktop/vault/health' : '/api/desktop/vault', {
         cache: 'no-store', signal,
-        ...(input && { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }),
+        ...(input && { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
     })
     if (!response.ok) {
         const body = await response.json().catch(() => null)
@@ -51,7 +56,7 @@ function VaultPanel() {
     const [error, setError] = useState('')
     const [busy, setBusy] = useState(true)
     const flight = useRef<AbortController | null>(null)
-    async function run(input?: DesktopVaultMutation, next?: VaultDestination, showError = true) {
+    async function run(input?: VaultRequest, next?: VaultDestination, showError = true) {
         if (flight.current) return new Error('Another Vault request is in progress.')
         const controller = new AbortController()
         flight.current = controller
@@ -134,6 +139,7 @@ function VaultPanel() {
                                 <h4 className="text-xs font-medium uppercase text-muted-foreground">{label}</h4>
                                 {items.map(item => <PanelRow key={item.id} leading={'kind' in item ? <Plug className="size-4" /> : <KeyRound className="size-4" />} title={entryTitle(item)}
                                     description={`${entrySubtitle(item)} · ${item.sharedWithAll ? 'Every coworker' : item.agentIds.length ? `${item.agentIds.length} assigned` : 'Unassigned'}`}
+                                    footer={'kind' in item && item.kind === 'mcp' && item.catalog ? vaultAccountHealthText(item.catalog.health) : undefined}
                                     actions={<ChevronRight className="size-4" />} onClick={() => navigate(item.id)} />)}
                             </section>
                         })}
@@ -295,7 +301,7 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
     entry: DesktopVaultEntry
     coworkers: DesktopVaultListing['coworkers']
     busy: boolean
-    onSubmit: (input: DesktopVaultMutation, next?: VaultDestination, showError?: boolean) => Promise<Error | null>
+    onSubmit: (input: VaultRequest, next?: VaultDestination, showError?: boolean) => Promise<Error | null>
 }) {
     const [agentIds, setAgentIds] = useState(entry.agentIds)
     const [sharedWithAll, setSharedWithAll] = useState(entry.sharedWithAll)
@@ -313,6 +319,12 @@ function VaultDetail({ entry, coworkers, busy, onSubmit }: {
             <p className="font-mono text-sm text-muted-foreground">{entrySubtitle(entry)}</p>
             {server && <p className="text-sm text-muted-foreground">{server.headerName ? `Header configured: ${server.headerName}` : server.hasBearer ? 'Bearer token configured' : server.browserSignIn ? 'Browser sign-in' : 'No authentication configured'}</p>}
         </header>
+        {server?.catalog && <section className="space-y-2 border-t pt-4" aria-label="Account connection">
+            <p role="status" className="text-sm">{vaultAccountHealthText(server.catalog.health)}</p>
+            {server.catalog.health?.message && <p className="text-sm text-muted-foreground">{server.catalog.health.message}</p>}
+            <Button size="sm" variant="outline" disabled={busy || replace || renaming}
+                onClick={() => void onSubmit({ operation: 'check-health', ...target })}>Check connection</Button>
+        </section>}
         <fieldset disabled={busy} className="space-y-3 border-t pt-4">
             <legend className="text-sm font-medium">Coworkers</legend>
             <p className="text-sm text-muted-foreground">{program ? 'Assigned coworkers can run this program when their Local MCP programs permission is on.' : server?.catalog ? 'Assigned coworkers can use this app when their Apps permission is on.' : server ? 'Assigned coworkers can use this server when their MCP permission is on.' : 'Assigned coworkers can use this variable in approved MCP credential references.'}</p>
