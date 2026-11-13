@@ -136,6 +136,7 @@ export function desktopForemanMessages(locale: Locale, source: Source) {
     const { welcome, plan, dock } = source.foreman
     return {
         ...mac[locale],
+        intake: source.foreman.intake,
         pendingSend: pendingSendCopy[locale],
         ask: source.kit.foreman.orbLabel,
         placeholder: `${source.foreman.pill.ask}…`,

@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion } from 'motion/react'
 import { useId } from 'react'
+import { useTranslations } from 'next-intl'
 
 import { Field } from '@/components/ui/field'
 import { IconBadge } from '@/components/ui/icon-badge'
@@ -20,6 +21,7 @@ import type { IntakeDraft } from './steps'
 type IntakeCompanyStepProps = {
     draft: IntakeDraft
     siteRead: ForemanIntakeController['siteRead']
+    platform: string | null
     disabled?: boolean
     autoFocus?: boolean
     onChange: (patch: Partial<IntakeDraft>) => void
@@ -33,14 +35,16 @@ const ADORNMENT_MOTION = {
     transition: { duration: 0.15 },
 }
 
-export function IntakeCompanyStep({ draft, siteRead, disabled, autoFocus, onChange, onEnter }: IntakeCompanyStepProps) {
+export function IntakeCompanyStep({ draft, siteRead, platform, disabled, autoFocus, onChange, onEnter }: IntakeCompanyStepProps) {
     const siteId = useId()
+    const t = useTranslations('foreman.intake.website')
 
     return (
-        <Field label="Company website" htmlFor={siteId}>
+        <Field label={t('label')} htmlFor={siteId} error={platform ? t('platform', { domain: platform }) : undefined}>
             <div className="relative">
                 <Input
                     id={siteId}
+                    aria-invalid={platform ? true : undefined}
                     autoFocus={autoFocus}
                     value={draft.companyUrl}
                     disabled={disabled}

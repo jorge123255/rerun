@@ -17,6 +17,7 @@
         "intake.settingUp": "{title} is the name of the template or coworker the person picked before signing up. <highlight> wraps it.",
         "intake.role.placeholder": "Example job title in an empty field.",
         "intake.name.placeholder": "Example first name in an empty field.",
+        "intake.website.platform": "Shown for a platform instead of a company website. {domain} is the platform host.",
         "intake.skip": "Button: skip the company website question.",
         "ownEntry": "The way out of the onboarding cards: the person already knows which coworker they want and writes it themselves.",
         "gettingStarted.pillLabel": "Accessible label of the checklist pill.",
@@ -159,7 +160,8 @@
         },
         "settingUp": "Setting up <highlight>{title}</highlight>",
         "website": {
-            "label": "Company website"
+            "label": "Company website",
+            "platform": "{domain} is not your company's site. Enter yours, or skip."
         },
         "industry": {
             "label": "Industry",
