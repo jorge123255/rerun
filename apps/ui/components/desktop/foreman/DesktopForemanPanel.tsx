@@ -228,7 +228,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         streaming={!!state.view.live} liveReply={liveReply} orbState={state.view.live ? state.writing ? 'speaking' : 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
         headerActions={<>
-            {props.onSelectConversation && <DesktopForemanConversations chat={state.chat} disabled={!!props.hidden} onSelect={props.onSelectConversation} />}
+            {props.onSelectConversation && <DesktopForemanConversations chat={state.chat} thread={!!props.target} disabled={!!props.hidden} onSelect={props.onSelectConversation} />}
             <DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} onApprovalPermissionChanged={() => { void client.refresh().catch(() => {}) }} />
             {error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}
         </>}
