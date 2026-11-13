@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import { createMacPhonePairingService, CUSTOM_SERVER_KEY, LOOPBACK_HOST, PHONE_SESSION_KEY } from '../src/main/mac-phone-pairing/index.mjs'
 import { hashSecret } from '../src/main/mac-phone-pairing/crypto.mjs'
 import { localPairingAddresses } from '../src/main/mac-phone-pairing/lan-identity.mjs'
-import { createWorkspace, seedLegacyCatalog } from '../src/main/workspaces/catalog.mjs'
+import { createWorkspace, renameWorkspace, seedLegacyCatalog } from '../src/main/workspaces/catalog.mjs'
 import { createMacPairingClient, createMemoryStorage, startSignInEntries } from '../../../packages/mac-pairing-client/src/index.mjs'
 import { pinnedFetch } from './mac-phone-pairing-client-fixture.mjs'
 
@@ -132,6 +132,42 @@ test('phone access and LAN stay off, and constructing the service does not liste
     assert.equal(service.address(), null)
     await assert.rejects(() => service.createOffer(1), error => error.code === 'disabled')
     await assert.rejects(() => service.setLanAddress('192.168.1.2'), error => error.code === 'disabled')
+})
+
+test('pairing status labels phones with their own workspace name as the active workspace changes', async t => {
+    const root = await dataRoot(t)
+    const workspace = await startWorkspaceFixture()
+    t.after(workspace.close)
+    const { service, setSelected } = createService(t, root, { workspace })
+    await service.setPhoneAccessEnabled(true)
+    const second = await createWorkspace(root, INSTALL_ID, {
+        name: 'Second workspace',
+        requestId: '9f1c8a16-6d4a-4c3a-9b2e-0c1d9a7e4b22',
+    })
+    assert.equal(second.ok, true)
+    const { client, pending } = await pairedClient(service)
+    const staleOffer = await service.createOffer(1)
+    const otherPhone = createMacPairingClient({ storage: createMemoryStorage(), deviceName: 'Pending phone' })
+    const waiting = await otherPhone.connectToThisMac(staleOffer)
+    const renamed = await renameWorkspace(root, INSTALL_ID, {
+        workspaceId: 1,
+        name: 'Renamed workspace',
+        requestId: '9f1c8a16-6d4a-4c3a-9b2e-0c1d9a7e4b23',
+    })
+    assert.equal(renamed.ok, true)
+    const status = await service.status()
+    assert.equal(status.selectedWorkspaceName, 'Renamed workspace')
+    assert.equal(status.devices.find(device => device.deviceId === waiting.deviceId).workspaceName, 'Renamed workspace')
+    assert.equal('workspaceName' in staleOffer, false)
+    assert.equal('workspaceName' in await client.readMacSession(), false)
+
+    setSelected(second.workspace.workspaceId)
+    const switched = await service.status()
+    assert.equal(switched.selectedWorkspaceName, 'Second workspace')
+    assert.deepEqual(switched.devices.map(({ deviceId, workspaceName }) => [deviceId, workspaceName]),
+        [[pending.deviceId, 'Renamed workspace']])
+    await assert.rejects(() => service.createOffer(status.selectedWorkspaceId), { code: 'workspace_not_active' })
+    assert.equal((await service.createOffer(switched.selectedWorkspaceId)).workspaceId, second.workspace.workspaceId)
 })
 
 test('revoking a device while a reply is streaming withholds subsequent text', async t => {

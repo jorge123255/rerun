@@ -4,7 +4,7 @@ import { createOfferBook } from './offers.mjs'
 import { DEFAULT_OFFER_TTL_MS, DEVICE_STATUS, ERRORS, LOOPBACK_HOST } from './protocol.mjs'
 import { listPublicDevices, publicDevice, readDeviceStore, readSettings, writeDeviceStore, writeSettings } from './store.mjs'
 import { createPairingTransport } from './transport.mjs'
-import { getWorkspace } from '../workspaces/catalog.mjs'
+import { getWorkspace, listCatalog } from '../workspaces/catalog.mjs'
 
 function refusal(code) {
     return Object.assign(new Error(code), { code })
@@ -76,11 +76,19 @@ export function createMacPhonePairingService({
     }
 
     async function status() {
-        const current = await settings()
+        const [current, deviceStore, workspaces] = await Promise.all([
+            settings(),
+            store(),
+            // A catalog error should not take away the ability to revoke a paired phone.
+            listCatalog(dataRoot, installId).then(({ catalog }) => catalog.workspaces, () => []),
+        ])
+        const workspaceNames = new Map(workspaces
+            .filter(workspace => workspace.pathStatus === 'ready')
+            .map(workspace => [workspace.workspaceId, workspace.name]))
         const selectedWorkspaceId = getRuntime()?.workspaceId ?? null
-        const devices = (await store()).devices.filter(device => device.status !== 'pending'
+        const devices = deviceStore.devices.filter(device => device.status !== 'pending'
             || (device.workspaceId === selectedWorkspaceId && transport?.inScope(device)))
-            .map(publicDevice)
+            .map(device => ({ ...publicDevice(device), workspaceName: workspaceNames.get(device.workspaceId) ?? null }))
         const address = transport?.address() ?? null
         return {
             phoneAccessEnabled: current.phoneAccessEnabled,
@@ -92,6 +100,7 @@ export function createMacPhonePairingService({
             bindHost: address?.host ?? null,
             origin: address?.origin ?? null,
             selectedWorkspaceId,
+            selectedWorkspaceName: workspaceNames.get(selectedWorkspaceId) ?? null,
             macId: installId,
             fingerprint,
             devices,

@@ -623,8 +623,9 @@ async function launch() {
     })
     ipcMain.handle('desktop:phone-pairing-enable', (event, enabled) => trustedPhonePairing(event).setPhoneAccessEnabled(enabled === true))
     ipcMain.handle('desktop:phone-pairing-network', (event, address) => trustedPhonePairing(event).setLanAddress(address))
-    ipcMain.handle('desktop:phone-pairing-offer', async event => {
-        const offer = await trustedPhonePairing(event).createOffer()
+    ipcMain.handle('desktop:phone-pairing-offer', async (event, workspaceId) => {
+        if (!Number.isSafeInteger(workspaceId) || workspaceId < 1) throw new Error('Choose a local workspace before pairing an iPhone.')
+        const offer = await trustedPhonePairing(event).createOffer(workspaceId)
         const qr = await pairingQrImage(resources, offer)
         trustedPhonePairing(event)
         return { offer, qr }

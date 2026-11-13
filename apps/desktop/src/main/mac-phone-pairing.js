@@ -1,6 +1,7 @@
 const enable = document.getElementById('enable-access')
 const entry = document.getElementById('pairing-entry')
 const controls = document.getElementById('pairing-controls')
+const currentWorkspace = document.getElementById('current-workspace')
 const openLocal = document.getElementById('open-local')
 const network = document.getElementById('network')
 const createOffer = document.getElementById('create-offer')
@@ -16,6 +17,7 @@ const pendingList = document.getElementById('pending-list')
 const approved = document.getElementById('approved')
 const approvedList = document.getElementById('approved-list')
 let displayedOffer = null
+let selectedWorkspaceId = null
 let renderedDevices = null
 let renderedNetworks = null
 let updating = false
@@ -47,7 +49,10 @@ function updateCopy(next) {
 function row(device, actionLabel, action) {
     const item = document.createElement('li')
     const label = document.createElement('span')
-    label.textContent = translate('device', { name: device.name || 'iPhone', workspace: device.workspaceId })
+    label.textContent = translate('device', {
+        name: device.name || 'iPhone',
+        workspace: device.workspaceName ?? `#${device.workspaceId}`,
+    })
         + (device.network === 'lan' ? ` · ${copy.localNetwork}` : '')
     const button = document.createElement('button')
     button.textContent = actionLabel
@@ -59,7 +64,8 @@ function row(device, actionLabel, action) {
 async function refresh() {
     const status = await window.desktopApp.phonePairing.status()
     updateCopy(status.copy)
-    const ready = status?.selectedWorkspaceId != null
+    selectedWorkspaceId = status.selectedWorkspaceId ?? null
+    const ready = selectedWorkspaceId !== null
     entry.hidden = ready
     openLocal.disabled = ready
     controls.hidden = !ready
@@ -73,6 +79,8 @@ async function refresh() {
         offer.textContent = ''
     }
     if (!ready) return
+    const workspaceLabel = translate('currentWorkspace', { workspace: status.selectedWorkspaceName ?? `#${selectedWorkspaceId}` })
+    if (currentWorkspace.textContent !== workspaceLabel) currentWorkspace.textContent = workspaceLabel
     enable.checked = !!status.phoneAccessEnabled
     const addresses = status.lanAddresses ?? []
     const choices = JSON.stringify([status.lanAddress, addresses])
@@ -148,10 +156,10 @@ network.addEventListener('change', () => {
     void updateSetting(() => window.desktopApp.phonePairing.setNetwork(network.value || null)).catch(() => showError('unavailable'))
 })
 createOffer.addEventListener('click', async () => {
-    if (creatingOffer) return
+    if (creatingOffer || selectedWorkspaceId === null) return
     creatingOffer = createOffer.disabled = true
     try {
-        const result = await window.desktopApp.phonePairing.createOffer()
+        const result = await window.desktopApp.phonePairing.createOffer(selectedWorkspaceId)
         displayedOffer = result.offer
         qr.hidden = qrInstructions.hidden = !result.qr
         if (result.qr) qr.src = result.qr

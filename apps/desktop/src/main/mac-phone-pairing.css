@@ -8,6 +8,7 @@ h2 { font-size: 15px; margin: 0 0 8px; }
 #pairing-entry[hidden] { display: none; }
 #pairing-entry { text-align: center; }
 .footnote, .mono { margin: 0; font-size: 13px; color: var(--auth-muted); }
+#current-workspace, li > span { overflow-wrap: anywhere; }
 .mono { font-family: ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; }
 .toggle { display: flex; gap: 8px; align-items: center; }
 select { max-width: 100%; }
