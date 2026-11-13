@@ -289,6 +289,14 @@ const desktopModelPickerCopy = {
     },
 }
 
+const workspaceCreationRecovery = {
+    en: { checkCreation: 'Check creation', unconfirmed: 'Could not confirm workspace creation. Check the same request to avoid creating a duplicate.' },
+    fr: { checkCreation: 'Vérifier la création', unconfirmed: 'La création du workspace n’a pas pu être confirmée. Vérifiez la même demande pour éviter un doublon.' },
+    es: { checkCreation: 'Comprobar la creación', unconfirmed: 'No se pudo confirmar la creación del espacio de trabajo. Comprueba la misma solicitud para evitar duplicados.' },
+    pt: { checkCreation: 'Verificar criação', unconfirmed: 'Não foi possível confirmar a criação do espaço de trabalho. Verifique a mesma solicitação para evitar duplicatas.' },
+    de: { checkCreation: 'Erstellung prüfen', unconfirmed: 'Die Erstellung des Arbeitsbereichs konnte nicht bestätigt werden. Prüfe dieselbe Anfrage, um ein Duplikat zu vermeiden.' },
+}
+
 export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
     return {
         ...mac[locale],
@@ -296,6 +304,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         macSettings: macSettingsCopy[locale],
         newWorkspace: {
             ...source.dialogs.createWorkspace,
+            ...workspaceCreationRecovery[locale],
             menu: source.layout.workspaceMenu.newWorkspace,
         },
         workspaceForm: {

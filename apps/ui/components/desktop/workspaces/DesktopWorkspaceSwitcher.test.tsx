@@ -159,3 +159,53 @@ test('keeps a confirmed workspace available to open when the catalog cannot be r
     expect(switchTo).toHaveBeenLastCalledWith({ requestId: expect.any(String), workspaceId: 2 })
     expect(create).toHaveBeenCalledOnce()
 })
+
+test('allows editing after a busy refusal and checks the same request after a lost create response', async () => {
+    const original = workspace(1, 'My workspace')
+    const saved = workspace(2, 'Revised workspace')
+    const create = vi.fn<DesktopWorkspaceClient['create']>()
+        .mockResolvedValueOnce({ ok: false, code: 'busy', message: 'Switch is busy.' })
+        .mockRejectedValueOnce(new Error('Reply lost after saving'))
+        .mockResolvedValueOnce({ ok: true, workspace: saved, switched: false })
+    const switchTo = vi.fn<DesktopWorkspaceClient['switchTo']>().mockResolvedValue({ ok: false, code: 'busy', message: 'Switch is busy.' })
+    const client: DesktopWorkspaceClient = { list: async () => listResult(1, [original]), create, rename: vi.fn(), switchTo }
+    mount(<DesktopWorkspaceSwitcher client={client} />)
+    await act(async () => { await Promise.resolve() })
+    await openMenu(document.querySelector<HTMLButtonElement>('[aria-label^="Workspace menu"]')!)
+    await act(async () => { menuItem('New workspace')!.click() })
+
+    const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]')!
+    const click = async (text: string) => {
+        const button = [...dialog().querySelectorAll('button')].find(item => item.textContent?.trim() === text)
+        expect(button, text).toBeDefined()
+        await act(async () => { button!.click() })
+    }
+    async function name(value: string) {
+        const input = dialog().querySelector('input')!
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
+            input.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+    }
+
+    await name('First name')
+    await click('Continue')
+    await click('Create workspace')
+    expect(dialog().querySelector('[role="alert"]')?.textContent).toBe('Switch is busy.')
+    await click('Back')
+    await name(saved.name)
+    await click('Continue')
+    await click('Create workspace')
+    expect(create).toHaveBeenCalledTimes(2)
+    const [revisedRequest] = create.mock.calls[1]!
+    expect(revisedRequest.name).toBe(saved.name)
+    expect(revisedRequest.requestId).not.toBe(create.mock.calls[0]![0].requestId)
+    expect(dialog().querySelector('[role="alert"]')?.textContent).toMatch(/could not confirm/i)
+    expect(dialog().querySelectorAll('button[aria-pressed]:disabled').length).toBeGreaterThan(0)
+    expect([...dialog().querySelectorAll('button')].some(button => button.textContent === 'Back')).toBe(false)
+
+    await click('Check creation')
+    expect(create).toHaveBeenCalledTimes(3)
+    expect(create).toHaveBeenLastCalledWith(revisedRequest)
+    expect(switchTo).toHaveBeenCalledExactlyOnceWith({ requestId: expect.any(String), workspaceId: saved.workspaceId })
+})

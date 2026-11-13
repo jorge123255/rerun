@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import type { DesktopWorkspaceClient } from '@/lib/desktop/workspaces'
-import type { DesktopWorkspaceRecord } from '@rerun/contracts'
+import type { DesktopWorkspaceCreateInput, DesktopWorkspaceRecord } from '@rerun/contracts'
 import { DESKTOP_WORKSPACE_ICONS } from '@/lib/desktop/icon-catalog'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 import { cn } from '@/lib/utils'
@@ -36,24 +36,27 @@ export function CreateDesktopWorkspaceDialog({
     const [iconCatalogId, setIconCatalogId] = useState<string | null>(null)
     const [busy, setBusy] = useState(false)
     const [error, setError] = useState<string | null>(null)
-    const attempt = useRef<{ requestId: string; name: string; iconCatalogId: string | null } | null>(null)
+    const [checking, setChecking] = useState(false)
+    const attempt = useRef<DesktopWorkspaceCreateInput | null>(null)
+    const submitting = useRef(false)
 
     useEffect(() => {
         if (!open) return
         setStep(attempt.current ? 1 : 0)
         setName(attempt.current?.name ?? '')
         setError(null)
+        setChecking(attempt.current !== null)
         setBusy(false)
         setIconCatalogId(attempt.current ? attempt.current.iconCatalogId : icons[0]?.id ?? null)
     }, [open, icons])
 
     const close = () => {
-        if (busy) return
+        if (submitting.current) return
         onOpenChange(false)
     }
 
     const submit = async () => {
-        if (busy) return
+        if (submitting.current) return
         const trimmed = name.trim()
         if (!trimmed) { setError(t('newWorkspace.nameRequired')); return }
         if (trimmed.length > WORKSPACE_NAME_MAX) {
@@ -65,22 +68,31 @@ export function CreateDesktopWorkspaceDialog({
             setError(null)
             return
         }
+        submitting.current = true
         setBusy(true)
         setError(null)
+        const previous = attempt.current
+        const request = previous ?? { requestId: crypto.randomUUID(), name: trimmed, iconCatalogId }
+        attempt.current = request
         try {
-            if (attempt.current && (attempt.current.name !== trimmed || attempt.current.iconCatalogId !== iconCatalogId)) throw new Error('Confirm the previous workspace before creating another.')
-            attempt.current ??= { requestId: crypto.randomUUID(), name: trimmed, iconCatalogId }
-            const result = await client.create(attempt.current)
+            const result = await client.create(request)
             if (!result.ok) {
+                // Busy is returned before creating anything. If an earlier reply was lost,
+                // it still cannot tell us whether that earlier request succeeded.
+                if (!previous && result.code === 'busy') attempt.current = null
+                setChecking(attempt.current !== null)
                 setError(result.message)
-                setBusy(false)
                 return
             }
             attempt.current = null
+            setChecking(false)
             onOpenChange(false)
             onCreated(result.workspace)
         } catch {
-            setError('The workspace could not be confirmed. Retry with the same name and icon to check it.')
+            setChecking(true)
+            setError(t('newWorkspace.unconfirmed'))
+        } finally {
+            submitting.current = false
             setBusy(false)
         }
     }
@@ -120,7 +132,7 @@ export function CreateDesktopWorkspaceDialog({
                                         <button
                                             key={icon.id}
                                             type="button"
-                                            disabled={busy}
+                                            disabled={busy || checking}
                                             aria-pressed={selected}
                                             onClick={() => setIconCatalogId(icon.id)}
                                             className={cn(
@@ -140,16 +152,17 @@ export function CreateDesktopWorkspaceDialog({
                             </div>
                         )}
                         {error && <p className="mt-4 text-sm text-destructive" role="alert">{error}</p>}
+                        {checking && error !== t('newWorkspace.unconfirmed') && <p className="mt-4 text-sm text-muted-foreground">{t('newWorkspace.unconfirmed')}</p>}
                     </div>
                     <DialogFooter className="mt-auto -mx-6 -mb-6 flex flex-wrap gap-2 border-t bg-muted/50 px-6 py-4">
-                        {step === 0 ? (
+                        {step === 0 || checking ? (
                             <Button type="button" variant="outline" disabled={busy} onClick={close}>{t('workspaceForm.cancel')}</Button>
                         ) : (
                             <Button type="button" variant="outline" disabled={busy} onClick={() => setStep(0)}>{t('newWorkspace.back')}</Button>
                         )}
                         <Button type="submit" disabled={busy || !name.trim()}>
                             {busy && <Loader2Icon className="animate-spin" />}
-                            {t(step === 0 ? 'newWorkspace.continue' : busy ? 'newWorkspace.creating' : 'newWorkspace.create')}
+                            {t(step === 0 ? 'newWorkspace.continue' : busy ? 'newWorkspace.creating' : checking ? 'newWorkspace.checkCreation' : 'newWorkspace.create')}
                         </Button>
                     </DialogFooter>
                 </form>
