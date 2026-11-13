@@ -12,17 +12,19 @@
   <div class="welcome-board" aria-hidden="true"></div>
   <main>
     <img class="foreman" src="startup-assets/foreman.webp" alt="" width="72" height="74">
-    <h1 id="welcome-title">Welcome to Rerun</h1>
-    <p id="message" role="status">Preparing your local workspace…</p>
-    <div class="actions">
-      <button id="run-locally" hidden></button>
-      <button id="sign-in-cloud" class="secondary" hidden></button>
-      <button id="connect-server" class="secondary" hidden></button>
-      <button id="retry" hidden>Try again</button>
+    <div class="welcome-content">
+      <h1 id="welcome-title">Welcome to Rerun</h1>
+      <p id="message" role="status">Preparing your local workspace…</p>
+      <div class="actions">
+        <button id="run-locally" hidden></button>
+        <button id="sign-in-cloud" class="secondary" hidden></button>
+        <p id="cloud-error" class="connection-error" role="alert" hidden></p>
+        <button id="connect-server" class="text-action" hidden></button>
+        <button id="retry" hidden>Try again</button>
+      </div>
+      <p id="local-footnote" class="footnote">Your workspace and history stay on this Mac. AI providers use the network when you chat.</p>
+      <button id="quit" class="text-action">Quit</button>
     </div>
-    <p id="cloud-error" class="connection-error" role="alert" hidden></p>
-    <p id="local-footnote" class="footnote">Your workspace and history stay on this Mac. AI providers use the network when you chat.</p>
-    <button id="quit" class="secondary">Quit</button>
   </main>
   <script src="startup.js"></script>
 </body>

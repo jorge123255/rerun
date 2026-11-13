@@ -17,19 +17,13 @@ body.auth-surface {
     --auth-muted: light-dark(#626262, #a1a1a1);
 }
 body.welcome {
-    position: relative;
-    align-items: end;
-    isolation: isolate;
-    padding: clamp(144px, 42vh, 520px) 24px 28px;
+    grid-template-rows: minmax(132px, 1fr) auto;
+    place-items: stretch;
 }
 .welcome #mac-titlebar { z-index: 1; }
 .welcome-board {
-    position: absolute;
-    inset: 0 0 auto;
-    z-index: -1;
-    height: clamp(235px, 71vh, 640px);
-    background: url("startup-assets/board-light.webp") center top / cover no-repeat;
-    mask-image: linear-gradient(#000 58%, transparent);
+    background: url("startup-assets/board-light.webp") center / cover no-repeat;
+    mask-image: linear-gradient(transparent, #000 12%, #000 88%, transparent);
     pointer-events: none;
 }
 @media (prefers-color-scheme: dark) {
@@ -37,36 +31,34 @@ body.welcome {
 }
 .welcome main {
     position: relative;
-    width: min(100%, 464px);
-    border: 1px solid var(--auth-border);
-    border-radius: 24px;
+    border-radius: 24px 24px 0 0;
     background: var(--auth-card);
-    padding: 46px 30px 16px;
+    padding: 52px 24px 16px;
     text-align: center;
-    box-shadow: 0 16px 54px light-dark(#00000015, #0009);
+    box-shadow: 0 -1px 0 light-dark(#0000000a, #ffffff0f), 0 -12px 40px light-dark(#00000014, #0008);
 }
+.welcome-content { max-width: 440px; margin-inline: auto; }
 .welcome .foreman {
     position: absolute;
-    inset: -38px auto auto 50%;
+    inset: -44px auto auto 50%;
     translate: -50%;
     filter: drop-shadow(0 6px 12px #21136555);
 }
 .welcome h1 {
     margin: 0;
-    font-size: clamp(24px, 4vw, 34px);
-    font-weight: 600;
-    line-height: 1.16;
-    letter-spacing: -.035em;
+    font-size: 30px;
+    font-weight: 500;
+    line-height: 1.2;
+    letter-spacing: -.02em;
     text-wrap: balance;
 }
 .welcome #message {
-    min-height: 0;
-    margin: 9px 0 0;
-    font-size: 14px;
-    line-height: 1.45;
+    margin: 4px 0 0;
+    font-size: 15px;
+    line-height: 20px;
     color: var(--auth-muted);
 }
-.welcome .actions { display: grid; gap: 8px; margin: 22px 0 0; }
+.welcome .actions { display: grid; gap: 8px; margin: 16px 0 0; }
 .welcome .actions:not(:has(button:not([hidden]))) { display: none; }
 .auth-surface button {
     min-height: 46px;
@@ -89,27 +81,34 @@ body.welcome {
 .auth-surface button:enabled:hover { filter: brightness(light-dark(1.08, .9)); }
 .auth-surface button.secondary:enabled:hover { background: light-dark(#f3f3f3, #232323); }
 .auth-surface button:focus-visible { outline: 2px solid light-dark(#4d34f7, #b7a8ff); outline-offset: 2px; }
-.welcome .connection-error { margin: 12px 0 0; font-size: 13px; color: light-dark(#b70013, #ff9294); }
-.welcome .footnote { max-width: 400px; margin: 16px auto 0; color: var(--auth-muted); font-size: 12px; line-height: 1.7; }
-.welcome #quit {
+.welcome .actions button {
+    min-height: 52px;
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 22px;
+}
+.welcome .actions button.secondary {
+    background: light-dark(#fff, #ffffff0b);
+    border-color: light-dark(#e4e4e4, #ffffff26);
+}
+.welcome .connection-error { margin: 0; font-size: 13px; color: light-dark(#b70013, #ff9294); }
+.welcome .footnote { margin: 16px auto 0; color: var(--auth-muted); font-size: 12px; line-height: 16px; }
+.welcome button.text-action {
+    justify-self: center;
     min-height: 36px;
-    margin: 9px 0 0;
-    border-color: transparent;
-    color: var(--auth-muted);
-    font-size: 13px;
+    background: transparent;
+    color: inherit;
+    font-size: 15px;
     font-weight: 500;
 }
-@media (max-width: 560px) {
-    body.welcome { padding: clamp(150px, 42vh, 430px) 0 0; }
-    .welcome-board { background-size: auto 100%; }
-    .welcome main { width: 100%; border-radius: 24px 24px 0 0; padding-inline: 24px; }
+.welcome button.text-action:enabled:hover { background: light-dark(#0000000a, #ffffff0b); filter: none; }
+.welcome #quit { color: var(--auth-muted); font-size: 13px; }
+@media (max-width: 600px) {
+    .welcome-board { background-position: 18% center; background-size: auto max(100%, 270px); }
 }
 @media (max-height: 580px) {
-    body.welcome { padding-top: max(122px, calc(100vh - 340px)); }
-    .welcome main { padding-top: 38px; padding-bottom: 8px; }
-    .welcome .foreman { width: 64px; height: auto; inset-block-start: -35px; }
-    .welcome .actions { margin-top: 16px; }
-    .welcome button { min-height: 42px; }
+    .welcome main { padding-block: 44px 8px; }
+    .welcome .foreman { width: 64px; height: auto; inset-block-start: -40px; }
 }
 
 body.recovery { padding: 52px 24px 28px; }
