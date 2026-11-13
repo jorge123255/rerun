@@ -1,0 +1,55 @@
+import type { Locale } from '@rerun/i18n'
+
+const en = {
+    find: 'Find in PDF', query: 'Find text', previousMatch: 'Previous match', nextMatch: 'Next match',
+    previousPage: 'Previous page', nextPage: 'Next page', page: 'Page {page, number} of {total}',
+    description: '{name}, page {page, number} of {total, number}', zoom: 'PDF zoom', zoomIn: 'Zoom in',
+    zoomOut: 'Zoom out', fit: 'Fit width', loadingPage: 'Loading PDF page', retry: 'Retry',
+    reading: 'Reading PDF text…', readFailed: 'Could not read this PDF’s text.',
+    partial: 'Search covers only part of this PDF.', noText: 'No searchable text',
+    misaligned: 'This page’s text does not match the displayed page.', noMatches: 'No matches',
+    noMatchesPartial: 'No matches. Search covers only part of this PDF.',
+}
+export const desktopPdfCopy = {
+    en,
+    fr: {
+        find: 'Rechercher dans le PDF', query: 'Rechercher du texte', previousMatch: 'Résultat précédent', nextMatch: 'Résultat suivant',
+        previousPage: 'Page précédente', nextPage: 'Page suivante', page: 'Page {page, number} sur {total}',
+        description: '{name}, page {page, number} sur {total, number}', zoom: 'Zoom du PDF', zoomIn: 'Agrandir',
+        zoomOut: 'Réduire', fit: 'Ajuster à la largeur', loadingPage: 'Chargement de la page PDF', retry: 'Réessayer',
+        reading: 'Lecture du texte du PDF…', readFailed: 'Impossible de lire le texte de ce PDF.',
+        partial: 'La recherche ne couvre qu’une partie de ce PDF.', noText: 'Aucun texte consultable',
+        misaligned: 'Le texte de cette page ne correspond pas à la page affichée.', noMatches: 'Aucun résultat',
+        noMatchesPartial: 'Aucun résultat. La recherche ne couvre qu’une partie de ce PDF.',
+    },
+    es: {
+        find: 'Buscar en el PDF', query: 'Buscar texto', previousMatch: 'Resultado anterior', nextMatch: 'Resultado siguiente',
+        previousPage: 'Página anterior', nextPage: 'Página siguiente', page: 'Página {page, number} de {total}',
+        description: '{name}, página {page, number} de {total, number}', zoom: 'Zoom del PDF', zoomIn: 'Acercar',
+        zoomOut: 'Alejar', fit: 'Ajustar al ancho', loadingPage: 'Cargando página del PDF', retry: 'Reintentar',
+        reading: 'Leyendo el texto del PDF…', readFailed: 'No se pudo leer el texto de este PDF.',
+        partial: 'La búsqueda solo cubre una parte de este PDF.', noText: 'No hay texto en el que buscar',
+        misaligned: 'El texto de esta página no coincide con la página mostrada.', noMatches: 'Sin resultados',
+        noMatchesPartial: 'Sin resultados. La búsqueda solo cubre una parte de este PDF.',
+    },
+    pt: {
+        find: 'Buscar no PDF', query: 'Buscar texto', previousMatch: 'Resultado anterior', nextMatch: 'Próximo resultado',
+        previousPage: 'Página anterior', nextPage: 'Próxima página', page: 'Página {page, number} de {total}',
+        description: '{name}, página {page, number} de {total, number}', zoom: 'Zoom do PDF', zoomIn: 'Aumentar zoom',
+        zoomOut: 'Diminuir zoom', fit: 'Ajustar à largura', loadingPage: 'Carregando página do PDF', retry: 'Tentar novamente',
+        reading: 'Lendo o texto do PDF…', readFailed: 'Não foi possível ler o texto deste PDF.',
+        partial: 'A busca cobre apenas parte deste PDF.', noText: 'Não há texto pesquisável',
+        misaligned: 'O texto desta página não corresponde à página exibida.', noMatches: 'Nenhum resultado',
+        noMatchesPartial: 'Nenhum resultado. A busca cobre apenas parte deste PDF.',
+    },
+    de: {
+        find: 'Im PDF suchen', query: 'Text suchen', previousMatch: 'Vorheriger Treffer', nextMatch: 'Nächster Treffer',
+        previousPage: 'Vorherige Seite', nextPage: 'Nächste Seite', page: 'Seite {page, number} von {total}',
+        description: '{name}, Seite {page, number} von {total, number}', zoom: 'PDF-Zoom', zoomIn: 'Vergrößern',
+        zoomOut: 'Verkleinern', fit: 'An Breite anpassen', loadingPage: 'PDF-Seite wird geladen', retry: 'Erneut versuchen',
+        reading: 'PDF-Text wird gelesen…', readFailed: 'Der Text dieses PDFs konnte nicht gelesen werden.',
+        partial: 'Die Suche erfasst nur einen Teil dieses PDFs.', noText: 'Kein durchsuchbarer Text',
+        misaligned: 'Der Text dieser Seite stimmt nicht mit der angezeigten Seite überein.', noMatches: 'Keine Treffer',
+        noMatchesPartial: 'Keine Treffer. Die Suche erfasst nur einen Teil dieses PDFs.',
+    },
+} satisfies Record<Locale, typeof en>
