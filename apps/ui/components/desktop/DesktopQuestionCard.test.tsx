@@ -64,6 +64,27 @@ test('uses the original option form and submits an authoritative answer only onc
     expect(document.querySelector('input[type="file"]')).toBeNull()
 })
 
+test('Enter confirms an in-progress input-method composition before submitting the final answer', async () => {
+    const onAnswer = vi.fn(async (_payload: DesktopQuestionAnswer) => {})
+    const root = mount()
+    await act(async () => {
+        root.render(<DesktopQuestionCard question={{ ...question, questions: [{ question: 'What should I call this?', options: [] }] }}
+            onAnswer={onAnswer} />)
+    })
+    const textarea = document.querySelector('textarea')!
+    const pressEnter = async (isComposing: boolean) => {
+        const event = new KeyboardEvent('keydown', { key: 'Enter', isComposing, bubbles: true, cancelable: true })
+        await act(async () => { textarea.dispatchEvent(event) })
+        return event
+    }
+    await enter('とうきょう')
+    expect((await pressEnter(true)).defaultPrevented).toBe(false)
+    expect(onAnswer).not.toHaveBeenCalled()
+    await enter('東京')
+    expect((await pressEnter(false)).defaultPrevented).toBe(true)
+    expect(onAnswer).toHaveBeenCalledExactlyOnceWith({ questionId: question.id, requestId: expect.any(String), action: 'answer', answers: [['東京']] })
+})
+
 test.each([
     ['text', false], ['image', false], ['text', true], ['image', true],
 ] as const)('restores a %s attachment and submits a file-only answer (Chief of Staff: %s)', async (kind, foreman) => {

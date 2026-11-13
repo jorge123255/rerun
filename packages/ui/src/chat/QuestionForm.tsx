@@ -262,7 +262,7 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
                 onKeyDown={e => {
                     e.stopPropagation()
                     textareaProps?.onKeyDown?.(e)
-                    if (e.defaultPrevented) return
+                    if (e.defaultPrevented || e.nativeEvent.isComposing) return
                     if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault()
                         advance()
