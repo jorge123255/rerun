@@ -103,10 +103,25 @@ async function refresh() {
     const paired = status.devices.filter(device => device.status === 'approved')
     pending.hidden = waiting.length === 0
     approved.hidden = paired.length === 0
-    pendingList.replaceChildren(...waiting.map(device => row(device, copy.approve, async id => {
-        try { await window.desktopApp.phonePairing.approve(id); showError(''); await refresh() }
-        catch { showError('approveFailed') }
-    })))
+    pendingList.replaceChildren(...waiting.map(device => {
+        const item = row(device, copy.approve, async id => {
+            try { await window.desktopApp.phonePairing.approve(id); showError(''); await refresh() }
+            catch { showError('approveFailed'); await refresh().catch(() => showError('unavailable')) }
+        })
+        const actions = document.createElement('div')
+        actions.className = 'pending-actions'
+        actions.append(item.lastElementChild)
+        const decline = document.createElement('button')
+        decline.className = 'secondary'
+        decline.textContent = copy.decline
+        decline.addEventListener('click', async () => {
+            try { await window.desktopApp.phonePairing.decline(device.deviceId); showError(''); await refresh() }
+            catch { showError('declineFailed'); await refresh().catch(() => showError('unavailable')) }
+        })
+        actions.prepend(decline)
+        item.append(actions)
+        return item
+    }))
     approvedList.replaceChildren(...paired.map(device => {
         const item = row(device, copy.revoke, async id => {
             try { await window.desktopApp.phonePairing.revoke(id); showError(''); await refresh() }

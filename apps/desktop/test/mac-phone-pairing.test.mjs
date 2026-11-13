@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { createMacPhonePairingService, CUSTOM_SERVER_KEY, LOOPBACK_HOST, PHONE_SESSION_KEY } from '../src/main/mac-phone-pairing/index.mjs'
+import { CREDENTIAL_CLAIM_TTL_MS } from '../src/main/mac-phone-pairing/protocol.mjs'
 import { hashSecret } from '../src/main/mac-phone-pairing/crypto.mjs'
 import { localPairingAddresses } from '../src/main/mac-phone-pairing/lan-identity.mjs'
 import { createWorkspace, renameWorkspace, seedLegacyCatalog } from '../src/main/workspaces/catalog.mjs'
@@ -168,6 +169,40 @@ test('pairing status labels phones with their own workspace name as the active w
         [[pending.deviceId, 'Renamed workspace']])
     await assert.rejects(() => service.createOffer(status.selectedWorkspaceId), { code: 'workspace_not_active' })
     assert.equal((await service.createOffer(switched.selectedWorkspaceId)).workspaceId, second.workspace.workspaceId)
+})
+
+test('declining a pending request persists and cannot revoke an already approved phone', async t => {
+    const root = await dataRoot(t)
+    const { service, setSelected } = createService(t, root)
+    await service.setPhoneAccessEnabled(true)
+    const { pending: approved } = await pairedClient(service)
+    await assert.rejects(() => service.declineDevice(approved.deviceId), { code: 'not_found' })
+    const phone = createMacPairingClient({ storage: createMemoryStorage() })
+    const pending = await phone.connectToThisMac(await service.createOffer(1))
+    setSelected(2)
+    await assert.rejects(() => service.declineDevice(pending.deviceId), { code: 'not_found' })
+    setSelected(1)
+    await service.declineDevice(pending.deviceId)
+    assert.deepEqual(await phone.waitForApproval(), { status: 'revoked' })
+    await assert.rejects(() => service.approveDevice(pending.deviceId), { code: 'not_found' })
+    await service.stop()
+    const reopened = createService(t, root).service
+    await reopened.restore()
+    assert.deepEqual(await phone.waitForApproval(), { status: 'revoked' })
+    assert.equal((await reopened.status()).devices.find(device => device.deviceId === approved.deviceId).status, 'approved')
+})
+
+test('expired approval requests stop appearing in the Mac pairing status', async t => {
+    const root = await dataRoot(t)
+    const { service, time } = createService(t, root)
+    await service.setPhoneAccessEnabled(true)
+    const phone = createMacPairingClient({ storage: createMemoryStorage() })
+    const pending = await phone.connectToThisMac(await service.createOffer(1))
+    assert.equal((await service.status()).devices[0].status, 'pending')
+    time.advance(CREDENTIAL_CLAIM_TTL_MS)
+    assert.deepEqual((await service.status()).devices, [])
+    assert.deepEqual(await phone.waitForApproval(), { status: 'revoked' })
+    await assert.rejects(() => service.approveDevice(pending.deviceId), { code: 'not_found' })
 })
 
 test('revoking a device while a reply is streaming withholds subsequent text', async t => {

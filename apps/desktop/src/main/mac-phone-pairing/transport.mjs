@@ -321,10 +321,15 @@ export function createPairingTransport({
             claims.set(device.deviceId, { credential, runtime: current, expiresAt: at + CREDENTIAL_CLAIM_TTL_MS })
             return publicDevice(device)
         },
-        async revoke(deviceId) {
+        async revoke(deviceId, { pendingOnly = false } = {}) {
+            const current = getRuntime()
             const store = await getStore()
             const device = store.devices.find(entry => entry.deviceId === deviceId)
             if (!device) throw hiddenWorkspaceError()
+            if (pendingOnly) {
+                if (device.status !== DEVICE_STATUS.pending || !inScope(device)) throw hiddenWorkspaceError()
+                await workspaceFor(device, device.workspaceId, current)
+            }
             device.status = DEVICE_STATUS.revoked
             device.revokedAt = new Date(now()).toISOString()
             claims.delete(device.deviceId)

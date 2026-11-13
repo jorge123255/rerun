@@ -1,7 +1,7 @@
 import { macFingerprint } from './crypto.mjs'
 import { isPrivateAddress, loadLanIdentity, localPairingAddresses } from './lan-identity.mjs'
 import { createOfferBook } from './offers.mjs'
-import { DEFAULT_OFFER_TTL_MS, DEVICE_STATUS, ERRORS, LOOPBACK_HOST } from './protocol.mjs'
+import { CREDENTIAL_CLAIM_TTL_MS, DEFAULT_OFFER_TTL_MS, DEVICE_STATUS, ERRORS, LOOPBACK_HOST } from './protocol.mjs'
 import { listPublicDevices, publicDevice, readDeviceStore, readSettings, writeDeviceStore, writeSettings } from './store.mjs'
 import { createPairingTransport } from './transport.mjs'
 import { getWorkspace, listCatalog } from '../workspaces/catalog.mjs'
@@ -86,8 +86,10 @@ export function createMacPhonePairingService({
             .filter(workspace => workspace.pathStatus === 'ready')
             .map(workspace => [workspace.workspaceId, workspace.name]))
         const selectedWorkspaceId = getRuntime()?.workspaceId ?? null
-        const devices = deviceStore.devices.filter(device => device.status !== 'pending'
-            || (device.workspaceId === selectedWorkspaceId && transport?.inScope(device)))
+        const at = now()
+        const devices = deviceStore.devices.filter(device => device.status !== DEVICE_STATUS.pending
+            || (device.workspaceId === selectedWorkspaceId && transport?.inScope(device)
+                && at - Date.parse(device.createdAt) < CREDENTIAL_CLAIM_TTL_MS))
             .map(device => ({ ...publicDevice(device), workspaceName: workspaceNames.get(device.workspaceId) ?? null }))
         const address = transport?.address() ?? null
         return {
@@ -150,6 +152,10 @@ export function createMacPhonePairingService({
         approveDevice: deviceId => exclusive(async () => {
             if (!transport || !(await settings()).phoneAccessEnabled) throw refusal(ERRORS.disabled)
             return transport.approve(deviceId)
+        }),
+        declineDevice: deviceId => exclusive(async () => {
+            if (!transport || !(await settings()).phoneAccessEnabled) throw refusal(ERRORS.disabled)
+            return transport.revoke(deviceId, { pendingOnly: true })
         }),
         setSendMessages: (deviceId, enabled) => exclusive(async () => {
             const record = await store()
