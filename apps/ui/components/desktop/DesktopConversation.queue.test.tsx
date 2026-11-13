@@ -85,6 +85,23 @@ test('busy Send saves the attachment and exact chat, then flushes once using its
     expect(saved.has('one')).toBe(false)
 })
 
+test('Send in the full editor queues the same long draft behind the current reply', async () => {
+    const text = 'Prepare the follow-up after this reply. '.repeat(10).trim()
+    await render('one', { text: '', attachment: 'notes.md' })
+    await type(text)
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Open the full editor"]')!.click() })
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.textContent).toContain('Write your message')
+    const send = [...dialog.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Send')!
+    await act(async () => { send.click() })
+    const queued = saved.get('one')
+    expect(queued).toMatchObject({ text, attachmentPath: 'notes.md', behindRunId: firstRun })
+    expect(sent).toHaveLength(0)
+    await finishRun()
+    expect(sent).toEqual([{ agentId: 'agent', sessionId: 'one', text, requestId: queued!.id, attachmentPath: 'notes.md' }])
+    expect(saved.has('one')).toBe(false)
+})
+
 test('Send now waits for successful cancellation, and a failed stop leaves the queued message intact', async () => {
     await render(); await type('Next please'); await click('Send')
     const queued = saved.get('one')!

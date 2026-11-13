@@ -1682,7 +1682,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                         // The normal form admission compares the current draft with its render's
                         // snapshot. Publish edited text before dispatching that form's submit.
                         flushSync(() => { setInput(markdown); setEditorOpen(false) })
-                        if (!active || inactive || generating || stopping || draft.quitting || !ready || uploadsActive || preparingSend || !!pendingRequest) return
+                        if (!active || inactive || stopping || draft.quitting || !ready || uploadsActive || preparingSend || !!pendingRequest) return
                         composerForm.current?.requestSubmit()
                     }} />
                 <form ref={composerForm} data-slot="desktop-composer" onSubmit={submit} hidden={!!pendingRequest || setupBlocked} className={cn('relative min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', pendingRequest || setupBlocked ? 'hidden' : 'flex')}>
