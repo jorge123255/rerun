@@ -128,7 +128,10 @@ export const CODEX_HARNESS_OVERRIDES: CodexConfigOverrides = {
     'features.goals': false,
     'features.tool_suggest': false,
     'features.hooks': false,
-    'features.code_mode': false,
+    // The model catalog can require Code Mode even when the feature is off. Keep
+    // the Rerun MCP namespace directly callable in that catalog mode.
+    'features.code_mode.enabled': false,
+    'features.code_mode.direct_only_tool_namespaces': [`mcp__${BRIDGE_SERVER_NAME}`],
     // Running a command is shell_exec, the Rerun tool. These two close Codex's own shell whole:
     // with them the model answers that it has no way to run a command.
     'features.shell_tool': false,
