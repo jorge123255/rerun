@@ -8,14 +8,14 @@ import { HelpCircleIcon } from '@/lib/icons'
 import { Button } from '@/components/ui/button'
 import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import type { DesktopAgentView } from './DesktopApp'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { desktopVaultListing } from '@/lib/desktop/vault'
 import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata'
 import { createDesktopWorkspaceClient } from '@/lib/desktop/workspaces'
 import { DesktopWorkspaceSwitcher } from './workspaces/DesktopWorkspaceSwitcher'
 import { DesktopWorkspaceSwitchLoader } from './workspaces/DesktopWorkspaceSwitchLoader'
 
-export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, profilePhoto, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onProfile, onWorkspaceSettings, onControlCenter, onShortcuts, onHelp, onSharedData, onSharedFiles, onBrain, onTemplates, onVault, onExternalMcp, onServers, onImportCoworker, navigationDisabled = false, settingsDisabled = false }: {
+export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, profilePhoto, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onProfile, onWorkspaceSettings, onControlCenter, onShortcuts, onHelp, onSharedData, onSharedFiles, onBrain, onTemplates, onVault, onExternalMcp, onServers, onImportCoworker, viewRow, navigationDisabled = false, settingsDisabled = false }: {
     workspaceName: string
     iconCatalogId?: string | null
     iconUploadId?: string | null
@@ -38,6 +38,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     onBrain?: () => void
     onTemplates?: () => void
     onVault?: () => void
+    viewRow?: ReactNode
     onExternalMcp?: () => void
     onServers?: () => void
     onImportCoworker?: () => void
@@ -48,7 +49,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     const openingControlCenter = useRef(false)
     const workspaceClient = useMemo(() => createDesktopWorkspaceClient(), [])
     useEffect(() => { void flushDesktopWorkspaceMetadata().catch(() => {}) }, [workspaceName, iconCatalogId, iconUploadId])
-    // Vault entries waiting on a sign-in: read on mount and each time the menu opens.
+    // Vault entries waiting on a sign-in: read each time the menu opens, which is when the row shows.
     const vaultEnabled = !!onVault
     const [vaultSignedOut, setVaultSignedOut] = useState(false)
     const refreshVaultSignedOut = useCallback(() => {
@@ -58,7 +59,6 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
             .then(listing => { if (listing) setVaultSignedOut(listing.entries.some(entry => 'kind' in entry && entry.kind === 'mcp' && entry.signedOut)) })
             .catch(() => {})
     }, [vaultEnabled])
-    useEffect(refreshVaultSignedOut, [refreshVaultSignedOut])
     const providerStatus = providerLabel ? t('boardUI.providerConnected', { provider: providerLabel }) : t('boardUI.providerSetup')
     const providerSummary = providerLabel && modelLabel ? `${providerStatus} · ${modelLabel}` : providerStatus
     return <nav aria-label={t('workspace')} className="flex min-w-0 items-center gap-1.5">
@@ -70,6 +70,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
                 openingControlCenter.current = false
             }} menuItems={<>
                 <DropdownMenuItem disabled={navigationDisabled} onSelect={onBoard}><LayoutGrid /> {t('board')}</DropdownMenuItem>
+                {viewRow}
                 {onSharedData && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onSharedData() }}><Database /> Shared database</DropdownMenuItem>}
                 {onSharedFiles && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onSharedFiles() }}><Folder /> {t('sharedFiles.title')}</DropdownMenuItem>}
                 {onTemplates && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onTemplates() }}><Package /> {t('templates')}</DropdownMenuItem>}

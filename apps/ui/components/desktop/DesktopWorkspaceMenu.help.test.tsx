@@ -124,7 +124,7 @@ test.each(['fr', 'es', 'de', 'pt'] as const)('Help opens the mounted Mac shortcu
     expect(opened.textContent).not.toContain(shortcuts.actions.askRerun)
 })
 
-test('the Vault menu row marks an app waiting on a sign-in, read again each time the menu opens', async () => {
+test('the Vault menu row marks an app waiting on a sign-in, read as the menu opens', async () => {
     const entry = { id: '00000000-0000-4000-8000-0000000000a1', revision: '00000000-0000-4000-8000-0000000000a2', name: 'linear', kind: 'mcp',
         url: 'https://mcp.linear.app/mcp', hasBearer: false, browserSignIn: true, agentIds: [], sharedWithAll: false }
     let signedOut = false
@@ -134,6 +134,7 @@ test('the Vault menu row marks an app waiting on a sign-in, read again each time
         const open = async () => {
             const host = mount(<DesktopWorkspaceMenu workspaceName="Studio" profileName="Local" agents={[]} selected={null} onBoard={vi.fn()} onCoworker={vi.fn()} onSettings={vi.fn()} onVault={vi.fn()} />)
             await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)) })
+            if (!signedOut) expect(fetched).not.toHaveBeenCalled()
             const pill = host.querySelector<HTMLButtonElement>('[aria-label^="Workspace menu"]')!
             pill.focus()
             await act(async () => { pill.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })) })
@@ -141,9 +142,8 @@ test('the Vault menu row marks an app waiting on a sign-in, read again each time
             return [...document.querySelectorAll('[role="menuitem"]')].find(item => item.textContent?.trim() === 'Vault')!
         }
         const row = await open()
-        // Once on mount and once more as the menu opens.
-        expect(fetched).toHaveBeenCalledTimes(2)
-        expect(fetched).toHaveBeenLastCalledWith('/api/desktop/vault', { cache: 'no-store' })
+        // Nothing is read until the menu opens.
+        expect(fetched).toHaveBeenCalledExactlyOnceWith('/api/desktop/vault', { cache: 'no-store' })
         expect(row.querySelector('[aria-label="An app of the Vault is signed out"]')).toBeNull()
         for (const root of roots.splice(0)) act(() => { root.unmount() })
         document.body.innerHTML = ''

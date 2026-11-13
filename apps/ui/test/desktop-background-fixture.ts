@@ -8,6 +8,8 @@ export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestIn
     if (url.pathname === '/api/desktop/subscription-login') return Response.json({
         'grok-build': { phase: 'unavailable' }, 'kimi-code': { phase: 'unavailable' },
     })
+    // The workspace menu reads the Vault as it opens, for the mark on its Vault row.
+    if (url.pathname === '/api/desktop/vault') return Response.json({ entries: [], coworkers: [] })
     if (/^\/api\/desktop\/coworkers\/[^/]+\/document-attachments$/.test(url.pathname)) return Response.json({ attachments: [] })
     if (/^\/api\/desktop\/sessions\/[^/]+\/trigger-requests$/.test(url.pathname)) return Response.json({ request: null })
     if (url.pathname === '/api/desktop/foreman') {

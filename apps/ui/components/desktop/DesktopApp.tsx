@@ -1,7 +1,7 @@
 'use client'
 
 import { useDesktopLocale } from './DesktopLocale'
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
 import type { ThemePreference } from '@rerun/ui/theme'
@@ -17,6 +17,11 @@ import { ArrowLeft, X } from 'lucide-react'
 import { SidePanel } from '@/components/layout/SidePanel'
 import { SIDE_PANEL_GAP, loadSidePanelWidth } from '@/lib/side-panel-width'
 import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
+import { DesktopSimpleSidebar } from './simple/DesktopSimpleSidebar'
+import { DesktopViewMenuRow } from './simple/DesktopViewMenuRow'
+import { desktopCoworkerPreviewsSchema, type DesktopCoworkerPreviews } from '@/lib/desktop/coworker-previews'
+import { desktopSimpleInitialOpen, loadDesktopWorkspaceView, readDesktopSimpleLastOpened, rememberDesktopSimpleLastOpened, rememberDesktopWorkspaceView, resolveDesktopWorkspaceView, type DesktopWorkspaceView } from '@/lib/desktop/workspace-view'
+import { byRecency } from '@rerun/contracts'
 import { DesktopExternalMcpDialog } from './external-mcp/DesktopExternalMcpDialog'
 import { DesktopCoworkerShareLauncher, DesktopPortableCoworkerImport, DesktopServersNavigation, DesktopWorkspaceDialogStatus } from './DesktopWorkspaceDialogs'
 import { DesktopWorkspaceSettings } from './DesktopWorkspaceSettings'
@@ -74,6 +79,12 @@ import type { DesktopOpenChat } from '@/lib/desktop/control-center-chats'
 import type { DesktopChatRequest } from '@/lib/desktop/chat-request'
 import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
 import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-request'
+
+// The open coworker's chat: the board's side panel, or the middle of the Simple view.
+function DesktopChatFrame({ simple, isOpen, onDismiss, children }: { simple: boolean; isOpen: boolean; onDismiss: () => void; children: ReactNode }) {
+    if (!simple) return <SidePanel isOpen={isOpen} onDismiss={onDismiss}>{children}</SidePanel>
+    return <div data-testid="desktop-simple-chat" hidden={!isOpen} className="absolute inset-y-0 right-0 left-72 z-30 flex min-w-0 flex-col bg-background">{children}</div>
+}
 
 export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string; position?: GridPosition | null; spaceId?: string; enabled?: boolean }
 export type DesktopSessionView = {
@@ -823,7 +834,39 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 else showBoard(true)
             }} />
     </div>
-    const workspaceMenu = <DesktopWorkspaceMenu workspaceName={workspaceName} {...savedIcon} profileName={profile.displayName} profilePhoto={desktopProfilePhotoUrl(profile.photoId)}
+    // The Simple view: the coworkers listed beside the open one's chat. Anything that needs the grid
+    // brings the board back until it is done.
+    const [viewPreference, setViewPreference] = useState<DesktopWorkspaceView | null>(null)
+    useEffect(() => { setViewPreference(loadDesktopWorkspaceView()) }, [])
+    const simple = resolveDesktopWorkspaceView({ preference: viewPreference, placing: !!creation.placement || !!templatePlacement.placement || placingCopy }) === 'simple'
+    const chooseView = (view: DesktopWorkspaceView) => { rememberDesktopWorkspaceView(view); setViewPreference(view) }
+    const [coworkerPreviews, setCoworkerPreviews] = useState<DesktopCoworkerPreviews['previews'] | null>(null)
+    const previewsKey = simple ? JSON.stringify([boardActivity.statuses, selectedAgentId, panelOpen, agents.length]) : null
+    useEffect(() => {
+        if (previewsKey === null) return
+        const controller = new AbortController()
+        void fetch('/api/desktop/coworker-previews', { cache: 'no-store', signal: controller.signal })
+            .then(async response => response.ok ? desktopCoworkerPreviewsSchema.parse(await response.json()).previews : null)
+            .then(previews => { if (previews && !controller.signal.aborted) setCoworkerPreviews(previews) })
+            .catch(() => {})
+        return () => controller.abort()
+    }, [previewsKey])
+    // Once each time the Simple view comes up with nothing open: the coworker open last on this Mac,
+    // else the most recently active one.
+    const simpleRestored = useRef(false)
+    useEffect(() => {
+        if (!simple) { simpleRestored.current = false; return }
+        if (simpleRestored.current || coworkerPreviews === null || runtimeWorkspaceId == null) return
+        simpleRestored.current = true
+        if (panelOpen || foremanOpen) return
+        const mostRecent = agents.map(agent => ({ id: agent.id, latest: coworkerPreviews[agent.id] ?? null })).sort(byRecency)[0]?.id ?? null
+        const initial = desktopSimpleInitialOpen({ remembered: readDesktopSimpleLastOpened(runtimeWorkspaceId), agentIds: agents.map(agent => agent.id), mostRecent })
+        if (initial) selectCoworker(initial)
+    })
+    useEffect(() => {
+        if (simple && panelOpen && selectedAgentId && runtimeWorkspaceId != null) rememberDesktopSimpleLastOpened(runtimeWorkspaceId, selectedAgentId)
+    }, [simple, panelOpen, selectedAgentId, runtimeWorkspaceId])
+    const workspaceMenu = <DesktopWorkspaceMenu viewRow={<DesktopViewMenuRow view={simple ? 'simple' : 'board'} onChange={chooseView} disabled={creationNavigationBlocked || workspaceDialogActive || quitting} />} workspaceName={workspaceName} {...savedIcon} profileName={profile.displayName} profilePhoto={desktopProfilePhotoUrl(profile.photoId)}
         navigationDisabled={creationNavigationBlocked || workspaceDialogActive || quitting} settingsDisabled={!creationSettingsAllowed || workspaceDialogActive || quitting}
         agents={agents} selected={panelOpen ? selectedAgentId : null} providerLabel={sidebarProvider && PROVIDER_LABELS[sidebarProvider.provider]}
         modelLabel={modelLabel} onBoard={() => showBoard()} onCoworker={selectCoworker} onSettings={openSettings}
@@ -849,8 +892,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             <div ref={boardFrame} data-desktop-board-frame inert={settings}
                 style={{ '--desktop-idle-orb-width': !controlCenterDisabled && !panelOpen && !foremanEngaged ? `${PARKED_ORB_SIZE + 8}px` : '0px' } as CSSProperties} aria-hidden={settings || undefined}
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow [--desktop-board-edge:16px] md:[--desktop-board-edge:25px]">
+                <div data-desktop-board-layer className={simple ? 'invisible absolute inset-0' : 'contents'} inert={simple} aria-hidden={simple || undefined}>
                 {runtimeWorkspaceId != null ? <FxBoardCameraBoundary workspaceId={runtimeWorkspaceId} currentWorkspace={() => runtimeWorkspaceId} persistence={cameraPersistence} bindFlush={flush => { cameraFlush.current = flush }}>{camera => (
-                <DesktopBoard activitySnapshot={boardActivity} routineCountdowns={routineCountdowns} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
+                <DesktopBoard activitySnapshot={boardActivity} routineCountdowns={routineCountdowns} agents={agents} workspaceName={workspaceName} workspaceMenu={simple ? null : workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
                     workspaceId={runtimeWorkspaceId} launchNonce={initialData.runtimeLaunchNonce} onOpenNotificationSettings={openNotifications}
                     cameraMountKey={camera.mountKey} initialCamera={camera.initialCamera} onCameraChange={camera.onCameraChange}
                     newBoxSignal={newBoxSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
@@ -866,7 +910,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     onOpenSettings={openBoardCoworkerSettings}
                     onRename={renameCoworker} onShare={agent => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting() && currentAgents.current.some(current => current.id === agent.id)) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) } }} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
-                )}</FxBoardCameraBoundary> : <DesktopBoard activitySnapshot={boardActivity} routineCountdowns={routineCountdowns} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
+                )}</FxBoardCameraBoundary> : <DesktopBoard activitySnapshot={boardActivity} routineCountdowns={routineCountdowns} agents={agents} workspaceName={workspaceName} workspaceMenu={simple ? null : workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
                     newBoxSignal={newBoxSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
                     board={boardState.board} onBoardCommand={initialData.board ? boardState.command : undefined}
                     boardSaving={boardState.saving} boardError={boardState.error} onRetryBoard={boardState.retry}
@@ -880,6 +924,18 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     onOpenSettings={openBoardCoworkerSettings}
                     onRename={renameCoworker} onShare={agent => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting() && currentAgents.current.some(current => current.id === agent.id)) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) } }} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />}
+                </div>
+                {simple && <div data-testid="desktop-simple-view" className="absolute inset-0 z-30 flex bg-background" inert={boardInteraction || workspaceDialogActive}>
+                    <div className="h-full w-72 shrink-0 border-r border-border bg-sidebar">
+                        <DesktopSimpleSidebar workspaceMenu={workspaceMenu} agents={agents} statuses={boardActivity.statuses} previews={coworkerPreviews}
+                            selectedId={panelOpen ? selectedAgentId : null} foremanOpen={foremanEngaged && foremanOpen && !panelOpen}
+                            disabled={creationNavigationBlocked || workspaceDialogActive || quitting}
+                            onOpenCoworker={id => selectCoworker(id)} onNewCoworker={() => showBoard(true)}
+                            onOpenForeman={controlCenterDisabled ? undefined : () => { setRequestedPanel(null); setPanelOpen(false); engageForeman() }}
+                            onSearch={() => { if (!creationAdmission.current.blocked && !controlCenterDisabled) setControlCenterOpen(true) }} />
+                    </div>
+                    <div className="flex min-w-0 flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">{t('workspaceView.chat.pick')}</div>
+                </div>}
                 {!controlCenterDisabled && !panelOpen && !foremanEngaged && <DesktopForemanDock open={foremanOpen} onToggle={engageForeman} />}
                 {foremanEngaged && <div className="pointer-events-none absolute inset-2 z-40 grid min-h-0" style={{ gridTemplateColumns: `${foremanLeftTrack}px minmax(0,1fr) ${foremanRightTrack}px` }}>
 
@@ -895,10 +951,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                         agentNameOf={id => currentAgents.current.find(agent => agent.id === id)?.name ?? 'Coworker'} />
                 </div>}
                 {selectedAgent && <div inert={!panelOpen || boardInteraction || workspaceDialogActive} aria-hidden={!panelOpen || boardInteraction || workspaceDialogActive || undefined}>
-                    <SidePanel isOpen={panelOpen} onDismiss={closePanel}>
+                    <DesktopChatFrame simple={simple} isOpen={panelOpen} onDismiss={closePanel}>
                         <section ref={panelContent} tabIndex={-1} data-testid="desktop-coworker-chat" aria-label={t('coworkerChat')} className="flex h-full min-h-0 flex-col outline-none"
                             onKeyDown={event => {
-                                if (event.key === 'Escape' && !event.defaultPrevented && event.currentTarget.contains(event.target as Node)) {
+                                if (!simple && event.key === 'Escape' && !event.defaultPrevented && event.currentTarget.contains(event.target as Node)) {
                                     event.preventDefault()
                                     closePanel()
                                 }
@@ -908,7 +964,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                 onVisibleSession={reportVisibleSession}
                                 onClosePanel={closePanel} modelLabel={modelLabel} workspaceDefault={providers.default} connections={providers.connections} onOpenModelSettings={openSettings} onOpenTranscriptionSettings={openTranscriptionSettings} />
                         </section>
-                    </SidePanel>
+                    </DesktopChatFrame>
                 </div>}
             </div>
             {settings && <div className="absolute inset-0 z-50 flex flex-col bg-background md:m-2 md:overflow-hidden md:rounded-3xl md:border">
