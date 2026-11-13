@@ -30,7 +30,7 @@ const opaqueColor = value => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test
 
 export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
     updates, canRestartForUpdate, available, openFind, closeFind, setUnread, desktopSettings, changeDesktopSettings, setLanguage, language, onConnect,
-    systemAppearance }) {
+    systemAppearance, localAppearance }) {
     const file = resolve(dataRoot, 'connected-hub.json')
     const windows = new Map()
     const childWindows = new Map()
@@ -45,6 +45,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             message: 'Quick Ask could not open on this Rerun server.', buttons: ['OK'] }).catch(() => {}) },
     })
     let picker = null, pickerOwner = null, pickerLocale = null, acceptedPicker = null, connecting = null
+    let pickerAppearance = null
     let pendingOpen = null, openingLink = null
     let appearanceWrites = Promise.resolve()
     const appearancePath = origin => resolve(dataRoot, `hub-appearance-${createHash('sha256').update(origin).digest('hex')}.json`)
@@ -196,11 +197,12 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         const hub = entryFor(owner)
         pickerOwner = owner && !owner.isDestroyed() ? owner : null
         pickerLocale = language(hub?.origin)
+        pickerAppearance = hub ? hub.appearance : localAppearance(pickerOwner)
         const isolated = session.fromPartition('rerun-connected-hub-picker')
         isolated.setPermissionRequestHandler((_contents, _permission, done) => done(false))
         isolated.setPermissionCheckHandler(() => false)
         const window = new BrowserWindow({ width: 530, height: 490, minWidth: 460, minHeight: 450, show: false,
-            title: hubPickerCopy(pickerLocale).title, backgroundColor: '#101214', webPreferences: preferences(isolated) })
+            title: hubPickerCopy(pickerLocale).title, backgroundColor: backgroundFor(pickerAppearance ?? systemAppearance()), webPreferences: preferences(isolated) })
         picker = window
         for (const event of ['will-navigate', 'will-redirect', 'will-attach-webview']) window.webContents.on(event, request => request.preventDefault())
         window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -210,6 +212,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             picker = null
             pickerOwner = null
             pickerLocale = null
+            pickerAppearance = null
             if (acceptedPicker === window) {
                 acceptedPicker = null
                 void openPendingLink()
@@ -508,7 +511,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
 
     ipcMain.on('hub:bootstrap', event => {
         if (localSender(event)) {
-            event.returnValue = { audience: 'picker', copy: hubPickerCopy(pickerLocale) }
+            event.returnValue = { audience: 'picker', copy: hubPickerCopy(pickerLocale), appearance: pickerAppearance }
             return
         }
         const offline = offlineSender(event)

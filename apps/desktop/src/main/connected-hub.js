@@ -10,6 +10,7 @@ let connecting = false
 let edited = false
 if (copy) {
     document.documentElement.lang = copy.locale
+    if (picker.appearance) document.documentElement.dataset.appearance = picker.appearance
     document.title = copy.title
     document.querySelector('h1').textContent = copy.title
     form.querySelector('label').textContent = copy.label

@@ -153,6 +153,11 @@ test('the hub preload exposes only its approved audience and drops the privilege
     assert.deepEqual(Object.keys(bootstrap(null).exposed), [])
     const picker = bootstrap({ audience: 'picker' })
     assert.deepEqual(Object.keys(picker.exposed), ['rerunHubPicker'])
+    assert.equal(picker.exposed.rerunHubPicker.appearance, null)
+    for (const appearance of ['light', 'dark']) {
+        assert.equal(bootstrap({ audience: 'picker', appearance }).exposed.rerunHubPicker.appearance, appearance)
+    }
+    assert.equal(bootstrap({ audience: 'picker', appearance: 'unrecognized' }).exposed.rerunHubPicker.appearance, null)
     await picker.exposed.rerunHubPicker.initialOrigin()
     await picker.exposed.rerunHubPicker.cancel('https://wrong.example.test')
     await picker.exposed.rerunHubPicker.connectCloud('https://wrong.example.test')

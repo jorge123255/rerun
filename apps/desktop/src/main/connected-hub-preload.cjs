@@ -11,6 +11,7 @@ function subscribe(channel, callback) {
 if (bootstrap?.audience === 'picker') {
     contextBridge.exposeInMainWorld('rerunHubPicker', {
         copy: bootstrap.copy,
+        appearance: bootstrap.appearance === 'light' || bootstrap.appearance === 'dark' ? bootstrap.appearance : null,
         initialOrigin: () => ipcRenderer.invoke('hub:picker-origin'),
         cancel: () => ipcRenderer.invoke('hub:picker-cancel'),
         connect: address => ipcRenderer.invoke('hub:connect', address),

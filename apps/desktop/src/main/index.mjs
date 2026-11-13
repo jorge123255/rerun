@@ -388,7 +388,8 @@ async function launch() {
                 }
                 if (remembered) return startupWorkspace.remember('connected')
             },
-            systemAppearance: () => nativeTheme.shouldUseDarkColors ? 'dark' : 'light' })
+            systemAppearance: () => nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+            localAppearance: candidate => boards.get(candidate)?.appearance ?? null })
         app.on('browser-window-focus', (_event, candidate) => {
             const hub = connectedHubs.ownsWindow(candidate)
             if (boards.get(candidate) || hub) {
