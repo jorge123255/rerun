@@ -6,7 +6,10 @@ import {abortable,boundedText} from '../mcp/remote'
 import type {ServiceStore} from './store'
 import type {LocalServices,ServiceRun} from './lifecycle'
 import type {remoteMcpTools} from '../mcp/tools'
-type VaultTool = Awaited<ReturnType<typeof remoteMcpTools>>[number]
+type RemoteTool = Awaited<ReturnType<typeof remoteMcpTools>>[number]
+type VaultTool = Omit<RemoteTool, 'execute'> & {
+ execute(args:Record<string,unknown>,signal:AbortSignal,toolCallId:string):ReturnType<RemoteTool['execute']>
+}
 type ServiceCapability = {key:string;revision:string;name:string} | {vault:VaultTool}
 const id=z.string().min(1).max(200),run=z.object({engineAgentId:id,sessionId:id,runId:id})
 const bodySchema=z.discriminatedUnion('action',[
@@ -59,7 +62,7 @@ export function serviceEngineBridge(store:ServiceStore,service:LocalServices,own
    await service.current(owner,'use',body,active);active.throwIfAborted()
    let result:unknown
    if('vault' in capability){
-    const called=await capability.vault.execute(body.arguments,active)
+    const called=await capability.vault.execute(body.arguments,active,body.toolCallId)
     result={source:'local_service',untrusted:true,result:called.result}
    }
    else if(record&&runtime){

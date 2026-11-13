@@ -1,6 +1,11 @@
 import 'server-only'
-import { redactDesktopMcpSecretValue } from '@rerun/contracts'
+import { redactDesktopMcpSecretValue, type DesktopMcpSseRef } from '@rerun/contracts'
+import { randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
+import type { McpRunIdentity } from '../mcp/bridge'
+import { bindDesktopSseRuntime, sseInvocationId, type DesktopSseRuntimeDeps } from '../mcp-sse/binding'
+import { sseToolDefinitions } from '../mcp-sse/adapters'
+import { SseFailure } from '../mcp-sse/errors'
 import { remoteMcpLifecycle } from '../mcp/lifecycle'
 import type { RemoteServer } from '../mcp/model'
 import { remoteMcpRuntime, type McpAccess, type McpNetwork } from '../mcp/remote'
@@ -12,7 +17,20 @@ import { vaultCatalogHealth } from './catalog-health'
 import { vaultMcpOAuth } from './mcp-oauth'
 import { vaultMcpHttps } from './mcp-network'
 
-export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, access: McpAccess, shutdown: AbortSignal, network: McpNetwork = vaultMcpHttps, assertWorkspace = () => {}, oauthJson?: OAuthJson, mode: 'mcp' | 'catalog' = 'mcp', sharedOAuth?: ReturnType<typeof vaultMcpOAuth>, verifySkills?: (owner: string, itemId: string, signal: AbortSignal) => Promise<void>) {
+type VaultSseOptions = Pick<DesktopSseRuntimeDeps, 'store' | 'key' | 'authorizeRun' | 'network'> & {
+    remoteAccess: McpAccess
+    watchOwner(owner: string): () => void
+}
+
+const sseServerId = (id: string) => 'vault-' + id
+const probeOwner = (id: string) => 'vault-health-' + id
+type VaultRow = Awaited<ReturnType<Client['execute']>>['rows'][number]
+
+function sseReference(owner: string, row: VaultRow): DesktopMcpSseRef {
+    return { agentId: owner, serverId: sseServerId(String(row.id)), name: String(row.name), expectedRevision: String(row.revision) }
+}
+
+export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, access: McpAccess, shutdown: AbortSignal, network: McpNetwork = vaultMcpHttps, assertWorkspace = () => {}, oauthJson?: OAuthJson, mode: 'mcp' | 'catalog' = 'mcp', sharedOAuth?: ReturnType<typeof vaultMcpOAuth>, verifySkills?: (owner: string, itemId: string, signal: AbortSignal) => Promise<void>, sseOptions?: VaultSseOptions) {
     const lifecycle = remoteMcpLifecycle()
     const oauth = sharedOAuth ?? vaultMcpOAuth(db, crypto, workspaceId, assertWorkspace, oauthJson)
     const close = () => { if (!sharedOAuth) oauth.shutdown(); lifecycle.shutdown() }
@@ -21,7 +39,7 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
 
     async function assigned(agentId: string, name?: string) {
         return (await db.execute({
-            sql: `SELECT s.id,s.name,s.url,s.revision,s.credential_revision,s.credential_header,s.oauth_enabled,s.sealed IS NOT NULL AS has_credential
+            sql: `SELECT s.id,s.name,s.url,s.revision,s.credential_revision,s.credential_header,s.oauth_enabled,s.transport,s.sealed IS NOT NULL AS has_credential
                 FROM desktop_vault_mcp_servers s JOIN desktop_agents a ON a.id=? AND a.workspace_id=1
                 WHERE (? IS NULL OR s.name=?) AND (s.catalog_slug IS NOT NULL)=?
                 AND NOT EXISTS (SELECT 1 FROM desktop_deletions d WHERE d.agent_id=a.id OR d.engine_agent_id=a.engine_agent_id)
@@ -37,7 +55,7 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
         })).rows
     }
     function view(row: Awaited<ReturnType<typeof assigned>>[number]): RemoteServer {
-        return { id: String(row.id), name: String(row.name), url: String(row.url), revision: String(row.revision), transport: 'http', hasBearer: row.has_credential === 1 && row.credential_header === null }
+        return { id: String(row.id), name: String(row.name), url: String(row.url), revision: String(row.revision), transport: row.transport === 'sse' ? 'sse' : 'http', hasBearer: row.has_credential === 1 && row.credential_header === null }
     }
     const store = {
         lifecycle,
@@ -107,27 +125,102 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
             throw error
         }
     }
+    async function catalogRow(account: { id: string; name: string; revision: string; generation: string | null }, signal: AbortSignal) {
+        assertWorkspace()
+        signal.throwIfAborted()
+        const row = (await db.execute({
+            sql: `SELECT s.id,s.name,s.url,s.revision,s.credential_revision,s.credential_header,s.oauth_enabled,s.transport,
+                s.sealed IS NOT NULL AS has_credential,o.generation
+                FROM desktop_vault_mcp_servers s LEFT JOIN desktop_vault_mcp_oauth o ON o.item_id=s.id
+                WHERE s.id=? AND s.name=? AND s.revision=? AND s.catalog_slug IS NOT NULL AND o.generation IS ?`,
+            args: [account.id, account.name, account.revision, account.generation],
+        })).rows[0]
+        signal.throwIfAborted()
+        assertWorkspace()
+        if (!row) throw new Error('Vault app changed')
+        return row
+    }
+
+    const sse = mode === 'catalog' && sseOptions && bindDesktopSseRuntime({
+        ...sseOptions, db, shutdownSignal: shutdown, access,
+        async account(ref, action, run, signal) {
+            if (!ref.serverId.startsWith('vault-') || (action !== 'use' && action !== 'call')) throw new SseFailure('changed')
+            const id = ref.serverId.slice('vault-'.length)
+            const probe = ref.agentId === probeOwner(id)
+            if (probe ? !!run || action !== 'use' : action === 'call' && !run) throw new SseFailure('changed')
+            const checkOwner = probe ? undefined : sseOptions.watchOwner(ref.agentId)
+            const check = () => { assertWorkspace(); shutdown.throwIfAborted(); checkOwner?.() }
+            const current = async () => {
+                check()
+                signal.throwIfAborted()
+                let row: VaultRow | undefined
+                if (probe) row = await catalogRow({ id, name: ref.name, revision: ref.expectedRevision, generation: null }, signal)
+                else {
+                    if (run && await sseOptions.authorizeRun(run, signal) !== ref.agentId) throw new SseFailure('changed')
+                    const [app, remote] = await Promise.all([access(ref.agentId), sseOptions.remoteAccess(ref.agentId)])
+                    if (!app.enabled || !app.granted || !remote.enabled || !remote.granted) throw new SseFailure('changed')
+                    row = (await assigned(ref.agentId, ref.name))[0]
+                }
+                if (!row || row.id !== id || row.revision !== ref.expectedRevision || row.transport !== 'sse'
+                    || row.oauth_enabled !== 0 || row.credential_header !== null) throw new SseFailure('changed')
+                signal.throwIfAborted()
+                check()
+                return row
+            }
+            const row = await current()
+            if (!probe) await verifySkills?.(ref.agentId, id, signal)
+            const lease = await credentials(current, signal, false)
+            try {
+                const value = lease.material.headers.Authorization
+                if (row.has_credential === 1 && !value?.startsWith('Bearer ')) throw new SseFailure('auth-needed')
+                signal.throwIfAborted()
+                check()
+                return { server: { ...view(row), id: ref.serverId, transport: 'sse' }, bearer: value?.slice(7) ?? '',
+                    credentialGeneration: String(row.credential_revision), check }
+            } finally { await lease.release() }
+        },
+    })
     const runtime = remoteMcpRuntime(store, access, network, undefined, material)
     return {
         oauth,
+        releaseSseRun: async (owner: string, run: McpRunIdentity) => { if (sse) await sse.runtime.releaseRun(owner, run) },
+        disposeSseOwner: async (owner: string) => { if (sse) await sse.dispose(owner) },
+        shutdownSse: async () => { if (sse) await sse.shutdown() },
+        async sseTools(owner: string, run: McpRunIdentity, signal: AbortSignal) {
+            if (!sse || !sseOptions) return []
+            const rows = (await assigned(owner)).filter(row => row.transport === 'sse')
+            if (!rows.length) return []
+            const [app, remote] = await Promise.all([access(owner), sseOptions.remoteAccess(owner)])
+            if (!app.enabled || !app.granted || !remote.enabled || !remote.granted) return []
+            const active = AbortSignal.any([signal, shutdown])
+            const definitions = []
+            for (const row of rows) {
+                const ref = sseReference(owner, row)
+                // An unavailable account must not hide unrelated tools in this coworker's chat.
+                const tools = await sseToolDefinitions(sse.runtime, ref, run, active).catch(error => {
+                    active.throwIfAborted()
+                    if (error instanceof SseFailure && ['auth-needed', 'unsupported', 'unavailable', 'invalid-data', 'timeout'].includes(error.code)) return []
+                    throw error
+                })
+                for (const tool of tools) definitions.push({
+                    name: tool.name, description: tool.description, inputSchema: tool.inputSchema,
+                    execute: (args: Record<string, unknown>, stop: AbortSignal, toolCallId: string) =>
+                        tool.execute(args, { requestId: sseInvocationId(owner, ref, run, toolCallId), toolCallId }, stop),
+                })
+            }
+            return definitions
+        },
         catalogHealth(launchNonce: string) {
             return vaultCatalogHealth(db, launchNonce, assertWorkspace, shutdown, async (account, signal) => {
-                const check = async () => {
-                    assertWorkspace()
-                    signal.throwIfAborted()
-                    const row = (await db.execute({
-                        sql: `SELECT s.id,s.name,s.url,s.revision,s.credential_revision,s.credential_header,s.oauth_enabled,
-                            s.sealed IS NOT NULL AS has_credential,o.generation
-                            FROM desktop_vault_mcp_servers s LEFT JOIN desktop_vault_mcp_oauth o ON o.item_id=s.id
-                            WHERE s.id=? AND s.name=? AND s.revision=? AND s.catalog_slug IS NOT NULL AND o.generation IS ?`,
-                        args: [account.id, account.name, account.revision, account.generation],
-                    })).rows[0]
-                    signal.throwIfAborted()
-                    assertWorkspace()
-                    if (!row) throw new Error('Vault app changed')
-                    return row
-                }
+                const check = () => catalogRow(account, signal)
                 const row = await check()
+                if (row.transport === 'sse') {
+                    if (!sse) throw new Error('Vault SSE is unavailable')
+                    const result = await sse.runtime.probe({
+                        ...sseReference(probeOwner(account.id), row), requestId: randomUUID(), operation: 'probe',
+                    }, signal)
+                    return { toolCount: result.tools.length }
+                }
                 let credentialExpiresAt: string | undefined
                 if (row.oauth_enabled === 1) {
                     const token = await oauth.readOAuth(account.id, account.name)

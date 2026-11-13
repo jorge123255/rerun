@@ -10,6 +10,9 @@ import { createDesktopSecretCrypto } from '../secret-requests/crypto'
 import { desktopVault } from './store'
 import { adoptDesktopCatalogApps } from './catalog-adoption'
 import { desktopVaultMcpRuntime } from './mcp-runtime'
+import { vaultCatalog } from './catalog'
+import { remoteMcpStore } from '../mcp/store'
+import type { SseNetwork } from '../mcp-sse/types'
 import { vaultMcpOAuth } from './mcp-oauth'
 import type { OAuthJson } from '../mcp/oauth-network'
 import type { OAuthTokenBundle } from '../mcp/store'
@@ -33,9 +36,10 @@ async function fixture() {
     for (const [id, name, engine] of [[first, 'Alice', 'alice'], [second, 'Bob', 'bob'], [third, 'Cara', 'cara']]) {
         await db.execute({ sql: "INSERT INTO desktop_agents(id,workspace_id,engine_agent_id,name,created_at,updated_at) VALUES(?,1,?,?,'2026-01-01','2026-01-01')", args: [id, engine, name] })
     }
-    async function install(owner: string, engineId: string, methodId: string, values: Record<string, string>, overrides: Partial<ServiceInstall> = {}) {
-        const { plan, headers, bearer } = compileAccountService(getDesktopServiceManifest('linear').manifest,
-            methodId, values, { id: methodId, supported: true }, { label: 'Linear' })
+    async function install(owner: string, engineId: string, methodId: string, values: Record<string, string>, overrides: Partial<ServiceInstall> = {}, slug = 'linear') {
+        const { manifest } = getDesktopServiceManifest(slug)
+        const { plan, headers, bearer } = compileAccountService(manifest,
+            methodId, values, { id: methodId, supported: true }, { label: manifest.name })
         const record: ServiceInstall = { owner, engineId, key: plan.key, id: randomUUID(), revision: randomUUID(), plan,
             state: 'ready', skills: [], toolNames: [], health: { state: 'unchecked' }, healthLaunch: null,
             installedAt: new Date().toISOString(), configured: !!bearer, ...overrides }
@@ -48,6 +52,128 @@ async function fixture() {
     }
     return { db, root, store, install, close: async () => { await closeDesktopDatabase(root); await rm(root, { recursive: true, force: true }) } }
 }
+
+test('Wrike Bearer SSE works from Vault with both grants, exact run authority and restart-safe receipts', async () => {
+    const f = await fixture()
+    const signal = new AbortController().signal
+    const run = { engineAgentId: 'alice', sessionId: 'sse-session', runId: 'sse-run' }
+    const methodId = 'permanent-access-token'
+    const values = { WRIKE_TOKEN: 'synthetic-wrike-token' }
+    const streams = new Map<string, ReadableStreamDefaultController<Uint8Array>>()
+    let opened = 0, effects = 0, appsGranted = true, remoteGranted = true, activeRun = true
+    const network: SseNetwork = async request => {
+        await request.guard()
+        expect(new URL(request.url).origin).toBe('https://mcp.wrike.com')
+        expect(request.authority.server.hasBearer).toBe(true)
+        if (request.method === 'GET') {
+            expect(new URL(request.url).pathname).toBe('/app/mcp/sse')
+            const session = `session_${++opened}`.padEnd(24, 'x')
+            const body = new ReadableStream<Uint8Array>({ start(controller) {
+                streams.set(session, controller)
+                controller.enqueue(Buffer.from(`event: endpoint\ndata: /app/mcp/messages?sessionId=${session}\n\n`))
+            }, cancel() { streams.delete(session) } })
+            return { status: 200, contentType: 'text/event-stream', body, async close() {
+                streams.get(session)?.close(); streams.delete(session)
+            } }
+        }
+        const input = JSON.parse(request.body!)
+        let result: unknown
+        if (input.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'Fixture', version: '1' } }
+        if (input.method === 'tools/list') result = { tools: [{ name: 'read_project', inputSchema: { type: 'object' } }] }
+        if (input.method === 'tools/call') {
+            expect(input.params.name).toBe('read_project')
+            effects++
+            result = { content: [{ type: 'text', text: 'Project found ' + values.WRIKE_TOKEN }] }
+        }
+        const session = new URL(request.url).searchParams.get('sessionId')!
+        if (result) streams.get(session)!.enqueue(Buffer.from(`event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: input.id, result })}\n\n`))
+        return { status: 202, contentType: 'text/plain', body: null, async close() {} }
+    }
+    const runtime = (db: typeof f.db) => desktopVaultMcpRuntime(db, crypto, 1,
+        async () => ({ enabled: true, granted: appsGranted }), signal, undefined, current, undefined, 'catalog', undefined, undefined, {
+            store: remoteMcpStore(db, key), key, network,
+            remoteAccess: async () => ({ enabled: true, granted: remoteGranted }),
+            watchOwner: () => current,
+            authorizeRun: async identity => {
+                if (!activeRun || identity.engineAgentId !== run.engineAgentId || identity.sessionId !== run.sessionId || identity.runId !== run.runId) throw new Error('Run is unavailable')
+                return first
+            },
+        })
+    const live = runtime(f.db)
+    try {
+        expect(vaultCatalog('wrike').find(app => app.slug === 'wrike')?.methods.map(method => method.id)).toContain(methodId)
+        expect(vaultCatalog('square').find(app => app.slug === 'square')?.methods.map(method => method.id) ?? []).not.toContain('oauth')
+        const vault = desktopVault(f.db, crypto, 1, 'first-launch')
+        const [saved] = (await vault.mutate({ operation: 'add-app', slug: 'wrike', methodId, values }, current)).entries
+        expect(saved).toMatchObject({ catalog: { slug: 'wrike', methodId }, hasBearer: true, agentIds: [] })
+        const { rows: [secure] } = await f.db.execute('SELECT transport,sealed FROM desktop_vault_mcp_servers')
+        expect(secure.transport).toBe('sse')
+        expect(typeof secure.sealed).toBe('string')
+        expect(secure.sealed).not.toContain(values.WRIKE_TOKEN)
+        expect(await live.sseTools(first, run, signal)).toEqual([])
+        expect(opened).toBe(0)
+        expect(await live.catalogHealth('first-launch')(saved.id, saved.revision, signal)).toMatchObject({ state: 'healthy', toolCount: 1 })
+        expect(streams.size).toBe(0)
+        expect(effects).toBe(0)
+        await vault.assignCoworker(first, { id: saved.id, revision: saved.revision, attached: true }, current)
+        remoteGranted = false
+        expect(await live.sseTools(first, run, signal)).toEqual([])
+        remoteGranted = true
+        appsGranted = false
+        expect(await live.sseTools(first, run, signal)).toEqual([])
+        appsGranted = true
+        expect(await live.sseTools(second, run, signal)).toEqual([])
+        await expect(live.sseTools(first, { ...run, sessionId: 'wrong-session' }, signal)).rejects.toThrow('Run is unavailable')
+        expect(opened).toBe(1)
+        const [tool] = await live.sseTools(first, run, signal)
+        expect(tool.name).toBe('wrike_read_project')
+        const output = await tool.execute({}, signal, 'one-call')
+        expect(JSON.stringify(output)).toContain('Project found [REDACTED]')
+        expect(effects).toBe(1)
+        activeRun = false
+        await expect(tool.execute({}, signal, 'stopped-call')).rejects.toThrow('Run is unavailable')
+        activeRun = true
+        await live.releaseSseRun(first, run)
+        expect(streams.size).toBe(0)
+        await live.shutdownSse()
+        await closeDesktopDatabase(f.root)
+
+        const reopened = await openDesktopDatabase(f.root)
+        const again = runtime(reopened)
+        try {
+            const restartedVault = desktopVault(reopened, crypto, 1, 'second-launch')
+            const [assigned] = (await restartedVault.list()).entries
+            expect(assigned).toMatchObject({ id: saved.id, agentIds: [first] })
+            expect(assigned).not.toHaveProperty('catalog.health')
+            const [replayed] = await again.sseTools(first, run, signal)
+            expect(await replayed.execute({}, signal, 'one-call')).toHaveProperty('result.structuredContent.status', 'uncertain')
+            expect(effects).toBe(1)
+            expect((await reopened.execute('SELECT count(*) AS n FROM desktop_mcp_sse_calls')).rows[0].n).toBe(1)
+            const rotated = await restartedVault.mutate({ operation: 'configure-app', id: assigned.id, revision: assigned.revision,
+                methodId, values: { WRIKE_TOKEN: 'rotated-synthetic-wrike-token' } }, current)
+            await expect(replayed.execute({}, signal, 'old-revision')).rejects.toThrow()
+            const [updated] = await again.sseTools(first, run, signal)
+            await restartedVault.assignCoworker(first, { id: assigned.id, revision: rotated.entries[0].revision, attached: false }, current)
+            await expect(updated.execute({}, signal, 'after-detach')).rejects.toThrow()
+            expect(effects).toBe(1)
+        } finally { await again.shutdownSse() }
+    } finally { await live.shutdownSse(); await f.close() }
+})
+
+test('adopts an installed Wrike SSE account once and fences the old tool path', async () => {
+    const f = await fixture()
+    try {
+        const record = await f.install(first, 'alice', 'permanent-access-token', { WRIKE_TOKEN: 'synthetic-wrike-key' }, {}, 'wrike')
+        const input = { db: f.db, workspaceId: 1, key, assertCurrent: current, verifySkills: async () => current }
+        expect(await adoptDesktopCatalogApps(input)).toBe(1)
+        expect(await adoptDesktopCatalogApps(input)).toBe(0)
+        expect(await serviceStore(f.db, key, true).read(first, record.key)).toBeNull()
+        expect((await desktopVault(f.db, crypto, 1).list()).entries).toMatchObject([
+            { catalog: { slug: 'wrike', methodId: 'permanent-access-token' }, agentIds: [first], hasBearer: true },
+        ])
+        expect((await f.db.execute('SELECT transport FROM desktop_vault_mcp_servers')).rows[0].transport).toBe('sse')
+    } finally { await f.close() }
+})
 
 test('adopts matching keys once, separates different keys, and never reattaches a detached or deleted account', async () => {
     const f = await fixture()

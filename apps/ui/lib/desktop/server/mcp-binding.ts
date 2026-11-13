@@ -209,17 +209,23 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     entry.shutdown.signal.addEventListener('abort', () => vaultOAuth.shutdown(), { once: true })
     const vaultMcp = desktopVaultMcpRuntime(db, vaultCrypto, runtime.workspaceId, access, entry.shutdown.signal,
         undefined, assertVaultWorkspace, undefined, 'mcp', vaultOAuth)
-    const vaultCatalog = desktopVaultMcpRuntime(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId,
-        owner => access(owner, 'services'), entry.shutdown.signal, undefined, () => assertDesktopWorkspaceAdmission(runtime), undefined, 'catalog', vaultMcp.oauth, verifyAdoptedSkills)
+    const vaultCatalog = desktopVaultMcpRuntime(db, vaultCrypto, runtime.workspaceId,
+        owner => access(owner, 'services'), entry.shutdown.signal, undefined, assertVaultWorkspace, undefined, 'catalog', vaultMcp.oauth, verifyAdoptedSkills, {
+            store, key: masterKey, authorizeRun: (identity, signal) => authorizeRun(identity, signal, 'services'),
+            remoteAccess: access, watchOwner: owner => watchDesktopMcpOwner(runtime, owner),
+        })
     const servicesBridge = serviceEngineBridge(installedServices, services, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'services')
         return (await historicalOwner(identity, signal)).owner.id
-    }, (owner, identity, signal) => serviceTransports.releaseRun(owner, identity, signal), async (owner, identity, signal) => {
+    }, async (owner, identity, signal) => {
+        await Promise.all([serviceTransports.releaseRun(owner, identity, signal), vaultCatalog.releaseSseRun(owner, identity)])
+    }, async (owner, identity, signal) => {
         const active = AbortSignal.any([signal, entry.shutdown.signal])
         await syncDesktopVaultSkillsForOwner(runtime, owner, active)
-        return vaultCatalog.tools(owner, active, async stop => {
+        const http = await vaultCatalog.tools(owner, active, async stop => {
             if (await authorizeRun(identity, stop, 'services') !== owner) throw new Error('Service run owner changed')
         })
+        return [...http, ...await vaultCatalog.sseTools(owner, identity, active)]
     })
     const accounts = await canonicalServiceAccounts(runtime, installedServices, services, masterKey, {
         additionalTransport: (record, run, signal) => serviceTransports?.service(record, run, signal),
@@ -312,7 +318,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         browserApprovals: (scope: Omit<Parameters<typeof createDesktopMcpBrowserApprovals>[3], 'workspaceId'>) =>
             createDesktopMcpBrowserApprovals(db, store, masterKey, { ...scope, workspaceId: String(runtime.workspaceId) }),
         localRuntime, localBridge, localApi: stdioApi(localStore, localRuntime, localAuthority), writebackApi: nativeWritebackApi(writeback),
-        selfMcp, serviceOAuth, serviceTransports, services, installedServices, servicesBridge, servicesApi: serviceApi(installedServices, services), accounts, sse }
+        selfMcp, serviceOAuth, serviceTransports, services, installedServices, servicesBridge, servicesApi: serviceApi(installedServices, services), accounts, sse, vaultCatalog }
 
 }
 
@@ -349,7 +355,7 @@ export async function withDesktopMcpOwnerTransition<T>(runtime: DesktopRuntime, 
         await service.serviceOAuth.suspendOwner(localAgentId)
         service.servicesBridge.releaseOwner(localAgentId)
         service.services.lifecycle.disconnect(localAgentId)
-        await service.sse.dispose(localAgentId)
+        await Promise.all([service.sse.dispose(localAgentId), service.vaultCatalog.disposeSseOwner(localAgentId)])
         return await service.store.lifecycle.transitionOwner(localAgentId, () => service.services.transitionOwner(localAgentId, () => service.localRuntime.transitionOwner(localAgentId, async () => { service.bridge.invalidateOwner(localAgentId); await service.localBridge.releaseOwner(localAgentId); return write() })))
     } finally {
         const count = (entry.pendingOwners.get(localAgentId) ?? 1) - 1
@@ -366,7 +372,7 @@ export async function shutdownDesktopRemoteMcp(runtime: DesktopRuntime) {
         service?.oauth.shutdown()
         service?.serviceOAuth.shutdown()
         service?.bridge.shutdown()
-        const stopped = await Promise.allSettled([service?.localBridge.shutdown(), service?.servicesBridge.shutdown(), service?.sse.shutdown()])
+        const stopped = await Promise.allSettled([service?.localBridge.shutdown(), service?.servicesBridge.shutdown(), service?.sse.shutdown(), service?.vaultCatalog.shutdownSse()])
         const failures = stopped.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
         if (failures.length) throw new AggregateError(failures, 'Connection shutdown is not confirmed')
     }

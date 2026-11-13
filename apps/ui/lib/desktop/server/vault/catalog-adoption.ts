@@ -21,7 +21,7 @@ function context(workspaceId: number, id: string, url: string, revision: string,
 
 async function readFields(tx: Transaction, record: ServiceInstall, key: () => Buffer, readBearer: () => string) {
     const plan = record.plan as ServiceInstall['plan'] & Partial<AccountCompilePlan>
-    if (plan.transport === 'sse' || plan.shape === 'oauth') return null
+    if (plan.shape === 'oauth') return null
     const { rows } = await tx.execute({
         sql: 'SELECT revision,bundle FROM desktop_service_header_secrets WHERE owner=? AND installation_id=?',
         args: [record.owner, record.id],
@@ -112,7 +112,7 @@ export async function adoptDesktopCatalogApps(input: {
                         if (!sameHeaders(fields.headers, connection)) return false
                     }
                     connection ??= compileVaultCatalogApp(plan.slug, plan.methodId, values, plan.instanceId)
-                    if (Boolean(connection.browserSignIn) !== isOAuth || connection.name !== plan.serverName || connection.url !== plan.url) return false
+                    if (Boolean(connection.browserSignIn) !== isOAuth || connection.name !== plan.serverName || connection.url !== plan.url || connection.transport !== (plan.transport ?? 'http')) return false
                 } catch { return false }
 
                 const accounts = (await tx.execute({
@@ -127,7 +127,7 @@ export async function adoptDesktopCatalogApps(input: {
                 for (const account of accounts) {
                     if (isOAuth) break
                     if (account.name !== connection.name || account.url !== connection.url || account.catalog_method !== plan.methodId ||
-                        account.oauth_enabled !== 0 || account.credential_header !== header || account.shared_with_all !== 0 || account.attached !== 0) continue
+                        account.transport !== connection.transport || account.oauth_enabled !== 0 || account.credential_header !== header || account.shared_with_all !== 0 || account.attached !== 0) continue
                     const linked = (await tx.execute({
                         sql: 'SELECT 1 FROM desktop_vault_catalog_adoptions WHERE item_id=? AND item_revision=? AND owner!=? LIMIT 1',
                         args: [String(account.id), String(account.revision), record.owner],
@@ -179,9 +179,9 @@ export async function adoptDesktopCatalogApps(input: {
                     for (let ordinal = 2; names.has(display.toLowerCase()); ordinal++) display = label.slice(0, 110) + ' ' + ordinal
                     await tx.execute({
                         sql: `INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,sealed,credential_header,oauth_enabled,
-                              catalog_slug,catalog_method,catalog_name,catalog_instance,catalog_label) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                              catalog_slug,catalog_method,catalog_name,catalog_instance,catalog_label,transport) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                         args: [itemId, connection.name, connection.url, revision, revision, sealed, header, Number(isOAuth),
-                            plan.slug, plan.methodId, connection.displayName, instanceId ?? null, display],
+                            plan.slug, plan.methodId, connection.displayName, instanceId ?? null, display, connection.transport],
                     })
                 }
                 await tx.execute({ sql: 'INSERT INTO desktop_vault_mcp_attachments(item_id,agent_id) VALUES(?,?)', args: [itemId, record.owner] })

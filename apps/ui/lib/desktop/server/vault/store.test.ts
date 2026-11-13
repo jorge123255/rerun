@@ -17,6 +17,7 @@ import { initializeDesktopRound52 } from '../round52-schema'
 import { initializeDesktopRound55 } from '../round55-schema'
 import { initializeDesktopRound56 } from '../round56-schema'
 import { initializeDesktopRound57 } from '../round57-schema'
+import { initializeDesktopRound58 } from '../round58-schema'
 import { initializeDesktopRound54 } from '../round54-schema'
 import { initializeDesktopRound53 } from '../round53-schema'
 import { desktopServicesSchema } from '../services/schema'
@@ -70,6 +71,7 @@ async function fixture(migrate = true, headerMigration = true, namedAccounts = t
     await initializeDesktopRound55(db)
     await initializeDesktopRound56(db)
     await initializeDesktopRound57(db)
+    await initializeDesktopRound58(db)
     await db.executeMultiple(desktopServicesSchema)
     return { db, root, file, open, vault: desktopVault(db, crypto, 7) }
 }
@@ -96,7 +98,7 @@ test('upgrades a prior workspace, saves redacted metadata, rotates ciphertext, a
             await initializeDesktopRound45(reopened)
             await initializeDesktopRound46(reopened)
             expect(await desktopVault(reopened, crypto, 7).list()).toEqual(updated)
-            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }, { version: 48 }, { version: 49 }, { version: 50 }, { version: 51 }, { version: 52 }, { version: 53 }, { version: 54 }, { version: 55 }, { version: 56 }, { version: 57 }])
+            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }, { version: 48 }, { version: 49 }, { version: 50 }, { version: 51 }, { version: 52 }, { version: 53 }, { version: 54 }, { version: 55 }, { version: 56 }, { version: 57 }, { version: 58 }])
             expect((await reopened.execute('PRAGMA foreign_key_check')).rows).toEqual([])
         } finally { reopened.close() }
         expect((await readFile(f.file)).includes(secret)).toBe(false)

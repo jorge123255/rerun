@@ -174,6 +174,7 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                 } else if (input.operation === 'create-server' || input.operation === 'add-app') {
                     let connection: Extract<DesktopVaultMutation, { operation: 'create-server' }>
                     let catalogName: string | null = null, instanceId: string | undefined, catalogLabel: string | undefined
+                    let transport: 'http' | 'sse' = 'http'
                     let url: string
                     try {
                         if (input.operation === 'add-app') {
@@ -186,6 +187,7 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                             }
                             if (accounts.length) instanceId = newServiceInstanceId(accounts.flatMap(account => account.instanceId ? [account.instanceId] : []))
                             const app = compileVaultCatalogApp(input.slug, input.methodId, input.values, instanceId)
+                            transport = app.transport
                             catalogName = app.displayName
                             catalogLabel = input.label
                             if (!catalogLabel && accounts.length) {
@@ -208,9 +210,9 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                     const id = randomUUID()
                     const sealed = await sealServerCredential(id, url, revision, connection.header ? { header: connection.header } : { bearer: connection.bearer })
                     await tx.execute({
-                        sql: 'INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,sealed,credential_header,oauth_enabled,catalog_slug,catalog_method,catalog_name,catalog_instance,catalog_label) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                        sql: 'INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,sealed,credential_header,oauth_enabled,catalog_slug,catalog_method,catalog_name,catalog_instance,catalog_label,transport) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                         args: [id, connection.name, url, revision, revision, sealed, connection.header?.name ?? null, Number(connection.browserSignIn === true),
-                            input.operation === 'add-app' ? input.slug : null, input.operation === 'add-app' ? input.methodId : null, catalogName, instanceId ?? null, catalogLabel ?? null],
+                            input.operation === 'add-app' ? input.slug : null, input.operation === 'add-app' ? input.methodId : null, catalogName, instanceId ?? null, catalogLabel ?? null, transport],
                     })
                 } else {
                     const entry = listing.entries.find(row => row.id === input.id)
@@ -298,7 +300,8 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         let connection: ReturnType<typeof compileVaultCatalogApp>
                         try { connection = compileVaultCatalogApp(entry.catalog.slug, input.methodId, input.values, entry.catalog.instanceId) }
                         catch { throw new DesktopHttpError(400, 'Check the app’s authentication fields and try again.') }
-                        if (entry.name !== connection.name || entry.url !== connection.url) throw new DesktopHttpError(409, 'This method uses a different server. Add a new Vault entry to review it.')
+                        const savedTransport = (await tx.execute({ sql: 'SELECT transport FROM desktop_vault_mcp_servers WHERE id=?', args: [entry.id] })).rows[0]?.transport
+                        if (entry.name !== connection.name || entry.url !== connection.url || savedTransport !== connection.transport) throw new DesktopHttpError(409, 'This method uses a different server. Add a new Vault entry to review it.')
                         const sealed = await sealServerCredential(entry.id, entry.url, revision, connection.header ? { header: connection.header } : { bearer: connection.bearer })
                         if (entry.browserSignIn) await retireVaultOAuthOrigin(tx, entry.id)
                         await tx.execute({ sql: 'DELETE FROM desktop_vault_mcp_oauth WHERE item_id=?', args: [entry.id] })
