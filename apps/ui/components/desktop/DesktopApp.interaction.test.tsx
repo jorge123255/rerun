@@ -666,6 +666,7 @@ test('open General picks up a saved sibling without rewriting the active layout'
     const path = '/api/desktop/agents/researcher/sessions'
     const initial = { sessions: [general, sibling], tabs: { revision: 2, activeIndex: 0, tabs: [{ uid: generalTabUid(coworker.id), id: general.id, title: 'General' }] } }
     let background: Response | undefined
+    const threadReads = () => fetcher.mock.calls.filter(([url]) => url === path + '?view=threads').length
     const fetcher = mockDesktopFetch((url, init) => {
         if (url === settingsUrl) return Response.json(disconnected)
         if (url === path) return Response.json(initial)
@@ -694,8 +695,17 @@ test('open General picks up a saved sibling without rewriting the active layout'
         expect(container.querySelector('[data-thread-row="sibling"]')).not.toBeNull()
         expect(container.textContent).not.toContain('Temporary read failure')
         background = undefined
-        await tick()
+        const beforeFocus = threadReads()
+        expect(container.querySelector('[data-thread-row="new-sibling"]')).toBeNull()
+        await act(async () => { window.dispatchEvent(new Event('focus')) })
+        expect(threadReads()).toBe(beforeFocus + 1)
         expect(container.querySelector('[data-thread-row="new-sibling"]')?.textContent ?? '').toContain('Saved on another surface')
+        visibility.mockReturnValue('hidden')
+        await act(async () => { document.dispatchEvent(new Event('visibilitychange')); window.dispatchEvent(new Event('focus')) })
+        expect(threadReads()).toBe(beforeFocus + 1)
+        visibility.mockReturnValue('visible')
+        await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+        expect(threadReads()).toBe(beforeFocus + 2)
         const branch = () => container.querySelector('[data-thread-row="sibling"]')!
         expect(branch().textContent).toContain('Scheduled run · Weekly digest')
         expect(branch().querySelector('[aria-label="Running"]')).not.toBeNull()
@@ -723,6 +733,7 @@ test('open General picks up a saved sibling without rewriting the active layout'
         expect(fetcher.mock.calls.filter(([url, options]) => url.endsWith('/tabs') && options?.method === 'PUT')).toHaveLength(0)
         await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Close panel"]')!.click())
         const requests = fetcher.mock.calls.filter(([url]) => url === path + '?view=threads').length
+        await act(async () => { window.dispatchEvent(new Event('focus')) })
         await tick()
         expect(fetcher.mock.calls.filter(([url]) => url === path + '?view=threads')).toHaveLength(requests)
     } finally {

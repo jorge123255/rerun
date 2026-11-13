@@ -93,6 +93,7 @@ export function DesktopChatTabs({ agent, workspaceId, sessions, pendingChatSumma
     useVisibleInterval(refreshVisibleThreads, 5000, {
         enabled: !!refreshThreads && selected && canMountChats && !rejectedRequest && (isGeneralTab(active) || historyUid !== null),
         immediate: historyUid !== null,
+        refreshOnFocus: true,
     })
     const [visited, setVisited] = useState<string[]>([active.uid])
     const lastRequest = useRef(requested)
