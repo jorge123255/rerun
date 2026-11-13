@@ -28,12 +28,14 @@ test('lists coworkers most recently active first with one line of where each sta
         agents={[agent('ann', 'Ann'), agent('bo', 'Bo'), agent('cy', 'Cy', { enabled: false }), agent('di', 'Di'), agent('ed', 'Ed', { description: '' })]}
         statuses={{ ann: 'working', bo: 'waiting_human', cy: 'working', di: 'unreachable', ed: 'idle' }}
         previews={{ ann: { title: 'Q4 prospects', updatedAt: '2026-11-13T10:00:00.000Z' }, bo: { title: 'Approve the invoice', updatedAt: '2026-11-13T12:00:00.000Z' }, di: { title: 'Weekly report', updatedAt: '2026-11-12T10:00:00.000Z', lastMessage: { text: 'Send it on Monday', mine: true } } }}
-        onOpenCoworker={onOpen} onOpenForeman={onForeman} onSearch={onSearch} onNewCoworker={onNew} />)
+        unseenIds={['bo', 'ann', 'di']} onOpenCoworker={onOpen} onOpenForeman={onForeman} onSearch={onSearch} onNewCoworker={onNew} />)
     const tiles = [...host.querySelectorAll<HTMLButtonElement>('[data-simple-tile-id]')]
     expect(tiles.map(tile => tile.dataset.simpleTileId)).toEqual(['bo', 'ann', 'di', 'cy', 'ed'])
     const lines = tiles.map(tile => tile.querySelector('.text-xs')?.textContent)
     // Waiting reads its conversation, work its subject, a quiet coworker its last message, paused wins over work.
     expect(lines).toEqual(['Approve the invoice', 'Working · Q4 prospects', 'You: Send it on Monday', 'Paused', ' '])
+    // Waiting on the person wins over a finished run nobody opened; the others carry no dot.
+    expect(tiles.map(tile => tile.querySelector<HTMLElement>('[data-tile-dot]')?.dataset.tileDot ?? null)).toEqual(['waiting', 'unseen', 'unseen', null, null])
     expect(tiles[0].getAttribute('aria-current')).toBe('true')
     expect(tiles[1].getAttribute('aria-current')).toBeNull()
     await act(async () => { tiles[1].click() })

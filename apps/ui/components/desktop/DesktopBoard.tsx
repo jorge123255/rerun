@@ -41,7 +41,7 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ inboxSlot, activitySnapshot, routineCountdowns, agents, workspaceName, workspaceMenu, gettingStarted, selectedAgentId, visibleSessionId, workspaceId, launchNonce, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onOpenSettings, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
+export function DesktopBoard({ inboxSlot, onUnseenAgents, activitySnapshot, routineCountdowns, agents, workspaceName, workspaceMenu, gettingStarted, selectedAgentId, visibleSessionId, workspaceId, launchNonce, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onOpenSettings, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
     activitySnapshot?: BoardActivitySnapshot
     routineCountdowns?: ReadonlyMap<string, TileCountdown>
     agents: DesktopAgentView[]
@@ -71,6 +71,8 @@ export function DesktopBoard({ inboxSlot, activitySnapshot, routineCountdowns, a
     onOpenConversation?: (hit: DesktopConversationHit) => void
     // Where the Actions inbox shows while the board is hidden behind the Simple view's list.
     inboxSlot?: HTMLElement | null
+    // The coworkers with a finished run nobody has opened yet, for the Simple view's list.
+    onUnseenAgents?: (agentIds: string[]) => void
     onPlacementChange?: (placing: boolean) => void
     board?: DesktopBoardState
     onBoardCommand?: (command: DesktopSpaceCommand) => Promise<void>
@@ -166,6 +168,8 @@ export function DesktopBoard({ inboxSlot, activitySnapshot, routineCountdowns, a
     if (placing && inboxOpen) setInboxOpen(false)
     const completions = useDesktopCompletions(inboxOpen && !placing, agents.map(agent => agent.id),
         placing ? null : visibleSessionId, !!onOpenConversation, !!(workspaceId && launchNonce && desktopInboxBadge()))
+    const unseenAgents = JSON.stringify([...new Set(completions.items.map(item => item.agentId))].sort())
+    useEffect(() => { onUnseenAgents?.(JSON.parse(unseenAgents) as string[]) }, [unseenAgents, onUnseenAgents])
     const resultsByAgent = useMemo(() => {
         const groups = new Map<string, { latest: DesktopCompletionItem; results: TileResults }>()
         if (completions.status !== 'ready') return groups

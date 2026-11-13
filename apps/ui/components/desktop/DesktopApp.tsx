@@ -852,6 +852,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const chooseView = (view: DesktopWorkspaceView) => { saveDesktopWorkspaceView({ view }); setViewPreference(view) }
     const [coworkerPreviews, setCoworkerPreviews] = useState<DesktopCoworkerPreviews['previews'] | null>(null)
     const [simpleInboxSlot, setSimpleInboxSlot] = useState<HTMLElement | null>(null)
+    const [unseenAgents, setUnseenAgents] = useState<string[]>([])
     // The local engine does not announce a finished turn here, so the list is read again when the
     // board's activity or the open conversation changes, and every few seconds while it is on screen.
     const [previewTick, setPreviewTick] = useState(0)
@@ -918,7 +919,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow [--desktop-board-edge:16px] md:[--desktop-board-edge:25px]">
                 <div data-desktop-board-layer className={simple ? 'invisible absolute inset-0' : 'contents'} inert={simple} aria-hidden={simple || undefined}>
                 {runtimeWorkspaceId != null ? <FxBoardCameraBoundary workspaceId={runtimeWorkspaceId} currentWorkspace={() => runtimeWorkspaceId} persistence={cameraPersistence} bindFlush={flush => { cameraFlush.current = flush }}>{camera => (
-                <DesktopBoard inboxSlot={simple ? simpleInboxSlot : null} activitySnapshot={boardActivity} routineCountdowns={routineCountdowns} agents={agents} workspaceName={workspaceName} workspaceMenu={simple ? null : workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
+                <DesktopBoard inboxSlot={simple ? simpleInboxSlot : null} onUnseenAgents={setUnseenAgents} activitySnapshot={boardActivity} routineCountdowns={routineCountdowns} agents={agents} workspaceName={workspaceName} workspaceMenu={simple ? null : workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
                     workspaceId={runtimeWorkspaceId} launchNonce={initialData.runtimeLaunchNonce} onOpenNotificationSettings={openNotifications}
                     cameraMountKey={camera.mountKey} initialCamera={camera.initialCamera} onCameraChange={camera.onCameraChange}
                     newBoxSignal={newBoxSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
@@ -934,7 +935,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     onOpenSettings={openBoardCoworkerSettings}
                     onRename={renameCoworker} onShare={agent => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting() && currentAgents.current.some(current => current.id === agent.id)) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) } }} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
-                )}</FxBoardCameraBoundary> : <DesktopBoard inboxSlot={simple ? simpleInboxSlot : null} activitySnapshot={boardActivity} routineCountdowns={routineCountdowns} agents={agents} workspaceName={workspaceName} workspaceMenu={simple ? null : workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
+                )}</FxBoardCameraBoundary> : <DesktopBoard inboxSlot={simple ? simpleInboxSlot : null} onUnseenAgents={setUnseenAgents} activitySnapshot={boardActivity} routineCountdowns={routineCountdowns} agents={agents} workspaceName={workspaceName} workspaceMenu={simple ? null : workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
                     newBoxSignal={newBoxSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
                     board={boardState.board} onBoardCommand={initialData.board ? boardState.command : undefined}
                     boardSaving={boardState.saving} boardError={boardState.error} onRetryBoard={boardState.retry}
@@ -954,7 +955,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                         <DesktopSimpleSidebar workspaceMenu={workspaceMenu} agents={agents} statuses={boardActivity.statuses} previews={coworkerPreviews}
                             selectedId={panelOpen ? selectedAgentId : null} foremanOpen={foremanEngaged && foremanOpen && !panelOpen}
                             disabled={creationNavigationBlocked || workspaceDialogActive || quitting}
-                            onOpenCoworker={id => selectCoworker(id)} onOpenCard={openBoardCoworkerSettings} inboxSlot={setSimpleInboxSlot} onNewCoworker={() => showBoard(true)}
+                            onOpenCoworker={id => selectCoworker(id)} onOpenCard={openBoardCoworkerSettings} inboxSlot={setSimpleInboxSlot} unseenIds={unseenAgents} onNewCoworker={() => showBoard(true)}
                             onOpenForeman={controlCenterDisabled ? undefined : () => { setRequestedPanel(null); setPanelOpen(false); engageForeman() }}
                             onSearch={() => { if (!creationAdmission.current.blocked && !controlCenterDisabled) setControlCenterOpen(true) }} />
                     </div>

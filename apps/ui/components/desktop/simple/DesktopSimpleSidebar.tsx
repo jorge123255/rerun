@@ -26,7 +26,7 @@ function statusOf(status: BoardActivityStatus | undefined): AgentStatus {
  * The left column of the Simple view: the workspace, search, then the Chief of Staff and one tile
  * per coworker, the most recently active first.
  */
-export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenCard, onOpenForeman, onSearch, onNewCoworker, inboxSlot }: {
+export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenCard, onOpenForeman, onSearch, onNewCoworker, inboxSlot, unseenIds }: {
     workspaceMenu: ReactNode
     agents: DesktopAgentView[]
     statuses: Record<string, BoardActivityStatus>
@@ -38,6 +38,8 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
     onOpenCard?: (agentId: string) => void
     // The board's Actions inbox is shown here while the list hides the board.
     inboxSlot?: (element: HTMLElement | null) => void
+    // Coworkers with a finished run nobody has opened yet.
+    unseenIds?: readonly string[]
     onOpenForeman?: () => void
     onSearch?: () => void
     onNewCoworker: () => void
@@ -94,7 +96,8 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
                                     </span>
                                     <span className="flex items-center gap-2">
                                         <span className={cn('min-w-0 flex-1 truncate text-xs', LINE_TONE[line.tone])}>{line.text || ' '}</span>
-                                        {!paused && status === 'waiting_human' && <span className="size-2 shrink-0 rounded-full bg-orange-400" />}
+                                        {!paused && status === 'waiting_human' ? <span data-tile-dot="waiting" className="size-2 shrink-0 rounded-full bg-orange-400" />
+                                            : unseenIds?.includes(agent.id) && <span data-tile-dot="unseen" className="size-2 shrink-0 rounded-full bg-brand" />}
                                     </span>
                                 </span>
                             </button>
