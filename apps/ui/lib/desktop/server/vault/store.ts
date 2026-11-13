@@ -35,7 +35,8 @@ function requireCoworker(listing: DesktopVaultListing, agentId: string) {
 
 function coworkerListing(listing: DesktopVaultListing, agentId: string) {
     requireCoworker(listing, agentId)
-    const attached = [], available = []
+    const attached: Omit<DesktopVaultEntry, 'agentIds'>[] = []
+    const available: typeof attached = []
     for (const { agentIds, ...entry } of listing.entries) {
         const group = entry.sharedWithAll || agentIds.includes(agentId) ? attached : available
         group.push(entry)

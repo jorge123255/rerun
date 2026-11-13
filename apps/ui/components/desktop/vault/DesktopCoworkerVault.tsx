@@ -38,7 +38,6 @@ export function DesktopCoworkerVault({ agentId, query }: { agentId: string; quer
         } finally {
             if (pending.current === controller) {
                 pending.current = null
-                setBusy(false)
             }
         }
     }, [agentId])
@@ -47,7 +46,7 @@ export function DesktopCoworkerVault({ agentId, query }: { agentId: string; quer
         if (pending.current) return
         setBusy(true)
         setError('')
-        void request(input)
+        void request(input).finally(() => setBusy(false))
     }
 
     useEffect(() => {
