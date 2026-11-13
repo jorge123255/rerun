@@ -31,7 +31,9 @@ async function read(action?: DesktopSubscriptionLoginAction, signal?: AbortSigna
 export function DesktopSubscriptionLogin({ only, onConnectionsChanged }: { only?: DesktopSubscriptionProvider; onConnectionsChanged?: () => void } = {}) {
     const [snapshot, setSnapshot] = useState<DesktopSubscriptionLoginSnapshot | null>(null)
     const [pending, setPending] = useState(false)
-    const [error, setError] = useState<string | null>(null)
+    const [statusReadFailed, setStatusReadFailed] = useState(false)
+    const [actionError, setActionError] = useState<string | null>(null)
+    const error = actionError ?? (statusReadFailed ? 'Could not read subscription sign-in status.' : null)
     const revision = useRef(0)
 
     useEffect(() => {
@@ -45,10 +47,11 @@ export function DesktopSubscriptionLogin({ only, onConnectionsChanged }: { only?
                 const next = await read(undefined, controller.signal)
                 if (controller.signal.aborted || revision.current !== current) return
                 setSnapshot(next)
+                setStatusReadFailed(false)
                 repeat = providers.some(provider => ['waiting', 'starting', 'cancelling'].includes(next[provider].phase))
             } catch {
                 if (!controller.signal.aborted && revision.current === current) {
-                    setError('Could not read subscription sign-in status.')
+                    setStatusReadFailed(true)
                     repeat = true
                 }
             }
@@ -61,21 +64,24 @@ export function DesktopSubscriptionLogin({ only, onConnectionsChanged }: { only?
     async function act(action: DesktopSubscriptionLoginAction) {
         revision.current++
         setPending(true)
-        setError(null)
+        setActionError(null)
         try {
             const next = await read(action)
             setSnapshot(next)
+            setStatusReadFailed(false)
             const state = next[action.provider]
             if (action.action === 'disconnect' ||
                 (action.action === 'refresh-models' && state.phase === 'approved' && state.chatReady)) onConnectionsChanged?.()
         } catch {
-            setError(action.action === 'refresh-models' ? 'Could not refresh subscription models. Try again.' : 'Could not confirm the sign-in change.')
+            setActionError(action.action === 'refresh-models' ? 'Could not refresh subscription models. Try again.' : 'Could not confirm the sign-in change.')
         }
         finally { setPending(false) }
     }
 
-    if (!snapshot) return only
-        ? <p role="status" className="text-sm text-muted-foreground">{error ?? 'Loading subscription sign-in status…'}</p> : null
+    if (!snapshot) {
+        if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>
+        return only ? <p role="status" className="text-sm text-muted-foreground">Loading subscription sign-in status…</p> : null
+    }
     if (only && snapshot[only].phase === 'unavailable') return <p role="status" className="text-sm text-muted-foreground">This subscription sign-in is unavailable.</p>
     if (!only && providers.every(provider => snapshot[provider].phase === 'unavailable')) return null
     return <div className="space-y-3">

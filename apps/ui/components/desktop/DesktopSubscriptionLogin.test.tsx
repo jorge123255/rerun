@@ -124,3 +124,38 @@ test('lists saved Grok models and reasoning without marking the connection chat 
     expect(changed).not.toHaveBeenCalled()
     await act(async () => { root.unmount() })
 })
+
+test('a recovered status clears its own error and preserves a failed action message', async () => {
+    vi.useFakeTimers()
+    let reads = 0
+    const fetchStatus = vi.fn(async (_path: string, init?: RequestInit) => {
+        if (init?.method === 'POST') return new Response(null, { status: 409 })
+        if (++reads === 1) return new Response(null, { status: 503 })
+        return Response.json({
+            'grok-build': { phase: 'unavailable' },
+            'kimi-code': { phase: 'waiting', userCode: 'TEST-QA22', verificationUrl: 'https://auth.kimi.ai/device' },
+        })
+    })
+    vi.stubGlobal('fetch', fetchStatus)
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    try {
+        await act(async () => { root.render(<DesktopSubscriptionLogin />) })
+        expect(container.querySelector('[role="alert"]')?.textContent).toBe('Could not read subscription sign-in status.')
+
+        await act(async () => { await vi.advanceTimersByTimeAsync(1800) })
+        expect(container.querySelector('output')?.textContent).toBe('TEST-QA22')
+        expect(container.querySelector('[role="alert"]')).toBeNull()
+
+        const cancel = [...container.querySelectorAll('button')].find(button => button.textContent === 'Cancel sign-in')!
+        await act(async () => { cancel.click() })
+        expect(container.querySelector('output')?.textContent).toBe('TEST-QA22')
+        expect(container.querySelector('[role="alert"]')?.textContent).toBe('Could not confirm the sign-in change.')
+        await act(async () => { await vi.advanceTimersByTimeAsync(1800) })
+        expect(container.querySelector('[role="alert"]')?.textContent).toBe('Could not confirm the sign-in change.')
+        expect(reads).toBeGreaterThan(2)
+    } finally {
+        await act(async () => { root.unmount() })
+    }
+})
