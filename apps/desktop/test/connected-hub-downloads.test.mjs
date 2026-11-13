@@ -93,6 +93,25 @@ test('a foreign sender, a foreign redirect and a cancelled transfer publish noth
     assert.deepEqual(f.recent, [])
 })
 
+test('an interrupted download reports immediately and publishes only after it completes', t => {
+    const f = fixture(t)
+    const { item } = f.begin()
+    const [{ id }] = f.messages
+    writeFileSync(item.destination, 'partial')
+    item.emit('updated', null, 'interrupted')
+    assert.deepEqual(f.messages.map(value => [value.id, value.state]), [[id, 'progressing'], [id, 'interrupted']])
+    assert.deepEqual(f.recent, [])
+    f.downloads.show(f.owner, id)
+    assert.deepEqual(f.revealed, [])
+
+    writeFileSync(item.destination, 'completed bytes')
+    item.emit('done', null, 'completed')
+    assert.deepEqual(f.messages.at(-1), {
+        source: f.owner, id, filename: 'export.csv', state: 'completed', receivedBytes: 12, totalBytes: 12,
+    })
+    assert.equal(readFileSync(join(f.root, 'export.csv'), 'utf8'), 'completed bytes')
+})
+
 test('a child export reports to its opener and settles only the initiating contents', t => {
     const f = fixture(t)
     assert(f.begin({ contents: f.child, urls: ['https://other.test/export'] }).refused)

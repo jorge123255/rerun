@@ -108,7 +108,12 @@ export function createHubDownloads({ app, shell, ownerOf, notify, closeEmptyWind
             let lastReport = now()
             active.set(item, temporary)
             item.on('updated', (_event, state) => {
-                if (!active.has(item) || state !== 'progressing' || now() - lastReport < 250) return
+                if (!active.has(item)) return
+                if (state === 'interrupted') {
+                    report('interrupted')
+                    return
+                }
+                if (state !== 'progressing' || now() - lastReport < 250) return
                 lastReport = now()
                 report('progressing')
             })
