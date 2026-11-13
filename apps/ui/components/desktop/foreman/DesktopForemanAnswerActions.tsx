@@ -9,20 +9,18 @@ import { copyDesktopPlainText } from '@/lib/desktop/clipboard'
 import { useCopy } from '@/lib/use-copy'
 import { toast } from 'sonner'
 
-const copyFailed = () => toast.error('Could not copy this reply. Try again.')
-
 function FeedbackThumb({ rating, current, disabled, onRate }: {
     rating: MessageFeedbackRating
     current: MessageFeedbackRating | null
     disabled?: boolean
     onRate: (rating: MessageFeedbackRating) => void
 }) {
+    const { t } = useDesktopLocale()
     const pressed = current === rating
     const Glyph = rating === 'up' ? ThumbsUpIcon : ThumbsDownIcon
     return (
         <MessageAction
-            tooltip={rating === 'up' ? 'Good response' : 'Bad response'}
-            label={rating === 'up' ? 'Good response' : 'Bad response'}
+            tooltip={t(rating === 'up' ? 'replyActions.goodResponse' : 'replyActions.badResponse')}
             aria-pressed={pressed}
             disabled={disabled}
             className={cn(pressed ? 'bg-accent text-foreground' : 'text-muted-foreground')}
@@ -42,7 +40,7 @@ export function DesktopForemanAnswerActions({ copyText, rating = null, disabled,
     retryDisabled?: boolean
 }) {
     const { t } = useDesktopLocale()
-    const { copied, copy } = useCopy(copyFailed, copyDesktopPlainText)
+    const { copied, copy } = useCopy(() => toast.error(t('copyReplyFailed')), copyDesktopPlainText)
     const copyLabel = t(copied ? 'foreman.copied' : 'foreman.copy')
     if (!copyText && !onRate && !onReviewRetry) return null
     return <MessageActions className="mt-1" data-chat-find-ignore>

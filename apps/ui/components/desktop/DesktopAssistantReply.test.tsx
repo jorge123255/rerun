@@ -5,6 +5,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { publicDesktopHistory, type HistoryMessage } from '@/lib/chat/engine-history'
 import { desktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages } from '@/lib/desktop/locale'
+import { DesktopLocale } from './DesktopLocale'
 import { DesktopAssistantReply } from './DesktopAssistantReply'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -98,7 +101,30 @@ test('renders Markdown during a stream and in the settled reply; copy uses text 
     await act(async () => button.click())
     expect(command.mock.calls).toEqual([['copy']])
     expect(data.getData('text/plain')).toBe(markdown + ' Final sentence.')
-    expect(button.textContent).toBe('Copied')
+    expect(button.textContent).toBe('Copied!')
+})
+
+test('uses the shared reply toolbar wording in the workspace language and describes where regeneration opens', async () => {
+    const initial = { locale: 'fr' as const, preference: 'fr' as const, messages: desktopMessages('fr', await loadMessages('fr')) }
+    const message: UIMessage = { id: 'engine-saved', role: 'assistant', parts: [{ type: 'text', text: 'Réponse conservée' }] }
+    const onRegenerate = vi.fn()
+    const onRate = vi.fn()
+    await act(async () => root.render(<DesktopLocale initial={initial}>
+        <DesktopAssistantReply message={message} streaming={false} onRegenerate={onRegenerate} onRate={onRate} />
+    </DesktopLocale>))
+    const actions = [...container.querySelectorAll<HTMLButtonElement>('[data-chat-find-ignore] button')]
+    expect(actions.map(button => button.querySelector('span.sr-only')?.textContent)).toEqual(['Copier', 'Régénérer', 'Bonne réponse', 'Mauvaise réponse'])
+    expect(actions.every(button => button.querySelector('svg'))).toBe(true)
+    expect(actions[1].getAttribute('aria-description')).toBe('Ouvre une nouvelle conversation et conserve l’originale')
+    const { data } = mockClipboard()
+    vi.stubGlobal('navigator', { userActivation: { isActive: true } })
+    await act(async () => actions[0].click())
+    expect(data.getData('text/plain')).toBe('Réponse conservée')
+    expect(actions[0].getAttribute('aria-label')).toBe('Copié !')
+    await act(async () => actions[1].click())
+    expect(onRegenerate).toHaveBeenCalledWith('engine-saved')
+    await act(async () => actions[3].click())
+    expect(onRate).toHaveBeenCalledWith('down')
 })
 
 test('workspace links send only well-formed proposals through the active handler', async () => {

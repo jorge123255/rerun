@@ -4,7 +4,7 @@ import { getToolName, isToolUIPart, type UIMessage } from 'ai'
 import { desktopSourceParts, QUICK_REPLIES_TOOL, stripBridgePrefix, skillProposalIdOf, isPinnable, type MessageFeedbackRating } from '@rerun/contracts'
 import { useMemo, type ReactElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { MessageAction } from '@/components/ai-elements/message'
+import { MessageAction, MessageActions } from '@/components/ai-elements/message'
 import { DesktopWorkspaceMessage, type DesktopOpenWorkspaceFile } from './DesktopWorkspaceMessage'
 import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ai-elements/sources'
 import { MessageTimeTooltip } from '@/components/chat/MessageTimeTooltip'
@@ -27,7 +27,6 @@ import { DesktopFileCard } from './DesktopFileCard'
 import { saveDesktopResultFile } from '@/lib/desktop/result-file-save'
 import { DesktopQuickReplies } from './DesktopQuickReplies'
 import type { DesktopQuickReplySend } from '@/lib/desktop/quick-replies'
-import { Button } from '@/components/ui/button'
 import { BrainIcon, CheckIcon, CopyIcon, FoldVerticalIcon, RefreshCcwIcon, ThumbsDownIcon, ThumbsUpIcon } from '@/lib/icons'
 import { isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { desktopCompactionSteps } from '@/lib/desktop/compaction'
@@ -44,7 +43,6 @@ import { DesktopCoworkerCalls } from './coworker-calls/DesktopCoworkerCalls'
 import { DesktopDelegationMount } from './delegation/DesktopDelegationMount'
 import type { DesktopCoworkerCallOpenTarget } from '@/lib/desktop/coworker-calls-client'
 
-const copyFailed = () => toast.error('Could not copy this reply. Try again.')
 
 function replyMarkdown(text: string, streaming = false) {
     return <DesktopWorkspaceMessage streaming={streaming}>{text}</DesktopWorkspaceMessage>
@@ -94,10 +92,11 @@ function DesktopReplySources({ parts }: Pick<UIMessage, 'parts'>) {
 }
 
 function FeedbackThumb({ rating, current, onRate }: { rating: MessageFeedbackRating; current: MessageFeedbackRating | null; onRate: (rating: MessageFeedbackRating) => void }) {
+    const { t } = useDesktopLocale()
     const pressed = current === rating
     const Glyph = rating === 'up' ? ThumbsUpIcon : ThumbsDownIcon
     return (
-        <MessageAction tooltip={rating === 'up' ? 'Good response' : 'Bad response'} aria-pressed={pressed} className={cn(pressed ? 'bg-accent text-foreground' : 'text-muted-foreground')} onClick={() => onRate(rating)}>
+        <MessageAction tooltip={t(rating === 'up' ? 'replyActions.goodResponse' : 'replyActions.badResponse')} aria-pressed={pressed} className={cn(pressed ? 'bg-accent text-foreground' : 'text-muted-foreground')} onClick={() => onRate(rating)}>
             <Glyph className="size-3.5" />
         </MessageAction>
     )
@@ -122,10 +121,10 @@ export function DesktopAssistantReply({ message, streaming, latest = streaming, 
     onOpenWorkspaceFile?: DesktopOpenWorkspaceFile
     skillProposals?: { rows: ReadonlyMap<string, EngineSkillProposal>; pinnedIds: ReadonlySet<string>; pendingId: string | null; onDecide?: (id: string, decision: 'accept' | 'dismiss') => void; onOpenSkill?: (slug: string) => void }
 }) {
-    const { copied, copy } = useCopy(copyFailed, copyDesktopPlainText)
     const compactions = desktopCompactionSteps(message.parts, streaming)
     const lastStepIndex = streaming ? message.parts.findLastIndex(part => !part.type.startsWith('data-')) : -1
     const { t } = useDesktopLocale()
+    const { copied, copy } = useCopy(() => toast.error(t('copyReplyFailed')), copyDesktopPlainText)
     const blocks: (ReactElement | StepGroupItem[])[] = []
     let group: StepGroupItem[] = []
     let groupIdentity: DesktopHistoricalIdentity | undefined
@@ -276,19 +275,21 @@ export function DesktopAssistantReply({ message, streaming, latest = streaming, 
         })}
         <DesktopReplySources parts={message.parts} />
         {quickReplies && <DesktopQuickReplies message={message} {...quickReplies} />}
-        {text && !streaming && <div data-chat-find-ignore className="mt-2 flex flex-wrap items-center gap-1">
-            <Button type="button" variant="ghost" size="sm" aria-label="Copy reply" onClick={() => copy(text)}>
+        {text.trim() && !streaming && <MessageActions data-chat-find-ignore
+            className={cn('mt-1 flex-wrap transition-opacity group-hover:opacity-100 focus-within:opacity-100',
+                feedbackRating == null && '[@media(hover:hover)]:opacity-0')}>
+            <MessageAction tooltip={t(copied ? 'replyActions.copied' : 'replyActions.copy')}
+                aria-label={t(copied ? 'replyActions.copied' : 'copyReply')} onClick={() => copy(text)}>
                 {copied ? <CheckIcon aria-hidden className="size-3.5" /> : <CopyIcon aria-hidden className="size-3.5" />}
-                {copied ? 'Copied' : 'Copy'}
-            </Button>
-            {onRegenerate && <Button type="button" variant="ghost" size="sm" title="Opens a new chat and keeps the original"
-                aria-description="Opens a new chat and keeps the original" onClick={() => onRegenerate(message.id)}>
-                <RefreshCcwIcon aria-hidden className="size-3.5" /> Regenerate reply
-            </Button>}
-            {onRate && message.id.startsWith('engine-') && <div className={cn('flex items-center gap-1 transition-opacity group-hover:opacity-100 focus-within:opacity-100', feedbackRating == null && 'opacity-0')}>
+            </MessageAction>
+            {onRegenerate && <MessageAction label={t('replyActions.regenerate')} aria-description={t('regenerateReplyHint')}
+                tooltip={`${t('replyActions.regenerate')} · ${t('regenerateReplyHint')}`} onClick={() => onRegenerate(message.id)}>
+                <RefreshCcwIcon aria-hidden className="size-3.5" />
+            </MessageAction>}
+            {onRate && message.id.startsWith('engine-') && <>
                 <FeedbackThumb rating="up" current={feedbackRating} onRate={onRate} />
                 <FeedbackThumb rating="down" current={feedbackRating} onRate={onRate} />
-            </div>}
-        </div>}
+            </>}
+        </MessageActions>}
     </>
 }
