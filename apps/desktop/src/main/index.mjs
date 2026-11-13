@@ -64,6 +64,7 @@ let reopeningHub
 let openingStartupCloud
 let deferringStartupWindow = false
 let transitioning = false
+let mountingWorkspaceRuntime
 let quitting = false
 let quittingNow = false
 let phonePairing
@@ -515,16 +516,19 @@ async function launch() {
             } catch { /* Ignore untrusted frames. */ }
         })
         ipcMain.handle('desktop:mac-fullscreen', event => (boards.recoveryPage(event, runtime) ?? trusted(event)).window.isFullScreen())
-        const assertBoard = event => {
+        const assertBoard = (event, { readWhileMounting = false } = {}) => {
             trusted(event)
-            if (quitting || transitioning || !runtimeScope() || !isDesktopPage(event.senderFrame.url)) throw new Error('The workspace is unavailable')
+            const mounting = readWhileMounting && runtime === mountingWorkspaceRuntime
+            if (quitting || (transitioning && !mounting) || !runtimeScope() || !isDesktopPage(event.senderFrame.url)) {
+                throw new Error('The workspace is unavailable')
+            }
         }
         const localMacSettings = () => ({
             openAtLogin: macLoginItemSettings(app)?.openAtLogin ?? null,
             version: app.isPackaged ? app.getVersion() : null,
             updatesAvailable: macUpdates?.enabled() === true,
         })
-        ipcMain.handle('desktop:mac-settings', event => { assertBoard(event); return localMacSettings() })
+        ipcMain.handle('desktop:mac-settings', event => { assertBoard(event, { readWhileMounting: true }); return localMacSettings() })
         ipcMain.handle('desktop:mac-set-open-at-login', (event, enabled) => {
             assertBoard(event)
             setMacOpenAtLogin(app, enabled)
@@ -534,14 +538,14 @@ async function launch() {
             assertBoard(event)
             phonePairingWindow.open()
         })
-        ipcMain.handle('desktop:update-state', event => { assertBoard(event); return macUpdates?.state() ?? { status: 'idle' } })
+        ipcMain.handle('desktop:update-state', event => { assertBoard(event, { readWhileMounting: true }); return macUpdates?.state() ?? { status: 'idle' } })
         ipcMain.handle('desktop:update-check', event => { assertBoard(event); return macUpdates?.checkForUpdates(false) ?? { status: 'idle' } })
         ipcMain.handle('desktop:update-install', event => {
             assertBoard(event)
             if (changingBoards.size) return false
             return macUpdates?.requestRestart() ?? false
         })
-        ipcMain.handle('desktop:quick-ask-settings', event => { assertBoard(event); return shortcutPreference.state() })
+        ipcMain.handle('desktop:quick-ask-settings', event => { assertBoard(event, { readWhileMounting: true }); return shortcutPreference.state() })
         ipcMain.handle('desktop:quick-ask-set-shortcut', (event, enabled) => {
             assertBoard(event)
             return shortcutPreference.change(enabled, () => assertBoard(event))
@@ -1038,6 +1042,9 @@ async function displayWorkspace() {
     runtime = current
     if (activeWorkspaceId !== current.workspaceId) await prepareWorkspaceWindow(current.workspaceId)
     await activeSession.cookies.set({ url: current.app.origin, name: 'rerun-desktop-session', value: current.app.sessionToken, httpOnly: true, sameSite: 'strict', path: '/' })
+    // The replacement board reads app preferences as soon as it mounts, before the
+    // switch promise settles. The outgoing runtime never receives this allowance.
+    if (transitioning) mountingWorkspaceRuntime = current
     await loadBoard(boards.get(window), current)
     await Promise.all(extraBounds.map(bounds => openAdditionalBoard(bounds)))
     clickHandoff.retain(runtimeScope())
@@ -1077,6 +1084,7 @@ async function runWorkspaceTransition(operation) {
         supervisor.publish('error', 'stateRecovery')
         return { ok: false, code: 'path_corrupt', message: 'Workspace state needs recovery before continuing.' }
     } finally {
+        mountingWorkspaceRuntime = undefined
         transitioning = false
         void clickRouter.flush()
         flushNotificationClicks()
