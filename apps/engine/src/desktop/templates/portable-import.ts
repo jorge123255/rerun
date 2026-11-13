@@ -91,7 +91,7 @@ async function importUnlocked(input: {
 
         for (const coworker of manifest.coworkers) {
             coworker.requirements = normalizeTemplateRequirements(coworker.requirements)
-            if (coworker.envKeys.some(key => !/^[A-Z_][A-Z0-9_]{0,127}$/.test(key)) || coworker.mcpAuth.some(auth => !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(auth.server))) throw new TemplateRequestError(400, 'Portable requirement names are not supported')
+            if (coworker.envKeys.some(key => !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key)) || coworker.mcpAuth.some(auth => !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(auth.server))) throw new TemplateRequestError(400, 'Portable requirement names are not supported')
             for (const member of coworker.members) {
                 const bytes = members.find(item => item.agentKey === coworker.agentKey && item.path === member.path)!
                 const inferred = templateMediaType(member.path, bytes.bytes, member.binary)

@@ -14,6 +14,9 @@ import { prepareSkillHelperFixture } from '../../../../../engine/src/desktop/ski
 import { desktopServicesSchema } from '../services/schema'
 import { serviceSkillMigrationSql } from '../services/skill-journal'
 import { initializeDesktopTemplates } from '../templates/schema'
+import { initializeDesktopRound45 } from '../round45-schema'
+import { initializeDesktopRound47 } from '../round47-schema'
+import { initializeDesktopRound52 } from '../round52-schema'
 import { ensureDesktopCoworkerShareSchema } from './schema'
 import { ingestDesktopCoworkerShareArchive, openDesktopCoworkerShareBinding, readCurrentDesktopCoworkerShareSource } from './binding'
 
@@ -39,6 +42,7 @@ beforeEach(async () => {
     fixture.runtime = { protocolVersion: 1,buildId: 'test',launchNonce: 'test-launch',workspaceId: 1,dataRoot: directory,engineRoot,app: { origin: 'http://127.0.0.1:31111',sessionToken: 't'.repeat(32) },engine: { origin: 'http://127.0.0.1:32222',apiKey: 'test-only' } }
     fixture.db = createClient({ url: `file:${dbPath}` })
     await fixture.db.executeMultiple(`
+        CREATE TABLE desktop_schema_migrations (version INTEGER PRIMARY KEY,id TEXT NOT NULL);
         CREATE TABLE desktop_agents (id TEXT PRIMARY KEY,workspace_id INTEGER NOT NULL,engine_agent_id TEXT NOT NULL UNIQUE,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',enabled INTEGER NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
         CREATE TABLE desktop_deletions (agent_id TEXT,engine_agent_id TEXT);
         CREATE TABLE desktop_spaces (id TEXT PRIMARY KEY,workspace_id INTEGER NOT NULL,name TEXT NOT NULL,col_start INTEGER NOT NULL,row_start INTEGER NOT NULL,col_end INTEGER NOT NULL,row_end INTEGER NOT NULL);
@@ -48,6 +52,9 @@ beforeEach(async () => {
         CREATE TABLE desktop_creations (request_id TEXT PRIMARY KEY,agent_id TEXT,space_id TEXT,board_col INTEGER,board_row INTEGER,phase TEXT);
     `)
     await fixture.db.executeMultiple(desktopServicesSchema); await fixture.db.executeMultiple(serviceSkillMigrationSql)
+    await initializeDesktopRound45(fixture.db)
+    await initializeDesktopRound47(fixture.db)
+    await initializeDesktopRound52(fixture.db)
     await initializeDesktopTemplates(fixture.db); await ensureDesktopCoworkerShareSchema(fixture.db)
     await fixture.db.execute({ sql: 'INSERT INTO desktop_agents VALUES(?,1,?,?,?,?,?,?)',args: [sourceId,'source','Ada','Notes',1,'2026-11-06T00:00:00Z','2026-11-06T00:00:00Z'] })
     await fixture.db.execute({ sql: 'INSERT INTO desktop_spaces VALUES(?,1,?,0,0,30,30)',args: [boxId,'Box'] })
@@ -97,6 +104,54 @@ test('production capture publishes exact canonical memory counts; database, cred
     await expect(readCurrentDesktopCoworkerShareSource(runtime,fixture.db,2,sourceId)).rejects.toMatchObject({ status: 404 })
     fixture.runtime = { ...runtime,launchNonce: 'replacement' }
     await expect(binding.source(1,sourceId)).rejects.toMatchObject({ status: 409 })
+})
+
+test('portable archives carry only app and variable requirements from the source coworker’s Vault', async () => {
+    const runtime = fixture.runtime
+    const binding = await openDesktopCoworkerShareBinding(runtime, sourceId)
+    const original = await binding.source(1, sourceId)
+    await fixture.db.executeMultiple(`
+        INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,sealed,shared_with_all,catalog_slug,catalog_method,catalog_name)
+        VALUES ('PRIVATE_ITEM','PRIVATE_SERVER','https://private.example/mcp','rev','rev','PRIVATE_TOKEN',0,'linear','oauth','PRIVATE_LABEL'),
+               ('other','OTHER_SERVER','https://other.example/mcp','rev','rev',NULL,0,'slack','oauth','Slack');
+        INSERT INTO desktop_vault_secrets(id,name,variable,revision,value_revision,sealed,shared_with_all)
+        VALUES ('SECRET_ITEM','SECRET_LABEL','TeamKey','rev','rev','SECRET_VALUE',1),
+               ('detached','Hidden name','HIDDEN_KEY','rev','rev','SECRET_VALUE',0);
+    `)
+    await fixture.db.execute({ sql: "INSERT INTO desktop_vault_mcp_attachments VALUES('PRIVATE_ITEM',?)", args: [sourceId] })
+    const source = await binding.source(1, sourceId)
+    expect(source.revision).not.toBe(original.revision)
+    expect(source.appSlugs).toEqual(['linear'])
+    expect(source.envKeys).toEqual(['TeamKey'])
+
+    const common = { workspaceId: 1, agentId: sourceId, sourceRevision: source.revision }
+    const include = { memories: false, database: false, files: false }
+    const review = await binding.service.review({ ...common, requestId: 'vault-review', include }, source)
+    const exported = await binding.service.export({
+        ...common, requestId: 'vault-export', include, reviewId: review.reviewId, expectedDigest: review.manifest.contentDigest,
+    }, source)
+    const { bytes } = await binding.service.download(exported.manifest.packageKey)
+    const { manifest, members } = await readPortableArchive(bytes)
+    expect(manifest.coworkers[0]!.requirements).toEqual([
+        { kind: 'service-reconnect', name: 'linear', detail: 'Connect this app locally after installation.' },
+        { kind: 'environment-key', name: 'TeamKey' },
+    ])
+    const portable = JSON.stringify(manifest) + members.map(member => member.bytes.toString('utf8')).join('')
+    expect(portable).not.toMatch(/PRIVATE_|SECRET_|private\.example|HIDDEN_KEY|OTHER_SERVER|"slack"/)
+    await ingestDesktopCoworkerShareArchive(runtime, bytes)
+    const imported = await binding.service.import({
+        requestId: 'vault-import', snapshotId: manifest.packageKey, expectedDigest: manifest.contentDigest, targetWorkspaceId: 1,
+    })
+    expect(imported).toMatchObject({ status: 'imported' })
+    const [target] = (await fixture.db.execute('SELECT engine_agent_id,enabled FROM desktop_agents WHERE id != ?', [sourceId])).rows
+    expect(target?.enabled).toBe(0)
+    const copied = join(engineRoot, 'agents', String(target?.engine_agent_id))
+    const requirements = JSON.parse(await readFile(join(copied, '.desktop-template-requirements.json'), 'utf8'))
+    expect(requirements.requirements.map(({ name }: { name: string }) => name).sort()).toEqual(['TeamKey', 'linear'])
+    expect((await fixture.db.execute('SELECT agent_id FROM desktop_vault_mcp_attachments')).rows).toEqual([{ agent_id: sourceId }])
+
+    await fixture.db.execute("DELETE FROM desktop_vault_mcp_attachments WHERE item_id='PRIVATE_ITEM'")
+    expect((await binding.source(1, sourceId)).appSlugs).toEqual([])
 })
 
 test('real canonical package/install receipts survive a lost share ACK and file DB reopen without another coworker', async () => {

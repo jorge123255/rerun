@@ -21,6 +21,7 @@ export const desktopCoworkerShareSourceSchema = z.strictObject({
     revision: desktopTemplateRevisionSchema,
     setup: z.strictObject({ required: z.boolean().nullable(), prompt: z.string().max(25 * 1024 * 1024), answered: z.boolean() }),
     config: z.record(z.string(), z.unknown()),
+    appSlugs: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{0,127}$/)).max(200).optional(),
     envKeys: z.array(z.string().min(1).max(200)).max(100),
     mcpAuth: z.array(z.strictObject({ server: z.string().min(1).max(200), kind: z.enum(['oauth', 'managed', 'device', 'unknown']) })).max(50),
     members: z.array(z.strictObject({

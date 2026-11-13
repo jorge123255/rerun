@@ -24,6 +24,7 @@ import { createDesktopTemplateServer, type DesktopTemplateEngineClient } from '.
 import { desktopTemplateAuthority } from '../templates/authority'
 import { commitDesktopTemplateInstall } from '../templates/commit'
 import { prepareTemplateIntent } from '../templates/intents'
+import { readDesktopPortableSetupRequirements } from '../templates/requirements'
 import { createDesktopCoworkerShareStore, shareFingerprint } from './store'
 import { createDesktopCoworkerShareService } from './service'
 import { createDesktopCoworkerShareApi } from './api'
@@ -63,6 +64,7 @@ export async function readCurrentDesktopCoworkerShareSource(runtime: DesktopRunt
         if ((await findDesktopAgent(db,agentId))?.engineAgentId !== owner.engineAgentId) throw new DesktopHttpError(409,'The coworker was replaced during memory review.')
     } })
     const database = await readShareDatabaseMember(runtime, join(agentsRoot, owner.engineAgentId), agentId, owner.engineAgentId, signal)
+    const requirements = await readDesktopPortableSetupRequirements(db, owner)
     await current(runtime,false,signal)
     await assertCoworkerNotDeleting(db,agentId)
     const fresh = await findDesktopAgent(db,agentId)
@@ -71,8 +73,11 @@ export async function readCurrentDesktopCoworkerShareSource(runtime: DesktopRunt
     const members = [...files.map(file => ({ path: file.path,bytes: Buffer.from(file.raw),kind: file.path === 'config.json' ? 'config' as const : ['SOUL.md','INSTALL.md'].includes(file.path) ? 'instruction' as const : file.path.startsWith('skills/') ? 'skill' as const : file.binary ? 'binary' as const : 'text' as const,binary: file.binary,textScanned: file.textScanned,flagged: file.flagged,ownership: 'user' as const })),
         ...memoryPackageToArchiveMembers(memory).map(file => ({ ...file, kind: 'text' as const, binary: false, textScanned: true, flagged: scanTextForSecrets(file.bytes.toString('utf8')), ownership: 'user' as const }))]
     if (database) members.push(database.member)
-    const body = { workspaceId,agentId,name: inspected.name,description: inspected.description,setup: inspected.setup,config: inspected.config?.text ? JSON.parse(inspected.config.text) : {},envKeys: inspected.envKeys,mcpAuth: inspected.mcpAuth,members }
-    return desktopCoworkerShareSourceSchema.parse({ ...body,revision: shareFingerprint([body.workspaceId,body.agentId,body.name,body.description,body.setup,body.config,body.envKeys,body.mcpAuth,members.map(file => [file.path,file.path === PORTABLE_DATABASE_MEMBER ? database!.digest : createHash('sha256').update(file.bytes).digest('hex'),file.ownership,file.flagged])]) })
+    const envKeys = [...new Set([...inspected.envKeys, ...requirements.filter(item => item.kind === 'environment-key').map(item => item.name)])].sort()
+    if (envKeys.length > 100) throw new DesktopHttpError(413, 'Too many environment requirements.')
+    const appSlugs = requirements.filter(item => item.kind === 'service-reconnect').map(item => item.name)
+    const body = { workspaceId,agentId,name: inspected.name,description: inspected.description,setup: inspected.setup,config: inspected.config?.text ? JSON.parse(inspected.config.text) : {},envKeys,mcpAuth: inspected.mcpAuth,appSlugs,members }
+    return desktopCoworkerShareSourceSchema.parse({ ...body,revision: shareFingerprint([body.workspaceId,body.agentId,body.name,body.description,body.setup,body.config,body.envKeys,body.mcpAuth,body.appSlugs,members.map(file => [file.path,file.path === PORTABLE_DATABASE_MEMBER ? database!.digest : createHash('sha256').update(file.bytes).digest('hex'),file.ownership,file.flagged])]) })
 }
 
 /** Verify immutable native-picked bytes before persisting them; picking alone never installs. */
