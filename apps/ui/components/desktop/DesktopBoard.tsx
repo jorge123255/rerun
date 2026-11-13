@@ -1,6 +1,6 @@
 import { useDesktopLocale } from './DesktopLocale'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { ChromeBar, ChromeButton, ChromeDivider } from '@rerun/ui/chrome'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { CHROME_SIZE, ChromeBar, ChromeButton, ChromeDivider } from '@rerun/ui/chrome'
 import type { ContainerCellRect, GridPosition, IsoCamera, ResizePatch, TileStyle } from '@rerun/ui/iso-grid'
 import { IsoGrid, SPACE_COLOR, agentTileStyle, disabledAgentTileStyle, DISABLED_AGENT_LABEL, type Container, type Tile } from '@rerun/ui/iso-grid'
 import { Plus } from 'lucide-react'
@@ -374,8 +374,11 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
 
     const canCreateCoworker = !baseBlocked && !spaceDialog && !covered && !creationChecking && !creationError
     const canAddBox = !!board && !!onBoardCommand
+    const showViewControls = tiles.length > 0 || !!board?.spaces.length
+    const zoomBesideHeader = showViewControls && !selectedAgentId
     return (
         <section ref={section} data-testid="desktop-team-board" aria-label={t('board')} className="relative isolate min-h-0 min-w-0 flex-1"
+            style={{ '--desktop-panel-right': `${panelInsetRight}px` } as CSSProperties}
             onPointerDownCapture={() => { resizeCanceled.current = false }} onPointerCancelCapture={() => { resizeCanceled.current = true }}
             onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented && placement) { event.preventDefault(); cancelCopy() } }}>
             <h1 className="sr-only">{t('board')}</h1>
@@ -414,9 +417,11 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                     focusRequest={focusRequest}
                     fitToContent
                     canDraw={false}
-                    showViewControls={tiles.length > 0 || !!board?.spaces.length}
+                    showViewControls={showViewControls}
                     viewControlsPlacement="top-right"
-                    viewControlsClassName={selectedAgentId ? 'md:top-auto md:right-auto md:bottom-16 md:left-4' : undefined}
+                    viewControlsClassName={selectedAgentId
+                        ? 'md:top-auto md:right-auto md:bottom-16 md:left-4'
+                        : 'right-[calc(1rem+var(--desktop-panel-right))]'}
                     onTileSelect={placement || gridBlocked ? undefined : id => {
                         if (board && !gridCurrent()) return
                         if (id) openCoworker(id)
@@ -430,7 +435,11 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                     } : tiles.length ? undefined : id => { if (id) onCreate() }}
                 />
             }</DesktopBoardMenu>
-            <div className="absolute top-4 left-4 z-40 flex items-start gap-2">{workspaceMenu}</div>
+            {/* The header and zoom controls share the space left by the side panels. */}
+            <div className="@container/board-header pointer-events-none absolute top-4 z-40"
+                style={{ left: panelInsetLeft + 16, right: panelInsetRight + 16 + (zoomBesideHeader ? CHROME_SIZE + 8 : 0) }}>
+                {workspaceMenu}
+            </div>
             {/* Measure compact mode inside the board space left by either side panel. */}
             <div className="@container/board pointer-events-none absolute bottom-4 z-40"
                 style={{ left: panelInsetLeft + 16, right: panelInsetRight + 16 }}>

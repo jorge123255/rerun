@@ -1,7 +1,7 @@
 'use client'
 
 import { useDesktopLocale } from './DesktopLocale'
-import { Brain, Database, Folder, Import, KeyRound, Package, Keyboard, LayoutGrid, Search, Server, Settings, UserRound } from 'lucide-react'
+import { Brain, Cpu, Database, Folder, Import, KeyRound, Package, Keyboard, LayoutGrid, Search, Server, Settings, UserRound } from 'lucide-react'
 import { ChromePill } from '@rerun/ui/chrome'
 import { TooltipLabeled } from '@/components/ui/tooltip'
 import { HelpCircleIcon } from '@/lib/icons'
@@ -46,8 +46,10 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     const openingControlCenter = useRef(false)
     const workspaceClient = useMemo(() => createDesktopWorkspaceClient(), [])
     useEffect(() => { void flushDesktopWorkspaceMetadata().catch(() => {}) }, [workspaceName, iconCatalogId, iconUploadId])
-    return <nav aria-label={t('workspace')} className="flex min-w-0 flex-wrap items-center gap-1.5">
-        <DesktopWorkspaceSwitcher client={workspaceClient} profileLabel={`${profileName} · Rerun Local`} profilePhoto={profilePhoto} activeDisplay={{ name: workspaceName, iconCatalogId, iconUploadId }} disabled={navigationDisabled}
+    const providerStatus = providerLabel ? t('boardUI.providerConnected', { provider: providerLabel }) : t('boardUI.providerSetup')
+    const providerSummary = providerLabel && modelLabel ? `${providerStatus} · ${modelLabel}` : providerStatus
+    return <nav aria-label={t('workspace')} className="flex min-w-0 items-center gap-1.5">
+        <DesktopWorkspaceSwitcher className="pointer-events-auto" client={workspaceClient} profileLabel={`${profileName} · Rerun Local`} profilePhoto={profilePhoto} activeDisplay={{ name: workspaceName, iconCatalogId, iconUploadId }} disabled={navigationDisabled}
             workspaceSettingsInMenu
             onRenameActive={onWorkspaceSettings ? () => { openingControlCenter.current = true; onWorkspaceSettings() } : undefined}
             onCloseAutoFocus={event => {
@@ -74,17 +76,23 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
             </>} />
         <DesktopWorkspaceSwitchLoader />
         {onHelp && <TooltipLabeled label={t('help')} side="bottom">
-            <ChromePill type="button" start="icon" end="icon" disabled={navigationDisabled} aria-label={t('help')}
+            <ChromePill type="button" start="icon" end="icon" disabled={navigationDisabled} aria-label={t('help')} className="pointer-events-auto"
                 onClick={event => onHelp(event.currentTarget)}>
                 <HelpCircleIcon className="size-4 text-muted-foreground" />
             </ChromePill>
         </TooltipLabeled>}
-        <Button type="button" variant="outline" size="sm" disabled={settingsDisabled} onClick={onSettings} aria-keyshortcuts="Meta+," title={t('boardUI.modelSettings')}
-            className="h-8 rounded-full bg-background/90 px-2.5 text-xs backdrop-blur-xl">
-            {providerLabel ? <span role="status" className="flex min-w-0 items-center gap-1.5">
-                <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-emerald-500" />{t('boardUI.providerConnected', { provider: providerLabel })}
-                {modelLabel && <span className="max-w-36 truncate text-muted-foreground">{modelLabel}</span>}
-            </span> : t('boardUI.providerSetup')}
-        </Button>
+        <TooltipLabeled label={providerSummary} side="bottom">
+            <Button type="button" variant="outline" size="sm" disabled={settingsDisabled} onClick={onSettings}
+                aria-keyshortcuts="Meta+," title={t('boardUI.modelSettings')} aria-label={providerSummary}
+                className="pointer-events-auto relative h-8 min-w-0 rounded-full bg-background/90 px-2.5 text-xs backdrop-blur-xl @max-md/board-header:size-8 @max-md/board-header:shrink-0 @max-md/board-header:p-0">
+                <Cpu aria-hidden className="hidden @max-md/board-header:block" />
+                <span role={providerLabel ? 'status' : undefined} className="flex min-w-0 items-center gap-1.5 @max-md/board-header:sr-only">
+                    {providerLabel && <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-emerald-500" />}
+                    <span className="truncate">{providerStatus}</span>
+                    {providerLabel && modelLabel && <span className="max-w-36 truncate text-muted-foreground">{modelLabel}</span>}
+                </span>
+                {providerLabel && <span aria-hidden className="absolute top-1 right-1 hidden size-1.5 rounded-full bg-emerald-500 @max-md/board-header:block" />}
+            </Button>
+        </TooltipLabeled>
     </nav>
 }

@@ -126,6 +126,8 @@ export function DesktopWorkspaceSwitcher({
                     <WorkspacePill
                         name={name}
                         iconUrl={iconUrl}
+                        className="max-w-full"
+                        title={name}
                         aria-label={`Workspace menu, ${name}`}
                         aria-busy={busy || undefined}
                     />
