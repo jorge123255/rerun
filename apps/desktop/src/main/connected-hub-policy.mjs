@@ -40,6 +40,17 @@ export function sameHub(url, origin) {
     } catch { return false }
 }
 
+export function isPublishedPageHandoff(source, target, origin) {
+    if (!sameHub(source, origin) || new URL(source).pathname !== '/published-auth') return false
+    try {
+        const url = new URL(target)
+        const tickets = url.searchParams.getAll('ticket')
+        return url.protocol === 'https:' && url.origin !== origin && !url.username && !url.password
+            && url.pathname === '/__rerun/auth' && tickets.length === 1
+            && tickets[0].length <= 4096 && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(tickets[0])
+    } catch { return false }
+}
+
 export function isHubPath(path) {
     return typeof path === 'string' && /^\/(?![\/\\])[\x21-\x7e]{0,1999}$/.test(path) && !path.includes('\\')
 }

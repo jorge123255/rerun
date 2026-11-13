@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { runInNewContext } from 'node:vm'
 import { test } from 'node:test'
-import { checkHub, hubPartition, hubWindowAddress, normalizeHubOrigin, parseHubLink, registerHubProtocol, sameHub } from '../src/main/connected-hub-policy.mjs'
+import { checkHub, hubPartition, hubWindowAddress, isPublishedPageHandoff, normalizeHubOrigin, parseHubLink, registerHubProtocol, sameHub } from '../src/main/connected-hub-policy.mjs'
 import { createHubAuth } from '../src/main/connected-hub-auth.mjs'
 
 const origin = 'https://hub.example.test'
@@ -38,6 +38,22 @@ test('the bounded config check refuses bad identities, incompatible releases and
     assert.deepEqual(await check({ ...fixture, app: 'other' }), { ok: false, reason: 'not-rerun' })
     assert.deepEqual(await check({ ...fixture, padding: 'x'.repeat(5000) }), { ok: false, reason: 'not-rerun' })
     assert.deepEqual(await checkHub(origin, '0.1.0', async () => new Response(null, { status: 302 })), { ok: false, reason: 'not-rerun' })
+})
+
+test('only the exact published-page gate can hand a signed ticket URL to the browser', () => {
+    const source = origin + '/published-auth?slug=fixture'
+    const target = 'https://published.fixture.test/__rerun/auth?ticket=fixture_body.fixture_signature&next=%2Fnotes'
+    assert.equal(isPublishedPageHandoff(source, target, origin), true)
+    for (const address of [
+        target.replace('https:', 'http:'),
+        target.replace('https://', 'https://user@'),
+        target.replace('/__rerun/auth', '/other'),
+        target.replace('fixture_body.fixture_signature', 'unsigned'),
+        target + '&ticket=another.value',
+        'file:///__rerun/auth?ticket=fixture_body.fixture_signature',
+    ]) assert.equal(isPublishedPageHandoff(source, address, origin), false, address)
+    assert.equal(isPublishedPageHandoff(origin + '/preview', target, origin), false)
+    assert.equal(isPublishedPageHandoff('https://foreign.test/published-auth', target, origin), false)
 })
 
 test('development links carry only the exact callback or a same-server path', () => {

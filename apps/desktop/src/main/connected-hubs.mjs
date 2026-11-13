@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash, randomUUID } from 'node:crypto'
-import { checkHub, hubPartition, hubWindowAddress, HUB_API_VERSION, normalizeHubOrigin, parseHubWorkspaceId, RERUN_CLOUD_ORIGIN, sameHub } from './connected-hub-policy.mjs'
+import { checkHub, hubPartition, hubWindowAddress, HUB_API_VERSION, isPublishedPageHandoff, normalizeHubOrigin, parseHubWorkspaceId, RERUN_CLOUD_ORIGIN, sameHub } from './connected-hub-policy.mjs'
 import { cascadeWindowBounds } from './board-windows.mjs'
 import { hubConnectionError, hubOfflineCopy, hubPickerCopy, hubRecoveryView } from './connected-hub-messages.mjs'
 import { shellText } from './shell-language.mjs'
@@ -311,13 +311,31 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         contents.on('did-create-window', (child, { url }) => {
             if (!available() || connected(window) !== entry || !sameHub(url, origin)) { child.destroy(); return }
             const source = child.webContents
+            const ownerScope = entry.scope
+            const ownerFrame = contents.mainFrame
+            let initialNavigation = true
             childWindows.set(source, { window: child, entry })
             child.once('closed', () => childWindows.delete(source))
             source.setWindowOpenHandler(() => ({ action: 'deny' }))
             source.on('will-navigate', navigation)
-            source.on('will-redirect', navigation)
+            source.on('will-redirect', (event, target) => {
+                navigation(event, target)
+                const address = event.url ?? target
+                if (!event.isMainFrame || !initialNavigation || !isPublishedPageHandoff(url, address, origin)
+                    || !available() || connected(window) !== entry || !window.isVisible()
+                    || entry.scope !== ownerScope || contents.mainFrame !== ownerFrame) return
+                // The browser receives only the server-issued link. The hub
+                // session stays in Electron and the transient window closes.
+                initialNavigation = false
+                child.destroy()
+                external(address)
+            })
             source.on('will-attach-webview', event => event.preventDefault())
-            source.on('did-navigate', (_event, url) => { if (sameHub(url, origin)) resetHubQuickAsk(origin) })
+            source.on('did-navigate', (_event, url) => {
+                if (!sameHub(url, origin)) return
+                initialNavigation = false
+                resetHubQuickAsk(origin)
+            })
             source.on('did-finish-load', () => { if (sameHub(source.mainFrame?.url, origin)) show(child) })
         })
         for (const event of ['focus', 'blur', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'show', 'hide', 'minimize', 'restore']) {
