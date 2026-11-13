@@ -12,13 +12,14 @@ function fixture(t) {
     const root = mkdtempSync(join(realpathSync(tmpdir()), 'rerun-hub-downloads-'))
     t.after(() => rmSync(root, { recursive: true, force: true }))
     const session = new EventEmitter()
-    const owner = { origin, contents: { session } }, another = { origin, contents: { session } }
+    const owner = { origin, scope: 'first-document', contents: { session } }, another = { origin, contents: { session } }
     const child = { session }
     const messages = [], revealed = [], recent = [], settled = []
     const downloads = createHubDownloads({
         app: { getPath: () => root, addRecentDocument: path => recent.push(path) },
         shell: { showItemInFolder: path => revealed.push(path) },
         ownerOf: contents => contents === owner.contents || contents === child ? owner : null,
+        isCurrent: (source, scope) => source === owner && owner.scope === scope,
         notify: (source, value) => messages.push({ source, ...value }),
         closeEmptyWindow: contents => settled.push(contents),
     })
@@ -122,4 +123,30 @@ test('a child export reports to its opener and settles only the initiating conte
     item.emit('done', null, 'completed')
     assert.deepEqual(f.messages.map(value => [value.source, value.state]), [[f.owner, 'progressing'], [f.owner, 'completed']])
     assert.deepEqual(f.settled, [f.child])
+})
+
+test('a document replacement keeps the export bytes and drops its completion and reveal authority', t => {
+    const f = fixture(t)
+    const { item: completed } = f.begin({ filename: 'completed.txt' })
+    writeFileSync(completed.destination, 'saved before navigating')
+    completed.emit('done', null, 'completed')
+    const completedId = f.messages.at(-1).id
+    const { item: running } = f.begin({ contents: f.child })
+    const runningId = f.messages.at(-1).id
+
+    f.owner.scope = 'second-document'
+    writeFileSync(running.destination, 'saved after navigating')
+    running.emit('updated', null, 'interrupted')
+    running.emit('done', null, 'completed')
+    assert.equal(readFileSync(join(f.root, 'export.csv'), 'utf8'), 'saved after navigating')
+    assert.deepEqual(f.messages.map(value => value.state), ['progressing', 'completed', 'progressing'])
+    f.downloads.show(f.owner, completedId)
+    f.downloads.show(f.owner, runningId)
+    assert.deepEqual(f.revealed, [])
+
+    const { item: next } = f.begin()
+    writeFileSync(next.destination, 'saved by the new page')
+    next.emit('done', null, 'completed')
+    f.downloads.show(f.owner, f.messages.at(-1).id)
+    assert.deepEqual(f.revealed, [join(f.root, 'export (1).csv')])
 })

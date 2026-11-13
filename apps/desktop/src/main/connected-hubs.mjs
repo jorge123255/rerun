@@ -74,6 +74,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             if (!available()) return null
             const child = childWindows.get(contents)
             if (child) {
+                if (child.scope !== child.entry.scope) return null
                 const url = contents.mainFrame?.url
                 if (url && url !== 'about:blank' && !sameHub(url, child.entry.origin)) return null
                 return connected(child.entry.window)
@@ -86,9 +87,8 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
                 child.window.destroy()
             }
         },
-        notify: (entry, value) => {
-            if (connected(entry.window) === entry) entry.contents.send('hub:download', value)
-        },
+        isCurrent: (entry, scope) => available() && entry.scope === scope && connected(entry.window) === entry,
+        notify: (entry, value) => entry.contents.send('hub:download', value),
     })
     const serviceSignIn = createHubServiceSignIn({ channel: 'dev', openBrowser: url => shell.openExternal(url) })
     const localSender = event => picker && !picker.isDestroyed() && event.sender === picker.webContents
@@ -339,7 +339,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             const ownerScope = entry.scope
             const ownerFrame = contents.mainFrame
             let initialNavigation = true
-            childWindows.set(source, { window: child, entry })
+            childWindows.set(source, { window: child, entry, scope: ownerScope })
             child.once('closed', () => childWindows.delete(source))
             source.setWindowOpenHandler(() => ({ action: 'deny' }))
             source.on('will-navigate', navigation)

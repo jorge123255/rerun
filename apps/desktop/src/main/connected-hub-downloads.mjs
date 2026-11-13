@@ -73,7 +73,7 @@ function publish(root, rootInfo, temporary, filename) {
     throw new Error('No unused download name')
 }
 
-export function createHubDownloads({ app, shell, ownerOf, notify, closeEmptyWindow, now = Date.now }) {
+export function createHubDownloads({ app, shell, ownerOf, isCurrent, notify, closeEmptyWindow, now = Date.now }) {
     const tracked = new WeakSet()
     const active = new Map()
     const completed = new Map()
@@ -88,8 +88,11 @@ export function createHubDownloads({ app, shell, ownerOf, notify, closeEmptyWind
                 return
             }
             const id = randomUUID(), filename = safeHubDownloadName(item.getFilename())
-            const report = (state, name = filename) => notify(owner, { id, filename: name, state,
-                receivedBytes: item.getReceivedBytes(), totalBytes: item.getTotalBytes() })
+            const scope = owner.scope
+            const report = (state, name = filename) => {
+                if (isCurrent(owner, scope)) notify(owner, { id, filename: name, state,
+                    receivedBytes: item.getReceivedBytes(), totalBytes: item.getTotalBytes() })
+            }
             let root, rootInfo, temporary
             try {
                 root = realpathSync(app.getPath('downloads'))
@@ -123,8 +126,10 @@ export function createHubDownloads({ app, shell, ownerOf, notify, closeEmptyWind
                 try { if (state === 'completed') saved = publish(root, rootInfo, temporary, filename) } catch {}
                 finally { discard(temporary) }
                 if (saved) {
-                    completed.set(id, { ...saved, owner })
-                    if (completed.size > 128) completed.delete(completed.keys().next().value)
+                    if (isCurrent(owner, scope)) {
+                        completed.set(id, { ...saved, owner, scope })
+                        if (completed.size > 128) completed.delete(completed.keys().next().value)
+                    }
                     try { app.addRecentDocument(saved.path); app.dock?.downloadFinished(saved.path) } catch {}
                     report('completed', saved.filename)
                 } else report(state === 'cancelled' ? 'cancelled' : 'interrupted')
@@ -139,7 +144,7 @@ export function createHubDownloads({ app, shell, ownerOf, notify, closeEmptyWind
         show(owner, id) {
             if (typeof id !== 'string' || id.length !== 36) return
             const saved = completed.get(id)
-            if (saved?.owner !== owner) return
+            if (saved?.owner !== owner || !isCurrent(owner, saved.scope)) return
             try {
                 if (!ownedDirectory(saved.root, saved.rootInfo)) return
                 const file = lstatSync(saved.path)
