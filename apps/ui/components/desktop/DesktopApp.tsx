@@ -20,7 +20,7 @@ import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
 import { DesktopSimpleSidebar } from './simple/DesktopSimpleSidebar'
 import { DesktopViewMenuRow } from './simple/DesktopViewMenuRow'
 import { desktopCoworkerPreviewsSchema, type DesktopCoworkerPreviews } from '@/lib/desktop/coworker-previews'
-import { desktopSimpleInitialOpen, loadDesktopWorkspaceView, readDesktopSimpleLastOpened, rememberDesktopSimpleLastOpened, rememberDesktopWorkspaceView, resolveDesktopWorkspaceView, type DesktopWorkspaceView } from '@/lib/desktop/workspace-view'
+import { desktopSimpleInitialOpen, loadDesktopWorkspaceView, resolveDesktopWorkspaceView, saveDesktopWorkspaceView, type DesktopWorkspaceView } from '@/lib/desktop/workspace-view'
 import { byRecency } from '@rerun/contracts'
 import { DesktopExternalMcpDialog } from './external-mcp/DesktopExternalMcpDialog'
 import { DesktopCoworkerShareLauncher, DesktopPortableCoworkerImport, DesktopServersNavigation, DesktopWorkspaceDialogStatus } from './DesktopWorkspaceDialogs'
@@ -837,9 +837,19 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     // The Simple view: the coworkers listed beside the open one's chat. Anything that needs the grid
     // brings the board back until it is done.
     const [viewPreference, setViewPreference] = useState<DesktopWorkspaceView | null>(null)
-    useEffect(() => { setViewPreference(loadDesktopWorkspaceView()) }, [])
+    const simpleLastOpened = useRef<string | null>(null)
+    const [viewLoaded, setViewLoaded] = useState(false)
+    useEffect(() => {
+        const controller = new AbortController()
+        void loadDesktopWorkspaceView(controller.signal).then(saved => {
+            if (controller.signal.aborted) return
+            if (saved) { simpleLastOpened.current = saved.lastOpened; setViewPreference(current => current ?? saved.view) }
+            setViewLoaded(true)
+        })
+        return () => controller.abort()
+    }, [])
     const simple = resolveDesktopWorkspaceView({ preference: viewPreference, placing: !!creation.placement || !!templatePlacement.placement || placingCopy }) === 'simple'
-    const chooseView = (view: DesktopWorkspaceView) => { rememberDesktopWorkspaceView(view); setViewPreference(view) }
+    const chooseView = (view: DesktopWorkspaceView) => { saveDesktopWorkspaceView({ view }); setViewPreference(view) }
     const [coworkerPreviews, setCoworkerPreviews] = useState<DesktopCoworkerPreviews['previews'] | null>(null)
     const previewsKey = simple ? JSON.stringify([boardActivity.statuses, selectedAgentId, panelOpen, agents.length]) : null
     useEffect(() => {
@@ -856,16 +866,18 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const simpleRestored = useRef(false)
     useEffect(() => {
         if (!simple) { simpleRestored.current = false; return }
-        if (simpleRestored.current || coworkerPreviews === null || runtimeWorkspaceId == null) return
+        if (simpleRestored.current || coworkerPreviews === null || !viewLoaded) return
         simpleRestored.current = true
         if (panelOpen || foremanOpen) return
         const mostRecent = agents.map(agent => ({ id: agent.id, latest: coworkerPreviews[agent.id] ?? null })).sort(byRecency)[0]?.id ?? null
-        const initial = desktopSimpleInitialOpen({ remembered: readDesktopSimpleLastOpened(runtimeWorkspaceId), agentIds: agents.map(agent => agent.id), mostRecent })
+        const initial = desktopSimpleInitialOpen({ remembered: simpleLastOpened.current, agentIds: agents.map(agent => agent.id), mostRecent })
         if (initial) selectCoworker(initial)
     })
     useEffect(() => {
-        if (simple && panelOpen && selectedAgentId && runtimeWorkspaceId != null) rememberDesktopSimpleLastOpened(runtimeWorkspaceId, selectedAgentId)
-    }, [simple, panelOpen, selectedAgentId, runtimeWorkspaceId])
+        if (!simple || !panelOpen || !selectedAgentId || !simpleRestored.current || simpleLastOpened.current === selectedAgentId) return
+        simpleLastOpened.current = selectedAgentId
+        saveDesktopWorkspaceView({ lastOpened: selectedAgentId })
+    }, [simple, panelOpen, selectedAgentId])
     const workspaceMenu = <DesktopWorkspaceMenu viewRow={<DesktopViewMenuRow view={simple ? 'simple' : 'board'} onChange={chooseView} disabled={creationNavigationBlocked || workspaceDialogActive || quitting} />} workspaceName={workspaceName} {...savedIcon} profileName={profile.displayName} profilePhoto={desktopProfilePhotoUrl(profile.photoId)}
         navigationDisabled={creationNavigationBlocked || workspaceDialogActive || quitting} settingsDisabled={!creationSettingsAllowed || workspaceDialogActive || quitting}
         agents={agents} selected={panelOpen ? selectedAgentId : null} providerLabel={sidebarProvider && PROVIDER_LABELS[sidebarProvider.provider]}

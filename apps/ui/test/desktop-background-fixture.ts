@@ -9,6 +9,7 @@ export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestIn
         'grok-build': { phase: 'unavailable' }, 'kimi-code': { phase: 'unavailable' },
     })
     // The workspace menu reads the Vault as it opens, for the mark on its Vault row.
+    if (url.pathname === '/api/desktop/workspace-view') return Response.json({ view: null, lastOpened: null })
     if (url.pathname === '/api/desktop/vault') return Response.json({ entries: [], coworkers: [] })
     if (/^\/api\/desktop\/coworkers\/[^/]+\/document-attachments$/.test(url.pathname)) return Response.json({ attachments: [] })
     if (/^\/api\/desktop\/sessions\/[^/]+\/trigger-requests$/.test(url.pathname)) return Response.json({ request: null })
