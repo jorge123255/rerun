@@ -360,8 +360,10 @@ export function DesktopChatTabs({ agent, workspaceId, sessions, pendingChatSumma
         {canMountChats && layout.tabs.map(tab => {
             const visible = !rejectedRequest && active.uid === tab.uid
             if (!visible && !visited.includes(tab.uid)) return null
+            const arrival = requested && tab.id && ('id' in requested ? tab.id === requested.id
+                : tab.uid === requested.tabUid && tab.id === requested.sessionId) ? requested : null
             return <div key={tab.uid} data-desktop-tab-active={visible} hidden={!visible} className={visible ? 'flex h-full min-h-0 flex-col' : 'hidden'}>
-                <DesktopConversation overview={overview} agent={agent} workspaceId={workspaceId} sessionId={tab.id} sessions={sessions} pendingChatSummaries={pendingChatSummaries} tabUid={tab.uid} active={selected && visible}
+                <DesktopConversation overview={overview} agent={agent} workspaceId={workspaceId} sessionId={tab.id} sessions={sessions} pendingChatSummaries={pendingChatSummaries} tabUid={tab.uid} active={selected && visible} arrival={arrival}
                     requestedPanel={selected && visible ? requestedPanel : null} onPanelRequestHandled={onPanelRequestHandled}
                     tabStrip={visible ? strip : false} onTabActivity={report} initialDraft={drafts[tab.uid]} onStartFork={startFork} onFinishFork={finishFork}
                     onSelectSession={(id, title) => {

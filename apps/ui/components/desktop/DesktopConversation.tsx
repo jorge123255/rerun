@@ -23,7 +23,8 @@ import { AgentBuddy } from '@rerun/ui/iso-grid'
 import { Message, MessageContent } from '@rerun/ui/chat'
 import { FloatingPill } from '@/components/agent/sheet/floating'
 import { Conversation, ConversationContent, ConversationScrollButton, type ConversationHandle } from '@/components/ai-elements/conversation'
-import { useArriveByTop } from '@/hooks/useArriveByTop'
+import { bringBlockIn, useArriveByTop } from '@/hooks/useArriveByTop'
+import type { DesktopChatRequest } from '@/lib/desktop/chat-request'
 import { summarizePendingHitl } from '@/lib/chat/hitl-cue'
 import type { HitlKind } from '@rerun/contracts'
 import { DesktopThreadBranch } from './DesktopThreadBranch'
@@ -209,7 +210,7 @@ function scheduledRunOf(message: UIMessage) {
     return parseScheduledRun(prompt)
 }
 
-export function DesktopConversation({ agent, workspaceId, sessionId, sessions, pendingChatSummaries, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, onHistoryVisibility, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: {
+export function DesktopConversation({ agent, workspaceId, sessionId, sessions, pendingChatSummaries, tabUid, active = true, arrival, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, onHistoryVisibility, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, connections, onOpenModelSettings, overview }: {
     agent: DesktopAgentView
     workspaceId?: number | null
     sessionId: string | null
@@ -220,6 +221,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     onFinishFork?: (uid: string) => void
     tabUid?: string
     active?: boolean
+    arrival?: DesktopChatRequest | null
     requestedPanel?: DesktopCoworkerPanelRequest | null
     onPanelRequestHandled?: (request: DesktopCoworkerPanelRequest) => void
     tabStrip?: ReactNode
@@ -1410,7 +1412,16 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     const waitingCard = transcriptActive && ready && !generating && !stopping && !draft.quitting
         ? requestCards.find(card => card.cue) : undefined
     const cueKey = waitingCard ? JSON.stringify([workspaceId, agent.id, sessionId, tabUid, waitingCard.key]) : null
-    const pendingBlock = useArriveByTop(conversationScroll, cueKey)
+    const pendingBlock = useArriveByTop(conversationScroll, cueKey, arrival)
+    const lastArrival = useRef<DesktopChatRequest | null>(null)
+    useEffect(() => {
+        const conversation = conversationScroll.current
+        if (!arrival || arrival === lastArrival.current || !transcriptActive || !ready || !conversation) return
+        lastArrival.current = arrival
+        if (pendingBlock.current) bringBlockIn(conversation, pendingBlock.current, 'instant')
+        else void conversation.scrollToBottom('instant')
+    }, [arrival, pendingBlock, ready, transcriptActive])
+
     const pendingCue = waitingCard?.cue && cueKey ? {
         key: cueKey, blockRef: pendingBlock,
         summary: summarizePendingHitl(waitingCard.cue.kind, {}, waitingCard.cue.label),

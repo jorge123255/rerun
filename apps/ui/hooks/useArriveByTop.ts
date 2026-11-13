@@ -30,7 +30,7 @@ export function bringBlockIn(conversation: ConversationHandle, blockEl: HTMLElem
 // asks. Such a block is brought in by its top instead, once per `key`: a block that loads its
 // content after mounting only outgrows the thread later, and the user's own scrolling is left
 // alone after that.
-export function useArriveByTop(conversationRef: RefObject<ConversationHandle | null>, key: string | null) {
+export function useArriveByTop(conversationRef: RefObject<ConversationHandle | null>, key: string | null, arrival?: object | null) {
     const blockRef = useRef<HTMLDivElement | null>(null)
 
     useLayoutEffect(() => {
@@ -50,7 +50,7 @@ export function useArriveByTop(conversationRef: RefObject<ConversationHandle | n
             observer.disconnect()
             cancelAnimationFrame(frame)
         }
-    }, [conversationRef, key])
+    }, [conversationRef, key, arrival])
 
     return blockRef
 }
