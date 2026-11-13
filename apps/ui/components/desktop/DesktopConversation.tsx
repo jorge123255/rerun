@@ -34,7 +34,7 @@ import { ArrowUpIcon, ChevronDownIcon, Maximize2Icon, PlusIcon, SendIcon, Square
 import { MarkdownEditorDialog } from '@/components/ui/markdown-editor-dialog'
 import { DesktopConversationFind } from './DesktopConversationFind'
 import { DesktopProviderErrorNotice } from './chat/recovery/DesktopProviderErrorNotice'
-import { formatFxDocumentRejections, planFxAttachmentBatch } from '@/lib/desktop/fx-repairs/attachment-overflow'
+import { formatFxAttachmentRejections, formatFxDocumentRejections, planFxAttachmentBatch } from '@/lib/desktop/fx-repairs/attachment-overflow'
 import { useDesktopChatRecovery } from '@/lib/desktop/chat-recovery/use-desktop-chat-recovery'
 import { MessageFeedbackDialog } from '@/components/chat/MessageFeedbackDialog'
 import { useDesktopReplyFeedback } from '@/lib/desktop/reply-feedback'
@@ -444,41 +444,47 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
         return batchOkay !== false && results.every(Boolean)
     }
     const uploadGate = useRef(false)
-    const beginUpload = useCallback((files: File[]) => {
-        if (!files.length || uploadGate.current || batchUpload.current || preparingSubmit.current || isDesktopQuitting()) return
+    const beginUpload = useCallback((files: File[], refused: string[] = []) => {
+        if (uploadGate.current || batchUpload.current || preparingSubmit.current || isDesktopQuitting()) return
+        if (!files.length) {
+            if (refused.length) setUploadNotice(refused.join(' '))
+            return
+        }
         const groups = planFxAttachmentBatch(files)
         const scope = uploadScope.current
         const release = holdDraftAdmission()
         setBatchActive(true)
-        batchNotices.current = []
-        setUploadNotice(null)
+        batchNotices.current = [...refused]
+        setUploadNotice(refused.join(' ') || null)
         const failures = [textUploads.failureVersion(), imageUploads.failureVersion()]
         // One ordered drain preserves mixed text/image selection order. Every next file still
         // belongs to the captured tab; closing it or beginning Quit cancels the remaining batch.
         const work = (async () => {
-            let documentRejected = false
+            let rejected = refused.length > 0
             for (const { kind, files: group } of groups) {
                 if (uploadScope.current !== scope || !scope.live || isDesktopQuitting()) break
                 if (kind === 'image') await imageUploads.start(group)
                 else if (kind === 'document') {
-                    if (!tabUid) throw new Error('Open a saved chat tab before adding documents.')
                     const added = await Promise.resolve(documents.add(group))
                     const rejections = formatFxDocumentRejections(added)
                     if (rejections.length) {
-                        documentRejected = true
+                        rejected = true
                         reportUploadNotice(rejections.join(' '))
                     }
                 }
                 else await textUploads.start(group)
             }
-            return !documentRejected && failures[0] === textUploads.failureVersion() && failures[1] === imageUploads.failureVersion()
-        })().finally(() => {
+            return !rejected && failures[0] === textUploads.failureVersion() && failures[1] === imageUploads.failureVersion()
+        })().catch(() => {
+            if (uploadScope.current === scope && scope.live) reportUploadNotice('Could not finish adding attachments. Check the attached files before sending.')
+            return false
+        }).finally(() => {
             batchNotices.current = null
             if (batchUpload.current === work) { batchUpload.current = null; setBatchActive(false) }
             release()
         })
         batchUpload.current = work
-    }, [imageUploads.start, textUploads.start, imageUploads.failureVersion, textUploads.failureVersion, documents.add, tabUid, reportUploadNotice])
+    }, [imageUploads.start, textUploads.start, imageUploads.failureVersion, textUploads.failureVersion, documents.add, reportUploadNotice])
     const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; takeover?: DesktopPendingTakeover | null; serviceRequest?: ServiceRequest | null; secretRequest?: DesktopSecretRequestView | null; mcpSignIn?: DesktopMcpSignInResponse | null; error?: string; loadedGeneration?: number; lastError?: string | null; activeRunId?: string | null; runsUnavailable?: boolean }>({ id: null, question: null, approval: null, takeover: null, serviceRequest: null, secretRequest: null, mcpSignIn: null })
     const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer | DesktopTakeoverTerminal; onAccepted?: () => void; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
     const quickReplyRequest = useRef<{ sessionId: string; requestId: string; accepted: boolean } | null>(null)
@@ -1251,12 +1257,17 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
             depth = 0
             setUploadDragOver(false)
             if (!event.dataTransfer) return
-            if (Array.from(event.dataTransfer.items).some(item => item.webkitGetAsEntry?.()?.isDirectory)) {
-                setUploadNotice('Choose text files or images, not folders.'); return
-            }
             // Capture files and their owner synchronously. No recursive directory walk can
             // resolve later into a different tab or read unbounded folders before the cap.
-            beginUpload(Array.from(event.dataTransfer.files))
+            const items = Array.from(event.dataTransfer.items).filter(item => item.kind === 'file')
+                .map(item => ({ item, entry: item.webkitGetAsEntry?.() }))
+            const folders = items.flatMap(({ entry }) => entry?.isDirectory
+                ? [{ name: entry.name, message: 'Choose individual files to attach.' }] : [])
+            const files = folders.length ? items.flatMap(({ item, entry }) => {
+                const file = entry?.isDirectory ? null : item.getAsFile()
+                return file ? [file] : []
+            }) : Array.from(event.dataTransfer.files)
+            beginUpload(files, formatFxAttachmentRejections(folders))
         }
         form.addEventListener('dragenter', onDragEnter)
         form.addEventListener('dragleave', onDragLeave)
