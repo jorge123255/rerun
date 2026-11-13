@@ -26,6 +26,7 @@ export type AccountCatalogRow = {
 export type AccountFeatureDeps = AccountLifecycleDeps & {
     catalog: AccountCatalogPort & { page(query: { text?: string; category?: string; offset: number; limit: number }): Promise<{ total: number; services: AccountCatalogRow[] }> }
     adoptedApp?(owner: string, engineId: string, slug: string): Promise<boolean>
+    vaultMethods?(slug: string): readonly string[]
     agent(coworkerId: string): Promise<{ id: string; engineAgentId: string } | null>
 }
 
@@ -84,7 +85,10 @@ export function accountFeature(deps: AccountFeatureDeps) {
             const manifest = await deps.catalog.manifest(slug)
             if (!manifest || manifest.slug !== slug) throw new Error(M.unknownService)
             const accounts = (await lifecycle.list(binding, signal)).filter(account => account.slug === slug)
-            const vaultManaged = await deps.adoptedApp?.(binding.coworkerId, binding.engineOwnerId, manifest.slug)
+            const vaultManaged = !accounts.length && (
+                !!deps.vaultMethods?.(manifest.slug).length
+                || await deps.adoptedApp?.(binding.coworkerId, binding.engineOwnerId, manifest.slug)
+            )
             const availability = manifest.authMethods.map(method => accountMethodAvailability(manifest, method.id))
             return {
                 slug: manifest.slug,
@@ -109,11 +113,16 @@ export function accountFeature(deps: AccountFeatureDeps) {
         async mutate(coworkerId: string, body: unknown, signal: AbortSignal) {
             const binding = await bindingFor(coworkerId, signal)
             const input = desktopServiceAccountMutationSchema.parse(body)
-            if (input.action === 'install' && input.intent.kind === 'new') {
+            if (input.action === 'install') {
                 const { slug } = input.intent
-                if (await deps.adoptedApp?.(binding.coworkerId, binding.engineOwnerId, slug)
-                    && !(await lifecycle.list(binding, signal)).some(account => account.key === slug)) {
-                    throw new Error(M.vaultManaged)
+                const supportedInVault = deps.vaultMethods?.(slug).includes(input.authMethodId)
+                const adopted = input.intent.kind === 'new' && await deps.adoptedApp?.(binding.coworkerId, binding.engineOwnerId, slug)
+                if (supportedInVault || adopted) {
+                    const accounts = await lifecycle.list(binding, signal)
+                    if (adopted && !accounts.some(account => account.key === slug)
+                        || supportedInVault && !accounts.some(account => account.slug === slug)) {
+                        throw new Error(M.vaultManaged)
+                    }
                 }
             }
             return lifecycle.mutate(binding, input, signal)

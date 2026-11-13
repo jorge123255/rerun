@@ -6,6 +6,8 @@ import { randomUUID } from 'node:crypto'
 import type { DesktopRuntime } from './runtime'
 import { closeDesktopDatabase, openDesktopDatabase } from './database'
 import { getDesktopRemoteMcpService, withDesktopMcpOwnerTransition, shutdownDesktopRemoteMcp } from './mcp-binding'
+import { createDesktopSecretCrypto } from './secret-requests/crypto'
+import { desktopVault } from './vault/store'
 
 import { prepareSkillHelperFixture } from '../../../../engine/src/desktop/skill-publication.test-support'
 let helper: Awaited<ReturnType<typeof prepareSkillHelperFixture>>
@@ -19,6 +21,7 @@ vi.mock('./mcp-stdio/process', async importOriginal => ({ ...await importOrigina
 let root: string, runtime: DesktopRuntime
 let grants: Record<string, boolean>, enabled: boolean
 let runStatus: string
+const ownerId = '11111111-1111-4111-8111-111111111111'
 const identity = { engineAgentId: 'engine-owner', sessionId: 'engine-chat', runId: 'run-1' }
 beforeEach(async () => {
     root = await realpath(await mkdtemp(join(tmpdir(), 'rerun-round28-')))
@@ -29,8 +32,8 @@ beforeEach(async () => {
     grants = {}; enabled = true; runStatus = 'running'; providerCalls = []
     await mkdir(join(root,'workspaces','1','engine','agents',identity.engineAgentId,'workspace'), {recursive:true})
     const db = await openDesktopDatabase(root)
-    await db.execute("INSERT INTO desktop_agents(id,workspace_id,engine_agent_id,name,created_at,updated_at) VALUES('owner',1,'engine-owner','Owner','now','now')")
-    await db.execute("INSERT INTO desktop_sessions(id,agent_id,engine_session_id,title,created_at,updated_at) VALUES('chat','owner','engine-chat','Chat','now','now'),('sibling','owner','engine-sibling','Sibling','now','now')")
+    await db.execute(`INSERT INTO desktop_agents(id,workspace_id,engine_agent_id,name,created_at,updated_at) VALUES('${ownerId}',1,'engine-owner','Owner','now','now')`)
+    await db.execute(`INSERT INTO desktop_sessions(id,agent_id,engine_session_id,title,created_at,updated_at) VALUES('chat','${ownerId}','engine-chat','Chat','now','now'),('sibling','${ownerId}','engine-sibling','Sibling','now','now')`)
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
         if (new URL(url).hostname === 'learn.microsoft.com') {
             if (init?.method === 'DELETE') return new Response(null, {status:204})
@@ -48,23 +51,59 @@ beforeEach(async () => {
 afterEach(async () => { await shutdownDesktopRemoteMcp(runtime); await closeDesktopDatabase(root); await rm(root,{recursive:true,force:true}); vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 
 
-const request = (query:string,body?:unknown) => new Request(`${runtime.app.origin}/api/desktop/coworkers/owner/services${query}`,{method:body?'POST':'GET',body:body?JSON.stringify(body):undefined})
+const request = (query:string,body?:unknown) => new Request(`${runtime.app.origin}/api/desktop/coworkers/${ownerId}/services${query}`,{method:body?'POST':'GET',body:body?JSON.stringify(body):undefined})
 const bridgeRequest = (body:unknown) => new Request(`${runtime.app.origin}/api/desktop/internal/services`,{method:'POST',body:JSON.stringify({...identity,...body as object})})
+
+test('the Apps Library routes fresh supported installs to the Vault and preserves existing local accounts', async () => {
+    const service = await getDesktopRemoteMcpService(runtime)
+    const detail = async (slug: string) => (await service.accounts.handle(request('?view=detail&slug=' + slug), ownerId)).json()
+    expect(await detail('wrike')).toMatchObject({ accounts: [], vaultManaged: true })
+    expect(await detail('square')).not.toHaveProperty('vaultManaged')
+    expect(await detail('microsoft')).toMatchObject({ accounts: [], vaultManaged: true })
+
+    const method = 'permanent-access-token'
+    const credential = 'wrike-synthetic-library-test'
+    const legacyInstall = (kind: 'new' | 'additional') => service.accounts.handle(request('', {
+        action: 'install', requestId: randomUUID(), intent: { kind, slug: 'wrike' }, authMethodId: method,
+        values: { WRIKE_TOKEN: credential },
+    }), ownerId)
+    for (const kind of ['new', 'additional'] as const) {
+        const response = await legacyInstall(kind)
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({ error: 'This app moved to Vault. Add or choose an account there.' })
+    }
+    const db = await openDesktopDatabase(root)
+    expect((await db.execute("SELECT id FROM desktop_service_installs WHERE slug='wrike'")).rows).toEqual([])
+    const vault = desktopVault(db, createDesktopSecretCrypto(() => Buffer.from('c'.repeat(64), 'hex')), 1)
+    const added = await vault.mutate({ operation: 'add-app', slug: 'wrike', methodId: method, values: { WRIKE_TOKEN: credential } }, () => {})
+    expect(added.entries).toMatchObject([{ catalog: { slug: 'wrike', methodId: method }, agentIds: [], hasBearer: true }])
+    expect(JSON.stringify(added)).not.toContain(credential)
+    expect(await detail('wrike')).toMatchObject({ accounts: [], vaultManaged: true })
+
+    const installed = await service.servicesApi(request('', {
+        action: 'install', requestId: randomUUID(), slug: 'microsoft', authMethodId: 'default', values: {},
+    }), ownerId)
+    expect(installed.status).toBe(200)
+    const legacy = await detail('microsoft')
+    expect(legacy.accounts).toHaveLength(1)
+    expect(legacy).not.toHaveProperty('vaultManaged')
+    expect(providerCalls).toHaveLength(0)
+})
 
 test('real bundled catalog installs only explicitly supported methods, uses the active run and refuses stale calls', async () => {
  const service=await getDesktopRemoteMcpService(runtime)
- const detail=await (await service.servicesApi(request('?view=detail&slug=microsoft'),'owner')).json()
+ const detail=await (await service.servicesApi(request('?view=detail&slug=microsoft'),ownerId)).json()
  expect(detail.name).toBe('Microsoft Learn'); expect(detail.methodAvailability).toEqual([{id:'default',supported:true}])
  expect(detail.authMethods[0].label).toBe('No sign-in required')
- const catalog=await (await service.servicesApi(request('?view=catalog&limit=100'),'owner')).json()
+ const catalog=await (await service.servicesApi(request('?view=catalog&limit=100'),ownerId)).json()
  expect(catalog.total).toBe(209); expect(catalog.services).toHaveLength(100)
  const install={action:'install',requestId:randomUUID(),slug:'microsoft',authMethodId:'default',values:{}}
- const installedResponse=await service.servicesApi(request('',install),'owner'); const saved=await installedResponse.json()
+ const installedResponse=await service.servicesApi(request('',install),ownerId); const saved=await installedResponse.json()
  expect(installedResponse.status, JSON.stringify(saved)).toBe(200)
  expect(saved.installed).toBe(false); expect(grants.services).toBeUndefined(); expect(providerCalls).toHaveLength(0)
  expect(saved.health.state).toBe('unchecked'); expect(saved.health.message).toContain('Enable Apps')
  grants.services=true
- const probed=await (await service.servicesApi(request('',{action:'probe',requestId:randomUUID(),key:saved.key,expectedRevision:saved.revision}),'owner')).json()
+ const probed=await (await service.servicesApi(request('',{action:'probe',requestId:randomUUID(),key:saved.key,expectedRevision:saved.revision}),ownerId)).json()
  expect(probed.installed).toBe(true)
  const cap=await (await service.servicesBridge.api(bridgeRequest({action:'catalog'}))).json()
  expect(cap.tools[0].name).toBe('microsoft-learn_docs_search')
@@ -73,15 +112,15 @@ test('real bundled catalog installs only explicitly supported methods, uses the 
  expect(JSON.stringify(await reply.json())).toContain('Fixture documentation result')
  expect((await service.servicesBridge.api(bridgeRequest(call))).status).toBe(400)
  expect(providerCalls.filter(x=>x==='tools/call')).toHaveLength(1)
- await withDesktopMcpOwnerTransition(runtime,'owner',async()=>{grants.services=false})
+ await withDesktopMcpOwnerTransition(runtime,ownerId,async()=>{grants.services=false})
  expect((await service.servicesBridge.api(bridgeRequest({...call,toolCallId:'call-2'}))).status).toBe(400)
  expect(providerCalls.filter(x=>x==='tools/call')).toHaveLength(1)
- const disconnected=await (await service.servicesApi(request('',{action:'disconnect',requestId:randomUUID(),key:saved.key,expectedRevision:saved.revision}),'owner')).json()
+ const disconnected=await (await service.servicesApi(request('',{action:'disconnect',requestId:randomUUID(),key:saved.key,expectedRevision:saved.revision}),ownerId)).json()
  expect(disconnected.health.state).toBe('disconnected')
  await shutdownDesktopRemoteMcp(runtime)
  runtime={...runtime,launchNonce:randomUUID()};context.runtime=runtime
  const reopened=await getDesktopRemoteMcpService(runtime)
- const rows=await (await reopened.servicesApi(request('?view=installed'),'owner')).json()
+ const rows=await (await reopened.servicesApi(request('?view=installed'),ownerId)).json()
  expect(rows).toHaveLength(1);expect(rows[0].health.state).toBe('disconnected');expect(rows[0].installed).toBe(false)
  expect((await (await openDesktopDatabase(root)).execute('PRAGMA foreign_key_check')).rows).toEqual([])
 })

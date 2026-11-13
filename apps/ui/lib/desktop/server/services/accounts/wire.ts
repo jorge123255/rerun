@@ -14,6 +14,7 @@ import { sqliteReservations } from './reservations'
 import { ensureDesktopServiceAccountSchema } from './schema'
 import { legacyCompatibleHeaderSecrets, sqliteHeaderSecrets } from './secret-store'
 import { accountTransport, type AccountNetwork, type AccountTransportPort } from './transport'
+import { vaultCatalogMethods } from '../../vault/catalog'
 
 /**
  * Root calls this from the desktop service binding with the same key reader and
@@ -31,6 +32,10 @@ export async function openDesktopServiceAccounts(
     const installs = deps.decorateInstalls ? deps.decorateInstalls(rawInstalls) : rawInstalls
     return accountFeature({
         installs,
+        vaultMethods(slug) {
+            try { return vaultCatalogMethods(getDesktopServiceManifest(slug)).map(method => method.id) }
+            catch { return [] }
+        },
         async adoptedApp(owner, engineId, slug) {
             const { rows } = await db.execute({
                 sql: `SELECT 1 FROM desktop_service_installs s
