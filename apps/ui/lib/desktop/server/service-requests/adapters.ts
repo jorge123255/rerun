@@ -9,7 +9,8 @@ import { openDesktopDatabase } from '../database'
 import { getDesktopRemoteMcpService } from '../mcp-binding'
 import type { DesktopRuntime } from '../runtime'
 import type { DesktopAgent, DesktopSession } from '../store'
-import { getDesktopServiceManifest, getDesktopServiceMethodAvailability } from '../services/catalog/index'
+import { getDesktopServiceManifest } from '../services/catalog/index'
+import { accountMethodAvailability } from '../services/accounts/availability'
 import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 import { attachServiceVaultAccounts, readServiceVaultAccounts, vaultConnection } from './vault'
 import { desktopServiceConnectionUsable } from './usable'
@@ -30,11 +31,11 @@ export async function describeDesktopServiceRequestCatalog(slug: string): Promis
         const category = bounded(record.category, 100)
         if (!name || !category || record.summary.length > 4_000) return { status: 'unavailable' }
         const methods = record.manifest.authMethods.slice(0, 20).map(method => {
-            const availability = getDesktopServiceMethodAvailability(record.slug, method.id)
+            const availability = accountMethodAvailability(record.manifest, method.id)
             return { id: availability.id, supported: availability.supported, ...(availability.reason ? { reason: availability.reason.slice(0, 300) } : {}) }
         })
         const supported = methods.some(method => method.supported)
-        const unsupportedReason = methods.find(method => !method.supported && method.reason)?.reason
+        const unsupportedReason = !supported ? methods.find(method => method.reason)?.reason : undefined
         return {
             status: supported ? 'available' : 'unsupported-auth',
             name, category, summary: record.summary, icon: record.icon && record.icon.length <= 2_000 ? record.icon : null,

@@ -256,7 +256,7 @@ function ServiceRequestBlock(props: DesktopServiceRequestBlockProps) {
     if (connection && choice.choice !== 'skip') nextChoices[detail.currentIndex] = { slug: row.slug, choice: 'use-connection', installation: { key: connection.key, revision: connection.revision } }
     const unavailableReason = catalog.status === 'unavailable' ? 'The app catalog is unavailable. Refresh before finishing.'
         : catalog.status === 'not-found' ? 'Not found in the catalog.'
-            : catalog.unsupportedReason ?? catalog.methods.filter(method => !method.supported && method.reason).map(method => method.reason).join('\n')
+            : catalog.status === 'unsupported-auth' ? catalog.unsupportedReason : undefined
     const locked = !!props.disabled || loading || working || !!attempt || (!fresh.current && !configuring) || detail.retry.phase !== 'open'
     return <div className="min-w-0 space-y-2">
         <DesktopServiceSuggestionCard name={named?.name ?? row.slug} slug={row.slug} reason={row.reason} icon={named?.icon ?? null} category={named?.category ?? 'other'}

@@ -100,6 +100,9 @@ it('treats a fresh healthy grant as usable and ignores catalog-only health', () 
 it('projects unavailable and unsupported auth without calling either one missing', async () => {
     expect(await describeDesktopServiceRequestCatalog('dynamics-365')).toEqual({ status: 'not-found' })
     expect(await describeDesktopServiceRequestCatalog('microsoft')).toMatchObject({ status: 'available', name: 'Microsoft Learn', verified: false, connected: false, authentication: 'supported' })
+    expect(await describeDesktopServiceRequestCatalog('linear')).toMatchObject({
+        status: 'available', methods: expect.arrayContaining([{ id: 'oauth', supported: true }]),
+    })
     const adobe = await describeDesktopServiceRequestCatalog('adobe')
     expect(adobe.status).not.toBe('not-found')
     expect(adobe.status).not.toBe('unavailable')
