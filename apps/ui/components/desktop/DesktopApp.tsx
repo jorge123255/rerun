@@ -913,6 +913,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             {runtimeWorkspaceId !== null && shareTarget && <DesktopCoworkerShareLauncher key={`${runtimeWorkspaceId}:${shareTarget.id}`} workspaceId={runtimeWorkspaceId} agentId={shareTarget.id} agentName={shareTarget.name} onClose={closeWorkspaceDialogs} onImported={refreshImportedCoworker} onOpenCoworker={agentId => { void openImportedCoworker(agentId) }} />}
             {runtimeWorkspaceId !== null && importCoworkerOpen && <DesktopPortableCoworkerImport key={runtimeWorkspaceId} workspaceId={runtimeWorkspaceId} onClose={closeWorkspaceDialogs} onImported={refreshImportedCoworker} onOpenCoworker={agentId => { void openImportedCoworker(agentId) }} />}
             <DesktopNotificationDelivery
+                navigationBlocked={controlCenterDisabled || controlCenterOpen}
                 visibleSessionId={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !profileOpen && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
                 onOpenConversation={target => {
                     if (controlCenterDisabled || isDesktopQuitting() || !currentAgents.current.some(agent => agent.id === target.agentId)) return

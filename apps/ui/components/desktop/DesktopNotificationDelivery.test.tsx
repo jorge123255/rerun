@@ -63,9 +63,11 @@ afterEach(async () => {
     document.body.innerHTML = ''; (window as unknown as { desktopApp?: unknown }).desktopApp = undefined
     vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers()
 })
-async function mount(visibleSessionId: string | null = null) {
+async function mount(visibleSessionId: string | null = null, navigationBlocked = false) {
     const container = document.createElement('div'); document.body.append(container); root = createRoot(container)
-    await act(async () => { root?.render(<DesktopNotificationDelivery visibleSessionId={visibleSessionId} onOpenConversation={navigate} />) })
+    const render = (blocked: boolean) => act(async () => { root?.render(<DesktopNotificationDelivery visibleSessionId={visibleSessionId} onOpenConversation={navigate} navigationBlocked={blocked} />) })
+    await render(navigationBlocked)
+    return render
 }
 const tick = async () => act(async () => { await vi.advanceTimersByTimeAsync(3000) })
 const pendingItem = (row: DesktopNotificationEvent) => ({ id: row.requestId, kind: row.kind, agentId: row.agentId, agentName: row.agentName, agentEnabled: true, sessionId: row.sessionId, title: '', summary: '', updatedAt: '' })
@@ -171,6 +173,42 @@ test('superseded and unmounted click reads cannot navigate late', async () => {
     await act(async () => listener?.(a)); await act(async () => root?.unmount()); root = undefined
     await act(async () => release(Response.json({ items: [pendingItem(a)], unavailableAgentIds: [], checkedAt: '' })))
     expect(navigate).toHaveBeenCalledTimes(1)
+})
+
+test('a blocked board keeps the latest click and validates it only when navigation is available', async () => {
+    const a = event(), b = event('pending:request-b', 'chat-b')
+    const read = vi.fn(async () => Response.json({ items: attention, unavailableAgentIds: [], checkedAt: '' }))
+    attentionRead = read
+    attention = [pendingItem(a)]
+    const render = await mount(null, true)
+    await act(async () => listener?.(a))
+    await act(async () => listener?.(b))
+    expect(read).not.toHaveBeenCalled()
+    expect(navigate).not.toHaveBeenCalled()
+    attention = [pendingItem(b)]
+    await render(false)
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(navigate).toHaveBeenCalledExactlyOnceWith({ agentId: 'agent-a', sessionId: 'chat-b', title: '' })
+    await render(true)
+    await act(async () => listener?.(a))
+    await render(false)
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(navigate).toHaveBeenCalledTimes(1)
+})
+
+test('opening a dialog during click validation defers a fresh check until the dialog closes', async () => {
+    const target = event()
+    const render = await mount()
+    let release!: (response: Response) => void
+    attentionRead = () => new Promise(resolve => { release = resolve })
+    await act(async () => listener?.(target))
+    await render(true)
+    await act(async () => release(Response.json({ items: [pendingItem(target)], unavailableAgentIds: [], checkedAt: '' })))
+    expect(navigate).not.toHaveBeenCalled()
+    attentionRead = undefined
+    attention = [pendingItem(target)]
+    await render(false)
+    expect(navigate).toHaveBeenCalledExactlyOnceWith({ agentId: 'agent-a', sessionId: 'chat-a', title: '' })
 })
 
 test('toast and native clicks share supersession, unmount and exact target checks', async () => {
