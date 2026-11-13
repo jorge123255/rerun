@@ -153,11 +153,11 @@ Use Rerun’s original team screenshot as the visual reference. Its right-hand p
 
 ## Upstream workspace Vault
 
-Upstream `dev` at `40f987db544b30dda7feeb7e5907d09865fc98f5` adds the workspace Vault in four merged PRs. These are open Mac parity tasks.
+Upstream `dev` at `27a80049bedfedb86cf24c00ce7776df93ed798f` includes the workspace Vault stack, PRs #177–182.
 
-- [ ] Port workspace-owned Vault storage and its list, attach, detach, and delete operations into the Mac's existing credential custody and migration ladder. Preserve redaction, attachment conflict checks, and workspace isolation. [Upstream #177](https://github.com/rerun-build/rerun/pull/177)
+- [x] Local Vault for standalone secrets. On the Mac board at `ca84492f`, adding and replacing a secret, assigning and removing a coworker, refusing conflicting assignments, and cancelling or confirming deletion passed. A cold restart retained the saved assignment and a separate workspace opened with an empty Vault. The list returns metadata only. [Upstream #177](https://github.com/rerun-build/rerun/pull/177) · [Upstream #182](https://github.com/rerun-build/rerun/pull/182)
 - [ ] Resolve attached entries for coworker runs and enforce the existing per-coworker grants. Verify detach and revocation for the local engine. [Upstream #178](https://github.com/rerun-build/rerun/pull/178)
-- [ ] Connect the upstream Vault dialog and app setup forms to the local workspace menu. Test the list, reauthorization, attachment changes, conflict feedback, and persistence after a Mac restart. [Upstream #179](https://github.com/rerun-build/rerun/pull/179) · [Upstream #180](https://github.com/rerun-build/rerun/pull/180)
+- [ ] Add catalog apps and custom MCP servers to the workspace Vault, including sign-in and reauthorization. Connect the coworker Apps tab and verify the original attachment and status flows after a Mac restart. [Upstream #179](https://github.com/rerun-build/rerun/pull/179) · [Upstream #180](https://github.com/rerun-build/rerun/pull/180) · [Upstream #181](https://github.com/rerun-build/rerun/pull/181) · [Upstream #182](https://github.com/rerun-build/rerun/pull/182)
 
 ## Original features that need an explicit connected-workspace decision
 
