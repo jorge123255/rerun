@@ -27,8 +27,9 @@ body.welcome {
     pointer-events: none;
 }
 @media (prefers-color-scheme: dark) {
-    .welcome-board { background-image: url("startup-assets/board-dark.webp"); }
+    :root:not([data-appearance]) .welcome-board { background-image: url("startup-assets/board-dark.webp"); }
 }
+:root[data-appearance="dark"] .welcome-board { background-image: url("startup-assets/board-dark.webp"); }
 .welcome main {
     position: relative;
     border-radius: 24px 24px 0 0;
@@ -52,11 +53,12 @@ body.welcome {
     letter-spacing: -.02em;
     text-wrap: balance;
 }
-.welcome #message {
+.welcome #message, .welcome #update-status {
     margin: 4px 0 0;
     font-size: 15px;
     line-height: 20px;
     color: var(--auth-muted);
+    overflow-wrap: anywhere;
 }
 .welcome .actions { display: grid; gap: 8px; margin: 16px 0 0; }
 .welcome .actions:not(:has(button:not([hidden]))) { display: none; }
@@ -103,6 +105,7 @@ body.welcome {
 }
 .welcome button.text-action:enabled:hover { background: light-dark(#0000000a, #ffffff0b); filter: none; }
 .welcome #quit { color: var(--auth-muted); font-size: 13px; }
+body.welcome.recovery { grid-template-rows: minmax(90px, 1fr) auto; }
 @media (max-width: 600px) {
     .welcome-board { background-position: 18% center; background-size: auto max(100%, 270px); }
 }
@@ -110,28 +113,3 @@ body.welcome {
     .welcome main { padding-block: 44px 8px; }
     .welcome .foreman { width: 64px; height: auto; inset-block-start: -40px; }
 }
-
-body.recovery { padding: 52px 24px 28px; }
-.recovery main { width: min(100%, 380px); text-align: center; }
-.recovery .foreman { display: block; margin: 0 auto 14px; }
-.recovery h1 {
-    margin: 0;
-    font-size: 26px;
-    font-weight: 600;
-    line-height: 1.2;
-    letter-spacing: -.035em;
-    text-wrap: balance;
-}
-.recovery #message, .recovery #update-status {
-    margin: 8px 0 0;
-    color: var(--auth-muted);
-    font-size: 14px;
-    line-height: 1.45;
-    overflow-wrap: anywhere;
-}
-.recovery .actions {
-    display: grid;
-    gap: 8px;
-    margin-top: 20px;
-}
-.recovery .actions:not(:has(button:not([hidden]))) { display: none; }
