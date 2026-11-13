@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { desktopTemplateIdSchema, desktopTemplateRevisionSchema } from '@rerun/contracts'
 import { raw } from '../../db/client.js'
+import { closeSystemDb } from '../../db/systemDb.js'
 import { withAgentLock } from '../../agents/lock.js'
 import { unloadAgent } from '../../agents/registry.js'
 import { withDesktopAgentDeletion } from '../agent-lifecycle.js'
@@ -58,6 +59,9 @@ export async function rollbackDesktopTemplateInstall(rawInput:unknown,roots:{dat
    if(marker?.foremanDisabled || !identity || (pinned && (String(pinned.dev)!==identity.dev||String(pinned.ino)!==identity.ino)))throw new TemplateRequestError(409,'This import has no exact fresh-folder cleanup proof')
    if(index&&(index.name!==manifest.coworkers.find(row=>row.agentKey===member.agentKey)?.name||index.status!=='idle'||!marker?.indexCreatedAt||index.created_at!==marker.indexCreatedAt))throw new TemplateRequestError(409,'The imported coworker has changed or started working')
    const initial=index?{name:String(index.name),createdAt:String(index.created_at)}:null
+   // Startup may have initialized an empty system DB. Close its writer under the
+   // deletion lease before taking the byte snapshot or renaming the owned folder.
+   closeSystemDb(member.engineAgentId)
    await rollbackFreshTemplateCoworker(request,{...roots,withFreshImportLease:async(_request,work)=>{
     // The enclosing config lock + deletion lease excludes live work throughout this callback.
     await assertUnpublished(input); return work()

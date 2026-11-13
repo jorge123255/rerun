@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { lstat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { agentDir, dataDir, installPath } from '../../config/paths.js'
@@ -21,6 +21,7 @@ import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { DESKTOP_TEMPLATE_LIMITS, desktopTemplateGuidedSetup, foremanImportedSetupPrompt, type DesktopForemanImportedSetup } from '@rerun/contracts'
 import { publishSetupCompletion } from './complete-write.js'
+import { SETUP_IMPORT_RECEIPT as IMPORT_RECEIPT, setupImportReceiptSchema as importMarkerSchema, setupDigest as digest } from './import-receipt.js'
 
 export type DesktopSetupRecord = {
     required: boolean | null
@@ -32,12 +33,10 @@ export type DesktopSetupRecord = {
 }
 export type DesktopSetupIntent = { requestId: string; expectedRevision: string }
 
-const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const conflict = (message: string) => new HttpError(409, message)
 export class DesktopSetupMutationRejected extends HttpError {}
 const rejected = (message: string) => new DesktopSetupMutationRejected(409, message)
 const JOURNAL = '.desktop-setup-journal.json'
-const IMPORT_RECEIPT = '.rerun-setup-import.json'
 
 async function readConfig(id: string) {
     assertDesktopAgentNotDeleted(id)
@@ -190,7 +189,6 @@ export async function continueDesktopSetupSession(engineAgentId: string): Promis
     return session
 }
 
-const importMarkerSchema = z.object({ version: z.literal(1), agentId: z.string(), engineAgentId: z.string(), importReceiptId: z.string(), fingerprint: z.string(), state: z.enum(['pending', 'complete']), revision: z.string().optional() })
 const templateImportSchema = z.object({ version: z.literal(1), engineAgentId: z.string(), importReceiptId: z.string(), templateId: z.string(), revision: z.string(), agentKey: z.string(), phase: z.literal('indexed'), foremanDisabled: z.literal(true).optional() })
 
 export async function initializeImportedSetup(input: { agentId: string; engineAgentId: string; importReceiptId: string; prompt: string; required: boolean; foreman?: DesktopForemanImportedSetup; signal?: AbortSignal }): Promise<{ revision: string }> {

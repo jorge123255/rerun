@@ -16,6 +16,9 @@ const {dataDir,agentsDir}=await import('../../config/paths.js')
 const {raw}=await import('../../db/client.js')
 const {createDesktopTemplateEngine}=await import('./service.js')
 const {rollbackDesktopTemplateInstall}=await import('./rollback-binding.js')
+const {initializeImportedSetup}=await import('../setup/service.js')
+const {closeSystemDb,getSystemDb}=await import('../../db/systemDb.js')
+const {desktopScheduleOccurrenceSchema}=await import('../../runtime/desktop-schedule-state.js')
 const {prepareSkillHelperFixture}=await import('../skill-publication.test-support.js')
 let helper:Awaited<ReturnType<typeof prepareSkillHelperFixture>>
 const priorHelper=process.env.RERUN_DESKTOP_RENAME_HELPER
@@ -60,4 +63,56 @@ test('production cleanup preserves a replaced index and a replaced folder even i
  await rename(second.copy,old);await cp(old,second.copy,{recursive:true})
  await expect(rollbackDesktopTemplateInstall(second.body,{dataRoot:dataDir(),agentsRoot:agentsDir()})).rejects.toThrow('fresh-folder')
  expect(await readFile(join(second.copy,'workspace','note.txt'),'utf8')).toBe('Original bytes')
+})
+
+async function setupBeforePlacement(f: Awaited<ReturnType<typeof fixture>>) {
+ const { importReceiptId } = f.install
+ await initializeImportedSetup({ agentId: crypto.randomUUID(), engineAgentId: f.engineAgentId, importReceiptId, prompt: '', required: false })
+ const { client } = await getSystemDb(f.engineAgentId)
+ await client.executeMultiple(desktopScheduleOccurrenceSchema)
+ return client
+}
+
+test('production cleanup removes an unpublished copy after setup and empty restart database initialization', async () => {
+ const f = await fixture('d')
+ await setupBeforePlacement(f)
+ await expect(rollbackDesktopTemplateInstall(f.body, { dataRoot: dataDir(), agentsRoot: agentsDir() })).resolves.toMatchObject({ status: 'rolled-back' })
+ await expect(access(f.copy)).rejects.toMatchObject({ code: 'ENOENT' })
+ expect(await readFile(join(f.folder, 'workspace', 'note.txt'), 'utf8')).toBe('Original bytes')
+})
+
+test('production cleanup refuses an initialized copy containing a saved chat', async () => {
+ const f = await fixture('e')
+ const client = await setupBeforePlacement(f)
+ await client.execute({
+  sql: "INSERT INTO sessions (id,agent_id,title,created_at,updated_at) VALUES (?,?,'Keep this chat','2026-01-01','2026-01-01')",
+  args: [crypto.randomUUID(), f.engineAgentId],
+ })
+ await expect(rollbackDesktopTemplateInstall(f.body, { dataRoot: dataDir(), agentsRoot: agentsDir() })).rejects.toThrow('contains saved data')
+ const reopened = await getSystemDb(f.engineAgentId)
+ expect((await reopened.client.execute('SELECT title FROM sessions')).rows[0]?.title).toBe('Keep this chat')
+ closeSystemDb(f.engineAgentId)
+})
+
+test('production cleanup still refuses edits to setup or imported notes', async () => {
+ const f = await fixture('f')
+ await setupBeforePlacement(f)
+ for (const path of ['INSTALL.md', 'workspace/note.txt']) {
+  const file = join(f.copy, path), original = await readFile(file)
+  await writeFile(file, 'Keep this edit', { mode: 0o600 })
+  await expect(rollbackDesktopTemplateInstall(f.body, { dataRoot: dataDir(), agentsRoot: agentsDir() })).rejects.toThrow('edited')
+  expect(await readFile(file, 'utf8')).toBe('Keep this edit')
+  await writeFile(file, original)
+ }
+ closeSystemDb(f.engineAgentId)
+})
+
+test('production cleanup refuses unfamiliar database tables and retains their rows', async () => {
+ const f = await fixture('7')
+ const client = await setupBeforePlacement(f)
+ await client.executeMultiple("CREATE TABLE local_notes (body TEXT); INSERT INTO local_notes VALUES ('Keep this note')")
+ await expect(rollbackDesktopTemplateInstall(f.body, { dataRoot: dataDir(), agentsRoot: agentsDir() })).rejects.toThrow('database schema')
+ const reopened = await getSystemDb(f.engineAgentId)
+ expect((await reopened.client.execute('SELECT body FROM local_notes')).rows[0]?.body).toBe('Keep this note')
+ closeSystemDb(f.engineAgentId)
 })

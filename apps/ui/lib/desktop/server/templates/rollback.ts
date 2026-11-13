@@ -6,6 +6,7 @@ import { desktopTemplateIdSchema, desktopTemplateOperationSchema, desktopTemplat
 import { DesktopHttpError,authenticateDesktopEngineRequest } from '../auth'
 import { openDesktopDatabase } from '../database'
 import { withRosterWrite } from '../roster-writes'
+import { EngineRequestError } from '../../../engine/client'
 import { templateInstallIntentKey } from './intents'
 import { templateRequestFingerprint, withTemplateRequestWrite, type DesktopTemplateEngineClient } from './server'
 const member=z.object({agentId:z.uuid(),engineAgentId:z.string().regex(/^i[a-f0-9]{31}$/),agentKey:z.string().regex(/^c[0-9]{2}$/),phase:z.enum(['reserved','folder','indexed','placed'])})
@@ -77,7 +78,13 @@ export async function rollbackDesktopTemplateRequest(db:Client,engine:DesktopTem
   payload.rollback={requestId,complete:false}
   await db.execute({sql:"UPDATE desktop_template_requests SET status='rolling-back',payload=?,updated_at=? WHERE request_id=? AND receipt_id=? AND status!='installed'",args:[JSON.stringify(payload),new Date().toISOString(),input.requestId,String(row.receipt_id)]})
   const body=engineBody.parse({requestId,importReceiptId:String(row.receipt_id),templateId,revision,coworkers:payload.coworkers.map(({engineAgentId,agentKey})=>({engineAgentId,agentKey}))})
-  const result=z.strictObject({status:z.literal('rolled-back'),requestId:z.uuid(),importReceiptId:z.uuid()}).parse(await engine.post('/desktop/templates/rollback-install',body))
+  const reply = await engine.post('/desktop/templates/rollback-install', body).catch(error => {
+   if (error instanceof EngineRequestError && error.status === 409) {
+    throw new DesktopHttpError(409, 'Cleanup could not verify that every unfinished copy was safe to remove. Any unverified copy was kept.')
+   }
+   throw error
+  })
+  const result=z.strictObject({status:z.literal('rolled-back'),requestId:z.uuid(),importReceiptId:z.uuid()}).parse(reply)
   if(result.requestId!==requestId||result.importReceiptId!==row.receipt_id)throw new DesktopHttpError(502,'Import cleanup acknowledgement changed')
   await unpublished(db,payload)
   payload.rollback={requestId,complete:true}

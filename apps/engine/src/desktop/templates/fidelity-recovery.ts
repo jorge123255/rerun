@@ -10,12 +10,14 @@ import { withPortableLibraryLease, removePortableQuarantinedDirectory } from './
 import { readOwnJson, writeOwnJson, replaceOwnJson, requestHome } from './store.js'
 import { TemplateRequestError } from './errors.js'
 import { sha256, canonicalJson } from './hash.js'
+import { SETUP_IMPORT_RECEIPT } from '../setup/import-receipt.js'
+import { emptySystemDbFiles, initializedSetupFiles, isFreshSystemDbFile } from './fresh-recovery-state.js'
 const recoverySchema = z.strictObject({
     version: z.literal(1), requestId: z.uuid(), importReceiptId: z.uuid(), templateId: desktopTemplateIdSchema, revision: desktopTemplateRevisionSchema,
     engineAgentId: z.string().regex(/^i[a-f0-9]{31}$/), agentKey: z.string().regex(/^c[0-9]{2}$/), fingerprint: desktopTemplateRevisionSchema,
     dev: z.string().regex(/^\d+$/), ino: z.string().regex(/^\d+$/),
-    // The template's 2,000 entries plus its optional exact screen ownership marker.
-    files:z.array(z.strictObject({path:desktopTemplateRelativePathSchema,bytes:z.number().int().nonnegative().max(25*1024*1024),sourceRevision:desktopTemplateRevisionSchema})).max(2001), phase: z.enum(['reserved','quarantined','index-removed','removed']),
+    // The template's 2,000 entries plus bounded setup, database and screen evidence.
+    files:z.array(z.strictObject({path:desktopTemplateRelativePathSchema,bytes:z.number().int().nonnegative().max(25*1024*1024),sourceRevision:desktopTemplateRevisionSchema})).max(2006), phase: z.enum(['reserved','quarantined','index-removed','removed']),
 })
 export type FidelityRecoveryRequest = Pick<z.infer<typeof recoverySchema>, 'requestId'|'importReceiptId'|'templateId'|'revision'|'engineAgentId'|'agentKey'>
 export type FidelityRecoveryDeps = {
@@ -50,11 +52,21 @@ export async function rollbackFreshTemplateCoworker(input: FidelityRecoveryReque
             const expected = new Map<string, { path: string; bytes: number; sourceRevision: string }>(
                 member.files.map(({ path, bytes, sourceRevision }) => [path, { path, bytes, sourceRevision }]),
             )
+            if (inventory.entries.some(entry => entry.path === SETUP_IMPORT_RECEIPT)) {
+                for (const file of await initializedSetupFiles(folder, deps.dataRoot, input, member)) expected.set(file.path, file)
+            }
+            const databasePaths = inventory.entries.filter(entry => isFreshSystemDbFile(entry.path)).map(entry => entry.path)
+            if (databasePaths.length) {
+                for (const file of await emptySystemDbFiles(folder, databasePaths)) expected.set(file.path, file)
+            }
             if (inventory.entries.some(entry => entry.path === UNUSED_SCREEN_MARKER)) {
                 const screenMarker = Buffer.from(unusedScreenMarkerText(input.engineAgentId, String(before.dev), String(before.ino)), 'utf8')
                 expected.set(UNUSED_SCREEN_MARKER, { path: UNUSED_SCREEN_MARKER, bytes: screenMarker.length, sourceRevision: sha256(screenMarker) })
             }
             for (const entry of inventory.entries) {
+                // The last SQLite connection can finish removing a sidecar after inventory.
+                // A surviving or replaced entry is still checked again inside quarantine.
+                if (entry.kind === 'file' && isFreshSystemDbFile(entry.path) && !expected.has(entry.path)) continue
                 if (entry.kind !== 'file') throw new TemplateRequestError(409, 'Rollback target contains a link or unsupported entry')
                 if (entry.path === '.desktop-template-import.json' || entry.path === '.desktop-template-requirements.json') continue
                 const meta = expected.get(entry.path)
