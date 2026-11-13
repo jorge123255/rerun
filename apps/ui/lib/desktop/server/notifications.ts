@@ -2,6 +2,7 @@ import 'server-only'
 import type { Client } from '@libsql/client'
 import { loadMessages } from '@rerun/i18n/messages'
 import { createTranslator } from 'use-intl/core'
+import { desktopAttentionNotificationLabels } from '@/lib/desktop/i18n/notification-messages'
 import { readDesktopLocale } from './language'
 import { coworkerRuleOf, mergeNotificationPrefs, normalizeNotificationPrefs, notificationPrefsPatchSchema, taskNotifies, taskRuleOf,
     type NotificationPrefs, type NotificationPrefsPatch } from '@rerun/contracts'
@@ -306,6 +307,12 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime, acc
                 body: item.source === 'chat' ? item.message : null, silent: true, groupId: item.id,
             } })
         }
+        const attentionLabels = {
+            ...desktopAttentionNotificationLabels[locale],
+            question: t('states.question'),
+            approval: t('states.approval'),
+            service: t('states.connector'),
+        }
         for (const item of attention.items) {
             if (item.kind === 'info') continue
             const key = `pending:${item.id}`
@@ -314,7 +321,7 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime, acc
             if (!wantedByPrefs(prefs, { kind: item.kind, agentId: item.agentId, source: 'chat', slug: null })) continue
             scored.push({ at, event: {
                 key, kind: item.kind, source: 'chat', agentId: item.agentId, agentName: item.agentName, sessionId: item.sessionId,
-                title: item.agentName, subtitle: item.kind === 'question' ? 'Question' : item.kind === 'takeover' ? 'Browser help' : item.kind === 'secret' ? 'Credentials' : item.kind === 'mcp' ? 'Tool sign-in' : item.kind === 'tool-install' ? 'Package installation' : item.kind === 'service' ? 'App setup' : 'Needs approval',
+                title: item.agentName, subtitle: attentionLabels[item.kind],
                 body: item.summary || null, silent: false, requestId: item.id,
             } })
         }

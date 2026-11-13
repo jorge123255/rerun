@@ -28,10 +28,13 @@ const histories = new Map<string, { owner: string; rows: Message[] }>(), complet
 const remoteSessions = new Map<string, Session>(), remoteRuns = new Map<string, RunDetail>()
 const calls: string[] = []
 
-function history(sessionId: string, createdAt: string): Message[] {
+function history(sessionId: string, createdAt: string, kind: 'question' | 'approval' = 'question'): Message[] {
+    const toolName = kind === 'question' ? 'ask_user' : 'request_approval'
+    const input = kind === 'question' ? { questions: [{ question: 'Which color should I use?', options: ['Blue'] }] }
+        : { approvals: [{ action: 'Review the draft report' }] }
     return [
-        { id: sessionId + '-request', sessionId, role: 'assistant', contentJson: JSON.stringify([{ type: 'tool-call', toolName: 'ask_user', toolCallId: sessionId + '-call', input: { questions: [{ question: 'Which color should I use?', options: ['Blue'] }] } }]), toolCallsJson: null, createdAt },
-        { id: sessionId + '-result', sessionId, role: 'tool', contentJson: JSON.stringify([{ type: 'tool-result', toolName: 'ask_user', toolCallId: sessionId + '-call', output: { type: 'json', value: { status: 'delivered' } } }]), toolCallsJson: null, createdAt },
+        { id: sessionId + '-request', sessionId, role: 'assistant', contentJson: JSON.stringify([{ type: 'tool-call', toolName, toolCallId: sessionId + '-call', input }]), toolCallsJson: null, createdAt },
+        { id: sessionId + '-result', sessionId, role: 'tool', contentJson: JSON.stringify([{ type: 'tool-result', toolName, toolCallId: sessionId + '-call', output: { type: 'json', value: { status: 'delivered' } } }]), toolCallsJson: null, createdAt },
     ]
 }
 function prefsRequest(body: unknown, method = 'PUT') {
@@ -211,6 +214,28 @@ test('done events follow the chat/schedule decision: started runs under mine, ot
     const scheduled = after.events.filter(event => event.kind === 'done')
     expect(scheduled.map(event => event.agentId)).toEqual([bob.id])
     expect(scheduled[0]!.subtitle).toBe('morning-digest · Done')
+})
+
+test.each([
+    ['en', 'Question', 'Needs approval'],
+    ['fr', 'Question', 'À valider'],
+    ['es', 'Pregunta', 'Requiere aprobación'],
+    ['pt', 'Pergunta', 'Precisa de aprovação'],
+    ['de', 'Frage', 'Freigabe nötig'],
+] as const)('uses the saved %s language for pending notification copy and admission', async (locale, question, approval) => {
+    histories.set(bobChat.engineSessionId, { owner: bob.engineAgentId, rows: history(bobChat.engineSessionId, raised(90_000), 'approval') })
+    await saveDesktopLanguage(runtime, locale, null)
+    await closeDesktopDatabase(root)
+
+    const { events } = await (await readEvents(eventsGet())).json() as { events: DesktopNotificationEvent[] }
+    expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'question', subtitle: question, sessionId: aliceChat.id, body: 'Which color should I use?' }),
+        expect.objectContaining({ kind: 'approval', subtitle: approval, sessionId: bobChat.id, body: 'Review the draft report' }),
+    ]))
+    expect(events).toHaveLength(2)
+    const admitted = await admit(notificationPost('admit', { keys: events.map(event => event.key) }))
+    expect(admitted.status).toBe(200)
+    expect((await admitted.json()).events).toEqual(events.map(event => expect.objectContaining(event)))
 })
 
 test('localizes routine names and terminal states when polling and admitting after reopening', async () => {
