@@ -251,6 +251,7 @@ async function initialize(dataRoot: string): Promise<Client> {
     const columns = await client.execute('PRAGMA table_info(desktop_sessions)')
     const names = new Set(columns.rows.map(row => String(row.name)))
     if (!names.has('model_connection_id')) await client.execute('ALTER TABLE desktop_sessions ADD COLUMN model_connection_id TEXT')
+    if (!names.has('title_edited')) await client.execute('ALTER TABLE desktop_sessions ADD COLUMN title_edited INTEGER NOT NULL DEFAULT 0 CHECK (title_edited IN (0, 1))')
     if (!names.has('model')) await client.execute('ALTER TABLE desktop_sessions ADD COLUMN model TEXT')
     const agentColumns = await client.execute('PRAGMA table_info(desktop_agents)')
     if (!agentColumns.rows.some(row => row.name === 'enabled'))

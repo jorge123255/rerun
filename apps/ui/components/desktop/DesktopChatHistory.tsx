@@ -4,11 +4,12 @@ import { useDesktopLocale } from './DesktopLocale'
 import { useEffect, useId, useState } from 'react'
 import { Badge } from '@rerun/ui/primitives'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Chip } from '@/components/ui/chip'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SkeletonPanelRows } from '@/components/ui/skeleton'
-import { CalendarClock, MessageCircle, MessageCircleQuestionIcon, PlusIcon, WebhookIcon, XIcon } from '@/lib/icons'
+import { CalendarClock, EllipsisIcon, MessageCircle, MessageCircleQuestionIcon, PlusIcon, WebhookIcon, XIcon } from '@/lib/icons'
 import {
     DESKTOP_CHAT_FILTERS,
     desktopChatHistorySchema,
@@ -22,6 +23,7 @@ import {
 import { fullDateTime, messageTime } from '@rerun/i18n/format'
 import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { cn } from '@/lib/utils'
+import { DesktopSessionRenameField, type DesktopSessionRename } from './DesktopSessionRename'
 import { DesktopNeedsChats, matchingPendingChats } from './DesktopNeedsChats'
 import { useDesktopPendingInbox } from './useDesktopPendingInbox'
 import type { DesktopSessionView } from './DesktopApp'
@@ -85,7 +87,7 @@ function ClassificationFilterNote({ onRetry, partial }: { onRetry: () => void; p
     )
 }
 
-function ChatHistoryList({ history, details, verifiedRunStatus, filter, query, selectedId, busy, pendingChatSummaries, inlinePendingIds, onSelect, onRetry }: {
+function ChatHistoryList({ history, details, verifiedRunStatus, filter, query, selectedId, busy, pendingChatSummaries, inlinePendingIds, onSelect, onRetry, rename }: {
     history: DesktopChatHistory
     details: ReadonlyMap<string, DesktopSessionView>
     verifiedRunStatus: boolean
@@ -97,14 +99,20 @@ function ChatHistoryList({ history, details, verifiedRunStatus, filter, query, s
     busy: boolean
     onSelect: (id: string) => void
     onRetry: () => void
+    rename?: DesktopSessionRename
 }) {
     const { language, t } = useDesktopLocale()
     const conversations = history.conversations.map(row => {
         const current = details.get(row.id)
-        return current?.automationOutcome && current.source === row.source && isAutomatedChat(row)
-            ? { ...row, title: current.title, automationOutcome: current.automationOutcome } : row
+        if (current?.automationOutcome && current.source === row.source && isAutomatedChat(row))
+            return { ...row, title: current.title, automationOutcome: current.automationOutcome }
+        return current?.titleEdited ? { ...row, title: current.title } : row
     })
-    const shown = filterDesktopChats(conversations, filter, query).filter(row => !inlinePendingIds.has(row.id))
+    const editingId = rename?.target?.surface === 'history' ? rename.target.id : null
+    const filtered = filterDesktopChats(conversations, filter, query).filter(row => !inlinePendingIds.has(row.id))
+    // Keep the field mounted if a save changes the title used by the current search.
+    const editing = editingId ? conversations.find(row => row.id === editingId) : undefined
+    const shown = editing && !filtered.some(row => row.id === editingId) ? [...filtered, editing] : filtered
     const groups = groupDesktopChats(shown, { locale: desktopLocaleTag(language.locale), unknownDate: t('threadHistory.dateUnavailable') })
     const classificationUnavailable = (filter === 'chats' || filter === 'automations') && history.enrichment === 'unavailable'
     const empty = query.trim()
@@ -121,9 +129,23 @@ function ChatHistoryList({ history, details, verifiedRunStatus, filter, query, s
                 <div key={day} className="pb-1">
                     <p className="px-2.5 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{day}</p>
                     {entries.map(conversation => (
-                        <ChatHistoryRow key={conversation.id} conversation={conversation} detail={details.get(conversation.id)}
-                            verifiedRunStatus={verifiedRunStatus} pendingSummary={pendingChatSummaries?.get(conversation.id)} active={selectedId === conversation.id}
-                            busy={busy} onOpen={() => onSelect(conversation.id)} />
+                        rename && editingId === conversation.id
+                            ? <DesktopSessionRenameField key={conversation.id} title={conversation.title} rename={rename} />
+                            : <div key={conversation.id} className="flex items-center gap-1">
+                                <ChatHistoryRow conversation={conversation} detail={details.get(conversation.id)}
+                                    verifiedRunStatus={verifiedRunStatus} pendingSummary={pendingChatSummaries?.get(conversation.id)}
+                                    active={selectedId === conversation.id} busy={busy} onOpen={() => onSelect(conversation.id)} />
+                                {rename && conversation.kind !== 'general' && <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <Button type="button" variant="ghost" size="icon-sm" aria-label={t('sessionRename.label') + ' · ' + conversation.title}>
+                                            <EllipsisIcon aria-hidden />
+                                        </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                        <DropdownMenuItem onSelect={() => rename.start({ id: conversation.id, surface: 'history' })}>{t('sessionRename.rename')}</DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                </DropdownMenu>}
+                            </div>
                     ))}
                 </div>
             ))}
@@ -134,8 +156,9 @@ function ChatHistoryList({ history, details, verifiedRunStatus, filter, query, s
     )
 }
 
-function ChatHistoryPanel({ agentId, selectedId, sessions, verifiedRunStatus, busy, pendingChatSummaries, onSelect, onCreate, onClose, titleId, descriptionId, initialFilter = 'all' }: {
+function ChatHistoryPanel({ agentId, selectedId, sessions, verifiedRunStatus, busy, pendingChatSummaries, onSelect, onCreate, onClose, titleId, descriptionId, rename, initialFilter = 'all' }: {
     initialFilter?: DesktopChatFilter
+    rename?: DesktopSessionRename
     agentId: string
     sessions: readonly DesktopSessionView[]
     verifiedRunStatus: boolean
@@ -230,14 +253,15 @@ function ChatHistoryPanel({ agentId, selectedId, sessions, verifiedRunStatus, bu
                     </div>
                 ) : (
                     <ChatHistoryList history={history} details={details} verifiedRunStatus={verifiedRunStatus} filter={filter} query={query} selectedId={selectedId} busy={busy} pendingChatSummaries={pendingChatSummaries}
-                        inlinePendingIds={inlinePendingIds} onSelect={onSelect} onRetry={retry} />
+                        inlinePendingIds={inlinePendingIds} onSelect={onSelect} onRetry={retry} rename={rename} />
                 ))}
             </div>
         </>
     )
 }
 
-export function DesktopChatHistory({ agentId, count, selectedId, sessions = [], verifiedRunStatus = false, busy, pendingChatSummaries, onSelect, onCreate, control }: {
+export function DesktopChatHistory({ agentId, count, selectedId, sessions = [], verifiedRunStatus = false, busy, pendingChatSummaries, onSelect, onCreate, control, rename }: {
+    rename?: DesktopSessionRename
     control?: { needsRequest: number | null; active: boolean; onOpenChange: (open: boolean) => void }
     agentId: string
     sessions?: readonly DesktopSessionView[]
@@ -259,7 +283,14 @@ export function DesktopChatHistory({ agentId, count, selectedId, sessions = [], 
     const visible = open && control?.active !== false
     useEffect(() => { control?.onOpenChange(visible); return () => control?.onOpenChange(false) }, [visible, control?.onOpenChange])
     useEffect(() => { if (control?.active === false) setOpen(false) }, [control?.active])
-    const changeOpen = (next: boolean) => { if (next) setInitialFilter('all'); setOpen(next) }
+    const changeOpen = (next: boolean) => {
+        if (!next && rename?.target?.surface === 'history') {
+            if (rename.status === 'saving') return
+            rename.cancel()
+        }
+        if (next) setInitialFilter('all')
+        setOpen(next)
+    }
     const titleId = useId()
     const descriptionId = useId()
     return (
@@ -271,15 +302,19 @@ export function DesktopChatHistory({ agentId, count, selectedId, sessions = [], 
                 </Button>
             </PopoverTrigger>
             <PopoverContent align="end" collisionPadding={12}
-                onInteractOutside={event => { if (document.querySelector('[role="alertdialog"][data-state="open"]')) event.preventDefault() }}
-                onEscapeKeyDown={event => { if (document.querySelector('[role="alertdialog"][data-state="open"]')) event.preventDefault() }} aria-labelledby={titleId} aria-describedby={descriptionId}
+                onInteractOutside={event => {
+                    if (rename?.target?.surface === 'history' || document.querySelector('[role="alertdialog"][data-state="open"]')) event.preventDefault()
+                }}
+                onEscapeKeyDown={event => {
+                    if (rename?.target?.surface === 'history' || document.querySelector('[role="alertdialog"][data-state="open"]')) event.preventDefault()
+                }} aria-labelledby={titleId} aria-describedby={descriptionId}
                 className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1.5rem)] gap-2 overflow-hidden p-2">
                 {visible && <ChatHistoryPanel key={`${agentId}/${seenRequest}`} initialFilter={initialFilter} agentId={agentId} selectedId={selectedId} busy={busy} pendingChatSummaries={pendingChatSummaries}
-                    sessions={sessions} verifiedRunStatus={verifiedRunStatus}
+                    sessions={sessions} verifiedRunStatus={verifiedRunStatus} rename={rename}
                     titleId={titleId} descriptionId={descriptionId}
-                    onClose={() => setOpen(false)}
-                    onCreate={onCreate && (() => { if (onCreate()) setOpen(false) })}
-                    onSelect={id => { if (onSelect(id) !== false) setOpen(false) }} />}
+                    onClose={() => changeOpen(false)}
+                    onCreate={onCreate && (() => { if (onCreate()) changeOpen(false) })}
+                    onSelect={id => { if (onSelect(id) !== false) changeOpen(false) }} />}
             </PopoverContent>
         </Popover>
     )

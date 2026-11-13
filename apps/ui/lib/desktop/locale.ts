@@ -477,6 +477,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         emptyThreads: source.agent.agentChatsList.emptyThreads,
         emptyAutomations: source.agent.agentChatsList.emptyAutomations,
         emptyNeeds: source.agent.agentChatsList.emptyNeeds,
+        sessionRename: source.agent.sessionRename,
         newThread: source.agent.openChatsTabs.newThread,
         closeTab: source.agent.openChatsTabs.closeTab,
         closePanel: source.layout.sidePanel.close,

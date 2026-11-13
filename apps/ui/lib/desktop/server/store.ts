@@ -29,6 +29,7 @@ export type DesktopSession = {
     agentId: string
     engineSessionId: string
     title: string
+    titleEdited?: boolean
     createdAt: string
     updatedAt: string
     modelConnectionId: string | null
@@ -70,6 +71,7 @@ export function sessionOf(row: Row): DesktopSession {
         agentId: String(row.agent_id),
         engineSessionId: String(row.engine_session_id),
         title: String(row.title),
+        ...(Number(row.title_edited) === 1 && { titleEdited: true }),
         createdAt: String(row.created_at),
         updatedAt: String(row.updated_at),
         modelConnectionId: choice?.modelConnectionId ?? null,

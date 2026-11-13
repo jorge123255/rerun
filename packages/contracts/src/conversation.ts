@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { runStatusSchema } from './run.js'
 import { desktopAutomationResultSchema, sessionSourceSchema } from './session.js'
 
+export const CONVERSATION_TITLE_MAX = 80
+
 export const sessionStatusSchema = z.enum(['idle', 'working', 'error', 'waiting_human', 'awaiting_question', 'awaiting_approval', 'awaiting_connector', 'awaiting_ack'])
 export type SessionStatus = z.infer<typeof sessionStatusSchema>
 

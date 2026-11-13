@@ -106,7 +106,7 @@ export async function readDesktopChatHistory(dependencies: DesktopChatHistoryDep
             id: session.id,
             agentId: session.agentId,
             engineSessionId: session.engineSessionId,
-            title: result?.title ?? session.title,
+            title: session.titleEdited ? session.title : result?.title ?? session.title,
             ...(result && { automationOutcome: result.outcome }),
             createdAt: session.createdAt,
             updatedAt: engine?.updatedAt ?? session.updatedAt,

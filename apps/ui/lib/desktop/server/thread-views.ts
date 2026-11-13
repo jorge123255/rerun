@@ -20,7 +20,7 @@ export async function desktopThreadViews(runtime: DesktopRuntime, db: Client, ag
         if (!thread) return view
         return {
             ...view,
-            title: thread.automationResult?.title ?? view.title,
+            title: view.titleEdited ? view.title : thread.automationResult?.title ?? view.title,
             automationOutcome: thread.automationResult?.outcome,
             source: thread.source,
             automationName: thread.automationName,

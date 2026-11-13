@@ -1,10 +1,11 @@
 'use client'
 
 import { useScrollFade } from '@rerun/ui/primitives'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { SessionTab } from '@/lib/chat/session-tabs'
 import { isGeneralTab } from '@/lib/desktop/general-threads'
 import { MessagesSquare, PlusIcon, XIcon } from '@/lib/icons'
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { cn } from '@/lib/utils'
 
 export type TabState = 'live' | 'needs' | 'quiet'
@@ -18,8 +19,9 @@ export type OpenChatsTabsProps = {
 }
 
 // Both the hosted board and the Mac use this strip. Each supplies the status from its own runs.
-export function OpenChatsTabStrip({ tabs, activeIndex, onSelect, onClose, onCreate, stateOf, newLabel = 'New conversation', closeLabel = title => `Close ${title}` }:
-    OpenChatsTabsProps & { stateOf: (tab: SessionTab) => TabState; newLabel?: string; closeLabel?: (title: string) => string }) {
+export function OpenChatsTabStrip({ tabs, activeIndex, onSelect, onClose, onCreate, stateOf, onRename, renameLabel, renderRename, newLabel = 'New conversation', closeLabel = title => `Close ${title}` }:
+    OpenChatsTabsProps & { stateOf: (tab: SessionTab) => TabState; newLabel?: string; closeLabel?: (title: string) => string
+        onRename?: (id: string) => void; renameLabel?: string; renderRename?: (tab: SessionTab) => ReactNode }) {
     const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
     const fadeMask = useScrollFade(scroller, { axis: 'x' })
 
@@ -53,6 +55,16 @@ export function OpenChatsTabStrip({ tabs, activeIndex, onSelect, onClose, onCrea
                 <div className="flex w-max items-center gap-1">
                     {threads.map(({ tab, index }) => {
                         const active = index === activeIndex
+                        const field = renderRename?.(tab)
+                        if (field) return <div key={tab.uid} data-active={active}>{field}</div>
+                        const startRename = tab.id && onRename ? () => onRename(tab.id!) : undefined
+                        const button = (
+                            <button type="button" aria-pressed={active} title={tab.title} onClick={() => onSelect(index)}
+                                onDoubleClick={startRename} className="flex min-w-0 items-center gap-1.5">
+                                <StateDot state={stateOf(tab)} />
+                                <span className="max-w-[160px] truncate">{tab.title}</span>
+                            </button>
+                        )
                         return (
                             <div
                                 key={tab.uid}
@@ -62,10 +74,10 @@ export function OpenChatsTabStrip({ tabs, activeIndex, onSelect, onClose, onCrea
                                     active ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
                                 )}
                             >
-                                <button type="button" aria-pressed={active} title={tab.title} onClick={() => onSelect(index)} className="flex min-w-0 items-center gap-1.5">
-                                    <StateDot state={stateOf(tab)} />
-                                    <span className="max-w-[160px] truncate">{tab.title}</span>
-                                </button>
+                                {startRename ? <ContextMenu>
+                                    <ContextMenuTrigger asChild>{button}</ContextMenuTrigger>
+                                    <ContextMenuContent><ContextMenuItem onSelect={startRename}>{renameLabel}</ContextMenuItem></ContextMenuContent>
+                                </ContextMenu> : button}
                                 <button
                                     type="button"
                                     aria-label={closeLabel(tab.title)}

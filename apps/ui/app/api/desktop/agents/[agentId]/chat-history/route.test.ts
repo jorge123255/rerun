@@ -11,6 +11,9 @@ import { readDesktopApproval } from '@/lib/desktop/server/approvals'
 import { readDesktopQuestion } from '@/lib/desktop/server/questions'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { GET } from './route'
+import { PATCH } from '../sessions/[sessionId]/title/route'
+import { searchDesktopChats } from '@/lib/desktop/server/chat-search'
+import { setDesktopWorkspaceFrozen } from '@/lib/desktop/server/workspace-admission'
 
 vi.mock('@/lib/desktop/server/secret-requests/binding', () => ({ readDesktopSecretRequestView: async () => ({ request: null }) }))
 vi.mock('@/lib/desktop/server/service-requests/view', () => ({ readDesktopServiceRequestView: async () => ({ request: null }) }))
@@ -185,4 +188,40 @@ test('saved thread listing remains available without reading pending forms or fu
     expect(body.conversations.map((row: { id: string }) => row.id).sort()).toEqual([question.id, approval.id, acceptedQuestion.id, acceptedApproval.id].sort())
     expect(body.conversations.find((row: { id: string }) => row.id === approval.id).source).toBe('schedule')
     expect(calls).toEqual(['GET /agents/engine-alice/sessions'])
+})
+
+
+function rename(agentId: string, sessionId: string, title: string) {
+    const url = new URL(`/api/desktop/agents/${agentId}/sessions/${sessionId}/title`, runtime.app.origin)
+    return PATCH(new Request(url, {
+        method: 'PATCH', headers: { host: url.host, origin: url.origin, cookie: `rerun-desktop-session=${runtime.app.sessionToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ title }),
+    }), { params: Promise.resolve({ agentId, sessionId }) })
+}
+
+test('renames an owned saved thread, indexes the title and keeps it over a generated result after reopen', async () => {
+    const routine = remoteSessions.find(row => row.id === approval.engineSessionId)!
+    routine.automationResult = { outcome: 'done', title: 'Generated routine result' }
+    expect((await (await get()).json()).conversations.find((row: DesktopSession) => row.id === approval.id).title).toBe('Generated routine result')
+    const saved = await rename(alice.id, approval.id, '  Résumé du matin  ')
+    expect(saved.status).toBe(200)
+    expect(await saved.json()).toEqual({ id: approval.id, title: 'Résumé du matin' })
+    await closeDesktopDatabase(root)
+    const db = await openDesktopDatabase(root)
+    const list = (await (await get()).json()).conversations
+    expect(list.find((row: DesktopSession) => row.id === approval.id)).toMatchObject({ title: 'Résumé du matin', automationOutcome: 'done' })
+    expect((await searchDesktopChats(db, 'RÉSUMÉ')).hits).toMatchObject([{ id: approval.id, title: 'Résumé du matin' }])
+    expect((await searchDesktopChats(db, 'approval')).hits.some(hit => hit.id === approval.id)).toBe(false)
+})
+
+test('refuses foreign ownership, General, invalid titles and a frozen workspace', async () => {
+    const db = await openDesktopDatabase(root)
+    const general = await createDesktopSession(db, { agentId: alice.id, engineSessionId: 'alice-general', title: 'General', kind: 'general' })
+    expect((await rename(alice.id, bobChat.id, 'Foreign')).status).toBe(404)
+    expect((await rename(alice.id, general.id, 'Rename General')).status).toBe(404)
+    for (const bad of ['   ', 'a'.repeat(81), 'first\nsecond']) expect((await rename(alice.id, question.id, bad)).status).toBe(400)
+    setDesktopWorkspaceFrozen(runtime, true)
+    try { expect((await rename(alice.id, question.id, 'Frozen')).status).toBe(409) }
+    finally { setDesktopWorkspaceFrozen(runtime, false) }
+    expect((await searchDesktopChats(db, 'question', alice.id)).hits.some(hit => hit.id === question.id && hit.title === 'question')).toBe(true)
 })

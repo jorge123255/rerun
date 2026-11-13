@@ -77,7 +77,7 @@ import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-r
 export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string; position?: GridPosition | null; spaceId?: string; enabled?: boolean }
 export type DesktopSessionView = {
     id: string; agentId: string; title: string; createdAt: string; updatedAt: string
-    kind?: 'general' | 'thread'; firstMessage?: string | null
+    kind?: 'general' | 'thread'; firstMessage?: string | null; titleEdited?: boolean
     source?: SessionSource; automationName?: string | null; originAgentName?: string | null; runStatus?: Run['status'] | null
     automationOutcome?: 'done' | 'nothing'
 }
@@ -1061,7 +1061,7 @@ function CoworkerChat({ agent, workspaceId, attention, overview, requested, requ
                 return previous.every((session, index) => {
                     const next = body.sessions[index]
                     return session.id === next.id && session.agentId === next.agentId && session.title === next.title
-                        && session.kind === next.kind && session.firstMessage === next.firstMessage
+                        && session.titleEdited === next.titleEdited && session.kind === next.kind && session.firstMessage === next.firstMessage
                         && session.createdAt === next.createdAt && session.updatedAt === next.updatedAt
                         && session.source === next.source && session.automationName === next.automationName
                         && session.originAgentName === next.originAgentName && session.runStatus === next.runStatus
@@ -1079,6 +1079,22 @@ function CoworkerChat({ agent, workspaceId, attention, overview, requested, requ
             if (checking && !controller.signal.aborted) setCheckedRequest(checking)
         }
     }, [agent.id, url])
+    const renameTitle = async (id: string, title: string) => {
+        if (!selected || isDesktopQuitting()) return false
+        const response = await fetch(`${url}/${encodeURIComponent(id)}/title`, {
+            method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }),
+            signal: AbortSignal.timeout(12_000),
+        })
+        if (!response.ok) return false
+        const saved = await response.json()
+        if (saved.id !== id || saved.title !== title) return false
+        // An older in-flight thread read can still carry the automatic title.
+        sessionRead.current?.abort()
+        sessionRead.current = null
+        setSessions(current => current?.map(session => session.id === id ? { ...session, title, titleEdited: true } : session) ?? null)
+        void readSessions({ background: true })
+        return true
+    }
     const refreshThreads = useCallback(() => readSessions({ background: true }), [readSessions])
 
     useEffect(() => {
@@ -1121,6 +1137,6 @@ function CoworkerChat({ agent, workspaceId, attention, overview, requested, requ
         {!bootstrap || !sessions ? dismiss : <DesktopChatTabs workspaceId={workspaceId} onOpenCoworkerChat={onOpenCoworkerChat}
             agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} pendingChatSummaries={pendingChatSummaries} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
-            refreshSessions={readSessions} refreshThreads={refreshThreads} reload={reload} modelLabel={modelLabel} workspaceDefault={workspaceDefault} connections={connections} onOpenModelSettings={onOpenModelSettings} onOpenTranscriptionSettings={onOpenTranscriptionSettings} onClosePanel={onClosePanel} />}
+            refreshSessions={readSessions} refreshThreads={refreshThreads} renameTitle={renameTitle} reload={reload} modelLabel={modelLabel} workspaceDefault={workspaceDefault} connections={connections} onOpenModelSettings={onOpenModelSettings} onOpenTranscriptionSettings={onOpenTranscriptionSettings} onClosePanel={onClosePanel} />}
     </>
 }
