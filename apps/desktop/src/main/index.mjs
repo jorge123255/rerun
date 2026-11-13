@@ -751,11 +751,9 @@ async function launch() {
     if (existingLocal && !restoreConnected && !linkResult) await startLocalWorkspace()
 }
 
-async function openLocalWorkspace() {
+function openLocalWorkspace() {
     reopeningHub?.controller.abort()
-    const opened = await startLocalWorkspace()
-    if (opened && runtimeScope()) await startupWorkspace?.remember('local')
-    return opened
+    return startLocalWorkspace()
 }
 
 async function startLocalWorkspace() {
@@ -1059,6 +1057,7 @@ async function startWorkspace() {
         }
         await supervisor.startFor(selected.workspaceId, selected.workspace)
         await displayWorkspace()
+        if (!quitting && runtimeScope()) await startupWorkspace?.remember('local')
     } catch {
         supervisor.publish('error', 'openFailed')
     }
