@@ -4,6 +4,7 @@ import type { DesktopSetupView } from '@rerun/contracts'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { SkeletonForm } from '@/components/ui/skeleton'
+import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopSetupEditor } from './DesktopSetupEditor'
 import type { DesktopSetupDraft } from './DesktopSetupFields'
 import { useDesktopSetup } from './useDesktopSetup'
@@ -19,6 +20,7 @@ function AuthorSetup({ agentId, onDirtyChange, onSavingChange, onCancel, onSaved
     onCancel?: () => void
     onSaved?: (view: DesktopSetupView) => void
 }) {
+    const { t } = useDesktopLocale()
     const setup = useDesktopSetup(agentId)
     const [draft, setDraft] = useState<DesktopSetupDraft | null>(null)
     const [acknowledged, setAcknowledged] = useState<DesktopSetupDraft | null>(null)
@@ -76,8 +78,8 @@ function AuthorSetup({ agentId, onDirtyChange, onSavingChange, onCancel, onSaved
     if (!setup.view || !draft || !acknowledged) {
         return (
             <div className="flex h-full flex-col gap-3 overflow-y-auto p-4">
-                <p role="alert" className="text-xs text-destructive">{setup.error || 'Could not reach the engine for this coworker.'}</p>
-                <Button type="button" size="sm" variant="outline" onClick={() => void setup.refresh()}>Retry</Button>
+                <p role="alert" className="text-xs text-destructive">{setup.error || t('coworkerSetup.author.unreachable')}</p>
+                <Button type="button" size="sm" variant="outline" onClick={() => void setup.refresh()}>{t('coworkerSetup.retry')}</Button>
             </div>
         )
     }
@@ -85,7 +87,7 @@ function AuthorSetup({ agentId, onDirtyChange, onSavingChange, onCancel, onSaved
     return (
         <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
             <p className="text-xs text-muted-foreground">
-                An imported copy of this coworker starts with no credentials or tools enabled. These instructions guide its setup when you first open it.
+                {t('coworkerSetup.author.intro')}
             </p>
             <DesktopSetupEditor
                 value={draft}

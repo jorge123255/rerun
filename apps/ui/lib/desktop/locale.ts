@@ -42,6 +42,39 @@ import ui from '@rerun/i18n/messages/en/ui.json'
 const englishSource = { account, agent, brain, builder, changelog, chat, common, connections, data, dialogs, files, foreman, kit, layout, mobileSettings, notifications, services, subRuns, workspace, ui }
 type DesktopMessageSource = typeof englishSource
 
+const desktopSetupAuthorCopy = {
+    en: {
+        intro: 'An imported copy of this coworker starts with no credentials or tools enabled. These instructions guide its setup when you first open it.',
+        answerHint: 'Answer before including this coworker in a private template.',
+        discardTitle: 'Discard unsaved setup changes?',
+        discardDescription: 'Your changes to the required answer and install instructions will be lost.',
+    },
+    fr: {
+        intro: 'Une copie importée de ce coworker démarre sans identifiants ni outils activés. Ces instructions guident sa configuration à la première ouverture.',
+        answerHint: 'Répondez avant d’inclure ce coworker dans un template privé.',
+        discardTitle: 'Ignorer les modifications de l’installation ?',
+        discardDescription: 'Votre réponse et les modifications apportées aux instructions d’installation seront perdues.',
+    },
+    es: {
+        intro: 'Una copia importada de este coworker empieza sin credenciales ni herramientas activadas. Estas instrucciones guían su configuración al abrirla por primera vez.',
+        answerHint: 'Responde antes de incluir este coworker en una plantilla privada.',
+        discardTitle: '¿Descartar los cambios de instalación sin guardar?',
+        discardDescription: 'Se perderán los cambios en la respuesta y en las instrucciones de instalación.',
+    },
+    pt: {
+        intro: 'Uma cópia importada deste coworker começa sem credenciais nem ferramentas ativadas. Estas instruções orientam a configuração na primeira abertura.',
+        answerHint: 'Responda antes de incluir este coworker em um template privado.',
+        discardTitle: 'Descartar as alterações de instalação não salvas?',
+        discardDescription: 'As alterações na resposta e nas instruções de instalação serão perdidas.',
+    },
+    de: {
+        intro: 'Eine importierte Kopie dieses Coworkers startet ohne Zugangsdaten oder aktivierte Tools. Diese Anweisungen leiten die Einrichtung beim ersten Öffnen.',
+        answerHint: 'Beantworte die Frage, bevor du diesen Coworker in eine private Vorlage aufnimmst.',
+        discardTitle: 'Ungespeicherte Änderungen an der Installation verwerfen?',
+        discardDescription: 'Deine Änderungen an der Antwort und den Installationsanweisungen gehen verloren.',
+    },
+} satisfies Record<Locale, Record<string, string>>
+
 const desktopChangelogCopy = {
     en: { loading: 'Loading updates…', unavailable: 'Updates couldn’t load. Try again when you’re online.', empty: 'No updates have been published.', readUpdate: 'Read the full update', retry: 'Try again', saved: 'Showing saved updates.' },
     fr: { loading: 'Chargement des nouveautés…', unavailable: 'Impossible de charger les nouveautés. Réessayez lorsque vous êtes en ligne.', empty: 'Aucune nouveauté publiée.', readUpdate: 'Lire la nouveauté complète', retry: 'Réessayer', saved: 'Nouveautés enregistrées.' },
@@ -387,6 +420,10 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         },
         coworker: desktopCoworkerMessages(locale, source),
         coworkerSetup: {
+            author: { ...source.agent.agentPanelSetup, ...desktopSetupAuthorCopy[locale] },
+            fields: source.agent.agentSetupFields,
+            tab: source.agent.agentTabs.setup,
+            editor: source.ui.markdown,
             gate: source.chat.installGate,
             skipped: source.agent.agentPanelChat,
             install: source.chat.agentInstall,
