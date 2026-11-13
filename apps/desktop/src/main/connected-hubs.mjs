@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash, randomUUID } from 'node:crypto'
-import { checkHub, hubPartition, hubWindowAddress, HUB_API_VERSION, isPublishedPageHandoff, normalizeHubOrigin, parseHubWorkspaceId, RERUN_CLOUD_ORIGIN, sameHub } from './connected-hub-policy.mjs'
+import { checkHub, hubPartition, hubWindowAddress, HUB_API_VERSION, isPublishedPageHandoff, normalizeHubOrigin, parseHubAddress, parseHubWorkspaceId, RERUN_CLOUD_ORIGIN, sameHub } from './connected-hub-policy.mjs'
 import { cascadeWindowBounds } from './board-windows.mjs'
 import { canChangeRecoveryServer, hubConnectionError, hubOfflineCopy, hubPickerCopy, hubRecoveryView, isIncompatibleHub } from './connected-hub-messages.mjs'
 import { shellText } from './shell-language.mjs'
@@ -453,8 +453,9 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
 
     async function connect(address, { path = null, parent, remember = true, signal, reveal, recoverIncompatible = false } = {}) {
         if (!available() || (connecting && !connecting.lifetime.aborted) || signal?.aborted) return { ok: false, reason: 'busy' }
-        const origin = normalizeHubOrigin(address)
-        if (!origin) return { ok: false, reason: 'invalid' }
+        const parsed = parseHubAddress(address)
+        if (!parsed.ok) return parsed
+        const { origin } = parsed
         const controller = new AbortController()
         const lifetime = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
         connecting = { controller, lifetime }

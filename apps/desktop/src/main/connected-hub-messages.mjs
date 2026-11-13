@@ -1,7 +1,8 @@
 import { shellLocale, shellText } from './shell-language.mjs'
 
 const connectionErrors = {
-    invalid: 'insecure',
+    invalid: 'invalid',
+    insecure: 'insecure',
     'not-rerun': 'notRerun',
     unsupported: 'unsupported',
     busy: 'busy',

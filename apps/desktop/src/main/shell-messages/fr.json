@@ -62,6 +62,7 @@
         "unreachable": "Rien ne répond à cette adresse.",
         "notRerun": "Cette adresse n’est pas un serveur Rerun.",
         "tooOld": "Ce serveur demande la version {version} de l’app ou plus récente.",
+        "invalid": "Saisissez une adresse comme rerun.example.com.",
         "insecure": "Cette adresse n’est pas chiffrée. Utilisez https:// sauf si le serveur tourne sur cet ordinateur.",
         "title": "Se connecter à Rerun",
         "connecting": "Connexion…",

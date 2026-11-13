@@ -15,17 +15,24 @@ export function registerHubProtocol(app) {
     } catch { return false }
 }
 
-export function normalizeHubOrigin(address) {
-    if (typeof address !== 'string' || address.length > 2048 || /[\x00-\x1f\x7f\\]/.test(address)) return null
+export function parseHubAddress(address) {
+    const invalid = { ok: false, reason: 'invalid' }
+    if (typeof address !== 'string' || address.length > 2048 || /[\x00-\x1f\x7f\\]/.test(address)) return invalid
     const input = address.trim()
-    if (!input || input.startsWith('/')) return null
+    if (!input || input.startsWith('/')) return invalid
     const hasScheme = /^[a-z][a-z\d+.-]*:\/\//i.test(input)
-    if (!hasScheme && /^[a-z][a-z\d+.-]*:/i.test(input) && !/^[^/?#]+:\d+(?:[/?#]|$)/.test(input)) return null
+    if (!hasScheme && /^[a-z][a-z\d+.-]*:/i.test(input) && !/^[^/?#]+:\d+(?:[/?#]|$)/.test(input)) return invalid
     try {
         const url = new URL(hasScheme ? input : `https://${input}`)
-        if (url.username || url.password || (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback.has(url.hostname)))) return null
-        return url.origin
-    } catch { return null }
+        if (url.username || url.password || (url.protocol !== 'https:' && url.protocol !== 'http:')) return invalid
+        if (url.protocol === 'http:' && !loopback.has(url.hostname)) return { ok: false, reason: 'insecure' }
+        return { ok: true, origin: url.origin }
+    } catch { return invalid }
+}
+
+export function normalizeHubOrigin(address) {
+    const parsed = parseHubAddress(address)
+    return parsed.ok ? parsed.origin : null
 }
 
 export function hubPartition(origin) {

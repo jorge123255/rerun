@@ -6,7 +6,12 @@ test('bundled connection pages use their supported language and interpolate the 
     for (const locale of ['de', 'en', 'es', 'fr', 'pt']) {
         assert.equal(hubPickerCopy(locale).locale, locale)
         assert.equal(hubOfflineCopy(locale).locale, locale)
-        for (const reason of ['invalid', 'unreachable', 'not-rerun', 'unsupported', 'busy', 'too-old']) {
+        const invalid = hubConnectionError(locale, { reason: 'invalid' })
+        const insecure = hubConnectionError(locale, { reason: 'insecure' })
+        assert.match(invalid, /rerun\.example\.com/)
+        assert.match(insecure, /https:\/\//)
+        assert.notEqual(invalid, insecure)
+        for (const reason of ['invalid', 'insecure', 'unreachable', 'not-rerun', 'unsupported', 'busy', 'too-old']) {
             const message = hubConnectionError(locale, { reason, minimum: '7.2.1' })
             assert(message && !message.includes('{'))
             assert.equal(message.includes('7.2.1'), reason === 'too-old')

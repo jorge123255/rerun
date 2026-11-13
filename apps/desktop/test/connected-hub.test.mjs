@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { runInNewContext } from 'node:vm'
 import { test } from 'node:test'
-import { checkHub, hubPartition, hubWindowAddress, isPublishedPageHandoff, normalizeHubOrigin, parseHubLink, registerHubProtocol, sameHub } from '../src/main/connected-hub-policy.mjs'
+import { checkHub, hubPartition, hubWindowAddress, isPublishedPageHandoff, normalizeHubOrigin, parseHubAddress, parseHubLink, registerHubProtocol, sameHub } from '../src/main/connected-hub-policy.mjs'
 import { createHubAuth } from '../src/main/connected-hub-auth.mjs'
 
 const origin = 'https://hub.example.test'
@@ -22,6 +22,20 @@ test('an explicit hub address uses HTTPS or HTTP on loopback and has its own par
     assert.notEqual(hubPartition('http://127.0.0.1:8371'), hubPartition('http://127.0.0.1:8372'))
     assert.equal(sameHub('blob:' + origin + '/uuid', origin), false)
     assert.equal(sameHub(origin + '/boards', origin), true)
+})
+
+test('the server picker distinguishes malformed addresses from remote HTTP without admitting either', () => {
+    for (const address of ['not a server address', 'file:///tmp/hub', 'https://user@hub.example.test', 'http://[::1', '']) {
+        assert.deepEqual(parseHubAddress(address), { ok: false, reason: 'invalid' }, address)
+        assert.equal(normalizeHubOrigin(address), null)
+    }
+    for (const address of ['http://hub.example.test', 'http://localhost.other.test', 'http://192.168.1.2']) {
+        assert.deepEqual(parseHubAddress(address), { ok: false, reason: 'insecure' }, address)
+        assert.equal(normalizeHubOrigin(address), null)
+    }
+    for (const address of [origin, 'http://127.0.0.1:8371', 'http://[::1]:8371']) {
+        assert.deepEqual(parseHubAddress(address), { ok: true, origin: address })
+    }
 })
 
 test('the bounded config check refuses bad identities, incompatible releases and redirects', async () => {
