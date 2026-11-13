@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { FileTextEditor } from '@/components/files/FileTextEditor'
 import { useFileUnloadGuard } from '@/components/files/useFileUnloadGuard'
@@ -102,6 +102,9 @@ export function DesktopCoworkerFilesBody({ agent, initialFilePath, registerClose
     const renamingNow = useRef(false)
     const deletingNow = useRef(false)
     const viewerRef = useRef<HTMLDivElement>(null)
+    const gridRef = useRef<HTMLDivElement>(null)
+    const homeRef = useRef<HTMLButtonElement>(null)
+    const gridFocus = useRef<{ folder: string; name: string | null; from: Element | null } | null>(null)
     const previewNow = useRef<Preview | null>(null)
     const blockSiblingNav = useRef(false)
     const pending = renamePending || deletePending
@@ -120,7 +123,7 @@ export function DesktopCoworkerFilesBody({ agent, initialFilePath, registerClose
         return ((await response.json()) as { entries: Entry[] }).entries
     }, [base])
 
-    const { currentPath, entries, loading, busy, showHidden, navigate, enter, goUp, goHome, setShowHidden, reload, refreshCurrent } = useFileNavigation<Entry>({
+    const { currentPath, entries, loading, busy, showHidden, navigate, enter, setShowHidden, reload, refreshCurrent } = useFileNavigation<Entry>({
         list, initialPath: initialFilePath ? folderOf(initialFilePath) : '',
         initialShowHidden: initialFilePath?.split('/').some(part => part.startsWith('.')),
     })
@@ -218,6 +221,7 @@ export function DesktopCoworkerFilesBody({ agent, initialFilePath, registerClose
         const entry = entries.find(item => item.type !== 'dir' && item.name === name)
         if (!entry) return
         const path = currentPath ? `${currentPath}/${name}` : name
+        gridFocus.current = null
         setSelected(path)
         const file: OpenFile = { path, name: entry.name, identity: entry.identity, exportVersion: entry.exportVersion }
         setEditingPath(null)
@@ -273,9 +277,45 @@ export function DesktopCoworkerFilesBody({ agent, initialFilePath, registerClose
     const currentEntry = (target: ListedSelection | null) => target?.folder === currentPath
         ? entries.find(entry => entry.name === target.entry.name && entry.type === target.entry.type && entry.identity === target.entry.identity)
         : undefined
-    const openDirectory = (name: string) => { setSelected(childPath(name)); enter(name) }
-    const parentOf = (path: string) => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
-    const selectedHere = selected && parentOf(selected) === currentPath ? selected.slice(selected.lastIndexOf('/') + 1) : null
+    const focusGrid = (folder: string, name: string | null) => {
+        gridFocus.current = { folder, name, from: document.activeElement }
+    }
+    const openDirectory = (name: string) => {
+        const path = childPath(name)
+        focusGrid(path, null)
+        setSelected(path)
+        enter(name)
+    }
+    const openAncestor = (folder: string) => {
+        if (folder !== currentPath) {
+            const child = currentPath.slice(folder ? folder.length + 1 : 0).split('/')[0]
+            focusGrid(folder, child)
+        } else gridFocus.current = null
+        navigate(folder)
+    }
+    const selectedHere = selected && folderOf(selected) === currentPath ? nameOf(selected) : null
+
+    useLayoutEffect(() => {
+        const viewer = viewerRef.current
+        const active = document.activeElement
+        if (openPathname) {
+            if (active === document.body || gridRef.current?.contains(active)) {
+                viewer?.querySelector<HTMLButtonElement>('[data-slot="panel-editor-back"]')?.focus()
+            }
+            return
+        }
+        const target = gridFocus.current
+        if (!target || target.folder !== currentPath || loading || busy || pending) return
+        gridFocus.current = null
+        if (active !== document.body && active !== target.from) return
+        const tiles = gridRef.current?.querySelectorAll<HTMLButtonElement>('button[data-files-name]:not([disabled])')
+        const entry = target.name && tiles && [...tiles].find(tile => tile.dataset.filesName === target.name)
+        const parent = !target.name && gridRef.current?.querySelector<HTMLButtonElement>('button[data-files-parent]:not([disabled])')
+        const next = entry || parent || homeRef.current
+        next?.focus()
+    }, [openPathname, currentPath, loading, busy, pending])
+
+    const backToFolder = (path: string) => focusGrid(folderOf(path), nameOf(path))
     const retarget = (value: string, from: string, to: string, directory: boolean) => value === from || (directory && value.startsWith(`${from}/`)) ? `${to}${value.slice(from.length)}` : value
     const renameEntry = async (target: ListedSelection, next: string) => {
         if (renamingNow.current) return
@@ -416,25 +456,25 @@ export function DesktopCoworkerFilesBody({ agent, initialFilePath, registerClose
     if (image) {
         const params = new URLSearchParams({ path: image.path })
         if (image.identity) params.set('identity', image.identity)
-        return withPreviewFeedback(<DesktopFileImagePreview name={image.name} path={image.path} identity={image.identity} srcUrl={`${base}/image?${params.toString()}`} onBack={() => setImage(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(image)} />)
+        return withPreviewFeedback(<DesktopFileImagePreview name={image.name} path={image.path} identity={image.identity} srcUrl={`${base}/image?${params.toString()}`} onBack={() => { backToFolder(image.path); setImage(null) }} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(image)} />)
     }
 
     if (audio) {
         const params = new URLSearchParams({ path: audio.path })
         if (audio.identity) params.set('identity', audio.identity)
-        return withPreviewFeedback(<DesktopFileAudioPreview name={audio.name} path={audio.path} identity={audio.identity} srcUrl={`${base}/audio?${params.toString()}`} onBack={() => setAudio(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(audio)} />)
+        return withPreviewFeedback(<DesktopFileAudioPreview name={audio.name} path={audio.path} identity={audio.identity} srcUrl={`${base}/audio?${params.toString()}`} onBack={() => { backToFolder(audio.path); setAudio(null) }} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(audio)} />)
     }
 
     if (video) {
         const params = new URLSearchParams({ path: video.path })
         if (video.identity) params.set('identity', video.identity)
-        return withPreviewFeedback(<DesktopFileVideoPreview name={video.name} path={video.path} identity={video.identity} srcUrl={`${base}/video?${params.toString()}`} onBack={() => setVideo(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(video)} />)
+        return withPreviewFeedback(<DesktopFileVideoPreview name={video.name} path={video.path} identity={video.identity} srcUrl={`${base}/video?${params.toString()}`} onBack={() => { backToFolder(video.path); setVideo(null) }} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(video)} />)
     }
 
     if (pdf) {
         const params = new URLSearchParams({ path: pdf.path })
         if (pdf.identity) params.set('identity', pdf.identity)
-        return withPreviewFeedback(<DesktopFilePdfPreview name={pdf.name} path={pdf.path} identity={pdf.identity} srcUrl={`${base}/pdf?${params.toString()}`} onBack={() => setPdf(null)} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(pdf)} />)
+        return withPreviewFeedback(<DesktopFilePdfPreview name={pdf.name} path={pdf.path} identity={pdf.identity} srcUrl={`${base}/pdf?${params.toString()}`} onBack={() => { backToFolder(pdf.path); setPdf(null) }} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(pdf)} />)
     }
 
     if (preview) {
@@ -442,7 +482,7 @@ export function DesktopCoworkerFilesBody({ agent, initialFilePath, registerClose
         const editable = 'hash' in preview && !!preview.hash
         return withPreviewFeedback(<div ref={viewerRef} className="flex min-h-0 flex-1 flex-col gap-2">
             <div className="flex items-center gap-2 text-sm">
-                <Button type="button" variant="ghost" size="sm" aria-label="Back to folder" onClick={() => setPreview(null)}><ArrowLeftIcon className="size-4" /></Button>
+                <Button type="button" variant="ghost" size="sm" aria-label="Back to folder" data-slot="panel-editor-back" onClick={() => { backToFolder(preview.path); setPreview(null) }}><ArrowLeftIcon className="size-4" /></Button>
                 <span className="min-w-0 flex-1 truncate font-medium" title={preview.path}>{name}</span>
                 {shownSiblings && <div className="flex shrink-0 items-center gap-1"><FileSiblingControls siblings={shownSiblings} /></div>}
                 {previewSaveAction(preview.path, 'content' in preview ? preview.exportVersion : 'error' in preview ? openEntry?.exportVersion : undefined)}
@@ -462,10 +502,10 @@ export function DesktopCoworkerFilesBody({ agent, initialFilePath, registerClose
 
     return <div className="flex min-h-0 flex-1 flex-col">
         <nav aria-label="Folder" className="flex items-center gap-1 overflow-x-auto border-b pb-2 text-xs">
-            <button type="button" aria-label="Workspace home" disabled={pending} onClick={goHome} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground"><HomeIcon className="size-3.5" /></button>
+            <button type="button" ref={homeRef} aria-label="Workspace home" disabled={pending} onClick={() => openAncestor('')} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground"><HomeIcon className="size-3.5" /></button>
             {breadcrumbs.map((crumb, i) => <span key={i} className="flex shrink-0 items-center gap-1">
                 <ChevronRightIcon className="size-3 text-muted-foreground" />
-                <button type="button" disabled={pending} onClick={() => navigate(breadcrumbs.slice(0, i + 1).join('/'))} className="text-muted-foreground hover:text-foreground">{crumb}</button>
+                <button type="button" disabled={pending} onClick={() => openAncestor(breadcrumbs.slice(0, i + 1).join('/'))} className="text-muted-foreground hover:text-foreground">{crumb}</button>
             </span>)}
             <div className="flex-1" />
             <button type="button" disabled={pending} onClick={() => setShowHidden(v => !v)} title={showHidden ? 'Hide hidden files' : 'Show hidden files'} aria-label={showHidden ? 'Hide hidden files' : 'Show hidden files'}
@@ -486,7 +526,7 @@ export function DesktopCoworkerFilesBody({ agent, initialFilePath, registerClose
                 : error ? <p role="alert" className="text-sm text-destructive">{error}</p>
                 : <ContextMenu onOpenChange={open => { if (!open) setMenuTarget(null) }}>
                     <ContextMenuTrigger asChild>
-                        <div>
+                        <div ref={gridRef}>
                             <DesktopFilesGrid
                                 entries={entries}
                                 currentPath={currentPath}
@@ -498,7 +538,7 @@ export function DesktopCoworkerFilesBody({ agent, initialFilePath, registerClose
                                 onRequestText={request}
                                 onOpenFile={name => openListed(name)}
                                 onOpenDir={openDirectory}
-                                onGoUp={currentPath ? goUp : undefined}
+                                onGoUp={currentPath ? () => openAncestor(folderOf(currentPath)) : undefined}
                                 onContextMenu={name => {
                                     const entry = entries.find(item => item.name === name)
                                     setMenuTarget(entry ? { folder: currentPath, entry } : null)

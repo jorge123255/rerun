@@ -14,7 +14,7 @@ export function PanelEditorHeader({ title, onBack, backLabel = 'Back', mono, chi
     return (
         <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
             {onBack && (
-                <Button size="icon-sm" variant="ghost" onClick={onBack} aria-label={backLabel}>
+                <Button size="icon-sm" variant="ghost" onClick={onBack} aria-label={backLabel} data-slot="panel-editor-back">
                     <ArrowLeftIcon className="size-4" />
                 </Button>
             )}

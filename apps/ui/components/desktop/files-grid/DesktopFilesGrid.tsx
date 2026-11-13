@@ -154,6 +154,7 @@ export function DesktopFilesGrid({
             {onGoUp && (
                 <button
                     type="button"
+                    data-files-parent=""
                     title="Parent directory"
                     aria-label=".."
                     disabled={pending}
