@@ -83,7 +83,7 @@ test('folds a saved long message, keeps its attachment outside the fold and reve
         expect(container.querySelector('aside')?.textContent).toBe('Control Center')
         await commandF()
         expect(container.querySelector('aside')).toBeNull()
-        expect(container.querySelector('[aria-label="Find in conversation"]')).not.toBeNull()
+        expect(container.querySelector('input[aria-label="Find in conversation"]')).not.toBeNull()
     }
     const closeFind = () => click(container.querySelector<HTMLButtonElement>('[aria-label="Close find"]')!)
     const link = () => container.querySelector<HTMLAnchorElement>('a[data-streamdown="link"]')
@@ -116,7 +116,7 @@ test('folds a saved long message, keeps its attachment outside the fold and reve
         expect(viewport.style.maxHeight).toBe('384px')
 
         await openFind()
-        const input = container.querySelector<HTMLInputElement>('[aria-label="Find in conversation"]')!
+        const input = container.querySelector<HTMLInputElement>('input[aria-label="Find in conversation"]')!
         await act(async () => {
             Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, marker)
             input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -141,7 +141,7 @@ test('folds a saved long message, keeps its attachment outside the fold and reve
         const searchEvent = new Event('rerun-desktop-conversation-find', { cancelable: true })
         await act(async () => { window.dispatchEvent(searchEvent) })
         expect(searchEvent.defaultPrevented).toBe(false)
-        expect(container.querySelector('[aria-label="Find in conversation"]')).toBeNull()
+        expect(container.querySelector('input[aria-label="Find in conversation"]')).toBeNull()
         await click(card)
 
         await act(async () => root.unmount())
