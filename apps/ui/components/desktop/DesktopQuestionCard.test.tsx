@@ -85,6 +85,39 @@ test('Enter confirms an in-progress input-method composition before submitting t
     expect(onAnswer).toHaveBeenCalledExactlyOnceWith({ questionId: question.id, requestId: expect.any(String), action: 'answer', answers: [['東京']] })
 })
 
+test('holds the answer and dismiss controls until saved attachments can be read', async () => {
+    const scope = { agentId: 'coworker', tabUid: questionDocumentTabUid(question.id), sessionId: 'saved-chat' }
+    let finishRead!: (response: Response) => void
+    const read = vi.fn(() => new Promise<Response>(resolve => { finishRead = resolve }))
+    vi.stubGlobal('fetch', read)
+    const onAnswer = vi.fn(async (_payload: DesktopQuestionAnswer) => {})
+    const root = mount()
+    await act(async () => { root.render(<DesktopQuestionCard question={question} documentScope={scope} onAnswer={onAnswer} />) })
+
+    const option = document.querySelector('[data-hitl="option-0"]')
+    const dismiss = document.querySelector<HTMLButtonElement>('[data-hitl="dismiss"]')
+    expect(document.querySelector('[role="status"]')?.textContent).toBe('Loading saved attachments…')
+    expect(option?.getAttribute('aria-disabled')).toBe('true')
+    expect(dismiss?.disabled).toBe(true)
+    await click('[data-hitl="option-0"]')
+    await click('[data-hitl="dismiss"]')
+    expect(onAnswer).not.toHaveBeenCalled()
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+
+    await act(async () => { finishRead(Response.json({ error: 'Could not restore attachments.' }, { status: 503 })) })
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe('Could not restore attachments.')
+    expect(option?.getAttribute('aria-disabled')).toBe('true')
+    await click('button:not([data-hitl])')
+    expect(read).toHaveBeenCalledTimes(2)
+    await act(async () => { finishRead(Response.json({ attachments: [] })) })
+
+    expect(document.querySelector('[role="status"]')).toBeNull()
+    expect(option?.getAttribute('aria-disabled')).toBe('false')
+    expect(dismiss?.disabled).toBe(false)
+    await click('[data-hitl="option-0"]')
+    expect(onAnswer).toHaveBeenCalledExactlyOnceWith({ questionId: question.id, requestId: expect.any(String), action: 'answer', answers: [['Blue']] })
+})
+
 test.each([
     ['text', false], ['image', false], ['text', true], ['image', true],
 ] as const)('restores a %s attachment and submits a file-only answer (Chief of Staff: %s)', async (kind, foreman) => {

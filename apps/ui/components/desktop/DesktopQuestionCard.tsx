@@ -86,7 +86,11 @@ function QuestionCard({ question, disabled, voiceTarget, onAnswer, files }: Desk
         ? { ...question.attempt, questionId: question.id }
         : cancellation
     const locked = disabled || status !== 'idle'
-    const { voice, error: voiceError } = useDesktopQuestionVoice(voiceTarget, question.id, !locked && !attempt)
+    // A new answer or dismissal must account for the saved selection. An exact
+    // retry already carries its document IDs and is checked again on the server.
+    const restoringFiles = !!files && !files.loaded
+    const formLocked = locked || restoringFiles
+    const { voice, error: voiceError } = useDesktopQuestionVoice(voiceTarget, question.id, !formLocked && !attempt)
     const group = (index: number) => files?.attachments.filter(file => questionDocumentIndex(file.position) === index) ?? []
     const removeFiles = async (ids: string[]) => {
         for (const id of ids) if (!await files?.remove(id)) return false
@@ -145,11 +149,12 @@ function QuestionCard({ question, disabled, voiceTarget, onAnswer, files }: Desk
             <Button type="button" size="sm" variant="outline" disabled={locked} onClick={() => { void send(attempt).catch(() => {}) }}>
                 {attempt.action === 'cancel' ? t('question.retryCancellation') : t('question.retry')}
             </Button>
-        </div> : <QuestionForm inline labels={language.messages.questionForm} questions={question.questions} disabled={locked} voice={voice} attachments={attachments}
+        </div> : <QuestionForm inline labels={language.messages.questionForm} questions={question.questions} disabled={formLocked} voice={voice} attachments={attachments}
             onSubmit={answers => submit(answers.map(item => item.answers))}
             onCancel={dismiss} />}
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         {voiceError && <p role="alert" className="text-sm text-destructive">{voiceError}</p>}
+        {!attempt && restoringFiles && !files.error && <p role="status" className="text-xs text-muted-foreground">{t('question.loadingAttachments')}</p>}
         {files?.error && <p role="alert" className="text-sm text-destructive">{files.error}</p>}
         {files?.error && !files.loaded && <Button type="button" size="sm" variant="outline" disabled={locked}
             onClick={() => { void files.refresh().catch(() => {}) }}>{t('question.retryAttachments')}</Button>}

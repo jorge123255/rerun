@@ -2,6 +2,7 @@ import type { Locale } from '@rerun/i18n'
 
 const local = {
     en: {
+        loadingAttachments: 'Loading saved attachments…',
         retryAttachments: 'Reload question attachments',
         unavailable: 'This question cannot be answered right now.',
         retrySaved: 'An answer is already saved for this question. Retry that answer.',
@@ -14,6 +15,7 @@ const local = {
         retryCancellationHint: 'Retry to confirm the cancellation.',
     },
     fr: {
+        loadingAttachments: 'Chargement des pièces jointes enregistrées…',
         retryAttachments: 'Recharger les pièces jointes de la question',
         unavailable: 'Vous ne pouvez pas répondre à cette question pour le moment.',
         retrySaved: 'Une réponse est déjà enregistrée pour cette question. Réessayez de l’envoyer.',
@@ -26,6 +28,7 @@ const local = {
         retryCancellationHint: 'Réessayez pour confirmer l’annulation.',
     },
     es: {
+        loadingAttachments: 'Cargando archivos adjuntos guardados…',
         retryAttachments: 'Volver a cargar los archivos adjuntos de la pregunta',
         unavailable: 'No se puede responder a esta pregunta ahora.',
         retrySaved: 'Ya hay una respuesta guardada para esta pregunta. Intenta enviarla de nuevo.',
@@ -38,6 +41,7 @@ const local = {
         retryCancellationHint: 'Vuelve a intentarlo para confirmar la cancelación.',
     },
     pt: {
+        loadingAttachments: 'Carregando anexos salvos…',
         retryAttachments: 'Recarregar os anexos da pergunta',
         unavailable: 'Não é possível responder a esta pergunta agora.',
         retrySaved: 'Já existe uma resposta salva para esta pergunta. Tente enviá-la novamente.',
@@ -50,6 +54,7 @@ const local = {
         retryCancellationHint: 'Tente novamente para confirmar o cancelamento.',
     },
     de: {
+        loadingAttachments: 'Gespeicherte Anhänge werden geladen…',
         retryAttachments: 'Frageanhänge erneut laden',
         unavailable: 'Diese Frage kann gerade nicht beantwortet werden.',
         retrySaved: 'Zu dieser Frage ist bereits eine Antwort gespeichert. Versuche erneut, sie zu senden.',
