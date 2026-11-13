@@ -9,7 +9,6 @@ import {
     desktopTemplateDetailSchema,
     desktopTemplateInstallResultSchema,
     desktopTemplateListSchema,
-    desktopTemplateOperationSchema,
     desktopTemplatePlanSchema,
     desktopTemplateReceiptSchema,
     desktopTemplateSourcesResultSchema,
@@ -45,6 +44,7 @@ type InstallPayload = {
     coworkers: InstallCoworker[]
     engineStarted: boolean
     setupRevisions: Record<string, string>
+    rollback?: { requestId: string; complete: boolean }
 }
 
 const engineInstallSchema = z.strictObject({
@@ -69,7 +69,7 @@ function canonicalJson(value: unknown): string {
     return JSON.stringify(value) ?? 'null'
 }
 
-const fingerprintOf = (operation: DesktopTemplateOperation | (DesktopTemplateOperation & {foremanDisabled:true})): string => createHash('sha256').update(canonicalJson(operation)).digest('hex')
+export const templateRequestFingerprint = (operation: DesktopTemplateOperation | (DesktopTemplateOperation & {foremanDisabled:true})): string => createHash('sha256').update(canonicalJson(operation)).digest('hex')
 const engineIdFor = (requestId: string, agentKey: string): string => `i${createHash('sha256').update(`${requestId}\n${agentKey}`).digest('hex').slice(0, 31)}`
 
 function engineFailure(error: unknown): never {
@@ -181,7 +181,7 @@ export function createDesktopTemplateServer(input: {
     }
 
     async function install(operation: Extract<DesktopTemplateOperation, { operation: 'install' }>): Promise<DesktopTemplateInstallResult> {
-        const fingerprint = fingerprintOf(input.foremanDisabled ? { ...operation, foremanDisabled: true } : operation)
+        const fingerprint = templateRequestFingerprint(input.foremanDisabled ? { ...operation, foremanDisabled: true } : operation)
         let existing = await row(operation.requestId)
         if (existing) sameFingerprint(existing, fingerprint, 'install')
         if (existing && JSON.parse(String(existing.payload)).rollback) throw new DesktopHttpError(409, 'This installation was cancelled. Start a new installation instead.')
@@ -208,6 +208,7 @@ export function createDesktopTemplateServer(input: {
             sameFingerprint(existing, fingerprint, 'install')
         }
         const payload = JSON.parse(String(existing.payload)) as InstallPayload
+        if (payload.rollback) throw new DesktopHttpError(409, 'This installation was cancelled. Start a new installation instead.')
         const base = { requestId: operation.requestId, receiptId: String(existing.receipt_id) }
         if (String(existing.status) === 'installed') {
             const placed = await views(payload.coworkers, true)
@@ -346,7 +347,7 @@ export function createDesktopTemplateServer(input: {
                 return receiptView(existing)
             }
             if (operation.operation === 'create-draft') {
-                const fingerprint = fingerprintOf(operation)
+                const fingerprint = templateRequestFingerprint(operation)
                 const existing = await row(operation.requestId)
                 if (existing) sameFingerprint(existing, fingerprint, 'create-draft')
                 const issued = await call(post('/desktop/templates/draft', { requestId: operation.requestId, title: operation.title }), value => z.strictObject({
@@ -358,7 +359,7 @@ export function createDesktopTemplateServer(input: {
                 return desktopTemplateCreateDraftResultSchema.parse({ ...issued, receiptId: String(saved?.receipt_id) })
             }
             if (operation.operation === 'plan') {
-                const fingerprint = fingerprintOf(operation)
+                const fingerprint = templateRequestFingerprint(operation)
                 const existing = await row(operation.requestId)
                 if (existing) sameFingerprint(existing, fingerprint, 'plan')
                 const coworkers = []
@@ -373,7 +374,7 @@ export function createDesktopTemplateServer(input: {
                 return plan
             }
             if (operation.operation === 'capture') {
-                const fingerprint = fingerprintOf(operation)
+                const fingerprint = templateRequestFingerprint(operation)
                 const existing = await row(operation.requestId)
                 if (existing) {
                     sameFingerprint(existing, fingerprint, 'capture')
