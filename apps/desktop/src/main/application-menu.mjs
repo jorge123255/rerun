@@ -17,8 +17,8 @@ export function installMacApplicationMenu({ Menu, appName, settingsWindow, isDes
                 id: 'rerun-settings',
                 label: t('menu.app.settings'),
                 accelerator: 'Command+,',
-                click: () => {
-                    const window = settingsWindow()
+                click: (_item, candidate) => {
+                    const window = settingsWindow(candidate)
                     if (!window || window.isDestroyed()) return
                     const frame = window.webContents.mainFrame
                     if (!frame || !isDesktopPage(frame.url)) return

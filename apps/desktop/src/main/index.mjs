@@ -204,6 +204,12 @@ function focusedBoard() {
     const focused = BrowserWindow.getFocusedWindow()
     return boards.get(focused) ? focused : window
 }
+function workspaceMenuTarget(candidate) {
+    const last = lastWorkspaceWindow && !lastWorkspaceWindow.isDestroyed() ? lastWorkspaceWindow : window
+    const target = candidate ?? BrowserWindow.getFocusedWindow() ?? last
+    // A picker or child window is not a workspace command target.
+    return boards.get(target) || connectedHubs?.ownsWindow(target) ? target : null
+}
 async function confirmDiscard(candidate, action) {
     const options = {
         type: 'warning', title: 'Unsaved changes',
@@ -366,15 +372,12 @@ async function launch() {
         app.once('will-quit', shortcutPreference.unregister)
         const refreshApplicationMenu = () => installMacApplicationMenu({
             Menu, appName: app.name, isDesktopPage, locale: shellLanguage.locale(),
-            settingsWindow: () => {
-                const candidate = focusedBoard()
-                return boardContext(candidate) && boards.get(candidate).drafts.ready ? candidate : null
+            settingsWindow: candidate => {
+                const target = workspaceMenuTarget(candidate)
+                return boardContext(target) && boards.get(target).drafts.ready ? target : null
             },
             openDocumentation: () => openExternal('https://docs.rerun.build'),
-            openFind: () => {
-                const focused = BrowserWindow.getFocusedWindow()
-                windowFind.open(connectedHubs.scopeOf(focused) ? focused : focusedBoard())
-            },
+            openFind: (_item, candidate) => windowFind.open(workspaceMenuTarget(candidate)),
             openQuickAsk: toggleQuickAsk,
             openLocalWorkspace: () => {
                 showMainWindow()
@@ -382,15 +385,14 @@ async function launch() {
                 else if (bootStatus.state === 'choose') void openLocalWorkspace()
             },
             openNewWindow: (_item, candidate) => {
-                const focused = candidate ?? BrowserWindow.getFocusedWindow() ?? lastWorkspaceWindow
-                if (connectedHubs.duplicateWindow(focused)) return
-                void openAdditionalBoard().catch(() => {})
+                const target = workspaceMenuTarget(candidate)
+                if (connectedHubs.duplicateWindow(target) || !boardContext(target)) return
+                void openAdditionalBoard(cascadeWindowBounds(target, screen)).catch(() => {})
             },
             openHubPicker: () => { reopeningHub?.controller.abort(); leaveLocalUnlock(); connectedHubs.openPicker() },
             openPhonePairing: () => phonePairingWindow.open(),
             reloadWindow: (_item, candidate) => {
-                const last = lastWorkspaceWindow && !lastWorkspaceWindow.isDestroyed() ? lastWorkspaceWindow : window
-                const target = candidate ?? BrowserWindow.getFocusedWindow() ?? last
+                const target = workspaceMenuTarget(candidate)
                 if (!connectedHubs.reloadWindow(target)) void reloadBoard(target).catch(() => {})
             },
             devTools: !app.isPackaged,
@@ -922,11 +924,6 @@ function retireAdditionalBoards() {
 }
 
 async function openAdditionalBoard(bounds) {
-    if (!bounds) {
-        const from = focusedBoard()
-        if (!boardContext(from)) return
-        bounds = cascadeWindowBounds(from, screen)
-    }
     const current = runtime
     if (!mac || !runtimeScope() || !activeSession) return
     const board = createBoardWindow(activeSession, bounds)

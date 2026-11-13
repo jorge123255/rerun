@@ -24,7 +24,7 @@ test('the Mac Settings item opens only the current desktop frame', () => {
     let current = null
     const desktopUrl = 'http://127.0.0.1:12345/desktop'
     installMacApplicationMenu({
-        Menu, appName: 'Rerun Desktop Preview', settingsWindow: () => current,
+        Menu, appName: 'Rerun Desktop Preview', settingsWindow: candidate => candidate ?? current,
         isDesktopPage: url => url === desktopUrl,
         openDocumentation: () => calls.push('documentation'),
         openFind: () => calls.push('find'),
@@ -54,6 +54,9 @@ test('the Mac Settings item opens only the current desktop frame', () => {
     current = window
     settings.click()
     assert.deepEqual(calls, ['restore', 'show', 'focus', ['desktop:open-settings']])
+    current = null
+    settings.click(settings, window)
+    assert.deepEqual(calls.slice(-4), ['restore', 'show', 'focus', ['desktop:open-settings']])
     const help = menu.find(item => item.role === 'help')
     help.submenu.find(item => item.id === 'rerun-documentation').click()
     assert.equal(calls.at(-1), 'documentation')
