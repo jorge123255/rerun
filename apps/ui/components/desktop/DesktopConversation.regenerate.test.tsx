@@ -82,7 +82,7 @@ test('regenerates the selected saved reply in a separate chat and retries a lost
         Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(composer, text)
         composer.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    const accepted = () => new Response('data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream', 'x-session-id': 'alternate' } })
+    const accepted = () => new Response('data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream', 'x-session-id': 'alternate', 'x-run-id': 'alternate-run' } })
     try {
         await act(async () => { root.render(<Harness />) })
         expect(buttons('Regenerate reply')).toHaveLength(2)
@@ -146,10 +146,10 @@ test('stopping a regenerating reply cancels only the alternate run', async () =>
                 init?.signal?.addEventListener('abort', () => controller.close(), { once: true })
                 controller.enqueue(new TextEncoder().encode('data: {"type":"start","messageId":"streaming"}\n\n'))
             } })
-            return new Response(body, { headers: { 'content-type': 'text/event-stream', 'x-session-id': 'alternate' } })
+            return new Response(body, { headers: { 'content-type': 'text/event-stream', 'x-session-id': 'alternate', 'x-run-id': 'alternate-run' } })
         }
         if (url.pathname.endsWith('/stop') && init?.method === 'POST') {
-            stopped.push(url.pathname)
+            stopped.push(url.pathname + url.search)
             return Response.json({ canceled: 1 })
         }
         return Response.json({ running: false })
@@ -165,7 +165,7 @@ test('stopping a regenerating reply cancels only the alternate run', async () =>
         expect(button('Regenerate reply')).toBeUndefined()
         expect(button('Stop')?.disabled).toBe(false)
         await act(async () => { button('Stop')!.click() })
-        expect(stopped).toEqual(['/api/desktop/sessions/alternate/stop'])
+        expect(stopped).toEqual(['/api/desktop/sessions/alternate/stop?runId=alternate-run'])
         expect(button('Stop')).toBeUndefined()
     } finally {
         await act(async () => { root.unmount() })

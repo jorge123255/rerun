@@ -91,8 +91,8 @@ afterEach(async () => {
 })
 
 const cookie = `rerun-desktop-session=${sessionToken}`
-const post = (id: string, headers: Record<string, string> = { origin, cookie }) => stop(
-    new Request(`${origin}/api/desktop/sessions/${id}/stop`, { method: 'POST', headers: { host: '127.0.0.1:3100', ...headers } }),
+const post = (id: string, runId = 'run-a', headers: Record<string, string> = { origin, cookie }) => stop(
+    new Request(`${origin}/api/desktop/sessions/${id}/stop?runId=${encodeURIComponent(runId)}`, { method: 'POST', headers: { host: '127.0.0.1:3100', ...headers } }),
     { params: Promise.resolve({ sessionId: id }) },
 )
 const get = (id: string) => readStop(
@@ -134,7 +134,7 @@ describe('/api/desktop/sessions/[sessionId]/stop', () => {
         // A follow-up turn in the canceled conversation is a new run that can itself be stopped.
         runs.push({ id: 'run-a2', agentId: 'engine-researcher', sessionId: 'es-a', status: 'running' })
         expect(await (await get(a.id)).json()).toEqual({ running: true, runId: 'run-a2', failedRunId: null, failedRunError: null, runVersion: JSON.stringify(['run-a2', 'running', 'run-a2']) })
-        expect(await (await post(a.id)).json()).toEqual({ canceled: 1, alreadyFinished: false })
+        expect(await (await post(a.id, 'run-a2')).json()).toEqual({ canceled: 1, alreadyFinished: false })
         expect(runs.find(r => r.id === 'run-b')!.status).toBe('running')
     })
 
@@ -145,6 +145,21 @@ describe('/api/desktop/sessions/[sessionId]/stop', () => {
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ canceled: 0, alreadyFinished: true })
         expect(cancels).toEqual([])
+    })
+
+    it('does not cancel a later run when Stop targets the previous reply', async () => {
+        const { a } = await twoHeldTurns()
+        const shown = await (await get(a.id)).json()
+        runs[0].status = 'done'
+        runs.push({ ...runs[0], id: 'run-a2', status: 'running' })
+        expect(await (await post(a.id, shown.runId)).json()).toEqual({ canceled: 0, alreadyFinished: true })
+        expect(await (await post(a.id, 'run-b')).json()).toEqual({ canceled: 0, alreadyFinished: true })
+        expect((await post(a.id, '')).status).toBe(400)
+        expect(cancels).toEqual([])
+        expect(runs[0].status).toBe('done')
+        expect(runs.find(run => run.id === 'run-a2')?.status).toBe('running')
+        expect(await (await post(a.id, 'run-a2')).json()).toEqual({ canceled: 1, alreadyFinished: false })
+        expect(cancels).toEqual(['engine-researcher/run-a2'])
     })
 
     it('treats a run that finishes between list and cancel as already finished', async () => {
@@ -190,8 +205,8 @@ describe('/api/desktop/sessions/[sessionId]/stop', () => {
 
     it('requires the local desktop session and same origin', async () => {
         const { a } = await twoHeldTurns()
-        expect((await post(a.id, { origin, cookie: 'rerun-desktop-session=wrong' })).status).toBe(401)
-        expect((await post(a.id, { origin: 'http://evil.test', cookie })).status).toBe(403)
+        expect((await post(a.id, 'run-a', { origin, cookie: 'rerun-desktop-session=wrong' })).status).toBe(401)
+        expect((await post(a.id, 'run-a', { origin: 'http://evil.test', cookie })).status).toBe(403)
         expect(cancels).toEqual([])
     })
 })

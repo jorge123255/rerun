@@ -752,6 +752,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     const canRegenerate = draft.loaded && !draft.error && !draft.quitting && !quickReplyBusy && !requestBlocked && !inactive && !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping && !queue.queued && !queue.pending
     const feedback = useDesktopReplyFeedback(agent.id, sessionId, active)
     const stopTarget = busy ? liveSessionId : runInFlight ? sessionId : null
+    const stopRunId = busy ? liveRunId : runInFlight ? engineRunning.runId : null
     const historyError = history.id === sessionId ? history.error : undefined
     const savedFailure = history.id === sessionId ? replayedRunFailure(history.transcript ?? [], history.lastError ?? engineRunning.failedRunError ?? null) : null
     const stopBanner = reconnectNote || savedFailure || (!reconnecting ? error?.message : undefined)
@@ -898,21 +899,21 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
 
     async function handleStop(): Promise<boolean> {
         const id = stopTarget
-        if (!id || stopping) return false
+        if (!id || !stopRunId || stopping) return false
         setStopError(undefined)
         // Abort the renderer stream, then cancel the actual engine run (as upstream AgentChat.handleStop).
         setStopping(true)
         if (busy) {
-            setEngineRunning({ id, running: true })
+            setEngineRunning({ id, running: true, runId: stopRunId })
             serviceStream.current?.cancelStream()
             stop()
         }
         try {
-            const response = await fetch(stopUrl(id), { method: 'POST' })
+            const response = await fetch(stopUrl(id) + '?runId=' + encodeURIComponent(stopRunId), { method: 'POST' })
             const body = await response.json().catch(() => ({}))
             if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not stop this reply. Try again.')
-            setEngineRunning({ id, running: false })
-            setHistory(current => current.id === id ? { ...current, question: undefined, approval: undefined, takeover: undefined, serviceRequest: undefined, secretRequest: undefined, mcpSignIn: undefined } : current)
+            setEngineRunning({ id: null, running: false })
+            setHistory(current => current.id === id ? { ...current, activeRunId: null, question: undefined, approval: undefined, takeover: undefined, serviceRequest: undefined, secretRequest: undefined, mcpSignIn: undefined } : current)
             setAttempt(n => n + 1)
             return true
         } catch (cause) {
@@ -1026,8 +1027,8 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
         const item = queue.queued
         if ((requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || (quickReplyRequest.current && !(generating && quickReplyRequest.current.accepted)) || !item || inactive || queue.pending || stopping || flushingQueue.current) return
         setQueueNotice(undefined)
-        // Cancellation must finish before the flush effect starts another stream. The engine's
-        // Stop operation cancels all current runs in this conversation, including a reopened one.
+        // Wait for the displayed run to stop. The flush effect also requires a fresh
+        // idle status and pending-request snapshot in case another window began a reply.
         if (generating && !await handleStop()) return
         clearError?.()
         setStopError(undefined)
@@ -1814,7 +1815,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                                 active={active && !draft.quitting && !cardOpen && !detailPanel && !chatsOpen} besideSend
                                 disabled={generating || stopping || inactive || !ready || !modelReady || requestBlocked || !!pendingRequest || !!queue.queued || queue.pending || uploadsActive || preparingSend || !draft.loaded}
                                 onActivity={setVoiceActivity} onSent={voiceSent} />}
-                            {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">{t('stop')}</span></Button>}
+                            {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget || !stopRunId} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">{t('stop')}</span></Button>}
                             <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={voiceActivity.busy || !draft.loaded || !uploadsLoaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || inactive || (!input.trim() && !attachmentPaths.length && !documents.attachments.length) || stopping || !ready || !queue.loaded || queue.pending || !!queue.error || uploadsActive || blockedUploads.length > 0 || preparingSend}>
                                 <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">{t('send')}</span>
                             </Button>
