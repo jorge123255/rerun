@@ -383,6 +383,9 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         })
         contents.on('did-navigate-in-page', (_event, _url, mainFrame) => { if (mainFrame) payments.close(entry) })
         contents.on('will-prevent-unload', event => {
+            // Close hides the primary workspace on macOS. Bring it back before
+            // presenting the sheet so Stay returns to the work that blocked Quit.
+            if (!window.isVisible() || window.isMinimized()) show(window)
             const t = shellText(language(entry.origin))
             const result = dialog.showMessageBoxSync(window, { type: 'warning', message: t('unload.message'),
                 detail: t('unload.detail'), buttons: [t('unload.stay'), t('unload.leave')], defaultId: 0, cancelId: 0 })
