@@ -75,6 +75,23 @@ test('an unauthorized connection offers reconnect', async () => {
     expect(onReconnect).toHaveBeenCalledTimes(1)
 })
 
+test('exhausted OpenAI API credits are named and offer a model switch', async () => {
+    const onSwitchModel = vi.fn(), onRetry = vi.fn()
+    await mount('usage_limit', 'OpenAI API credits used up', { onSwitchModel, onRetry })
+    expect(text()).toContain('OpenAI API credits used up')
+    expect(text()).toContain('platform.openai.com')
+    expect(button('Retry')).toBeUndefined()
+    await click('Switch')
+    expect(onSwitchModel).toHaveBeenCalledOnce()
+})
+
+test('an OpenAI-compatible endpoint does not inherit OpenAI billing guidance', async () => {
+    await mount('usage_limit', 'Provider API credits used up', { onSwitchModel: vi.fn() })
+    expect(text()).toContain('Provider API credits used up')
+    expect(text()).toContain('Check its billing settings')
+    expect(text()).not.toContain('platform.openai.com')
+})
+
 test('a refused model opens the recovery picker and saves a conversation-scoped pick', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input)

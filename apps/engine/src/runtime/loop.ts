@@ -53,7 +53,7 @@ import { repairToolCall } from './tool-repair.js'
 import { stepWithScreenshots } from './screenshots.js'
 import { authorMetadata, sendNotification, type NotificationKind } from './notify.js'
 import { emitRunTerminal } from './run-events.js'
-import { ClaudeSignInRenewedError, classifyFinishReason, classifyProviderError, isFailedFinish, ProviderRefusedError, ProviderStreamCutError, RUN_ERROR_CODES, refusalReason, type RunErrorCode } from './provider-errors.js'
+import { apiCreditsMessage, ClaudeSignInRenewedError, classifyFinishReason, classifyProviderError, isFailedFinish, ProviderRefusedError, ProviderStreamCutError, RUN_ERROR_CODES, refusalReason, type RunErrorCode } from './provider-errors.js'
 import { armBudgetLatch, clearBudgetLatch, RERUN_BUDGET_ERROR_CODE } from './budget-latch.js'
 
 export type RunOutcome = { kind: 'done' | 'error' | 'cancelled'; error?: string; errorCode?: RunErrorCode | null; pendingToolCallId?: string }
@@ -370,14 +370,15 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             if (renewed) settlement = { ...settlement, error: new ClaudeSignInRenewedError(), errorCode: RUN_ERROR_CODES.authRenewed }
             if (settlement.errorCode === RUN_ERROR_CODES.refused) settlement = { ...settlement, error: new ProviderRefusedError(refusalReason(settlement.error)) }
             const errorCode = settlement.errorCode ?? null
+            const errorMessage = (errorCode === RUN_ERROR_CODES.usageLimit && apiCreditsMessage(provider, settlement.error)) || String(settlement.error)
             forgetCodexThread(agent.id, sessionId)
             logger.error({ err: String(settlement.error), errorCode, agent: agent.id, run: run.id }, 'run error')
             if (errorCode === RERUN_BUDGET_ERROR_CODE) armBudgetLatch()
             // The token is still on file, so the connection would keep reading "Ready" while every
             // run on it fails. The keyless Rerun connection answers for the hub's key, not the user's.
             if (errorCode === RUN_ERROR_CODES.unauthorized && connection && connection.id !== RERUN_CONNECTION_ID) recordCredentialRejected(connection.id)
-            await failRun(agent.id, run.id, String(settlement.error)).catch(() => {})
-            outcome = { kind: 'error', error: String(settlement.error), errorCode }
+            await failRun(agent.id, run.id, errorMessage).catch(() => {})
+            outcome = { kind: 'error', error: errorMessage, errorCode }
         }
 
         if (!foremanAlternate) await setAgentStatus(agent.id, 'idle').catch(() => {})

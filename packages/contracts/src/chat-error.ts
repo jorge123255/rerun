@@ -37,6 +37,8 @@ export function stripErrorPrefix(message: string): string {
 // "OpenCode Go limit reached: weekly window · resets Nov 6, 3:00 PM UTC".
 export const OPENCODE_CREDITS_USED_UP = 'OpenCode Console credits used up'
 export const OPENCODE_GO_LIMIT = 'OpenCode Go limit reached'
+export const OPENAI_API_CREDITS_USED_UP = 'OpenAI API credits used up'
+export const PROVIDER_API_CREDITS_USED_UP = 'Provider API credits used up'
 
 // Claude Code builds its own sentence: "You've hit your ${limit}" with the limit named after the
 // window that ran out (`session limit`, `weekly limit`, `Opus limit`, `Sonnet limit`), optionally
@@ -48,7 +50,7 @@ export const OPENCODE_GO_LIMIT = 'OpenCode Go limit reached'
 // once they are spent), Codex "The 'gpt-6-astra' model is not supported when using Codex with a
 // ChatGPT account". Shared with the engine's `classifyProviderError`, so both ends agree.
 export const SUBSCRIPTION_LIMIT =
-    /hit your (?:session|weekly|opus|sonnet|usage) limit|usage limit reached|usage_limit_exceeded|5-hour limit|quota exceeded|monthly spend limit|usage credits|not supported when using codex with a chatgpt account|does not exist or you do not have access|opencode console credits used up|opencode go limit reached/i
+    /hit your (?:session|weekly|opus|sonnet|usage) limit|usage limit reached|usage_limit_exceeded|5-hour limit|quota exceeded|monthly spend limit|usage credits|not supported when using codex with a chatgpt account|does not exist or you do not have access|opencode console credits used up|opencode go limit reached|openai api credits used up|provider api credits used up|no credits remaining|insufficient_quota/i
 
 // The subset of `SUBSCRIPTION_LIMIT` that names a model the plan does not include, rather than a
 // window that ran out. The chat words both the same way, but the engine reports it under its own
