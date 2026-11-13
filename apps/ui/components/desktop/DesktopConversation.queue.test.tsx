@@ -167,6 +167,25 @@ test('an unaccepted interrupted send restores a review draft and retries with it
     expect(sent[1]).not.toHaveProperty('reconcileOnly')
 })
 
+test('a restored queue draft and its full editor follow the workspace language', async () => {
+    const queued = item('sending')
+    const source = await loadMessages('fr')
+    const language: DesktopLanguage = { preference: 'fr', locale: 'fr', messages: desktopMessages('fr', source) }
+    saved.set('one', queued)
+    running = false
+    reconcileMissing = true
+    await render('one', undefined, language)
+    expect(container.querySelector('textarea')!.value).toBe(queued.text)
+    expect(container.textContent).toContain('Vérifiez le message en attente enregistré avant de l’envoyer.')
+    await type(queued.text.repeat(30))
+    await click(source.chat.composer.openEditor)
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.textContent).toContain(source.chat.composer.editor.title)
+    expect(dialog.textContent).toContain(source.chat.composer.editor.hint)
+    expect(dialog.textContent).toContain(source.chat.composer.editor.cancel)
+    expect(chat.sendMessage).not.toHaveBeenCalled()
+})
+
 test('switching conversations never sends or removes the other chat’s queue', async () => {
     const one = item(), two = { ...item(), text: 'Second chat' }
     saved.set('one', one); saved.set('two', two)

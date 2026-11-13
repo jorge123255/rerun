@@ -15,6 +15,7 @@ import { desktopSharedFilesCopy } from './i18n/shared-files-messages'
 import { desktopMcpSignInCopy } from './i18n/mcp-sign-in-messages'
 import { macSettingsCopy } from './i18n/mac-settings-messages'
 import { desktopBoardCopy } from './i18n/board-messages'
+import { desktopQueueCopy } from './i18n/queue-messages'
 import dialogs from '@rerun/i18n/messages/en/dialogs.json'
 import type { Locale } from '@rerun/i18n'
 import { createTranslator } from 'use-intl/core'
@@ -360,6 +361,8 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         stop: source.chat.promptInput.stop,
         stoppingRun: source.chat.queued.stopping,
         queuedMessage: source.chat.queued,
+        queue: desktopQueueCopy[locale],
+        composerEditor: { ...source.chat.composer.editor, open: source.chat.composer.openEditor },
         chatActivity: source.chat.activity,
         chatSteps: source.chat.steps,
         chatRequestCue: source.chat.hitlCue,

@@ -240,6 +240,8 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     overview?: DesktopConversationOverviewAuthority
 }) {
     const { language, t } = useDesktopLocale()
+    const queueCopy = language.messages.queue
+    const editorCopy = language.messages.composerEditor
     const locale = desktopLocaleTag(language.locale)
     const setup = useDesktopSetup(agent.id)
     const setupBlocked = !setup.view || !!setup.error || setup.view.pending && (!setup.view.sessionId || setup.view.sessionId !== sessionId)
@@ -506,7 +508,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     const queue = useDesktopQueuedMessage(agent.id, sessionId, tabUid)
     const queueScope = useRef(queue.key)
     useEffect(() => { queueScope.current = queue.key; return () => { queueScope.current = '' } }, [queue.key])
-    const [queueNotice, setQueueNotice] = useState<string>()
+    const [queueNotice, setQueueNotice] = useState<keyof typeof queueCopy>()
     const [modelReady, setModelReady] = useState(false)
     const [sendQueuedId, setSendQueuedId] = useState<string | null>(null)
     const flushingQueue = useRef<string | null>(null)
@@ -556,10 +558,10 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
         }
         const id = response.headers.get('x-session-id')
         if (alternate && (!id || id === alternate.sessionId)) throw new Error('Could not open the alternate chat. Try again.')
-        if (queued && (id !== queued.sessionId || response.headers.get('x-run-id') !== queued.item.id)) throw new Error('Could not confirm this queued message. It is still saved; try Send now to check again.')
+        if (queued && (id !== queued.sessionId || response.headers.get('x-run-id') !== queued.item.id)) throw new Error(queueCopy.confirmFailed)
         if (response.ok && id) {
             if (queued) {
-                try { await queued.acknowledge() } catch { setQueueNotice('The message was sent, but its queue receipt could not be cleared. Send now will check the same message safely.') }
+                try { await queued.acknowledge() } catch { setQueueNotice('receiptPending') }
                 if (flushingQueue.current === queued.item.id) flushingQueue.current = null
             }
             if (pending?.documents) await documents.consumed(pending.documents).catch(() => setUploadNotice('The documents were sent. Reopen the chat to refresh their saved state.'))
@@ -595,7 +597,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
         }
         return response
         } finally { pending?.release(); alternate?.release() }
-    }, [agent.id, tabUid, onChatSession, draft.clear, draft.reload, draft.invalidate, documents.consumed])
+    }, [agent.id, tabUid, onChatSession, draft.clear, draft.reload, draft.invalidate, documents.consumed, queueCopy.confirmFailed])
 
     // The constructor saves the callback; only a submitted request reads the pending draft.
     // eslint-disable-next-line react-hooks/refs
@@ -969,7 +971,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
             if (live.generating || (live.queue.queued && draftQueues.current.has(live.queue.queued.id))) {
                 const queuedPaths = live.queue.queued ? desktopQueuedAttachmentPaths(live.queue.queued) : []
                 const sameDraft = !live.generating && live.queue.queued && live.queue.queued.text === text && samePaths(queuedPaths, paths) && JSON.stringify(live.queue.queued.coworkerMentions ?? []) === JSON.stringify(mentionFields.coworkerMentions ?? []) && JSON.stringify(live.queue.queued.documents ?? null) === JSON.stringify(documentSend?.selection ?? null)
-                const item = sameDraft ? live.queue.queued : await live.queue.enqueue(text, paths, live.busy ? live.liveRunId : live.engineRunning.runId ?? null, mentionFields.coworkerMentions, documentSend?.selection)
+                const item = sameDraft ? live.queue.queued : await live.queue.enqueue(text, paths, live.busy ? live.liveRunId : live.engineRunning.runId ?? null, mentionFields.coworkerMentions, documentSend?.selection).catch(() => null)
                 if (!item) return
                 if (documentSend) await documents.consumed(documentSend.selection)
                 if (current.draft.clear(version)) {
@@ -1013,8 +1015,8 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
             await sendMessage({ text: item.text, ...((paths.length || item.coworkerMentions?.length) && { metadata: { ...attachmentFields, ...desktopCoworkerMentionFieldsOf(item.coworkerMentions) } }) }, {
                 body: { agentId: agent.id, sessionId, text: item.text, requestId: item.id, ...(item.documents && { documents: item.documents }), ...attachmentFields, ...desktopCoworkerMentionFieldsOf(item.coworkerMentions) },
             })
-        } catch (cause) {
-            setQueueNotice(cause instanceof Error ? cause.message : 'Could not send the queued message. It is still saved.')
+        } catch {
+            setQueueNotice('sendFailed')
         } finally {
             if (pendingQueue.current?.item.id === item.id) pendingQueue.current = null
             if (flushingQueue.current === item.id) flushingQueue.current = null
@@ -1060,7 +1062,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                 setMentionValues(current => new Map(current).set(draftKey, item.coworkerMentions ?? []))
                 draft.update({ text: item.text, coworkerMentions: item.coworkerMentions ?? [], ...desktopAttachmentFieldsOf(paths) })
             }
-            setQueueNotice('Your saved queued message is ready to review before sending.')
+            setQueueNotice('review')
         }
         void (async () => {
             if (item.state === 'sending' && sessionId) {
@@ -1076,13 +1078,17 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                     if (isCurrent()) setAttempt(n => n + 1)
                     return
                 }
-                if (response.status !== 404) throw new Error('Could not check the saved queued message. Use Send now to retry safely.')
+                if (response.status !== 404) {
+                    if (isCurrent()) setQueueNotice('checkFailed')
+                    return
+                }
             }
             await restoreDraft()
-        })().catch(cause => { if (isCurrent()) setQueueNotice(cause instanceof Error ? cause.message : 'Could not restore the queued message.') })
+        })().catch(() => { if (isCurrent()) setQueueNotice('restoreFailed') })
     }, [active, activeRunId, agent.id, draftKey, queue, queueStatusKnown, ready, sessionId, stopping, draft.loaded, draft.error, draft.quitting, draft.update])
 
     const queued = queue.queued
+    const queueFeedback = queueNotice === 'receiptPending' ? queueNotice : queue.error ?? queueNotice
     const queuedBehindFailure = !!queued?.behindRunId && queued.behindRunId === engineRunning.failedRunId
     const canFlushQueue = draft.loaded && !draft.error && !draft.quitting && !requestBlocked && !inactive && !!sessionId && ready && modelReady && queue.loaded && !queue.pending && !queue.restoredId && queueStatusKnown && !stopping && !stopError && !queue.error
         && shouldFlush({ queued, busy: generating, uploading: !!pendingAttachment.current || !!regenerating.current, status, hasError: !!error || !!queueNotice || queuedBehindFailure })
@@ -1705,11 +1711,11 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                             : <Button type="button" size="sm" variant="outline" onClick={() => void draft.retry()}>Retry saving draft</Button>}
                     </div> : tabUid && (!draft.loaded || draft.saving || input || attachmentPaths.length) ? <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">{!draft.loaded ? 'Restoring draft…' : draft.saving ? 'Saving draft…' : 'Draft saved'}</p> : null}
                 {inactive && <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">This coworker is inactive. Enable it from the board to send a message. Your chats are kept.</p>}
-                {(queue.error || queueNotice) && <p role={queue.error ? 'alert' : 'status'} className="mb-2 px-1 text-xs text-muted-foreground">{queue.error || queueNotice}</p>}
+                {queueFeedback && <p role={queue.error ? 'alert' : 'status'} className="mb-2 px-1 text-xs text-muted-foreground">{queueCopy[queueFeedback]}</p>}
                 {uploadNotice && <p role="alert" className="mb-2 px-1 text-xs text-destructive">{uploadNotice}</p>}
                 {uploadsActive && <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">Preparing attachments…</p>}
                 {blockedUploadNotice && <p role="alert" className="mb-2 px-1 text-xs text-destructive">{blockedUploadNotice}</p>}
-                {queuedBehindFailure && !queueNotice && <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">The previous reply failed. Your queued message is kept; use Send now when you are ready.</p>}
+                {queuedBehindFailure && !queueNotice && <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">{queueCopy.previousFailed}</p>}
                 <QueuedMessagePill text={queued && !(draftQueues.current.has(queued.id) && input.trim() === queued.text && samePaths(attachmentPaths, desktopQueuedAttachmentPaths(queued))) ? desktopQueuedPreview(queued) : null}
                     copy={language.messages.queuedMessage}
                     busy={generating} pending={!draft.loaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || queue.pending || stopping || inactive || !!flushingQueue.current}
@@ -1721,7 +1727,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                 {active && workspacePreview?.owner === uploadOwner && <DesktopWorkspaceAttachmentLightbox {...workspacePreview}
                     onIndexChange={index => setWorkspacePreview(value => value && { ...value, index })}
                     onClose={() => setWorkspacePreview(null)} />}
-                <MarkdownEditorDialog key={editorSession} open={active && editorOpen} onOpenChange={setEditorOpen} initialValue={input} title="Write your message" description="Room to structure a long message. Enter starts a new line." hint="Send with Cmd + Enter" closeLabel="Cancel" submitLabel="Send" submitIcon={<SendIcon className="size-4" />} submitting={preparingSend || stopping}
+                <MarkdownEditorDialog key={editorSession} open={active && editorOpen} onOpenChange={setEditorOpen} initialValue={input} title={editorCopy.title} description={editorCopy.description} hint={editorCopy.hint} closeLabel={editorCopy.cancel} submitLabel={editorCopy.send} submitIcon={<SendIcon className="size-4" />} submitting={preparingSend || stopping}
                     onDraftChange={setInput}
                     onClose={markdown => { setInput(markdown); queueMicrotask(() => composerForm.current?.querySelector('textarea')?.focus()) }}
                     onSubmit={markdown => {
@@ -1765,7 +1771,7 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                         refreshKey={`${status}:${lastMessage?.id ?? ''}`}>
                     {mention => <>
                     <div className="relative">
-                    {expandable && draft.loaded && !draft.error && <button type="button" aria-label="Open the full editor" title="Open the full editor" className="absolute top-1.5 right-1.5 z-10 rounded-md p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground" onClick={() => { setEditorSession(value => value + 1); setEditorOpen(true) }}><Maximize2Icon className="size-3.5" /></button>}
+                    {expandable && draft.loaded && !draft.error && <button type="button" aria-label={editorCopy.open} title={editorCopy.open} className="absolute top-1.5 right-1.5 z-10 rounded-md p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground" onClick={() => { setEditorSession(value => value + 1); setEditorOpen(true) }}><Maximize2Icon className="size-3.5" /></button>}
                     <Textarea
                         ref={mention.inputRef}
                         id={composerId}

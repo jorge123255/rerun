@@ -6,7 +6,7 @@ import { desktopQueuedMessageSchema, type DesktopQueuedMessage, type DesktopQueu
 import { pendingTabWrite } from './tab-writes'
 
 const changedEvent = 'desktop-queued-message-changed'
-type State = { key: string; queued: DesktopQueuedMessage | null; loaded: boolean; error?: string; restoredId: string | null }
+type State = { key: string; queued: DesktopQueuedMessage | null; loaded: boolean; error?: 'loadFailed' | 'saveFailed'; restoredId: string | null }
 
 export function useDesktopQueuedMessage(agentId: string, sessionId: string | null, tabUid?: string) {
     const scope = useMemo(() => ({ ...(sessionId && { sessionId }), ...(tabUid && { tabUid }) }), [sessionId, tabUid])
@@ -49,9 +49,9 @@ export function useDesktopQueuedMessage(agentId: string, sessionId: string | nul
             if (tabUid) await pendingTabWrite(agentId)
             const response = await fetch(`${url}?${new URLSearchParams(scope).toString()}`, { cache: 'no-store', signal })
             return await accept(response, started)
-        } catch (cause) {
+        } catch {
             if (!signal?.aborted && currentKey.current === key && version.current === started) {
-                setState(previous => ({ ...(previous.key === key ? previous : { key, queued: null, restoredId: null }), loaded: true, error: cause instanceof Error ? cause.message : 'Could not load the queued message.' }))
+                setState(previous => ({ ...(previous.key === key ? previous : { key, queued: null, restoredId: null }), loaded: true, error: 'loadFailed' }))
             }
             return null
         }
@@ -76,7 +76,7 @@ export function useDesktopQueuedMessage(agentId: string, sessionId: string | nul
             window.dispatchEvent(new Event(changedEvent))
             return queued
         } catch (cause) {
-            if (currentKey.current === key) setState(previous => ({ ...previous, key, error: cause instanceof Error ? cause.message : 'Could not save the queued message. Try again.' }))
+            if (currentKey.current === key) setState(previous => ({ ...previous, key, error: 'saveFailed' }))
             throw cause
         } finally { setPendingKey(current => current === key ? null : current) }
     }, [accept, agentId, key, tabUid, url])
