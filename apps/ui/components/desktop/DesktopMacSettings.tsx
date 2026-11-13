@@ -11,6 +11,7 @@ import { desktopMacUpdates, type MacUpdateState } from './DesktopMacUpdateBridge
 type MacSettings = { openAtLogin: boolean | null; version: string | null; updatesAvailable: boolean }
 type MacSettingsBridge = {
     read: () => Promise<MacSettings>
+    openPhonePairing?: () => Promise<void>
     setOpenAtLogin: (enabled: boolean) => Promise<MacSettings>
 }
 const updateMessages = {
@@ -28,11 +29,13 @@ export function desktopMacSettings() {
 export function DesktopMacSettings({ appStoreBuild }: { appStoreBuild: boolean }) {
     const { t } = useDesktopLocale()
     const settingsBridge = desktopMacSettings()
+    const openPhonePairing = settingsBridge?.openPhonePairing
     const updates = appStoreBuild ? null : desktopMacUpdates()
     const [settings, setSettings] = useState<MacSettings | null>(null)
     const [update, setUpdate] = useState<MacUpdateState | null>(null)
     const [loginBusy, setLoginBusy] = useState(false)
     const [updateBusy, setUpdateBusy] = useState(false)
+    const [pairingError, setPairingError] = useState(false)
     const [settingsError, setSettingsError] = useState<'loadFailed' | 'loginFailed' | null>(null)
     const [updateError, setUpdateError] = useState<'updateFailed' | 'restartFailed' | null>(null)
 
@@ -101,6 +104,16 @@ export function DesktopMacSettings({ appStoreBuild }: { appStoreBuild: boolean }
             {settingsError && <p role="alert" className="text-sm text-destructive">{t(`macSettings.${settingsError}`)}</p>}
         </div>
         <DesktopQuickAskSettings />
+        {openPhonePairing && <div className="space-y-2 rounded-xl border p-4">
+            <Field orientation="row" label={t('macSettings.phone')} helperText={t('macSettings.phoneHint')}>
+                <Button type="button" size="sm" variant="outline" onClick={async () => {
+                    setPairingError(false)
+                    try { await openPhonePairing() }
+                    catch { setPairingError(true) }
+                }}>{t('macSettings.connectPhone')}</Button>
+            </Field>
+            {pairingError && <p role="alert" className="text-sm text-destructive">{t('macSettings.phoneFailed')}</p>}
+        </div>}
         <div className="space-y-2 rounded-xl border p-4">
             <Field orientation="row" label={t('macSettings.updates')}
                 helperText={settings?.version ? t('macSettings.version', { version: settings.version }) : undefined}>

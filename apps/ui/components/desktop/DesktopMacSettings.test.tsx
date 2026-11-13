@@ -8,12 +8,13 @@ import type { MacUpdateState } from './DesktopMacUpdateBridge'
 
 type DesktopLoginWriter = (enabled: boolean) => Promise<{ openAtLogin: boolean; version: string; updatesAvailable: boolean }>
 
-async function fixture(appStoreBuild: boolean) {
+async function fixture(appStoreBuild: boolean, openPhonePairing?: () => Promise<void>) {
     let reportUpdate: (state: MacUpdateState) => void = () => {}
     const saved = { openAtLogin: false, version: '1.0.0', updatesAvailable: true }
     const macSettings = {
         read: vi.fn(async () => saved),
         setOpenAtLogin: vi.fn<DesktopLoginWriter>(async () => saved),
+        openPhonePairing,
     }
     const stop = vi.fn()
     const updates = {
@@ -59,6 +60,22 @@ it('uses the OS readback and follows update events through check and restart', a
         expect(view.host.textContent).toContain('Could not restart to install the update.')
     } finally { await view.close() }
     expect(view.stop).toHaveBeenCalledTimes(1)
+})
+
+it('opens the native pairing window from Desktop app settings and allows retry after a refusal', async () => {
+    const open = vi.fn<() => Promise<void>>().mockRejectedValueOnce(new Error('Workspace changing')).mockResolvedValue(undefined)
+    const view = await fixture(true, open)
+    try {
+        const pairing = view.button()
+        expect(pairing.textContent).toBe('Connect iPhone…')
+        expect(view.host.textContent).toContain('Pair an iPhone with the workspace running on this Mac.')
+        await act(async () => pairing.click())
+        expect(open).toHaveBeenCalledExactlyOnceWith()
+        expect(view.host.querySelector('[role="alert"]')?.textContent).toContain('Could not open iPhone pairing.')
+        await act(async () => pairing.click())
+        expect(open).toHaveBeenCalledTimes(2)
+        expect(view.host.querySelector('[role="alert"]')).toBeNull()
+    } finally { await view.close() }
 })
 
 it('leaves update checks to the App Store without invoking the direct updater', async () => {

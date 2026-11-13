@@ -524,6 +524,10 @@ async function launch() {
             setMacOpenAtLogin(app, enabled)
             return localMacSettings()
         })
+        ipcMain.handle('desktop:mac-open-phone-pairing', event => {
+            assertBoard(event)
+            phonePairingWindow.open()
+        })
         ipcMain.handle('desktop:update-state', event => { assertBoard(event); return macUpdates?.state() ?? { status: 'idle' } })
         ipcMain.handle('desktop:update-check', event => { assertBoard(event); return macUpdates?.checkForUpdates(false) ?? { status: 'idle' } })
         ipcMain.handle('desktop:update-install', event => {
