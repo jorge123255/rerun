@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from 'motion/react'
 import { useId } from 'react'
-import { useTranslations } from 'next-intl'
+import foreman from '@rerun/i18n/messages/en/foreman.json'
 
 import { Field } from '@/components/ui/field'
 import { IconBadge } from '@/components/ui/icon-badge'
@@ -37,10 +37,10 @@ const ADORNMENT_MOTION = {
 
 export function IntakeCompanyStep({ draft, siteRead, platform, disabled, autoFocus, onChange, onEnter }: IntakeCompanyStepProps) {
     const siteId = useId()
-    const t = useTranslations('foreman.intake.website')
+    const copy = foreman.intake.website
 
     return (
-        <Field label={t('label')} htmlFor={siteId} error={platform ? t('platform', { domain: platform }) : undefined}>
+        <Field label={copy.label} htmlFor={siteId} error={platform ? copy.platform.replace('{domain}', platform) : undefined}>
             <div className="relative">
                 <Input
                     id={siteId}
