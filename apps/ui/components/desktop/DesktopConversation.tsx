@@ -1050,8 +1050,9 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
         const isCurrent = () => queueScope.current === queue.key && !isDesktopQuitting()
         const restoreDraft = async () => {
             const paths = desktopQueuedAttachmentPaths(item)
-            await queue.action('review', item.id)
-            if (!isCurrent()) return
+            const reviewed = await queue.action('review', item.id)
+            // A different window may have removed or replaced the queue while this write was pending.
+            if (!isCurrent() || reviewed?.id !== item.id || reviewed.state !== 'review') return
             if (composer.current.text.trim() === item.text && samePaths(draftPaths(composer.current), paths) && JSON.stringify(trimDesktopCoworkerMentions(composer.current.text, composer.current.coworkerMentions).coworkerMentions ?? []) === JSON.stringify(item.coworkerMentions ?? [])) draftQueues.current.add(item.id)
             // An older waiting message must not replace a newer draft already in the composer.
             if (!item.documents && !composer.current.text && draftPaths(composer.current).length === 0) {

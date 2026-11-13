@@ -17,6 +17,7 @@ vi.mock('@ai-sdk/react', () => ({ useChat: ({ transport }: { transport: { fetch:
 vi.mock('./DesktopModelSelector', () => ({ DesktopModelSelector: ({ onReady }: { onReady?: (ready: boolean) => void }) => { useEffect(() => onReady?.(true), [onReady]); return null } }))
 
 let root: Root, container: HTMLDivElement, running: boolean, stopResponse: () => Promise<Response>, reconcileMissing: boolean, loseEnqueueAck: boolean, queueReads: number
+let beforeReview: (() => Promise<void>) | undefined
 const saved = new Map<string, DesktopQueuedMessage>()
 const sent: Record<string, unknown>[] = []
 const firstRun = 'first-run'
@@ -24,7 +25,7 @@ const agent = { id: 'agent', name: 'Researcher', description: '', createdAt: '',
 const item = (state: DesktopQueuedMessage['state'] = 'waiting'): DesktopQueuedMessage => ({ id: crypto.randomUUID(), text: 'Saved follow-up', attachmentPath: 'notes.md', createdAt: Date.now(), behindRunId: firstRun, state })
 
 beforeEach(() => {
-    running = true; reconcileMissing = false; loseEnqueueAck = false; queueReads = 0; saved.clear(); sent.length = 0
+    running = true; reconcileMissing = false; loseEnqueueAck = false; queueReads = 0; beforeReview = undefined; saved.clear(); sent.length = 0
     chat.status = 'ready'; chat.error = undefined; chat.stop.mockReset(); chat.sendMessage.mockReset()
     chat.clearError.mockImplementation(() => { chat.error = undefined })
     stopResponse = async () => { running = false; return Response.json({ canceled: 1, alreadyFinished: false }) }
@@ -36,6 +37,7 @@ beforeEach(() => {
         if (url.pathname.endsWith('/queue')) {
             if (init?.method === 'PUT') {
                 const body = JSON.parse(String(init.body)), key = body.scope.sessionId ?? body.scope.tabUid
+                if (body.action === 'review') await beforeReview?.()
                 const current = saved.get(key)
                 if (body.action === 'enqueue') {
                     saved.set(key, body.item)
@@ -145,6 +147,28 @@ test('reopening an old waiting item restores its draft without sending or replac
     await click('Remove queued message')
     expect(saved.has('one')).toBe(false)
     expect(container.querySelector('textarea')!.value).toBe('Newer unsent draft')
+})
+
+test.each([false, true])('a queue changed during recovery cannot restore the stale draft (replacement: %s)', async replaced => {
+    const original = item()
+    saved.set('one', original)
+    running = false
+    const reviewStarted = Promise.withResolvers<void>()
+    const resumeReview = Promise.withResolvers<void>()
+    beforeReview = async () => {
+        reviewStarted.resolve()
+        await resumeReview.promise
+    }
+    await render()
+    await reviewStarted.promise
+    const replacement = { ...item(), text: 'Newer queued follow-up' }
+    if (replaced) saved.set('one', replacement)
+    else saved.delete('one')
+    await act(async () => { resumeReview.resolve() })
+    expect(container.querySelector('textarea')!.value).toBe(replaced ? replacement.text : '')
+    const visibleQueue = container.querySelector('[aria-label="Send queued message now"]')?.closest('.grid:not([inert])')
+    expect(visibleQueue?.textContent ?? '').not.toContain(original.text)
+    expect(sent).toHaveLength(0)
 })
 
 test('an interrupted send reconciles the same ID after remount without sending a second message', async () => {
