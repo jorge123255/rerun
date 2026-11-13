@@ -9,6 +9,7 @@ const copy = bridge?.copy
 const updater = bridge?.update
 if (copy) {
     document.documentElement.lang = copy.locale
+    document.documentElement.dataset.appearance = bridge.appearance
     document.title = title.textContent = copy.title
     button.textContent = copy.retry
     download.textContent = copy.download

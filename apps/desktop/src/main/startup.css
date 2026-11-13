@@ -15,4 +15,7 @@ button.secondary { background: #25282a; color: #f4f4f0; }
 button:disabled { cursor: default; opacity: .65; }
 .connection-error { color: #ffc0b3; }
 .footnote { max-width: 400px; color: #8a918b; font-size: 12px; line-height: 1.7; }
+:root[data-appearance="light"] { color-scheme: light; background: #fafafa; color: #0a0a0a; }
+:root[data-appearance="light"] #message { color: #4d514e; }
+:root[data-appearance="light"] button:focus-visible { outline-color: #172116; }
 [hidden] { display: none; }

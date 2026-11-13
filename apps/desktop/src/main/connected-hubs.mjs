@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { checkHub, hubPartition, hubWindowAddress, HUB_API_VERSION, normalizeHubOrigin, parseHubWorkspaceId, RERUN_CLOUD_ORIGIN, sameHub } from './connected-hub-policy.mjs'
 import { cascadeWindowBounds } from './board-windows.mjs'
 import { hubConnectionError, hubOfflineCopy, hubPickerCopy, hubRecoveryView } from './connected-hub-messages.mjs'
@@ -24,9 +24,13 @@ const offlinePage = new URL('./connected-hub-offline.html', import.meta.url)
 const downloadPage = 'https://rerun.build/download'
 const preload = fileURLToPath(new URL('./connected-hub-preload.cjs', import.meta.url))
 const capabilities = ['auth', 'window', 'find', 'links', 'server', 'downloads', 'notifications', 'badge', 'settings', 'oauth', 'locale']
+const appearanceOf = value => value === 'light' || value === 'dark' ? value : null
+const backgroundFor = appearance => appearance === 'light' ? '#fafafa' : '#101214'
+const opaqueColor = value => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)
 
 export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
-    updates, canRestartForUpdate, available, openFind, closeFind, setUnread, desktopSettings, changeDesktopSettings, setLanguage, language, onConnect }) {
+    updates, canRestartForUpdate, available, openFind, closeFind, setUnread, desktopSettings, changeDesktopSettings, setLanguage, language, onConnect,
+    systemAppearance }) {
     const file = resolve(dataRoot, 'connected-hub.json')
     const windows = new Map()
     const childWindows = new Map()
@@ -42,6 +46,8 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     })
     let picker = null, pickerLocale = null, acceptedPicker = null, connecting = null
     let pendingOpen = null, openingLink = false
+    let appearanceWrites = Promise.resolve()
+    const appearancePath = origin => resolve(dataRoot, `hub-appearance-${createHash('sha256').update(origin).digest('hex')}.json`)
 
     function entryFor(window) {
         if (!window || window.isDestroyed()) return null
@@ -226,8 +232,13 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             return true
         }
         const primary = !bounds
+        await appearanceWrites
+        const savedAppearance = await readJSON(appearancePath(origin)).catch(() => null)
+        signal.throwIfAborted()
+        const appearance = savedAppearance?.version === 1 ? appearanceOf(savedAppearance.appearance) : null
         const window = new BrowserWindow({ ...(placement?.bounds ?? bounds), minWidth: 720, minHeight: 520, show: false,
-            title: 'Rerun', backgroundColor: '#101214', titleBarStyle: 'hidden', trafficLightPosition: { x: 12, y: 8 },
+            title: 'Rerun', backgroundColor: backgroundFor(appearance ?? systemAppearance()),
+            titleBarStyle: 'hidden', trafficLightPosition: { x: 12, y: 8 },
             // Keep the connected board's activity and unread updates running while it is hidden.
             webPreferences: { ...preferences(desktopSession), backgroundThrottling: !primary } })
         const contents = window.webContents
@@ -237,11 +248,12 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         contents.setUserAgent(userAgent)
         const auth = createHubAuth({ origin, openBrowser: url => shell.openExternal(url), fetcher: (url, init) =>
             desktopSession.fetch(url, { ...init, headers: { ...init.headers, 'User-Agent': userAgent } }) })
-        const entry = { origin, window, contents, auth, scope: randomUUID(), closeAttempt: null }
+        const entry = { origin, window, contents, auth, primary, appearance, scope: randomUUID(), closeAttempt: null }
         entry.recovery = createHubRecovery({ window, origin, offlinePage, available,
             check: signal => checkHub(origin, version, desktopSession.fetch.bind(desktopSession),
                 AbortSignal.any([signal, AbortSignal.timeout(5000)])),
             invalidate: () => {
+                window.setBackgroundColor(backgroundFor(entry.appearance ?? systemAppearance()))
                 payments.close(entry)
                 entry.scope = randomUUID()
                 auth.cancel()
@@ -440,6 +452,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
         if (offline) {
             offline.locale = language(offline.origin)
             event.returnValue = { audience: 'hub-offline', copy: hubOfflineCopy(offline.locale),
+                appearance: offline.appearance ?? systemAppearance(),
                 appStore: process.mas === true, updatesAvailable: updates?.enabled() === true }
             return
         }
@@ -493,8 +506,21 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
     })
     for (const [channel, action] of [
         ['hub:window-state', entry => stateOf(entry.window)],
-        ['hub:window-chrome', (entry, colors) => {
-            if (typeof colors?.frameColor === 'string' && /^#[0-9a-f]{6}$/i.test(colors.frameColor)) entry.window.setBackgroundColor(colors.frameColor)
+        ['hub:window-chrome', (entry, colors, frame) => {
+            if (!entry.native || entry.native.frame !== frame || !currentNative(entry, entry.native)) return
+            const symbol = colors?.symbolColor
+            if (opaqueColor(symbol)) {
+                // Upstream sends a dark symbol for a light board and a light symbol for a dark board.
+                const appearance = parseInt(symbol.slice(1, 3), 16) > 0x80 ? 'dark' : 'light'
+                if (entry.appearance !== appearance) {
+                    entry.appearance = appearance
+                    if (entry.primary) appearanceWrites = appearanceWrites
+                        .then(() => atomicPrivateJSON(appearancePath(entry.origin), { version: 1, appearance }))
+                        .catch(() => console.warn('Could not save the connected Rerun appearance.'))
+                }
+                entry.window.setBackgroundColor(backgroundFor(appearance))
+            }
+            if (opaqueColor(colors?.frameColor)) entry.window.setBackgroundColor(colors.frameColor)
         }],
         ['hub:find', entry => openFind(entry.window)],
         ['hub:open-link', async (entry, url, frame, registrationId) => (await serviceSignIn.consider(entry, url, registrationId, frame)) ? true : external(url)],
@@ -640,6 +666,7 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             // Chromium batches writes. Persist session cookies even if the last hub
             // was closed just before quitting the local app.
             await Promise.all([...usedSessions].map(value => value.cookies.flushStore()))
+            await appearanceWrites
         },
     }
 }

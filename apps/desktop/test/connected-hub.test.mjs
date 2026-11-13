@@ -141,6 +141,9 @@ test('the hub preload exposes only its approved audience and drops the privilege
     assert.deepEqual(picker.requests, [['hub:connect-cloud']])
     const offline = bootstrap({ audience: 'hub-offline' })
     assert.deepEqual(Object.keys(offline.exposed), ['rerunHubOffline'])
+    assert.equal(offline.exposed.rerunHubOffline.appearance, 'dark')
+    assert.equal(bootstrap({ audience: 'hub-offline', appearance: 'light' }).exposed.rerunHubOffline.appearance, 'light')
+    assert.equal(bootstrap({ audience: 'hub-offline', appearance: 'unrecognized' }).exposed.rerunHubOffline.appearance, 'dark')
     await offline.exposed.rerunHubOffline.state()
     await offline.exposed.rerunHubOffline.retry()
     await offline.exposed.rerunHubOffline.download('https://ignored.example')
@@ -163,6 +166,10 @@ test('the hub preload exposes only its approved audience and drops the privilege
     assert.deepEqual(seen, [[{ status: 'signed-in' }]])
     unsubscribe()
     assert.equal(listeners.size, 0)
+    const chrome = bootstrap({ audience: 'hub', capabilities: ['window'] })
+    chrome.exposed.rerunShell.window.setChrome({ frameColor: '#00000000', symbolColor: '#0a0a0a', appearance: 'dark' })
+    assert.deepEqual(JSON.parse(JSON.stringify(chrome.requests)),
+        [['hub:window-chrome', { frameColor: '#00000000', symbolColor: '#0a0a0a' }]])
     const native = bootstrap({ audience: 'hub', capabilities: ['notifications', 'badge'] })
     const notice = { id: 'task:123', title: 'Finished' }
     const clicks = []

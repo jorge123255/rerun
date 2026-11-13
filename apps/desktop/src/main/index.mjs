@@ -32,7 +32,7 @@ import { createMacPhonePairingService } from './mac-phone-pairing/index.mjs'
 import { pairingQrImage } from './mac-phone-pairing/qr.mjs'
 import { createPhonePairingWindow } from './mac-phone-pairing-window.mjs'
 
-const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, Notification, safeStorage, screen, shell, session, Tray, WebContentsView } = electron
+const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, screen, shell, session, Tray, WebContentsView } = electron
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const resources = app.isPackaged ? process.resourcesPath : resolve(directory, '../../resources')
 const startup = resolve(directory, 'startup.html')
@@ -344,7 +344,8 @@ async function launch() {
             available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate),
             setUnread: count => { hubUnread = count; publishMacUnread() }, desktopSettings, changeDesktopSettings,
             setLanguage: (scope, locale) => shellLanguage.set(scope, locale), language: scope => shellLanguage.forScope(scope),
-            onConnect: () => startupWorkspace.remember('connected') })
+            onConnect: () => startupWorkspace.remember('connected'),
+            systemAppearance: () => nativeTheme.shouldUseDarkColors ? 'dark' : 'light' })
         app.on('browser-window-focus', (_event, candidate) => {
             const hub = connectedHubs.ownsWindow(candidate)
             if (boards.get(candidate) || hub) {

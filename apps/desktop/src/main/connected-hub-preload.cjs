@@ -18,6 +18,7 @@ if (bootstrap?.audience === 'picker') {
 } else if (bootstrap?.audience === 'hub-offline') {
     contextBridge.exposeInMainWorld('rerunHubOffline', {
         copy: bootstrap.copy,
+        appearance: bootstrap.appearance === 'light' ? 'light' : 'dark',
         state: () => ipcRenderer.invoke('hub:offline-state'),
         retry: () => ipcRenderer.invoke('hub:offline-retry'),
         ...(bootstrap.appStore ? { appStore: true } : { download: () => ipcRenderer.invoke('hub:offline-download') }),
@@ -87,7 +88,7 @@ if (bootstrap?.audience === 'picker') {
         window: {
             getState: () => ipcRenderer.invoke('hub:window-state'),
             onState: callback => subscribe('hub:window-state', callback),
-            setChrome: colors => { void ipcRenderer.invoke('hub:window-chrome', { frameColor: colors?.frameColor }).catch(() => {}) },
+            setChrome: colors => { void ipcRenderer.invoke('hub:window-chrome', { frameColor: colors?.frameColor, symbolColor: colors?.symbolColor }).catch(() => {}) },
         },
         find: { open: () => { void ipcRenderer.invoke('hub:find').catch(() => {}) } },
         links: { openExternal: url => ipcRenderer.invoke('hub:open-link', url, oauthRegistration?.id) },
