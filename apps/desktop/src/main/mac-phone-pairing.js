@@ -1,4 +1,7 @@
 const enable = document.getElementById('enable-access')
+const entry = document.getElementById('pairing-entry')
+const controls = document.getElementById('pairing-controls')
+const openLocal = document.getElementById('open-local')
 const network = document.getElementById('network')
 const createOffer = document.getElementById('create-offer')
 const offer = document.getElementById('offer')
@@ -36,8 +39,20 @@ function row(device, actionLabel, action) {
 
 async function refresh() {
     const status = await window.desktopApp.phonePairing.status()
+    const ready = status?.selectedWorkspaceId != null
+    entry.hidden = ready
+    controls.hidden = !ready
+    enable.disabled = updating || !ready
+    if (displayedOffer && (!ready || !status.listening || status.selectedWorkspaceId !== displayedOffer.workspaceId
+        || status.origin !== displayedOffer.origin
+        || Date.parse(displayedOffer.expiresAt) <= Date.now())) {
+        displayedOffer = null
+        code.hidden = true
+        qr.removeAttribute('src')
+        offer.textContent = ''
+    }
+    if (!ready) return
     enable.checked = !!status.phoneAccessEnabled
-    enable.disabled = updating
     const addresses = status.lanAddresses ?? []
     const choices = JSON.stringify([status.lanAddress, addresses])
     if (renderedNetworks !== choices) {
@@ -49,14 +64,6 @@ async function refresh() {
     network.value = status.lanAddress ?? ''
     network.disabled = updating || !status.phoneAccessEnabled
     createOffer.hidden = !status.listening || status.selectedWorkspaceId === null
-    if (displayedOffer && (!status.listening || status.selectedWorkspaceId !== displayedOffer.workspaceId
-        || status.origin !== displayedOffer.origin
-        || Date.parse(displayedOffer.expiresAt) <= Date.now())) {
-        displayedOffer = null
-        code.hidden = true
-        qr.removeAttribute('src')
-        offer.textContent = ''
-    }
     origin.hidden = !status.origin && !status.lanBindingEnabled
     origin.textContent = status.origin ? `Listening on ${status.origin}`
         : status.lanBindingEnabled ? 'Local network is unavailable. Choose an active address or This Mac only.' : ''
@@ -109,6 +116,10 @@ async function updateSetting(change) {
     await refresh()
 }
 
+openLocal.addEventListener('click', async () => {
+    try { await window.desktopApp.phonePairing.openLocal(); showError('') }
+    catch { showError('The local workspace could not be opened.') }
+})
 enable.addEventListener('change', () => {
     void updateSetting(() => window.desktopApp.phonePairing.setEnabled(enable.checked)).catch(() => showError('Phone pairing is unavailable.'))
 })
@@ -134,7 +145,7 @@ createOffer.addEventListener('click', async () => {
 })
 async function poll() {
     try { await refresh() }
-    catch { showError('Phone pairing is unavailable until a local workspace is open.') }
+    catch { showError('Phone pairing is unavailable. Try reopening this window.') }
     setTimeout(poll, 1000)
 }
 void poll()

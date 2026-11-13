@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('desktopApp', {
     phonePairing: {
         status: () => ipcRenderer.invoke('desktop:phone-pairing-status'),
+        openLocal: () => ipcRenderer.invoke('desktop:phone-pairing-open-local'),
         setEnabled: enabled => ipcRenderer.invoke('desktop:phone-pairing-enable', enabled === true),
         setNetwork: address => ipcRenderer.invoke('desktop:phone-pairing-network', address),
         createOffer: () => ipcRenderer.invoke('desktop:phone-pairing-offer'),

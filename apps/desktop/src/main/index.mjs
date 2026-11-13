@@ -141,6 +141,12 @@ function showMainWindow() {
     showWindowOnReady = true
     revealWorkspaceWindow(window)
 }
+function selectLocalWorkspace() {
+    if (quitting) return
+    showMainWindow()
+    if (runtimeScope()) void startupWorkspace.remember('local')
+    else if (bootStatus.state === 'choose') void openLocalWorkspace()
+}
 function reopenRememberedHub() {
     if (!reopeningHub) {
         const controller = new AbortController()
@@ -393,11 +399,7 @@ async function launch() {
             openDocumentation: () => openExternal('https://docs.rerun.build'),
             openFind: (_item, candidate) => windowFind.open(workspaceMenuTarget(candidate)),
             openQuickAsk: (_item, candidate) => toggleQuickAsk(candidate),
-            openLocalWorkspace: () => {
-                showMainWindow()
-                if (runtimeScope()) void startupWorkspace.remember('local')
-                else if (bootStatus.state === 'choose') void openLocalWorkspace()
-            },
+            openLocalWorkspace: selectLocalWorkspace,
             openNewWindow: (_item, candidate) => {
                 const target = workspaceMenuTarget(candidate)
                 if (connectedHubs.duplicateWindow(target) || !boardContext(target)) return
@@ -587,12 +589,22 @@ async function launch() {
         if (!boards.recoveryPage(event, runtime)) trusted(event)
         app.quit()
     })
-    const trustedPhonePairing = (event, readOnly = false) => {
-        if (!phonePairingWindow.isTrusted(event) || (!readOnly && quitting)) throw new Error('Phone pairing is unavailable.')
+    const assertPhonePairingWindow = event => {
+        if (!phonePairingWindow.isTrusted(event) || quitting) throw new Error('Phone pairing is unavailable.')
+    }
+    const trustedPhonePairing = event => {
+        assertPhonePairingWindow(event)
         if (!phonePairing) throw new Error('Open a local workspace before pairing an iPhone.')
         return phonePairing
     }
-    ipcMain.handle('desktop:phone-pairing-status', event => trustedPhonePairing(event, true).status())
+    ipcMain.handle('desktop:phone-pairing-status', event => {
+        assertPhonePairingWindow(event)
+        return phonePairing?.status() ?? null
+    })
+    ipcMain.handle('desktop:phone-pairing-open-local', event => {
+        assertPhonePairingWindow(event)
+        selectLocalWorkspace()
+    })
     ipcMain.handle('desktop:phone-pairing-enable', (event, enabled) => trustedPhonePairing(event).setPhoneAccessEnabled(enabled === true))
     ipcMain.handle('desktop:phone-pairing-network', (event, address) => trustedPhonePairing(event).setLanAddress(address))
     ipcMain.handle('desktop:phone-pairing-offer', async event => {
