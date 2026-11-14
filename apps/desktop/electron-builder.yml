@@ -33,7 +33,7 @@ electronFuses:
 npmRebuild: false
 buildDependenciesFromSource: false
 mac:
-    icon: ../ui/app/icon.svg
+    icon: build-resources/icon.icns
     category: public.app-category.productivity
     artifactName: "${productName}-${version}-mac-${arch}.${ext}"
     target:

@@ -376,6 +376,12 @@ async function launch() {
     if (mac) {
         startupWorkspace = await loadStartupWorkspace(dataRoot)
         if (app.isPackaged && !registerHubProtocol(app)) console.warn('Could not register Rerun development links with macOS.')
+        // A packaged app carries its icon in the bundle. A development run is Electron's own
+        // bundle, so the Dock would show Electron's icon.
+        if (!app.isPackaged) {
+            const icon = nativeImage.createFromPath(resolve(directory, '../../build-resources/icon.png'))
+            if (!icon.isEmpty()) app.dock?.setIcon(icon)
+        }
         shortcutPreference = await loadQuickAskShortcut({ dataRoot, globalShortcut, open: toggleQuickAsk })
         const currentLanguageScope = () => {
             const focused = BrowserWindow.getFocusedWindow()
