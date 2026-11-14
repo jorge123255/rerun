@@ -18,7 +18,7 @@ const errorText = {
 }
 
 async function read(action?: DesktopSubscriptionLoginAction, signal?: AbortSignal) {
-    const timeout = AbortSignal.timeout(action?.action === 'refresh-models' ? 45_000 : 15_000)
+    const timeout = AbortSignal.timeout(action?.action === 'refresh-models' ? 190_000 : 15_000)
     const response = await fetch('/api/desktop/subscription-login', {
         method: action ? 'POST' : 'GET',
         headers: action ? { 'Content-Type': 'application/json' } : undefined,
@@ -35,6 +35,9 @@ async function read(action?: DesktopSubscriptionLoginAction, signal?: AbortSigna
 export function DesktopSubscriptionLogin({ only, onConnectionsChanged }: { only?: DesktopSubscriptionProvider; onConnectionsChanged?: () => void } = {}) {
     const [snapshot, setSnapshot] = useState<DesktopSubscriptionLoginSnapshot | null>(null)
     const [pending, setPending] = useState(false)
+    // Which provider's model list is being read: Devin asks each of about 150 models for its effort levels.
+    const [loadingModels, setLoadingModels] = useState<string | null>(null)
+    useEffect(() => { if (!pending) setLoadingModels(null) }, [pending])
     const [statusReadFailed, setStatusReadFailed] = useState(false)
     const [actionError, setActionError] = useState<string | null>(null)
     const error = actionError ?? (statusReadFailed ? 'Could not read subscription sign-in status.' : null)
@@ -94,7 +97,7 @@ export function DesktopSubscriptionLogin({ only, onConnectionsChanged }: { only?
             const state = snapshot[provider]
             if (state.phase === 'unavailable') return null
             const name = names[provider]
-            const send = (action: DesktopSubscriptionLoginAction['action']) => void act({ provider, action })
+            const send = (action: DesktopSubscriptionLoginAction['action']) => { if (action === 'refresh-models') setLoadingModels(provider); void act({ provider, action }) }
             return <section key={provider} aria-label={name} className="space-y-3 rounded-xl border p-4">
                 <h2 className="font-semibold">{name}</h2>
                 {state.phase === 'waiting' ? <>
@@ -127,6 +130,7 @@ export function DesktopSubscriptionLogin({ only, onConnectionsChanged }: { only?
                     {state.canRefreshModels && <Button type="button" variant="outline" disabled={pending} onClick={() => send('refresh-models')}>
                         {state.models?.length ? 'Refresh models' : 'Load models'}
                     </Button>}
+                    {pending && loadingModels === provider && <p role="status" className="text-sm text-muted-foreground">Reading {name}’s models and their effort levels. This can take a minute or two.</p>}
                     <Button type="button" variant="outline" disabled={pending} onClick={() => send('disconnect')}>Disconnect {name} from Rerun</Button>
                 </> : <>
                     {state.phase === 'error' && <p role="alert" className="text-sm text-destructive">{errorText[state.reason]}</p>}

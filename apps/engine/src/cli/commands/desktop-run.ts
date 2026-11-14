@@ -204,7 +204,7 @@ export async function desktopRunCommand(): Promise<void> {
         catch { return c.json({ error: 'This workspace is switching. Try again when it is ready.' }, 409) }
         try {
             if (parsed.data.action === 'refresh-models') {
-                await refreshDesktopSubscriptionCatalog(parsed.data.provider, AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(90_000)]))
+                await refreshDesktopSubscriptionCatalog(parsed.data.provider, AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(180_000)]))
             } else {
                 await subscriptionLogin.action(parsed.data)
             }

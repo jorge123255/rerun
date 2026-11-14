@@ -293,7 +293,8 @@ export async function refreshDesktopSubscriptionCatalog(provider: DesktopSubscri
     try {
         if (!initial) throw new SubscriptionAcpError('selection-unavailable')
         // Every provider, Devin included, says a model's efforts through its Thinking selector once
-        // the model is chosen. Devin lists about 150 models at roughly a fifth of a second each.
+        // the model is chosen. Devin lists about 150 models and took 73 seconds for them on
+        // November 14, 2026, so the caller allows three minutes.
         for (const option of initial.options) {
             const selected = await session.selectModel(option.value, signal)
             const reasoning = selected.find(selector => selector.category === 'thought_level')
