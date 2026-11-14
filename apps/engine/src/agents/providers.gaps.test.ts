@@ -393,7 +393,7 @@ describe('resolveModel on the codex subscription', () => {
                 expect(settings).toMatchObject({ sandboxPolicy: 'read-only', autoApprove: false, approvalPolicy: 'never', configOverrides: { web_search: enabled ? 'live' : 'disabled' } })
                 expect(settings.env.RERUN_DESKTOP_CODEX_WEB).toBe(enabled ? '1' : '0')
                 expect(Object.keys(settings.mcpServers)).toEqual(enabled ? ['rerun'] : [])
-                expect(settings.configOverrides['features.code_mode.direct_only_tool_namespaces']).toEqual(enabled ? ['mcp__rerun', 'image_gen'] : ['image_gen'])
+                expect(settings.configOverrides['features.code_mode.direct_only_tool_namespaces']).toEqual(enabled ? ['mcp__rerun'] : undefined)
                 if (enabled) {
                     expect(settings.mcpServers.rerun.tools.map((t: { name: string }) => t.name)).toEqual(['fs_read', 'fs_list'])
                     expect(settings.configOverrides['mcp_servers.rerun.tools.fs_read.approval_mode']).toBe('approve')
@@ -405,11 +405,17 @@ describe('resolveModel on the codex subscription', () => {
             resolveModel(agent, undefined, tools, [], undefined, undefined, worker)
             const scoped = codexAppServerCalls.at(-1)!.defaultSettings
             expect(scoped).toMatchObject({ cwd: worker.cwd, sandboxPolicy: { type: 'externalSandbox', networkAccess: 'restricted' }, env: { RERUN_NATIVE_EXEC_URL: worker.url } })
-            expect(scoped.configOverrides['features.code_mode.direct_only_tool_namespaces']).toEqual(['mcp__rerun', 'functions', 'image_gen'])
+            expect(scoped.configOverrides['features.code_mode.direct_only_tool_namespaces']).toEqual(['mcp__rerun', 'functions'])
             agent.config.tools.desktopCodexGrants = { workspaceWrite: true }
             expect(() => resolveModel(agent, undefined, tools)).toThrow('isolated Codex command worker')
             resolveModel(agent, undefined, tools, [], undefined, undefined, worker)
             expect(codexAppServerCalls.at(-1)!.defaultSettings.env).toMatchObject({ RERUN_NATIVE_EXEC_URL: worker.url, RERUN_NATIVE_SHELL: '0' })
+            // The image permission starts Codex with its image tool and keeps that tool direct.
+            agent.config.tools.desktopCodexGrants = { images: true }
+            resolveModel(agent, undefined, tools)
+            const images = codexAppServerCalls.at(-1)!.defaultSettings
+            expect(images.env.RERUN_DESKTOP_CODEX_IMAGES).toBe('1')
+            expect(images.configOverrides['features.code_mode.direct_only_tool_namespaces']).toContain('image_gen')
             agent.config.tools.desktopCodexGrants = { codeMode: true }
             resolveModel(agent, undefined, tools)
             const host = codexAppServerCalls.at(-1)!.defaultSettings

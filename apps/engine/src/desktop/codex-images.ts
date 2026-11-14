@@ -2,16 +2,17 @@ import type { LanguageModelMiddleware } from 'ai'
 import { constants } from 'node:fs'
 import { lstat, mkdir, open, realpath, type FileHandle } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, sep } from 'node:path'
-import { CARD_MAX_IMAGE_BYTES, type FileCard } from '@rerun/contracts'
+import { CARD_MAX_IMAGE_BYTES, desktopCodexGrantsOf, type FileCard } from '@rerun/contracts'
+import { readAgentConfig } from '../agents/loader.js'
 import { validPath, workspaceRoot } from './workspace-read.js'
 import { openWithoutLinks, readBoundedFileWithoutLinks } from './open-without-links.js'
 import { requireDesktopToolGrant } from './tool-grants.js'
 import { sessionClaim } from '../runtime/run-control.js'
 import type { RunContext } from '../runtime/context.js'
 
-// Codex names this tool once the CLI adapter maps an imageGeneration item. This desktop slice does
-// not map that item and does not start a ChatGPT image turn. It only keeps a result the adapter has
-// already named, and only into this coworker's own Files.
+// Codex names this tool once the CLI adapter maps an imageGeneration item. A coworker with the
+// native image permission gets the tool; this file keeps each result the adapter names, and only
+// into this coworker's own Files.
 export const IMAGE_GENERATION_TOOL = 'image_generation'
 export const GENERATED_IMAGES_DIR = 'generated-images'
 
@@ -143,6 +144,10 @@ function exactRun(ctx: DesktopCodexImageContext): boolean {
 async function assertGrant(ctx: DesktopCodexImageContext): Promise<void> {
     ctx.abortSignal?.throwIfAborted()
     try {
+        // The coworker's own image permission keeps what it made; "Show result files" still works too.
+        const config = await readAgentConfig(ctx.agent.id).catch(() => null)
+        ctx.abortSignal?.throwIfAborted()
+        if (config?.enabled && desktopCodexGrantsOf(config.tools).images) return
         await requireDesktopToolGrant({ agent: { id: ctx.agent.id }, abortSignal: ctx.abortSignal } as RunContext, 'cardFile')
     } catch {
         ctx.abortSignal?.throwIfAborted()

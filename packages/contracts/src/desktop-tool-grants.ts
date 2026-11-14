@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { foremanAgentFileCatalogEntries } from './desktop-foreman-agent-files.js'
 
 export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'sharedFilesWrite', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'tableViewWrite', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'download', 'db', 'sharedDb', 'schedule', 'scheduleManage', 'toolInstall', 'guestShell', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate', 'teamRead', 'aiProviders', 'vision', 'notify', 'foremanAgentFilesRead', 'foremanAgentFilesWrite', 'foremanWorkspaceRead'] as const
-export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
+export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode', 'images'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
 export const desktopRerunGrantsSchema = z.partialRecord(z.enum(desktopRerunGrantIds), z.boolean())
@@ -90,8 +90,8 @@ export const desktopCodexToolCatalog: DesktopToolCatalogEntry[] = [
     supported('shell', 'Run shell commands', 'Run supported commands in a private temporary folder. Changes are discarded at the end of the turn. Include workspace files to read copies of this coworker’s text files.', 'exec_command'),
     supported('webSearch', 'Search the web', 'Use the Codex provider’s native web search.', 'web_search'),
     supported('codeMode', 'Code mode', 'Run JavaScript calculations in the bundled Codex host and call the Rerun tools granted to this coworker.', 'functions.exec'),
+    supported('images', 'Image generation and editing', 'Generate or edit an image in a ChatGPT (Codex) chat. Each image is kept in this coworker’s Files and shown in the chat.', 'image_generation'),
     pending('browser', 'Browser and computer', 'Use a browser or desktop from Codex.', 'Requires an isolated browser or desktop and its permissions.'),
-    pending('images', 'Image generation and editing', 'Generate or edit an image in a Codex chat.', 'Requires a scoped image output store and preview.'),
     pending('subagents', 'Delegate to subagents', 'Start or continue child agents.', 'Requires scoped child runs, cancellation and activity history.'),
     pending('voice', 'Voice', 'Use the Codex voice input and output tools.', 'Requires a Mac microphone and playback flow.'),
     pending('connectors', 'External connectors', 'Connect external services and servers.', 'Requires configured accounts and scoped credentials.'),

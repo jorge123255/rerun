@@ -12,7 +12,7 @@ import type { CoworkerTools, CoworkerToolPatch, CoworkerToolRow, DesktopToolGrou
 import { DesktopCoworkerCallTargets } from './coworker-calls/DesktopCoworkerCallTargets'
 import { FxToolsLoading } from './fx-repairs/PanelLoadingSkeletons'
 import { getToolMeta } from '@/lib/tool-meta'
-import { ChevronDownIcon, FolderIcon, PencilIcon, TerminalIcon, GlobeIcon, WandSparklesIcon, WrenchIcon } from '@/lib/icons'
+import { ChevronDownIcon, FolderIcon, ImageIcon, PencilIcon, TerminalIcon, GlobeIcon, WandSparklesIcon, WrenchIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { DesktopAgentView } from './DesktopApp'
 import { holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
@@ -28,7 +28,7 @@ async function requestTools(url: string, init: RequestInit): Promise<CoworkerToo
     return response.json()
 }
 
-const nativeIcons = { workspaceRead: FolderIcon, workspaceWrite: PencilIcon, shell: TerminalIcon, webSearch: GlobeIcon, codeMode: TerminalIcon }
+const nativeIcons = { workspaceRead: FolderIcon, workspaceWrite: PencilIcon, shell: TerminalIcon, webSearch: GlobeIcon, codeMode: TerminalIcon, images: ImageIcon }
 
 function CapabilityCard({ agentId, group, row, saving, toggle }: { agentId: string; group: DesktopToolGroup; row: CoworkerToolRow; saving: boolean; toggle: (patch: CoworkerToolPatch) => void }) {
     const id = useId()
