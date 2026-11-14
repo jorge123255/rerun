@@ -51,7 +51,12 @@ export async function stageSubscriptionRunners(engine, env = process.env) {
         // Devin reads its sign-in code from the terminal it is run on.
         await writeFile(join(staged, loginPolicyName), policy +
             '\n(allow network-outbound (remote ip (param "AUTH_RELAY")))\n' +
-            '(allow file-read* file-write-data file-ioctl (literal "/dev/tty") (regex #"^/dev/ttys[0-9]+$"))\n')
+            '(allow file-read* file-write-data file-ioctl (literal "/dev/tty") (regex #"^/dev/ttys[0-9]+$"))\n' +
+            // Devin checks each server's certificate with the Mac's own trust service. Without it every
+            // secure connection failed, the sign-in fell back to another route and the code was refused.
+            '(allow mach-lookup (global-name "com.apple.trustd.agent") (global-name "com.apple.trustd") (global-name "com.apple.ocspd") (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc"))\n' +
+            '(allow file-read* (literal "/Library/Keychains/System.keychain") (subpath "/private/var/db/mds") (literal "/Library/Preferences/com.apple.security.plist") (regex #"^/Library/Preferences/com\\.apple\\.security\\..*\\.plist$"))\n' +
+            '(allow ipc-posix-shm-read-data (ipc-posix-name "apple.shm.notification_center") (ipc-posix-name-regex #"^com\\.apple\\.AppleDatabaseChanged"))\n')
         await rename(staged, directory(engine))
     } finally {
         await rm(staged, { recursive: true, force: true })
