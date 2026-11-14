@@ -1,58 +1,16 @@
-import { createRequire } from 'node:module'
-import { pathToFileURL } from 'node:url'
 import { DESKTOP_CLAUDE_CONNECTION_ID } from '@rerun/contracts'
 import { planLimitWindowsFromClaude, recordPlanLimits, type ClaudePlanUsage } from '../../connections/plan-limits.js'
 import type { LoadedConnection } from '../../connections/types.js'
 import { logger } from '../../lib/logger.js'
 import { noteDesktopPlanUsage } from '../plan-usage-diagnostic.js'
-import { desktopClaudeAvailable, desktopClaudeRuntime } from './runtime.js'
+import { desktopClaudeAvailable } from './runtime.js'
 
 const READ_TIMEOUT_MS = 20_000
 const EVERY_MS = 5 * 60_000
-// The SDK ships the usage read under a name that says it will change; looked up by key so a
-// renamed method costs the gauge and nothing else.
-const USAGE_METHOD = 'usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET'
-
-type SdkQuery = { close(): void } & Record<string, unknown>
-type Sdk = { query(input: { prompt: AsyncIterable<never>; options: Record<string, unknown> }): SdkQuery }
-let sdk: Promise<Sdk> | undefined
-// The Agent SDK is the Claude provider's dependency, not the engine's own: resolved through it.
-const loadSdk = () => sdk ??= (async () => {
-    const provider = createRequire(createRequire(import.meta.url).resolve('ai-sdk-provider-claude-code'))
-    return await import(pathToFileURL(provider.resolve('@anthropic-ai/claude-agent-sdk')).href) as Sdk
-})()
-
-/** Starts the sandboxed Claude runner, asks it for the plan usage, and stops it. No prompt is sent. */
-export async function readDesktopClaudePlanUsage(token: string, harness: Record<string, string>, load: () => Promise<Sdk> = loadSdk): Promise<ClaudePlanUsage | null> {
-    const runtime = desktopClaudeRuntime(DESKTOP_CLAUDE_CONNECTION_ID, token, harness)
-    let release!: () => void
-    const idle = new Promise<void>(resolve => { release = resolve })
-    // An input that never speaks: the runner stays up for the one control request and nothing else.
-    const prompt = { async *[Symbol.asyncIterator](): AsyncGenerator<never> { await idle } }
-    let query: SdkQuery | undefined, timer: NodeJS.Timeout | undefined
-    try {
-        const { cwd, pathToClaudeCodeExecutable, settingSources, tools, strictMcpConfig, persistSession, permissionMode, spawnClaudeCodeProcess } = runtime.settings
-        query = (await load()).query({ prompt, options: { cwd, pathToClaudeCodeExecutable, settingSources, tools, strictMcpConfig, persistSession, permissionMode, spawnClaudeCodeProcess, env: {} } })
-        const reader = query[USAGE_METHOD]
-        if (typeof reader !== 'function') return null
-        return await Promise.race([
-            Promise.resolve(reader.call(query, { skipBehaviors: true })) as Promise<ClaudePlanUsage>,
-            new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Claude usage read timed out')), READ_TIMEOUT_MS) }),
-        ])
-    } catch (error) {
-        logger.warn({ err: (error as Error).message }, 'claude plan usage read failed')
-        return null
-    } finally {
-        clearTimeout(timer)
-        release()
-        try { query?.close() } catch { /* already gone */ }
-        await runtime.close().catch(() => {})
-    }
-}
-
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
-// The sign-in is a Claude Code one and the app runs the Claude Code runner with it. Asked under any
-// other name the endpoint answered 429 on the first request (seen November 14, 2026).
+// The sign-in is a Claude Code one and the app runs the Claude Code runner with it, so the request
+// carries that client's name. The endpoint throttles hard whatever the name (429 on November 14,
+// 2026); the reading a reply carries is the one to count on.
 const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.322 (external, sdk-ts)'
 
 /**
@@ -60,7 +18,9 @@ const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.322 (external, sdk-ts)'
  * started with that sign-in alone does not know the plan and answers that it has no limits to
  * report, so this is the reading that works; the token goes to its issuer and nowhere else.
  */
+let refusedUntil = 0
 export async function fetchDesktopClaudePlanUsage(token: string, request: typeof fetch = fetch): Promise<ClaudePlanUsage | null> {
+    if (Date.now() < refusedUntil) return null
     try {
         const response = await request(USAGE_URL, {
             headers: { accept: 'application/json', authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20', 'user-agent': CLAUDE_CODE_USER_AGENT },
@@ -68,7 +28,10 @@ export async function fetchDesktopClaudePlanUsage(token: string, request: typeof
         })
         if (!response.ok) {
             logger.warn({ status: response.status }, 'claude plan usage endpoint refused')
-            noteDesktopPlanUsage('claude', { outcome: 'endpoint-refused', status: response.status })
+            const wait = Number(response.headers.get('retry-after'))
+            // The endpoint throttles hard; asking again soon only extends it.
+            if (response.status === 429) refusedUntil = Date.now() + Math.min(6 * 60 * 60_000, Math.max(30 * 60_000, Number.isFinite(wait) ? wait * 1000 : 0))
+            noteDesktopPlanUsage('claude', { outcome: `endpoint-refused${Number.isFinite(wait) && wait > 0 ? `:retry-after-${Math.round(wait)}s` : ''}`, status: response.status })
             return null
         }
         const body: unknown = await response.json()
@@ -82,11 +45,11 @@ export async function fetchDesktopClaudePlanUsage(token: string, request: typeof
     }
 }
 
-/** The endpoint first; the runner only when the endpoint gave nothing to show. */
-async function readEither(token: string, harness: Record<string, string>): Promise<ClaudePlanUsage | null> {
-    const direct = await fetchDesktopClaudePlanUsage(token)
-    return planLimitWindowsFromClaude(direct).length ? direct : readDesktopClaudePlanUsage(token, harness)
-}
+/**
+ * The endpoint only. The runner started for this alone answers that it has no limits to report
+ * (seen with the owner's plan on November 14, 2026), so it is not started when the endpoint refuses.
+ */
+const readEither = (token: string, _harness: Record<string, string>) => fetchDesktopClaudePlanUsage(token)
 
 let reading: Promise<void> | undefined, attemptedAt = 0
 
@@ -110,4 +73,4 @@ export function refreshStaleDesktopClaudePlanLimits(connection: LoadedConnection
         .catch(() => {})
         .finally(() => { reading = undefined })
 }
-export function resetDesktopClaudePlanLimitPacing() { attemptedAt = 0 }
+export function resetDesktopClaudePlanLimitPacing() { attemptedAt = 0; refusedUntil = 0 }

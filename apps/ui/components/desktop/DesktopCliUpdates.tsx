@@ -68,7 +68,11 @@ export function DesktopCliToolVersion({ name, status, acting, onAct }: {
             aria-label={`${label}: ${name}`} onClick={() => onAct(action)}>{label}</Button>
     return <div data-testid="desktop-cli-tool" data-tool={tool} data-state={state} className="mt-1.5 flex items-start justify-between gap-2 text-[11px]">
         <div className="min-w-0 flex-1 space-y-0.5">
-            <p className="text-muted-foreground">{version}{source === 'updated' ? ' · updated in this app' : ''}</p>
+            <p className="text-muted-foreground">{version}{state === 'current' && latest && current === latest ? ' · up to date' : ''}</p>
+            {/* The way back is there for a version that misbehaves; it is not a step anyone has to take. */}
+            {state === 'current' && source === 'updated' && <button type="button" disabled={acting} aria-label={`Undo update: ${name}`}
+                className="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground disabled:opacity-50"
+                title="Go back to the version that came with the app" onClick={() => onAct({ action: 'revert', tool })}>Undo update</button>}
             {state === 'available' && <p className="font-medium text-amber-600 dark:text-amber-400">Version {latest} is available.</p>}
             {state === 'untested' && <p className="text-muted-foreground">Version {latest} is out but not yet tested with this app.</p>}
             {working && <p role="status" className="text-muted-foreground">{working}</p>}
@@ -84,6 +88,5 @@ export function DesktopCliToolVersion({ name, status, acting, onAct }: {
         </div>
         {state === 'available' && button('Update', { action: 'update', tool }, true)}
         {state === 'failed' && button('Try again', { action: 'update', tool })}
-        {state === 'current' && source === 'updated' && button('Use built-in', { action: 'revert', tool })}
     </div>
 }

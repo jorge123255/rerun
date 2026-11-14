@@ -35,8 +35,8 @@ test('says a ready version waits for the running coworkers, with nothing to pres
 
 test('an updated tool can go back to the built-in copy', () => {
     const { host, onAct } = mount({ state: 'current', current: '2.5.3', source: 'updated' })
-    expect(host.textContent).toContain('Version 2.5.3 · updated in this app')
-    act(() => { host.querySelector<HTMLButtonElement>('button[aria-label="Use built-in: Kimi Code"]')!.click() })
+    expect(host.textContent).toContain('Version 2.5.3 · up to date')
+    act(() => { host.querySelector<HTMLButtonElement>('button[aria-label="Undo update: Kimi Code"]')!.click() })
     expect(onAct).toHaveBeenCalledWith({ action: 'revert', tool: 'kimi-code' })
 })
 

@@ -6,6 +6,8 @@ import { Transform } from 'node:stream'
 import type { ClaudeCodeSettings } from 'ai-sdk-provider-claude-code'
 import { DESKTOP_CLAUDE_CONNECTION_ID } from '@rerun/contracts'
 import { dataDir } from '../../config/paths.js'
+import { mergePlanLimits, planLimitWindowsFromClaudeEvent } from '../../connections/plan-limits.js'
+import { noteDesktopPlanUsage } from '../plan-usage-diagnostic.js'
 
 type SpawnOptions = Parameters<NonNullable<ClaudeCodeSettings['spawnClaudeCodeProcess']>>[0]
 /** The Claude Agent SDK this app drives the Claude runner with. */
@@ -26,7 +28,7 @@ function trusted(path: string) {
     throw new Error('The bundled Claude runtime is unavailable.')
 }
 /** Bound protocol lines before the SDK parses JSON; never publish a credential echo. */
-export function desktopClaudeOutputFilter(token: string, totalLimit = 64 * 1024 * 1024, lineLimit = 8 * 1024 * 1024) {
+export function desktopClaudeOutputFilter(token: string, totalLimit = 64 * 1024 * 1024, lineLimit = 8 * 1024 * 1024, onRateLimit?: (info: unknown) => void) {
     const variants = [...new Set([token, Buffer.from(token).toString('base64'), Buffer.from(token).toString('hex'), encodeURIComponent(token)])].filter(Boolean)
     let pending = Buffer.alloc(0), total = 0
     const redact = (value: Buffer) => variants.reduce((text, secret) => text.split(secret).join('[redacted]'), value.toString('utf8'))
@@ -38,7 +40,16 @@ export function desktopClaudeOutputFilter(token: string, totalLimit = 64 * 1024 
             let offset: number
             while ((offset = pending.indexOf(10)) !== -1) {
                 if (offset > lineLimit) { done(new Error('Claude response exceeded its limit.')); return }
-                this.push(redact(pending.subarray(0, offset + 1)))
+                const line = redact(pending.subarray(0, offset + 1))
+                // The runner says how much of the plan's windows is used as it answers. Read here because
+                // the provider on top of the SDK drops the message.
+                if (onRateLimit && line.includes('"rate_limit_event"')) {
+                    try {
+                        const message = JSON.parse(line) as { type?: unknown; rate_limit_info?: unknown }
+                        if (message.type === 'rate_limit_event') onRateLimit(message.rate_limit_info)
+                    } catch { /* not a message of its own */ }
+                }
+                this.push(line)
                 pending = pending.subarray(offset + 1)
             }
             if (pending.length > lineLimit) { done(new Error('Claude response exceeded its limit.')); return }
@@ -112,7 +123,11 @@ export function desktopClaudeRuntime(connectionId: string | undefined, token: st
                 const spec = desktopClaudeSpawnSpec(binary, sandbox, profile, token, harness, options)
                 const child = spawn(spec.command, spec.args, { cwd: spec.cwd, env: spec.env, stdio: ['pipe', 'pipe', 'pipe'], shell: false, detached: true }) as ChildProcessWithoutNullStreams
                 children.add(child)
-                const output = desktopClaudeOutputFilter(token), diagnostic = desktopClaudeOutputFilter(token, 65536, 65536)
+                const output = desktopClaudeOutputFilter(token, undefined, undefined, info => {
+                    const windows = planLimitWindowsFromClaudeEvent(info)
+                    mergePlanLimits(DESKTOP_CLAUDE_CONNECTION_ID, windows)
+                    noteDesktopPlanUsage('claude-reply', { outcome: windows.length ? 'read' : 'no-windows', fields: info && typeof info === 'object' ? Object.keys(info) : [] })
+                }), diagnostic = desktopClaudeOutputFilter(token, 65536, 65536)
                 child.stdout = child.stdout.pipe(output)
                 child.stderr = child.stderr.pipe(diagnostic)
                 output.on('error', () => { void drain(child).catch(() => {}) })

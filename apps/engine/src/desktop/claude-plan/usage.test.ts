@@ -61,6 +61,13 @@ describe('Claude plan limits on demand', () => {
         expect(planLimitWindowsFromClaude(usage)).toMatchObject([{ kind: 'session', usedPercent: 41 }, { kind: 'weekly', usedPercent: 12 }])
     })
 
+    it('stops asking for a while once the endpoint says it is throttled', async () => {
+        const request = vi.fn(async () => new Response('', { status: 429 }))
+        expect(await fetchDesktopClaudePlanUsage('fixture-token', request as unknown as typeof fetch)).toBeNull()
+        expect(await fetchDesktopClaudePlanUsage('fixture-token', request as unknown as typeof fetch)).toBeNull()
+        expect(request).toHaveBeenCalledTimes(1)
+    })
+
     it('has no reading when the endpoint refuses or cannot be reached', async () => {
         expect(await fetchDesktopClaudePlanUsage('fixture-token', (async () => new Response('', { status: 401 })) as unknown as typeof fetch)).toBeNull()
         expect(await fetchDesktopClaudePlanUsage('fixture-token', (async () => { throw new Error('offline') }) as unknown as typeof fetch)).toBeNull()

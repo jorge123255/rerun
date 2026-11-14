@@ -62,6 +62,33 @@ function codexWindow(window: CodexWindow | undefined, fallback: PlanLimitWindow[
     return [{ kind, label: null, usedPercent: window.usedPercent, resetsAt }]
 }
 
+/**
+ * The windows a live `rate_limit_event` of the Claude runner carries. It sends both windows under
+ * `unifiedWindows`; an older runner sends only the one named by `rateLimitType`, at the top level.
+ * `utilization` is a fraction of 1 here, where the usage reading sends a percent.
+ */
+export function planLimitWindowsFromClaudeEvent(info: unknown): PlanLimitWindow[] {
+    if (!info || typeof info !== 'object') return []
+    const event = info as { unifiedWindows?: unknown; rateLimitType?: unknown }
+    const windows = (event.unifiedWindows && typeof event.unifiedWindows === 'object' ? event.unifiedWindows
+        : typeof event.rateLimitType === 'string' ? { [event.rateLimitType]: info } : {}) as Record<string, { utilization?: unknown; resetsAt?: unknown } | null | undefined>
+    const read = (kind: PlanLimitWindow['kind'], window: { utilization?: unknown; resetsAt?: unknown } | null | undefined): PlanLimitWindow[] => {
+        if (typeof window?.utilization !== 'number' || !Number.isFinite(window.utilization) || window.utilization < 0) return []
+        const reset = typeof window.resetsAt === 'number' && window.resetsAt > 0 ? (window.resetsAt > 100_000_000_000 ? window.resetsAt : window.resetsAt * 1000) : NaN
+        return [{ kind, label: null, usedPercent: window.utilization * 100, resetsAt: Number.isFinite(reset) ? new Date(reset).toISOString() : null }]
+    }
+    return [...read('session', windows.five_hour), ...read('weekly', windows.seven_day)]
+}
+
+/** Records the windows of a partial reading over the last one, keeping the windows it does not mention. */
+export function mergePlanLimits(connectionId: string, windows: PlanLimitWindow[]): void {
+    if (!windows.length) return
+    const same = (a: PlanLimitWindow, b: PlanLimitWindow) => a.kind === b.kind && a.label === b.label
+    const kept = (readPlanLimits(connectionId)?.windows ?? []).filter(old => !windows.some(window => same(window, old)))
+    const order = { session: 0, weekly: 1, model: 2 }
+    recordPlanLimits(connectionId, [...windows, ...kept].sort((a, b) => order[a.kind] - order[b.kind]))
+}
+
 // Grok's answer to its own `_x.ai/billing` call. Its service writes proto3 JSON, which leaves a zero
 // out: a period with nothing used yet has no `creditUsagePercent`.
 export type GrokBilling = { config?: { creditUsagePercent?: unknown; currentPeriod?: { type?: unknown; start?: unknown; end?: unknown } | null } | null }

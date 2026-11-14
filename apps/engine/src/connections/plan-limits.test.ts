@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { forgetPlanLimits, planLimitWindowsFromClaude, planLimitWindowsFromCodex, planLimitWindowsFromGrok, planLimitWindowsFromKimi, readPlanLimits, recordPlanLimits } from './plan-limits.js'
+import { forgetPlanLimits, planLimitWindowsFromClaude, planLimitWindowsFromCodex, mergePlanLimits, planLimitWindowsFromClaudeEvent, planLimitWindowsFromGrok, planLimitWindowsFromKimi, readPlanLimits, recordPlanLimits } from './plan-limits.js'
 
 describe('planLimitWindowsFromClaude', () => {
     it('reads the session, weekly and per-model windows', () => {
@@ -54,6 +54,29 @@ describe('planLimitWindowsFromCodex', () => {
     it('reads nothing off a failed read', () => {
         expect(planLimitWindowsFromCodex(null)).toEqual([])
         expect(planLimitWindowsFromCodex({ rateLimits: null })).toEqual([])
+    })
+})
+
+describe('planLimitWindowsFromClaudeEvent', () => {
+    it('reads both windows of a live event, as percents', () => {
+        expect(planLimitWindowsFromClaudeEvent({ status: 'allowed', unifiedWindows: { five_hour: { utilization: 0.41, resetsAt: 1794675600 }, seven_day: { utilization: 1.2, resetsAt: 1795000000000 } } })).toEqual([
+            { kind: 'session', label: null, usedPercent: 41, resetsAt: new Date(1794675600_000).toISOString() },
+            { kind: 'weekly', label: null, usedPercent: 120, resetsAt: new Date(1795000000000).toISOString() },
+        ])
+    })
+
+    it('reads the single window an older runner sends, and nothing from an event without one', () => {
+        expect(planLimitWindowsFromClaudeEvent({ rateLimitType: 'seven_day', utilization: 0.5, resetsAt: 1794675600 })).toMatchObject([{ kind: 'weekly', usedPercent: 50 }])
+        expect(planLimitWindowsFromClaudeEvent({ status: 'allowed' })).toEqual([])
+        expect(planLimitWindowsFromClaudeEvent(null)).toEqual([])
+    })
+
+    it('keeps the windows a partial event does not mention', () => {
+        forgetPlanLimits('merge-fixture')
+        recordPlanLimits('merge-fixture', [{ kind: 'session', label: null, usedPercent: 10, resetsAt: null }, { kind: 'weekly', label: null, usedPercent: 20, resetsAt: null }])
+        mergePlanLimits('merge-fixture', [{ kind: 'weekly', label: null, usedPercent: 25, resetsAt: null }])
+        expect(readPlanLimits('merge-fixture')?.windows.map(window => [window.kind, window.usedPercent])).toEqual([['session', 10], ['weekly', 25]])
+        forgetPlanLimits('merge-fixture')
     })
 })
 
