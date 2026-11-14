@@ -70,6 +70,7 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (path === '/desktop/codex-login') return (method === 'GET' || method === 'POST') && desktopCodexAvailable()
     if (path === '/desktop/claude-login') return (method === 'GET' || method === 'POST') && desktopClaudeAvailable()
     if (path === '/desktop/subscription-providers' || path === '/desktop/provider-usage') return method === 'GET'
+    if (path === '/desktop/cli-updates') return method === 'GET' || method === 'POST'
     if (path === '/desktop/subscription-login') return method === 'GET' || method === 'POST'
     if (/^\/agents\/(?:import|foreman|default)(?:\/|$)/.test(path)) return false
     const id = '[A-Za-z0-9_-]+'

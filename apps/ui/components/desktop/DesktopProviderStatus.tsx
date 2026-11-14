@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Cpu } from 'lucide-react'
-import { PROVIDER_LABELS, desktopProviderUsageSchema, type BoxDefaultModel, type ConnectionSummary, type DesktopProviderUsage, type Provider } from '@rerun/contracts'
+import { DESKTOP_CLI_TOOLS, PROVIDER_LABELS, desktopProviderUsageSchema, type BoxDefaultModel, type ConnectionSummary, type DesktopProviderUsage, type Provider } from '@rerun/contracts'
 import { PlanLimitMeter } from '@/components/connections/SourceBits'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -11,6 +11,7 @@ import { planWindowName, planWindowPercent, planWindowReset } from '@/lib/engine
 import { ChevronDownIcon } from '@/lib/icons'
 import { desktopConnectionModelLabel } from '@/lib/desktop/chat-model'
 import { desktopPlanUsage } from '@/lib/desktop/plan-limits'
+import { DesktopCliToolVersion, useDesktopCliUpdates } from './DesktopCliUpdates'
 import { useDesktopLocale } from './DesktopLocale'
 
 const labelOf = (connection: Pick<ConnectionSummary, 'provider' | 'name'>) =>
@@ -18,7 +19,8 @@ const labelOf = (connection: Pick<ConnectionSummary, 'provider' | 'name'>) =>
 
 /**
  * The provider pill of the board's header. It names the workspace default as before and opens a
- * list of every connected provider with the usage each one reports.
+ * list of every connected provider with the usage each one reports, the version of the tool that
+ * runs it, and its update when the vendor has a newer one.
  */
 export function DesktopProviderStatus({ providerLabel, modelLabel, connections = [], workspaceDefault, disabled, onSettings }: {
     providerLabel?: string
@@ -42,13 +44,18 @@ export function DesktopProviderStatus({ providerLabel, modelLabel, connections =
         return () => controller.abort()
     }, [open])
     const connected = connections.filter(connection => connection.connected && !connection.credentialRejected)
+    const updates = useDesktopCliUpdates(connected.some(connection => (DESKTOP_CLI_TOOLS as readonly string[]).includes(connection.provider)))
+    const toolOf = (provider: string) => updates.tools.find(tool => tool.tool === provider)
+    // Only a tool that runs a connected provider is worth a notice.
+    const waiting = connected.filter(connection => toolOf(connection.provider)?.state === 'available').length
+    const updateNotice = waiting === 1 ? '1 update available' : `${waiting} updates available`
     const providerStatus = providerLabel ? t('boardUI.providerConnected', { provider: providerLabel }) : t('boardUI.providerSetup')
     const providerSummary = providerLabel && modelLabel ? `${providerStatus} · ${modelLabel}` : providerStatus
     const others = connected.length > 1 ? ` · ${connected.length} connected` : ''
     return <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
             <Button type="button" variant="outline" size="sm" disabled={disabled && !open}
-                aria-keyshortcuts="Meta+," title={t('boardUI.modelSettings')} aria-label={providerSummary + others}
+                aria-keyshortcuts="Meta+," title={t('boardUI.modelSettings')} aria-label={providerSummary + others + (waiting ? ` · ${updateNotice}` : '')}
                 className="pointer-events-auto relative h-8 min-w-0 rounded-full bg-background/90 px-2.5 text-xs backdrop-blur-xl @max-md/board-header:size-8 @max-md/board-header:shrink-0 @max-md/board-header:p-0">
                 <Cpu aria-hidden className="hidden @max-md/board-header:block" />
                 <span role={providerLabel ? 'status' : undefined} className="flex min-w-0 items-center gap-1.5 @max-md/board-header:sr-only">
@@ -56,13 +63,15 @@ export function DesktopProviderStatus({ providerLabel, modelLabel, connections =
                     <span className="truncate">{providerStatus}</span>
                     {providerLabel && modelLabel && <span className="max-w-36 truncate text-muted-foreground">{modelLabel}</span>}
                     {connected.length > 1 && <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] text-muted-foreground" aria-hidden>+{connected.length - 1}</span>}
+                    {waiting > 0 && <span data-testid="desktop-cli-update-notice" title={updateNotice} className="shrink-0 rounded-full bg-amber-500/15 px-1.5 text-[10px] font-medium text-amber-700 dark:text-amber-300" aria-hidden>{waiting === 1 ? 'Update' : `${waiting} updates`}</span>}
                     <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
                 </span>
-                {providerLabel && <span aria-hidden className="absolute top-1 right-1 hidden size-1.5 rounded-full bg-emerald-500 @max-md/board-header:block" />}
+                {providerLabel && <span aria-hidden className={`absolute top-1 right-1 hidden size-1.5 rounded-full @max-md/board-header:block ${waiting ? 'bg-amber-500' : 'bg-emerald-500'}`} />}
             </Button>
         </PopoverTrigger>
         <PopoverContent align="start" collisionPadding={12} data-testid="desktop-provider-status" className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1.5rem)] gap-2 overflow-y-auto p-2">
             <h2 className="px-2 pt-1 text-sm font-semibold">Connected providers</h2>
+            {waiting > 0 && <p role="status" className="px-2 text-xs font-medium text-amber-600 dark:text-amber-400">{updateNotice}</p>}
             {connected.length === 0 && <p className="px-2 text-xs text-muted-foreground">{t('boardUI.providerSetup')}</p>}
             <ul className="space-y-1.5">
                 {connected.map(connection => {
@@ -78,6 +87,7 @@ export function DesktopProviderStatus({ providerLabel, modelLabel, connections =
                             {isDefault && workspaceDefault ? `Workspace default · ${desktopConnectionModelLabel(connection, workspaceDefault.model)}`
                                 : `${connection.models.length + (connection.extraModels?.length ?? 0)} ${connection.models.length + (connection.extraModels?.length ?? 0) === 1 ? 'model' : 'models'}`}
                         </p>
+                        {toolOf(connection.provider) && <DesktopCliToolVersion name={connection.name || labelOf(connection)} status={toolOf(connection.provider)!} acting={updates.acting} onAct={action => { void updates.act(action) }} />}
                         <ProviderRan ran={ran?.[connection.provider]} loaded={ran !== null} />
                         {usage.status === 'unknown'
                             ? <p className="mt-1.5 text-[11px] text-muted-foreground">{usage.reason === 'unsupported-provider' ? 'This provider does not report its plan limits.' : 'No plan limit reading yet.'}</p>
@@ -97,7 +107,10 @@ export function DesktopProviderStatus({ providerLabel, modelLabel, connections =
                     </li>
                 })}
             </ul>
-            <Button type="button" size="sm" variant="ghost" className="justify-start" disabled={disabled} onClick={() => { setOpen(false); onSettings() }}>{t('boardUI.modelSettings')}</Button>
+            <div className="flex items-center justify-between gap-2">
+                <Button type="button" size="sm" variant="ghost" className="justify-start" disabled={disabled} onClick={() => { setOpen(false); onSettings() }}>{t('boardUI.modelSettings')}</Button>
+                {updates.tools.length > 0 && <Button type="button" size="sm" variant="ghost" className="text-muted-foreground" disabled={updates.acting} onClick={() => { void updates.act({ action: 'check' }) }}>{updates.acting ? 'Checking…' : 'Check for updates'}</Button>}
+            </div>
         </PopoverContent>
     </Popover>
 }

@@ -8,6 +8,8 @@ import { DESKTOP_CLAUDE_CONNECTION_ID } from '@rerun/contracts'
 import { dataDir } from '../../config/paths.js'
 
 type SpawnOptions = Parameters<NonNullable<ClaudeCodeSettings['spawnClaudeCodeProcess']>>[0]
+/** The Claude Agent SDK this app drives the Claude runner with. */
+export const DESKTOP_CLAUDE_SDK_VERSION = '0.3.322'
 const workers = new Set<{ close(): Promise<void> }>()
 export const desktopClaudeAvailable = () => process.env.RERUN_DESKTOP_APP === '1' && isAbsolute(process.env.RERUN_DESKTOP_CLAUDE_RUNNER ?? '') && isAbsolute(process.env.RERUN_DESKTOP_CLAUDE_SANDBOX ?? '')
 export async function stopDesktopClaudeWorkers() {
@@ -55,7 +57,7 @@ export function desktopClaudeSpawnSpec(binary: string, sandbox: string, profile:
         command: '/usr/bin/sandbox-exec',
         args: ['-D', `PROFILE=${profile}`, '-D', `BINARY=${binary}`, '-f', sandbox, binary, ...options.args],
         cwd: profile,
-        env: { ...harness, NODE_ENV: 'production' as const, PATH: '/usr/bin:/bin', HOME: profile, CLAUDE_CONFIG_DIR: profile, TMPDIR: join(profile, 'tmp'), CLAUDE_CODE_TMPDIR: join(profile, 'tmp'), LANG: 'en_US.UTF-8', CLAUDE_CODE_ENTRYPOINT: 'sdk-ts', CLAUDE_AGENT_SDK_VERSION: '0.3.322', CLAUDE_CODE_OAUTH_TOKEN: token },
+        env: { ...harness, NODE_ENV: 'production' as const, PATH: '/usr/bin:/bin', HOME: profile, CLAUDE_CONFIG_DIR: profile, TMPDIR: join(profile, 'tmp'), CLAUDE_CODE_TMPDIR: join(profile, 'tmp'), LANG: 'en_US.UTF-8', CLAUDE_CODE_ENTRYPOINT: 'sdk-ts', CLAUDE_AGENT_SDK_VERSION: DESKTOP_CLAUDE_SDK_VERSION, CLAUDE_CODE_OAUTH_TOKEN: token },
     }
 }
 export function desktopClaudeRuntime(connectionId: string | undefined, token: string, harness: Record<string, string>) {

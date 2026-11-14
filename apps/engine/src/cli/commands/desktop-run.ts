@@ -36,8 +36,9 @@ import { reconcileInterruptedRuns } from '../../runtime/reconcile.js'
 import { abortAllRuns } from '../../runtime/run-control.js'
 import { closeAllMcp } from '../../tools/mcp-pool.js'
 import { env } from '../../config/env.js'
-import { desktopCodexAction, desktopClaudePlanActionSchema, desktopSubscriptionLoginAction } from '@rerun/contracts'
+import { desktopCodexAction, desktopClaudePlanActionSchema, desktopCliUpdateActionSchema, desktopSubscriptionLoginAction } from '@rerun/contracts'
 import { readDesktopProviderUsage } from '../../desktop/provider-usage/usage.js'
+import { bindDesktopCliUpdates } from '../../desktop/cli-updates/updates.js'
 import { codexLoginAction, codexLoginStatus, stopCodexLogin } from '../../desktop/codex-login.js'
 import { desktopApp, desktopRouteAllowed } from '../../desktop/policy.js'
 import { bindDesktopSchedules } from '../../desktop/schedule-binding.js'
@@ -166,6 +167,15 @@ export async function desktopRunCommand(): Promise<void> {
     })
     app.get('/desktop/codex-login', async c => c.json(await codexLoginStatus()))
     app.get('/desktop/provider-usage', async c => c.json(await readDesktopProviderUsage(), 200, { 'Cache-Control': 'no-store' }))
+    // Downloaded tool versions take over from the built-in copies before the first reply can start.
+    const cliUpdates = bindDesktopCliUpdates(installRoot)
+    void cliUpdates.restore().catch(() => {})
+    app.get('/desktop/cli-updates', async c => c.json(await cliUpdates.status(), 200, { 'Cache-Control': 'no-store' }))
+    app.post('/desktop/cli-updates', async c => {
+        const parsed = desktopCliUpdateActionSchema.safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) return c.json({ error: 'Invalid update action.' }, 400)
+        return c.json(await cliUpdates.action(parsed.data), 200, { 'Cache-Control': 'no-store' })
+    })
     app.get('/desktop/subscription-providers', c => c.json({
         'grok-build': { runtimeAvailable: desktopSubscriptionRunnerAvailable('grok-build') },
         'kimi-code': { runtimeAvailable: desktopSubscriptionRunnerAvailable('kimi-code') },
@@ -233,6 +243,7 @@ export async function desktopRunCommand(): Promise<void> {
         if (shutdownActive) return
         shutdownActive = true
         stopping = true
+        cliUpdates.stop()
         const diagnostic = createDesktopStopDiagnostic(expectedEngineRoot, runtime)
         lifetime.abort()
         stopScheduler?.()

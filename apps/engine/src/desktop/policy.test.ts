@@ -40,6 +40,9 @@ test('generic connection mutations cannot bypass named API receipts through raw,
     expect(desktopRouteAllowed('PUT', '/connections/model-effort')).toBe(true)
     expect(desktopRouteAllowed('GET', '/desktop/provider-usage')).toBe(true)
     expect(desktopRouteAllowed('POST', '/desktop/provider-usage')).toBe(false)
+    expect(desktopRouteAllowed('GET', '/desktop/cli-updates')).toBe(true)
+    expect(desktopRouteAllowed('POST', '/desktop/cli-updates')).toBe(true)
+    expect(desktopRouteAllowed('DELETE', '/desktop/cli-updates')).toBe(false)
     expect(desktopRouteAllowed('POST', '/connections/model-effort')).toBe(false)
 })
 
