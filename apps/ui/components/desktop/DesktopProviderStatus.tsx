@@ -11,6 +11,7 @@ import { planWindowName, planWindowPercent, planWindowReset } from '@/lib/engine
 import { ChevronDownIcon } from '@/lib/icons'
 import { desktopConnectionModelLabel } from '@/lib/desktop/chat-model'
 import { desktopPlanUsage } from '@/lib/desktop/plan-limits'
+import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { DesktopCliToolVersion, useDesktopCliUpdates } from './DesktopCliUpdates'
 import { useDesktopLocale } from './DesktopLocale'
 
@@ -48,10 +49,10 @@ export function DesktopProviderStatus({ providerLabel, modelLabel, connections =
     const toolOf = (provider: string) => updates.tools.find(tool => tool.tool === provider)
     // Only a tool that runs a connected provider is worth a notice.
     const waiting = connected.filter(connection => toolOf(connection.provider)?.state === 'available').length
-    const updateNotice = waiting === 1 ? '1 update available' : `${waiting} updates available`
+    const updateNotice = t('boardUI.updatesAvailable', { count: waiting })
     const providerStatus = providerLabel ? t('boardUI.providerConnected', { provider: providerLabel }) : t('boardUI.providerSetup')
     const providerSummary = providerLabel && modelLabel ? `${providerStatus} · ${modelLabel}` : providerStatus
-    const others = connected.length > 1 ? ` · ${connected.length} connected` : ''
+    const others = connected.length > 1 ? ` · ${t('boardUI.providersMore', { count: connected.length })}` : ''
     return <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
             <Button type="button" variant="outline" size="sm" disabled={disabled && !open}
@@ -63,14 +64,14 @@ export function DesktopProviderStatus({ providerLabel, modelLabel, connections =
                     <span className="truncate">{providerStatus}</span>
                     {providerLabel && modelLabel && <span className="max-w-36 truncate text-muted-foreground">{modelLabel}</span>}
                     {connected.length > 1 && <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] text-muted-foreground" aria-hidden>+{connected.length - 1}</span>}
-                    {waiting > 0 && <span data-testid="desktop-cli-update-notice" title={updateNotice} className="shrink-0 rounded-full bg-amber-500/15 px-1.5 text-[10px] font-medium text-amber-700 dark:text-amber-300" aria-hidden>{waiting === 1 ? 'Update' : `${waiting} updates`}</span>}
+                    {waiting > 0 && <span data-testid="desktop-cli-update-notice" title={updateNotice} className="shrink-0 rounded-full bg-amber-500/15 px-1.5 text-[10px] font-medium text-amber-700 dark:text-amber-300" aria-hidden>{t('boardUI.updatesBadge', { count: waiting })}</span>}
                     <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
                 </span>
                 {providerLabel && <span aria-hidden className={`absolute top-1 right-1 hidden size-1.5 rounded-full @max-md/board-header:block ${waiting ? 'bg-amber-500' : 'bg-emerald-500'}`} />}
             </Button>
         </PopoverTrigger>
         <PopoverContent align="start" collisionPadding={12} data-testid="desktop-provider-status" className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1.5rem)] gap-2 overflow-y-auto p-2">
-            <h2 className="px-2 pt-1 text-sm font-semibold">Connected providers</h2>
+            <h2 className="px-2 pt-1 text-sm font-semibold">{t('boardUI.providersTitle')}</h2>
             {waiting > 0 && <p role="status" className="px-2 text-xs font-medium text-amber-600 dark:text-amber-400">{updateNotice}</p>}
             {connected.length === 0 && <p className="px-2 text-xs text-muted-foreground">{t('boardUI.providerSetup')}</p>}
             <ul className="space-y-1.5">
@@ -84,13 +85,13 @@ export function DesktopProviderStatus({ providerLabel, modelLabel, connections =
                             <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
                         </div>
                         <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                            {isDefault && workspaceDefault ? `Workspace default · ${desktopConnectionModelLabel(connection, workspaceDefault.model)}`
-                                : `${connection.models.length + (connection.extraModels?.length ?? 0)} ${connection.models.length + (connection.extraModels?.length ?? 0) === 1 ? 'model' : 'models'}`}
+                            {isDefault && workspaceDefault ? t('boardUI.workspaceDefaultModel', { model: desktopConnectionModelLabel(connection, workspaceDefault.model) })
+                                : t('boardUI.modelCount', { count: connection.models.length + (connection.extraModels?.length ?? 0) })}
                         </p>
                         {toolOf(connection.provider) && <DesktopCliToolVersion name={connection.name || labelOf(connection)} status={toolOf(connection.provider)!} acting={updates.acting} onAct={action => { void updates.act(action) }} />}
                         <ProviderRan ran={ran?.[connection.provider]} loaded={ran !== null} />
                         {usage.status === 'unknown'
-                            ? <p className="mt-1.5 text-[11px] text-muted-foreground">{usage.reason === 'unsupported-provider' ? 'This provider does not report its plan limits.' : 'No plan limit reading yet.'}</p>
+                            ? <p className="mt-1.5 text-[11px] text-muted-foreground">{usage.reason === 'unsupported-provider' ? t('boardUI.noPlanLimits') : t('boardUI.noPlanReading')}</p>
                             : <div className="mt-2 space-y-2">
                                 {usage.windows.map((window, index) => {
                                     const name = planWindowName(window), reset = planWindowReset(window)
@@ -102,29 +103,31 @@ export function DesktopProviderStatus({ providerLabel, modelLabel, connections =
                                         <PlanLimitMeter percent={window.usedPercent} label={`${connection.name} ${name} limit used`} />
                                     </div>
                                 })}
-                                {usage.status === 'stale' && <p className="text-[11px] text-muted-foreground">This reading may be out of date.</p>}
+                                {usage.status === 'stale' && <p className="text-[11px] text-muted-foreground">{t('boardUI.staleReading')}</p>}
                             </div>}
                     </li>
                 })}
             </ul>
             <div className="flex items-center justify-between gap-2">
                 <Button type="button" size="sm" variant="ghost" className="justify-start" disabled={disabled} onClick={() => { setOpen(false); onSettings() }}>{t('boardUI.modelSettings')}</Button>
-                {updates.tools.length > 0 && <Button type="button" size="sm" variant="ghost" className="text-muted-foreground" disabled={updates.acting} onClick={() => { void updates.act({ action: 'check' }) }}>{updates.acting ? 'Checking…' : 'Check for updates'}</Button>}
+                {updates.tools.length > 0 && <Button type="button" size="sm" variant="ghost" className="text-muted-foreground" disabled={updates.acting} onClick={() => { void updates.act({ action: 'check' }) }}>{updates.acting ? t('boardUI.checkingUpdates') : t('boardUI.checkUpdates')}</Button>}
             </div>
         </PopoverContent>
     </Popover>
 }
 
-const count = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
-const amount = (window: { replies: number; tokens: number }) =>
-    `${window.replies} ${window.replies === 1 ? 'reply' : 'replies'}${window.tokens > 0 ? ` · ${count.format(window.tokens)} tokens` : ''}`
-
 /** Replies and tokens this Mac ran on a provider. Shown for every provider, whatever it reports itself. */
 function ProviderRan({ ran, loaded }: { ran?: DesktopProviderUsage['providers'][string]; loaded: boolean }) {
-    if (!loaded) return <p className="mt-1.5 text-[11px] text-muted-foreground">Reading usage…</p>
+    const { t, language } = useDesktopLocale()
+    if (!loaded) return <p className="mt-1.5 text-[11px] text-muted-foreground">{t('boardUI.readingUsage')}</p>
+    const number = new Intl.NumberFormat(desktopLocaleTag(language.locale), { notation: 'compact', maximumFractionDigits: 1 })
+    const amount = (window: { replies: number; tokens: number }) => {
+        const replies = t('boardUI.replies', { count: window.replies })
+        return window.tokens > 0 ? t('boardUI.repliesTokens', { replies, tokens: number.format(window.tokens) }) : replies
+    }
     const day = ran?.day ?? { replies: 0, tokens: 0 }, week = ran?.week ?? { replies: 0, tokens: 0 }
     return <dl data-testid="desktop-provider-ran" className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-2 text-[11px]">
-        <dt className="text-muted-foreground">Last 24 hours</dt><dd className="tabular-nums">{amount(day)}</dd>
-        <dt className="text-muted-foreground">Last 7 days</dt><dd className="tabular-nums">{amount(week)}</dd>
+        <dt className="text-muted-foreground">{t('boardUI.lastDay')}</dt><dd className="tabular-nums">{amount(day)}</dd>
+        <dt className="text-muted-foreground">{t('boardUI.lastWeek')}</dt><dd className="tabular-nums">{amount(week)}</dd>
     </dl>
 }

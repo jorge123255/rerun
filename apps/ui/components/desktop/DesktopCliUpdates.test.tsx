@@ -4,6 +4,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { DesktopCliToolStatus } from '@rerun/contracts'
 import { DesktopCliToolVersion } from './DesktopCliUpdates'
+import { DesktopLocale } from './DesktopLocale'
+import { desktopMessages } from '@/lib/desktop/locale'
+import { loadMessages } from '@rerun/i18n/messages'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -59,4 +62,16 @@ test('shows a bar with the step while an update is under way', () => {
     expect(checking.host.querySelector('[role=progressbar]')!.hasAttribute('aria-valuenow')).toBe(false)
     expect(mount({ state: 'downloading', pending: '2.5.3', step: 'install', progress: null }).host.textContent).toContain('Installing version 2.5.3…')
     expect(mount({ state: 'waiting', pending: '2.5.3' }).host.querySelector('[role=progressbar]')!.getAttribute('aria-valuenow')).toBe('100')
+})
+
+test('reads in the app language', async () => {
+    const language = { locale: 'fr' as const, preference: 'fr' as const, messages: desktopMessages('fr', await loadMessages('fr')) }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    roots.push(root)
+    act(() => { root.render(<DesktopLocale initial={language}>
+        <DesktopCliToolVersion name="Kimi Code" status={base} acting={false} onAct={vi.fn()} /></DesktopLocale>) })
+    expect(host.textContent).toContain('La version 2.5.3 est disponible.')
+    expect(host.querySelector('button')!.textContent).toBe('Mettre à jour')
 })
