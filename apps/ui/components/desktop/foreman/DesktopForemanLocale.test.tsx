@@ -287,11 +287,11 @@ it('shows only the Chief of Staff’s selected plan usage, and removes it when u
 it('labels estimated context in French and hides it when the selected model or connection changes', async () => {
     const model = { connectionId: 'fixture', model: 'test-model' }
     const effective = { ...model, source: 'workspace' as const, provider: 'codex', name: 'Fixture', label: 'Fixture model', available: true }
-    const context = { model, usage: { inputTokens: 4000 }, usedTokens: 5000, maxTokens: 10_000, estimated: true }
+    const context = { model, usage: { inputTokens: 4000 }, usedTokens: 8000, maxTokens: 10_000, estimated: true }
     await show(<DesktopForemanContext context={context} effective={effective} />)
-    expect(document.querySelector('button')?.getAttribute('aria-label')).toBe('Contexte estimé · 50%')
+    expect(document.querySelector('button')?.getAttribute('aria-label')).toBe('Contexte estimé · 80%')
     await show(<DesktopForemanContext context={{ ...context, estimated: false }} effective={effective} />)
-    expect(document.querySelector('button')?.getAttribute('aria-label')).toBe(french.messages.foreman.context.usedLabel.replace('{percent}', '50'))
+    expect(document.querySelector('button')?.getAttribute('aria-label')).toBe(french.messages.foreman.context.usedLabel.replace('{percent}', '80'))
     await show(<DesktopForemanContext context={context} effective={{ ...effective, connectionId: 'another-account' }} />)
     expect(document.querySelector('button')).toBeNull()
     await show(<DesktopForemanContext context={context} effective={{ ...effective, model: 'another-model' }} />)

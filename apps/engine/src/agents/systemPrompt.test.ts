@@ -315,7 +315,7 @@ describe('buildSystemPrompt provider notes', () => {
     it('tells codex to make the closing calls before writing its message', async () => {
         const prompt = await buildSystemPrompt(agent, { source: 'chat' }, 'codex')
         expect(prompt).toContain('<turn_order>')
-        expect(prompt).toContain('the first message you write to the user ends your turn')
+        expect(prompt).toContain('a message written before a call does not reach the user as your message')
         expect(prompt).not.toContain('A turn ends in this order, your message first')
     })
 
@@ -331,7 +331,7 @@ describe('buildSystemPrompt provider notes', () => {
         const provider = 'rerun'
         const prompt = await buildSystemPrompt(agent, { source: 'chat' }, provider)
         expect(prompt).toContain('A turn ends in this order, your message first')
-        expect(prompt).not.toContain('the first message you write to the user ends your turn')
+        expect(prompt).not.toContain('a message written before a call does not reach the user as your message')
     })
 
     it('leaves the turn order out for an agent with nothing that closes a turn', async () => {

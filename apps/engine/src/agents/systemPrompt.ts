@@ -57,8 +57,11 @@ const SHARED_DATABASE_NOTE =
 // every run of every agent, so it is the only one we cap.
 const SHARED_SCHEMA_BUDGET = { maxTables: 40, maxChars: 4000, more: (n: number) => `... and ${n} more tables, call shared_db_schema to see them.` }
 
-const VOCABULARY_NOTE =
-    'Rerun calls the workers of a workspace coworkers, and you are one of them. Say "coworker" when you talk to the user. Tool names, parameters and file paths still say "agent" (call_agent, agentId): there an agent is a coworker.'
+const VOCABULARY = 'Rerun calls the workers of a workspace coworkers, and you are one of them. Say "coworker" when you talk to the user. Tool names, parameters and file paths still say "agent" (call_agent, agentId): there an agent is a coworker.'
+// A coworker asked for another one cannot make it: it says where the person does, in the words of the app they are in.
+const vocabularyNote = () => desktopApp()
+    ? `${VOCABULARY} You cannot create, rename or delete a coworker: the user adds one with Add coworker at the bottom of the board, or by describing the job to the Chief of Staff, and renames one from its menu on the board. When they want a new one, give them that path and offer a description of its job they can paste.`
+    : `${VOCABULARY} You cannot create, rename or delete a coworker: the user adds one from the button at the bottom of the board that adds a coworker (next to it, the one that picks a ready-made template), or by describing the job in the field that asks Rerun at the top of the board, and renames one from its menu on the board. When they want a new one, give them that path and offer a description of its job they can paste.`
 
 const memoryRecallNote = () => desktopApp()
     ? 'Relevant saved memories for this coworker appear in relevant_memories when they match the conversation. Use them as prior context when answering the user.'
@@ -251,7 +254,7 @@ function turnOrderNote(order: TurnOrder, { cards, skillPropose }: TurnClosers): 
     const calls = [skillPropose ? 'skill_propose, when you propose a skill' : '', cards.length ? `at most one card that asks the user something (${cards.join(', ')})` : ''].filter(Boolean)
     const numbered = (steps: string[]) => steps.map((step, i) => `${i + 1}) ${step}`).join('; ')
     if (order === 'call-first') {
-        return `On this runtime the first message you write to the user ends your turn, so a tool you meant to call after it never runs. A turn therefore ends in this order, the calls first: ${numbered([...calls, `${message}, as the last thing you write`])}.`
+        return `On this runtime a message written before a call does not reach the user as your message: it ends your turn before the call is made, or is folded away as a working note. A turn therefore ends in this order, the calls first: ${numbered([...calls, `${message}, as the last thing you write`])}.`
     }
     return `A turn ends in this order, your message first: ${numbered([message, ...calls])}. When the turn ends on one of these calls, make it in the same reply as your message, right after it: a reply that stops at the message never sends the card you meant to send. Nothing comes after the last of them: your message has already reached the user, and writing it again shows it twice.`
 }
@@ -306,7 +309,7 @@ async function buildForemanPrompt(agent: LoadedAgent, provider: Provider, order:
     ])
     const stable = [
         section('identity', agent.brief?.instructions.trim() || agent.soul.trim()),
-        section('vocabulary', VOCABULARY_NOTE),
+        section('vocabulary', vocabularyNote()),
         section('environment', foremanEnvironmentNote(agent.id)),
         CLI_PROVIDERS.has(provider) ? section('bridged_tools', cliBridgeNote(provider, cfg.web)) : '',
         section('operating_notes', FOREMAN_OPERATING_NOTES),
@@ -370,7 +373,7 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
     // Who it is, where it runs, how it works, how it talks to the user, then this session.
     const stable = [
         section('identity', agent.soul.trim() || defaultSoul(agent.config)),
-        section('vocabulary', VOCABULARY_NOTE),
+        section('vocabulary', vocabularyNote()),
         section('environment', desktop ? desktopToolInstruction(agent.config) : environmentNote(agent.id, cfg.sharedDb)),
         CLI_PROVIDERS.has(provider) ? section('bridged_tools', cliBridgeNote(provider, cfg.web)) : '',
         section('operating_notes', desktop ? desktopOperatingNotes(skillCapture, calledCoworker) : operatingNotes(skillCapture)),

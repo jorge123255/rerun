@@ -1,6 +1,6 @@
 import type { ToolSet } from 'ai'
 import { z } from 'zod'
-import { HITL_ACK, jsonTolerantArray } from '../../tools/builtin/hitl.js'
+import { HITL_ACK, hitlAck, jsonTolerantArray } from '../../tools/builtin/hitl.js'
 import { desktopSecretRequestInputSchema, desktopSecretRequestSourceSchema, type DesktopSecretRequestInput, type DesktopSecretRequestSource } from '@rerun/contracts'
 import type { RunContext } from '../../runtime/context.js'
 import { hasDesktopToolGrant, requireDesktopToolGrant } from '../tool-grants.js'
@@ -10,7 +10,8 @@ export type DesktopSecretRequestToolAuthority = {
     deliver?: (input: DesktopSecretRequestInput, context: { toolCallId: string; abortSignal?: AbortSignal }) => Promise<DesktopSecretRequestSource>
 }
 
-export function createDesktopSecretRequestTool(authority: DesktopSecretRequestToolAuthority): ToolSet {
+// `ack` follows the turn order of the run, so a model that calls first is told to write its message now.
+export function createDesktopSecretRequestTool(authority: DesktopSecretRequestToolAuthority, ack: ReturnType<typeof hitlAck> = HITL_ACK): ToolSet {
     return {
         request_secret: {
             description: 'Ask the user for one to eight credentials through the secure masked desktop form, then END YOUR TURN. Group credentials needed for one setup into one call. Never ask for secrets in chat or files. Values are encrypted for this coworker and are never returned to you; the result contains only variable names. Storage alone grants no credential use: only separately authorized supported operations may use them. Use suggest_service instead when the service is in the catalog.',
@@ -37,7 +38,7 @@ export function createDesktopSecretRequestTool(authority: DesktopSecretRequestTo
                     if (source.toolCallId !== context.toolCallId) throw new Error('Credential delivery returned a different source tool call.')
                 }
                 context.abortSignal?.throwIfAborted()
-                return HITL_ACK
+                return ack
             },
         },
     }
@@ -50,5 +51,5 @@ export function desktopSecretRequestTools(ctx: RunContext): ToolSet {
         abortSignal?.throwIfAborted()
         await requireDesktopToolGrant(ctx, 'requestSecret')
         abortSignal?.throwIfAborted()
-    } })
+    } }, hitlAck(ctx.turnOrder))
 }

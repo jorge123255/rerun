@@ -25,10 +25,11 @@ const defaultLabels: ContextLabels = { usedLabel: percent => `Context used: ${pe
     reasoning: 'Reasoning', output: 'Output', total: 'Total' }
 
 function toneFor(ratio: number): string {
-    if (ratio >= 0.85) return 'text-destructive'
-    if (ratio >= 0.6) return 'text-amber-500'
-    return 'text-emerald-500'
+    return ratio >= 0.85 ? 'text-destructive' : 'text-amber-500'
 }
+
+// The gauge only shows once the context is getting short: below this there is nothing to act on.
+const CONTEXT_GAUGE_FROM = 0.75
 
 function UsageRow({ label, value, locale }: { label: string; value: number; locale?: string }) {
     if (!value) return null
@@ -43,6 +44,7 @@ function UsageRow({ label, value, locale }: { label: string; value: number; loca
 export function Context({ usedTokens, maxTokens, usage, locale, labels = defaultLabels }: ContextProps) {
     if (!maxTokens || usedTokens <= 0) return null
     const ratio = usedTokens / maxTokens
+    if (ratio < CONTEXT_GAUGE_FROM) return null
     const percent = Math.round(ratio * 100)
     const tone = toneFor(ratio)
 
