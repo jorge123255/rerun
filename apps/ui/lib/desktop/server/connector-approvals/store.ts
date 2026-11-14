@@ -111,3 +111,13 @@ export async function pendingConnectorApproval(db: Client, sessionId: string): P
     const row = (await db.execute({ sql: "SELECT id,tool,created_at FROM desktop_connector_approval_requests WHERE session_id=? AND status='pending' ORDER BY created_at LIMIT 1", args: [sessionId] })).rows[0]
     return row ? { id: String(row.id), tool: String(row.tool), createdAt: String(row.created_at) } : null
 }
+
+/** Every standing answer a coworker holds, for its Tools settings. */
+export async function listConnectorRules(db: Client, owner: string): Promise<DesktopConnectorApprovalView['rules']> {
+    return (await db.execute({ sql: 'SELECT id,tool,session_id FROM desktop_connector_approval_rules WHERE owner=? ORDER BY created_at LIMIT 200', args: [owner] }))
+        .rows.map(row => ({ id: String(row.id), tool: String(row.tool), scope: row.session_id === '' ? 'always' as const : 'conversation' as const }))
+}
+
+export async function forgetConnectorRuleOf(db: Client, owner: string, ruleId: string): Promise<boolean> {
+    return (await db.execute({ sql: 'DELETE FROM desktop_connector_approval_rules WHERE id=? AND owner=?', args: [ruleId, owner] })).rowsAffected === 1
+}

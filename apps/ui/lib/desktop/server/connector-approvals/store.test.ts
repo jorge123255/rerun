@@ -7,7 +7,7 @@ import { desktopConnectorActionKind } from '@rerun/contracts'
 
 vi.mock('server-only', () => ({}))
 const { initializeDesktopRound61 } = await import('../round61-schema')
-const { admitConnectorCall, decideConnectorApproval, forgetConnectorRule, readConnectorApprovals } = await import('./store')
+const { admitConnectorCall, decideConnectorApproval, forgetConnectorRule, forgetConnectorRuleOf, listConnectorRules, pendingConnectorApproval, readConnectorApprovals } = await import('./store')
 
 let db: Client, dir: string
 beforeEach(async () => {
@@ -105,5 +105,24 @@ describe('holding a connector call until the person answers', () => {
         for (let index = 0; index < 20; index++) expect(await admitConnectorCall(db, call({ arguments: { index } }))).toMatch(/did not run/)
         expect(await admitConnectorCall(db, call({ arguments: { index: 20 } }))).toMatch(/Too many/)
         expect((await readConnectorApprovals(db, 'chat-1')).pending).toHaveLength(20)
+    })
+
+    it('lists a coworker’s standing answers for its settings, and what is waiting for the board', async () => {
+        expect(await pendingConnectorApproval(db, 'chat-1')).toBeNull()
+        await admitConnectorCall(db, call())
+        const waiting = await pendingConnectorApproval(db, 'chat-1')
+        expect(waiting).toMatchObject({ tool: 'gmail_send_email' })
+        await decideConnectorApproval(db, 'chat-1', waiting!.id, 'always')
+        expect(await pendingConnectorApproval(db, 'chat-1')).toBeNull()
+        await admitConnectorCall(db, call({ tool: 'drive_delete_file', kind: 'delete' }))
+        await decideConnectorApproval(db, 'chat-1', (await pendingConnectorApproval(db, 'chat-1'))!.id, 'conversation')
+
+        const rules = await listConnectorRules(db, 'coworker-1')
+        expect(rules.map(rule => [rule.tool, rule.scope])).toEqual([['gmail_send_email', 'always'], ['drive_delete_file', 'conversation']])
+        expect(await listConnectorRules(db, 'coworker-2')).toEqual([])
+        expect(await forgetConnectorRuleOf(db, 'coworker-2', rules[0]!.id)).toBe(false)
+        expect(await forgetConnectorRuleOf(db, 'coworker-1', rules[0]!.id)).toBe(true)
+        expect((await listConnectorRules(db, 'coworker-1')).map(rule => rule.tool)).toEqual(['drive_delete_file'])
+        expect(await admitConnectorCall(db, call({ sessionId: 'chat-5' }))).toMatch(/did not run/)
     })
 })
