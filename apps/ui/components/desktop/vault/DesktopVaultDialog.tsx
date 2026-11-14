@@ -157,7 +157,7 @@ function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: Sug
                                     actions={<ChevronRight className="size-4" />} onClick={() => navigate(item.id)} />)}
                             </section>
                         })}
-                    {!coworkerApp && <DesktopManagedApps coworkers={listing.coworkers} disabled={busy} />}
+                    {!coworkerApp && <DesktopManagedApps coworkers={listing.coworkers} disabled={busy} onVaultChanged={() => { void run() }} />}
                 </>}
         </PanelScroller>
     </PanelSteps>

@@ -27,5 +27,7 @@ export const desktopManagedAppsActionSchema = z.discriminatedUnion('action', [
 export type DesktopManagedAppsAction = z.infer<typeof desktopManagedAppsActionSchema>
 
 /** `signIn` is the page to open in the browser after `connect`; it is returned once. */
-export const desktopManagedAppsResultSchema = z.object({ view: desktopManagedAppsViewSchema, signIn: z.string().url().optional() }).strict()
+// `addedToVault` names the Vault entry made for a Composio Connect key: that key opens one connector for every app,
+// so it is kept as a Vault MCP server rather than as a managed-apps key.
+export const desktopManagedAppsResultSchema = z.object({ view: desktopManagedAppsViewSchema, signIn: z.string().url().optional(), addedToVault: z.string().max(64).optional() }).strict()
 export type DesktopManagedAppsResult = z.infer<typeof desktopManagedAppsResultSchema>

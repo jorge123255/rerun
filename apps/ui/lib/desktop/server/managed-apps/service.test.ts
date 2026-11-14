@@ -8,7 +8,7 @@ vi.mock('server-only', () => ({}))
 const { createDesktopSecretCrypto } = await import('../secret-requests/crypto')
 const { initializeDesktopRound62 } = await import('../round62-schema')
 const { desktopManagedApps, managedAppCatalog } = await import('./service')
-const { COMPOSIO_API } = await import('./client')
+const { COMPOSIO_API, COMPOSIO_CONNECT, managedAppsConnectAccepts } = await import('./client')
 
 const KEY = 'fixture-composio-key-0001', ACCOUNT_KEY = 'fixture-account-key-0002', ORG_KEY = 'fixture-org-key-0003'
 let db: Client, dir: string
@@ -210,4 +210,17 @@ test('an account key is accepted the way Composio takes it, and an organization 
     expect((await service.view()).apps.map(app => app.slug)).toContain('slack')
     const row = (await db.execute('SELECT sealed FROM desktop_managed_app_key')).rows[0]!
     expect(Buffer.from(String(row.sealed), 'base64').toString('latin1')).not.toContain(ACCOUNT_KEY)
+})
+
+test('a Connect key is recognized by the handshake alone, in its own header', async () => {
+    const seen: { url: string; header: string | null; body: { method: string } }[] = []
+    const network = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const header = new Headers(init?.headers).get('x-consumer-api-key')
+        seen.push({ url: String(input), header, body: JSON.parse(String(init?.body)) })
+        return header === 'ck_fixture_good' ? Response.json({ jsonrpc: '2.0', id: 1, result: { protocolVersion: '2025-03-26' } }) : Response.json({ error: 'Authorization required' }, { status: 401 })
+    }) as typeof fetch
+    expect(await managedAppsConnectAccepts('ck_fixture_good', network)).toBe(true)
+    expect(await managedAppsConnectAccepts('ak_fixture_other', network)).toBe(false)
+    expect(seen.map(call => [call.url, call.body.method])).toEqual([[COMPOSIO_CONNECT, 'initialize'], [COMPOSIO_CONNECT, 'initialize']])
+    await expect(managedAppsConnectAccepts('ck_fixture_good', (async () => { throw new Error('offline') }) as typeof fetch)).rejects.toThrow('could not be reached')
 })

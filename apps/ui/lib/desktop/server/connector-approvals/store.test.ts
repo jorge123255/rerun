@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { desktopConnectorActionKind } from '@rerun/contracts'
+import { desktopConnectorActionKind, desktopConnectorCall } from '@rerun/contracts'
 
 vi.mock('server-only', () => ({}))
 const { initializeDesktopRound61 } = await import('../round61-schema')
@@ -40,6 +40,22 @@ describe('which connector actions ask first', () => {
         for (const [name, kind] of kinds) expect(desktopConnectorActionKind(name), name).toBe(kind)
         expect(desktopConnectorActionKind('gmail_batch_modify_messages', true)).toBe('delete')
         expect(desktopConnectorActionKind('gmail_send_email', true)).toBe('send')
+    })
+})
+
+describe('a tool that runs other tools is held for what those tools do', () => {
+    it('reads the inner tools out of the arguments', () => {
+        const run = 'composio_COMPOSIO_MULTI_EXECUTE_TOOL'
+        expect(desktopConnectorCall(run, false, { tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: { query: 'send the report' } }] })).toBeNull()
+        expect(desktopConnectorCall(run, false, { tools: [{ tool_slug: 'GMAIL_SEND_EMAIL', arguments: { to: 'pat@example.test' } }] })).toEqual({ kind: 'send', tool: 'GMAIL_SEND_EMAIL' })
+        expect(desktopConnectorCall(run, false, { tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: {} }, { tool_slug: 'GMAIL_MOVE_TO_TRASH', arguments: {} }, { tool_slug: 'GMAIL_SEND_EMAIL', arguments: {} }] }))
+            .toEqual({ kind: 'delete', tool: 'GMAIL_MOVE_TO_TRASH+GMAIL_SEND_EMAIL' })
+        // What a call carries never makes it ask: only the name of a tool it is about to run does.
+        expect(desktopConnectorCall(run, false, { tools: [{ tool_slug: 'NOTION_UPDATE_PAGE', arguments: { title: 'GMAIL_SEND_EMAIL', note: 'delete the old draft' } }] })).toBeNull()
+        expect(desktopConnectorCall('composio_COMPOSIO_SEARCH_TOOLS', false, { queries: [{ use_case: 'send an email', tool_slug: 'GMAIL_SEND_EMAIL' }] })).toBeNull()
+        // A tool that asks by its own name keeps its own name.
+        expect(desktopConnectorCall('gmail_send_email', false, { tool_slug: 'GMAIL_MOVE_TO_TRASH' })).toEqual({ kind: 'send', tool: 'gmail_send_email' })
+        expect(desktopConnectorCall('notes_sync', true, {})).toEqual({ kind: 'delete', tool: 'notes_sync' })
     })
 })
 
