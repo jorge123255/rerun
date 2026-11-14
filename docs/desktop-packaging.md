@@ -57,6 +57,52 @@ must already exist and be outside the installed preview's profile. This launch
 uses the development app name for Keychain storage. Packaged apps use the
 installed preview profile.
 
+## Release build (Developer ID, notarized)
+
+`pnpm desktop:release --output-dir /absolute/dir` builds what people outside the team install.
+It stages the same runtime as the preview, then:
+
+1. signs the bundle with the named Developer ID Application certificate and the hardened runtime
+   (`entitlements/release.plist` for the app, `release.inherit.plist` for everything inside it),
+2. checks the signature against the requirement the in-app updater tests itself with, the Electron
+   fuses and the source receipts,
+3. sends the app to Apple's notary, staples the ticket and validates it (stapler is tried again
+   only when it could not reach Apple, exit 68),
+4. makes the update zip and the disk image from that stapled bundle, signs, notarizes and staples
+   the disk image, and checks that both hold the very signature that was notarized,
+5. writes the Squirrel.Mac update feed naming the zip, and `SHA256SUMS.txt`.
+
+It uploads nothing. Publish the zip, the disk image and the feed together, the feed last.
+
+| Setting | Meaning |
+|---|---|
+| `RERUN_RELEASE_BUNDLE_ID` | The app's bundle ID. Not the preview's. |
+| `RERUN_RELEASE_TEAM_ID` | Ten-character Apple team ID. |
+| `RERUN_RELEASE_IDENTITY` | Name or SHA-1 of the Developer ID Application certificate. |
+| `RERUN_RELEASE_FEED_URL` | https address the feed file will be served from. |
+| `RERUN_RELEASE_DOWNLOAD_URL` | https folder the zip will be served from. |
+| `RERUN_NOTARY_KEYCHAIN_PROFILE` | A `notarytool store-credentials` profile, or instead the three below. |
+| `RERUN_NOTARY_KEY_PATH`, `RERUN_NOTARY_KEY_ID`, `RERUN_NOTARY_ISSUER` | App Store Connect API key. |
+| `RERUN_RELEASE_PRODUCT_NAME` | Optional, default `Rerun`. |
+| `RERUN_RELEASE_VERSION` | Optional, default the version in `apps/desktop/package.json`. |
+| `RERUN_RELEASE_PREVIOUS_FEED`, `RERUN_RELEASE_NOTES_FILE` | Optional: the feed now live, and notes for this version. |
+
+The build writes these into the packaged `release-config.mjs`: the feed, team and bundle the
+updater accepts, and the name of the app's own profile folder. A release keeps its data in
+`~/Library/Application Support/<product name>`, never in the preview's folder, so it starts
+empty beside an installed preview.
+
+`.github/workflows/desktop-macos-release.yml` runs the same command on a GitHub Mac from a
+temporary keychain. It is started by hand and keeps the files as a workflow artifact.
+
+`pnpm desktop:release --output-dir /absolute/dir --local-check` builds the same hardened bundle,
+zip and disk image with the local preview certificate and skips Apple. Its bundle
+(`build.rerun.desktop.localcheck`, "Rerun Local Check") has no update feed and is not for anyone
+else.
+
+Not yet covered: an Intel build, the Kimi, Grok and Devin runners (staged for local QA only),
+moving a preview profile into a release, and the window title, which still says Preview.
+
 ## Mac App Store sandbox testing
 
 Use an Apple Development identity and a Mac development provisioning profile

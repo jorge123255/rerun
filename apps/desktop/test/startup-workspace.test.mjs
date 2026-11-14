@@ -47,6 +47,19 @@ test('a development profile uses separate storage and packaged builds keep the i
     assert.equal(configureStartupProfile(app, development), installed)
     assert.deepEqual(operations.splice(0), [['userData', installed], ['sessionData', installed]])
 
+    // A release build names a folder of its own and never opens the preview's data.
+    const release = join(appData, 'Rerun')
+    assert.equal(configureStartupProfile(app, undefined, 'Rerun'), release)
+    assert.deepEqual(operations.splice(0), [['userData', release], ['sessionData', release]])
+    for (const name of ['Rerun Desktop Preview', '../Elsewhere', '', '.hidden']) {
+        assert.equal(configureStartupProfile(app, undefined, name), installed)
+        operations.splice(0)
+    }
+    app.isPackaged = false
+    assert.equal(configureStartupProfile(app, undefined, 'Rerun'), installed)
+    operations.splice(0)
+    app.isPackaged = true
+
     app.isPackaged = false
     const alias = join(root, 'alias')
     const inside = join(installed, 'inside')

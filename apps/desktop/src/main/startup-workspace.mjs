@@ -1,17 +1,20 @@
 import { mkdirSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { atomicPrivateJSON, pathExists, readJSON } from './workspaces/paths.mjs'
+import { PROFILE_NAME } from './release-config.mjs'
 
 function contains(root, candidate) {
     const path = relative(root, candidate)
     return path === '' || (path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path))
 }
 
-export function configureStartupProfile(app, override = process.env.RERUN_DESKTOP_USER_DATA) {
+export function configureStartupProfile(app, override = process.env.RERUN_DESKTOP_USER_DATA, releaseProfile = PROFILE_NAME) {
     const appData = app.getPath('appData')
     const previewName = 'Rerun Desktop Preview'
     const defaultRoot = join(appData, previewName)
-    let dataRoot = defaultRoot
+    // A release build keeps its data in a folder of its own, never in the preview's.
+    const ownName = app.isPackaged && /^[A-Za-z0-9][A-Za-z0-9 ]{0,38}[A-Za-z0-9]$/.test(releaseProfile) && releaseProfile !== previewName ? releaseProfile : ''
+    let dataRoot = ownName ? join(appData, ownName) : defaultRoot
     if (!app.isPackaged && override !== undefined) {
         if (!isAbsolute(override) || !statSync(override, { throwIfNoEntry: false })?.isDirectory()) {
             throw new Error('RERUN_DESKTOP_USER_DATA must be an existing absolute directory.')

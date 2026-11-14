@@ -30,19 +30,19 @@ async function containedFile(bundle, relativePath) {
     return file
 }
 
-async function requireIdentity(bundle) {
+async function requireIdentity(bundle, bundleId = appID) {
     if (!(await lstat(bundle)).isDirectory() || await realpath(bundle) !== bundle) throw new Error(`Refusing a linked or invalid app: ${bundle}`)
     const plist = await containedFile(bundle, 'Contents/Info.plist')
     const { stdout } = await exec('/usr/bin/plutil', ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', plist])
-    if (stdout.trim() !== appID) throw new Error(`The app at ${bundle} does not have Rerun’s preview bundle ID.`)
+    if (stdout.trim() !== bundleId) throw new Error(`The app at ${bundle} does not have ${bundleId === appID ? 'Rerun’s preview bundle ID' : `the bundle ID ${bundleId}`}.`)
 }
 
 async function bundleReceipt(bundle, path) {
     return JSON.parse(await readFile(await containedFile(bundle, 'Contents/Resources/' + path), 'utf8'))
 }
 
-export async function verifyBundle(bundle, stamp) {
-    await requireIdentity(bundle)
+export async function verifyBundle(bundle, stamp, bundleId = appID) {
+    await requireIdentity(bundle, bundleId)
     const archive = await containedFile(bundle, 'Contents/Resources/app.asar')
     const asar = electronAsar()
     asar.uncache(archive)
