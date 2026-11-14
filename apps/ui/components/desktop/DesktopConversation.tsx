@@ -212,6 +212,23 @@ function scheduledRunOf(message: UIMessage) {
     return parseScheduledRun(prompt)
 }
 
+// Kept across coworkers, as the original does: a card closed beside one chat stays closed for the next.
+let besideCardWanted: boolean | null = null
+const WIDE_WINDOW = '(min-width: 1280px)'
+
+function useWideWindow(): boolean {
+    const [wide, setWide] = useState(() => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(WIDE_WINDOW).matches)
+    useEffect(() => {
+        if (typeof window.matchMedia !== 'function') return
+        const query = window.matchMedia(WIDE_WINDOW)
+        const change = () => setWide(query.matches)
+        change()
+        query.addEventListener('change', change)
+        return () => query.removeEventListener('change', change)
+    }, [])
+    return wide
+}
+
 export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId, sessions, pendingChatSummaries, tabUid, active = true, arrival, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, onHistoryVisibility, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, workspaceDefault, connections, onOpenModelSettings, onOpenTranscriptionSettings, overview }: {
     agent: DesktopAgentView
     workspaceId?: number | null
@@ -251,6 +268,17 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     const setup = useDesktopSetup(agent.id)
     const setupBlocked = !setup.view || !!setup.error || setup.view.pending && (!setup.view.sessionId || setup.view.sessionId !== sessionId)
     const [cardOpen, setCardOpen] = useState(false)
+    // In the Simple view a wide window gives the card its own column: the chat stays in use beside it.
+    const wide = useWideWindow()
+    const beside = !!cardBeside && wide && !!overview
+    const cardCovers = cardOpen && !beside
+    const openedBeside = useRef(false)
+    useEffect(() => {
+        if (!cardBeside) return
+        // Beside the chat the card is open until closed; over it, closed until asked for.
+        if (beside && besideCardWanted !== false) { openedBeside.current = true; setCardOpen(true) }
+        else if (!beside && openedBeside.current) { openedBeside.current = false; setCardOpen(false) }
+    }, [beside, cardBeside])
     const [overviewCovered, setOverviewCovered] = useState(false)
     const [serviceStreaming, setServiceStreaming] = useState(false)
     const [voiceActivity, setVoiceActivity] = useState({ busy: false, dirty: false })
@@ -295,6 +323,8 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     const overviewCloseControl = useDesktopPanelCloseGuard()
     const dismissCard = () => {
         if (requestedPanel) { handledPanel.current = requestedPanel; onPanelRequestHandled?.(requestedPanel) }
+        if (beside) besideCardWanted = false
+        openedBeside.current = false
         setCardOpen(false)
         setPanelNotice('')
         setPanelFocus('chat')
@@ -312,9 +342,9 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
             setDetailPanel(open ? panel : null)
         },
     })
-    useEffect(() => () => fileLinkRequest.current?.abort(), [active, cardOpen, detailPanel, chatsOpen, agent.id, sessionId])
+    useEffect(() => () => fileLinkRequest.current?.abort(), [active, cardCovers, detailPanel, chatsOpen, agent.id, sessionId])
     const openWorkspaceFile = async (href: string, opener: HTMLElement) => {
-        if (!active || cardOpen || detailPanel || chatsOpen || isDesktopQuitting()) return
+        if (!active || cardCovers || detailPanel || chatsOpen || isDesktopQuitting()) return
         fileLinkRequest.current?.abort()
         const request = new AbortController()
         fileLinkRequest.current = request
@@ -734,7 +764,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
         setPanelFocus(null)
     }, [panelFocus, active, detailPanel, cardOpen])
     const dirty = voiceActivity.dirty || !draft.loaded || !uploadsLoaded || !!(input || attachmentPaths.length || queue.queued || uploadsActive || uploadItems.length || imageUploads.items.length || documents.attachments.length)
-    const readable = active && !cardOpen && !detailPanel && !chatsOpen && ready && !generating && history.loadedGeneration === historyGeneration
+    const readable = active && !cardCovers && !detailPanel && !chatsOpen && ready && !generating && history.loadedGeneration === historyGeneration
         && !!history.transcript && history.question !== undefined && history.approval !== undefined && history.takeover !== undefined && history.serviceRequest !== undefined && history.secretRequest !== undefined && history.mcpSignIn !== undefined
         && engineRunning.id === sessionId
     useEffect(() => { if (tabUid) onTabActivity?.(tabUid, { busy: generating || voiceActivity.busy, dirty, recordingPending: voiceActivity.dirty, readableSessionId: readable ? sessionId : null }) }, [tabUid, generating, voiceActivity.busy, voiceActivity.dirty, dirty, readable, sessionId, onTabActivity])
@@ -796,7 +826,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
         : null
     const proposalSourceIds = useMemo(() => desktopSkillProposalIds(transcript), [transcript])
     const proposalSessionId = sessionId ?? liveSessionId
-    const proposalsActive = active && !cardOpen && !detailPanel && !!proposalSessionId && proposalSourceIds.size > 0
+    const proposalsActive = active && !cardCovers && !detailPanel && !!proposalSessionId && proposalSourceIds.size > 0
     const skillProposals = useCoworkerSkillProposals(agent.id, { sessionId: proposalSessionId ?? undefined, active: proposalsActive, mode: 'chat' })
     const proposalSourceKey = [...proposalSourceIds].join('\0')
     const previousProposalSource = useRef(proposalSourceKey)
@@ -1304,7 +1334,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     const findTranscript = useRef<HTMLDivElement>(null)
     const [findOpen, setFindOpen] = useState(false)
     const [editorOpen, setEditorOpen] = useState(false)
-    const transcriptActive = active && !cardOpen && !detailPanel && !chatsOpen
+    const transcriptActive = active && !cardCovers && !detailPanel && !chatsOpen
     const canFind = transcriptActive && !editorOpen
     const finding = findOpen && canFind
     const [editorSession, setEditorSession] = useState(0)
@@ -1475,7 +1505,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     }
     if (question && !webhookOwns('question', question.id)) {
         addRequest(`question:${question.id}`, <DesktopQuestionCard question={question}
-            voiceTarget={!cardOpen && !detailPanel && !chatsOpen && sessionId ? { sessionId } : undefined}
+            voiceTarget={!cardCovers && !detailPanel && !chatsOpen && sessionId ? { sessionId } : undefined}
             documentScope={sessionId ? { agentId: agent.id, sessionId, tabUid: questionDocumentTabUid(question.id) } : undefined}
             disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onAnswer={answerQuestion} />,
         { kind: 'question', label: t('chatRequestCue.question', { count: question.questions.length }) })
@@ -1513,16 +1543,16 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     } : null
     const placeholder = generalView ? t('message', { name: agent.name }) : sessionId && currentTitle !== 'New conversation' ? t('reply', { title: currentTitle }) : t('sendMessage')
     return (
-        <div ref={conversationRoot} className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-background" onKeyDown={event => {
-            if (cardOpen && event.key === 'Escape' && !event.defaultPrevented && !(event.target as HTMLElement).closest('[role="dialog"], [role="alertdialog"]')) {
+        <div ref={conversationRoot} className={cn('relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-background', beside && cardOpen && 'pr-[26rem]')} onKeyDown={event => {
+            if (cardOpen && (cardCovers || (event.target as HTMLElement).closest('[aria-label="Coworker details"]')) && event.key === 'Escape' && !event.defaultPrevented && !(event.target as HTMLElement).closest('[role="dialog"], [role="alertdialog"]')) {
                 event.preventDefault()
                 event.stopPropagation()
                 overviewCloseControl.requestClose(() => { dismissCard(); setPanelFocus('card') })
             }
         }}>
-            <header inert={overviewCovered} className={cn('relative z-40 grid shrink-0 grid-cols-[minmax(2.5rem,1fr)_minmax(0,max-content)_minmax(2.5rem,1fr)] items-center gap-1 px-3 pt-3', overviewCovered && 'invisible [&_button]:backdrop-filter-none')}>
+            <header inert={overviewCovered && !beside} className={cn('relative z-40 grid shrink-0 grid-cols-[minmax(2.5rem,1fr)_minmax(0,max-content)_minmax(2.5rem,1fr)] items-center gap-1 px-3 pt-3', overviewCovered && !beside && 'invisible [&_button]:backdrop-filter-none')}>
                 <div className="flex min-w-0 items-center justify-start">
-                    {renderHistory ? renderHistory(busy, { needsRequest, active: active && !cardOpen && !detailPanel, onOpenChange: onChatsOpenChange }) : sessions.length > 0 && (
+                    {renderHistory ? renderHistory(busy, { needsRequest, active: active && !cardCovers && !detailPanel, onOpenChange: onChatsOpenChange }) : sessions.length > 0 && (
                         <select
                             disabled={busy}
                             aria-label="Conversation history"
@@ -1536,7 +1566,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                     )}
                 </div>
                 <h1 aria-label={agent.name} className="min-w-0">
-                    <FloatingPill label="Coworker card" active={cardOpen} onClick={() => cardOpen ? overviewCloseControl.requestClose(dismissCard) : setCardOpen(true)} className="max-w-full pl-1.5">
+                    <FloatingPill label="Coworker card" active={cardOpen} onClick={() => { if (cardOpen) overviewCloseControl.requestClose(dismissCard); else { if (beside) { besideCardWanted = true; openedBeside.current = true } setCardOpen(true) } }} className="max-w-full pl-1.5">
                         <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted">
                             <AgentBuddy agentId={agent.id} mood={inactive ? 'asleep' : generating ? 'working' : 'idle'} size={20} facing="right" />
                         </span>
@@ -1546,8 +1576,8 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                 </h1>
                 {onClosePanel && <Button type="button" aria-label={t('closePanel')} variant="ghost" size="icon-sm" className="justify-self-end" onClick={() => overviewCloseControl.requestClose(onClosePanel)}><XIcon className="size-4" /></Button>}
             </header>
-            {cardOpen && !overviewCovered && <button type="button" aria-label="Back to the chat" className={cardBeside ? 'absolute inset-0 z-30 xl:bg-transparent max-xl:bg-foreground/5 max-xl:backdrop-blur-[2px]' : 'absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]'} onClick={() => overviewCloseControl.requestClose(dismissCard)} />}
-            <section aria-label="Coworker details" hidden={!cardOpen} data-card-beside={cardBeside || undefined} className={!cardOpen ? "hidden" : overview ? `absolute top-14 bottom-3 z-40 flex min-h-0 flex-col overflow-auto rounded-2xl border border-border bg-background shadow-xl ${cardBeside ? 'inset-x-3 xl:left-auto xl:w-[26rem]' : 'inset-x-3'}` : "absolute inset-x-3 top-14 z-40 rounded-2xl border border-border bg-background p-4 shadow-xl"}>
+            {cardCovers && !overviewCovered && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={() => overviewCloseControl.requestClose(dismissCard)} />}
+            <section aria-label="Coworker details" hidden={!cardOpen} data-card-beside={beside || undefined} className={!cardOpen ? "hidden" : overview ? beside ? 'absolute inset-y-0 right-0 z-40 flex min-h-0 w-[26rem] flex-col overflow-auto border-l border-border bg-background' : 'absolute inset-x-3 top-14 bottom-3 z-40 flex min-h-0 flex-col overflow-auto rounded-2xl border border-border bg-background shadow-xl' : "absolute inset-x-3 top-14 z-40 rounded-2xl border border-border bg-background p-4 shadow-xl"}>
                 {overview && cardOpen && active && <DesktopConversationOverview
                     authority={overview} agent={agent} active={active && !draft.quitting}
                     working={generating} settingsDisabledReason={generating || !!sessionId && engineRunning.id !== sessionId ? 'Wait for this coworker’s current run to finish.' : null}
@@ -1637,7 +1667,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                         if (triggerPayload) return withTimeline(<DesktopWebhookRunBlock agentId={agent.id} onOpenWorkspaceFile={onOpenWorkspaceFile} payload={triggerPayload} />)
                         if (scheduledRun) return withTimeline(<DesktopScheduledRunBlock agentId={agent.id} onOpenWorkspaceFile={onOpenWorkspaceFile} run={scheduledRun} />)
                         const voiceContext = { workspaceId, sessionId, tabUid, messageId: message.id,
-                            active: active && ready && !cardOpen && !detailPanel && !chatsOpen && !draft.quitting }
+                            active: active && ready && !cardCovers && !detailPanel && !chatsOpen && !draft.quitting }
                         const textParts = message.parts.filter(part => part.type === 'text')
                         const voicePart = message.role === 'user' && textParts.length === 1 ? textParts[0] : undefined
                         const renderBubble = (voicePlayer?: ReactNode) => {
@@ -1871,7 +1901,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                             </Button>
                             {tabUid && draft.loaded && <DesktopVoiceComposer agentId={agent.id} tabUid={tabUid} sessionId={sessionId ?? undefined}
                                 reviewTarget={voiceReviewTarget} modelChoice={!sessionId && conversationChoice.current?.session === null ? conversationChoice.current.pick : undefined}
-                                active={active && !draft.quitting && !cardOpen && !detailPanel && !chatsOpen} besideSend
+                                active={active && !draft.quitting && !cardCovers && !detailPanel && !chatsOpen} besideSend
                                 disabled={generating || stopping || inactive || !ready || !modelReady || requestBlocked || !!pendingRequest || !!queue.queued || queue.pending || uploadsActive || preparingSend || !draft.loaded}
                                 onActivity={setVoiceActivity} onSent={voiceSent} onOpenTranscriptionSettings={onOpenTranscriptionSettings} />}
                             {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget || !stopRunId} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">{t('stop')}</span></Button>}
