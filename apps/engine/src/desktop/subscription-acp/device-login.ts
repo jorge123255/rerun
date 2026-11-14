@@ -71,8 +71,8 @@ export function bindDesktopSubscriptionDeviceLogin(io: typeof ports = ports, tim
             if (provider === 'devin') {
                 // Devin prints its sign-in address and then reads the code from its input.
                 const stdin = worker.child.stdin
-                // Typed into its terminal and left open: the exchange that follows ends the process.
-                entry.submit = code => { entry.submit = undefined; stdin.write(code + '\r') }
+                // Typed into its terminal, then the input closes: the exchange that follows ends the process.
+                entry.submit = code => { entry.submit = undefined; stdin.end(code + '\r') }
                 worker.child.stdout.on('data', output)
             } else {
                 worker.child.stdin.end()

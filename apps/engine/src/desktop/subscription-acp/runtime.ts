@@ -196,11 +196,17 @@ export function createDesktopSubscriptionDeviceAttempt(provider: DesktopSubscrip
 }
 
 // The packaged policy denies process creation. Only this directly owned PID can run.
-async function stopChild(child: ChildProcess, exited: Promise<true>) {
+async function stopChild(child: ChildProcess, exited: Promise<true>, group = false) {
     if (!child.pid || child.exitCode !== null || child.signalCode !== null) return
-    child.kill('SIGTERM')
+    const pid = child.pid
+    // A terminal sign-in is a small group of its own: the signal goes to all of it.
+    const signal = (name: NodeJS.Signals) => {
+        if (!group) { child.kill(name); return }
+        try { process.kill(-pid, name) } catch { child.kill(name) }
+    }
+    signal('SIGTERM')
     if (await Promise.race([exited, delay(600, false, { ref: false })])) return
-    child.kill('SIGKILL')
+    signal('SIGKILL')
     if (!await Promise.race([exited, delay(1_500, false, { ref: false })])) throw shutdownUnconfirmed()
 }
 
@@ -375,8 +381,10 @@ function spawnRunner(
     if (stopping || workers.has(provider)) throw unavailable()
     const definition = runners[provider]
     // `script` only lends its pseudo-terminal; the runner under it is confined exactly as without it.
-    const child = spawn(terminal ? '/usr/bin/script' : '/usr/bin/sandbox-exec', [
-        ...(terminal ? ['-q', '/dev/null', '/usr/bin/sandbox-exec'] : []),
+    // It refuses the socket Node gives a child as its input, so `cat` hands it a plain pipe. The
+    // three run as one process group, stopped together.
+    const child = spawn(terminal ? '/bin/sh' : '/usr/bin/sandbox-exec', [
+        ...(terminal ? ['-c', '/bin/cat | /usr/bin/script -q /dev/null "$@"', 'sh', '/usr/bin/sandbox-exec'] : []),
         '-D', `RUNNER=${binary}`, '-D', `RUNNER_DIR=${dirname(binary)}`, '-D', `PROFILE=${profile}`,
         ...(relay ? ['-D', `AUTH_RELAY=localhost:${relay.port}`] : []),
         '-f', sandbox, binary, ...args,
@@ -399,6 +407,7 @@ function spawnRunner(
             } : {}),
         },
         shell: false,
+        detached: terminal,
         stdio: ['pipe', 'pipe', 'pipe'],
     })
     child.on('error', () => child.stdout.destroy())
@@ -406,7 +415,7 @@ function spawnRunner(
     let draining: Promise<void> | undefined
     const dispose: Worker = () => draining ??= Promise.all([
         relay?.close?.(),
-        stopChild(child, exited),
+        stopChild(child, exited, terminal),
     ]).then(() => {
         if (workers.get(provider)?.dispose === dispose) workers.delete(provider)
     }).catch(error => {
