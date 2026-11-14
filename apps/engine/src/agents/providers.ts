@@ -101,6 +101,9 @@ export const CODEX_DISABLED_FEATURES = ['multi_agent', 'multi_agent_v2'] as cons
 // `features.skills` flag, so the `[skills]` table of config.toml is what closes it.
 export const CODEX_SKILL_OVERRIDES = { 'skills.bundled.enabled': false, 'skills.include_instructions': false } as const
 
+// The namespace Codex 0.166 gives its built-in image tool.
+export const CODEX_IMAGE_NAMESPACE = 'image_gen'
+
 // The package declares these but does not export them.
 type CodexMcpServerConfig = NonNullable<CodexAppServerSettings['mcpServers']>[string]
 type CodexConfigOverrides = NonNullable<CodexAppServerSettings['configOverrides']>
@@ -389,7 +392,10 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
     const native = desktopCodexGrantsOf(agent.config.tools)
     const worker = options.nativeWorker
     if (desktop && (native.shell || native.workspaceWrite) && !worker) throw new Error('The isolated Codex command worker is unavailable.')
-    const directNamespaces = [...(names.length ? [`mcp__${BRIDGE_SERVER_NAME}`] : []), ...(worker ? ['functions'] : [])]
+    // OpenAI's catalog marks every Codex model code_mode_only, which moves the image tool
+    // (`image_gen.imagegen`) inside exec. With the code-mode host off the model then has no way to
+    // make an image and tells the user to switch on a setting that does not exist.
+    const directNamespaces = [...(names.length ? [`mcp__${BRIDGE_SERVER_NAME}`] : []), ...(worker ? ['functions'] : []), ...(desktop ? [CODEX_IMAGE_NAMESPACE] : [])]
     return createCodexAppServer({
         defaultSettings: {
             ...shared,

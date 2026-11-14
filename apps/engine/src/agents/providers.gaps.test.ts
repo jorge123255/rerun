@@ -393,7 +393,7 @@ describe('resolveModel on the codex subscription', () => {
                 expect(settings).toMatchObject({ sandboxPolicy: 'read-only', autoApprove: false, approvalPolicy: 'never', configOverrides: { web_search: enabled ? 'live' : 'disabled' } })
                 expect(settings.env.RERUN_DESKTOP_CODEX_WEB).toBe(enabled ? '1' : '0')
                 expect(Object.keys(settings.mcpServers)).toEqual(enabled ? ['rerun'] : [])
-                expect(settings.configOverrides['features.code_mode.direct_only_tool_namespaces']).toEqual(enabled ? ['mcp__rerun'] : undefined)
+                expect(settings.configOverrides['features.code_mode.direct_only_tool_namespaces']).toEqual(enabled ? ['mcp__rerun', 'image_gen'] : ['image_gen'])
                 if (enabled) {
                     expect(settings.mcpServers.rerun.tools.map((t: { name: string }) => t.name)).toEqual(['fs_read', 'fs_list'])
                     expect(settings.configOverrides['mcp_servers.rerun.tools.fs_read.approval_mode']).toBe('approve')
@@ -405,7 +405,7 @@ describe('resolveModel on the codex subscription', () => {
             resolveModel(agent, undefined, tools, [], undefined, undefined, worker)
             const scoped = codexAppServerCalls.at(-1)!.defaultSettings
             expect(scoped).toMatchObject({ cwd: worker.cwd, sandboxPolicy: { type: 'externalSandbox', networkAccess: 'restricted' }, env: { RERUN_NATIVE_EXEC_URL: worker.url } })
-            expect(scoped.configOverrides['features.code_mode.direct_only_tool_namespaces']).toEqual(['mcp__rerun', 'functions'])
+            expect(scoped.configOverrides['features.code_mode.direct_only_tool_namespaces']).toEqual(['mcp__rerun', 'functions', 'image_gen'])
             agent.config.tools.desktopCodexGrants = { workspaceWrite: true }
             expect(() => resolveModel(agent, undefined, tools)).toThrow('isolated Codex command worker')
             resolveModel(agent, undefined, tools, [], undefined, undefined, worker)
