@@ -34,4 +34,15 @@ describe('buildImportPrompt', () => {
         expect(buildImportPrompt('openclaw', URL, null)).toContain('~/.openclaw')
         expect(buildImportPrompt('hermes', URL, null)).toContain('~/.hermes')
     })
+
+    it('hands a local Rerun its header and its narrower file rule, and leaves the hosted wording alone', () => {
+        const local = buildImportPrompt('openclaw', 'http://127.0.0.1:4100/mcp', null, { header: 'Authorization: Bearer rk_fixture' })
+        expect(local).toContain('with the header "Authorization: Bearer rk_fixture": http://127.0.0.1:4100/mcp')
+        expect(local).toContain('call that URL directly, with the same header, with HTTP POST')
+        expect(local).toContain('.txt and .md, up to 1 MB each')
+        expect(local).not.toContain('no other auth needed')
+        const hosted = buildImportPrompt('openclaw', URL, null)
+        expect(hosted).toContain(`no other auth needed): ${URL}`)
+        expect(hosted).toContain('base64 for binary files')
+    })
 })

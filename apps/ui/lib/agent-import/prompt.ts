@@ -5,13 +5,23 @@ import { importSource, type ImportSourceId } from './sources'
 // Addressed to the outside agent, in English whatever the user's language: it is the one reading
 // it. The rules are the ones a model breaks on its own, summarising a long file, passing an API
 // key along, creating a second coworker after an error.
-export function buildImportPrompt(sourceId: ImportSourceId, connectorUrl: string, spaceId: string | null): string {
+//
+// `local` is for a Rerun that runs on the person's own Mac: the server takes its key in a header
+// rather than in the address, and its file door is narrower than the hosted one.
+export function buildImportPrompt(sourceId: ImportSourceId, connectorUrl: string, spaceId: string | null, local?: { header: string }): string {
     const source = importSource(sourceId)
+    const connect = local
+        ? `add this MCP server (streamable HTTP) with the header "${local.header}": ${connectorUrl}`
+        : `add this MCP server (streamable HTTP, no other auth needed): ${connectorUrl}`
+    const direct = local ? 'call that URL directly, with the same header,' : 'call that URL directly'
+    const files = local
+        ? 'Copy your text and Markdown working files (.txt and .md, up to 1 MB each) with upload_workspace_file, one call per file. A file already there is never replaced. Skip everything else.'
+        : `Copy your working files with upload_workspace_file, one call per file, base64 for binary files. Skip caches, logs, databases and anything over ${MAX_UPLOAD_MB} MB.`
     const createArgs = spaceId ? `name, description, soul and spaceId "${spaceId}"` : 'name, description and soul'
     return `Move yourself to Rerun, a platform where you will keep working for me as a "coworker". Everything you are and know gets copied there through the Rerun MCP server.
 
-Connect: add this MCP server (streamable HTTP, no other auth needed): ${connectorUrl}
-If you cannot add an MCP server, call that URL directly with HTTP POST JSON-RPC 2.0 requests: first {"jsonrpc":"2.0","id":1,"method":"tools/list"}, then {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"<tool>","arguments":{...}}}.
+Connect: ${connect}
+If you cannot add an MCP server, ${direct} with HTTP POST JSON-RPC 2.0 requests: first {"jsonrpc":"2.0","id":1,"method":"tools/list"}, then {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"<tool>","arguments":{...}}}.
 
 What to read: ${source.whereToLook}
 
@@ -20,7 +30,7 @@ Steps:
 2. For each skill, call upsert_skill with its name, description, body and reference files.
 3. For each scheduled or recurring task, call upsert_schedule with its name, its cron (5 fields) and its instructions as body. A periodic heartbeat check is a scheduled task too.
 4. Send what you know about me and what you learned with write_memory, one entry per fact or section, up to ${MAX_MEMORIES_PER_CALL} entries per call.
-5. Copy your working files with upload_workspace_file, one call per file, base64 for binary files. Skip caches, logs, databases and anything over ${MAX_UPLOAD_MB} MB.
+5. ${files}
 6. For each app or service you use (Gmail, Notion, Slack, GitHub...), find it with search_connectors and add it with attach_connector. I will sign in to them from Rerun.
 
 Rules:

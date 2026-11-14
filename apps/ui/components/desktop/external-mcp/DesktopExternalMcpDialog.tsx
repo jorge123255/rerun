@@ -16,6 +16,7 @@ import { externalMcpEndpoint } from '@/lib/desktop/external-mcp/snippets'
 import { ScrollFade } from '@rerun/ui/primitives'
 import { DesktopCreatedExternalMcpKey } from './DesktopCreatedExternalMcpKey'
 import { DesktopExternalMcpKeyList } from './DesktopExternalMcpKeyList'
+import { DesktopImportAgent } from './DesktopImportAgent'
 import { DesktopExternalMcpSnippets } from './DesktopExternalMcpSnippets'
 import { DesktopRevokeExternalMcpKeyDialog } from './DesktopRevokeExternalMcpKeyDialog'
 import { useDesktopExternalMcpController } from './useDesktopExternalMcpController'
@@ -117,6 +118,8 @@ function DialogFrame({ open, onOpenChange, workspaceId, driver }: { open: boolea
                                         </Button>
                                     </div>
                                 </section>
+
+                                <DesktopImportAgent workspaceId={workspaceId} listening={!!endpoint} onCreated={controller.retryLoad} />
                             </>
                         )}
                         {controller.error && (
