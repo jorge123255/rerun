@@ -4,10 +4,10 @@ import { byRecency, coworkerLine, type AgentStatus, type CoworkerLineKey, type C
 import { shortRelativeTime } from '@rerun/i18n/format'
 import { Orb } from '@rerun/ui/foreman'
 import { AgentBuddy, buddyMoodOfStatus } from '@rerun/ui/iso-grid'
-import { Ellipsis, PanelRight, Plus, Search, Users } from 'lucide-react'
+import { ArrowRight, CopyPlus, Ellipsis, PanelRight, Plus, Search, Users } from 'lucide-react'
 import { useMemo, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { TooltipLabeled } from '@/components/ui/tooltip'
 import type { BoardActivityStatus } from '@/lib/desktop/board-activity'
 import type { DesktopCoworkerPreviews } from '@/lib/desktop/coworker-previews'
@@ -26,7 +26,7 @@ function statusOf(status: BoardActivityStatus | undefined): AgentStatus {
  * The left column of the Simple view: the workspace, search, then the Chief of Staff and one tile
  * per coworker, the most recently active first.
  */
-export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenCard, onOpenForeman, onSearch, onNewCoworker, inboxSlot, unseenIds }: {
+export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenCard, onOpenForeman, onSearch, onNewCoworker, inboxSlot, unseenIds, boxes, boxOf, onDuplicate, onMoveToBox }: {
     workspaceMenu: ReactNode
     agents: DesktopAgentView[]
     statuses: Record<string, BoardActivityStatus>
@@ -40,6 +40,12 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
     inboxSlot?: (element: HTMLElement | null) => void
     // Coworkers with a finished run nobody has opened yet.
     unseenIds?: readonly string[]
+    // The Boxes of the board and the one a coworker sits in, for Move to Box.
+    boxes?: readonly { id: string; name: string | null }[]
+    boxOf?: (agentId: string) => string | null
+    // Both need the grid: a copy is placed on it, a move lands in the first free cell of the Box.
+    onDuplicate?: (agentId: string) => void
+    onMoveToBox?: (agentId: string, spaceId: string) => void
     onOpenForeman?: () => void
     onSearch?: () => void
     onNewCoworker: () => void
@@ -111,6 +117,18 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="start" side="right" className="w-auto">
                                     <DropdownMenuItem onSelect={() => onOpenCard(agent.id)} className="gap-2 whitespace-nowrap"><PanelRight className="size-4" />{t('workspaceView.tile.card')}</DropdownMenuItem>
+                                    {(onDuplicate || onMoveToBox) && <DropdownMenuSeparator />}
+                                    {onDuplicate && <DropdownMenuItem onSelect={() => onDuplicate(agent.id)} className="gap-2 whitespace-nowrap"><CopyPlus className="size-4" />{t('coworker.duplicate')}</DropdownMenuItem>}
+                                    {onMoveToBox && boxes && (() => {
+                                        const others = boxes.filter(box => box.id !== boxOf?.(agent.id))
+                                        return <DropdownMenuSub>
+                                            <DropdownMenuSubTrigger className="gap-2 whitespace-nowrap"><ArrowRight className="size-4" />{t('coworker.moveBox')}</DropdownMenuSubTrigger>
+                                            <DropdownMenuSubContent>
+                                                {others.length === 0 ? <DropdownMenuItem disabled>{t('coworker.noOtherBox')}</DropdownMenuItem>
+                                                    : others.map(box => <DropdownMenuItem key={box.id} className="max-w-56 truncate" onSelect={() => onMoveToBox(agent.id, box.id)}>{box.name}</DropdownMenuItem>)}
+                                            </DropdownMenuSubContent>
+                                        </DropdownMenuSub>
+                                    })()}
                                 </DropdownMenuContent>
                             </DropdownMenu>}
                         </div>

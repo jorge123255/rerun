@@ -41,7 +41,7 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ inboxSlot, onUnseenAgents, activitySnapshot, routineCountdowns, agents, workspaceName, workspaceMenu, gettingStarted, selectedAgentId, visibleSessionId, workspaceId, launchNonce, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onOpenSettings, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
+export function DesktopBoard({ inboxSlot, onUnseenAgents, tileAction, activitySnapshot, routineCountdowns, agents, workspaceName, workspaceMenu, gettingStarted, selectedAgentId, visibleSessionId, workspaceId, launchNonce, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onOpenSettings, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
     activitySnapshot?: BoardActivitySnapshot
     routineCountdowns?: ReadonlyMap<string, TileCountdown>
     agents: DesktopAgentView[]
@@ -73,6 +73,8 @@ export function DesktopBoard({ inboxSlot, onUnseenAgents, activitySnapshot, rout
     inboxSlot?: HTMLElement | null
     // The coworkers with a finished run nobody has opened yet, for the Simple view's list.
     onUnseenAgents?: (agentIds: string[]) => void
+    // What the Simple view's list asks of the grid: place a copy of a coworker, or move one to another Box.
+    tileAction?: { kind: 'copy'; agentId: string; nonce: number } | { kind: 'move'; agentId: string; spaceId: string; nonce: number } | null
     onPlacementChange?: (placing: boolean) => void
     board?: DesktopBoardState
     onBoardCommand?: (command: DesktopSpaceCommand) => Promise<void>
@@ -255,6 +257,17 @@ export function DesktopBoard({ inboxSlot, onUnseenAgents, activitySnapshot, rout
         onDismiss?.()
         setPlacement({ sourceId: agent.id, requestId: crypto.randomUUID(), name: duplicateAgentName(agent.name) })
     }
+
+    // Each request is acted on once, when it arrives.
+    const handledTileAction = useRef(0)
+    useEffect(() => {
+        if (!tileAction || handledTileAction.current === tileAction.nonce) return
+        handledTileAction.current = tileAction.nonce
+        if (tileAction.kind === 'copy') {
+            const source = agents.find(agent => agent.id === tileAction.agentId)
+            if (source && onDuplicate) beginCopy(source)
+        } else if (onBoardCommand) void moveAgent(tileAction.agentId, tileAction.spaceId).catch(() => {})
+    })
 
     function cancelCopy() {
         if (!placement || submitting.current) return

@@ -59,3 +59,29 @@ test('an empty workspace offers a first coworker, and the view row switches betw
     await act(async () => { radios[1].click() })
     expect(onChange).toHaveBeenCalledExactlyOnceWith('simple')
 })
+
+test('the tile menu opens the card, places a copy and moves a coworker to another Box', async () => {
+    const onCard = vi.fn(), onDuplicate = vi.fn(), onMove = vi.fn()
+    const host = mount(<DesktopSimpleSidebar workspaceMenu={null} agents={[agent('ann', 'Ann')]} statuses={{}} previews={{}} selectedId={null} foremanOpen={false}
+        onOpenCoworker={vi.fn()} onNewCoworker={vi.fn()} onOpenCard={onCard} onDuplicate={onDuplicate} onMoveToBox={onMove}
+        boxes={[{ id: 'sales', name: 'Sales' }, { id: 'support', name: 'Support' }]} boxOf={() => 'sales'} />)
+    const open = async () => {
+        const more = host.querySelector<HTMLButtonElement>('button[aria-label="More for Ann"]')!
+        more.focus()
+        await act(async () => { more.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })) })
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+        return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    }
+    const items = await open()
+    expect(items.map(item => item.textContent)).toEqual(['Coworker card', 'Duplicate', 'Move to Box'])
+    await act(async () => { items[1].click() })
+    expect(onDuplicate).toHaveBeenCalledExactlyOnceWith('ann')
+    const again = await open()
+    await act(async () => { again[2].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })); await new Promise(resolve => setTimeout(resolve, 5)) })
+    // Only the other Box is offered.
+    const boxes = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].filter(item => !['Coworker card', 'Duplicate', 'Move to Box'].includes(item.textContent ?? ''))
+    expect(boxes.map(item => item.textContent)).toEqual(['Support'])
+    await act(async () => { boxes[0].click() })
+    expect(onMove).toHaveBeenCalledExactlyOnceWith('ann', 'support')
+    expect(onCard).not.toHaveBeenCalled()
+})
