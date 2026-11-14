@@ -32,6 +32,8 @@ import { nativeWritebackService } from './native-writeback/service'
 import { nativeWritebackApi } from './native-writeback/api'
 import { authenticateDesktopEngineRequest, authenticateDesktopRequest, DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
+import { desktopConnectorActionKind } from '@rerun/contracts'
+import { admitConnectorCall } from './connector-approvals/store'
 import type { DesktopRuntime } from './runtime'
 import { remoteMcpApi } from './mcp/api'
 import { abortable, boundedText, remoteMcpRuntime } from './mcp/remote'
@@ -42,7 +44,7 @@ import { createMcpOAuthAttempts } from './mcp/oauth-attempt'
 import { bindTrustedMcpDeviceMethodReview } from './mcp-device-approval/binding'
 import { createDesktopMcpBrowserApprovals } from './mcp-sign-in/browser-approval'
 import { loopbackOAuthApi } from './mcp/oauth-api'
-import { desktopMcpBridge, desktopMcpBridgeRequest, type McpRunIdentity } from './mcp/bridge'
+import { desktopMcpBridge, desktopMcpBridgeRequest, type DesktopMcpCallAdmission, type McpRunIdentity } from './mcp/bridge'
 
 const authority = z.object({ id: z.string(), config: z.object({ enabled: z.boolean(), tools: z.object({ filesystem: z.boolean().optional(), shared: z.boolean().optional(), desktopToolGrants: z.record(z.string(), z.boolean()).optional(), desktopCodexGrants: z.record(z.string(), z.boolean()).optional() }) }) })
 const session = z.object({ id: z.string(), agentId: z.string() })
@@ -214,6 +216,11 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
             store, key: masterKey, authorizeRun: (identity, signal) => authorizeRun(identity, signal, 'services'),
             remoteAccess: access, watchOwner: owner => watchDesktopMcpOwner(runtime, owner),
         })
+    // Connector actions that delete, send, share, post, pay or change credentials wait for the person's answer.
+    const askFirst: DesktopMcpCallAdmission = async call => {
+        const kind = desktopConnectorActionKind(call.tool, call.destructive)
+        return kind ? admitConnectorCall(db, { owner: call.owner, sessionId: call.sessionId, tool: call.tool, kind, arguments: call.arguments }) : null
+    }
     const servicesBridge = serviceEngineBridge(installedServices, services, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'services')
         return (await historicalOwner(identity, signal)).owner.id
@@ -226,7 +233,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
             if (await authorizeRun(identity, stop, 'services') !== owner) throw new Error('Service run owner changed')
         })
         return [...http, ...await vaultCatalog.sseTools(owner, identity, active)]
-    })
+    }, askFirst)
     const accounts = await canonicalServiceAccounts(runtime, installedServices, services, masterKey, {
         additionalTransport: (record, run, signal) => serviceTransports?.service(record, run, signal),
         oauthCredential: (record, run, signal) => serviceOAuth.credentialFor(record, run, signal),
@@ -311,7 +318,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
             return [...await sse.tools(owner, run, signal), ...await vaultMcp.tools(owner, signal)]
         },
         releaseRun: sse.releaseRun,
-    })
+    }, askFirst)
     const deviceReview = bindTrustedMcpDeviceMethodReview({ runtime, db, key: masterKey, store, shutdown: entry.shutdown.signal })
     entry.shutdown.signal.addEventListener('abort', deviceReview.dispose, { once: true })
     return { store, references, runtime: remote, bridge, vaultOAuth: vaultMcp.oauth, checkVaultCatalogHealth: vaultCatalog.catalogHealth(runtime.launchNonce), access, authorizeRun, deviceReview, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),

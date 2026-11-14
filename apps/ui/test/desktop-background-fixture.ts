@@ -16,6 +16,8 @@ export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestIn
     if (coworkerVault) return Response.json({ agentId: coworkerVault[1], attached: [], available: [] })
     if (url.pathname === '/api/desktop/workspace-view') return Response.json({ view: null, lastOpened: null })
     // The header's providers list reads what this Mac ran when it opens.
+    // A chat reads the connector actions waiting for an answer in it.
+    if (/^\/api\/desktop\/sessions\/[^/]+\/connector-approvals$/.test(url.pathname)) return Response.json({ pending: [], rules: [] })
     if (url.pathname === '/api/desktop/cli-updates') return Response.json({ tools: [] })
     if (url.pathname === '/api/desktop/provider-usage') return Response.json({ since: { day: '2026-01-01T00:00:00.000Z', week: '2026-01-01T00:00:00.000Z' }, providers: {} })
     if (url.pathname === '/api/desktop/vault') return Response.json({ entries: [], coworkers: [] })

@@ -6,8 +6,9 @@ import {abortable,boundedText} from '../mcp/remote'
 import type {ServiceStore} from './store'
 import type {LocalServices,ServiceRun} from './lifecycle'
 import type {remoteMcpTools} from '../mcp/tools'
+import type {DesktopMcpCallAdmission} from '../mcp/bridge'
 type RemoteTool = Awaited<ReturnType<typeof remoteMcpTools>>[number]
-type VaultTool = Omit<RemoteTool, 'execute'> & {
+type VaultTool = Omit<RemoteTool, 'execute' | 'destructive'> & { destructive?: boolean } & {
  execute(args:Record<string,unknown>,signal:AbortSignal,toolCallId:string):ReturnType<RemoteTool['execute']>
 }
 type ServiceCapability = {key:string;revision:string;name:string} | {vault:VaultTool}
@@ -15,7 +16,7 @@ const id=z.string().min(1).max(200),run=z.object({engineAgentId:id,sessionId:id,
 const bodySchema=z.discriminatedUnion('action',[
  run.extend({action:z.literal('catalog')}).strict(),run.extend({action:z.literal('call'),catalogId:z.string().uuid(),capabilityId:z.string().uuid(),toolCallId:id,arguments:z.record(z.string(),z.unknown())}).strict(),run.extend({action:z.literal('release'),catalogId:z.string().uuid().optional()}).strict(),
 ])
-export function serviceEngineBridge(store:ServiceStore,service:LocalServices,ownerForRun:(run:ServiceRun,signal:AbortSignal,action:'catalog'|'call'|'release')=>Promise<string>,releaseTransportRun?:(owner:string,run:ServiceRun,signal:AbortSignal)=>Promise<void>,vaultTools?:(owner:string,run:ServiceRun,signal:AbortSignal)=>Promise<VaultTool[]>){
+export function serviceEngineBridge(store:ServiceStore,service:LocalServices,ownerForRun:(run:ServiceRun,signal:AbortSignal,action:'catalog'|'call'|'release')=>Promise<string>,releaseTransportRun?:(owner:string,run:ServiceRun,signal:AbortSignal)=>Promise<void>,vaultTools?:(owner:string,run:ServiceRun,signal:AbortSignal)=>Promise<VaultTool[]>,admit?:DesktopMcpCallAdmission){
  type Catalog={owner:string;run:string;controller:AbortController;timer:ReturnType<typeof setTimeout>;tools:Map<string,ServiceCapability>}
  const catalogs=new Map<string,Catalog>(),releasedRuns=new Set<string>(),preparing=new Map<string,AbortController>();let closed=false
  const identity=(run:ServiceRun)=>JSON.stringify([run.engineAgentId,run.sessionId,run.runId])
@@ -58,6 +59,10 @@ export function serviceEngineBridge(store:ServiceStore,service:LocalServices,own
    const active=AbortSignal.any([signal,catalog.controller.signal]);await service.current(owner,'use',body,active)
    const record='vault' in capability ? undefined : await service.liveRecord(owner,capability.key,capability.revision,active)
    const runtime=record && service.transport(record,body,active)
+   // An action that asks first is answered here, before the call is claimed or anything reaches the app.
+   const held=await admit?.({owner,sessionId:body.sessionId,tool:'vault' in capability?capability.vault.name:capability.name,destructive:'vault' in capability&&capability.vault.destructive===true,arguments:body.arguments},active)
+   active.throwIfAborted()
+   if(typeof held==='string')return Response.json({toolCallId:body.toolCallId,result:{source:'local_service',untrusted:true,result:{isError:true,content:[{type:'text',text:held}]}}})
    const claimed=await store.db.execute({sql:'INSERT INTO desktop_service_calls(owner,run_id,call_id) VALUES(?,?,?) ON CONFLICT DO NOTHING',args:[owner,body.runId,body.toolCallId]});if(claimed.rowsAffected!==1)throw new Error('Call already submitted; it will not be replayed')
    await service.current(owner,'use',body,active);active.throwIfAborted()
    let result:unknown

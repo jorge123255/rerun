@@ -63,6 +63,7 @@ import { DesktopMcpSignInSummary } from './mcp-sign-in/DesktopMcpSignInReceipt'
 import { readDesktopMcpSignIn } from '@/lib/desktop/mcp-sign-in-client'
 import type { DesktopMcpSignInResponse } from '@rerun/contracts'
 import { DesktopSecretRequestBlock } from './secret-requests/DesktopSecretRequestBlock'
+import { DesktopConnectorApprovals } from './connector-approvals/DesktopConnectorApprovals'
 import { DesktopSecretSummaryReceipt } from './secret-requests/DesktopSecretRequestReceipt'
 import { readDesktopSecretRequest } from '@/lib/desktop/secret-requests-client'
 import { parseDesktopSecretReceiptSummary, type DesktopSecretRequestView } from '@rerun/contracts'
@@ -1521,6 +1522,12 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                 if (payload.action === 'open') { setScreenOpen('request'); return }
                 if (payload.action === 'done' || payload.action === 'skip') await decideTakeover(payload)
             }} />, { kind: 'takeover', label: t('chatRequestCue.takeover') })
+    }
+    if (active && sessionId) {
+        // Connector actions that ask first. The answer goes back to the coworker as the next message.
+        addRequest(`connector-approvals:${sessionId}`,
+            <DesktopConnectorApprovals sessionId={sessionId} generating={generating || stopping} disabled={draft.quitting || inactive || !ready}
+                onAnswered={text => { void sendMessage({ text }, { body: { agentId: agent.id, sessionId } }) }} />)
     }
     const waitingCard = ready && !generating && !stopping && !draft.quitting
         ? requestCards.find(card => card.cue) : undefined
