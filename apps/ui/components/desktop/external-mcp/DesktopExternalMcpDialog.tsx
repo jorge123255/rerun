@@ -118,10 +118,11 @@ function DialogFrame({ open, onOpenChange, workspaceId, driver }: { open: boolea
                                         </Button>
                                     </div>
                                 </section>
-
-                                <DesktopImportAgent workspaceId={workspaceId} listening={!!endpoint} onCreated={controller.retryLoad} />
                             </>
                         )}
+                        {/* Outside the loading switch: making the key refreshes the list above, and the text it
+                            shows once must not be rebuilt away with it. */}
+                        <DesktopImportAgent workspaceId={workspaceId} listening={!!endpoint} onCreated={controller.retryLoad} />
                         {controller.error && (
                             <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
                                 <span className="min-w-0 break-words">{controller.error}</span>
