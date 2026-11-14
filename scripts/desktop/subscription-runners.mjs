@@ -6,7 +6,8 @@ import { existsSync, repoRoot, sha256File } from './lib.mjs'
 const runners = [
     {
         key: 'grokBuildPath', name: 'grok-build', env: 'RERUN_STAGE_GROK_BUILD',
-        sha256: '5c8a688251bf61e35370b828b6a353b0a20fcc3f64000de8a91d426039f29cec',
+        // grok 1.0.77 (50ca579fa996), Developer ID X.AI Corporation (5Y6N3AJ54S). Accepted by the owner on November 14, 2026.
+        sha256: '197c66a63e5ac46e07450b0ca21d141ce665050a412180f185dadfae1c7a5b2a',
     },
     {
         key: 'kimiCodePath', name: 'kimi-code', env: 'RERUN_STAGE_KIMI_CODE',

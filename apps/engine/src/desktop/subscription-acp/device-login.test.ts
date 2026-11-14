@@ -52,7 +52,8 @@ test.each(['grok-build', 'kimi-code'] as const)('publishes a bounded public chal
     const text = output(provider).replace('/device?', '/device?device_code=private&')
     for (const part of Buffer.from(text)) parse(Buffer.from([part]))
     expect(seen).toHaveBeenCalledExactlyOnceWith({
-        verificationUrl: provider === 'grok-build' ? 'https://auth.x.ai/device' : 'https://auth.kimi.ai/device',
+        // Kimi's page needs the code in its address; nothing else of the runner's query is kept.
+        verificationUrl: provider === 'grok-build' ? 'https://auth.x.ai/device' : `https://auth.kimi.ai/device?user_code=${'TEST-QA22'}`,
         userCode: 'TEST-QA22',
     })
 })

@@ -36,8 +36,12 @@ export function desktopSubscriptionVerificationUrl(provider: DesktopSubscription
         const url = new URL(value)
         if (url.protocol !== 'https:' || url.port || url.username || url.password ||
             !verificationHosts[provider].has(url.hostname)) return null
-        // Device code is displayed separately. No runner query or fragment reaches the renderer.
-        return url.origin + url.pathname
+        // Device code is displayed separately. No other runner query or fragment reaches the renderer.
+        // Kimi's page reads the code from the address and answers "Missing user_code parameter"
+        // without it, so that one parameter stays, checked like the code shown beside the link.
+        const code = provider === 'kimi-code' ? url.searchParams.get('user_code') : null
+        const kept = code && desktopSubscriptionDeviceCode.safeParse(code).success ? `?user_code=${code}` : ''
+        return url.origin + url.pathname + kept
     } catch {
         return null
     }
