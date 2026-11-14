@@ -67,6 +67,7 @@ const en = {
     askScopeAlways: "{tool} · always",
     askTurnOff: "Turn off",
     askFailed: "That did not go through. Try again.",
+    askAllowedHint: "Connector actions this coworker runs without asking you first.",
 }
 
 export const desktopBoardCopy = {
@@ -138,6 +139,7 @@ export const desktopBoardCopy = {
         askScopeAlways: "{tool} · toujours",
         askTurnOff: "Désactiver",
         askFailed: "L’action n’a pas abouti. Réessayez.",
+        askAllowedHint: "Actions de connecteur que ce collègue exécute sans vous demander.",
     },
     es: {
         title: "Buscar conversación",
@@ -206,6 +208,7 @@ export const desktopBoardCopy = {
         askScopeAlways: "{tool} · siempre",
         askTurnOff: "Desactivar",
         askFailed: "No se pudo completar. Inténtalo de nuevo.",
+        askAllowedHint: "Acciones de conector que este compañero ejecuta sin preguntarte.",
     },
     pt: {
         title: "Buscar conversa",
@@ -274,6 +277,7 @@ export const desktopBoardCopy = {
         askScopeAlways: "{tool} · sempre",
         askTurnOff: "Desativar",
         askFailed: "Não foi possível concluir. Tente de novo.",
+        askAllowedHint: "Ações de conector que este colega executa sem perguntar a você.",
     },
     de: {
         title: "Unterhaltung suchen",
@@ -342,5 +346,6 @@ export const desktopBoardCopy = {
         askScopeAlways: "{tool} · immer",
         askTurnOff: "Ausschalten",
         askFailed: "Das hat nicht geklappt. Versuche es erneut.",
+        askAllowedHint: "Connector-Aktionen, die dieser Kollege ohne Nachfrage ausführt.",
     },
 } satisfies Record<Locale, typeof en>

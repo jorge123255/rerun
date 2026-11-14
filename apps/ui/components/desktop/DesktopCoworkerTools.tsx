@@ -19,6 +19,7 @@ import type { DesktopAgentView } from './DesktopApp'
 import { holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { useDesktopDialogControl, useDesktopPanelCloseGuard, type DesktopDialogControl, type RegisterDesktopPanelCloseGuard } from '@/lib/desktop/use-dialog-control'
 import { useDesktopLocale } from './DesktopLocale'
+import { DesktopConnectorRules } from './connector-approvals/DesktopConnectorRules'
 
 async function requestTools(url: string, init: RequestInit): Promise<CoworkerTools> {
     const response = await fetch(url, init)
@@ -169,6 +170,7 @@ export function DesktopCoworkerToolsBody({ agent, disabled = false, registerClos
                 </CollapsibleContent>
             </Collapsible>}
         </fieldset> : !error && <FxToolsLoading />}
+        <DesktopConnectorRules agentId={agent.id} disabled={saving || disabled} />
         {error && <div role="alert" className="space-y-2 text-sm text-destructive">{error}
             {!tools && <Button type="button" variant="outline" size="sm" onClick={() => { setError(''); setAttempt(n => n + 1) }}>Retry</Button>}
         </div>}
