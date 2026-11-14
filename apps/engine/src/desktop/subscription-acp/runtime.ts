@@ -469,6 +469,6 @@ export function desktopDevinModels(options: readonly { value: string; name: stri
         const supported = devinEfforts.filter(effort => efforts.has(effort))
         return { id, label, reasoning: { supported: [...supported], default: supported.includes('medium') ? 'medium' : supported[0]! } }
     })
-    // The catalog holds at most 128 models: the plain ones first, then the families as Devin lists them.
-    return [...plain, ...grouped].slice(0, 128)
+    // In Devin's own order of families first, then the models it names without an effort.
+    return [...grouped, ...plain].slice(0, 512)
 }

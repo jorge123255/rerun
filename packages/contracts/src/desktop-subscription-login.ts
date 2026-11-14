@@ -22,7 +22,8 @@ export const desktopSubscriptionModels = z.array(z.object({
         supported: z.array(catalogId).min(1).max(128),
         default: catalogId,
     }).refine(({ supported, default: effort }) => supported.includes(effort)).optional(),
-})).min(1).max(128).refine(models => new Set(models.map(model => model.id)).size === models.length)
+// Devin alone offers well over a hundred.
+})).min(1).max(512).refine(models => new Set(models.map(model => model.id)).size === models.length)
 
 export const desktopSubscriptionDeviceCode = z.string().regex(/^[A-Z0-9]{3,12}(?:-[A-Z0-9]{3,12}){0,2}$/)
 const verificationHosts = {

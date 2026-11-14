@@ -39,6 +39,20 @@ export async function aggregateUsageByDay(agentId: string, sinceIso: string | nu
         .orderBy(day)
 }
 
+/** Finished runs of one coworker since a moment, by provider. */
+export async function aggregateUsageByProvider(agentId: string, sinceIso: string): Promise<{ provider: string | null; totalTokens: number; runCount: number }[]> {
+    const { db } = await getSystemDb(agentId)
+    return db
+        .select({
+            provider: runs.provider,
+            totalTokens: sql<number>`coalesce(sum(coalesce(${runs.totalTokens}, coalesce(${runs.inputTokens}, 0) + coalesce(${runs.outputTokens}, 0))), 0)`,
+            runCount: sql<number>`count(*)`,
+        })
+        .from(runs)
+        .where(and(eq(runs.agentId, agentId), eq(runs.status, 'done'), gte(runs.startedAt, sinceIso)))
+        .groupBy(runs.provider)
+}
+
 export async function getRun(agentId: string, id: string): Promise<RunRow | undefined> {
     const { db } = await getSystemDb(agentId)
     const rows = await db.select().from(runs).where(eq(runs.id, id)).limit(1)

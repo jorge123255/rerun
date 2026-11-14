@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Cpu } from 'lucide-react'
-import { PROVIDER_LABELS, type BoxDefaultModel, type ConnectionSummary, type Provider } from '@rerun/contracts'
+import { PROVIDER_LABELS, desktopProviderUsageSchema, type BoxDefaultModel, type ConnectionSummary, type DesktopProviderUsage, type Provider } from '@rerun/contracts'
 import { PlanLimitMeter } from '@/components/connections/SourceBits'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -30,6 +30,17 @@ export function DesktopProviderStatus({ providerLabel, modelLabel, connections =
 }) {
     const { t } = useDesktopLocale()
     const [open, setOpen] = useState(false)
+    // What this Mac ran on each provider, read each time the list opens.
+    const [ran, setRan] = useState<DesktopProviderUsage['providers'] | null>(null)
+    useEffect(() => {
+        if (!open) return
+        const controller = new AbortController()
+        void fetch('/api/desktop/provider-usage', { cache: 'no-store', signal: controller.signal })
+            .then(async response => response.ok ? desktopProviderUsageSchema.parse(await response.json()) : null)
+            .then(usage => { if (usage && !controller.signal.aborted) setRan(usage.providers) })
+            .catch(() => {})
+        return () => controller.abort()
+    }, [open])
     const connected = connections.filter(connection => connection.connected && !connection.credentialRejected)
     const providerStatus = providerLabel ? t('boardUI.providerConnected', { provider: providerLabel }) : t('boardUI.providerSetup')
     const providerSummary = providerLabel && modelLabel ? `${providerStatus} · ${modelLabel}` : providerStatus
@@ -67,8 +78,9 @@ export function DesktopProviderStatus({ providerLabel, modelLabel, connections =
                             {isDefault && workspaceDefault ? `Workspace default · ${desktopConnectionModelLabel(connection, workspaceDefault.model)}`
                                 : `${connection.models.length + (connection.extraModels?.length ?? 0)} ${connection.models.length + (connection.extraModels?.length ?? 0) === 1 ? 'model' : 'models'}`}
                         </p>
+                        <ProviderRan ran={ran?.[connection.provider]} loaded={ran !== null} />
                         {usage.status === 'unknown'
-                            ? <p className="mt-1.5 text-[11px] text-muted-foreground">{usage.reason === 'unsupported-provider' ? 'This provider does not report usage.' : 'No usage reading yet.'}</p>
+                            ? <p className="mt-1.5 text-[11px] text-muted-foreground">{usage.reason === 'unsupported-provider' ? 'This provider does not report its plan limits.' : 'No plan limit reading yet.'}</p>
                             : <div className="mt-2 space-y-2">
                                 {usage.windows.map((window, index) => {
                                     const name = planWindowName(window), reset = planWindowReset(window)
@@ -88,4 +100,18 @@ export function DesktopProviderStatus({ providerLabel, modelLabel, connections =
             <Button type="button" size="sm" variant="ghost" className="justify-start" disabled={disabled} onClick={() => { setOpen(false); onSettings() }}>{t('boardUI.modelSettings')}</Button>
         </PopoverContent>
     </Popover>
+}
+
+const count = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
+const amount = (window: { replies: number; tokens: number }) =>
+    `${window.replies} ${window.replies === 1 ? 'reply' : 'replies'}${window.tokens > 0 ? ` · ${count.format(window.tokens)} tokens` : ''}`
+
+/** Replies and tokens this Mac ran on a provider. Shown for every provider, whatever it reports itself. */
+function ProviderRan({ ran, loaded }: { ran?: DesktopProviderUsage['providers'][string]; loaded: boolean }) {
+    if (!loaded) return <p className="mt-1.5 text-[11px] text-muted-foreground">Reading usage…</p>
+    const day = ran?.day ?? { replies: 0, tokens: 0 }, week = ran?.week ?? { replies: 0, tokens: 0 }
+    return <dl data-testid="desktop-provider-ran" className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-2 text-[11px]">
+        <dt className="text-muted-foreground">Last 24 hours</dt><dd className="tabular-nums">{amount(day)}</dd>
+        <dt className="text-muted-foreground">Last 7 days</dt><dd className="tabular-nums">{amount(week)}</dd>
+    </dl>
 }

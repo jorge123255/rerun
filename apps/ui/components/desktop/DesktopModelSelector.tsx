@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils'
 import { useDesktopLocale } from './DesktopLocale'
 
 import { DesktopModelEffort, desktopEffortLabel, saveDesktopModelEffort } from './DesktopModelEffort'
+import { DesktopModelGroupHeader, DesktopModelSearch, useDesktopModelGroups } from './DesktopModelGroups'
 export type DesktopModelBlock = 'setup' | 'unavailable' | 'reasoning'
 
 type Props = {
@@ -149,6 +150,7 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, connection
         reasoningUnavailable: !!current?.effective.reasoningUnavailable
             && pending.connectionId === current.workspace?.connectionId && pending.model === current.workspace.model,
     } : current?.effective
+    const modelGroups = useDesktopModelGroups(current?.catalog ?? [], effective?.connectionId)
     const setupRequired = !!current && !current.workspace
     const blocked = setupRequired ? 'setup' : effective?.reasoningUnavailable ? 'reasoning'
         : effective?.model && !effective.available ? 'unavailable' : null
@@ -220,12 +222,15 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, connection
                         </span>
                         <Star aria-hidden className="size-3.5 fill-current text-primary" />
                     </button>}
-                    {current?.catalog.map(group => (
+                    {modelGroups.searchable && <div className="px-0.5 pt-1.5"><DesktopModelSearch value={modelGroups.query} onChange={modelGroups.setQuery} /></div>}
+                    {modelGroups.query.trim() && modelGroups.groups.length === 0 && <p className="px-2.5 py-2 text-xs text-muted-foreground">No model matches.</p>}
+                    {modelGroups.groups.map(({ group, models, open: groupOpen }) => (
                         <div key={group.connectionId} className="pt-1">
-                            <p className="px-2.5 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{group.name}</p>
-                            {group.models.map(model => {
+                            <DesktopModelGroupHeader name={group.name} provider={group.provider} count={models.length} open={groupOpen} searching={!!modelGroups.query.trim()}
+                                onToggle={() => modelGroups.toggle(group.connectionId, groupOpen)} />
+                            {groupOpen && models.map(model => {
                                 const picked = effective?.connectionId === group.connectionId && effective.model === model.id
-                                const pinned = current.coworker?.connectionId === group.connectionId && current.coworker.model === model.id
+                                const pinned = current?.coworker?.connectionId === group.connectionId && current.coworker.model === model.id
                                 const choice = { connectionId: group.connectionId, model: model.id }
                                 return (
                                     <div key={model.id} className={cn('flex min-h-11 items-center rounded-lg hover:bg-muted/40', picked && 'bg-muted/60')}>

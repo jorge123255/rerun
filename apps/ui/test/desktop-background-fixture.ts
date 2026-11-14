@@ -15,6 +15,8 @@ export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestIn
     const coworkerVault = /^\/api\/desktop\/coworkers\/([^/]+)\/vault$/.exec(url.pathname)
     if (coworkerVault) return Response.json({ agentId: coworkerVault[1], attached: [], available: [] })
     if (url.pathname === '/api/desktop/workspace-view') return Response.json({ view: null, lastOpened: null })
+    // The header's providers list reads what this Mac ran when it opens.
+    if (url.pathname === '/api/desktop/provider-usage') return Response.json({ since: { day: '2026-01-01T00:00:00.000Z', week: '2026-01-01T00:00:00.000Z' }, providers: {} })
     if (url.pathname === '/api/desktop/vault') return Response.json({ entries: [], coworkers: [] })
     if (/^\/api\/desktop\/coworkers\/[^/]+\/document-attachments$/.test(url.pathname)) return Response.json({ attachments: [] })
     if (/^\/api\/desktop\/sessions\/[^/]+\/trigger-requests$/.test(url.pathname)) return Response.json({ request: null })

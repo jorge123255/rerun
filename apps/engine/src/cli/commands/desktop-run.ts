@@ -37,6 +37,7 @@ import { abortAllRuns } from '../../runtime/run-control.js'
 import { closeAllMcp } from '../../tools/mcp-pool.js'
 import { env } from '../../config/env.js'
 import { desktopCodexAction, desktopClaudePlanActionSchema, desktopSubscriptionLoginAction } from '@rerun/contracts'
+import { readDesktopProviderUsage } from '../../desktop/provider-usage/usage.js'
 import { codexLoginAction, codexLoginStatus, stopCodexLogin } from '../../desktop/codex-login.js'
 import { desktopApp, desktopRouteAllowed } from '../../desktop/policy.js'
 import { bindDesktopSchedules } from '../../desktop/schedule-binding.js'
@@ -164,6 +165,7 @@ export async function desktopRunCommand(): Promise<void> {
         return c.json(await claudeLogin.action(parsed.data, c.req.raw.signal))
     })
     app.get('/desktop/codex-login', async c => c.json(await codexLoginStatus()))
+    app.get('/desktop/provider-usage', async c => c.json(await readDesktopProviderUsage(), 200, { 'Cache-Control': 'no-store' }))
     app.get('/desktop/subscription-providers', c => c.json({
         'grok-build': { runtimeAvailable: desktopSubscriptionRunnerAvailable('grok-build') },
         'kimi-code': { runtimeAvailable: desktopSubscriptionRunnerAvailable('kimi-code') },

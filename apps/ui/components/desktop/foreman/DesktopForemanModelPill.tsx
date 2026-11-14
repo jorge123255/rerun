@@ -6,6 +6,7 @@ import { UsageRing } from '@/components/agent/UsageRing'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { DesktopModelEffort, desktopEffortLabel } from '../DesktopModelEffort'
+import { DesktopModelGroupHeader, DesktopModelSearch, useDesktopModelGroups } from '../DesktopModelGroups'
 import type { DesktopModelView } from '@/lib/desktop/chat-model'
 import { ProviderIcon } from '@/lib/engine/provider-icons'
 import { CheckIcon, ChevronDownIcon } from '@/lib/icons'
@@ -41,6 +42,7 @@ export function DesktopForemanModelPill({ ref, view, connections, disabled, savi
     const label = !effective.model ? t('foreman.modelPicker.setUp') : effective.source === 'workspace'
         ? t('foreman.modelPicker.defaultLabel', { model: effective.label }) : effective.label
     const pillLabel = effective.available && effective.reasoning?.source === 'model' ? `${label} · ${desktopEffortLabel(effective.reasoning.effort)}` : label
+    const modelGroups = useDesktopModelGroups(view.catalog, effective.connectionId)
     const pick = async (model: DesktopForemanModelRef | null) => {
         setError(undefined)
         try { await onPick(model); setOpen(false) }
@@ -79,9 +81,12 @@ export function DesktopForemanModelPill({ ref, view, connections, disabled, savi
                     {!conversation && <CheckIcon aria-hidden className="size-4" />}
                 </button>
                 {view.catalog.length === 0 && <p className="px-2.5 py-2 text-xs text-muted-foreground">{t('foreman.modelPicker.empty')}</p>}
-                {view.catalog.map(group => <div key={group.connectionId}>
-                    <p className="px-2.5 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{group.name}</p>
-                    {group.models.map(model => {
+                {modelGroups.searchable && <div className="px-0.5 pt-1.5"><DesktopModelSearch value={modelGroups.query} onChange={modelGroups.setQuery} /></div>}
+                {modelGroups.query.trim() && modelGroups.groups.length === 0 && <p className="px-2.5 py-2 text-xs text-muted-foreground">No model matches.</p>}
+                {modelGroups.groups.map(({ group, models, open: groupOpen }) => <div key={group.connectionId} className="pt-1">
+                    <DesktopModelGroupHeader name={group.name} provider={group.provider} count={models.length} open={groupOpen} searching={!!modelGroups.query.trim()}
+                        onToggle={() => modelGroups.toggle(group.connectionId, groupOpen)} />
+                    {groupOpen && models.map(model => {
                         const chosen = conversation?.connectionId === group.connectionId && conversation.model === model.id
                         return <button key={model.id} type="button" disabled={disabled || saving || chosen} aria-current={chosen || undefined}
                             className="flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted/40"

@@ -13,11 +13,11 @@ test('Devin’s per-effort model ids fold into one model with its efforts as lev
         { value: 'swe-2-max-lightning', name: 'SWE-2' },
     ])
     expect(models).toEqual([
-        { id: 'adaptive', label: 'Adaptive' },
         { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', reasoning: { supported: ['low', 'medium', 'max'], default: 'medium' } },
         { id: 'claude-opus-5-5-fast', label: 'Claude Opus 5.5 Fast', reasoning: { supported: ['low', 'high'], default: 'low' } },
         { id: 'swe-2', label: 'SWE-2', reasoning: { supported: ['high'], default: 'high' } },
         { id: 'swe-2-lightning', label: 'SWE-2 Lightning', reasoning: { supported: ['max'], default: 'max' } },
+        { id: 'adaptive', label: 'Adaptive' },
     ])
 })
 

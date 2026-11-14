@@ -38,6 +38,8 @@ test('generic connection mutations cannot bypass named API receipts through raw,
     expect(desktopRouteAllowed('PUT', '/connections/default')).toBe(true)
     // The effort chosen for a model in a chat's model picker.
     expect(desktopRouteAllowed('PUT', '/connections/model-effort')).toBe(true)
+    expect(desktopRouteAllowed('GET', '/desktop/provider-usage')).toBe(true)
+    expect(desktopRouteAllowed('POST', '/desktop/provider-usage')).toBe(false)
     expect(desktopRouteAllowed('POST', '/connections/model-effort')).toBe(false)
 })
 
