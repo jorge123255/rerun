@@ -105,3 +105,9 @@ export async function forgetConnectorRule(db: Client, sessionId: string, ruleId:
     })
     return result.rowsAffected === 1
 }
+
+/** The oldest held call still waiting in a conversation, for the board and the Actions inbox. */
+export async function pendingConnectorApproval(db: Client, sessionId: string): Promise<{ id: string; tool: string; createdAt: string } | null> {
+    const row = (await db.execute({ sql: "SELECT id,tool,created_at FROM desktop_connector_approval_requests WHERE session_id=? AND status='pending' ORDER BY created_at LIMIT 1", args: [sessionId] })).rows[0]
+    return row ? { id: String(row.id), tool: String(row.tool), createdAt: String(row.created_at) } : null
+}

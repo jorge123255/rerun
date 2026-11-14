@@ -4,6 +4,7 @@ import { readDesktopToolInstallHistory } from './tool-install/runtime'
 import { readDesktopServiceRequestView } from './service-requests/view'
 import { readDesktopSecretRequestView } from './secret-requests/binding'
 import 'server-only'
+import { pendingConnectorApproval } from './connector-approvals/store'
 import { z } from 'zod'
 import type { DesktopPendingInbox, DesktopPendingReadTarget } from '../pending-inbox'
 import { readDesktopAttention } from './attention'
@@ -99,7 +100,7 @@ export async function markDesktopPendingInboxRead(runtime: DesktopRuntime, input
                             : item.kind === 'mcp' ? (await readDesktopMcpSignInView(runtime, session.id, { signal })).request?.requestId ?? null
                             : item.kind === 'tool-install' ? (await readDesktopToolInstallHistory(runtime, session.id, { signal })).filter(row => desktopToolInstallAttention(row)).find(row => row.operationId === item.id)?.operationId ?? null
                             : item.kind === 'secret' ? (await readDesktopSecretRequestView(runtime, session.id, { signal })).request?.requestId ?? null
-                            : (await readDesktopApproval(runtime, session.id, { signal })).approval?.id ?? null
+                            : (await readDesktopApproval(runtime, session.id, { signal })).approval?.id ?? (await pendingConnectorApproval(db, session.engineSessionId))?.id ?? null
                         // The resolver also reads local answer receipts after history arrives.
                         // A result that finishes after the scan deadline is still unknown.
                         signal.throwIfAborted()

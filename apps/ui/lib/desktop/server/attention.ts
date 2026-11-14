@@ -1,4 +1,5 @@
-import { desktopToolInstallAttention } from '@rerun/contracts'
+import { desktopToolInstallAttention, toolLabelOf } from '@rerun/contracts'
+import { pendingConnectorApproval } from './connector-approvals/store'
 import { readDesktopToolInstallHistory } from './tool-install/runtime'
 import { readDesktopMcpSignInView } from './mcp-sign-in/binding'
 import { readDesktopServiceRequestView } from './service-requests/view'
@@ -82,6 +83,12 @@ async function collect(runtime: DesktopRuntime): Promise<DesktopAttention> {
                             }
                         }
                     }
+                }
+                // A connector action held for an answer needs the person as much as a question does,
+                // and a delegated or scheduled run has nobody watching its chat.
+                if (!pending) {
+                    const held = await pendingConnectorApproval(db, session.engineSessionId)
+                    if (held) pending = { id: held.id, kind: 'approval', summary: summary(`Allow ${toolLabelOf(held.tool)}?`), requestedAt: held.createdAt }
                 }
             } catch { failed = true }
             try {
