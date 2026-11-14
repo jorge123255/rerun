@@ -59,6 +59,15 @@ async function openMenu(trigger: HTMLElement) {
     })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)) })
     expect(document.querySelector('[role="menu"]')).toBeTruthy()
+    // The other workspaces hang off the menu's header.
+    const header = document.querySelector<HTMLElement>('[data-testid="desktop-workspace-list-trigger"]')
+    expect(header).toBeTruthy()
+    await act(async () => {
+        header!.focus()
+        header!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)) })
+    expect(document.querySelector('[data-testid="desktop-workspace-list"]')).toBeTruthy()
 }
 const menuItem = (label: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent?.trim() === label)
 

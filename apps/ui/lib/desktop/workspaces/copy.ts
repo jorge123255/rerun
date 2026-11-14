@@ -7,6 +7,7 @@ export const DESKTOP_WORKSPACE_UI_COPY = {
     saving: 'Saving',
     busySwitch: 'A workspace switch is already in progress. Wait for it to finish, then try again.',
     draftsKept: 'Your unsent drafts stay in the workspace you are leaving.',
+    switchLabel: 'Switch workspace',
     openWorkspace: 'Open workspace',
     retry: 'Try again',
 } as const
