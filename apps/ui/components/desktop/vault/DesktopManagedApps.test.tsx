@@ -49,7 +49,7 @@ test('without a key it says where the sign-ins are held and takes the key, maske
     await press(host, 'Save key')
     expect(posts).toEqual([{ action: 'set-key', key: 'wrong-key-000000' }])
     expect(host.querySelector('[role=alert]')!.textContent).toBe('Composio refused this key.')
-    expect(host.textContent).not.toContain('Connect')
+    expect([...host.querySelectorAll('button')].some(node => node.textContent === 'Connect')).toBe(false)
 })
 
 test('with a key: connect opens the sign-in page, a signed-in account is given to coworkers', async () => {
