@@ -153,7 +153,7 @@ export function CreateDesktopWorkspaceDialog({
                         {error && <p className="mt-4 text-sm text-destructive" role="alert">{error}</p>}
                         {checking && error !== t('newWorkspace.unconfirmed') && <p className="mt-4 text-sm text-muted-foreground">{t('newWorkspace.unconfirmed')}</p>}
                     </div>
-                    <DialogFooter className="mt-auto flex flex-wrap gap-2 border-t bg-muted/50 p-4">
+                    <DialogFooter className="mx-0 mt-auto mb-0 flex flex-wrap gap-2">
                         {step === 0 || checking ? (
                             <Button type="button" variant="outline" disabled={busy} onClick={close}>{t('workspaceForm.cancel')}</Button>
                         ) : (

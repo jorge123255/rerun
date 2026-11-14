@@ -245,7 +245,7 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
                     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
                 </div>
             </ScrollFade>
-            <DialogFooter className="m-0 shrink-0 px-6 py-4">
+            <DialogFooter className="m-0 shrink-0">
                 <Button type="button" variant="outline" disabled={saving || quitting} onClick={() => { if (mounted.current && !savingRef.current && !isDesktopQuitting()) onCancel() }}>
                     {t('workspaceForm.cancel')}
                 </Button>

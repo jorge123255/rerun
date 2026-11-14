@@ -88,7 +88,7 @@ export function RenameDesktopWorkspaceDialog({
                         />
                         {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
                     </div>
-                    <DialogFooter className="flex flex-wrap gap-2 border-t bg-muted/50 p-4">
+                    <DialogFooter className="m-0 flex flex-wrap gap-2">
                         <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
                             {DESKTOP_WORKSPACE_UI_COPY.cancel}
                         </Button>
