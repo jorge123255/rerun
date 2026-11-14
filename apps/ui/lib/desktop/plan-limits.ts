@@ -18,7 +18,8 @@ function boundedPlanWindows(windows: PlanLimitWindow[]): PlanLimitWindow[] {
 }
 
 export function desktopPlanUsage(connection: Pick<ConnectionSummary, 'provider' | 'planLimits'>, now = Date.now()): DesktopPlanUsage {
-    if (connection.provider !== 'codex' && connection.provider !== 'claude') {
+    // ChatGPT, Claude and Grok say how much of the plan is used. Kimi and Devin do not.
+    if (connection.provider !== 'codex' && connection.provider !== 'claude' && connection.provider !== 'grok-build') {
         return { status: 'unknown', reason: 'unsupported-provider', capturedAt: null, windows: [] }
     }
     if (!connection.planLimits) {

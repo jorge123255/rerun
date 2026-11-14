@@ -10,6 +10,7 @@ import { assertDesktopRunAdmission } from '../workspace-admission.js'
 import { openDesktopSubscriptionCatalogRelay, openDesktopSubscriptionTurnRelay } from './device-relay.js'
 import { SubscriptionAcpError } from './peer.js'
 import { openDesktopSubscriptionAcpSession } from './session.js'
+import { planLimitWindowsFromGrok, recordPlanLimits, type GrokBilling } from '../../connections/plan-limits.js'
 
 const runners = {
     'grok-build': {
@@ -324,12 +325,45 @@ export function openDesktopSubscriptionTurn(
     return openApprovedSession(provider, generation, 'turn', signal)
 }
 
+const PLAN_USAGE_EVERY_MS = 5 * 60_000
+const planUsageReads = new Map<DesktopSubscriptionProvider, Promise<void>>()
+const planUsageAttemptedAt = new Map<DesktopSubscriptionProvider, number>()
+function recordSubscriptionPlanUsage(provider: DesktopSubscriptionProvider, generation: string, usage: unknown) {
+    if (provider !== 'grok-build' || readApproval(provider)?.id !== generation) return
+    recordPlanLimits(`mac-${provider}-${generation}`, planLimitWindowsFromGrok(usage as GrokBilling))
+}
+
+/**
+ * Reads the plan usage of a signed-in subscription without sending a prompt, at most every five
+ * minutes and never while the provider is answering: a reply reads it itself when it completes.
+ */
+export function refreshDesktopSubscriptionPlanUsage(provider: DesktopSubscriptionProvider): Promise<void> {
+    if (provider !== 'grok-build' || stopping || workers.has(provider)) return Promise.resolve()
+    const pending = planUsageReads.get(provider)
+    if (pending) return pending
+    if (Date.now() - (planUsageAttemptedAt.get(provider) ?? 0) < PLAN_USAGE_EVERY_MS) return Promise.resolve()
+    const saved = readApproval(provider)
+    if (!saved) return Promise.resolve()
+    planUsageAttemptedAt.set(provider, Date.now())
+    const signal = AbortSignal.timeout(20_000)
+    const read = (async () => {
+        const session = await openApprovedSession(provider, saved.id, 'catalog', signal, true)
+        try { recordSubscriptionPlanUsage(provider, saved.id, await session.readPlanUsage(signal)) }
+        finally { await session.close() }
+    })().catch(() => {}).finally(() => { planUsageReads.delete(provider) })
+    planUsageReads.set(provider, read)
+    return read
+}
+
 async function openApprovedSession(
     provider: DesktopSubscriptionProvider,
     generation: string,
     purpose: 'catalog' | 'turn',
     signal?: AbortSignal,
+    usageRead = false,
 ) {
+    // A usage read holds the provider's one runner for a moment; a reply or model list waits it out.
+    if (!usageRead) await planUsageReads.get(provider)
     const admission = assertDesktopRunAdmission()
     const assertCurrent = () => {
         signal?.throwIfAborted()
@@ -354,7 +388,7 @@ async function openApprovedSession(
         const { child, dispose } = spawnRunner(provider, { binary, sandbox }, account, purpose === 'turn' ? runners[provider].turn : runners[provider].args, relay, true)
         child.stderr.resume()
         return await openDesktopSubscriptionAcpSession({
-            provider, cwd: account.cwd, signal, beforePrompt() {
+            provider, cwd: account.cwd, signal, onPlanUsage: usage => recordSubscriptionPlanUsage(provider, generation, usage), beforePrompt() {
                 if (purpose !== 'turn') throw unavailable()
                 assertCurrent()
             },

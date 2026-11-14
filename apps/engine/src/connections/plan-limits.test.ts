@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { forgetPlanLimits, planLimitWindowsFromClaude, planLimitWindowsFromCodex, readPlanLimits, recordPlanLimits } from './plan-limits.js'
+import { forgetPlanLimits, planLimitWindowsFromClaude, planLimitWindowsFromCodex, planLimitWindowsFromGrok, readPlanLimits, recordPlanLimits } from './plan-limits.js'
 
 describe('planLimitWindowsFromClaude', () => {
     it('reads the session, weekly and per-model windows', () => {
@@ -54,6 +54,31 @@ describe('planLimitWindowsFromCodex', () => {
     it('reads nothing off a failed read', () => {
         expect(planLimitWindowsFromCodex(null)).toEqual([])
         expect(planLimitWindowsFromCodex({ rateLimits: null })).toEqual([])
+    })
+})
+
+describe('planLimitWindowsFromGrok', () => {
+    const period = { type: 'BILLING_PERIOD_TYPE_WEEKLY', start: '2026-11-09T19:49:24.473066+00:00', end: '2026-11-16T19:49:24.473066+00:00' }
+
+    it('reads the weekly credit use and its reset', () => {
+        expect(planLimitWindowsFromGrok({ config: { creditUsagePercent: 23, currentPeriod: period } }))
+            .toEqual([{ kind: 'weekly', label: null, usedPercent: 23, resetsAt: '2026-11-16T19:49:24.473Z' }])
+    })
+
+    it('reads a period with nothing used yet, which Grok writes without a percent', () => {
+        expect(planLimitWindowsFromGrok({ config: { currentPeriod: period } })[0]).toMatchObject({ kind: 'weekly', usedPercent: 0 })
+    })
+
+    it('names a period that is not a week by its length', () => {
+        const monthly = { start: '2026-11-01T00:00:00Z', end: '2026-12-01T00:00:00Z' }
+        expect(planLimitWindowsFromGrok({ config: { creditUsagePercent: 150, currentPeriod: monthly } }))
+            .toEqual([{ kind: 'model', label: '30-day credits', usedPercent: 100, resetsAt: '2026-12-01T00:00:00.000Z' }])
+    })
+
+    it('has no reading without a current period or with a percent that is not a number', () => {
+        expect(planLimitWindowsFromGrok(null)).toEqual([])
+        expect(planLimitWindowsFromGrok({ config: { creditUsagePercent: 10 } })).toEqual([])
+        expect(planLimitWindowsFromGrok({ config: { creditUsagePercent: '10', currentPeriod: period } })).toEqual([])
     })
 })
 

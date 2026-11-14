@@ -62,6 +62,24 @@ function codexWindow(window: CodexWindow | undefined, fallback: PlanLimitWindow[
     return [{ kind, label: null, usedPercent: window.usedPercent, resetsAt }]
 }
 
+// Grok's answer to its own `_x.ai/billing` call. Its service writes proto3 JSON, which leaves a zero
+// out: a period with nothing used yet has no `creditUsagePercent`.
+export type GrokBilling = { config?: { creditUsagePercent?: unknown; currentPeriod?: { type?: unknown; start?: unknown; end?: unknown } | null } | null }
+
+export function planLimitWindowsFromGrok(response: GrokBilling | null | undefined): PlanLimitWindow[] {
+    const config = response?.config, period = config?.currentPeriod
+    if (!config || !period) return []
+    const used = config.creditUsagePercent === undefined ? 0 : config.creditUsagePercent
+    if (typeof used !== 'number' || !Number.isFinite(used)) return []
+    const start = typeof period.start === 'string' ? Date.parse(period.start) : NaN, end = typeof period.end === 'string' ? Date.parse(period.end) : NaN
+    const days = (end - start) / (DAY_MINUTES * 60_000)
+    const weekly = typeof period.type === 'string' && /week/i.test(period.type) || Math.abs(days - 7) < 0.5
+    return [{
+        kind: weekly ? 'weekly' : 'model', label: weekly ? null : Number.isFinite(days) ? `${Math.round(days)}-day credits` : 'Credits',
+        usedPercent: Math.max(0, Math.min(100, used)), resetsAt: Number.isFinite(end) ? new Date(end).toISOString() : null,
+    }]
+}
+
 export function planLimitWindowsFromCodex(response: CodexRateLimits | null | undefined): PlanLimitWindow[] {
     const limits = response?.rateLimits
     if (!limits) return []

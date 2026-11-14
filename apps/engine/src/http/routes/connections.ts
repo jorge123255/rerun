@@ -11,6 +11,7 @@ import { withConnectionLock } from '../../connections/lock.js'
 import { servesModel } from '../../connections/resolve.js'
 import { defaultModelOf } from '../../agents/availability.js'
 import { refreshStaleCodexPlanLimits } from '../../connections/codex-plan-limits.js'
+import { refreshStaleDesktopPlanUsage } from '../../desktop/plan-usage.js'
 import type { LoadedConnection } from '../../connections/types.js'
 import { sendNotification } from '../../runtime/notify.js'
 import { assertDesktopProvider, desktopApp, desktopProviderAllowed } from '../../desktop/policy.js'
@@ -33,6 +34,7 @@ connectionRoutes.get('/', async c => {
     const all = await listConnections()
     const connections = desktopApp() ? all.filter(connection => desktopProviderAllowed(connection.config.provider, connection.id)) : all
     refreshStaleCodexPlanLimits(connections)
+    refreshStaleDesktopPlanUsage(connections)
     return c.json({ connections: connections.map(toSummary), default: await readBoxDefault(), efforts: await readModelEfforts() })
 })
 

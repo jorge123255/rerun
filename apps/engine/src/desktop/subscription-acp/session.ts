@@ -61,6 +61,8 @@ interface OpenOptions {
     cwd: string;
     signal?: AbortSignal;
     beforePrompt?: () => void;
+    /** Receives the provider's own plan usage answer, read once a reply is complete. */
+    onPlanUsage?: (usage: unknown) => void;
 }
 
 function devinModelId(model: string, effort: string | undefined): string {
@@ -114,7 +116,11 @@ function verifySelection(selectors: readonly Selector[], selection: Selection): 
  * Authentication checks the runner's existing login. Device login and credential custody
  * belong to the app-owned runtime. The channel is consumed and closed by prompt or close.
  */
-export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd, signal: openSignal, beforePrompt }: OpenOptions) {
+// Grok reports its plan usage through an ACP extension of its own. The others have none.
+const planUsageMethod: Partial<Record<keyof typeof authParams, string>> = { 'grok-build': '_x.ai/billing' };
+const PLAN_USAGE_TIMEOUT_MS = 8000;
+
+export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd, signal: openSignal, beforePrompt, onPlanUsage }: OpenOptions) {
     let sessionId: string | undefined;
     let selectors: Selector[] = [];
     let used = false;
@@ -216,6 +222,12 @@ export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd
             return structuredClone(selectors);
         },
         close: () => peer.shutdown(),
+        /** The provider's plan usage, or null when it has no such call. Sends no prompt. */
+        async readPlanUsage(signal?: AbortSignal): Promise<unknown> {
+            const method = planUsageMethod[provider];
+            if (!method) return null;
+            return peer.request(method, {}, { timeoutMs: PLAN_USAGE_TIMEOUT_MS, cancellation: signal ? { signal } : undefined });
+        },
         async prompt(options: PromptOptions): Promise<{ text: string; stopReason: StopReason }> {
             if (used) throw new SubscriptionAcpError('busy');
             used = true;
@@ -252,6 +264,9 @@ export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd
                     cancellation: signal ? { signal, sessionId: openedSession } : undefined,
                 }));
                 if (stopReason === 'cancelled') throw new SubscriptionAcpError('cancelled');
+                const usageMethod = onPlanUsage && planUsageMethod[provider];
+                // The reply is complete; a usage read that fails costs the gauge, never the reply.
+                if (usageMethod) await peer.request(usageMethod, {}, { timeoutMs: PLAN_USAGE_TIMEOUT_MS }).then(onPlanUsage, () => {});
                 return { text: chunks.join(''), stopReason };
             } finally {
                 onChunk = undefined;
