@@ -77,7 +77,10 @@ export async function resolveRunModel(agent: LoadedAgent, override?: ModelOverri
         if (agent.resolved.provider !== 'opencode' && !isDesktopSubscriptionProvider(agent.resolved.provider)) return agent.resolved
         return resolveConfiguredModel(agent.config)
     }
-    const connection = await resolveConnection(override.connectionId ?? agent.config.connectionId, override.provider ?? agent.config.provider)
+    // A connection named by the override is judged on its own: the coworker's pinned provider says
+    // nothing about it. A chat switched to Kimi on a coworker pinned to another provider used to
+    // lose its connection here and was refused as unavailable.
+    const connection = await resolveConnection(override.connectionId ?? agent.config.connectionId, override.connectionId ? override.provider : override.provider ?? agent.config.provider)
     if ((override.connectionId ?? agent.config.connectionId) === DESKTOP_OPENCODE_CONNECTION_ID) return { connection, provider: 'opencode', model: override.model ?? agent.resolved.model }
     const provider = connection?.config.provider ?? parseDesktopSubscriptionConnectionId(override.connectionId ?? agent.config.connectionId)?.provider
         ?? override.provider ?? agent.resolved.provider

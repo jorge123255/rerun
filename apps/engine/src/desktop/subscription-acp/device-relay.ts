@@ -22,8 +22,8 @@ export function openDesktopSubscriptionCatalogRelay(provider: DesktopSubscriptio
 }
 
 export function openDesktopSubscriptionTurnRelay(provider: DesktopSubscriptionProvider, dial = dialVendor) {
-    if (provider !== 'kimi-code') throw new Error('The subscription turn relay is unavailable.')
-    return openRelay(deviceDestinations[provider], dial)
+    // Grok answers through its chat proxy, the same host its model list comes from.
+    return openRelay(provider === 'grok-build' ? catalogDestinations[provider] : deviceDestinations[provider], dial)
 }
 
 async function openRelay(destinations: ReadonlySet<string>, dial: typeof dialVendor) {

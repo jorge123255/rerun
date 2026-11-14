@@ -57,6 +57,13 @@ afterEach(() => {
     expect(unexpectedRequests.splice(0)).toEqual([])
 })
 
+// The provider pill opens the list of connected providers; Settings is one step further.
+async function openModelSettings(root: ParentNode) {
+    await act(async () => { root.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
+    const inner = [...document.querySelectorAll<HTMLButtonElement>('[data-testid="desktop-provider-status"] button')].find(button => button.textContent?.trim() === 'Open model settings')
+    await act(async () => { inner!.click() })
+}
+
 test('the open board follows sign-in, default provider changes, and sign-out', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
@@ -230,7 +237,7 @@ test('a reopened workspace can replace a saved key and recover after a failed sa
     try {
         await act(async () => { root.render(<DesktopApp initialData={initialData} />) })
         expect(container.querySelector('#desktop-api-key')).toBeNull()
-        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
+        await openModelSettings(container)
         expect(container.querySelector<HTMLInputElement>('#desktop-api-key')!.type).toBe('password')
         await enterKey()
         await submit()
@@ -276,7 +283,7 @@ test('Codex Settings refreshes the account model list while keeping the selected
     const refreshed = ['GPT-5.6 Sol', 'GPT-5.6 Terra', accountModel]
     try {
         await act(async () => { root.render(<DesktopApp initialData={{ ...providers, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
-        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
+        await openModelSettings(container)
         expect(actions).toEqual([{ action: 'refresh' }])
         assertChoices(refreshed)
         await act(async () => { button('Refresh models').click() })
@@ -334,13 +341,13 @@ test('reasoning effort uses the active model’s supported levels and the saved 
     const levels = () => [...effort().options].map(o => o.value)
     try {
         await act(async () => { root.render(<DesktopApp initialData={{ ...providers, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
-        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
+        await openModelSettings(container)
         expect(levels()).toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
         expect(effort().options[0].textContent).toBe('Model default (Medium)')
         expect(effort().value).toBe('high')
         await change(effort(), 'xhigh')
         await open('Team board')
-        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
+        await openModelSettings(container)
         expect(effort().value).toBe('xhigh')
         await chooseModel('GPT-5.6 Sol')
         expect(levels()).toEqual(['', 'high', 'xhigh'])
@@ -393,7 +400,7 @@ test('Kimi Platform Settings shows Max and saves or resets an effort on the exac
     try {
         await act(async () => { root.render(<DesktopApp initialData={{ ...providers, theme: 'system',
             profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
-        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
+        await openModelSettings(container)
         expect([...effort().options].map(option => option.textContent)).toEqual(['Model default (Max)', 'Low', 'High', 'Max'])
         await change('max')
         expect(effort().value).toBe('max')
@@ -627,7 +634,7 @@ test('applying a new appearance keeps the saved choice active', async () => {
             theme: 'light', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' },
             default: null, connections: [], agents: [],
         }} /></ThemeProvider>) })
-        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
+        await openModelSettings(container)
         await act(async () => { button('Workspace').click() })
         await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Dark"]')!.click() })
         expect(writes).toEqual([{ action: 'appearance', theme: 'dark' }])

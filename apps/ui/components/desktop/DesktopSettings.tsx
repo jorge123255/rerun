@@ -1,7 +1,7 @@
 import { useDesktopLocale } from './DesktopLocale'
 import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata'
 import { useMemo, useState, type FormEvent } from 'react'
-import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, connectionReasoningOptions, desktopApiConnectionIdSchema, desktopApiConnectionProviderSchema, hasDesktopApiConnectionPrefix, isDesktopSubscriptionProvider, type ConnectionsList } from '@rerun/contracts'
+import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, connectionReasoningOptions, desktopApiConnectionIdSchema, desktopApiConnectionProviderSchema, hasDesktopApiConnectionPrefix, isDesktopSubscriptionProvider, desktopSubscriptionProvider, type ConnectionsList } from '@rerun/contracts'
 import { ThemeToggle } from '@rerun/ui/theme'
 import { DesktopLanguageSettings } from './DesktopLanguageSettings'
 import { DesktopCodexLogin } from './DesktopCodexLogin'
@@ -71,6 +71,8 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
     const current = editable.find(c => c.id === source)
     const provider = current ? desktopProvider.parse(current.provider) : desktopProvider.safeParse(source.replace(/^add:/, '')).data ?? 'openai'
     const missing = desktopProvider.options.filter(p => supports(p) && p !== 'custom' && (p !== 'opencode' || !!workspaceId) && !isDesktopSubscriptionProvider(p) && !editable.some(c => c.provider === p))
+    const subscriptions = desktopSubscriptionProvider.options.filter(p => supports(p))
+    const subscriptionConnected = (p: string) => standardConnections.some(c => c.provider === p && c.connected)
     const defaultConnections = standardConnections.filter(c => c.connected && !((c.provider === 'claude' || c.provider === 'opencode') && c.credentialRejected))
     const picks = defaultConnections.flatMap(c => enabledModels(c).map(m => ({ connectionId: c.id, model: m.id })))
     const selected = picks.findIndex(p => p.connectionId === providers.default?.connectionId && p.model === providers.default.model)
@@ -170,11 +172,14 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                 {editable.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                 {workspaceId && <option value="add:custom">Add custom endpoint</option>}
                                 {missing.map(p => <option key={p} value={'add:' + p}>Connect {p === 'codex' ? 'ChatGPT (Codex)' : PROVIDER_LABELS[p]}</option>)}
+                                {/* Subscriptions signed in on this Mac sit with the other providers. */}
+                                {subscriptions.map(p => <option key={p} value={'add:' + p}>{subscriptionConnected(p) ? PROVIDER_LABELS[p] : `Connect ${PROVIDER_LABELS[p]}`}</option>)}
                             </select>
                             <div className="flex items-center gap-2 text-sm"><ProviderIcon provider={provider} className="size-5" /><strong>{provider === 'codex' ? 'ChatGPT (Codex)' : PROVIDER_LABELS[provider]}</strong>
-                                {provider !== 'codex' && provider !== 'claude' && provider !== 'custom' && provider !== 'opencode' && <span className="text-muted-foreground">{connection?.credentialRejected ? 'Key rejected' : connection?.connected ? 'Key saved' : 'No key saved'}</span>}
+                                {provider !== 'codex' && provider !== 'claude' && provider !== 'custom' && provider !== 'opencode' && !isDesktopSubscriptionProvider(provider) && <span className="text-muted-foreground">{connection?.credentialRejected ? 'Key rejected' : connection?.connected ? 'Key saved' : 'No key saved'}</span>}
                             </div>
-                            {provider === 'opencode' ? workspaceId && <DesktopOpencodeSettings key={workspaceId} workspaceId={workspaceId}
+                            {isDesktopSubscriptionProvider(provider) ? <DesktopSubscriptionLogin key={(workspaceId ?? 'workspace') + ':' + provider} only={provider} onConnectionsChanged={onConnectionsChanged} />
+                            : provider === 'opencode' ? workspaceId && <DesktopOpencodeSettings key={workspaceId} workspaceId={workspaceId}
                                 rejected={!!connection?.credentialRejected} onProviders={onProviders}
                                 onBack={() => { setRecoveryId(null); setSource(editable.find(item => item.provider !== 'opencode')?.id ?? 'add:openai') }} />
                             : provider === 'custom' ? workspaceId && (connection === undefined || connection.customRevision) ? <DesktopCustomProviderPage
@@ -204,9 +209,9 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                 {provider === 'openrouter' && <CustomModelList models={connection.extraModels} reserved={DEFAULT_CONNECTION_MODELS.openrouter} onChange={extras => changeModels(connection.models, extras)} />}
                             </div>}
                         </div>}
-                        {!appStoreBuild && (!recoveryId || recoverySubscription) && <DesktopSubscriptionLogin key={workspaceId ?? 'workspace'}
+                        {!appStoreBuild && recoverySubscription && <DesktopSubscriptionLogin key={workspaceId ?? 'workspace'}
                             only={recoverySubscription} onConnectionsChanged={onConnectionsChanged} />}
-                        {!appStoreBuild && !recoveryId && <p className="text-sm text-muted-foreground">Connect ChatGPT (Codex) or Claude with your subscription, or use an API key for the other providers.</p>}
+                        {!appStoreBuild && !recoveryId && <p className="text-sm text-muted-foreground">Connect ChatGPT (Codex), Claude, Grok Build or Kimi Code with your subscription, or use an API key for the other providers.</p>}
                     </>}
                     {tab === 'Workspace' && <>
                         <DesktopLanguageSettings />

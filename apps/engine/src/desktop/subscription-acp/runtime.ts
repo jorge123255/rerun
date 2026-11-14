@@ -16,12 +16,15 @@ const runners = {
         variable: 'RERUN_DESKTOP_GROK_BUILD_RUNNER',
         home: 'GROK_HOME',
         args: ['--no-auto-update', 'agent', 'stdio'],
+        // A chat turn runs Grok with none of its own tools and no web search: the reply is text only.
+        turn: ['--no-auto-update', '--tools', '', '--disable-web-search', 'agent', 'stdio'],
         login: ['--no-auto-update', 'login', '--device-auth'],
     },
     'kimi-code': {
         variable: 'RERUN_DESKTOP_KIMI_CODE_RUNNER',
         home: 'KIMI_CODE_HOME',
         args: ['acp'],
+        turn: ['acp'],
         login: ['login', '--region', 'global'],
     },
 } as const
@@ -238,7 +241,7 @@ function replacePrivateFile(path: string, content: string) {
 }
 
 export function desktopSubscriptionChatAvailable(provider: DesktopSubscriptionProvider) {
-    return provider === 'kimi-code' && desktopSubscriptionDeviceLoginAvailable(provider)
+    return desktopSubscriptionDeviceLoginAvailable(provider)
 }
 
 const catalogSchema = z.object({
@@ -319,7 +322,6 @@ async function openApprovedSession(
     }
     assertCurrent()
     if (!desktopSubscriptionDeviceLoginAvailable(provider) || workers.has(provider)) throw unavailable()
-    // Catalog discovery never enables Grok's tool-bearing prompt path.
     if (purpose === 'turn' && !desktopSubscriptionChatAvailable(provider)) throw unavailable()
     const { binary } = bundlePaths(provider)
     const sandbox = ownedFile(process.env.RERUN_DESKTOP_SUBSCRIPTION_LOGIN_SANDBOX)
@@ -330,7 +332,8 @@ async function openApprovedSession(
         const account = accountDirectories(assertCurrent().profile)
         if (workers.has(provider)) throw unavailable()
         if (provider === 'kimi-code') restrictKimiTools(account.vendorHome)
-        const { child, dispose } = spawnRunner(provider, { binary, sandbox }, account, runners[provider].args, relay, true)
+        // Catalog discovery keeps the plain arguments; only a turn starts Grok without its tools.
+        const { child, dispose } = spawnRunner(provider, { binary, sandbox }, account, purpose === 'turn' ? runners[provider].turn : runners[provider].args, relay, true)
         child.stderr.resume()
         return await openDesktopSubscriptionAcpSession({
             provider, cwd: account.cwd, signal, beforePrompt() {

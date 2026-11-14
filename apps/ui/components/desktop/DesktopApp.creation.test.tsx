@@ -140,7 +140,7 @@ it('keeps a reserved roster owner out of workspace navigation until the exact fi
  await act(async()=>{document.querySelector('[role="menu"]')?.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))})
  // Recovery can reconnect a provider, but cannot enter the unfinished owner's initial tab.
  expect(modelSettings().disabled).toBe(false)
- await click(modelSettings());expect(document.querySelector('#desktop-api-key')).not.toBeNull()
+ await click(modelSettings());await click([...document.querySelectorAll<HTMLButtonElement>('[data-testid="desktop-provider-status"] button')].find(button=>button.textContent?.trim()==='Open model settings')!);expect(document.querySelector('#desktop-api-key')).not.toBeNull()
  await click(button('Team board'))
  await click(button('Retry'))
  expect(fixture.requests).toEqual([{intent:pending.intent,position:pending.position,spaceId:pending.spaceId}])

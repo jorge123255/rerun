@@ -896,6 +896,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const workspaceMenu = <DesktopWorkspaceMenu viewRow={<DesktopViewMenuRow view={simple ? 'simple' : 'board'} onChange={chooseView} disabled={creationNavigationBlocked || workspaceDialogActive || quitting} />} workspaceName={workspaceName} {...savedIcon} profileName={profile.displayName} profilePhoto={desktopProfilePhotoUrl(profile.photoId)}
         navigationDisabled={creationNavigationBlocked || workspaceDialogActive || quitting} settingsDisabled={!creationSettingsAllowed || workspaceDialogActive || quitting}
         agents={agents} selected={panelOpen ? selectedAgentId : null} providerLabel={sidebarProvider && PROVIDER_LABELS[sidebarProvider.provider]}
+        connections={providers.connections} workspaceDefault={providers.default}
         modelLabel={modelLabel} onBoard={() => showBoard()} onCoworker={selectCoworker} onSettings={openSettings}
         onProfile={() => { if (!controlCenterDisabled && !isDesktopQuitting()) setProfileOpen(true) }}
         onWorkspaceSettings={() => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting()) setWorkspaceSettings(true) }}

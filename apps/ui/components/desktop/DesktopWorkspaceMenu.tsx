@@ -1,13 +1,14 @@
 'use client'
 
 import { useDesktopLocale } from './DesktopLocale'
-import { Brain, Cpu, Database, Folder, Import, KeyRound, Package, Keyboard, LayoutGrid, Search, Server, Settings, UserRound } from 'lucide-react'
+import { Brain, Database, Folder, Import, KeyRound, Package, Keyboard, LayoutGrid, Search, Server, Settings, UserRound } from 'lucide-react'
 import { ChromePill } from '@rerun/ui/chrome'
 import { TooltipLabeled } from '@/components/ui/tooltip'
 import { HelpCircleIcon } from '@/lib/icons'
-import { Button } from '@/components/ui/button'
 import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import type { DesktopAgentView } from './DesktopApp'
+import type { BoxDefaultModel, ConnectionSummary } from '@rerun/contracts'
+import { DesktopProviderStatus } from './DesktopProviderStatus'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { desktopVaultListing } from '@/lib/desktop/vault'
 import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata'
@@ -15,7 +16,7 @@ import { createDesktopWorkspaceClient } from '@/lib/desktop/workspaces'
 import { DesktopWorkspaceSwitcher } from './workspaces/DesktopWorkspaceSwitcher'
 import { DesktopWorkspaceSwitchLoader } from './workspaces/DesktopWorkspaceSwitchLoader'
 
-export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, profilePhoto, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onProfile, onWorkspaceSettings, onControlCenter, onShortcuts, onHelp, onSharedData, onSharedFiles, onBrain, onTemplates, onVault, onExternalMcp, onServers, onImportCoworker, viewRow, navigationDisabled = false, settingsDisabled = false }: {
+export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, profilePhoto, agents, selected, providerLabel, modelLabel, connections, workspaceDefault, onBoard, onCoworker, onSettings, onProfile, onWorkspaceSettings, onControlCenter, onShortcuts, onHelp, onSharedData, onSharedFiles, onBrain, onTemplates, onVault, onExternalMcp, onServers, onImportCoworker, viewRow, navigationDisabled = false, settingsDisabled = false }: {
     workspaceName: string
     iconCatalogId?: string | null
     iconUploadId?: string | null
@@ -25,6 +26,9 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     selected: string | null
     providerLabel?: string
     modelLabel?: string
+    /** Every provider connection, for the list the provider pill opens. */
+    connections?: readonly ConnectionSummary[]
+    workspaceDefault?: BoxDefaultModel | null
     onBoard: () => void
     onCoworker: (id: string) => void
     onSettings: () => void
@@ -59,8 +63,6 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
             .then(listing => { if (listing) setVaultSignedOut(listing.entries.some(entry => 'kind' in entry && entry.kind === 'mcp' && entry.signedOut)) })
             .catch(() => {})
     }, [vaultEnabled])
-    const providerStatus = providerLabel ? t('boardUI.providerConnected', { provider: providerLabel }) : t('boardUI.providerSetup')
-    const providerSummary = providerLabel && modelLabel ? `${providerStatus} · ${modelLabel}` : providerStatus
     return <nav aria-label={t('workspace')} className="flex min-w-0 items-center gap-1.5">
         <DesktopWorkspaceSwitcher className="pointer-events-auto" client={workspaceClient} profileLabel={`${profileName} · Rerun Local`} profilePhoto={profilePhoto} activeDisplay={{ name: workspaceName, iconCatalogId, iconUploadId }} disabled={navigationDisabled}
             workspaceSettingsInMenu onMenuOpenChange={open => { if (open) refreshVaultSignedOut() }}
@@ -96,18 +98,6 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
                 <HelpCircleIcon className="size-4 text-muted-foreground" />
             </ChromePill>
         </TooltipLabeled>}
-        <TooltipLabeled label={providerSummary} side="bottom">
-            <Button type="button" variant="outline" size="sm" disabled={settingsDisabled} onClick={onSettings}
-                aria-keyshortcuts="Meta+," title={t('boardUI.modelSettings')} aria-label={providerSummary}
-                className="pointer-events-auto relative h-8 min-w-0 rounded-full bg-background/90 px-2.5 text-xs backdrop-blur-xl @max-md/board-header:size-8 @max-md/board-header:shrink-0 @max-md/board-header:p-0">
-                <Cpu aria-hidden className="hidden @max-md/board-header:block" />
-                <span role={providerLabel ? 'status' : undefined} className="flex min-w-0 items-center gap-1.5 @max-md/board-header:sr-only">
-                    {providerLabel && <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-emerald-500" />}
-                    <span className="truncate">{providerStatus}</span>
-                    {providerLabel && modelLabel && <span className="max-w-36 truncate text-muted-foreground">{modelLabel}</span>}
-                </span>
-                {providerLabel && <span aria-hidden className="absolute top-1 right-1 hidden size-1.5 rounded-full bg-emerald-500 @max-md/board-header:block" />}
-            </Button>
-        </TooltipLabeled>
+        <DesktopProviderStatus providerLabel={providerLabel} modelLabel={modelLabel} connections={connections} workspaceDefault={workspaceDefault} disabled={settingsDisabled} onSettings={onSettings} />
     </nav>
 }
