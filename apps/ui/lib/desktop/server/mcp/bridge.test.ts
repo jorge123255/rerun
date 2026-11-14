@@ -69,3 +69,22 @@ test('shutdown is terminal and the bridge refuses arbitrary endpoint or tool-nam
     await expect(discover(handle)).rejects.toThrow('stopped')
     expect(mocks.tools).not.toHaveBeenCalled()
 })
+
+test('a call that asks first is answered without reaching the connector, and runs once it is admitted', async () => {
+    const authorize = vi.fn(async () => 'local-owner')
+    const admit = vi.fn(async () => 'This call did not run.' as string | null)
+    mocks.tools.mockResolvedValue([{ name: 'mail_send_email', description: 'Send', inputSchema: { type: 'object' }, destructive: true, execute: mocks.execute }])
+    const bridge = desktopMcpBridge({ lifecycle: remoteMcpLifecycle() } as unknown as RemoteMcpStore, {} as ReturnType<typeof remoteMcpRuntime>, authorize, undefined, admit)
+    bridges.push(bridge)
+    const handle = (body: unknown) => bridge.handle(desktopMcpBridgeRequest.parse(body), new AbortController().signal)
+    const catalog = await discover(handle)
+    const call = { action: 'call', ...identity, catalogId: catalog.catalogId, capabilityId: catalog.tools[0].capabilityId, arguments: { to: 'pat@example.test' } }
+
+    expect(await handle({ ...call, toolCallId: 'held' })).toEqual({ toolCallId: 'held', result: { source: 'remote_mcp', untrusted: true, result: { isError: true, content: [{ type: 'text', text: 'This call did not run.' }] } } })
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(admit).toHaveBeenCalledWith({ owner: 'local-owner', sessionId: 'session', tool: 'mail_send_email', destructive: true, arguments: { to: 'pat@example.test' } }, expect.any(AbortSignal))
+
+    admit.mockResolvedValueOnce(null)
+    expect(await handle({ ...call, toolCallId: 'allowed' })).toMatchObject({ toolCallId: 'allowed', result: { result: { content: [{ type: 'text', text: '42' }] } } })
+    expect(mocks.execute).toHaveBeenCalledTimes(1)
+})
