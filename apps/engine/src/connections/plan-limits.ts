@@ -80,6 +80,23 @@ export function planLimitWindowsFromGrok(response: GrokBilling | null | undefine
     }]
 }
 
+// Kimi Code's answer to `GET /coding/v1/usages`: one entry per quota, each a ratio of 1.
+type KimiQuota = { used_ratio?: unknown; reset_time?: unknown } | null
+export type KimiUsage = { usages?: { limit_5h?: KimiQuota; limit_7d?: KimiQuota; limit_month_total?: KimiQuota } | null }
+
+function kimiWindow(kind: PlanLimitWindow['kind'], label: string | null, quota: KimiQuota | undefined): PlanLimitWindow[] {
+    const ratio = typeof quota?.used_ratio === 'string' && quota.used_ratio.trim() ? Number(quota.used_ratio) : quota?.used_ratio
+    if (typeof ratio !== 'number' || !Number.isFinite(ratio)) return []
+    const reset = typeof quota?.reset_time === 'string' ? Date.parse(quota.reset_time) : NaN
+    return [{ kind, label, usedPercent: Math.max(0, Math.min(100, ratio * 100)), resetsAt: Number.isFinite(reset) ? new Date(reset).toISOString() : null }]
+}
+
+export function planLimitWindowsFromKimi(response: KimiUsage | null | undefined): PlanLimitWindow[] {
+    const usages = response?.usages
+    if (!usages || typeof usages !== 'object') return []
+    return [...kimiWindow('session', null, usages.limit_5h), ...kimiWindow('weekly', null, usages.limit_7d), ...kimiWindow('model', 'Monthly', usages.limit_month_total)]
+}
+
 export function planLimitWindowsFromCodex(response: CodexRateLimits | null | undefined): PlanLimitWindow[] {
     const limits = response?.rateLimits
     if (!limits) return []

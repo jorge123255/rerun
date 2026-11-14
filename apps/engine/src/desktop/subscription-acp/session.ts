@@ -267,6 +267,8 @@ export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd
                 const usageMethod = onPlanUsage && planUsageMethod[provider];
                 // The reply is complete; a usage read that fails costs the gauge, never the reply.
                 if (usageMethod) await peer.request(usageMethod, {}, { timeoutMs: PLAN_USAGE_TIMEOUT_MS }).then(onPlanUsage, () => {});
+                // A provider without such a call is told the reply ended: its sign-in is fresh right now.
+                else onPlanUsage?.(null);
                 return { text: chunks.join(''), stopReason };
             } finally {
                 onChunk = undefined;

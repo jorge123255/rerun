@@ -55,7 +55,7 @@ function describeConnection(connection: LoadedConnection) {
     const scope = opencodeScope(connection)
     const reading = !connected || credentialRejected ? null
         : scope ? readDesktopOpencodeLimits(scope.workspaceId, scope.connectionId)
-            : provider === 'codex' || provider === 'claude' || provider === 'grok-build' ? readPlanLimits(connection.id) : null
+            : provider === 'codex' || provider === 'claude' || provider === 'grok-build' || provider === 'kimi-code' ? readPlanLimits(connection.id) : null
     const windows = reading?.windows.map(({ kind, label, usedPercent, resetsAt }: PlanLimitWindow | DesktopOpencodeWindow) =>
         ({ kind, label, usedPercent, resetsAt })) ?? []
     const activeWindows = windows.filter(window => window.resetsAt === null || Date.parse(window.resetsAt) > Date.now())

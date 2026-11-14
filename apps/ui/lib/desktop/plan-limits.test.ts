@@ -66,9 +66,10 @@ describe('desktopPlanUsage', () => {
         })
     })
 
-    it('shows the weekly reading Grok reports', () => {
+    it('shows the readings Grok and Kimi report', () => {
         expect(desktopPlanUsage(connection({ provider: 'grok-build' }), NOW)).toMatchObject({ status: 'ready', reason: 'fresh' })
-        expect(desktopPlanUsage(connection({ provider: 'kimi-code' }), NOW).reason).toBe('unsupported-provider')
+        expect(desktopPlanUsage(connection({ provider: 'kimi-code' }), NOW)).toMatchObject({ status: 'ready', reason: 'fresh' })
+        expect(desktopPlanUsage(connection({ provider: 'devin' }), NOW).reason).toBe('unsupported-provider')
     })
 
     it('bounds model windows by highest reported use after session and weekly', () => {

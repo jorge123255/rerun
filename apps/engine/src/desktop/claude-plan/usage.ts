@@ -4,6 +4,7 @@ import { DESKTOP_CLAUDE_CONNECTION_ID } from '@rerun/contracts'
 import { planLimitWindowsFromClaude, recordPlanLimits, type ClaudePlanUsage } from '../../connections/plan-limits.js'
 import type { LoadedConnection } from '../../connections/types.js'
 import { logger } from '../../lib/logger.js'
+import { noteDesktopPlanUsage } from '../plan-usage-diagnostic.js'
 import { desktopClaudeAvailable, desktopClaudeRuntime } from './runtime.js'
 
 const READ_TIMEOUT_MS = 20_000
@@ -64,12 +65,16 @@ export async function fetchDesktopClaudePlanUsage(token: string, request: typeof
         })
         if (!response.ok) {
             logger.warn({ status: response.status }, 'claude plan usage endpoint refused')
+            noteDesktopPlanUsage('claude', { outcome: 'endpoint-refused', status: response.status })
             return null
         }
         const body: unknown = await response.json()
-        return body && typeof body === 'object' && !Array.isArray(body) ? { rate_limits: body as ClaudePlanUsage['rate_limits'] } : null
+        const usable = !!body && typeof body === 'object' && !Array.isArray(body)
+        noteDesktopPlanUsage('claude', { outcome: usable ? 'endpoint-answered' : 'endpoint-unexpected', status: response.status, fields: usable ? Object.keys(body as object) : [] })
+        return usable ? { rate_limits: body as ClaudePlanUsage['rate_limits'] } : null
     } catch (error) {
         logger.warn({ err: (error as Error).message }, 'claude plan usage endpoint unreachable')
+        noteDesktopPlanUsage('claude', { outcome: `endpoint-unreachable:${(error as Error).name}` })
         return null
     }
 }

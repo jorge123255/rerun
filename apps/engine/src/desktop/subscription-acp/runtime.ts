@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { closeSync, constants, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, constants, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync, readdirSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { dataDir } from '../../config/paths.js'
@@ -10,7 +10,8 @@ import { assertDesktopRunAdmission } from '../workspace-admission.js'
 import { openDesktopSubscriptionCatalogRelay, openDesktopSubscriptionTurnRelay } from './device-relay.js'
 import { SubscriptionAcpError } from './peer.js'
 import { openDesktopSubscriptionAcpSession } from './session.js'
-import { planLimitWindowsFromGrok, recordPlanLimits, type GrokBilling } from '../../connections/plan-limits.js'
+import { noteDesktopPlanUsage } from '../plan-usage-diagnostic.js'
+import { planLimitWindowsFromGrok, planLimitWindowsFromKimi, recordPlanLimits, type GrokBilling, type KimiUsage } from '../../connections/plan-limits.js'
 
 const runners = {
     'grok-build': {
@@ -328,7 +329,42 @@ export function openDesktopSubscriptionTurn(
 const PLAN_USAGE_EVERY_MS = 5 * 60_000
 const planUsageReads = new Map<DesktopSubscriptionProvider, Promise<void>>()
 const planUsageAttemptedAt = new Map<DesktopSubscriptionProvider, number>()
+// The global Kimi Code API, the one host besides its sign-in host that Kimi's own tool may reach here.
+const KIMI_USAGE_URL = 'https://api.kimi.ai/coding/v1/usages'
+
+/**
+ * Kimi has no usage call in its tool, so the engine asks Kimi's API with the access token Kimi's
+ * tool saved in its private folder (owner's decision, November 14, 2026). The token is read, sent
+ * only to that API, and never kept, logged or renewed here: it lives fifteen minutes and only
+ * Kimi's tool renews it, when it answers. With an expired token there is simply no new reading.
+ */
+export async function readDesktopKimiPlanUsage(generation: string, request: typeof fetch = fetch, now = Date.now()): Promise<void> {
+    const saved = readApproval('kimi-code')
+    if (!saved || saved.id !== generation) return
+    try {
+        const directory = ownedDirectory(join(accountDirectories(saved.profile).vendorHome, 'credentials'))
+        const names = readdirSync(directory).filter(name => /^kimi-code[A-Za-z0-9_-]{0,64}\.json$/.test(name))
+        if (names.length !== 1) { noteDesktopPlanUsage('kimi-code', { outcome: `sign-in-files:${names.length}` }); return }
+        const file = ownedFile(join(directory, names[0]!))
+        const info = lstatSync(file)
+        if (info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0 || info.size > 64 * 1024) return
+        const { access_token: token, expires_at: expires } = JSON.parse(readFileSync(file, 'utf8')) as { access_token?: unknown; expires_at?: unknown }
+        if (typeof token !== 'string' || !token || /[\0\r\n]/.test(token) || typeof expires !== 'number') { noteDesktopPlanUsage('kimi-code', { outcome: 'sign-in-unreadable' }); return }
+        if (expires * 1000 < now + 30_000) { noteDesktopPlanUsage('kimi-code', { outcome: 'sign-in-expired' }); return }
+        const response = await request(KIMI_USAGE_URL, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(8000) })
+        if (!response.ok) { noteDesktopPlanUsage('kimi-code', { outcome: 'endpoint-refused', status: response.status }); return }
+        const body = await response.json() as KimiUsage
+        const windows = planLimitWindowsFromKimi(body)
+        noteDesktopPlanUsage('kimi-code', { outcome: windows.length ? 'read' : 'no-quotas', status: response.status, fields: Object.keys(body?.usages ?? body ?? {}) })
+        if (readApproval('kimi-code')?.id === generation) recordPlanLimits(`mac-kimi-code-${generation}`, windows)
+    } catch (error) {
+        // No reading: the list keeps what it last showed.
+        noteDesktopPlanUsage('kimi-code', { outcome: `failed:${(error as Error).name}` })
+    }
+}
+
 function recordSubscriptionPlanUsage(provider: DesktopSubscriptionProvider, generation: string, usage: unknown) {
+    if (provider === 'kimi-code') { void readDesktopKimiPlanUsage(generation); return }
     if (provider !== 'grok-build' || readApproval(provider)?.id !== generation) return
     recordPlanLimits(`mac-${provider}-${generation}`, planLimitWindowsFromGrok(usage as GrokBilling))
 }
@@ -338,6 +374,12 @@ function recordSubscriptionPlanUsage(provider: DesktopSubscriptionProvider, gene
  * minutes and never while the provider is answering: a reply reads it itself when it completes.
  */
 export function refreshDesktopSubscriptionPlanUsage(provider: DesktopSubscriptionProvider): Promise<void> {
+    if (provider === 'kimi-code') {
+        const saved = readApproval(provider)
+        if (!saved || stopping || Date.now() - (planUsageAttemptedAt.get(provider) ?? 0) < PLAN_USAGE_EVERY_MS) return Promise.resolve()
+        planUsageAttemptedAt.set(provider, Date.now())
+        return readDesktopKimiPlanUsage(saved.id)
+    }
     if (provider !== 'grok-build' || stopping || workers.has(provider)) return Promise.resolve()
     const pending = planUsageReads.get(provider)
     if (pending) return pending

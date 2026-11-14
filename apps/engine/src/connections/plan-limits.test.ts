@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { forgetPlanLimits, planLimitWindowsFromClaude, planLimitWindowsFromCodex, planLimitWindowsFromGrok, readPlanLimits, recordPlanLimits } from './plan-limits.js'
+import { forgetPlanLimits, planLimitWindowsFromClaude, planLimitWindowsFromCodex, planLimitWindowsFromGrok, planLimitWindowsFromKimi, readPlanLimits, recordPlanLimits } from './plan-limits.js'
 
 describe('planLimitWindowsFromClaude', () => {
     it('reads the session, weekly and per-model windows', () => {
@@ -79,6 +79,23 @@ describe('planLimitWindowsFromGrok', () => {
         expect(planLimitWindowsFromGrok(null)).toEqual([])
         expect(planLimitWindowsFromGrok({ config: { creditUsagePercent: 10 } })).toEqual([])
         expect(planLimitWindowsFromGrok({ config: { creditUsagePercent: '10', currentPeriod: period } })).toEqual([])
+    })
+})
+
+describe('planLimitWindowsFromKimi', () => {
+    it('reads the five-hour, weekly and monthly quotas, each a ratio of 1', () => {
+        expect(planLimitWindowsFromKimi({ usages: {
+            limit_5h: { used_ratio: 0.25, reset_time: '2026-11-14T18:00:00Z' }, limit_7d: { used_ratio: '0.5' }, limit_month_total: { used_ratio: 1.4, reset_time: '2026-12-01T00:00:00Z' },
+        } })).toEqual([
+            { kind: 'session', label: null, usedPercent: 25, resetsAt: '2026-11-14T18:00:00.000Z' },
+            { kind: 'weekly', label: null, usedPercent: 50, resetsAt: null },
+            { kind: 'model', label: 'Monthly', usedPercent: 100, resetsAt: '2026-12-01T00:00:00.000Z' },
+        ])
+    })
+
+    it('has no reading for an answer without quotas', () => {
+        expect(planLimitWindowsFromKimi(null)).toEqual([])
+        expect(planLimitWindowsFromKimi({ usages: { limit_5h: { used_ratio: 'soon' }, limit_7d: null } })).toEqual([])
     })
 })
 
