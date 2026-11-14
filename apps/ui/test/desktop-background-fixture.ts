@@ -20,6 +20,8 @@ export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestIn
     if (/^\/api\/desktop\/sessions\/[^/]+\/connector-approvals$/.test(url.pathname)) return Response.json({ pending: [], rules: [] })
     // A coworker's Tools settings read what it may run without asking.
     if (/^\/api\/desktop\/agents\/[^/]+\/connector-approvals$/.test(url.pathname)) return Response.json({ rules: [] })
+    // The Vault reads its managed apps section as it opens.
+    if (url.pathname === '/api/desktop/managed-apps') return Response.json({ configured: false, apps: [], accounts: [] })
     if (url.pathname === '/api/desktop/cli-updates') return Response.json({ tools: [] })
     if (url.pathname === '/api/desktop/provider-usage') return Response.json({ since: { day: '2026-01-01T00:00:00.000Z', week: '2026-01-01T00:00:00.000Z' }, providers: {} })
     if (url.pathname === '/api/desktop/vault') return Response.json({ entries: [], coworkers: [] })
