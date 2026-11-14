@@ -146,7 +146,7 @@ test('the original batch approves and declines with a note in one indexed reques
     await click('Approve')
     expect(approvalPosts).toHaveLength(0)
     expect(container.textContent).toContain('Publish the post')
-    await click('Not now'); await note('  Wait for my review.  '); await click('Confirm')
+    await click('Explain'); await note('  Wait for my review.  '); await click('Confirm')
     expect(approvalPosts).toEqual([{ sessionId: 'one', body: { approvalId: approval.id, requestId: expect.any(String), decisions: [
         { decision: 'approved' }, { decision: 'declined', note: 'Wait for my review.' },
     ] } }])
@@ -168,7 +168,7 @@ test('a lost acknowledgement restores immutable saved decisions and retries the 
         return acknowledgement(sessionId, body.requestId, 'x-approval-id', body.approvalId)
     }
     await render('one', { text: 'Keep my draft' })
-    await click('Not now'); await note('Do not send yet.'); await click('Confirm')
+    await click('Explain'); await note('Do not send yet.'); await click('Confirm')
     expect(approvalPosts).toHaveLength(1)
     expect(container.querySelector('[data-hitl="approve"]')).toBeNull()
     expect(container.textContent).toContain('Do not send yet.')

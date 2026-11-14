@@ -44,6 +44,7 @@ type Props = {
     workspaceDefault?: BoxDefaultModel | null
     connections?: ConnectionSummary[]
     overview?: DesktopConversationOverviewAuthority
+    cardBeside?: boolean
 }
 
 function initialTabs(agentId: string, layout: DesktopTabLayout | null, sessions: DesktopSessionView[], requested: DesktopChatRequest | null): SessionTabsState {
@@ -60,7 +61,7 @@ function initialTabs(agentId: string, layout: DesktopTabLayout | null, sessions:
     return id && session ? openSessionTab(pinned, id, session.title) : pinned
 }
 
-export function DesktopChatTabs({ agent, workspaceId, sessions, pendingChatSummaries, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, refreshThreads, renameTitle, reload, onOpenCoworkerChat, onClosePanel, modelLabel, workspaceDefault, connections, onOpenModelSettings, onOpenTranscriptionSettings, overview }: Props) {
+export function DesktopChatTabs({ cardBeside, agent, workspaceId, sessions, pendingChatSummaries, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, refreshThreads, renameTitle, reload, onOpenCoworkerChat, onClosePanel, modelLabel, workspaceDefault, connections, onOpenModelSettings, onOpenTranscriptionSettings, overview }: Props) {
     const { t } = useDesktopLocale()
     const [layout, setLayout] = useState(() => initialTabs(agent.id, initialLayout, sessions, requested))
     const [rejectedRequest, setRejectedRequest] = useState<DesktopChatRequest | null>(() => {
@@ -375,7 +376,7 @@ export function DesktopChatTabs({ agent, workspaceId, sessions, pendingChatSumma
                     : tab.uid === requested.tabUid && tab.id === requested.sessionId) ? requested : null
                 return <div key={tab.uid} data-desktop-tab-active={visible} inert={!visible} aria-hidden={!visible || undefined}
                     className={visible ? 'col-start-1 row-start-1 flex min-h-0 min-w-0 flex-col' : 'invisible col-start-1 row-start-1 flex min-h-0 min-w-0 flex-col overflow-hidden'}>
-                    <DesktopConversation overview={overview} agent={agent} workspaceId={workspaceId} sessionId={tab.id} sessions={sessions} pendingChatSummaries={pendingChatSummaries} tabUid={tab.uid} active={selected && visible} arrival={arrival}
+                    <DesktopConversation overview={overview} cardBeside={cardBeside} agent={agent} workspaceId={workspaceId} sessionId={tab.id} sessions={sessions} pendingChatSummaries={pendingChatSummaries} tabUid={tab.uid} active={selected && visible} arrival={arrival}
                         requestedPanel={selected && visible ? requestedPanel : null} onPanelRequestHandled={onPanelRequestHandled}
                         tabStrip={visible ? strip : false} onTabActivity={report} initialDraft={drafts[tab.uid]} onStartFork={startFork} onFinishFork={finishFork}
                         onSelectSession={(id, title) => {

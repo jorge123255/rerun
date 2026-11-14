@@ -212,7 +212,7 @@ function scheduledRunOf(message: UIMessage) {
     return parseScheduledRun(prompt)
 }
 
-export function DesktopConversation({ agent, workspaceId, sessionId, sessions, pendingChatSummaries, tabUid, active = true, arrival, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, onHistoryVisibility, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, workspaceDefault, connections, onOpenModelSettings, onOpenTranscriptionSettings, overview }: {
+export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId, sessions, pendingChatSummaries, tabUid, active = true, arrival, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, onHistoryVisibility, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, workspaceDefault, connections, onOpenModelSettings, onOpenTranscriptionSettings, overview }: {
     agent: DesktopAgentView
     workspaceId?: number | null
     sessionId: string | null
@@ -241,6 +241,8 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
     onOpenModelSettings?: () => void
     onOpenTranscriptionSettings?: () => void
     overview?: DesktopConversationOverviewAuthority
+    // The Simple view shows the coworker's card as a column on the right, with the chat still in view beside it.
+    cardBeside?: boolean
 }) {
     const { language, t } = useDesktopLocale()
     const queueCopy = language.messages.queue
@@ -1544,8 +1546,8 @@ export function DesktopConversation({ agent, workspaceId, sessionId, sessions, p
                 </h1>
                 {onClosePanel && <Button type="button" aria-label={t('closePanel')} variant="ghost" size="icon-sm" className="justify-self-end" onClick={() => overviewCloseControl.requestClose(onClosePanel)}><XIcon className="size-4" /></Button>}
             </header>
-            {cardOpen && !overviewCovered && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={() => overviewCloseControl.requestClose(dismissCard)} />}
-            <section aria-label="Coworker details" hidden={!cardOpen} className={!cardOpen ? "hidden" : overview ? "absolute inset-x-3 top-14 bottom-3 z-40 flex min-h-0 flex-col overflow-auto rounded-2xl border border-border bg-background shadow-xl" : "absolute inset-x-3 top-14 z-40 rounded-2xl border border-border bg-background p-4 shadow-xl"}>
+            {cardOpen && !overviewCovered && <button type="button" aria-label="Back to the chat" className={cardBeside ? 'absolute inset-0 z-30 xl:bg-transparent max-xl:bg-foreground/5 max-xl:backdrop-blur-[2px]' : 'absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]'} onClick={() => overviewCloseControl.requestClose(dismissCard)} />}
+            <section aria-label="Coworker details" hidden={!cardOpen} data-card-beside={cardBeside || undefined} className={!cardOpen ? "hidden" : overview ? `absolute top-14 bottom-3 z-40 flex min-h-0 flex-col overflow-auto rounded-2xl border border-border bg-background shadow-xl ${cardBeside ? 'inset-x-3 xl:left-auto xl:w-[26rem]' : 'inset-x-3'}` : "absolute inset-x-3 top-14 z-40 rounded-2xl border border-border bg-background p-4 shadow-xl"}>
                 {overview && cardOpen && active && <DesktopConversationOverview
                     authority={overview} agent={agent} active={active && !draft.quitting}
                     working={generating} settingsDisabledReason={generating || !!sessionId && engineRunning.id !== sessionId ? 'Wait for this coworker’s current run to finish.' : null}
