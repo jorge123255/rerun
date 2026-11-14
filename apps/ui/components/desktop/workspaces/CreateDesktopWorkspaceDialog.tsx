@@ -1,14 +1,15 @@
 'use client'
 
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { Input } from '@/components/ui/input'
 import type { DesktopWorkspaceClient } from '@/lib/desktop/workspaces'
 import type { DesktopWorkspaceCreateInput, DesktopWorkspaceRecord } from '@rerun/contracts'
 import { DESKTOP_WORKSPACE_ICONS } from '@/lib/desktop/icon-catalog'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 import { cn } from '@/lib/utils'
-import { CheckIcon, Loader2Icon } from '@/lib/icons'
+import { CheckIcon, Loader2Icon, CirclePlusIcon } from '@/lib/icons'
 import { useEffect, useRef, useState } from 'react'
 import { useDesktopLocale } from '../DesktopLocale'
 
@@ -100,19 +101,17 @@ export function CreateDesktopWorkspaceDialog({
     return (
         <Dialog open={open} onOpenChange={next => { if (!next) close() }}>
             <DialogContent closeLabel={t('workspaceForm.close')} className="flex max-h-[min(100dvh-2rem,40rem)] w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
-                <form className="flex min-h-0 flex-1 flex-col p-6" onSubmit={event => { event.preventDefault(); void submit() }}>
-                    <div className="mb-6 flex gap-1.5" aria-hidden>
-                        {[0, 1].map(index => (
-                            <span key={index} className={cn('h-1 flex-1 rounded-full', index <= step ? 'bg-foreground' : 'bg-border')} />
-                        ))}
-                    </div>
-                    <DialogHeader className="mb-4">
-                        <DialogTitle>{t(step === 0 ? 'newWorkspace.steps.name.title' : 'newWorkspace.steps.icon.title')}</DialogTitle>
-                        <DialogDescription>
-                            {t(step === 0 ? 'newWorkspace.steps.name.description' : 'newWorkspace.steps.icon.description')}
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="min-h-0 flex-1 overflow-y-auto pb-4">
+                <form className="flex min-h-0 flex-1 flex-col" onSubmit={event => { event.preventDefault(); void submit() }}>
+                    {/* The shared header with the two-step progress under the title, as upstream's wizard header draws it. */}
+                    <DialogHeaderBar icon={CirclePlusIcon} title={t(step === 0 ? 'newWorkspace.steps.name.title' : 'newWorkspace.steps.icon.title')}
+                        description={t(step === 0 ? 'newWorkspace.steps.name.description' : 'newWorkspace.steps.icon.description')}>
+                        <div className="flex gap-1.5" aria-hidden>
+                            {[0, 1].map(index => (
+                                <span key={index} className={cn('h-1 flex-1 rounded-full', index <= step ? 'bg-foreground' : 'bg-border')} />
+                            ))}
+                        </div>
+                    </DialogHeaderBar>
+                    <div className="min-h-0 flex-1 overflow-y-auto p-4">
                         {step === 0 && (
                             <Input
                                 label={t('newWorkspace.name')}
@@ -154,7 +153,7 @@ export function CreateDesktopWorkspaceDialog({
                         {error && <p className="mt-4 text-sm text-destructive" role="alert">{error}</p>}
                         {checking && error !== t('newWorkspace.unconfirmed') && <p className="mt-4 text-sm text-muted-foreground">{t('newWorkspace.unconfirmed')}</p>}
                     </div>
-                    <DialogFooter className="mt-auto -mx-6 -mb-6 flex flex-wrap gap-2 border-t bg-muted/50 px-6 py-4">
+                    <DialogFooter className="mt-auto flex flex-wrap gap-2 border-t bg-muted/50 p-4">
                         {step === 0 || checking ? (
                             <Button type="button" variant="outline" disabled={busy} onClick={close}>{t('workspaceForm.cancel')}</Button>
                         ) : (

@@ -1,7 +1,9 @@
 'use client'
 
-import { DIALOG_TABS_CONTENT, DIALOG_TABS_HEADER, DialogTabs } from '@/components/dialogs/DialogTabs'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DIALOG_TABS_CONTENT, DialogTabs } from '@/components/dialogs/DialogTabs'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { BellIcon } from '@/lib/icons'
 import { useDesktopLocale } from './DesktopLocale'
 import { DesktopNotificationSettings } from './DesktopNotificationSettings'
 
@@ -17,10 +19,7 @@ export function DesktopNotificationsDialog({ open, onOpenChange, pinnedCoworkerI
     return <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent closeLabel={t('closeDialog')} className={DIALOG_TABS_CONTENT} onCloseAutoFocus={onCloseAutoFocus}>
             <DialogTabs tabs={tabs} tab="coworkers" onTabChange={() => {}} header={
-                <DialogHeader className={DIALOG_TABS_HEADER}>
-                    <DialogTitle>{t('notifications')}</DialogTitle>
-                    <DialogDescription>{t('notificationUI.description')}</DialogDescription>
-                </DialogHeader>
+                <DialogHeaderBar icon={BellIcon} title={t('notifications')} description={t('notificationUI.description')} />
             }>
                 <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-5 max-sm:pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:px-6">
                     {open && <DesktopNotificationSettings key={pinnedCoworkerId ?? 'workspace'} pinnedCoworkerId={pinnedCoworkerId} />}
