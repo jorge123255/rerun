@@ -1,3 +1,5 @@
+import { desktopPdfCopy } from './i18n/pdf-messages'
+
 export const DESKTOP_PDF_TEXT_MAX_STDOUT = 2 * 1024 * 1024
 export const DESKTOP_PDF_TEXT_MAX_RESPONSE = DESKTOP_PDF_TEXT_MAX_STDOUT + 4096
 export const DESKTOP_PDF_TEXT_MAX_PAGES = 10_000
@@ -217,15 +219,14 @@ export function desktopPdfFindMessage(input: {
     matchCount: number
     matchIndex: number
     limited: boolean
-}): { count: string; message: string } {
-    if (input.phase === 'loading') return { count: '', message: 'Reading PDF text…' }
-    if (input.phase === 'error') return { count: '', message: input.error.trim() ? input.error : 'Could not read this PDF’s text.' }
+}, copy = desktopPdfCopy.en, formatCount = (current: number, total: number) => `${current} of ${total}`): { count: string; message: string } {
+    if (input.phase === 'loading') return { count: '', message: copy.reading }
+    if (input.phase === 'error') return { count: '', message: input.error.trim() ? input.error : copy.readFailed }
     if (input.phase !== 'ready') return { count: '', message: '' }
-    const partial = 'Search covers only part of this PDF.'
-    const count = input.matchCount > 0 ? `${(input.matchIndex % input.matchCount) + 1} of ${input.matchCount}${input.limited ? '+' : ''}` : ''
-    if (!input.searchable) return { count: '', message: input.truncated ? partial : 'No searchable text' }
-    if (!input.pagePresent) return { count, message: input.truncated ? partial : 'This page’s text does not match the displayed page.' }
-    if (!input.aligned) return { count, message: 'This page’s text does not match the displayed page.' }
-    if (input.query.trim() && input.matchCount === 0) return { count: '', message: input.truncated ? `No matches. ${partial}` : 'No matches' }
-    return { count, message: input.truncated ? partial : '' }
+    const count = input.matchCount > 0 ? formatCount((input.matchIndex % input.matchCount) + 1, input.matchCount) + (input.limited ? '+' : '') : ''
+    if (!input.searchable) return { count: '', message: input.truncated ? copy.partial : copy.noText }
+    if (!input.pagePresent) return { count, message: input.truncated ? copy.partial : copy.misaligned }
+    if (!input.aligned) return { count, message: copy.misaligned }
+    if (input.query.trim() && input.matchCount === 0) return { count: '', message: input.truncated ? copy.noMatchesPartial : copy.noMatches }
+    return { count, message: input.truncated ? copy.partial : '' }
 }

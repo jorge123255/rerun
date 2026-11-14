@@ -7,6 +7,7 @@ import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/
 import { createDesktopAgent } from '@/lib/desktop/server/store'
 import { GET as list, POST as upload } from './route'
 import { GET as read } from './read/route'
+import { POST as resolveLink } from './link/route'
 import { DELETE as removeCoworker } from '../route'
 
 const race = vi.hoisted(() => ({
@@ -71,6 +72,30 @@ test('identically named files preview each coworker’s own content', async () =
     const b = await (await call(read, bob, 'path=docs/notes.md')).json()
     expect(a).toMatchObject({ path: 'docs/notes.md', content: '# Alice notes', truncated: false })
     expect(b.content).toBe('# Bob notes')
+})
+
+test('resolves only the authenticated coworker’s file links and reveals no foreign file status', async () => {
+    const resolve = (agentId: string, href: string, cookie = `rerun-desktop-session=${token}`, origin = 'http://127.0.0.1:3190') =>
+        resolveLink(new Request(`http://127.0.0.1:3190/api/desktop/agents/${agentId}/files/link`, {
+            method: 'POST', headers: { host: '127.0.0.1:3190', cookie, origin, 'content-type': 'application/json' },
+            body: JSON.stringify({ href }),
+        }), { params: Promise.resolve({ agentId }) })
+    const aliceLink = '/data/agents/engine-alice/workspace/docs/notes.md'
+    const valid = await resolve(alice, aliceLink)
+    expect(valid.status).toBe(200)
+    expect(await valid.json()).toEqual({ path: 'docs/notes.md' })
+    expect((await resolve(alice, aliceLink, '')).status).toBe(401)
+    expect((await resolve(alice, aliceLink, undefined, 'https://example.invalid')).status).toBe(403)
+    expect((await resolve(alice, aliceLink.replace('/docs/', '/%2e%2e/'))).status).toBe(400)
+    for (const link of [
+        '/data/agents/engine-bob/workspace/docs/notes.md',
+        '/data/agents/engine-bob/workspace/docs/missing.md',
+        '/data/agents/engine-bob/workspace/agents/engine-alice/workspace/docs/notes.md',
+    ]) {
+        const denied = await resolve(alice, link)
+        expect(denied.status).toBe(404)
+        expect(await denied.json()).toMatchObject({ error: 'File not found' })
+    }
 })
 
 test('rejects traversal, absolute paths, unknown coworkers, engine ids and missing auth', async () => {

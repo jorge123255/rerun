@@ -44,7 +44,7 @@ function sameResource(current:OwnedSkill,owned:OwnedSkill):boolean{
 }
 
 export const serviceSkillHash=(skill:ServicePlan['skills'][number])=>hash(Buffer.from(serviceSkillManifest(skill),'utf8'))
-export async function createServiceSkill(root:string,record:ServiceInstall,index:number,skill:ServicePlan['skills'][number],guard:()=>Promise<void>,journal:ServiceSkillJournal){
+export async function createServiceSkill(root:string,record:Pick<ServiceInstall,'id'|'owner'|'engineId'>,index:number,skill:ServicePlan['skills'][number],guard:()=>Promise<void>,journal:ServiceSkillJournal){
  await guard()
  const reservation=await journal.reserve(record,index,serviceSkillHash(skill))
  if(reservation.state==='reserved'){

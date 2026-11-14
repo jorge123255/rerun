@@ -308,7 +308,7 @@ describe('buildSystemPrompt for the foreman', () => {
     it('adds the bridge note and the call-first order on codex', async () => {
         const prompt = await buildSystemPrompt(foreman(), { source: 'chat' }, 'codex')
         expect(prompt).toContain('<bridged_tools>')
-        expect(prompt).toContain('the first message you write to the user ends your turn')
+        expect(prompt).toContain('a message written before a call does not reach the user as your message')
     })
 
     it('adds the bridge note and orders the closing card before the final message on claude', async () => {

@@ -1,10 +1,24 @@
 import { normalizeNotificationPrefs } from '@rerun/contracts'
 
-/** Neutral reads for newly mounted chat surfaces. Call after feature-specific handlers so
+/** Neutral reads for mounted desktop surfaces. Call after feature-specific handlers so
  * notification/skill tests keep their own state and every unexpected write still fails. */
 export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestInit): Response | undefined {
     if ((init?.method ?? 'GET') !== 'GET') return
     const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, 'http://local')
+    if (url.pathname === '/api/desktop/subscription-login') return Response.json({
+        'grok-build': { phase: 'unavailable' }, 'kimi-code': { phase: 'unavailable' },
+    })
+    // The workspace menu reads the Vault as it opens, for the mark on its Vault row.
+    // The board counts down to the next routine; a workspace without one has nothing to show.
+    if (url.pathname === '/api/desktop/workspace/routines/upcoming') return Response.json([])
+    // A coworker's Apps panel lists what it holds from the workspace Vault.
+    const coworkerVault = /^\/api\/desktop\/coworkers\/([^/]+)\/vault$/.exec(url.pathname)
+    if (coworkerVault) return Response.json({ agentId: coworkerVault[1], attached: [], available: [] })
+    if (url.pathname === '/api/desktop/workspace-view') return Response.json({ view: null, lastOpened: null })
+    // The header's providers list reads what this Mac ran when it opens.
+    if (url.pathname === '/api/desktop/cli-updates') return Response.json({ tools: [] })
+    if (url.pathname === '/api/desktop/provider-usage') return Response.json({ since: { day: '2026-01-01T00:00:00.000Z', week: '2026-01-01T00:00:00.000Z' }, providers: {} })
+    if (url.pathname === '/api/desktop/vault') return Response.json({ entries: [], coworkers: [] })
     if (/^\/api\/desktop\/coworkers\/[^/]+\/document-attachments$/.test(url.pathname)) return Response.json({ attachments: [] })
     if (/^\/api\/desktop\/sessions\/[^/]+\/trigger-requests$/.test(url.pathname)) return Response.json({ request: null })
     if (url.pathname === '/api/desktop/foreman') {

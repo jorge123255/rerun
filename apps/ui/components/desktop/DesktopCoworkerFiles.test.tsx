@@ -349,3 +349,34 @@ test('refresh replaces a text thumbnail when only the listed modification time c
         await close()
     }
 })
+
+test('Save As sends the chosen file version from the folder menu and preview', async () => {
+    const listedVersion = 'a'.repeat(64)
+    const previewVersion = 'b'.repeat(64)
+    const saveCoworkerFile = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    vi.stubGlobal('desktopApp', { saveCoworkerFile })
+    const row = { ...entry('report.csv', 'file'), identity: '1:2', exportVersion: listedVersion }
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url.includes('/files/read')
+        ? Response.json({ path: 'report.csv', content: 'city,count', truncated: false, identity: row.identity, exportVersion: previewVersion })
+        : Response.json({ entries: [row] })))
+    const root = createRoot(document.body.appendChild(document.createElement('div')))
+    try {
+        await act(async () => { root.render(<DesktopConversation agent={coworker('alice')} sessionId={null} sessions={[]} onSelectSession={() => {}} onChatSession={() => {}} />) })
+        await click('Files')
+        await flush()
+        await act(async () => {
+            document.querySelector('[data-files-name="report.csv"]')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+        })
+        const menu = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent?.trim() === 'Save As')
+        expect(menu).toBeDefined()
+        await act(async () => { menu!.click() })
+        expect(saveCoworkerFile).toHaveBeenNthCalledWith(1, { agentId: 'alice', path: 'report.csv', version: listedVersion })
+        expect(document.body.textContent).not.toContain('Saved report.csv')
+
+        await click('report.csv')
+        await flush()
+        await click('Save As')
+        expect(saveCoworkerFile).toHaveBeenNthCalledWith(2, { agentId: 'alice', path: 'report.csv', version: previewVersion })
+        expect(document.body.textContent).toContain('Saved report.csv')
+    } finally { await act(async () => root.unmount()) }
+})

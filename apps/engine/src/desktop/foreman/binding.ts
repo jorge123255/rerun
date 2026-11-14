@@ -1,10 +1,12 @@
 import { z } from 'zod'
-import { RERUN_PUBLIC_DOCS_CORPUS, FOREMAN_AGENT_ID } from '@rerun/contracts'
+import { DESKTOP_FOREMAN_TURN_TEXT_LIMIT, RERUN_PUBLIC_DOCS_CORPUS, FOREMAN_AGENT_ID } from '@rerun/contracts'
 import type { RunContext } from '../../runtime/context.js'
 import { getAgent } from '../../agents/registry.js'
+import { readAgentConfig } from '../../agents/loader.js'
 import { getRun } from '../../db/repos/runs.js'
 import { getSession } from '../../db/repos/sessions.js'
 import { desktopApp } from '../policy.js'
+import { desktopApprovalTools } from '../approval-tool.js'
 import { askUserTool } from '../../tools/builtin/hitl.js'
 import { foremanTools } from './tools.js'
 import { registerDesktopForemanTools } from './tool-identity.js'
@@ -16,7 +18,9 @@ import { readDesktopDelegation } from '../delegation/binding.js'
 import { readDesktopCoworkerCallRuntime } from '../coworker-calls/bind.js'
 import { desktopCallAgentTools } from '../coworker-calls/tool.js'
 import { hasDesktopToolGrant } from '../tool-grants.js'
-import { readForemanWorkspaceReads } from '../foreman-workspace-reads/binding.js'
+import { bindForemanWorkspaceReads, createDesktopForemanWorkspacePorts, readForemanWorkspaceReads, unbindForemanWorkspaceReads } from '../foreman-workspace-reads/index.js'
+import { parseForemanWorkspaceSnapshot } from '../foreman-workspace-reads/project.js'
+import { assertDesktopRunAdmission } from '../workspace-admission.js'
 type Binding = ReturnType<typeof createDesktopForemanBridge>
 let installed: Binding | undefined
 let installedDocs: ReturnType<typeof createDesktopForemanDocsBridge> | undefined
@@ -27,7 +31,25 @@ export function bindDesktopForeman(runtime: ForemanRuntime, network?: typeof fet
     installed = binding
     const docs = createDesktopForemanDocsBridge(runtime, network)
     installedDocs = docs
-    return { bridge: binding, close() { binding.close(); docs.close(); if (installedDocs === docs) installedDocs = undefined; if (installed === binding) installed = undefined } }
+    const workspaceReads = bindForemanWorkspaceReads(createDesktopForemanWorkspacePorts({
+        async grant(workspaceId) {
+            if (!desktopApp() || installed !== binding || workspaceId !== binding.workspaceId) return false
+            assertDesktopRunAdmission()
+            const config = await readAgentConfig(FOREMAN_AGENT_ID)
+            assertDesktopRunAdmission()
+            return installed === binding && config.enabled && hasDesktopToolGrant(config, 'foremanWorkspaceRead')
+        },
+        async snapshot(target, signal) {
+            return parseForemanWorkspaceSnapshot(await binding.request({ action: 'workspace_snapshot', binding: target }, signal))
+        },
+    }))
+    return { bridge: binding, close() {
+        binding.close()
+        docs.close()
+        if (installedDocs === docs) installedDocs = undefined
+        if (installed === binding) installed = undefined
+        if (readForemanWorkspaceReads() === workspaceReads) unbindForemanWorkspaceReads()
+    } }
 }
 export function readDesktopForemanBinding() { return installed }
 export async function desktopForemanTools(ctx: RunContext) {
@@ -56,10 +78,13 @@ export async function desktopForemanTools(ctx: RunContext) {
     })
     const docs = installedDocs
     Object.assign(tools, desktopForemanDocsTools({ binding, corpus: RERUN_PUBLIC_DOCS_CORPUS, assertCurrent: current, search: docs ? (input, requestSignal) => docs.search(input, requestSignal ?? signal) : null }))
-    Object.assign(tools, askUserTool(ctx), foremanAgentFileTools(ctx))
+    Object.assign(tools, askUserTool(ctx), desktopApprovalTools(ctx, DESKTOP_FOREMAN_TURN_TEXT_LIMIT), foremanAgentFileTools(ctx))
     const workspaceReads = readForemanWorkspaceReads()
     let workspaceGranted = false
-    try { workspaceGranted = !!workspaceReads && await workspaceReads.grant(binding.workspaceId) === true } catch { workspaceGranted = false }
+    try {
+        workspaceGranted = !!workspaceReads && hasDesktopToolGrant(ctx.agent.config, 'foremanWorkspaceRead')
+            && await workspaceReads.grant(binding.workspaceId) === true
+    } catch { workspaceGranted = false }
     if (workspaceReads && workspaceGranted) Object.assign(tools, workspaceReads.tools({ binding, assertCurrent: current, signal }))
     const calls = readDesktopCoworkerCallRuntime()
     return {

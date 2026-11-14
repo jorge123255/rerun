@@ -1,3 +1,9 @@
+import { adoptDesktopCatalogApps } from './vault/catalog-adoption'
+import { vaultMcpOAuth } from './vault/mcp-oauth'
+import { assertDesktopWorkspaceAdmission, desktopWorkspaceFrozen } from './workspace-admission'
+import { assignedVaultMcpPrograms, vaultProgramMaterials } from './vault/mcp-programs'
+import { desktopVaultMcpRuntime } from './vault/mcp-runtime'
+import { createDesktopSecretCrypto } from './secret-requests/crypto'
 import { shutdownDesktopForeman } from './foreman/binding'
 import { shutdownDesktopForemanVoice } from './foreman-voice/binding'
 import { canonicalDesktopEngineRoot, desktopEngineParts } from './runtime'
@@ -8,7 +14,7 @@ import { z } from 'zod'
 import { createDesktopSelfMcpBinding } from './self-mcp/binding'
 import { desktopRerunToolCatalog, desktopCodexToolCatalog } from '@rerun/contracts'
 import { serviceStore } from './services/store'
-import { bindDesktopServiceSkillOwners, desktopServiceSkillRestartScope } from './service-skills/authority'
+import { bindDesktopServiceSkillOwners, desktopServiceSkillRestartScope, syncDesktopVaultSkillsForOwner } from './service-skills/authority'
 import { localServiceLifecycle, type ServiceAuthority } from './services/lifecycle'
 import { serviceApi } from './services/api'
 import { serviceEngineBridge } from './services/bridge'
@@ -32,6 +38,9 @@ import { abortable, boundedText, remoteMcpRuntime } from './mcp/remote'
 import { remoteMcpStore, bindRemoteTransportDrain } from './mcp/store'
 import { initializeDesktopMcp } from './mcp/schema'
 import { loopbackMcpOAuth } from './mcp/oauth-loopback'
+import { createMcpOAuthAttempts } from './mcp/oauth-attempt'
+import { bindTrustedMcpDeviceMethodReview } from './mcp-device-approval/binding'
+import { createDesktopMcpBrowserApprovals } from './mcp-sign-in/browser-approval'
 import { loopbackOAuthApi } from './mcp/oauth-api'
 import { desktopMcpBridge, desktopMcpBridgeRequest, type McpRunIdentity } from './mcp/bridge'
 
@@ -91,7 +100,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         signal.throwIfAborted()
         return { enabled: detail.config.enabled, granted: detail.config.tools.desktopToolGrants?.[grant] === true && (grant !== 'privateFileWrite' || detail.config.tools.filesystem === true) && (grant !== 'sharedFilesWrite' || detail.config.tools.shared !== false) }
     }
-    const oauth = loopbackMcpOAuth(store, access)
+    const oauth = loopbackMcpOAuth(store, access, undefined, store, createMcpOAuthAttempts(db))
     const material: DesktopMcpMaterialSource = (...args) => references.material(...args)
     const remote = remoteMcpRuntime(store, access, fetch, oauth.credential, material)
     const authorizeRun = async (identity: McpRunIdentity, stop: AbortSignal, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' | 'services' | 'webSearch' | 'sharedFilesWrite' = 'mcp') => {
@@ -161,12 +170,13 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         current.check()
         return { cwd: current.workspaceRoot }
     }
-    const localRuntime = stdioRuntime(localStore, localAuthority, undefined, material)
+    const localRuntime = stdioRuntime(localStore, localAuthority, undefined, material,
+        owner => assignedVaultMcpPrograms(db, owner), vaultProgramMaterials(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId))
     const localBridge = stdioEngineBridge(localRuntime, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'localMcpStdio')
         return (await historicalOwner(identity, signal)).owner.id
     })
-    const installedServices = serviceStore(db, masterKey)
+    const installedServices = serviceStore(db, masterKey, true)
     const serviceAuthority: ServiceAuthority = async (owner, action, identity, signal) => {
         const stop = AbortSignal.any([signal, entry.shutdown.signal])
         const current = identity ? await historicalOwner(identity, stop) : await currentOwner(owner, stop)
@@ -184,10 +194,39 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (new Set(names).size !== names.length || names.some(name => !/^[\w.-]{1,128}$/.test(name) || reserved.has(name) || prefixes.some(prefix => name.startsWith(`${prefix}_`)))) throw new Error('Service tool conflicts with another tool')
         signal.throwIfAborted()
     }, fetch, undefined, (owner, signal) => desktopServiceSkillRestartScope(runtime, owner, signal))
+    const verifyAdoptedSkills = async (owner: string, itemId: string, signal: AbortSignal) => {
+        const { rows } = await db.execute({
+            sql: `SELECT x.installation_id FROM desktop_vault_catalog_adoptions x
+                JOIN desktop_agents a ON a.id=x.owner AND a.engine_agent_id=x.engine_id
+                WHERE x.owner=? AND x.item_id=?`,
+            args: [owner, itemId],
+        })
+        for (const row of rows) await services.skillAuthority.assertReady(owner, String(row.installation_id), signal)
+    }
+    const vaultCrypto = createDesktopSecretCrypto(masterKey)
+    const assertVaultWorkspace = () => assertDesktopWorkspaceAdmission(runtime)
+    const vaultOAuth = vaultMcpOAuth(db, vaultCrypto, runtime.workspaceId, assertVaultWorkspace, undefined, masterKey)
+    entry.shutdown.signal.addEventListener('abort', () => vaultOAuth.shutdown(), { once: true })
+    const vaultMcp = desktopVaultMcpRuntime(db, vaultCrypto, runtime.workspaceId, access, entry.shutdown.signal,
+        undefined, assertVaultWorkspace, undefined, 'mcp', vaultOAuth)
+    const vaultCatalog = desktopVaultMcpRuntime(db, vaultCrypto, runtime.workspaceId,
+        owner => access(owner, 'services'), entry.shutdown.signal, undefined, assertVaultWorkspace, undefined, 'catalog', vaultMcp.oauth, verifyAdoptedSkills, {
+            store, key: masterKey, authorizeRun: (identity, signal) => authorizeRun(identity, signal, 'services'),
+            remoteAccess: access, watchOwner: owner => watchDesktopMcpOwner(runtime, owner),
+        })
     const servicesBridge = serviceEngineBridge(installedServices, services, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'services')
         return (await historicalOwner(identity, signal)).owner.id
-    }, (owner, identity, signal) => serviceTransports.releaseRun(owner, identity, signal))
+    }, async (owner, identity, signal) => {
+        await Promise.all([serviceTransports.releaseRun(owner, identity, signal), vaultCatalog.releaseSseRun(owner, identity)])
+    }, async (owner, identity, signal) => {
+        const active = AbortSignal.any([signal, entry.shutdown.signal])
+        await syncDesktopVaultSkillsForOwner(runtime, owner, active)
+        const http = await vaultCatalog.tools(owner, active, async stop => {
+            if (await authorizeRun(identity, stop, 'services') !== owner) throw new Error('Service run owner changed')
+        })
+        return [...http, ...await vaultCatalog.sseTools(owner, identity, active)]
+    })
     const accounts = await canonicalServiceAccounts(runtime, installedServices, services, masterKey, {
         additionalTransport: (record, run, signal) => serviceTransports?.service(record, run, signal),
         oauthCredential: (record, run, signal) => serviceOAuth.credentialFor(record, run, signal),
@@ -215,7 +254,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (row.transport === 'sse' && row.id) await sse.dispose(owner, row.id)
     })
     const references = createCanonicalMcpSecretReferences({
-        db, key: masterKey, origin: 'desktop-workspace-1', shutdown: entry.shutdown.signal,
+        db, key: masterKey, origin: 'desktop-workspace-1', workspaceId: runtime.workspaceId, shutdown: entry.shutdown.signal,
         async owner(id, signal) {
             const current = await currentOwner(id, signal)
             const grants = current.config.tools.desktopToolGrants
@@ -234,6 +273,18 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     })
     // Offline reconciliation verifies canonical owned skills without replaying remote work.
     await services.reconcileOwners(entry.shutdown.signal)
+    // Runs and legacy app mutations share this process-wide initialization. Once
+    // it publishes, both tool paths can see the same committed adoption receipt.
+    if (!desktopWorkspaceFrozen(runtime)) await adoptDesktopCatalogApps({
+        db, workspaceId: runtime.workspaceId, key: masterKey,
+        assertCurrent() { entry.shutdown.signal.throwIfAborted(); assertDesktopWorkspaceAdmission(runtime) },
+        verifySkills: async record => {
+            const check = watchDesktopMcpOwner(runtime, record.owner)
+            await services.skillAuthority.assertReady(record.owner, record.id, entry.shutdown.signal)
+            check()
+            return check
+        },
+    })
     entry.shutdown.signal.throwIfAborted()
     const writeback = nativeWritebackService(db, async (identity, action, signal) => {
         const stop = AbortSignal.any([signal, entry.shutdown.signal])
@@ -255,10 +306,19 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
             return write()
         })),
     })
-    const bridge = desktopMcpBridge(store, remote, authorizeRun, sse)
-    return { store, references, runtime: remote, bridge, access, authorizeRun, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),
+    const bridge = desktopMcpBridge(store, remote, authorizeRun, {
+        async tools(owner, run, signal) {
+            return [...await sse.tools(owner, run, signal), ...await vaultMcp.tools(owner, signal)]
+        },
+        releaseRun: sse.releaseRun,
+    })
+    const deviceReview = bindTrustedMcpDeviceMethodReview({ runtime, db, key: masterKey, store, shutdown: entry.shutdown.signal })
+    entry.shutdown.signal.addEventListener('abort', deviceReview.dispose, { once: true })
+    return { store, references, runtime: remote, bridge, vaultOAuth: vaultMcp.oauth, checkVaultCatalogHealth: vaultCatalog.catalogHealth(runtime.launchNonce), access, authorizeRun, deviceReview, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),
+        browserApprovals: (scope: Omit<Parameters<typeof createDesktopMcpBrowserApprovals>[3], 'workspaceId'>) =>
+            createDesktopMcpBrowserApprovals(db, store, masterKey, { ...scope, workspaceId: String(runtime.workspaceId) }),
         localRuntime, localBridge, localApi: stdioApi(localStore, localRuntime, localAuthority), writebackApi: nativeWritebackApi(writeback),
-        selfMcp, serviceOAuth, serviceTransports, services, installedServices, servicesBridge, servicesApi: serviceApi(installedServices, services), accounts, sse }
+        selfMcp, serviceOAuth, serviceTransports, services, installedServices, servicesBridge, servicesApi: serviceApi(installedServices, services), accounts, sse, vaultCatalog }
 
 }
 
@@ -295,7 +355,7 @@ export async function withDesktopMcpOwnerTransition<T>(runtime: DesktopRuntime, 
         await service.serviceOAuth.suspendOwner(localAgentId)
         service.servicesBridge.releaseOwner(localAgentId)
         service.services.lifecycle.disconnect(localAgentId)
-        await service.sse.dispose(localAgentId)
+        await Promise.all([service.sse.dispose(localAgentId), service.vaultCatalog.disposeSseOwner(localAgentId)])
         return await service.store.lifecycle.transitionOwner(localAgentId, () => service.services.transitionOwner(localAgentId, () => service.localRuntime.transitionOwner(localAgentId, async () => { service.bridge.invalidateOwner(localAgentId); await service.localBridge.releaseOwner(localAgentId); return write() })))
     } finally {
         const count = (entry.pendingOwners.get(localAgentId) ?? 1) - 1
@@ -312,7 +372,7 @@ export async function shutdownDesktopRemoteMcp(runtime: DesktopRuntime) {
         service?.oauth.shutdown()
         service?.serviceOAuth.shutdown()
         service?.bridge.shutdown()
-        const stopped = await Promise.allSettled([service?.localBridge.shutdown(), service?.servicesBridge.shutdown(), service?.sse.shutdown()])
+        const stopped = await Promise.allSettled([service?.localBridge.shutdown(), service?.servicesBridge.shutdown(), service?.sse.shutdown(), service?.vaultCatalog.shutdownSse()])
         const failures = stopped.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
         if (failures.length) throw new AggregateError(failures, 'Connection shutdown is not confirmed')
     }

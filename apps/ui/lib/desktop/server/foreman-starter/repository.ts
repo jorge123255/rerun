@@ -2,16 +2,13 @@ import { createHash } from 'node:crypto'
 import type { Client, Transaction } from '@libsql/client'
 import { z } from 'zod'
 import { DesktopHttpError } from '../auth'
+import { starterChoiceSchema } from '../../foreman-client/starter'
+export { starterChoiceSchema } from '../../foreman-client/starter'
 
 const id = z.string().trim().min(1).max(256)
 export const starterScopeSchema = z.strictObject({ workspaceId: id, chatId: id })
 export const starterBindingSchema = starterScopeSchema.extend({ sessionId: id, runId: id, turnRevision: id, messageId: id, toolCallId: id, grantRevision: id, widgetDigest: id })
 export type StarterBinding = z.infer<typeof starterBindingSchema>
-export const starterChoiceSchema = z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('text'), text: z.string().trim().min(1).max(4000) }),
-    z.strictObject({ kind: z.literal('cards'), chosen: z.array(id).min(1).max(3) }),
-    z.strictObject({ kind: z.literal('dismiss') }),
-])
 export const starterDecisionSchema = starterScopeSchema.extend({ requestId: id, revision: z.literal('1'), choice: starterChoiceSchema })
 export type StarterDecision = z.infer<typeof starterDecisionSchema>
 export type StarterPending = StarterBinding & { requestId: string; revision: '1'; offered: string[] }

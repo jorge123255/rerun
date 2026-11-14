@@ -15,30 +15,15 @@ afterEach(async () => {
     vi.restoreAllMocks()
 })
 
-type Handlers = Partial<Omit<ComponentProps<typeof DesktopProviderErrorNotice>, 'kind' | 'message' | 'agentId' | 'sessionId'>>
-async function mount(kind: ChatErrorKind, message: string, handlers: Handlers = {}, sessionId: string | null = 'session-1') {
+type Handlers = Omit<ComponentProps<typeof DesktopProviderErrorNotice>, 'kind' | 'message'>
+async function mount(kind: ChatErrorKind, message: string, handlers: Handlers = {}) {
     const root = createRoot(document.body.appendChild(document.createElement('div'))); roots.push(root)
-    await act(async () => root.render(
-        <DesktopProviderErrorNotice kind={kind} message={message} agentId="agent-1" sessionId={sessionId}
-            onRetry={handlers.onRetry} onContinue={handlers.onContinue} onStopRun={handlers.onStopRun}
-            onNewConversation={handlers.onNewConversation} onReconnect={handlers.onReconnect}
-            onSwitchModel={handlers.onSwitchModel} onConversationChoice={handlers.onConversationChoice}
-            onOpenModelSettings={handlers.onOpenModelSettings} onModelSaved={handlers.onModelSaved} />,
-    ))
-    return root
+    await act(async () => root.render(<DesktopProviderErrorNotice kind={kind} message={message} {...handlers} />))
 }
 
 const button = (label: string) => [...document.querySelectorAll<HTMLElement>('button, [role="button"]')].find(item => item.textContent?.includes(label))
 const click = async (label: string) => { await act(async () => { button(label)?.click() }) }
 const text = () => document.body.textContent ?? ''
-
-const modelView = {
-    catalog: [{ connectionId: 'conn-1', name: 'ChatGPT', provider: 'codex', models: [{ id: 'gpt-5', label: 'GPT-5' }, { id: 'gpt-5-mini', label: 'GPT-5 mini' }] }],
-    workspace: null,
-    coworker: { connectionId: 'conn-1', provider: 'codex', model: 'gpt-5', label: 'GPT-5', available: true },
-    conversation: null,
-    effective: { source: 'coworker', connectionId: 'conn-1', provider: 'codex', name: 'ChatGPT', model: 'gpt-5', label: 'GPT-5', available: true },
-}
 
 test('a missing session offers only a new conversation and never deletes anything itself', async () => {
     const onNewConversation = vi.fn()
@@ -75,39 +60,26 @@ test('an unauthorized connection offers reconnect', async () => {
     expect(onReconnect).toHaveBeenCalledTimes(1)
 })
 
-test('a refused model opens the recovery picker and saves a conversation-scoped pick', async () => {
-    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input)
-        if (init?.method === 'PATCH') {
-            expect(JSON.parse(String(init.body))).toEqual({ action: 'conversation', sessionId: 'session-1', connectionId: 'conn-1', model: 'gpt-5-mini' })
-            return new Response(JSON.stringify(modelView), { status: 200 })
-        }
-        return new Response(JSON.stringify(modelView), { status: 200 })
-    })
-    vi.stubGlobal('fetch', fetcher)
-    const onModelSaved = vi.fn()
-    const onConversationChoice = vi.fn()
-    await mount('provider_error', 'provider returned error', { onModelSaved, onConversationChoice })
+test('exhausted OpenAI API credits are named and offer a model switch', async () => {
+    const onSwitchModel = vi.fn(), onRetry = vi.fn()
+    await mount('usage_limit', 'OpenAI API credits used up', { onSwitchModel, onRetry })
+    expect(text()).toContain('OpenAI API credits used up')
+    expect(text()).toContain('platform.openai.com')
+    expect(button('Retry')).toBeUndefined()
     await click('Switch model')
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
-    expect(text()).toContain('GPT-5 mini')
-    await click('GPT-5 mini')
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
-    expect(onModelSaved).toHaveBeenCalledTimes(1)
-    expect(onConversationChoice).not.toHaveBeenCalled()
+    expect(onSwitchModel).toHaveBeenCalledOnce()
 })
 
-test('an unsent conversation routes the pick through onConversationChoice instead of patching', async () => {
-    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify(modelView), { status: 200 }))
-    vi.stubGlobal('fetch', fetcher)
-    const onConversationChoice = vi.fn()
-    const onModelSaved = vi.fn()
-    await mount('generic', 'socket hangup', { onConversationChoice, onModelSaved }, null)
+test('an OpenAI-compatible endpoint does not inherit OpenAI billing guidance', async () => {
+    await mount('usage_limit', 'Provider API credits used up', { onSwitchModel: vi.fn() })
+    expect(text()).toContain('Provider API credits used up')
+    expect(text()).toContain('Check its billing settings')
+    expect(text()).not.toContain('platform.openai.com')
+})
+
+test('a refused model opens the conversation model picker', async () => {
+    const onSwitchModel = vi.fn()
+    await mount('provider_error', 'provider returned error', { onSwitchModel })
     await click('Switch model')
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
-    await click('GPT-5 mini')
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
-    expect(onConversationChoice).toHaveBeenCalledWith({ connectionId: 'conn-1', model: 'gpt-5-mini' })
-    expect(onModelSaved).toHaveBeenCalledTimes(1)
-    expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(0)
+    expect(onSwitchModel).toHaveBeenCalledOnce()
 })

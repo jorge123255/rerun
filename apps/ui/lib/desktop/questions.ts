@@ -1,9 +1,10 @@
 import { z } from 'zod'
+import { desktopDocumentSendSelectionSchema } from '@rerun/contracts'
 
 const questionId = z.string().regex(/^[a-f0-9]{64}$/)
 const answerValues = z.array(z.array(z.string().max(20_000)).max(101)).min(1).max(32)
     .refine(answers => answers.flat().reduce((length, answer) => length + answer.length, 0) <= 20_000, 'Keep the answers under 20,000 characters.')
-const answer = z.object({ action: z.literal('answer'), answers: answerValues }).strict()
+const answer = z.object({ action: z.literal('answer'), answers: answerValues, documents: desktopDocumentSendSelectionSchema.optional() }).strict()
 const cancel = z.object({ action: z.literal('cancel') }).strict()
 export const desktopQuestionPayloadSchema = z.discriminatedUnion('action', [answer, cancel])
 export const desktopQuestionAnswerSchema = z.discriminatedUnion('action', [

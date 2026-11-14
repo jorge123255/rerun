@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ConnectionsList, DesktopCodexStatus } from '@rerun/contracts'
+import { DesktopDeviceCode } from './DesktopDeviceCode'
 import { Button } from '@/components/ui/button'
 import { DESKTOP_CODEX_LOGIN_BUDGET_MS } from '@/lib/desktop/codex-login-budget'
 
@@ -88,7 +89,7 @@ export function DesktopCodexLogin({ connected, modelCount, onProviders }: {
         {status?.phase === 'error' && <p role="alert" className="text-sm text-destructive">{status.message}</p>}
         {status?.phase === 'waiting' ? <div className="space-y-3 rounded-lg border p-3">
             <p className="text-sm">Open the OpenAI verification page and enter this one-time code.</p>
-            <output aria-label="Device code" className="block select-all font-mono text-xl font-semibold tracking-widest">{status.userCode}</output>
+            <DesktopDeviceCode key={status.userCode} code={status.userCode} label="Device code" />
             <a className="text-sm font-medium underline" href={status.verificationUrl} target="_blank" rel="noreferrer">Open OpenAI verification</a>
             <p role="status" className="text-xs text-muted-foreground">Waiting for approval. If prompted, enable device-code authorization in ChatGPT security settings.</p>
             <Button type="button" variant="outline" disabled={busy} onClick={() => void act('cancel')}>Cancel sign-in</Button>

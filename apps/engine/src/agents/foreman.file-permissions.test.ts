@@ -38,3 +38,19 @@ test('rebuild preserves only an explicit Foreman delegation grant', async () => 
         foremanAgentFilesRead: false, foremanAgentFilesWrite: false, delegate: true, callAgent: true,
     })
 })
+
+test('an existing Foreman profile receives the Chief of Staff name on boot with the same identity, model and grants', async () => {
+    await ensureForeman()
+    const config = await read()
+    const model = { connectionId: 'saved-connection', provider: 'openai', model: 'saved-model' }
+    const grants = { foremanAgentFilesRead: true, foremanAgentFilesWrite: false, delegate: true, callAgent: true, foremanWorkspaceRead: true }
+    await writeFile(join(location.root, 'config.json'), JSON.stringify({
+        ...config, ...model, displayName: 'Foreman', tools: { ...config.tools, desktopToolGrants: grants },
+    }))
+    await writeFile(join(location.root, 'SOUL.md'), '# Foreman\n')
+
+    await ensureForeman()
+
+    expect(await read()).toMatchObject({ ...model, name: 'foreman', kind: 'foreman', displayName: 'Chief of Staff', tools: { desktopToolGrants: grants } })
+    expect(await readFile(join(location.root, 'SOUL.md'), 'utf8')).toMatch(/^# Chief of Staff\n/)
+})

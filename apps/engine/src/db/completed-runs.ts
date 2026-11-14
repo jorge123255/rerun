@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS run_completions (
     run_id TEXT,
     source TEXT NOT NULL CHECK (source IN ('chat', 'schedule', 'trigger')),
     slug TEXT,
+    source_name TEXT,
     completed_at TEXT NOT NULL,
     text TEXT,
     provider TEXT,
@@ -32,8 +33,22 @@ CREATE TABLE IF NOT EXISTS run_completions (
 CREATE INDEX IF NOT EXISTS run_completions_agent_time_idx ON run_completions(agent_id, completed_at DESC, id DESC);
 `
 
-export async function ensureRunCompletions(client: Client): Promise<void> {
-    await client.executeMultiple(RUN_COMPLETIONS_DDL)
+const initialized = new WeakMap<Client, Promise<void>>()
+
+export function ensureRunCompletions(client: Client): Promise<void> {
+    let ready = initialized.get(client)
+    if (!ready) {
+        ready = (async () => {
+            await client.executeMultiple(RUN_COMPLETIONS_DDL)
+            const { rows } = await client.execute('PRAGMA table_info(run_completions)')
+            if (!rows.some(row => row.name === 'source_name')) {
+                await client.execute('ALTER TABLE run_completions ADD COLUMN source_name TEXT')
+            }
+        })()
+        initialized.set(client, ready)
+        void ready.catch(() => initialized.delete(client))
+    }
+    return ready
 }
 
 export type RunCompletionRow = {
@@ -43,6 +58,7 @@ export type RunCompletionRow = {
     runId: string | null
     source: 'chat' | 'schedule' | 'trigger'
     slug: string | null
+    sourceName?: string
     completedAt: string
     text: string | null
     provider: string | null
@@ -81,12 +97,13 @@ async function writeRunCompletion(input: RecordRunCompletionInput): Promise<void
     // run without an id (not produced by the loop) falls back to a synthetic key.
     const id = input.runId ?? `${input.agentId}:${input.sessionId}:${Date.now()}:${randomUUID()}`
     const text = input.text?.trim().slice(0, TEXT_MAX) || null
+    const sourceName = input.trigger.source === 'chat' ? null : input.trigger.name.replace(/\s+/g, ' ').trim().slice(0, 200) || null
     const slug = input.trigger.source === 'chat' ? null : input.trigger.slug
     await client.execute({
-        sql: `INSERT INTO run_completions (id, agent_id, session_id, run_id, source, slug, completed_at, text, provider, model, cost_micros, step_count)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        sql: `INSERT INTO run_completions (id, agent_id, session_id, run_id, source, slug, source_name, completed_at, text, provider, model, cost_micros, step_count)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(id) DO NOTHING`,
-        args: [id, input.agentId, input.sessionId, input.runId, input.trigger.source, slug,
+        args: [id, input.agentId, input.sessionId, input.runId, input.trigger.source, slug, sourceName,
             input.completedAt ?? new Date().toISOString(), text, input.provider ?? null, input.model ?? null,
             input.costMicros ?? null, input.stepCount ?? null],
     })
@@ -106,6 +123,7 @@ function rowOf(row: Record<string, unknown>): RunCompletionRow {
         runId: row.run_id == null ? null : String(row.run_id),
         source: String(row.source) as RunCompletionRow['source'],
         slug: row.slug == null ? null : String(row.slug),
+        ...(row.source !== 'chat' && typeof row.source_name === 'string' && { sourceName: row.source_name }),
         completedAt: String(row.completed_at),
         text: row.text == null ? null : String(row.text),
         provider: row.provider == null ? null : String(row.provider),
@@ -132,7 +150,7 @@ export async function listRunCompletions(agentId: string, options: ListRunComple
         args.push(options.before.completedAt, options.before.completedAt, options.before.id)
     }
     const result = await client.execute({
-        sql: `SELECT id, agent_id, session_id, run_id, source, slug, completed_at, text, provider, model, cost_micros, step_count
+        sql: `SELECT id, agent_id, session_id, run_id, source, slug, source_name, completed_at, text, provider, model, cost_micros, step_count
               FROM run_completions WHERE ${where.join(' AND ')} ORDER BY completed_at DESC, id DESC LIMIT ?`,
         args: [...args, Math.min(200, Math.max(1, Math.floor(options.limit)))],
     })

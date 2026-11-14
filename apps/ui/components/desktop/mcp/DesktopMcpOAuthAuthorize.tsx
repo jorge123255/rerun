@@ -7,7 +7,9 @@ import type {OAuthStatus} from '@/lib/desktop/server/mcp/oauth-loopback'
 
 const statusSchema=z.object({state:z.enum(['idle','waiting','connected','error','unsupported']),message:z.string().max(400).optional()}).strict()
 const responseSchema=z.union([statusSchema,z.object({status:statusSchema,authorizationUrl:z.string().max(8192).optional()}).strict()])
-type Props={agentId:string;name:string;revision:string;active?:boolean}
+type Props={name:string;revision:string;active?:boolean} & (
+ {agentId:string;vaultId?:never} | {vaultId:string;agentId?:never}
+)
 type Action='start'|'status'|'cancel'
 
 async function readResponse(response:Response,signal:AbortSignal) {
@@ -35,9 +37,9 @@ async function readResponse(response:Response,signal:AbortSignal) {
 }
 
 export function DesktopMcpOAuthAuthorize(props:Props) {
- return <Authorization key={JSON.stringify([props.agentId,props.name,props.revision])} {...props}/>
+ return <Authorization key={JSON.stringify([props.agentId,props.vaultId,props.name,props.revision])} {...props}/>
 }
-function Authorization({agentId,name,revision,active=true}:Props) {
+function Authorization({agentId,vaultId,name,revision,active=true}:Props) {
  const [status,setStatus]=useState<OAuthStatus>({state:'idle'}),[pending,setPending]=useState<Action|null>(null),[link,setLink]=useState('')
  const [visible,setVisible]=useState(()=>typeof document==='undefined'||document.visibilityState!=='hidden')
  const epoch=useRef(0),inflight=useRef<AbortController|null>(null),operation=useRef<Action|null>(null)
@@ -49,7 +51,8 @@ function Authorization({agentId,name,revision,active=true}:Props) {
   const timer=setTimeout(()=>controller.abort(),35_000)
   setPending(action)
   try {
-   const response=await fetch(`/api/desktop/coworkers/${encodeURIComponent(agentId)}/mcp/oauth`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,revision,action}),cache:'no-store',signal:controller.signal})
+   const path=vaultId?'/api/desktop/vault/oauth':`/api/desktop/coworkers/${encodeURIComponent(agentId!)}/mcp/oauth`
+   const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,revision,action,...(vaultId?{id:vaultId}:{})}),cache:'no-store',signal:controller.signal})
    if(!response.ok)throw new Error('Authorization unavailable')
    const data=await readResponse(response,controller.signal)
    if(generation!==epoch.current)return
@@ -58,9 +61,9 @@ function Authorization({agentId,name,revision,active=true}:Props) {
    if(candidate && (candidate.protocol!=='https:' || candidate.username || candidate.password || candidate.hash || candidate.port && candidate.port!=='443'))throw new Error('Invalid authorization link')
    setStatus(next)
    if(action==='start' || action==='cancel' || next.state!=='waiting')setLink(candidate?.href??'')
-  }catch{if(generation===epoch.current){setStatus({state:'error',message:'Authorization unavailable. Check this coworker’s MCP permission and retry.'});setLink('')}}
+  }catch{if(generation===epoch.current){setStatus({state:'error',message:vaultId?'Vault sign-in is unavailable. Refresh the entry and retry.':'Authorization unavailable. Check this coworker’s MCP permission and retry.'});setLink('')}}
   finally{clearTimeout(timer);if(generation===epoch.current){inflight.current=null;operation.current=null;setPending(null)}}
- },[agentId,name,revision,active])
+ },[agentId,vaultId,name,revision,active])
  useEffect(()=>{
   const visibility=()=>setVisible(document.visibilityState!=='hidden')
   document.addEventListener('visibilitychange',visibility)
@@ -77,7 +80,10 @@ function Authorization({agentId,name,revision,active=true}:Props) {
  },[status,action,active,visible,pending])
  const busy=pending==='start'||pending==='cancel'
  return <div className="space-y-2 py-1" aria-label={`Authorization for ${name}`}>
-  {status.state==='connected'?<div className="flex items-center gap-2 text-sm text-green-600"><CheckCircle2Icon className="size-3.5"/>Connected</div>:<>
+  {status.state==='connected'?<>
+   <div className="flex items-center gap-2 text-sm text-green-600"><CheckCircle2Icon className="size-3.5"/>Connected</div>
+   {vaultId&&<Button variant="outline" size="sm" disabled={!active||!visible||!!pending} onClick={()=>action('start')}>Reconnect</Button>}
+  </>:<>
    {(status.state==='error'||status.state==='unsupported')&&<p role="alert" className="flex items-start gap-2 text-sm text-destructive break-words"><XCircleIcon className="size-3.5 shrink-0"/>{status.message}</p>}
    <Button variant="outline" size="sm" className="w-full" disabled={!active||!visible||busy||status.state==='waiting'||pending==='status'} onClick={()=>action('start')}>
     {busy||status.state==='waiting'?<Loader2Icon className="size-3.5 animate-spin mr-1.5"/>:<ExternalLinkIcon className="size-3.5 mr-1.5"/>}

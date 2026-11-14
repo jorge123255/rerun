@@ -144,11 +144,16 @@ test('only the active Codex model accepts a supported effort and refresh reconci
     expect(await defaults.readBoxDefault()).toEqual({ connectionId: DESKTOP_CODEX_ID, model: 'terra', reasoningEffort: 'deep' })
     const { boxDefaultPath } = await import('../config/paths.js')
     expect(JSON.parse(await readFile(boxDefaultPath(), 'utf8')).reasoningEffort).toBe('deep')
+    const { createConnection } = await import('../connections/store.js')
+    await createConnection({ provider: 'openai', name: 'Fixture API provider', models: ['other'], extraModels: [],
+        keys: { OPENAI_API_KEY: 'synthetic-test-key' } }, 'openai')
     const otherProvider = await engine.request('/connections/default', {
         method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ connectionId: 'openai', model: 'other', reasoningEffort: 'deep' }),
     })
     expect(otherProvider.status).toBe(400)
+    expect(await otherProvider.json()).toEqual({ error: 'This connection does not offer reasoning controls.' })
+    expect(await defaults.readBoxDefault()).toEqual({ connectionId: DESKTOP_CODEX_ID, model: 'terra', reasoningEffort: 'deep' })
     await login.codexLoginAction('refresh')
     expect((await defaults.readBoxDefault())?.reasoningEffort).toBe('deep')
     expect(await pick('next')).toBe(200)

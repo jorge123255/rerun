@@ -2,12 +2,14 @@
 
 import type { SaveFileResult } from '@/app/api/_services/file.service'
 import { applyEol, hashText, splitEol, type Eol } from '@/lib/files/editable'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
+import { useFileUnloadGuard, type FileDraftHost } from './useFileUnloadGuard'
 
 type UseFileDraftProps = {
     initialContent: string
     onSave: (content: string, baseHash: string | null) => Promise<SaveFileResult>
     onSaved: (content: string) => void
+    host?: FileDraftHost
 }
 
 export type FileDraft = {
@@ -22,25 +24,23 @@ export type FileDraft = {
     dismissConflict: () => void
 }
 
-export function useFileDraft({ initialContent, onSave, onSaved }: UseFileDraftProps): FileDraft {
+export function useFileDraft({ initialContent, onSave, onSaved, host }: UseFileDraftProps): FileDraft {
     const [opened, setOpened] = useState(() => splitEol(initialContent))
-    const [draft, setDraft] = useState(opened.text)
+    const [draft, setText] = useState(opened.text)
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [conflict, setConflict] = useState(false)
 
     const dirty = draft !== opened.text
 
-    // The browser only asks about a tab being closed; leaving the panel is guarded by the caller.
-    useEffect(() => {
-        if (!dirty) return
-        const warn = (event: BeforeUnloadEvent) => event.preventDefault()
-        window.addEventListener('beforeunload', warn)
-        return () => window.removeEventListener('beforeunload', warn)
-    }, [dirty])
+    useFileUnloadGuard(dirty, host)
+    const setDraft = useCallback((text: string) => {
+        if (!host?.isClosing()) setText(text)
+    }, [host])
 
     const run = useCallback(
         async (eol: Eol, baseHash: string | null) => {
+            if (host?.isClosing()) return
             const content = applyEol(draft, eol)
             setSaving(true)
             setError(null)
@@ -55,7 +55,7 @@ export function useFileDraft({ initialContent, onSave, onSaved }: UseFileDraftPr
             if (result.conflict) setConflict(true)
             else setError(result.error)
         },
-        [draft, onSave, onSaved],
+        [draft, host, onSave, onSaved],
     )
 
     const save = useCallback(() => {

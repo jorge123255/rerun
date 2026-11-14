@@ -9,7 +9,7 @@ process.env.RERUN_DESKTOP_APP = '1'
 const { getSystemDb, closeSystemDb } = await import('../../db/systemDb.js')
 const { agentDir } = await import('../../config/paths.js')
 const { reserveDesktopQueuedTurn, getDesktopQueuedTurn } = await import('../../db/repos/desktop-queued-turns.js')
-const { appendMessage, listMessages } = await import('../../db/repos/messages.js')
+const { appendMessage, listDesktopForemanMessages, listMessages } = await import('../../db/repos/messages.js')
 const { cancelRun, failRun, finishRun, getRun } = await import('../../db/repos/runs.js')
 const { getSession } = await import('../../db/repos/sessions.js')
 const { readForemanReplySource } = await import('../../db/repos/foreman-reply-sources.js')
@@ -63,6 +63,7 @@ test('identical replies in one chat resolve to their own admitted turn after reo
     const firstReply = await saveReply(first, firstUser.id, 'Same response')
     const nextReply = await saveReply(next, nextUser.id, 'Same response')
     const secondWrite = await saveReply(first, firstUser.id, 'Same response')
+    const legacy = await appendMessage(id, first.sessionId, { role: 'user', content: first.message })
     const { client } = await getSystemDb(id)
     await client.execute({ sql: "UPDATE messages SET created_at = 'same' WHERE session_id = ?", args: [first.sessionId] })
     expect(await readForemanReplySource(replyTarget(first, firstReply.id))).toBeNull()
@@ -70,10 +71,16 @@ test('identical replies in one chat resolve to their own admitted turn after reo
     await finishRun(id, next.runId, null, 1)
     closeSystemDb(id)
     expect(await getDesktopQueuedTurn(id, first)).toBe(true)
+    const prompts = new Map((await listDesktopForemanMessages(first.sessionId)).map(row => [row.id, row.foremanRunId]))
+    expect(prompts.get(firstUser.id)).toBe(first.runId)
+    expect(prompts.get(nextUser.id)).toBe(next.runId)
+    expect(prompts.get(legacy.id)).toBeNull()
+    expect(prompts.get(firstReply.id)).toBeNull()
     for (const [input, reply, user] of [[first, firstReply, firstUser], [next, nextReply, nextUser]] as const) {
         const target = replyTarget(input, reply.id)
         expect(await readForemanReplySource(target)).toEqual({ ...target, sourceRunId: input.runId,
-            precedingUserMessageId: user.id, replyDigest: expect.stringMatching(/^[a-f0-9]{64}$/) })
+            precedingUserMessageId: user.id, replyDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+            transcriptRevision: expect.stringMatching(/^[a-f0-9]{64}$/) })
     }
     for (const row of [wrongUser, secondWrite]) expect(await readForemanReplySource(replyTarget(first, row.id))).toBeNull()
 })
@@ -111,4 +118,48 @@ test('cancelled or failed turns with saved text cannot claim a completed reply',
         await end(id, input.runId)
         expect(await readForemanReplySource(replyTarget(input, reply.id))).toBeNull()
     }
+})
+
+test('saved reply lookup compares the engine transcript revision and keeps it stable across reopen', async () => {
+    const input = turn()
+    const user = await reserveDesktopQueuedTurn(id, input, undefined, undefined, undefined, true)
+    const reply = await saveReply(input, user.id, 'Same saved reply')
+    await finishRun(id, input.runId, null, 1)
+    const bridge = createDesktopForemanBridge({ workspaceId: 1, launchNonce: crypto.randomUUID(),
+        app: { origin: 'http://127.0.0.1:3101' }, engine: { apiKey: 'a'.repeat(64) } })
+    try {
+        const app = createDesktopForemanRoutes(() => bridge)
+        const target = replyTarget(input, reply.id)
+        async function lookup(expectedTranscriptRevision?: string) {
+            const query = new URLSearchParams({ ...target, ...(expectedTranscriptRevision && { expectedTranscriptRevision }) })
+            const response = await app.request('/reply-source?' + query)
+            expect(response.status).toBe(200)
+            expect(response.headers.get('cache-control')).toBe('no-store')
+            return (await response.json()).source
+        }
+
+        const first = await lookup()
+        expect(first.transcriptRevision).toMatch(/^[a-f0-9]{64}$/)
+        closeSystemDb(id)
+        expect(await lookup(first.transcriptRevision)).toEqual(first)
+        const unrelated = turn()
+        await reserveDesktopQueuedTurn(id, unrelated, undefined, undefined, undefined, true)
+        expect(await lookup(first.transcriptRevision)).toEqual(first)
+
+        const { client } = await getSystemDb(id)
+        await client.execute({ sql: 'UPDATE messages SET content_json = ? WHERE id = ?', args: ['"Revised user request"', user.id] })
+        expect(await lookup(first.transcriptRevision)).toBeNull()
+        const edited = await lookup()
+        expect(edited.replyDigest).toBe(first.replyDigest)
+        expect(edited.precedingUserMessageId).toBe(user.id)
+        expect(edited.transcriptRevision).not.toBe(first.transcriptRevision)
+
+        await appendMessage(id, input.sessionId, { role: 'user', content: 'A later question' })
+        expect(await lookup(edited.transcriptRevision)).toBeNull()
+        const appended = await lookup()
+        expect(appended.transcriptRevision).not.toBe(edited.transcriptRevision)
+        expect(await lookup(appended.transcriptRevision)).toEqual(appended)
+        const invalid = await app.request('/reply-source?' + new URLSearchParams({ ...target, expectedTranscriptRevision: 'invalid' }))
+        expect(invalid.status).toBe(400)
+    } finally { bridge.close() }
 })

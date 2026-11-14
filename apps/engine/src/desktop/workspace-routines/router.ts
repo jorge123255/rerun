@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { desktopWorkspaceRoutineMutationSchema, type DesktopWorkspaceRoutineMutation } from '@rerun/contracts'
+import { getAgent } from '../../agents/registry.js'
 import { dataDir } from '../../config/paths.js'
 import { HttpError } from '../../lib/errors.js'
 import { withKeyedLock } from '../../lib/lock.js'
@@ -15,8 +16,9 @@ import { authorizeDesktopSchedule } from '../schedule-binding.js'
 import { fireSchedule } from '../../runtime/scheduler.js'
 import { isValidCron } from '../../schedules/cron.js'
 import { assertDesktopRunAdmission } from '../workspace-admission.js'
-import { desktopApp } from '../policy.js'
+import { assertDesktopProvider, desktopApp } from '../policy.js'
 import { desktopBrainRequestBody } from '../brain-pages-router.js'
+import { resolveDesktopScheduleModel } from '../schedule-model.js'
 
 const directory = () => join(dataDir(), 'desktop-workspace-routine-requests')
 export async function initializeDesktopWorkspaceRoutineRequests() { await mkdir(directory(), { recursive: true, mode: 0o700 }) }
@@ -44,6 +46,13 @@ export function createDesktopWorkspaceRoutineRouter() {
         }
         const input = body.input, fingerprint = fingerprintOf(input), signal = c.req.raw.signal
         const check = async () => { if (body.operation === 'mutate') assertDesktopRunAdmission(); signal.throwIfAborted(); await authorizeDesktopSchedule(engineAgentId); signal.throwIfAborted() }
+        const modelOverride = input.action === 'edit' ? input.input.modelOverride : undefined
+        const checkModel = async () => {
+            if (modelOverride) {
+                assertDesktopProvider(modelOverride.provider, modelOverride.connectionId)
+                await resolveDesktopScheduleModel(await getAgent(engineAgentId), modelOverride)
+            }
+        }
         await check()
         return withKeyedLock(`workspace-routine-request:${input.requestId}`, async () => {
             const name = `${input.requestId}.json`
@@ -63,7 +72,14 @@ export function createDesktopWorkspaceRoutineRouter() {
             if (!saved) {
                 if (input.action === 'rename') desired = { ...current, name: input.name }
                 else if (input.action === 'toggle') desired = { ...current, enabled: input.enabled }
-                else if (input.action === 'edit') desired = { ...current, ...input.input }
+                else if (input.action === 'edit') {
+                    const { modelOverride, ...fields } = input.input
+                    desired = { ...current, ...fields }
+                    if (modelOverride !== undefined) {
+                        Object.assign(desired, modelOverride ?? { connectionId: null, provider: null, model: null })
+                    }
+                    await checkModel()
+                }
                 await check()
                 await replaceOwnJson(directory(), name, { fingerprint, engineAgentId, input, before: old, desired })
             }
@@ -76,7 +92,10 @@ export function createDesktopWorkspaceRoutineRouter() {
                 if (!run?.runId || !run.sessionId) throw new HttpError(503, 'Routine result identity was not confirmed; retry this same request')
             } else if (desktopScheduleDefinitionRevision(current) !== desktopScheduleDefinitionRevision(desired)) {
                 if (desktopScheduleDefinitionRevision(current) !== desktopScheduleDefinitionRevision(old)) throw new HttpError(409, 'Routine changed; original change is uncertain')
-                schedule = (await files.replace(engineAgentId, input.slug, old, desired, check))!
+                schedule = (await files.replace(engineAgentId, input.slug, old, desired, modelOverride ? async () => {
+                    await checkModel()
+                    await check()
+                } : check))!
             }
             const result = { schedule, revision: desktopScheduleDefinitionRevision(schedule), ...(run ? { run } : {}) }
             await replaceOwnJson(directory(), name, { fingerprint, engineAgentId, input, before: old, desired, result })

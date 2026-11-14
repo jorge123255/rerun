@@ -1,5 +1,8 @@
+import { desktopOpencodeModelSchema } from './desktop-opencode.js'
 import { z } from 'zod'
 import { RERUN_MODELS, providerSchema } from './agent.js'
+import { desktopSubscriptionModels, desktopSubscriptionProvider, isDesktopSubscriptionProvider } from './desktop-subscription-login.js'
+import { customProviderReasoningSchema } from './desktop-custom-provider.js'
 
 // Populated by the desktop Codex runner. Its catalog, not a fixed enum, defines the available levels.
 const reasoningLevel = z.string().min(1)
@@ -19,6 +22,9 @@ export const connectionConfigSchema = z.object({
     // is shared by everyone on the box and survives a new device.
     models: z.array(z.string()).default([]),
     codexReasoning: codexReasoningSchema.optional(),
+    customReasoning: z.record(z.string(), customProviderReasoningSchema).optional(),
+    subscriptionModels: desktopSubscriptionModels.optional(),
+    opencodeModels: z.array(desktopOpencodeModelSchema).optional(),
     // OpenRouter-compatible router of the user's own. Empty falls back to openrouter.ai, and it has
     // to be a valid member of the type since a PATCH cannot clear a field by sending `undefined`.
     baseUrl: z.url().or(z.literal('')).optional(),
@@ -27,6 +33,28 @@ export const connectionConfigSchema = z.object({
     createdAt: z.string(),
 })
 export type ConnectionConfig = z.infer<typeof connectionConfigSchema>
+
+export const CLAUDE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+
+/** One effort per model of a connection, chosen by the user. It applies wherever that model runs. */
+export const modelEffortKey = (connectionId: string, model: string) => `${connectionId}::${model}`
+export const modelEffortsSchema = z.record(z.string(), reasoningLevel)
+export type ModelEfforts = z.infer<typeof modelEffortsSchema>
+export const modelEffortUpdateSchema = z.object({ connectionId: z.string().min(1).max(256), model: z.string().min(1).max(256), reasoningEffort: reasoningLevel.max(32).nullable() }).strict()
+export type ModelEffortUpdate = z.infer<typeof modelEffortUpdateSchema>
+
+export function connectionReasoningOptions(
+    connection: Pick<ConnectionConfig, 'provider' | 'codexReasoning' | 'customReasoning' | 'subscriptionModels'>,
+    model: string,
+): { supported: string[]; default?: string } | undefined {
+    if (connection.provider === 'codex') return Object.hasOwn(connection.codexReasoning ?? {}, model)
+        ? connection.codexReasoning?.[model] : undefined
+    // The Claude subscription runner takes one of its own effort levels for any model; leaving it
+    // unset keeps the model's own default.
+    if (connection.provider === 'claude') return { supported: [...CLAUDE_EFFORT_LEVELS] }
+    if (isDesktopSubscriptionProvider(connection.provider)) return connection.subscriptionModels?.find(item => item.id === model)?.reasoning
+    if (connection.provider === 'custom' && Object.hasOwn(connection.customReasoning ?? {}, model)) return connection.customReasoning?.[model]
+}
 
 // The id of the keyless connection every box carries: requests are proxied by the hub, which holds
 // the shared key. It has a config.json like any other but no `.env`, and cannot be deleted.
@@ -67,7 +95,10 @@ export type ConnectionSummary = z.infer<typeof connectionSummarySchema>
 // The pair a box runs when an agent names no model of its own. One record for the whole box rather
 // than a flag on each connection.json: "exactly one of them is true" is an invariant nothing can
 // hold across N independent writes, and the default is a pair anyway.
-export const boxDefaultModelSchema = z.object({ connectionId: z.string(), model: z.string(), reasoningEffort: reasoningLevel.optional() })
+export const boxDefaultModelSchema = z.object({
+    connectionId: z.string(), model: z.string(), reasoningEffort: reasoningLevel.optional(),
+    customReasoningRevision: z.number().int().positive().optional(),
+})
 export type BoxDefaultModel = z.infer<typeof boxDefaultModelSchema>
 // Leave effort out to switch models. Send null to restore the selected model's native default.
 export const boxDefaultUpdateSchema = boxDefaultModelSchema.extend({ reasoningEffort: reasoningLevel.nullish() })
@@ -77,12 +108,14 @@ export const connectionsListSchema = z.object({
     connections: z.array(connectionSummarySchema),
     // Defaulted rather than required: an engine older than box defaults answers a list without it.
     default: boxDefaultModelSchema.nullable().default(null),
+    // The effort chosen for a model, keyed by `modelEffortKey`. Missing on an engine without it.
+    efforts: modelEffortsSchema.optional(),
 })
 export type ConnectionsList = z.infer<typeof connectionsListSchema>
 
 export const createConnectionSchema = z.object({
     name: z.string().min(1),
-    provider: providerSchema,
+    provider: providerSchema.refine(provider => !isDesktopSubscriptionProvider(provider)),
     models: z.array(z.string()).default([]),
     baseUrl: z.url().or(z.literal('')).optional(),
     extraModels: z.array(z.string()).default([]),
@@ -132,6 +165,10 @@ export const CONNECTION_TOKEN_KEY: Record<z.infer<typeof providerSchema>, string
     google: 'GOOGLE_GENERATIVE_AI_API_KEY',
     openrouter: 'OPENROUTER_API_KEY',
     custom: '',
+    opencode: '',
+    'grok-build': '',
+    'kimi-code': '',
+    devin: '',
 }
 
 // What is wrong with a value about to be stored as a Claude subscription token, or null when it
@@ -155,6 +192,10 @@ export const CONNECTION_SATELLITE_KEYS: Record<z.infer<typeof providerSchema>, s
     google: ['GOOGLE_API_KEY'],
     openrouter: [],
     custom: [],
+    opencode: [],
+    'grok-build': [],
+    'kimi-code': [],
+    devin: [],
 }
 
 // Every env var name that used to live on an agent and now belongs to a connection. What the boot
@@ -224,6 +265,10 @@ export const DEFAULT_CONNECTION_MODELS: Record<z.infer<typeof providerSchema>, s
         'minimax/minimax-m3.1-flash',
     ],
     custom: [],
+    opencode: [],
+    'grok-build': [],
+    'kimi-code': [],
+    devin: [],
 }
 
 // How a connection names itself when nobody has yet: the boot migration builds "Claude (Theo)"
@@ -237,6 +282,10 @@ export const PROVIDER_LABELS: Record<z.infer<typeof providerSchema>, string> = {
     google: 'Google',
     openrouter: 'OpenRouter',
     custom: 'Custom endpoint',
+    opencode: 'OpenCode',
+    'grok-build': 'Grok Build',
+    'kimi-code': 'Kimi Code',
+    devin: 'Devin',
 }
 
 // The model the app's picker offers for one coworker, grouped and labelled by the hub with the web
@@ -268,7 +317,7 @@ export type SetAgentModelInput = z.infer<typeof setAgentModelSchema>
 
 // The AI providers screen of the app, shaped by the hub with the web dialog's own rules (catalog,
 // hidden and locked models, plan windows, credit), since those live in apps/ui.
-export const addableProviderSchema = providerSchema.exclude(['rerun'])
+export const addableProviderSchema = providerSchema.exclude(['rerun', 'opencode', ...desktopSubscriptionProvider.options])
 export type AddableProvider = z.infer<typeof addableProviderSchema>
 
 export const aiConnectionKindSchema = z.enum(['included', 'plan', 'key'])

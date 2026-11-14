@@ -1,4 +1,4 @@
-import { RERUN_CONNECTION_ID, type Provider } from '@rerun/contracts'
+import { DESKTOP_OPENCODE_CONNECTION_ID, RERUN_CONNECTION_ID, isDesktopSubscriptionProvider, parseDesktopSubscriptionConnectionId, type Provider } from '@rerun/contracts'
 import { findConnection, listConnections } from './registry.js'
 import type { LoadedConnection } from './types.js'
 
@@ -18,8 +18,12 @@ export async function connectionsOfProvider(provider: Provider): Promise<LoadedC
 // Rerun connection keeps a freshly imported agent runnable rather than inert.
 export async function resolveConnection(connectionId: string | null | undefined, provider: Provider | null | undefined): Promise<LoadedConnection | null> {
     const direct = await findConnection(connectionId)
+    if (connectionId === DESKTOP_OPENCODE_CONNECTION_ID) return direct
+    if (parseDesktopSubscriptionConnectionId(connectionId) || isDesktopSubscriptionProvider(provider)) {
+        return direct && (provider == null || direct.config.provider === provider) ? direct : null
+    }
     if (direct) return direct
-    if (provider === 'custom') return null
+    if (provider === 'custom' || provider === 'opencode') return null
     if (provider) {
         const match = (await connectionsOfProvider(provider))[0]
         if (match) return match

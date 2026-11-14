@@ -5,6 +5,8 @@ import { isUsable } from '../../agents/availability.js'
 import { modelFor } from '../../agents/providers.js'
 import { readBoxDefault } from '../../connections/default.js'
 import { findConnection } from '../../connections/registry.js'
+import { sameDesktopOpencodeConnection } from '../../connections/snapshot.js'
+import type { LoadedConnection } from '../../connections/types.js'
 import { ensureCliAuth } from '../../connections/cli-auth.js'
 import { readDesktopForemanBinding } from '../foreman/binding.js'
 import { assertDesktopRunAdmission } from '../workspace-admission.js'
@@ -16,10 +18,7 @@ export type CompanyBriefModel = {
     complete(input: { selection: CompanyBriefModelRef; prompt: string; signal: AbortSignal }): Promise<string | null>
 }
 
-// Freeze and verify the exact saved pair before and after the call. There is no provider ladder.
-export async function confirmExplicitCompanyBriefModel(selection: CompanyBriefModelRef): Promise<boolean> {
-    const connection = await findConnection(selection.connectionId)
-    if (!connection || !isUsable(connection, selection.model) || connection.config.provider !== selection.provider) return false
+async function matchesSavedCompanyBriefSelection(selection: CompanyBriefModelRef): Promise<boolean> {
     if (selection.source === 'conversation') {
         if (selection.agentId !== FOREMAN_AGENT_ID || !selection.foremanChat) return false
         const bridge = readDesktopForemanBinding()
@@ -44,6 +43,24 @@ export async function confirmExplicitCompanyBriefModel(selection: CompanyBriefMo
     return false
 }
 
+async function resolveExplicitCompanyBriefConnection(selection: CompanyBriefModelRef): Promise<LoadedConnection | null> {
+    const connection = await findConnection(selection.connectionId)
+    if (!connection || !isUsable(connection, selection.model) || connection.config.provider !== selection.provider) return null
+    return await matchesSavedCompanyBriefSelection(selection) ? connection : null
+}
+
+export async function confirmExplicitCompanyBriefModel(selection: CompanyBriefModelRef): Promise<boolean> {
+    return !!await resolveExplicitCompanyBriefConnection(selection)
+}
+
+// Re-read the connection after any async authority check, including the UI callback.
+async function currentCompanyBriefConnection(selection: CompanyBriefModelRef, expected: LoadedConnection): Promise<boolean> {
+    if (!await confirmExplicitCompanyBriefModel(selection)) return false
+    const current = await findConnection(selection.connectionId)
+    if (!current || !isUsable(current, selection.model)) return false
+    return expected.config.provider === 'opencode' ? sameDesktopOpencodeConnection(expected, current) : current === expected
+}
+
 export function openDesktopCompanyBriefModel(): CompanyBriefModel {
     return {
         confirm: confirmExplicitCompanyBriefModel,
@@ -53,8 +70,7 @@ export function openDesktopCompanyBriefModel(): CompanyBriefModel {
             try {
                 const admission = assertDesktopRunAdmission()
                 signal.throwIfAborted()
-                if (!await confirmExplicitCompanyBriefModel(selection)) return null
-                const connection = await findConnection(selection.connectionId)
+                const connection = await resolveExplicitCompanyBriefConnection(selection)
                 if (!connection) return null
                 // modelFor is the existing one-shot path used for memory reconciliation/compaction.
                 // Codex uses the packaged isolated exec runner; Claude gets an owned isolated runner
@@ -65,8 +81,9 @@ export function openDesktopCompanyBriefModel(): CompanyBriefModel {
                 const release = await ensureCliAuth(selection.provider, connection)
                 try {
                     signal.throwIfAborted()
-                    if (!await confirmExplicitCompanyBriefModel(selection)) return null
-                    if (await findConnection(selection.connectionId) !== connection) return null
+                    const current = await currentCompanyBriefConnection(selection, connection)
+                    signal.throwIfAborted()
+                    if (!current) return null
                     assertDesktopRunAdmission(admission)
                     const result = await generateText({
                         model: modelFor(agent), prompt, maxOutputTokens: 16_000,
@@ -74,8 +91,9 @@ export function openDesktopCompanyBriefModel(): CompanyBriefModel {
                         providerOptions: { openai: { store: false } },
                     })
                     signal.throwIfAborted()
-                    const current = await confirmExplicitCompanyBriefModel(selection) && await findConnection(selection.connectionId) === connection
-                    return current ? result.text : null
+                    const after = await currentCompanyBriefConnection(selection, connection)
+                    signal.throwIfAborted()
+                    return after ? result.text : null
                 } finally { release() }
             } finally { releaseWork() }
         },

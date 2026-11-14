@@ -1,3 +1,4 @@
+import { UNUSED_SCREEN_MARKER } from '../isolated-screen/ownership-file.js'
 import { mkdtemp, realpath, mkdir, writeFile, readFile, rm, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -82,6 +83,12 @@ test('fresh rollback receipts reconcile the same exact folder across restart',as
     const request={requestId:id(51),importReceiptId,templateId:f.captured.templateId,revision:f.captured.revision,engineAgentId,agentKey:'c00'}
     let removes=0
     const deps={dataRoot:f.dataRoot,agentsRoot:f.agentsRoot,withFreshImportLease:async<T>(_r:unknown,work:()=>Promise<T>)=>work(),removeOwnedIndex:async()=>{removes++;f.names.delete(engineAgentId);return'removed' as const}}
+    const marker = join(f.agentsRoot, engineAgentId, UNUSED_SCREEN_MARKER)
+    const exactMarker = await readFile(marker)
+    await writeFile(marker, 'Changed owner data')
+    await expect(rollbackFreshTemplateCoworker(request, deps)).rejects.toMatchObject({ status: 409 })
+    expect(removes).toBe(0)
+    await writeFile(marker, exactMarker)
     expect((await rollbackFreshTemplateCoworker(request,deps)).status).toBe('rolled-back')
     expect((await rollbackFreshTemplateCoworker(request,deps)).status).toBe('rolled-back')
     expect(removes).toBe(1);await expect(access(join(f.agentsRoot,engineAgentId))).rejects.toThrow()

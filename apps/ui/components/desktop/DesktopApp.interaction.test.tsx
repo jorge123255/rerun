@@ -8,8 +8,12 @@ import { MotionConfig } from 'motion/react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { DesktopApp } from './DesktopApp'
+import { DesktopLocale } from './DesktopLocale'
+import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
+import { loadMessages } from '@rerun/i18n/messages'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
+import { buildDesktopModelView } from '@/lib/desktop/chat-model'
 import { generalTabUid } from '@/lib/desktop/general-threads'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -52,6 +56,13 @@ afterEach(() => {
     vi.unstubAllGlobals()
     expect(unexpectedRequests.splice(0)).toEqual([])
 })
+
+// The provider pill opens the list of connected providers; Settings is one step further.
+async function openModelSettings(root: ParentNode) {
+    await act(async () => { root.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
+    const inner = [...document.querySelectorAll<HTMLButtonElement>('[data-testid="desktop-provider-status"] button')].find(button => button.textContent?.trim() === 'Open model settings')
+    await act(async () => { inner!.click() })
+}
 
 test('the open board follows sign-in, default provider changes, and sign-out', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
@@ -105,6 +116,99 @@ test('the open board follows sign-in, default provider changes, and sign-out', a
     }
 })
 
+test('the native Settings menu and the keyboard shortcut share the desktop admission guard', async () => {
+    const { cancelDraftShutdown, freezeDesktopAdmissions } = await import('@/lib/desktop/draft-writes')
+    const desktopWindow = window as Window & { desktopApp?: { onOpenSettings(listener: () => void): () => void } }
+    const previous = desktopWindow.desktopApp
+    const listeners = new Set<() => void>()
+    desktopWindow.desktopApp = { onOpenSettings(listener) {
+        listeners.add(listener)
+        return () => { listeners.delete(listener) }
+    } }
+    const container = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(container)
+    mockDesktopFetch(url => url === settingsUrl ? Response.json(disconnected) : undefined)
+    const settingsNav = () => container.querySelector('nav[aria-label="Settings sections"]')
+    const menu = () => { for (const listener of listeners) listener() }
+    const shortcut = () => window.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true }))
+    try {
+        await act(async () => { root.render(<DesktopApp initialData={{ ...disconnected, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
+        expect(listeners.size).toBe(1)
+        freezeDesktopAdmissions()
+        await act(async () => { menu(); expect(shortcut()).toBe(true) })
+        expect(settingsNav()).toBeNull()
+        cancelDraftShutdown()
+        await act(async () => { menu() })
+        expect(settingsNav()).not.toBeNull()
+        const back = [...container.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Team board')!
+        await act(async () => { back.click() })
+        expect(settingsNav()).toBeNull()
+        await act(async () => { expect(shortcut()).toBe(false) })
+        expect(settingsNav()).not.toBeNull()
+    } finally {
+        cancelDraftShutdown()
+        await act(async () => { root.unmount() })
+        desktopWindow.desktopApp = previous
+    }
+    expect(listeners.size).toBe(0)
+})
+
+test('Chief of Staff reconnect opens the failed connection even after opening transcription settings', async () => {
+    vi.stubGlobal('EventSource', class { close() {} })
+    const container = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(container)
+    const chat = { workspaceId: '1', chatId: 'fmc_settings' }
+    const model = { connectionId: 'plan', model: 'fixture-model' }
+    const attemptId = '00000000-0000-4000-8000-000000000001'
+    const failedConnection = 'failed-key'
+    const connection = { id: 'plan', name: 'Workspace default', provider: 'codex' as const, models: [model.model],
+        connected: true, credentialRejected: false, planLimits: null, createdAt: '', extraModels: [] }
+    const providers: ConnectionsList = { default: model, connections: [connection,
+        { ...connection, id: 'sibling-key', provider: 'openai', name: 'OpenAI sibling' },
+        { ...connection, id: failedConnection, provider: 'openai', name: 'Failed OpenAI key', credentialRejected: true },
+    ] }
+    const fetcher = mockDesktopFetch((url, init) => {
+        const method = init?.method ?? 'GET'
+        if (url === settingsUrl && method === 'GET') return Response.json(providers)
+        if (url === '/api/desktop/foreman' && method === 'GET') return Response.json({
+            chat, sessionId: 'chief-fixture', model: null, runFailure: { kind: 'unauthorized', connectionId: failedConnection },
+            messages: [{ id: 'saved-user', role: 'user', parts: [{ type: 'text', text: 'An existing question' }] }],
+            view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
+            ui: { revision: 0, snapshot: null },
+        })
+        if (url === '/api/desktop/foreman' && method === 'POST') {
+            const change = JSON.parse(String(init?.body))
+            expect(change.action).toBe('ui')
+            return Response.json({ revision: change.expectedRevision + 1 })
+        }
+        if (url.startsWith('/api/desktop/foreman/voice?')) return Response.json({ target: { chat, model }, receipt: null, setup: 'transcription',
+            attempt: { attemptId, revision: attemptId, phase: 'review', transcript: null, error: null, messageId: null, updatedAt: '2026-11-11T00:00:00Z',
+                recording: { attemptId, sha256: 'a'.repeat(64), byteLength: 10, mimeType: 'audio/webm', extension: 'webm', transcriptionFormat: 'webm', durationMs: 1300, levels: [0.2] } },
+        })
+        if (url === '/api/desktop/auxiliary' && method === 'GET') return Response.json([])
+        if (url.startsWith('/api/desktop/foreman/') || url.startsWith('/api/desktop/agents/foreman/')) return new Response(null, { status: 404 })
+    })
+    const findButton = (text: string) => [...container.querySelectorAll('button')].find(button => button.textContent?.trim() === text)
+    const section = () => container.querySelector('nav[aria-label="Settings sections"] [aria-current="page"]')?.textContent?.trim()
+    try {
+        await act(async () => root.render(<DesktopApp initialData={{ ...providers, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />))
+        await act(async () => container.querySelector<HTMLButtonElement>('[data-foreman-orb] button')!.click())
+        expect(findButton('Set up transcription')).toBeDefined()
+        await act(async () => findButton('Set up transcription')!.click())
+        expect(section()).toBe('Tool services')
+        await act(async () => findButton('Team board')!.click())
+        expect(section()).toBeUndefined()
+        await act(async () => findButton('Reconnect')!.click())
+        expect(section()).toBe('AI providers')
+        expect(container.querySelector<HTMLSelectElement>('#desktop-provider')?.value).toBe(failedConnection)
+        expect(container.querySelector('#desktop-default')).toBeNull()
+        expect(container.textContent).toContain('Key rejected')
+        expect(fetcher.mock.calls.some(([url, init]) => url === settingsUrl && init?.method === 'PATCH')).toBe(false)
+    } finally {
+        await act(async () => root.unmount())
+    }
+})
+
 test('a reopened workspace can replace a saved key and recover after a failed save', async () => {
     const container = document.createElement('div')
     document.body.append(container)
@@ -133,7 +237,7 @@ test('a reopened workspace can replace a saved key and recover after a failed sa
     try {
         await act(async () => { root.render(<DesktopApp initialData={initialData} />) })
         expect(container.querySelector('#desktop-api-key')).toBeNull()
-        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
+        await openModelSettings(container)
         expect(container.querySelector<HTMLInputElement>('#desktop-api-key')!.type).toBe('password')
         await enterKey()
         await submit()
@@ -179,7 +283,7 @@ test('Codex Settings refreshes the account model list while keeping the selected
     const refreshed = ['GPT-5.6 Sol', 'GPT-5.6 Terra', accountModel]
     try {
         await act(async () => { root.render(<DesktopApp initialData={{ ...providers, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
-        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
+        await openModelSettings(container)
         expect(actions).toEqual([{ action: 'refresh' }])
         assertChoices(refreshed)
         await act(async () => { button('Refresh models').click() })
@@ -237,13 +341,13 @@ test('reasoning effort uses the active model’s supported levels and the saved 
     const levels = () => [...effort().options].map(o => o.value)
     try {
         await act(async () => { root.render(<DesktopApp initialData={{ ...providers, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
-        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
+        await openModelSettings(container)
         expect(levels()).toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
         expect(effort().options[0].textContent).toBe('Model default (Medium)')
         expect(effort().value).toBe('high')
         await change(effort(), 'xhigh')
         await open('Team board')
-        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
+        await openModelSettings(container)
         expect(effort().value).toBe('xhigh')
         await chooseModel('GPT-5.6 Sol')
         expect(levels()).toEqual(['', 'high', 'xhigh'])
@@ -265,6 +369,50 @@ test('reasoning effort uses the active model’s supported levels and the saved 
     } finally { await act(async () => { root.unmount() }) }
 })
 
+test('Kimi Platform Settings shows Max and saves or resets an effort on the exact revision', async () => {
+    const model = 'kimi-k3.1-pro'
+    const selection = { connectionId: 'fixture-kimi', model }
+    const connection: ConnectionsList['connections'][number] = {
+        id: selection.connectionId, name: 'Kimi Platform API', provider: 'custom', models: [model],
+        extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '',
+        customRevision: 7, customReasoning: { [model]: { supported: ['low', 'high', 'max'], default: 'max' } },
+    }
+    let providers: ConnectionsList = { connections: [connection], default: selection }
+    const writes: unknown[] = []
+    mockDesktopFetch((url, init) => {
+        if (url !== settingsUrl) return
+        if (init?.method === 'PATCH') {
+            const body = JSON.parse(String(init.body))
+            writes.push(body)
+            providers = { ...providers, default: body.reasoningEffort ? {
+                ...selection, reasoningEffort: body.reasoningEffort, customReasoningRevision: 7,
+            } : selection }
+        }
+        return Response.json(providers)
+    })
+    const container = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(container)
+    const effort = () => container.querySelector<HTMLSelectElement>('#desktop-reasoning-effort')!
+    const change = (value: string) => act(async () => {
+        effort().value = value
+        effort().dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    try {
+        await act(async () => { root.render(<DesktopApp initialData={{ ...providers, theme: 'system',
+            profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
+        await openModelSettings(container)
+        expect([...effort().options].map(option => option.textContent)).toEqual(['Model default (Max)', 'Low', 'High', 'Max'])
+        await change('max')
+        expect(effort().value).toBe('max')
+        await change('')
+        expect(effort().value).toBe('')
+        expect(writes).toEqual([
+            { action: 'default', ...selection, reasoningEffort: 'max', customReasoningRevision: 7 },
+            { action: 'default', ...selection, reasoningEffort: null, customReasoningRevision: 7 },
+        ])
+    } finally { await act(async () => { root.unmount() }) }
+})
+
 test('editing a coworker from the board preserves the chat and only saves changed fields', async () => {
     const container = document.createElement('div')
     document.body.append(container)
@@ -275,8 +423,9 @@ test('editing a coworker from the board preserves the chat and only saves change
     const writes: Record<string, string>[] = []
     mockDesktopFetch((url, init) => {
         if (url === settingsUrl) return Response.json(disconnected)
-        if (url === '/api/desktop/agents/reviewer/chat-history') return Response.json({ conversations: [{ id: 'review', agentId: agent.id, engineSessionId: 'engine-review', title: 'Earlier review', createdAt: '', updatedAt: '', source: 'dashboard', needsYou: false, pendingQuestion: null }], enrichment: 'ok', questions: 'ok' })
-        if (url === '/api/desktop/agents/reviewer/sessions') return Response.json({ sessions: [{ id: 'review', agentId: agent.id, title: 'Earlier review', createdAt: '', updatedAt: '' }] })
+        if (url === '/api/desktop/agents/reviewer/chat-history?view=saved') return Response.json({ conversations: [{ id: 'review', agentId: agent.id, engineSessionId: 'engine-review', title: 'Earlier review', createdAt: '', updatedAt: '', source: 'dashboard', needsYou: false, pendingQuestion: null }], enrichment: 'ok', questions: 'ok' })
+        if (url === '/api/desktop/agents/reviewer/sessions' || url === '/api/desktop/agents/reviewer/sessions?view=threads')
+            return Response.json({ sessions: [{ id: 'review', agentId: agent.id, title: 'Earlier review', createdAt: '', updatedAt: '' }] })
         if (url === '/api/desktop/sessions/review/messages') return Response.json({ messages: [{ id: 'a', role: 'assistant', parts: [{ type: 'text', text: 'Existing answer.' }] }] })
         if (url === '/api/desktop/agents/reviewer/settings') {
             if (init?.method !== 'PATCH') {
@@ -343,16 +492,76 @@ test('editing a coworker from the board preserves the chat and only saves change
     } finally { await act(async () => { root.unmount() }) }
 })
 
-test('a board tile opens the saved conversation and New chat starts a separate session', async () => {
+test.each([
+    { locale: 'en', open: 'Open chat with Researcher', openingLabel: 'Opening Researcher…', retryLabel: 'Retry conversations', close: 'Close panel' },
+    { locale: 'fr', open: 'Ouvrir la conversation avec Researcher', openingLabel: 'Ouverture de la conversation avec Researcher…', retryLabel: 'Recharger les conversations', close: 'Fermer le panneau' },
+    { locale: 'es', open: 'Abrir el chat con Researcher', openingLabel: 'Abriendo el chat con Researcher…', retryLabel: 'Volver a cargar las conversaciones', close: 'Cerrar panel' },
+    { locale: 'pt', open: 'Abrir conversa com Researcher', openingLabel: 'Abrindo a conversa com Researcher…', retryLabel: 'Recarregar conversas', close: 'Fechar painel' },
+    { locale: 'de', open: 'Chat mit Researcher öffnen', openingLabel: 'Chat mit Researcher wird geöffnet…', retryLabel: 'Unterhaltungen erneut laden', close: 'Panel schließen' },
+] as const)('the chat keeps a localized composer area in place during load and retry ($locale)', async ({ locale, open, openingLabel, retryLabel, close }) => {
+    const language: DesktopLanguage = { locale, preference: locale, messages: desktopMessages(locale, await loadMessages(locale)) }
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const agent = { id: 'researcher', name: 'Researcher', description: '', createdAt: '', updatedAt: '' }
+    let resolveSessions!: (response: Response) => void
+    let rejectSessions!: (reason: Error) => void
+    const fetcher = mockDesktopFetch(url => {
+        if (url === settingsUrl) return Response.json(disconnected)
+        if (url === '/api/desktop/agents/researcher/sessions') {
+            return new Promise<Response>((resolve, reject) => { resolveSessions = resolve; rejectSessions = reject })
+        }
+    })
+    const panel = () => container.querySelector('[data-testid="desktop-coworker-chat"]')!
+    const opening = () => {
+        const composer = panel().querySelector('[data-slot="desktop-composer"]')
+        expect(composer).not.toBeNull()
+        expect(composer?.querySelector('[role="status"]')?.textContent).toBe(openingLabel)
+        expect(composer?.querySelector('button, textarea, input, form')).toBeNull()
+        expect(panel().querySelector('[aria-label="' + close + '"]')).not.toBeNull()
+    }
+    try {
+        await act(async () => { root.render(<DesktopLocale initial={language}><DesktopApp initialData={{ ...disconnected, profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [agent], theme: 'system' }} /></DesktopLocale>) })
+        const tile = container.querySelector<HTMLElement>('[aria-label="' + open + '"]')!
+        await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+        opening()
+        await act(async () => { rejectSessions(new TypeError('Failed to fetch')) })
+        expect(panel().querySelector('[data-slot="desktop-composer"]')).toBeNull()
+        expect(panel().querySelector('[role="alert"]')?.textContent).toContain(language.messages.threadHistory.loadFailed)
+        expect(panel().textContent).not.toContain('Failed to fetch')
+        const retry = panel().querySelector<HTMLButtonElement>('[role="alert"] button')!
+        expect(retry.textContent).toBe(retryLabel)
+        await act(async () => { retry.click() })
+        expect(panel().querySelector('[role="alert"]')).toBeNull()
+        opening()
+        expect(fetcher.mock.calls.some(([url]) => url === '/api/desktop/chat')).toBe(false)
+        await act(async () => { resolveSessions(Response.json({ sessions: [] })) })
+        expect(panel().querySelector('form[data-slot="desktop-composer"] textarea')).not.toBeNull()
+        expect(panel().textContent).not.toContain(openingLabel)
+        await act(async () => { panel().querySelector<HTMLButtonElement>('[aria-label="' + close + '"]')!.click() })
+        expect(document.activeElement).toBe(tile)
+    } finally { await act(async () => { root.unmount() }) }
+})
+
+test('a board tile holds the first send for model setup, then opens a separate new session', async () => {
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
     const agent = { id: 'researcher', name: 'Researcher', description: 'Finds answers', createdAt: '', updatedAt: '' }
     const session = { id: 'previous', agentId: agent.id, title: 'First chat', createdAt: '', updatedAt: '' }
     const sent: unknown[] = []
-    const providers: ConnectionsList = { default: null, connections: [{ id: 'key', name: 'OpenAI', provider: 'openai', models: ['gpt-6-sol'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }] }
+    let providers: ConnectionsList = { default: null, connections: [{ id: 'key', name: 'OpenAI', provider: 'openai', models: ['gpt-6-sol'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }] }
     mockDesktopFetch((url, init) => {
         if (url === settingsUrl && (init?.method ?? 'GET') === 'GET') return Response.json(providers)
+        if (url === settingsUrl && init?.method === 'PATCH') {
+            const { action, connectionId, model } = JSON.parse(String(init.body))
+            expect(action).toBe('default')
+            providers = { ...providers, default: { connectionId, model } }
+            return Response.json(providers)
+        }
+        if (/\/api\/desktop\/agents\/researcher\/model(?:\?|$)/.test(url)) return Response.json(buildDesktopModelView({
+            connections: providers.connections, workspace: providers.default, coworker: null, conversation: null,
+        }))
         if (url.endsWith('/sessions')) return Response.json({ sessions: [session] })
         if (url === '/api/desktop/sessions/previous/messages') return Response.json({ messages: [{ id: 'reply', role: 'assistant', parts: [{ type: 'text', text: 'Saved answer' }] }] })
         if (url === '/api/desktop/chat') {
@@ -380,6 +589,18 @@ test('a board tile opens the saved conversation and New chat starts a separate s
         expect(container.querySelector('[aria-label="Team board"]')).toBe(board)
         expect(container.querySelector('[aria-label="Open chat with Researcher"]')).toBe(tile)
         expect(container.querySelector('[aria-label="Coworker chat"]')?.textContent).toContain('Saved answer')
+        await send('Continue')
+        expect(sent).toEqual([])
+        const picker = container.querySelector<HTMLSelectElement>('#desktop-default')!
+        expect(picker).not.toBeNull()
+        await act(async () => {
+            picker.value = '0'
+            picker.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+        expect(providers.default).toEqual({ connectionId: 'key', model: 'gpt-6-sol' })
+        await act(async () => { button('Back to chat').click() })
+        expect(container.querySelector('#desktop-message')).toHaveProperty('value', 'Continue')
+        expect(sent).toEqual([])
         await send('Continue')
         await act(async () => { button('New thread').click() })
         await send('Start fresh')
@@ -413,7 +634,7 @@ test('applying a new appearance keeps the saved choice active', async () => {
             theme: 'light', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' },
             default: null, connections: [], agents: [],
         }} /></ThemeProvider>) })
-        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
+        await openModelSettings(container)
         await act(async () => { button('Workspace').click() })
         await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Dark"]')!.click() })
         expect(writes).toEqual([{ action: 'appearance', theme: 'dark' }])
@@ -472,14 +693,22 @@ test('open General picks up a saved sibling without rewriting the active layout'
     const newSibling = { ...base, id: 'new-sibling', title: 'New thread', kind: 'thread', firstMessage: 'Saved on another surface' }
     const routine = { ...sibling, source: 'schedule', automationName: 'Weekly digest', firstMessage: null }
     let runStatus = 'running'
+    let outcome: 'done' | 'nothing' | undefined
     let waiting = false
     const path = '/api/desktop/agents/researcher/sessions'
     const initial = { sessions: [general, sibling], tabs: { revision: 2, activeIndex: 0, tabs: [{ uid: generalTabUid(coworker.id), id: general.id, title: 'General' }] } }
     let background: Response | undefined
+    let networkDropped = false
+    const threadReads = () => fetcher.mock.calls.filter(([url]) => url === path + '?view=threads').length
     const fetcher = mockDesktopFetch((url, init) => {
         if (url === settingsUrl) return Response.json(disconnected)
         if (url === path) return Response.json(initial)
-        if (url === path + '?view=threads') return background?.clone() ?? Response.json({ sessions: [general, { ...routine, runStatus }, newSibling] })
+        if (url === path + '?view=threads') {
+            if (networkDropped) return Promise.reject(new TypeError('Failed to fetch'))
+            return background?.clone() ?? Response.json({
+                sessions: [general, { ...routine, runStatus, ...(outcome && { automationOutcome: outcome, title: 'No new leads' }) }, newSibling],
+            })
+        }
         if (url === '/api/desktop/board-activity') return Response.json({
             agents: { [coworker.id]: 'idle' },
             attention: { items: waiting ? [{ id: 'ask', agentId: coworker.id, agentName: coworker.name, agentEnabled: true,
@@ -502,8 +731,22 @@ test('open General picks up a saved sibling without rewriting the active layout'
         expect(container.querySelector('[data-thread-row="sibling"]')).not.toBeNull()
         expect(container.textContent).not.toContain('Temporary read failure')
         background = undefined
+        networkDropped = true
         await tick()
+        expect(container.querySelector('[data-thread-row="sibling"]')).not.toBeNull()
+        expect(container.textContent).not.toContain('Failed to fetch')
+        networkDropped = false
+        const beforeFocus = threadReads()
+        expect(container.querySelector('[data-thread-row="new-sibling"]')).toBeNull()
+        await act(async () => { window.dispatchEvent(new Event('focus')) })
+        expect(threadReads()).toBe(beforeFocus + 1)
         expect(container.querySelector('[data-thread-row="new-sibling"]')?.textContent ?? '').toContain('Saved on another surface')
+        visibility.mockReturnValue('hidden')
+        await act(async () => { document.dispatchEvent(new Event('visibilitychange')); window.dispatchEvent(new Event('focus')) })
+        expect(threadReads()).toBe(beforeFocus + 1)
+        visibility.mockReturnValue('visible')
+        await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+        expect(threadReads()).toBe(beforeFocus + 2)
         const branch = () => container.querySelector('[data-thread-row="sibling"]')!
         expect(branch().textContent).toContain('Scheduled run · Weekly digest')
         expect(branch().querySelector('[aria-label="Running"]')).not.toBeNull()
@@ -520,14 +763,101 @@ test('open General picks up a saved sibling without rewriting the active layout'
         waiting = false
         await tick()
         expect(branch().textContent).not.toContain('Needs you')
+        outcome = 'done'
+        await tick()
+        expect(branch().textContent).toContain('No new leads')
+        const title = () => [...branch().querySelectorAll('button span')].find(span => span.textContent === 'No new leads')!
+        expect(title().classList.contains('text-muted-foreground')).toBe(false)
+        outcome = 'nothing'
+        await tick()
+        expect(title().classList.contains('text-muted-foreground')).toBe(true)
         expect(fetcher.mock.calls.filter(([url, options]) => url.endsWith('/tabs') && options?.method === 'PUT')).toHaveLength(0)
         await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Close panel"]')!.click())
         const requests = fetcher.mock.calls.filter(([url]) => url === path + '?view=threads').length
+        await act(async () => { window.dispatchEvent(new Event('focus')) })
         await tick()
         expect(fetcher.mock.calls.filter(([url]) => url === path + '?view=threads')).toHaveLength(requests)
     } finally {
         await act(async () => root.unmount())
         visibility.mockRestore()
         vi.useRealTimers()
+    }
+})
+
+test('the board workspace menu edits the local profile and displays the saved name and photo', async () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const photoId = '11111111-1111-4111-8111-111111111111'
+    const profilePath = '/api/desktop/profile'
+    const copy = desktopMessages('en', await loadMessages('en')).localProfile
+    let failName = true
+    let profile = { id: 1, displayName: 'Local User', photoId: null as string | null }
+    const fetcher = mockDesktopFetch((url, init) => {
+        if (url === settingsUrl && !init?.method) return Response.json(disconnected)
+        if (url === profilePath && init?.method === 'PUT') {
+            if (failName) return Response.json({ error: 'Could not save' }, { status: 409 })
+            profile = { ...profile, displayName: JSON.parse(String(init.body)).name }
+            return Response.json(profile)
+        }
+        if (url === profilePath + '/photo' && init?.method === 'PUT') {
+            profile = { ...profile, photoId }
+            return Response.json(profile)
+        }
+        if (url === profilePath + '/photo' && init?.method === 'DELETE') {
+            profile = { ...profile, photoId: null }
+            return Response.json(profile)
+        }
+    })
+    const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]')!
+    const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(element =>
+        element.getAttribute('aria-label') === label || element.textContent?.trim() === label)!
+    const avatar = () => document.querySelector(`img[src="${profilePath}/photo?id=${photoId}"]`)
+    async function openWorkspaceMenu() {
+        const menu = container.querySelector<HTMLButtonElement>('[aria-label^="Workspace menu,"]')!
+        menu.focus()
+        await act(async () => { menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })) })
+    }
+    async function openProfile() {
+        await openWorkspaceMenu()
+        const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(el => el.textContent?.trim() === copy.title)!
+        await act(async () => { item.click() })
+        expect(dialog().querySelector('[data-slot="dialog-title"]')?.textContent).toBe(copy.title)
+    }
+    try {
+        await act(async () => { root.render(<DesktopApp initialData={{ ...disconnected, theme: 'system', profile,
+            workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
+        await openProfile()
+        const field = dialog().querySelector<HTMLInputElement>('input[autocomplete="name"]')!
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, '  Élodie Park  ')
+            field.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+        await act(async () => { button(copy.fields.save).click() })
+        expect(fetcher).toHaveBeenCalledWith(profilePath, expect.objectContaining({ method: 'PUT', body: '{"name":"Élodie Park"}' }))
+        expect(field.value).toBe('  Élodie Park  ')
+        failName = false
+        await act(async () => { button(copy.fields.save).click() })
+        expect(field.value).toBe('Élodie Park')
+        const input = dialog().querySelector<HTMLInputElement>('input[type="file"]')!
+        const photo = new File(['fixture'], 'profile.png', { type: 'image/png' })
+        await act(async () => {
+            Object.defineProperty(input, 'files', { configurable: true, value: [photo] })
+            input.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+        expect(fetcher).toHaveBeenCalledWith(profilePath + '/photo', expect.objectContaining({ method: 'PUT', body: photo }))
+        expect(avatar()).toBeTruthy()
+        await act(async () => { dialog().querySelector<HTMLButtonElement>('[data-slot="dialog-close"]')!.click() })
+        await openWorkspaceMenu()
+        expect(document.querySelector('[role="menu"]')?.textContent).toContain('Élodie Park')
+        expect(document.querySelector('[role="menu"]')?.contains(avatar())).toBe(true)
+        const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(el => el.textContent?.trim() === copy.title)!
+        await act(async () => { item.click() })
+        await act(async () => { button(copy.fields.changePhoto).click() })
+        await act(async () => { button(copy.fields.removePhoto).click() })
+        expect(fetcher).toHaveBeenCalledWith(profilePath + '/photo', expect.objectContaining({ method: 'DELETE' }))
+        expect(avatar()).toBeNull()
+    } finally {
+        await act(async () => root.unmount())
     }
 })

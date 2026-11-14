@@ -1,8 +1,12 @@
 import 'server-only'
 import type { Client } from '@libsql/client'
+import { loadMessages } from '@rerun/i18n/messages'
+import { createTranslator } from 'use-intl/core'
+import { desktopAttentionNotificationLabels } from '@/lib/desktop/i18n/notification-messages'
+import { readDesktopLocale } from './language'
 import { coworkerRuleOf, mergeNotificationPrefs, normalizeNotificationPrefs, notificationPrefsPatchSchema, taskNotifies, taskRuleOf,
     type NotificationPrefs, type NotificationPrefsPatch } from '@rerun/contracts'
-import type { DesktopNotificationReceipt } from '@/lib/desktop/notifications'
+import type { DesktopNotificationReceipt, DesktopNotificationRuleChange } from '@/lib/desktop/notifications'
 import type { NotificationPayload } from '@/lib/engine/types'
 import { readDesktopCompletions } from './completed-actions'
 import { readDesktopAttention } from './attention'
@@ -11,6 +15,8 @@ import { desktopInfoNotificationWanted, ensureDesktopUserNotifications, pendingD
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { withRosterWrite } from './roster-writes'
+import { findDesktopAgent } from './store'
+import { assertDesktopWorkspaceAdmission } from './workspace-admission'
 
 // The database initializer calls this before engines start, establishing the
 // installation cutoff before a new run can finish. Public helpers also ensure it.
@@ -51,6 +57,7 @@ const CREATE_DESKTOP_NOTIFICATIONS = `
         run_id TEXT,
         source TEXT NOT NULL CHECK (source IN ('chat', 'schedule', 'trigger')),
         slug TEXT,
+        source_name TEXT,
         status TEXT NOT NULL,
         message TEXT,
         completed_at TEXT NOT NULL,
@@ -71,6 +78,7 @@ export async function initializeDesktopNotifications(db: Client): Promise<void> 
                 await db.execute("ALTER TABLE desktop_notifications_seen ADD COLUMN native_status TEXT CHECK (native_status IN ('shown', 'unavailable', 'failed', 'unknown'))")
             }
             const columns = new Set((await db.execute('PRAGMA table_info(desktop_notification_terminals)')).rows.map(row => String(row.name)))
+            if (!columns.has('source_name')) await db.execute('ALTER TABLE desktop_notification_terminals ADD COLUMN source_name TEXT')
             if (!columns.has('agent_local_id')) await db.execute('ALTER TABLE desktop_notification_terminals ADD COLUMN agent_local_id TEXT REFERENCES desktop_agents(id) ON DELETE CASCADE')
             if (!columns.has('session_local_id')) await db.execute('ALTER TABLE desktop_notification_terminals ADD COLUMN session_local_id TEXT REFERENCES desktop_sessions(id) ON DELETE CASCADE')
             await db.execute({ sql: 'INSERT INTO desktop_notifications_state (id,enabled_at) VALUES (1,?) ON CONFLICT(id) DO NOTHING', args: [new Date().toISOString()] })
@@ -101,14 +109,33 @@ export async function writeDesktopNotificationPrefs(db: Client, patch: Notificat
     return withRosterWrite(() => mergeAndWritePrefs(db, parsed.data))
 }
 
+export async function changeDesktopNotificationRule(runtime: DesktopRuntime, input: DesktopNotificationRuleChange, signal: AbortSignal): Promise<NotificationPrefs> {
+    if (runtime.workspaceId !== input.workspaceId) throw new DesktopHttpError(409, 'The notification workspace changed.')
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    await initializeDesktopNotifications(db)
+    return withRosterWrite(async () => {
+        if (!await findDesktopAgent(db, input.agentId)) throw new DesktopHttpError(404, 'Coworker not found.')
+        const prefs = await readDesktopNotificationPrefs(db)
+        const rule = coworkerRuleOf(prefs, input.agentId)
+        if (rule[input.field] !== input.expected) throw new DesktopHttpError(409, 'This notification setting changed. Reopen its menu.', 'notification_rule_changed')
+        signal.throwIfAborted()
+        assertDesktopWorkspaceAdmission(runtime)
+        const next = input.field === 'mode' ? { ...rule, mode: input.value } : { ...rule, follow: input.value }
+        return savePrefs(db, mergeNotificationPrefs(prefs, { coworkers: { [input.agentId]: next } }))
+    })
+}
+
 async function mergeAndWritePrefs(db: Client, patch: NotificationPrefsPatch): Promise<NotificationPrefs> {
-    const merged = mergeNotificationPrefs(await readDesktopNotificationPrefs(db), patch)
+    return savePrefs(db, mergeNotificationPrefs(await readDesktopNotificationPrefs(db), patch))
+}
+
+async function savePrefs(db: Client, prefs: NotificationPrefs): Promise<NotificationPrefs> {
     const now = new Date().toISOString()
     await db.execute({
         sql: 'INSERT INTO desktop_notification_prefs (workspace_id,prefs,created_at,updated_at) VALUES (1,?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET prefs=excluded.prefs,updated_at=excluded.updated_at',
-        args: [JSON.stringify(merged), now, now],
+        args: [JSON.stringify(prefs), now, now],
     })
-    return merged
+    return prefs
 }
 
 export type DesktopNotificationEvent = {
@@ -212,11 +239,13 @@ async function recordTerminalWithRosterLock(db: Client, payload: NotificationPay
     const session = (await db.execute({ sql: 'SELECT id FROM desktop_sessions WHERE agent_id=? AND engine_session_id=?', args: [agentId, payload.sessionId ?? ''] })).rows[0]
     if (!session) return false
     const id = `${agentId}:${String(session.id)}:${payload.runId ?? payload.timestamp}`
-    const message = payload.message.replace(/\s+/g, ' ').trim().slice(0, TERMINAL_MESSAGE_MAX) || null
+    const sourceName = source === 'chat' ? null : metadataString(metadata, 'sourceName')?.replace(/\s+/g, ' ').trim().slice(0, 200) || null
+    const detail = sourceName ? metadataString(metadata, 'error') : payload.message
+    const message = detail?.replace(/\s+/g, ' ').trim().slice(0, TERMINAL_MESSAGE_MAX) || null
     await db.execute({
-        sql: `INSERT INTO desktop_notification_terminals (id, agent_engine_id, agent_local_id, session_local_id, session_engine_id, run_id, source, slug, status, message, completed_at, created_at)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`,
-        args: [id, engineAgentId, agentId, String(session.id), payload.sessionId ?? null, payload.runId ?? null, source, slug, status, message, payload.timestamp, new Date().toISOString()],
+        sql: `INSERT INTO desktop_notification_terminals (id, agent_engine_id, agent_local_id, session_local_id, session_engine_id, run_id, source, slug, source_name, status, message, completed_at, created_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`,
+        args: [id, engineAgentId, agentId, String(session.id), payload.sessionId ?? null, payload.runId ?? null, source, slug, sourceName, status, message, payload.timestamp, new Date().toISOString()],
     })
     // Old failure detail can expire; permanent admission/seen identities prevent replay.
     await db.execute({ sql: 'DELETE FROM desktop_notification_terminals WHERE completed_at < ?', args: [new Date(Date.now() - TERMINAL_PRUNE_MS).toISOString()] })
@@ -245,7 +274,7 @@ export async function readDesktopTerminalBinding(db: Client, id: string): Promis
 // coworker rules want, minus anything this install already announced and everything raised
 // before the slice's first boot. Polling, reconnecting and restarting cannot replay old history
 // as new.
-export async function readDesktopNotificationEvents(runtime: DesktopRuntime): Promise<{ events: DesktopNotificationEvent[]; channels: { toast: boolean; sound: boolean }; unavailableAgentIds: string[]; checkedAt: string }> {
+export async function readDesktopNotificationEvents(runtime: DesktopRuntime, acceptLanguage: string | null = null): Promise<{ events: DesktopNotificationEvent[]; channels: { toast: boolean; sound: boolean }; unavailableAgentIds: string[]; checkedAt: string }> {
     const db = await openDesktopDatabase(runtime.dataRoot)
     await initializeDesktopNotifications(db)
     const prefs = await readDesktopNotificationPrefs(db)
@@ -256,20 +285,33 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime): Pr
     const scored: { at: number; event: DesktopNotificationEvent }[] = []
     let unavailableAgentIds: string[] = []
     if (prefs.scope !== 'nothing') {
-        const [completions, attention] = await Promise.all([readDesktopCompletions(runtime), readDesktopAttention(runtime)])
+        const [completions, attention, locale] = await Promise.all([
+            readDesktopCompletions(runtime), readDesktopAttention(runtime), readDesktopLocale(runtime, acceptLanguage),
+        ])
+        const t = createTranslator({ locale, messages: (await loadMessages(locale)).push })
+        const subtitle = (kind: 'done' | 'error', source: string | null) => {
+            const state = t(`states.${kind}`)
+            return source ? t('subtitle', { source: source.slice(0, 200), state }) : state
+        }
         unavailableAgentIds = [...new Set([...completions.unavailableAgentIds, ...attention.unavailableAgentIds])]
         for (const item of completions.items) {
             const key = `${item.id}:${item.completedAt}`
             const at = Date.parse(item.completedAt)
             if (seen.has(key) || !Number.isFinite(at) || at < enabledAtMs) continue
             if (!wantedByPrefs(prefs, { kind: 'done', agentId: item.agentId, source: item.source, slug: item.slug })) continue
-            const sourceName = item.source !== 'chat' && item.slug ? item.slug : null
+            const sourceName = item.source !== 'chat' && item.slug ? item.title : null
             scored.push({ at, event: {
                 key, kind: 'done', source: item.source, agentId: item.agentId, agentName: item.agentName, sessionId: item.sessionId,
-                title: item.agentName, subtitle: sourceName ? `${sourceName} · Done` : 'Done',
+                title: item.agentName, subtitle: subtitle('done', sourceName),
                 // A finished schedule only says "completed", which the subtitle already does.
                 body: item.source === 'chat' ? item.message : null, silent: true, groupId: item.id,
             } })
+        }
+        const attentionLabels = {
+            ...desktopAttentionNotificationLabels[locale],
+            question: t('states.question'),
+            approval: t('states.approval'),
+            service: t('states.connector'),
         }
         for (const item of attention.items) {
             if (item.kind === 'info') continue
@@ -279,12 +321,12 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime): Pr
             if (!wantedByPrefs(prefs, { kind: item.kind, agentId: item.agentId, source: 'chat', slug: null })) continue
             scored.push({ at, event: {
                 key, kind: item.kind, source: 'chat', agentId: item.agentId, agentName: item.agentName, sessionId: item.sessionId,
-                title: item.agentName, subtitle: item.kind === 'question' ? 'Question' : item.kind === 'takeover' ? 'Browser help' : item.kind === 'secret' ? 'Credentials' : item.kind === 'mcp' ? 'Tool sign-in' : item.kind === 'tool-install' ? 'Package installation' : item.kind === 'service' ? 'App setup' : 'Needs approval',
+                title: item.agentName, subtitle: attentionLabels[item.kind],
                 body: item.summary || null, silent: false, requestId: item.id,
             } })
         }
         const terminalRows = (await db.execute({
-            sql: `SELECT t.id, t.source, t.slug, t.status, t.message, t.completed_at, a.id AS agent_id, a.name AS agent_name, s.id AS session_id
+            sql: `SELECT t.id, t.source, t.slug, t.source_name, t.status, t.message, t.completed_at, a.id AS agent_id, a.name AS agent_name, s.id AS session_id
                   FROM desktop_notification_terminals t
                   JOIN desktop_agents a ON a.id = t.agent_local_id AND a.engine_agent_id = t.agent_engine_id AND a.workspace_id = 1
                   JOIN desktop_sessions s ON s.id = t.session_local_id AND s.agent_id = a.id AND s.engine_session_id = t.session_engine_id
@@ -304,7 +346,7 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime): Pr
             if (!wantedByPrefs(prefs, { kind: terminalKind, agentId, source, slug })) continue
             scored.push({ at, event: {
                 key, kind: terminalKind, source, agentId, agentName: String(row.agent_name), sessionId: String(row.session_id),
-                title: String(row.agent_name), subtitle: slug ? `${slug} · Failed` : 'Failed',
+                title: String(row.agent_name), subtitle: subtitle('error', typeof row.source_name === 'string' ? row.source_name : slug),
                 body: row.message ? String(row.message).slice(0, 180) : null, silent: false, terminalId: String(row.id),
             } })
         }
@@ -336,10 +378,10 @@ export type DesktopNotificationAdmission = DesktopNotificationEvent & { attemptI
 /** Persist admission before asking the OS to display. An interrupted attempt is
  * intentionally not retried: we cannot know whether the OS already showed it.
  * A definite unavailable/failed response releases only that exact attempt. */
-export async function admitDesktopNotificationEvents(runtime: DesktopRuntime, keys: readonly string[]): Promise<{ events: DesktopNotificationAdmission[]; channels: { toast: boolean; sound: boolean } }> {
+export async function admitDesktopNotificationEvents(runtime: DesktopRuntime, keys: readonly string[], acceptLanguage: string | null = null): Promise<{ events: DesktopNotificationAdmission[]; channels: { toast: boolean; sound: boolean } }> {
     const db = await openDesktopDatabase(runtime.dataRoot)
     const prefsBefore = await readDesktopNotificationPrefs(db)
-    const snapshot = await readDesktopNotificationEvents(runtime)
+    const snapshot = await readDesktopNotificationEvents(runtime, acceptLanguage)
     const wanted = new Set(keys.slice(0, 50))
     return withRosterWrite(async () => {
         const prefs = await readDesktopNotificationPrefs(db)

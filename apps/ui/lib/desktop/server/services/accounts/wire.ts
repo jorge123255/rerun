@@ -14,6 +14,7 @@ import { sqliteReservations } from './reservations'
 import { ensureDesktopServiceAccountSchema } from './schema'
 import { legacyCompatibleHeaderSecrets, sqliteHeaderSecrets } from './secret-store'
 import { accountTransport, type AccountNetwork, type AccountTransportPort } from './transport'
+import { vaultCatalogMethods } from '../../vault/catalog'
 
 /**
  * Root calls this from the desktop service binding with the same key reader and
@@ -26,11 +27,24 @@ export async function openDesktopServiceAccounts(
 ): Promise<AccountFeature> {
     const db = await openDesktopDatabase(runtime.dataRoot)
     await ensureDesktopServiceAccountSchema(db)
-    const canonicalStore = serviceStore(db, deps.keyReader)
+    const canonicalStore = serviceStore(db, deps.keyReader, true)
     const rawInstalls = serviceStoreInstalls(canonicalStore)
     const installs = deps.decorateInstalls ? deps.decorateInstalls(rawInstalls) : rawInstalls
     return accountFeature({
         installs,
+        vaultMethods(slug) {
+            try { return vaultCatalogMethods(getDesktopServiceManifest(slug)).map(method => method.id) }
+            catch { return [] }
+        },
+        async adoptedApp(owner, engineId, slug) {
+            const { rows } = await db.execute({
+                sql: `SELECT 1 FROM desktop_service_installs s
+                    JOIN desktop_vault_catalog_adoptions a ON a.installation_id=s.id AND a.owner=s.owner AND a.engine_id=s.engine_id
+                    WHERE s.owner=? AND s.engine_id=? AND s.slug=? LIMIT 1`,
+                args: [owner, engineId, slug],
+            })
+            return rows.length > 0
+        },
         secrets: legacyCompatibleHeaderSecrets(canonicalStore, sqliteHeaderSecrets(db, deps.keyReader)),
         reservations: sqliteReservations(db),
         authority: deps.authority,

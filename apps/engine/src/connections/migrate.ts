@@ -1,7 +1,7 @@
 import { readFile, rename, writeFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { CONNECTION_ENV_KEYS, CONNECTION_SATELLITE_KEYS, CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, canonicalModelId, canonicalModelIds, providerSchema, type Provider } from '@rerun/contracts'
+import { CONNECTION_ENV_KEYS, CONNECTION_SATELLITE_KEYS, CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, canonicalModelId, canonicalModelIds, desktopSubscriptionProvider, providerSchema, type Provider } from '@rerun/contracts'
 import { agentDir, agentEnvPath, configPath, connectionDir, connectionsDir, connectionsMigratedPath } from '../config/paths.js'
 import { listAgentIdsOnDisk } from '../agents/loader.js'
 import { agentConfigSchema } from '../agents/types.js'
@@ -17,7 +17,7 @@ import type { LoadedConnection } from './types.js'
 // the connection, so the current schema no longer describes what is on disk here.
 type LegacyAgentConfig = { name: string; provider: Provider; openrouterBaseUrl?: string; openrouterModels?: string[] }
 
-const KEYED_PROVIDERS = providerSchema.options.filter(p => !!CONNECTION_TOKEN_KEY[p])
+const KEYED_PROVIDERS = providerSchema.exclude(desktopSubscriptionProvider.options).options.filter(p => !!CONNECTION_TOKEN_KEY[p])
 
 function credentialOf(env: Record<string, string>, provider: Provider): string | null {
     const primary = env[CONNECTION_TOKEN_KEY[provider]]

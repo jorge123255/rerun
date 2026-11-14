@@ -1,7 +1,10 @@
 // @vitest-environment happy-dom
-import { act, type ComponentProps, type ReactNode } from 'react'
+import { act, useState, type ComponentProps, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { createPortal } from 'react-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { useDesktopControlCenterKeys } from '@/lib/desktop/control-center'
+import { desktopForemanMessages } from '@/lib/desktop/foreman-client/runtime-client'
 import { DesktopForemanChatLayer } from './DesktopForemanChatLayer'
 
 // Keep the real Conversation and use-stick-to-bottom implementation. Only the unrelated
@@ -11,11 +14,22 @@ vi.mock('./docs/DesktopForemanDocsTool', () => ({ DesktopForemanDocsTool: () => 
 vi.mock('./plan/DesktopPlanCard', () => ({ DesktopPlanCard: () => null }))
 vi.mock('./DesktopForemanBuildProgress', () => ({ DesktopForemanBuildProgress: () => null }))
 vi.mock('./DesktopForemanNextSteps', () => ({ DesktopForemanNextSteps: () => null }))
+vi.mock('@rerun/ui/foreman', async importOriginal => ({
+    ...await importOriginal<typeof import('@rerun/ui/foreman')>(),
+    Orb: ({ state }: { state: string }) => <span data-test-orb={state} />,
+}))
 vi.mock('motion/react', async () => {
     const { forwardRef } = await import('react')
     return {
         AnimatePresence: ({ children }: { children: ReactNode }) => children,
-        motion: { div: forwardRef<HTMLDivElement, ComponentProps<'div'> & { initial?: unknown; animate?: unknown; exit?: unknown; transition?: unknown }>(function MotionDiv({ initial: _initial, animate: _animate, exit: _exit, transition: _transition, ...props }, ref) { return <div {...props} ref={ref} /> }) },
+        motion: {
+            div: forwardRef<HTMLDivElement, ComponentProps<'div'> & { initial?: unknown; animate?: unknown; exit?: unknown; transition?: unknown }>(function MotionDiv({ initial: _initial, animate: _animate, exit: _exit, transition: _transition, ...props }, ref) { return <div {...props} ref={ref} /> }),
+            span: forwardRef<HTMLSpanElement, ComponentProps<'span'> & { initial?: unknown; animate?: unknown; exit?: unknown; transition?: unknown; layout?: boolean }>(
+                function MotionSpan({ initial: _initial, animate: _animate, exit: _exit, transition: _transition, layout: _layout, ...props }, ref) {
+                    return <span {...props} ref={ref} />
+                },
+            ),
+        },
     }
 })
 
@@ -37,7 +51,7 @@ class GeometryObserver {
 const saved = Array.from({ length: 12 }, (_, index) => ({ id: `saved-${index}`, role: index % 2 ? 'assistant' as const : 'user' as const, text: `Saved message ${index}` }))
 const defaults: Props = {
     messages: saved, restored: true, planSnapshot: null, decisionStatus: { status: 'idle' },
-    build: null, nextSteps: [], leadState: { status: 'idle' }, live: false,
+    build: null, nextSteps: [], leadState: { status: 'idle' },
     onConfirmPlan() {}, onAskChanges() {}, onStartLead() {}, onOpenCreated() {},
 }
 
@@ -102,6 +116,166 @@ afterEach(async () => {
     vi.useRealTimers(); vi.unstubAllGlobals()
 })
 
+it('uses the Chief of Staff orb and announces the current activity only in the open chat', async () => {
+    const activity = () => host.querySelector('[role="status"]')?.textContent
+    await render({ streaming: true })
+    expect(host.querySelector('[data-test-orb="thinking"]')).not.toBeNull()
+    expect(activity()).toMatch(/^Thinking/)
+    await render({ streaming: true, writing: true })
+    expect(host.querySelector('[data-test-orb="speaking"]')).not.toBeNull()
+    expect(activity()).toMatch(/^Writing/)
+    await render({ streaming: true, writing: true, active: false })
+    expect(activity()).toBeUndefined()
+    await render({ writing: true })
+    expect(activity()).toBeUndefined()
+    expect(host.textContent).toContain('Saved message 11')
+})
+
+it('renders a growing reply without clickable preview links, then shows only the saved answer', async () => {
+    const first = '**Live result** [reference](https://example.test) ![Picture](https://example.test/asset.png)'
+    const preview = () => host.querySelector('[data-foreman-live-reply]')
+    await render({ streaming: true, liveReply: { runId: 'reply', text: first } })
+    expect(preview()?.querySelector('[data-streamdown="strong"]')?.textContent).toBe('Live result')
+    expect(preview()?.querySelector('a, img')).toBeNull()
+    expect(preview()?.textContent).toContain('reference')
+    await render({ streaming: true, liveReply: { runId: 'reply', text: first + ' continues.' } })
+    expect(preview()?.textContent).toContain('continues.')
+    await render({ active: false, streaming: true, liveReply: { runId: 'reply', text: first } })
+    expect(preview()).toBeNull()
+    const text = 'Final saved answer'
+    const messages = [...saved, { id: 'final', role: 'assistant' as const, text }]
+    await render({ liveReply: { runId: 'reply', text: first }, messages })
+    expect(preview()).toBeNull()
+    expect(host.textContent?.match(/Final saved answer/g)).toHaveLength(1)
+})
+
+it('copies only the saved answer or its chosen draft after reopening the Chief of Staff chat', async () => {
+    const draft = 'Hi Ada,\n\nHere are the notes.'
+    const text = 'Here is a draft.\n\n```draft Launch note\n' + draft + '\n```'
+    const chat = { workspaceId: '1', chatId: 'fmc_abcdefgh' }
+    const state = {
+        chat, sessionId: 'saved-session', model: null,
+        view: { contractVersion: 1 as const, chat, phase: 'plan' as const, live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
+        ui: { revision: 0, snapshot: null },
+        messages: [
+            { id: 'user', role: 'user' as const, parts: [{ type: 'text', text }] },
+            { id: 'engine-answer', role: 'assistant' as const, parts: [
+                { type: 'reasoning', text: 'An internal trace' },
+                { type: 'tool-search_docs', toolCallId: 'private-call', state: 'output-error', errorText: 'Private tool error' },
+                { type: 'text', text },
+            ] },
+        ],
+    }
+    const messages = desktopForemanMessages(state)
+    const data = new DataTransfer()
+    const command = vi.fn(() => {
+        const event = new Event('copy', { cancelable: true })
+        Object.defineProperty(event, 'clipboardData', { value: data })
+        document.dispatchEvent(event)
+        return event.defaultPrevented
+    })
+    const asyncWrite = vi.fn()
+    vi.stubGlobal('navigator', { userActivation: { isActive: false }, clipboard: { writeText: asyncWrite } })
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: command })
+    const copyAnswer = () => host.querySelector<HTMLButtonElement>('button[aria-label="Copy"]')
+    const copyDraft = () => host.querySelector<HTMLButtonElement>('button[aria-label="Copy draft"]')
+    try {
+        await render({ streaming: true, liveReply: { runId: 'current', text }, messages })
+        expect(copyAnswer()).toBeNull()
+        expect(copyDraft()).toBeNull()
+        await render({ active: false, messages })
+        expect(copyAnswer()).toBeNull()
+        expect(copyDraft()).toBeNull()
+        expect(command).not.toHaveBeenCalled()
+        await act(async () => root!.unmount())
+        root = createRoot(host)
+        await render({ messages: desktopForemanMessages(JSON.parse(JSON.stringify(state))) })
+        expect(host.querySelectorAll('[aria-label="Copy draft"]')).toHaveLength(1)
+        expect(host.querySelector('[role="group"][aria-label="Launch note"]')).not.toBeNull()
+        expect(copyAnswer()).not.toBeNull()
+
+        await act(async () => copyAnswer()!.click())
+        expect(command).not.toHaveBeenCalled()
+        vi.stubGlobal('navigator', { userActivation: { isActive: true }, clipboard: { writeText: asyncWrite } })
+        await act(async () => copyDraft()!.click())
+        expect(data.getData('text/plain')).toBe(draft)
+        command.mockReturnValueOnce(false)
+        await act(async () => copyAnswer()!.click())
+        expect(data.getData('text/plain')).toBe(draft)
+        expect(copyAnswer()).not.toBeNull()
+        await act(async () => copyAnswer()!.click())
+        expect(data.getData('text/plain')).toBe(text)
+        expect(host.querySelector('button[aria-label="Copied!"]')).not.toBeNull()
+        expect(command.mock.calls).toEqual([['copy'], ['copy'], ['copy']])
+        expect(asyncWrite).not.toHaveBeenCalled()
+    } finally { Reflect.deleteProperty(document, 'execCommand') }
+})
+
+it('groups consecutive live read steps between reply paragraphs and clears them when saved history takes over', async () => {
+    const group = () => host.querySelector('[data-foreman-live-steps]')
+    await render({ streaming: true, liveReply: { runId: 'reply', text: 'Before the tools.\n\nAfter the tools.', steps: [
+        { tool: 'search_docs', offset: 17, status: 'running' },
+        { tool: 'agent_files_list', offset: 17, status: 'error' },
+    ] } })
+    expect(host.querySelectorAll('[data-foreman-live-steps]')).toHaveLength(1)
+    const text = host.textContent ?? ''
+    const running = text.indexOf('Running Search Docs')
+    expect(text).toContain('Before the tools.')
+    expect(running).toBeGreaterThan(text.indexOf('Before the tools.'))
+    expect(text.indexOf('After the tools.')).toBeGreaterThan(running)
+    expect(host.querySelector('[role="status"]')).toBeNull()
+    const disclosure = group()?.querySelector<HTMLButtonElement>('button[aria-expanded]')
+    expect(disclosure?.getAttribute('aria-label')).toBe('2 steps, 1 failed')
+    await act(async () => disclosure?.click())
+    expect(group()?.textContent).toContain('Agent Files List')
+    const buttons = [...group()!.querySelectorAll('button')]
+    expect(buttons.filter(button => !button.disabled)).toEqual([disclosure])
+    expect(buttons.filter(button => button.disabled)).toHaveLength(2)
+    await render()
+    expect(group()).toBeNull()
+})
+
+it('places saved work after its own prompt even when two prompts have the same text', async () => {
+    await render({
+        messages: [
+            { id: 'user-first', role: 'user', text: 'Same prompt', sourceRunId: 'run-first' },
+            { id: 'answer-first', role: 'assistant', text: 'First answer' },
+            { id: 'user-second', role: 'user', text: 'Same prompt', sourceRunId: 'run-second' },
+            { id: 'answer-second', role: 'assistant', text: 'Second answer' },
+        ],
+        renderChildWork: slots => {
+            const slot = slots.get('run-second')
+            const card = <div>Second call completed</div>
+            return slot ? createPortal(card, slot) : card
+        },
+    })
+    expect(host.textContent).toMatch(/Same prompt.*First answer.*Same prompt.*Second call completed.*Second answer/)
+    expect(host.textContent?.match(/Second call completed/g)).toHaveLength(1)
+})
+
+it('shortens safe sent links before and after history loads, preserving exact coworker mention styling and named Markdown links', async () => {
+    const url = 'https://example.com/notes/prior/agenda?view=details'
+    const withMention = `@Ada check ${url} then @Ada.`
+    const plain = `Check ${url} or [the named reference](https://example.com/reference) [unsafe](https://user:pass@example.com/hidden)`
+    const messages: Props['messages'] = [
+        { id: 'with-mention', role: 'user', text: withMention, coworkerMentions: [{ targetId: 'ada', token: '@Ada', start: 0, end: 4 }],
+            history: [{ kind: 'text', key: 'saved-mention', text: withMention }] },
+        { id: 'plain', role: 'user', text: plain, history: [{ kind: 'text', key: 'saved-plain', text: plain }] },
+    ]
+    await render({ messages: messages.slice(0, 1), restored: false })
+    expect(host.querySelector('a')?.getAttribute('href')).toBe(url)
+    await render({ messages })
+    const links = [...host.querySelectorAll('a')]
+    expect(links.map(link => [link.textContent, link.getAttribute('href')])).toEqual([
+        ['example.com/…/agenda…', url],
+        ['example.com/…/agenda…', url],
+        ['the named reference', 'https://example.com/reference'],
+    ])
+    expect(host.querySelectorAll('[class*="text-violet-700"]')).toHaveLength(1)
+    expect(host.textContent).toContain('then @Ada.')
+    expect(links.every(link => link.rel === 'noopener noreferrer')).toBe(true)
+})
+
 it('opens the latest restored message after an async history load and after reopening the dock', async () => {
     await render({ messages: [], restored: false })
     const view = geometry(120)
@@ -151,4 +325,79 @@ it('keeps a reader in older history until they choose the original return-to-lat
     expect(view.scroll.scrollTop).toBeGreaterThanOrEqual(view.bottom() - 2)
     await view.resize(2000); await settle()
     expect(view.scroll.scrollTop).toBeGreaterThanOrEqual(view.bottom() - 2)
+})
+
+it('routes Mac Find to the active Chief of Staff transcript and resets it when the chat changes', async () => {
+    const userAgent = vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Macintosh')
+    const messages: Props['messages'] = [
+        { id: 'prompt', role: 'user', text: 'Status marker in my prompt' },
+        { id: 'reply', role: 'assistant', text: 'Status marker in the reply', history: [
+            { key: 'reply-text', kind: 'text', text: 'Status **marker** in the reply' },
+            { key: 'reason', kind: 'reasoning', text: 'Status marker in reasoning' },
+        ] },
+    ]
+    function Harness({ scope }: { scope?: string }) {
+        const [centerOpen, setOpen] = useState(false)
+        useDesktopControlCenterKeys({ open: centerOpen, setOpen, conversationOpen: false })
+        return <>
+            {centerOpen && <div role="dialog">Control Center</div>}
+            <aside>Status marker on the board</aside>
+            <div inert={centerOpen}>
+                <DesktopForemanChatLayer {...defaults} messages={messages} findScope={scope} findHidden={centerOpen}
+                    question={<button type="button">Status marker on a question</button>}
+                    onCloseFind={() => host.querySelector('textarea')?.focus()} />
+                <textarea aria-label="Chief of Staff composer" />
+            </div>
+        </>
+    }
+    const mount = (scope?: string) => act(async () => root!.render(<Harness scope={scope} />))
+    const find = () => act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', metaKey: true, cancelable: true })))
+    const input = () => host.querySelector<HTMLInputElement>('input[aria-label="Find in conversation"]')
+    try {
+        await mount('chat-one')
+        await find()
+        expect(host.querySelector('[role="dialog"]')?.textContent).toBe('Control Center')
+        expect(input()).toBeNull()
+        await find()
+        expect(host.querySelector('[role="dialog"]')).toBeNull()
+        expect(document.activeElement).toBe(input())
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input(), 'status marker')
+            input()!.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+        expect(host.querySelector('[role="status"]')?.textContent).toBe('1 of 2')
+        await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Close find"]')!.click())
+        expect(input()).toBeNull()
+        expect(document.activeElement).toBe(host.querySelector('textarea'))
+        await find()
+        await find()
+        expect(input()).not.toBeNull()
+        await mount('chat-two')
+        expect(input()).toBeNull()
+        await mount()
+        await find()
+        await find()
+        expect(input()).toBeNull()
+    } finally {
+        userAgent.mockRestore()
+    }
+})
+
+it('renders the saved Chief of Staff decision as one read-only card and keeps ordinary text in history', async () => {
+    const raw = 'Here are my approval decisions:'
+    const messages: Props['messages'] = [
+        { id: 'engine-request', role: 'assistant', text: 'Two suggested changes' },
+        { id: 'engine-answer', role: 'user', text: raw, savedDecision: { kind: 'approvals', items: [
+            { action: 'Review the draft', decision: 'approved' },
+            { action: 'Rename the draft', decision: 'declined', note: 'Keep its name.' },
+        ] } },
+        { id: 'engine-paste', role: 'user', text: raw },
+    ]
+    await render({ messages })
+    expect(host.textContent).toContain('Review the draft')
+    expect(host.textContent).toContain('Approved')
+    expect(host.textContent).toContain('Not now')
+    expect(host.textContent).toContain('Keep its name.')
+    expect(host.textContent?.split(raw)).toHaveLength(2)
+    expect(Array.from(host.querySelectorAll('button')).some(button => /^(Approve|Decline)$/.test(button.textContent ?? ''))).toBe(false)
 })

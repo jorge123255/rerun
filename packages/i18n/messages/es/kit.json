@@ -6,6 +6,7 @@
             "previous": "Aprobación anterior",
             "next": "Aprobación siguiente",
             "decline": "Ahora no",
+            "explain": "Explicar",
             "approve": "Aprobar",
             "approved": "Aprobado"
         },
@@ -33,6 +34,9 @@
             "somethingElse": "Otra cosa",
             "attachFiles": "Adjuntar archivos",
             "dropFiles": "Suelta archivos para adjuntarlos",
+            "record": "Responder con tu voz",
+            "useRecording": "Usar esta grabación",
+            "discardRecording": "Descartar la grabación",
             "selectAll": "Selecciona todas las que correspondan",
             "dismiss": "Descartar preguntas",
             "skip": "Omitir",
@@ -212,10 +216,11 @@
         }
     },
     "foreman": {
-        "orbLabel": "Pregunta a Rerun",
+        "orbLabel": "Pregunta a tu Chief of Staff",
+        "tabsLabel": "Chief of Staff",
         "empty": {
             "title": "Pregunta lo que quieras sobre tu workspace",
-            "description": "Rerun crea y ejecuta tus coworkers contigo"
+            "description": "Tu Chief of Staff crea y dirige tus coworkers contigo"
         },
         "header": {
             "closeChat": "Cerrar el chat",

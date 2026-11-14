@@ -16,13 +16,13 @@ export const signInMethodRequestSchema = z.object({
     approvalId: id,
 }).strict()
 export type SignInMethodRequest = z.infer<typeof signInMethodRequestSchema>
-const approvalSchema = z.object({
+export const approvedSignInMethodSchema = z.object({
     workspaceId: id, owner: id, engineAgentId: id, engineSessionId: id,
     registrationId: id, revision: id, name: id, resource: z.string().url().max(8192),
     requestId: id, approvalId: id, method: z.enum(['browser', 'device']),
     credentialGeneration: id, expiresAt: z.number().int().positive(),
 }).strict()
-export type ApprovedSignInMethod = z.infer<typeof approvalSchema>
+export type ApprovedSignInMethod = z.infer<typeof approvedSignInMethodSchema>
 export type SignInMethodProof = { value: unknown; signal: AbortSignal; check(): void }
 type Transaction = Awaited<ReturnType<Client['transaction']>>
 export type SignInMethodAdmissionPorts = {
@@ -36,7 +36,7 @@ export type SignInMethodAdmissionPorts = {
     now?: () => number
 }
 const recordSchema = z.object({
-    selectionId: z.uuid(), input: signInMethodRequestSchema, approval: approvalSchema,
+    selectionId: z.uuid(), input: signInMethodRequestSchema, approval: approvedSignInMethodSchema,
     state: z.enum(['selected', 'reserved', 'unknown', 'retired']),
     createdAt: z.number().int(),
 }).strict().superRefine((value, ctx) => {
@@ -118,7 +118,7 @@ export function createMcpMethodAdmission(ports: SignInMethodAdmissionPorts) {
     async function authority(input: SignInMethodRequest, tx: Transaction, signal: AbortSignal) {
         const proof = await abortable(ports.approved(input, tx, signal), signal)
         if (!proof) throw unavailable()
-        const approval = parsePrivate(approvalSchema, proof.value)
+        const approval = parsePrivate(approvedSignInMethodSchema, proof.value)
         const bound = AbortSignal.any([signal, proof.signal, AbortSignal.timeout(Math.max(1, Math.min(30_000, Math.ceil(approval.expiresAt - now()))))])
         const check = () => {
             open(bound); proof.check()

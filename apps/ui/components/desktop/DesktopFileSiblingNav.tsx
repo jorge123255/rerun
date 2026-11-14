@@ -3,17 +3,19 @@
 import { useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { ChevronLeftIcon, ChevronRightIcon } from '@/lib/icons'
+import { useFileTranslations } from '@/lib/files/translations'
 import type { SiblingFiles } from '@/components/files/useSiblingFiles'
 
 /** FileDetail's previous / index / next cluster. The header slot supplies the row. */
 export function FileSiblingControls({ siblings }: { siblings: SiblingFiles | null }) {
+    const t = useFileTranslations()
     if (!siblings) return null
     return <>
-        <Button size="icon-sm" variant="ghost" onClick={siblings.previous} title="Previous file" aria-label="Previous file">
+        <Button size="icon-sm" variant="ghost" onClick={siblings.previous} title={t('files.detail.previousFile')} aria-label={t('files.detail.previousFile')}>
             <ChevronLeftIcon className="size-4" />
         </Button>
         <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{siblings.index + 1} / {siblings.total}</span>
-        <Button size="icon-sm" variant="ghost" onClick={siblings.next} title="Next file" aria-label="Next file">
+        <Button size="icon-sm" variant="ghost" onClick={siblings.next} title={t('files.detail.nextFile')} aria-label={t('files.detail.nextFile')}>
             <ChevronRightIcon className="size-4" />
         </Button>
     </>

@@ -16,6 +16,29 @@ import { ensureDesktopPrivateFileToolsSchema } from './private-file-tools/schema
 import { initializeDesktopRound35 } from './round35-schema'
 import { initializeDesktopRound36 } from './round36-schema'
 import { initializeDesktopRound38 } from './round38-schema'
+import { initializeDesktopRound39 } from './round39-schema'
+import { initializeDesktopRound40 } from './round40-schema'
+import { initializeDesktopRound41 } from './round41-schema'
+import { initializeDesktopRound42 } from './round42-schema'
+import { initializeDesktopRound43 } from './round43-schema'
+import { initializeDesktopRound44 } from './round44-schema'
+import { initializeDesktopRound45 } from './round45-schema'
+import { initializeDesktopRound46 } from './round46-schema'
+import { initializeDesktopRound47 } from './round47-schema'
+import { initializeDesktopRound48 } from './round48-schema'
+import { initializeDesktopRound49 } from './round49-schema'
+import { initializeDesktopRound50 } from './round50-schema'
+import { initializeDesktopRound51 } from './round51-schema'
+import { initializeDesktopRound52 } from './round52-schema'
+import { initializeDesktopRound54 } from './round54-schema'
+import { initializeDesktopRound55 } from './round55-schema'
+import { initializeDesktopRound56 } from './round56-schema'
+import { initializeDesktopRound57 } from './round57-schema'
+import { initializeDesktopRound58 } from './round58-schema'
+import { initializeDesktopRound59 } from './round59-schema'
+import { initializeDesktopRound60 } from './round60-schema'
+import { initializeDesktopRound53 } from './round53-schema'
+import { ensureDesktopDocumentAttachmentsSchema } from './document-attachments/store'
 import { initializeDesktopRound37 } from './round37-schema'
 import { initializeDesktopRound34 } from './round34-schema'
 import { initializeDesktopRound33 } from './round33-schema'
@@ -43,9 +66,20 @@ async function initialize(dataRoot: string): Promise<Client> {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS desktop_profile_photo (
+            profile_id INTEGER PRIMARY KEY REFERENCES desktop_profile(id),
+            identity TEXT NOT NULL,
+            bytes BLOB NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS desktop_language (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             locale TEXT
+        );
+        CREATE TABLE IF NOT EXISTS desktop_changelog (
+            id INTEGER PRIMARY KEY REFERENCES desktop_profile(id),
+            entries TEXT NOT NULL DEFAULT '[]',
+            fetched_at INTEGER NOT NULL DEFAULT 0,
+            seen_at TEXT
         );
         CREATE TABLE IF NOT EXISTS desktop_workspace (
             id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -233,6 +267,7 @@ async function initialize(dataRoot: string): Promise<Client> {
     const columns = await client.execute('PRAGMA table_info(desktop_sessions)')
     const names = new Set(columns.rows.map(row => String(row.name)))
     if (!names.has('model_connection_id')) await client.execute('ALTER TABLE desktop_sessions ADD COLUMN model_connection_id TEXT')
+    if (!names.has('title_edited')) await client.execute('ALTER TABLE desktop_sessions ADD COLUMN title_edited INTEGER NOT NULL DEFAULT 0 CHECK (title_edited IN (0, 1))')
     if (!names.has('model')) await client.execute('ALTER TABLE desktop_sessions ADD COLUMN model TEXT')
     const agentColumns = await client.execute('PRAGMA table_info(desktop_agents)')
     if (!agentColumns.rows.some(row => row.name === 'enabled'))
@@ -271,6 +306,29 @@ async function initialize(dataRoot: string): Promise<Client> {
     await initializeDesktopRound36(client)
     await initializeDesktopRound37(client)
     await initializeDesktopRound38(client)
+    await initializeDesktopRound39(client)
+    await initializeDesktopRound40(client)
+    await initializeDesktopRound41(client)
+    await initializeDesktopRound42(client)
+    await initializeDesktopRound43(client)
+    await initializeDesktopRound44(client)
+    await initializeDesktopRound45(client)
+    await initializeDesktopRound46(client)
+    await initializeDesktopRound47(client)
+    await initializeDesktopRound48(client)
+    await initializeDesktopRound49(client)
+    await initializeDesktopRound50(client)
+    await initializeDesktopRound51(client)
+    await initializeDesktopRound52(client)
+    await initializeDesktopRound53(client)
+    await initializeDesktopRound54(client)
+    await initializeDesktopRound55(client)
+    await initializeDesktopRound56(client)
+    await initializeDesktopRound57(client)
+    await initializeDesktopRound58(client)
+    await initializeDesktopRound59(client)
+    await initializeDesktopRound60(client)
+    await ensureDesktopDocumentAttachmentsSchema(client)
     if (nativeContext) {
         const assignedIcon = process.env.RERUN_DESKTOP_WORKSPACE_ICON
         if (seeded[1].rowsAffected && assignedIcon && desktopWorkspaceIconById(assignedIcon)) await writeDesktopWorkspaceIcon(client, { name: initialName, catalogId: assignedIcon })

@@ -14,14 +14,12 @@ export function notificationPayload(value) {
     if (value.subtitle != null && !text(value.subtitle, 256) || value.body != null && !text(value.body, 2048)) return null
     return { ...target, title: value.title, subtitle: value.subtitle ?? '', body: value.body ?? '', silent: true }
 }
-export function createDesktopNotifications({ Notification, onClick, timeoutMs = 5000, now = Date.now }) {
+export function createNativeNotifications({ Notification, timeoutMs = 5000, now = Date.now }) {
     const active = new Map()
     let closed = false
     let retryAfter = 0
-    function notify(value, scope) {
-        const payload = notificationPayload(value)
-        if (!payload || closed || !Notification.isSupported()) return Promise.resolve({ status: 'unavailable' })
-        const key = scope ? JSON.stringify([scope.workspaceId, scope.launchNonce, payload.key]) : payload.key
+    function notify(key, options, onClick, scope) {
+        if (closed || !Notification.isSupported()) return Promise.resolve({ status: 'unavailable' })
         if (active.has(key)) return active.get(key).result
         // A refused OS delivery must not generate another native request every UI poll.
         // The durable event remains unconsumed and can be retried after this short cooldown.
@@ -36,11 +34,11 @@ export function createDesktopNotifications({ Notification, onClick, timeoutMs = 
             try { entry.notice.close() } catch { /* The native notice may already be gone. */ }
         }
         let notice
-        try { notice = new Notification({ title: payload.title, subtitle: payload.subtitle, body: payload.body, silent: true }) }
+        try { notice = new Notification(options) }
         catch { retryAfter = now() + 30_000; return Promise.resolve({ status: 'failed', diagnostic: 'construction-failed' }) }
         let settle
         const result = new Promise(resolve => { settle = resolve })
-        const entry = { notice, result, settled: false }
+        const entry = { notice, result, settled: false, scope }
         active.set(key, entry)
         const finish = (status, diagnostic) => {
             if (entry.settled) return
@@ -49,6 +47,7 @@ export function createDesktopNotifications({ Notification, onClick, timeoutMs = 
             settle({ status, ...(diagnostic ? { diagnostic } : {}) })
         }
         const timer = setTimeout(() => finish('unknown', 'observation-timeout'), timeoutMs)
+        entry.finish = finish
         timer.unref?.()
         notice.once('show', () => finish('accepted'))
         // Electron's error string is deliberately ignored: it has no stable permission code
@@ -65,11 +64,41 @@ export function createDesktopNotifications({ Notification, onClick, timeoutMs = 
         })
         notice.once('click', () => {
             if (closed || active.get(key) !== entry) return
-            const { title, subtitle, body, silent, ...target } = payload
-            onClick(target, scope)
+            onClick()
         })
         try { notice.show() } catch { finish('unknown', 'show-threw') }
         return result
     }
-    return { notify, close() { closed = true; for (const { notice } of active.values()) notice.close(); active.clear() } }
+    function discard(scope) {
+        for (const [key, entry] of active) {
+            if (entry.scope !== scope) continue
+            active.delete(key)
+            entry.finish('unknown', 'closed-before-acceptance')
+            try { entry.notice.close() } catch { /* Already closed by the OS. */ }
+        }
+    }
+    return { notify, discard, close() {
+        closed = true
+        for (const scope of new Set([...active.values()].map(entry => entry.scope))) discard(scope)
+    } }
+}
+
+export function createDesktopNotifications({ onClick, ...dependencies }) {
+    const native = createNativeNotifications(dependencies)
+    return {
+        notify(value, scope) {
+            const payload = notificationPayload(value)
+            if (!payload) return Promise.resolve({ status: 'unavailable' })
+            const { title, subtitle, body, silent, ...target } = payload
+            const key = scope ? JSON.stringify([scope.workspaceId, scope.launchNonce, target.key]) : target.key
+            return native.notify(key, { title, subtitle, body, silent }, () => onClick(target, scope))
+        },
+        close: native.close,
+    }
+}
+
+export function hubNotificationPayload(value) {
+    if (!value || !text(value.id, 200, true) || !text(value.title, 200, true)
+        || (value.body != null && !text(value.body, 1000))) return null
+    return { id: value.id, title: value.title, body: value.body ?? '', silent: value.silent !== false }
 }

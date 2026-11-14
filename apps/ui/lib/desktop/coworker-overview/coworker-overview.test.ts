@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { UNNAMED_BOX_LABEL } from '@/lib/board/types'
 import { resolveDesktopOverviewBox } from './box'
-import { desktopOverviewFocusGroups, moveDesktopOverviewFocus, moveDesktopOverviewSectionTab, openDesktopOverviewDestination, selectDesktopOverviewTab } from './navigation'
+import { desktopOverviewFocusGroups, moveDesktopOverviewFocus, openDesktopOverviewDestination, selectDesktopOverviewTab } from './navigation'
 import { acceptDesktopOverviewRename, desktopOverviewRenameBody } from './rename'
 import { DESKTOP_OVERVIEW_FOOTER, DESKTOP_OVERVIEW_ROWS, DESKTOP_OVERVIEW_TILES, DESKTOP_OVERVIEW_VIEWS, desktopOverviewDestinationLabel, desktopOverviewServicesDot, desktopOverviewSiblingTabs, desktopOverviewTabLabel, shownDesktopOverviewTab } from './sections'
 import { decideDesktopOverviewWorkspaceSwitch } from './workspace-switch'
@@ -47,8 +47,6 @@ describe('coworker overview sections', () => {
         expect(moveDesktopOverviewFocus('scheduled', 'ArrowRight', groups)).toBe('services')
         expect(moveDesktopOverviewFocus('scheduled', 'ArrowDown', groups)).toBe('data')
         expect(moveDesktopOverviewFocus('files', 'ArrowDown', desktopOverviewFocusGroups(false))).toBe('monitoring')
-        expect(moveDesktopOverviewSectionTab(['monitoring', 'logs'], 'monitoring', 'ArrowRight')).toBe('logs')
-        expect(moveDesktopOverviewSectionTab(['monitoring', 'logs'], 'logs', 'Home')).toBe('monitoring')
     })
 })
 

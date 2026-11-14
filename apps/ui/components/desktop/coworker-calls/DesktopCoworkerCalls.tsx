@@ -1,12 +1,12 @@
 'use client'
 
 import { Button } from '@/components/ui/button'
-import type { DesktopCoworkerCallOpenTarget } from '@/lib/desktop/coworker-calls-client'
+import type { DesktopCoworkerCallOpenTarget, DesktopCoworkerCallSnapshot } from '@/lib/desktop/coworker-calls-client'
 import { DesktopCoworkerCallBlock } from './DesktopCoworkerCallBlock'
 import { useDesktopCoworkerCalls } from './useDesktopCoworkerCalls'
 import type { ReactNode } from 'react'
 
-export function DesktopCoworkerCalls({ agentId, sessionId, toolCallId, fallback, active = true, currentRunId = null, currentRunActive = false, onOpenTarget }: {
+export function DesktopCoworkerCalls({ agentId, sessionId, toolCallId, fallback, active = true, currentRunId = null, currentRunActive = false, onOpenTarget, placeCard }: {
     agentId: string
     sessionId: string
     toolCallId?: string
@@ -15,25 +15,31 @@ export function DesktopCoworkerCalls({ agentId, sessionId, toolCallId, fallback,
     currentRunId?: string | null
     currentRunActive?: boolean
     onOpenTarget?: (target: DesktopCoworkerCallOpenTarget) => Promise<void>
+    placeCard?: (call: DesktopCoworkerCallSnapshot, card: ReactNode) => ReactNode
 }) {
     const controller = useDesktopCoworkerCalls(agentId, sessionId, active, currentRunActive)
     const calls = toolCallId ? controller.calls.filter(call => call.toolCallId === toolCallId) : controller.calls
     if (!active && controller.calls.length === 0 && !controller.error) return null
-    if (controller.status === 'loading' && calls.length === 0) return fallback ?? <p role="status" className="text-xs text-muted-foreground">Loading coworker calls…</p>
+    if (controller.status === 'loading' && calls.length === 0) return fallback === undefined
+        ? <p role="status" className="text-xs text-muted-foreground">Loading coworker calls…</p>
+        : fallback
     if (!calls.length && !controller.error) return fallback ?? null
-    return <section aria-label="Coworker calls" className="flex min-w-0 flex-col gap-3">
+    return <section aria-label="Coworker calls" className="flex min-w-0 flex-col gap-3 empty:hidden">
         {controller.error && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-destructive">
             <span className="min-w-0 break-words">{controller.error}</span>
             <Button type="button" variant="outline" size="sm" disabled={!active} onClick={controller.retry}>Retry coworker calls</Button>
         </div>}
-        {calls.map(call => <DesktopCoworkerCallBlock
-            key={call.callId}
-            client={controller.client}
-            call={call}
-            active={active}
-            live={currentRunActive && (currentRunId === null || call.parentRunId === currentRunId)}
-            onOpenTarget={onOpenTarget}
-            onChange={controller.replace}
-        />)}
+        {calls.map(call => {
+            const card = <DesktopCoworkerCallBlock
+                key={call.callId}
+                client={controller.client}
+                call={call}
+                active={active}
+                live={currentRunActive && (currentRunId === null || call.parentRunId === currentRunId)}
+                onOpenTarget={onOpenTarget}
+                onChange={controller.replace}
+            />
+            return placeCard ? placeCard(call, card) : card
+        })}
     </section>
 }

@@ -5,6 +5,10 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { DesktopApp } from './DesktopApp'
 import { DesktopRunHistory } from './DesktopRunHistory'
+import { DesktopLocale, useDesktopLocale } from './DesktopLocale'
+import { desktopMessages, englishDesktopLanguage } from '@/lib/desktop/locale'
+import { loadMessages } from '@rerun/i18n/messages'
+import { fullDateTime } from '@rerun/i18n/format'
 import type { DesktopRunView } from '@/lib/desktop/run-history'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
@@ -168,5 +172,35 @@ test('controlled Logs navigation aborts an old owner and ignores its late run re
         expect(onOpenChange).toHaveBeenCalledWith(false)
         await act(async () => { root.render(<DesktopRunHistory agent={bob} dialogControl={{ open: false, onOpenChange }} />) })
         expect(document.querySelector('[role="dialog"]')).toBeNull()
+    } finally { await act(async () => { root.unmount() }) }
+})
+
+test('uses the selected app language for loaded rows and details without refetching when the language changes', async () => {
+    const startedAt = running.startedAt!
+    const fetcher = vi.fn(async (url: string) => url.endsWith('/details')
+        ? Response.json({ steps: [{ id: 'step', stepNumber: 1, finishReason: null, totalTokens: 1400, durationMs: 1250 }], tools: [] })
+        : Response.json({ runs: [{ ...running, status: 'done', stepCount: 1, totalTokens: 1400 }] }))
+    vi.stubGlobal('fetch', fetcher)
+    const french = { locale: 'fr' as const, preference: 'fr' as const, messages: desktopMessages('fr', await loadMessages('fr')) }
+    function Harness() {
+        const { setLanguage } = useDesktopLocale()
+        return <><button onClick={() => setLanguage(french)}>French</button><DesktopRunHistory agent={alice} dialogControl={{ open: true, onOpenChange: () => {} }} /></>
+    }
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    try {
+        await act(async () => { root.render(<DesktopLocale initial={englishDesktopLanguage}><Harness /></DesktopLocale>) })
+        await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="Recent runs"] button')!.click() })
+        expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Step 1')
+        expect(fetcher).toHaveBeenCalledTimes(2)
+        await click('French')
+        const dialog = document.querySelector('[role="dialog"]')!
+        expect(dialog.querySelector('h2')?.textContent).toBe('Exécutions récentes')
+        expect(dialog.querySelector('time')?.textContent).toBe(fullDateTime(startedAt, 'fr'))
+        expect(dialog.textContent).toContain('Étape 1')
+        expect(dialog.textContent).toContain('1,3')
+        expect(dialog.textContent).toContain(new Intl.NumberFormat('fr').format(1400))
+        expect(dialog.textContent).not.toContain('Step 1')
+        expect(fetcher).toHaveBeenCalledTimes(2)
     } finally { await act(async () => { root.unmount() }) }
 })

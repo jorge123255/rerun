@@ -3,29 +3,32 @@
 import { BrainChromeContext, BrainTopBar, type BrainCrumb } from '@/components/brain/BrainTopBar'
 import { FileList } from '@/components/files/FileList'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { importDesktopSharedFiles, listDesktopSharedFolder, renameDesktopSharedFile, type DesktopSharedEntry, type DesktopSharedImportResult } from '@/lib/desktop/shared-workspace-files'
+import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { importDesktopSharedFiles, listDesktopSharedFolder, renameDesktopSharedEntry, type DesktopSharedEntry, type DesktopSharedImportResult } from '@/lib/desktop/shared-workspace-files'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { UploadEntry } from '@/lib/files/upload'
 import { FolderIcon } from '@/lib/icons'
+import { useDesktopLocale } from './DesktopLocale'
 import { DesktopSharedFilePreview } from './shared-files/DesktopSharedFilePreview'
 import { DesktopSharedImportResults } from './shared-files/DesktopSharedImportResults'
+import { useDesktopSharedDelete } from './shared-files/useDesktopSharedDelete'
+import { useDesktopSharedSave } from './shared-files/useDesktopSharedSave'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 
 // The workspace shared folder. Same FileList, breadcrumb, and text preview as the hosted
-// shared Files view. Rename is limited to ordinary files in the current folder.
+// shared Files view. Renames stay within the selected folder.
 // Optional FileList actions keep the original layout without advertising unavailable mutations.
 
-const ROOT = 'Files'
 const joinPath = (dir: string, name: string) => (dir ? `${dir}/${name}` : name)
 const parentPath = (path: string) => path.split('/').filter(Boolean).slice(0, -1).join('/')
 
-function folderCrumbs(path: string, onSelect: (path: string) => void): BrainCrumb[] {
+function folderCrumbs(path: string, rootLabel: string, onSelect: (path: string) => void): BrainCrumb[] {
     const parts = path.split('/').filter(Boolean)
     return [
-        { label: ROOT, icon: FolderIcon, onClick: () => onSelect('') },
+        { label: rootLabel, icon: FolderIcon, onClick: () => onSelect('') },
         ...parts.map((part, index) => ({ label: part, onClick: () => onSelect(parts.slice(0, index + 1).join('/')) })),
     ]
 }
@@ -34,15 +37,20 @@ function messageOf(error: unknown, fallback: string): string {
     return error instanceof Error && error.message ? error.message : fallback
 }
 
-function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, directory: boolean) => void }) {
+function SharedFolder({ path, onOpen, workspaceId }: { path: string; onOpen: (path: string, directory: boolean) => void; workspaceId?: number | null }) {
+    const { t } = useDesktopLocale()
+    const rootLabel = t('brain.files.root')
+    const { deleting, remove } = useDesktopSharedDelete(workspaceId, path)
+    const { available: canSaveLocally, saving, savedName, save } = useDesktopSharedSave(workspaceId, path)
     const [entries, setEntries] = useState<DesktopSharedEntry[] | undefined>()
     const [truncated, setTruncated] = useState(false)
     const [failed, setFailed] = useState<string | null>(null)
     const [uploading, setUploading] = useState(false)
+    const [renaming, setRenaming] = useState(false)
     const [results, setResults] = useState<DesktopSharedImportResult[]>([])
     const [attempt, setAttempt] = useState(0)
-    const current = useRef({ mounted: true, path })
-    current.current.path = path
+    const current = useRef({ mounted: true, path, workspaceId })
+    current.current = { ...current.current, path, workspaceId }
     const importing = useRef<AbortController | null>(null)
     const originalFiles = useRef(new WeakMap<DesktopSharedImportResult, File>())
 
@@ -69,10 +77,10 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
                 setFailed(messageOf(error, 'The shared folder could not be listed.'))
             })
         return () => controller.abort()
-    }, [path, attempt])
+    }, [path, workspaceId, attempt])
 
     const upload = async (picked: UploadEntry[]) => {
-        if (importing.current || !current.current.mounted || isDesktopQuitting()) return
+        if (saving || deleting || importing.current || !current.current.mounted || isDesktopQuitting()) return
         if (picked.length > 16) { toast.error('Import at most 16 files at a time.'); return }
         if (picked.reduce((total, entry) => total + entry.file.size, 0) > 32 * 1024 * 1024) { toast.error('Import at most 32 MB at a time.'); return }
         const controller = new AbortController()
@@ -119,7 +127,7 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
     }
 
     const retry = async (result: DesktopSharedImportResult) => {
-        if (importing.current || result.status !== 'refused' || !current.current.mounted || isDesktopQuitting()) return
+        if (saving || deleting || importing.current || result.status !== 'refused' || !current.current.mounted || isDesktopQuitting()) return
         const folder = result.folder ?? path
         const file = originalFiles.current.get(result)
         if (!file) return
@@ -152,49 +160,60 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
         }
     }
 
-    const rename = async (name: string, next: string) => {
-        if (importing.current || !current.current.mounted || isDesktopQuitting()) return
+    const rename = async (name: string, next: string, revision?: string) => {
+        if (!workspaceId || !revision || saving || deleting || importing.current || !current.current.mounted || isDesktopQuitting()) return
         const controller = new AbortController()
         importing.current = controller
         const release = holdDraftAdmission()
-        setUploading(true)
-        const active = () => current.current.mounted && current.current.path === path && !controller.signal.aborted && !isDesktopQuitting()
+        setRenaming(true)
+        const active = () => current.current.mounted && current.current.path === path && current.current.workspaceId === workspaceId
+            && !controller.signal.aborted && !isDesktopQuitting()
         try {
-            await renameDesktopSharedFile(joinPath(path, name), next, controller.signal)
+            await renameDesktopSharedEntry(workspaceId, joinPath(path, name), next, revision, controller.signal)
             if (active()) setAttempt(value => value + 1)
         } catch (error) {
             if (active()) toast.error(messageOf(error, 'The rename was not confirmed. Refresh Shared files before retrying.'))
         } finally {
             if (importing.current === controller) importing.current = null
-            if (current.current.mounted) setUploading(false)
+            if (current.current.mounted) setRenaming(false)
             release()
         }
     }
 
+    const busy = uploading || renaming || deleting || saving
     return (
         <div className="flex min-h-0 flex-1 flex-col">
-            <BrainTopBar crumbs={folderCrumbs(path, next => onOpen(next, true))} status={truncated ? 'Showing the first 512 entries' : undefined} />
-            <DesktopSharedImportResults results={results} disabled={uploading} onRetry={result => void retry(result)} onOpen={path => onOpen(path, false)} />
-            {uploading && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">Importing files…</p>}
-            {failed ? <div className="space-y-2 px-6 py-6"><p role="alert" className="text-sm text-destructive">{failed}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>Retry</Button></div> : <FileList
-                title={path.split('/').filter(Boolean).pop() ?? ROOT}
+            <BrainTopBar crumbs={folderCrumbs(path, rootLabel, next => onOpen(next, true))} status={truncated ? t('sharedFiles.truncated') : undefined} />
+            <DesktopSharedImportResults results={results} disabled={busy} onRetry={result => void retry(result)} onOpen={path => onOpen(path, false)} />
+            {uploading && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">{t('sharedFiles.importing')}</p>}
+            {savedName && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">{t('sharedFiles.saved', { name: savedName })}</p>}
+            {failed ? <div className="space-y-2 px-6 py-6"><p role="alert" className="text-sm text-destructive">{failed}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>{t('brain.workspace.retry')}</Button></div> : <FileList
+                key={path}
+                title={path.split('/').filter(Boolean).pop() ?? rootLabel}
                 entries={entries}
                 onOpen={entry => onOpen(joinPath(path, entry.name), entry.type === 'dir')}
-                emptyDescription="Nothing here yet. Import supported documents, images, audio, video, or PDFs to share them with coworkers that have Read shared files enabled."
-                canRename={entry => entry.type === 'file' && !uploading}
-                onRename={(name, next) => void rename(name, next)}
-                uploadDisabled={uploading || !entries}
+                emptyDescription={t('sharedFiles.empty')}
+                canRename={entry => !!workspaceId && !!entry.deleteRevision && !busy}
+                onRename={(name, next, entry) => void rename(name, next, entry.deleteRevision)}
+                canDownload={entry => canSaveLocally && entry.type === 'file' && !!entry.deleteRevision && !busy}
+                onDownload={(name, entry) => { if (!importing.current) void save(joinPath(path, name), entry.deleteRevision) }}
+                downloadLabel={t('sharedFiles.saveAs')}
+                canDelete={entry => !!workspaceId && !!entry.deleteRevision && !busy}
+                onDelete={async (name, entry) => {
+                    if (!importing.current && await remove(joinPath(path, name), entry.deleteRevision)) setAttempt(value => value + 1)
+                }}
+                deleteDescription={{ file: t('sharedFiles.deleteFile'), folder: t('sharedFiles.deleteFolder') }}
+                uploadDisabled={busy || !entries}
                 onUpload={picked => void upload(picked)}
             />}
         </div>
     )
 }
 
-const SharedFile = DesktopSharedFilePreview
-
-function SharedFilesPanel({ onClose }: { onClose: () => void }) {
+function SharedFilesPanel({ onClose, workspaceId }: { onClose: () => void; workspaceId?: number | null }) {
     const [selection, setSelection] = useState<{ kind: 'folder' | 'file'; path: string }>({ kind: 'folder', path: '' })
     const [folderEntries, setFolderEntries] = useState<DesktopSharedEntry[] | undefined>()
+    const [listingRevision, refreshListing] = useState(0)
     const folder = selection.kind === 'file' ? parentPath(selection.path) : selection.path
 
     useEffect(() => {
@@ -205,7 +224,7 @@ function SharedFilesPanel({ onClose }: { onClose: () => void }) {
             .then(listing => { if (!controller.signal.aborted) setFolderEntries(listing.entries) })
             .catch(() => { if (!controller.signal.aborted) setFolderEntries([]) })
         return () => controller.abort()
-    }, [folder, selection.kind])
+    }, [folder, selection.kind, listingRevision])
 
     const open = (path: string, directory: boolean) => setSelection(directory ? { kind: 'folder', path } : { kind: 'file', path })
 
@@ -213,24 +232,25 @@ function SharedFilesPanel({ onClose }: { onClose: () => void }) {
         <BrainChromeContext.Provider value={{ onClose, onToggleSidebar: null }}>
             <div className="flex min-h-0 flex-1 flex-col">
                 {selection.kind === 'folder'
-                    ? <SharedFolder path={selection.path} onOpen={open} />
-                    : <SharedFile key={selection.path} path={selection.path} entries={folderEntries} onOpen={open} />}
+                    ? <SharedFolder path={selection.path} onOpen={open} workspaceId={workspaceId} />
+                    : <DesktopSharedFilePreview key={selection.path} path={selection.path} entries={folderEntries} onOpen={open}
+                        editWorkspaceId={workspaceId} onTextSaved={() => refreshListing(value => value + 1)} />}
             </div>
         </BrainChromeContext.Provider>
     )
 }
 
-export function DesktopSharedFiles({ dialogControl, hideTrigger = false, onCloseAutoFocus }: { dialogControl?: DesktopDialogControl; hideTrigger?: boolean; onCloseAutoFocus?: (event: Event) => void }) {
+export function DesktopSharedFiles({ dialogControl, hideTrigger = false, onCloseAutoFocus, workspaceId }: {
+    dialogControl?: DesktopDialogControl; hideTrigger?: boolean; onCloseAutoFocus?: (event: Event) => void; workspaceId?: number | null
+}) {
+    const { t } = useDesktopLocale()
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     return (
         <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
-            {!hideTrigger && <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Shared files</Button></DialogTrigger>}
+            {!hideTrigger && <DialogTrigger asChild><Button type="button" variant="outline" size="sm">{t('sharedFiles.title')}</Button></DialogTrigger>}
             {open && <DialogContent onCloseAutoFocus={onCloseAutoFocus} className="flex h-[80dvh] flex-col sm:max-w-5xl">
-                <DialogHeader>
-                    <DialogTitle>Shared files</DialogTitle>
-                    <DialogDescription>The workspace shared folder. Import supported documents, images, audio, video, or PDFs. Coworkers with shared files permission read the same files. Their private Files stay separate.</DialogDescription>
-                </DialogHeader>
-                <SharedFilesPanel onClose={() => setOpen(false)} />
+                <DialogHeaderBar icon={FolderIcon} title={t('sharedFiles.title')} description={t('sharedFiles.description')} />
+                <SharedFilesPanel key={workspaceId ?? 'loading'} workspaceId={workspaceId} onClose={() => setOpen(false)} />
             </DialogContent>}
         </Dialog>
     )

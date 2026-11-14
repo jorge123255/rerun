@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { DesktopVoiceDraft } from '@rerun/contracts'
 import { useDesktopVoiceMessage } from './useDesktopVoiceMessage'
+import { buildDesktopVoiceMessage } from './voice'
 import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
 
 const scope = { agentId: 'owner', tabUid: 'tab-1', sessionId: 'session-1' }
@@ -98,6 +99,26 @@ it('discard uses the exact restored attempt and does not start another recording
     expect(transport.discardDesktopVoice).toHaveBeenCalledWith(scope, draft.attemptId, draft.revision, expect.any(AbortSignal))
     expect(api.status).toBe('idle')
     expect(transport.uploadDesktopVoice).not.toHaveBeenCalled()
+    expect(transport.transcribeDesktopVoice).not.toHaveBeenCalled()
+})
+
+it('attaches the accepted reply when read-back confirms a send whose response was lost', async () => {
+    const dispatch = { sessionId: scope.sessionId, runId: draft.attemptId }
+    const sent: DesktopVoiceDraft = { ...draft, phase: 'sent', dispatch, messageId: 'message-1' }
+    transport.listDesktopVoiceDrafts.mockResolvedValue([draft])
+    transport.sendDesktopVoice.mockRejectedValueOnce(new Error('send response lost'))
+    transport.readDesktopVoiceDraft.mockResolvedValue(sent)
+    const onSent = vi.fn()
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<Probe onSent={onSent} />))
+    expect(onSent).not.toHaveBeenCalled()
+
+    await act(async () => api.send())
+    expect(api.status).toBe('sent')
+    expect(onSent).toHaveBeenCalledExactlyOnceWith({
+        draft: sent, dispatch, text: buildDesktopVoiceMessage(scope, draft.recording, draft.transcript!),
+    })
+    expect(transport.sendDesktopVoice).toHaveBeenCalledOnce()
     expect(transport.transcribeDesktopVoice).not.toHaveBeenCalled()
 })
 

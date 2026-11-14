@@ -5,6 +5,7 @@ import { getSession, getRun } from '@/lib/engine/client'
 import { findDesktopAgent, sessionOf } from '../store'
 import { withRosterWrite } from '../roster-writes'
 import { DesktopHttpError } from '../auth'
+import { conversationSearchKey } from '../../chat-search'
 
 /** Bound slow dependency implementations as well as native fetch; late reads never adopt. */
 export function scheduleRead<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -17,15 +18,28 @@ export function scheduleRead<T>(work: Promise<T>, signal?: AbortSignal): Promise
     })
 }
 
+type ScheduleAdoption = { agentId: string; engineAgentId: string } & (
+    | { engineSessionId: string; runId?: string | null; scheduleSlug?: never }
+    | { engineSessionId?: string; runId: string; scheduleSlug: string }
+)
+
 /** Both callback adoption and manual/history adoption use this exact ownership boundary. */
-export async function adoptDesktopScheduledSession(db:Client,engine:EngineConnection,input:{agentId:string;engineAgentId:string;engineSessionId:string;runId?:string|null}, options: { signal?: AbortSignal } = {}) {
+export async function adoptDesktopScheduledSession(db:Client,engine:EngineConnection,input:ScheduleAdoption, options: { signal?: AbortSignal; authorize?: () => Promise<void> } = {}) {
     options.signal?.throwIfAborted()
-    const session=await scheduleRead(getSession(engine,input.engineAgentId,input.engineSessionId,options),options.signal)
-    if(!session || session.id!==input.engineSessionId || session.agentId!==input.engineAgentId || session.source!=='schedule')throw new DesktopHttpError(409,'Not an owned scheduled conversation')
+    let sessionId = input.engineSessionId
     if(input.runId) {
         const run=await scheduleRead(getRun(engine,input.engineAgentId,input.runId,options),options.signal)
-        if(run.id!==input.runId || run.agentId!==input.engineAgentId || run.sessionId!==session.id || run.triggerSource!=='schedule')throw new DesktopHttpError(409,'Run belongs to another conversation')
+        if (run.id !== input.runId || run.agentId !== input.engineAgentId || run.triggerSource !== 'schedule'
+            || (sessionId !== undefined && run.sessionId !== sessionId)
+            || (input.scheduleSlug !== undefined && run.triggerSlug !== input.scheduleSlug)) {
+            throw new DesktopHttpError(409, 'Run belongs to another scheduled task or conversation')
+        }
+        sessionId = run.sessionId
     }
+    if (!sessionId) throw new DesktopHttpError(409, 'Scheduled conversation is unavailable')
+    const session=await scheduleRead(getSession(engine,input.engineAgentId,sessionId,options),options.signal)
+    if(!session || session.id!==sessionId || session.agentId!==input.engineAgentId || session.source!=='schedule')throw new DesktopHttpError(409,'Not an owned scheduled conversation')
+    if (options.authorize) await scheduleRead(options.authorize(), options.signal)
     options.signal?.throwIfAborted()
     return scheduleRead(withRosterWrite(async()=>{
         options.signal?.throwIfAborted()
@@ -33,12 +47,13 @@ export async function adoptDesktopScheduledSession(db:Client,engine:EngineConnec
         options.signal?.throwIfAborted()
         if(!owner || owner.engineAgentId!==input.engineAgentId)throw new DesktopHttpError(409,'Coworker identity changed')
         const now=new Date().toISOString()
+        const title = session.title.slice(0, 80)
         const results=await db.batch([{
-            sql:`INSERT INTO desktop_sessions(id,agent_id,engine_session_id,title,created_at,updated_at)
-                SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM desktop_agents WHERE id=? AND engine_agent_id=? AND workspace_id=1)
+            sql:`INSERT INTO desktop_sessions(id,agent_id,engine_session_id,title,title_search,created_at,updated_at)
+                SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM desktop_agents WHERE id=? AND engine_agent_id=? AND workspace_id=1)
                 AND NOT EXISTS(SELECT 1 FROM desktop_deletions WHERE agent_id=?)
                 ON CONFLICT(engine_session_id) DO NOTHING`,
-            args:[crypto.randomUUID(),owner.id,session.id,session.title.slice(0,80),session.createdAt,now,owner.id,input.engineAgentId,owner.id],
+            args:[crypto.randomUUID(),owner.id,session.id,title,conversationSearchKey(title),session.createdAt,now,owner.id,input.engineAgentId,owner.id],
         },{sql:'SELECT * FROM desktop_sessions WHERE agent_id=? AND engine_session_id=?',args:[owner.id,session.id]}],'write')
         const row=results[1].rows[0]
         if(!row)throw new DesktopHttpError(409,'Conversation ownership conflict')

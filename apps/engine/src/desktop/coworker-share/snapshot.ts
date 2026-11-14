@@ -75,6 +75,7 @@ export async function createDesktopCoworkerSnapshot(source: DesktopCoworkerShare
         members.push({ agentKey: 'c01', path: member.path, bytes, digest: sha256(bytes) })
     }
     const requirements = [
+        ...[...new Set(parsed.appSlugs)].map(name => ({ kind: 'service-reconnect' as const, name, detail: 'Connect this app locally after installation.' })),
         ...parsed.envKeys.map(name => ({ kind: 'environment-key' as const, name })),
         ...parsed.mcpAuth.map(entry => ({ kind: 'mcp-reconnect' as const, name: entry.server, detail: entry.kind })),
         ...parsed.members.filter(member => member.path.startsWith('schedules/')).map(member => ({ kind: 'schedule-inactive' as const, name: member.path })),

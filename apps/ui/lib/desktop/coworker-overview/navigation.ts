@@ -41,12 +41,3 @@ export function moveDesktopOverviewFocus(current: DesktopOverviewControl, key: '
     const nextGroup = groups[key === 'ArrowUp' ? Math.max(0, groupIndex - 1) : Math.min(groups.length - 1, groupIndex + 1)]
     return nextGroup[Math.min(index, nextGroup.length - 1)]
 }
-
-export function moveDesktopOverviewSectionTab(tabs: readonly DesktopOverviewTab[], current: DesktopOverviewTab, key: 'ArrowLeft' | 'ArrowRight' | 'Home' | 'End'): DesktopOverviewTab {
-    if (!tabs.length) return current
-    if (key === 'Home') return tabs[0]
-    if (key === 'End') return tabs[tabs.length - 1]
-    const index = Math.max(0, tabs.indexOf(current))
-    const delta = key === 'ArrowLeft' ? -1 : 1
-    return tabs[(index + delta + tabs.length) % tabs.length]
-}

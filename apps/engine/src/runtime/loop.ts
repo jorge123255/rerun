@@ -1,10 +1,11 @@
 import { assertDesktopRunAdmission } from '../desktop/workspace-admission.js'
 import { desktopDocumentContextParts } from '@rerun/contracts'
 import { streamText, type LanguageModelUsage, type ModelMessage, type StepResult, type StreamTextResult, type ToolSet, type UIMessageStreamWriter } from 'ai'
-import { FOREMAN_AGENT_ID, RERUN_CONNECTION_ID, desktopCoworkerMentionContextParts, contextTextPart, workspaceAttachmentParts, desktopResolvedAttachmentParts, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, RERUN_CONNECTION_ID, desktopCoworkerMentionContextParts, contextTextPart, workspaceAttachmentParts, desktopResolvedAttachmentParts, isDesktopSubscriptionProvider, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
 import { applyCaching, withTailBreakpoint } from '../agents/caching.js'
-import { desktopCodexEffort, mergeProviderOptions, reasoningProviderOptions } from '../agents/reasoning.js'
+import { desktopClaudeEffort, desktopCodexEffort, desktopCustomEffort, desktopSubscriptionEffort, mergeProviderOptions, reasoningProviderOptions } from '../agents/reasoning.js'
 import { prepareRunHistory } from './compaction/compact.js'
+import { recordDesktopCompaction } from '../db/repos/compactions.js'
 import { repairToolPairs } from './compaction/repair.js'
 import { approvalSummary, canonicalHitlName, findPendingHitl, hitlStepLacksMessage, hitlTurnIsOver, isHitlToolName, secretSummary, takeoverSummary, type PendingHitl } from '../tools/builtin/hitl.js'
 import { CLI_PROVIDERS, resolveModel, type ModelOverride } from '../agents/providers.js'
@@ -46,12 +47,13 @@ import { registerRunAbort, setRunCancel, unregisterRunAbort } from './run-contro
 import { assertExactDesktopScheduleModel } from '../desktop/schedule-model.js'
 import { assertDesktopProvider, desktopApp } from '../desktop/policy.js'
 import { beginDesktopAgentWork } from '../desktop/agent-lifecycle.js'
+import { labelDesktopAutomationResult } from '../desktop/automation-result.js'
 import { runCurator } from './curator.js'
 import { repairToolCall } from './tool-repair.js'
 import { stepWithScreenshots } from './screenshots.js'
 import { authorMetadata, sendNotification, type NotificationKind } from './notify.js'
 import { emitRunTerminal } from './run-events.js'
-import { ClaudeSignInRenewedError, classifyFinishReason, classifyProviderError, isFailedFinish, ProviderRefusedError, ProviderStreamCutError, RUN_ERROR_CODES, refusalReason, type RunErrorCode } from './provider-errors.js'
+import { apiCreditsMessage, ClaudeSignInRenewedError, classifyFinishReason, classifyProviderError, isFailedFinish, ProviderRefusedError, ProviderStreamCutError, RUN_ERROR_CODES, refusalReason, type RunErrorCode } from './provider-errors.js'
 import { armBudgetLatch, clearBudgetLatch, RERUN_BUDGET_ERROR_CODE } from './budget-latch.js'
 
 export type RunOutcome = { kind: 'done' | 'error' | 'cancelled'; error?: string; errorCode?: RunErrorCode | null; pendingToolCallId?: string }
@@ -247,6 +249,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     const author = trigger.source === 'chat' ? trigger.author : undefined
     const savedUser = trigger.source === 'chat' ? trigger.savedUser : undefined
     const queuedUser = trigger.source === 'chat' ? trigger.queuedUser : undefined
+    const foremanAlternate = trigger.source === 'chat' && trigger.foremanAlternate === true
 
     let agent = baseAgent
     let { connection, provider, model } = baseAgent.resolved
@@ -254,7 +257,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     let releaseConnectionAdmission = () => {}
     let nativeWorker: DesktopNativeWorker | undefined
     let closeModel = async (): Promise<void> => {}
-    let appendP: Promise<unknown> = Promise.resolve()
+    let appendP: Promise<MessageRow | void> = Promise.resolve()
     let contextUsage: (() => ContextOccupancy | undefined) | undefined
     let quickReplies: (() => QuickRepliesCapture | undefined) | undefined
     let cliAuthP: Promise<() => void> | undefined
@@ -367,17 +370,18 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             if (renewed) settlement = { ...settlement, error: new ClaudeSignInRenewedError(), errorCode: RUN_ERROR_CODES.authRenewed }
             if (settlement.errorCode === RUN_ERROR_CODES.refused) settlement = { ...settlement, error: new ProviderRefusedError(refusalReason(settlement.error)) }
             const errorCode = settlement.errorCode ?? null
+            const errorMessage = (errorCode === RUN_ERROR_CODES.usageLimit && apiCreditsMessage(provider, settlement.error)) || String(settlement.error)
             forgetCodexThread(agent.id, sessionId)
             logger.error({ err: String(settlement.error), errorCode, agent: agent.id, run: run.id }, 'run error')
             if (errorCode === RERUN_BUDGET_ERROR_CODE) armBudgetLatch()
             // The token is still on file, so the connection would keep reading "Ready" while every
             // run on it fails. The keyless Rerun connection answers for the hub's key, not the user's.
             if (errorCode === RUN_ERROR_CODES.unauthorized && connection && connection.id !== RERUN_CONNECTION_ID) recordCredentialRejected(connection.id)
-            await failRun(agent.id, run.id, String(settlement.error)).catch(() => {})
-            outcome = { kind: 'error', error: String(settlement.error), errorCode }
+            await failRun(agent.id, run.id, errorMessage).catch(() => {})
+            outcome = { kind: 'error', error: errorMessage, errorCode }
         }
 
-        await setAgentStatus(agent.id, 'idle').catch(() => {})
+        if (!foremanAlternate) await setAgentStatus(agent.id, 'idle').catch(() => {})
         // Codex only writes its rotated token to auth.json once the CLI has exited, so the next run
         // must not be able to start before this returns. Capped rather than awaited outright: a
         // teardown that hangs used to be enough to keep the whole conversation busy forever.
@@ -411,6 +415,9 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
                     model,
                     costMicros,
                 })
+                if (desktopApp() && outcome.kind === 'done' && trigger.source !== 'chat' && admission !== null) {
+                    await labelDesktopAutomationResult(agent, sessionId, run.id, trigger, admission, controller.signal)
+                }
                 const proposed = skillProposals.at(-1)
                 if (outcome.kind === 'done' && proposed) await emitSkillProposalEvent(agent, sessionId, run.id, proposed, author)
             }
@@ -426,7 +433,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             }
         }
 
-        if (outcome.kind === 'done' && !pending && agent.config.selfImprovement.enabled && userText) {
+        if (!foremanAlternate && outcome.kind === 'done' && !pending && agent.config.selfImprovement.enabled && userText) {
             void runCurator(agent, sessionId, userText, text ?? '', override).catch(e => logger.warn({ err: String(e) }, 'curator failed'))
         }
 
@@ -462,6 +469,10 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         // itself stays the shared instance, so a token refreshed here is refreshed for everyone.
         assertDesktopRunAdmission(admission)
         const resolved = await resolveRunModel(baseAgent, override)
+        if (foremanAlternate && (!desktopApp() || baseAgent.id !== FOREMAN_AGENT_ID || !savedUser || savedUser.sessionId !== sessionId
+            || override?.connectionId !== resolved.connection?.id || override?.model !== resolved.model)) {
+            throw new Error('This Chief of Staff retry lost its conversation or model.')
+        }
         if (desktopApp()) {
             if (trigger.source === 'schedule' && trigger.requireExactModel) assertExactDesktopScheduleModel(override, resolved)
             const { admitDesktopApiConnectionRun } = await import('../desktop/api-connections/run-authority.js')
@@ -470,7 +481,10 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         agent = resolved === baseAgent.resolved ? baseAgent : { ...baseAgent, resolved }
         ;({ connection, provider, model } = resolved)
         assertDesktopProvider(provider, resolved.connection?.id)
-        if (desktopApp() && provider === 'codex') {
+        if (foremanAlternate) {
+            // An alternate has no authority over the original chat's tools, decisions or files.
+            agent = { ...agent, config: { ...agent.config, tools: { ...agent.config.tools, desktopCodexGrants: {} } } }
+        } else if (desktopApp() && provider === 'codex') {
             assertDesktopRunAdmission(admission)
             const config = await beginDesktopCodexRun(agent.id, run.id, controller.signal)
             if (!agent.config.selfImprovement.enabled) config.selfImprovement = { ...config.selfImprovement, enabled: false }
@@ -485,18 +499,20 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         const triggerSlug = 'slug' in trigger ? trigger.slug : null
         void setRunContext(agent.id, run.id, { provider, model, triggerSource: trigger.source, triggerSlug }).catch(() => {})
 
-        const callTargetsP = agent.config.tools.callAgent ? listAgentIndex().then(idx => idx.filter(a => a.id !== agent.id && !a.name.endsWith(' delegate'))) : Promise.resolve([])
-        const toolsP = callTargetsP.then(callTargets => {
-            ctx.callTargets = callTargets
-            return buildTools(ctx)
-        })
+        const subscription = isDesktopSubscriptionProvider(provider)
+        const callTargetsP = !foremanAlternate && !subscription && agent.config.tools.callAgent ? listAgentIndex().then(idx => idx.filter(a => a.id !== agent.id && !a.name.endsWith(' delegate'))) : Promise.resolve([])
+        const toolsP = foremanAlternate || subscription ? Promise.resolve({ tools: {}, close: async () => {} }) :
+            callTargetsP.then(callTargets => {
+                ctx.callTargets = callTargets
+                return buildTools(ctx)
+            })
         const preparedP = !desktopApp() && CLI_PROVIDERS.has(provider) ? Promise.all(agent.config.mcpServers.map(s => prepareMcpServer(agent.id, s, agent.env))) : Promise.resolve([])
         // Claude reaches its servers through the engine's connections; Codex starts its own without
         // holding up the model, so it keeps dialing them as declared.
         const mcpServersP = provider === 'claude' ? preparedP.then(servers => withPooledRelays(agent, servers)) : preparedP
         cliAuthP = ensureCliAuth(provider, connection)
 
-        void setAgentStatus(agent.id, 'busy').catch(err => logger.warn({ err: String(err), agent: agent.id }, 'setAgentStatus busy failed'))
+        if (!foremanAlternate) void setAgentStatus(agent.id, 'busy').catch(err => logger.warn({ err: String(err), agent: agent.id }, 'setAgentStatus busy failed'))
 
         const system = await buildSystemPrompt(agent, trigger, provider, order)
         const systemText = systemPromptText(system)
@@ -551,6 +567,14 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             appendP.catch(err => logger.error({ err: String(err), agent: agent.id }, 'append user message failed'))
             turn = { role: 'user', content: [{ type: 'text', text: shared ? signText(userText, author) : userText }, ...context] }
         }
+        // The display receipt belongs to the prompt that caused compaction. Keep it outside
+        // model history and wait for that user row to exist before recording it.
+        const receipt = ctx.compactionReceipt
+        if (receipt) {
+            const userId = savedUser?.id ?? queuedUser?.id ?? (await appendP.catch(() => undefined))?.id
+            if (userId) await recordDesktopCompaction(agent.id, sessionId, run.id, userId, receipt).catch(error =>
+                logger.warn({ err: String(error), run: run.id }, 'could not save compaction receipt'))
+        }
         const turnMessages = [...history, turn]
 
         const cached = applyCaching(provider, { system, messages: turnMessages, sessionId })
@@ -574,11 +598,12 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         const imageRun = provider === 'codex' && desktopApp() && ctx.runId
             ? { runId: ctx.runId, sessionId, abortSignal: controller.signal, runRoot: nativeWorker?.root }
             : undefined
-        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker, imageRun)
+        const reasoningEffort = subscription ? await desktopSubscriptionEffort(resolved) : provider === 'claude' ? await desktopClaudeEffort(resolved) : await desktopCustomEffort(resolved)
+        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker, imageRun, reasoningEffort, sessionId)
         closeModel = resolvedModel.close
         contextUsage = resolvedModel.contextUsage
         // Cut out of the text whoever wrote it; only a coworker that offers replies gets the buttons.
-        if (offersQuickReplies(agent.config)) quickReplies = resolvedModel.quickReplies
+        if (!foremanAlternate && offersQuickReplies(agent.config)) quickReplies = resolvedModel.quickReplies
         const languageModel = resolvedModel.model
 
         let lastStepAt = Date.now()

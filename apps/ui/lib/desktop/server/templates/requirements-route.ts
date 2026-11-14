@@ -4,7 +4,7 @@ import { authenticateDesktopEngineRequest, DesktopHttpError } from '../auth'
 import { openDesktopDatabase } from '../database'
 import { assertCoworkerNotDeleting } from '../coworker-delete'
 import { boundedText } from '../mcp/remote'
-import { createTemplateAppRequirementProjection } from './requirements'
+import { readDesktopPortableSetupRequirements } from './requirements'
 
 export async function handleDesktopTemplateRequirements(request: Request) {
     try {
@@ -19,7 +19,7 @@ export async function handleDesktopTemplateRequirements(request: Request) {
             return localId
         }
         const original = await owner(input.engineAgentId)
-        const requirements = await createTemplateAppRequirementProjection(db, owner)(input.engineAgentId)
+        const requirements = await readDesktopPortableSetupRequirements(db, { id: original, engineAgentId: input.engineAgentId })
         if (original !== await owner(input.engineAgentId)) throw new DesktopHttpError(409, 'Template requirement owner changed')
         return Response.json({ engineAgentId: input.engineAgentId, requirements }, { headers: { 'Cache-Control': 'no-store' } })
     } catch { return Response.json({ error: 'Could not verify template requirement names.' }, { status: 409 }) }

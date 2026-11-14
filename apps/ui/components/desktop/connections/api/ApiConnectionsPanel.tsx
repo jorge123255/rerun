@@ -25,20 +25,22 @@ export type ApiConnectionsPanelProps = {
     active: boolean
     api: ApiConnectionsApi | null
     selectionContext: ApiSelectionContext | null
+    initialConnectionId?: string
     onCatalog?(catalog: DesktopApiConnectionCatalog): void
 }
 export function ApiConnectionsPanel(props: ApiConnectionsPanelProps) {
-    return <WorkspacePanel key={props.workspaceId} {...props} />
+    return <WorkspacePanel key={JSON.stringify([props.workspaceId, props.initialConnectionId ?? null])} {...props} />
 }
 function WorkspacePanel(props: ApiConnectionsPanelProps) {
     const latest = useRef(props); latest.current = props
     const [session, setSession] = useState<ApiConnectionsSession | null>(null)
     useEffect(() => {
         if (!props.api) { setSession(null); return }
-        const owned = new ApiConnectionsSession(props.workspaceId, props.api, () => latest.current.active ? latest.current.currentWorkspace() : null)
+        const owned = new ApiConnectionsSession(props.workspaceId, props.api, () => latest.current.active ? latest.current.currentWorkspace() : null,
+            props.initialConnectionId ? { kind: 'detail', connectionId: props.initialConnectionId } : undefined)
         setSession(owned)
         return () => owned.close()
-    }, [props.workspaceId, props.api])
+    }, [props.workspaceId, props.api, props.initialConnectionId])
     useEffect(() => { if (session) { if (props.active) void session.refresh(); else session.suspend() } }, [session, props.active])
     if (!props.active) return null
     if (!props.api) return <p role="status" className="p-4 text-xs text-muted-foreground">API connections are unavailable until the local connection service is connected.</p>
@@ -61,7 +63,11 @@ function SessionPanel({ session, selectionContext, onCatalog }: { session: ApiCo
         <PanelSteps stepKey={stepKey} depth={page.kind === 'list' ? 0 : 1}>
             {page.kind === 'add' ? <ApiAddProviderPage provider={page.provider} session={session} />
                 : selected ? <ApiConnectionDetail key={selected.connectionId} connection={selected} session={session} />
-                    : page.kind === 'detail' ? <div className="space-y-2 p-4"><p role="status" className="text-xs">This connection is unavailable. No sibling connection was selected.</p><Button type="button" size="sm" variant="outline" onClick={() => session.navigate({ kind: 'list' })}>Back to AI providers</Button></div>
+                    : page.kind === 'detail' ? <div className="space-y-2 p-4">
+                        <p role="status" className="text-xs">{!catalog && !state.error ? 'Loading connection…' : 'This connection is unavailable.'}</p>
+                        {state.error && <Button type="button" size="sm" variant="outline" onClick={() => void session.refresh()}>Reload connection</Button>}
+                        <Button type="button" size="sm" variant="outline" onClick={() => session.navigate({ kind: 'list' })}>Back to connection list</Button>
+                    </div>
                         : <PanelScroller className="space-y-6 p-4">
                             {!catalog && state.loading ? <div role="status" className="space-y-3">{[0, 1, 2].map(index => <div key={index} className="h-14 animate-pulse rounded-md border bg-muted/30" />)}<span className="sr-only">Loading connections…</span></div>
                                 : catalog ? <>
@@ -102,7 +108,7 @@ function DefaultModel({ session, selectionContext }: { session: ApiConnectionsSe
                 {selected < 0 && <option value={-1} disabled>{external ? `Current connection: ${catalog.default!.connectionId} · ${catalog.default!.model}` : catalog.default ? `${catalog.default.model} (unavailable)` : 'Choose a model'}</option>}
                 {catalog.connections.filter(c => c.connected && !c.credentialRejected).map(connection => <optgroup key={connection.connectionId} label={connection.name}>{choices.map((pick, index) => pick.connectionId === connection.connectionId && <option key={pick.model} value={index}>{catalogFor(connection.provider).models.find(model => model.id === pick.model)?.label ?? pick.model}</option>)}</optgroup>)}
             </select>
-            {!selectionContext && <p role="status" className="text-[11px] text-muted-foreground">Model selection is unavailable until the current local selection authority is connected.</p>}
+            {!selectionContext && <p role="status" className="text-[11px] text-muted-foreground">Named API keys are unavailable as workspace defaults.</p>}
         </div>
     </section>
 }

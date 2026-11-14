@@ -2,6 +2,9 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages } from '@/lib/desktop/locale'
+import { DesktopLocale } from './DesktopLocale'
 import { DesktopSharedFiles } from './DesktopSharedFiles'
 import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
 
@@ -59,10 +62,21 @@ afterEach(async () => {
     document.body.innerHTML = ''
 })
 
-test('keeps the read preview and offers rename only for files without exposing Delete', async () => {
+test('keeps the read preview and gates file and folder actions on the active workspace and listing', async () => {
+    const revision = 'a'.repeat(64)
+    api.list.mockImplementation(async (path: string) => ({
+        path, truncated: false, entries: path ? [entry('nested.txt')] : [
+            { ...entry('docs', 'dir'), deleteRevision: revision }, { ...entry('note.txt'), deleteRevision: revision }, entry('unconfirmed.txt'),
+        ],
+    }))
     await open()
     expect(button('Actions for docs')).toBeUndefined()
-    const actions = button('Actions for note.txt')
+    expect(button('Actions for note.txt')).toBeUndefined()
+    await act(async () => { root!.render(<DesktopSharedFiles workspaceId={7} />) })
+    await flush()
+    expect(button('Actions for unconfirmed.txt')).toBeUndefined()
+    expect(button('Actions for note.txt')).toBeDefined()
+    const actions = button('Actions for docs')
     expect(actions).toBeDefined()
     await act(async () => {
         actions!.focus()
@@ -70,7 +84,7 @@ test('keeps the read preview and offers rename only for files without exposing D
     })
     await flush()
     const menu = document.querySelector('[role="menu"]')
-    expect([...menu!.querySelectorAll('[role="menuitem"]')].map(item => item.textContent?.trim())).toEqual(['Rename'])
+    expect([...menu!.querySelectorAll('[role="menuitem"]')].map(item => item.textContent?.trim())).toEqual(['Rename', 'Delete'])
     await act(async () => { menu!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
     await flush()
     await row('note.txt')
@@ -118,6 +132,28 @@ test('failed listing and preview stay visible and can retry without claiming an 
 test('empty shared files describes only supported import and reading', async () => {
     api.list.mockResolvedValue({ path: '', entries: [], truncated: false })
     await open()
-    expect(document.body.textContent).toContain('Import supported documents, images, audio, video, or PDFs')
+    expect(document.body.textContent).toContain('Import text, images, audio, video, or PDFs')
+    expect(document.body.textContent).toContain('Coworkers with Read shared files can read shared .txt and .md files.')
     expect(document.body.textContent).not.toContain('Anything a coworker downloads')
+})
+
+test('Shared Files shows localized rows and import results without translating file names', async () => {
+    const language = { locale: 'fr', preference: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) } as const
+    const container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    await act(async () => root!.render(<DesktopLocale initial={language}>
+        <DesktopSharedFiles dialogControl={{ open: true, onOpenChange: vi.fn() }} />
+    </DesktopLocale>))
+    const dialog = document.querySelector('[role="dialog"]')
+    expect(dialog?.querySelector('h2')?.textContent).toBe('Fichiers partagés')
+    expect(dialog?.textContent).toContain('Taille')
+    expect(dialog?.textContent).toContain('Dossier')
+    expect(dialog?.textContent).toContain('note.txt')
+    expect(dialog?.querySelector('button[title="Importer"]')).toBeTruthy()
+    await pick(['nouveau.txt'])
+    const results = dialog?.querySelector('[aria-label="Résultats de l’importation"]')
+    expect(results?.textContent).toContain('nouveau.txt')
+    expect(results?.textContent).toContain('importé')
+    expect(results?.querySelector('button')?.textContent).toBe('Ouvrir')
 })

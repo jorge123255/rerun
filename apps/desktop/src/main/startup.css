@@ -1,14 +1,115 @@
-:root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #101214; color: #f4f4f0; }
+:root {
+    color-scheme: light dark;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    background: light-dark(#f8f8f8, #0a0a0a);
+    color: light-dark(#0a0a0a, #fafafa);
+}
+:root[data-appearance="light"] { color-scheme: light; }
+:root[data-appearance="dark"] { color-scheme: dark; }
 * { box-sizing: border-box; }
-body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 40px 24px; }
-main { width: min(100%, 520px); }
-.mark { width: 58px; height: 58px; border-radius: 18px; background: #c6e581; color: #172116; display: grid; place-items: center; font-size: 38px; margin-bottom: 36px; }
-.eyebrow { color: #b5ce8a; font-size: 11px; letter-spacing: .2em; font-weight: 600; }
-h1 { font-size: clamp(34px, 6vw, 56px); font-weight: 500; line-height: 1.05; letter-spacing: -.045em; margin: 18px 0 28px; }
-#message { color: #c5c8c4; font-size: 16px; line-height: 1.6; min-height: 52px; }
-.actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0 38px; }
-button { min-height: 44px; border: 0; border-radius: 9px; background: #c6e581; color: #172116; font: inherit; padding: 10px 20px; cursor: pointer; }
-button:focus-visible { outline: 2px solid white; outline-offset: 4px; }
-button.secondary { background: #25282a; color: #f4f4f0; }
-.footnote { max-width: 400px; color: #8a918b; font-size: 12px; line-height: 1.7; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
+#mac-titlebar { position: fixed; inset: 0 0 auto; height: 28px; -webkit-app-region: drag; app-region: drag; user-select: none; }
 [hidden] { display: none; }
+
+body.auth-surface {
+    --auth-card: light-dark(#fff, #171717);
+    --auth-border: light-dark(#e4e4e4, #ffffff1a);
+    --auth-muted: light-dark(#626262, #a1a1a1);
+}
+body.welcome {
+    grid-template-rows: minmax(132px, 1fr) auto;
+    place-items: stretch;
+}
+.welcome #mac-titlebar { z-index: 1; }
+.welcome-board {
+    background: url("startup-assets/board-light.webp") center / cover no-repeat;
+    mask-image: linear-gradient(transparent, #000 12%, #000 88%, transparent);
+    pointer-events: none;
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-appearance]) .welcome-board { background-image: url("startup-assets/board-dark.webp"); }
+}
+:root[data-appearance="dark"] .welcome-board { background-image: url("startup-assets/board-dark.webp"); }
+.welcome main {
+    position: relative;
+    border-radius: 24px 24px 0 0;
+    background: var(--auth-card);
+    padding: 52px 24px 16px;
+    text-align: center;
+    box-shadow: 0 -1px 0 light-dark(#0000000a, #ffffff0f), 0 -12px 40px light-dark(#00000014, #0008);
+}
+.welcome-content { max-width: 440px; margin-inline: auto; }
+.welcome .foreman {
+    position: absolute;
+    inset: -44px auto auto 50%;
+    translate: -50%;
+    filter: drop-shadow(0 6px 12px #21136555);
+}
+.welcome h1 {
+    margin: 0;
+    font-size: 30px;
+    font-weight: 500;
+    line-height: 1.2;
+    letter-spacing: -.02em;
+    text-wrap: balance;
+}
+.welcome #message, .welcome #update-status {
+    margin: 4px 0 0;
+    font-size: 15px;
+    line-height: 20px;
+    color: var(--auth-muted);
+    overflow-wrap: anywhere;
+}
+.welcome .actions { display: grid; gap: 8px; margin: 16px 0 0; }
+.welcome .actions:not(:has(button:not([hidden]))) { display: none; }
+.auth-surface button {
+    min-height: 46px;
+    cursor: pointer;
+    font-family: inherit;
+    border: 1px solid transparent;
+    border-radius: 14px;
+    background: light-dark(#171717, #e5e5e5);
+    color: light-dark(#fafafa, #171717);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 8px 16px;
+}
+.auth-surface button.secondary {
+    border-color: var(--auth-border);
+    background: var(--auth-card);
+    color: inherit;
+}
+.auth-surface button:disabled { cursor: default; opacity: .65; }
+.auth-surface button:enabled:hover { filter: brightness(light-dark(1.08, .9)); }
+.auth-surface button.secondary:enabled:hover { background: light-dark(#f3f3f3, #232323); }
+.auth-surface button:focus-visible { outline: 2px solid light-dark(#4d34f7, #b7a8ff); outline-offset: 2px; }
+.welcome .actions button {
+    min-height: 52px;
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 22px;
+}
+.welcome .actions button.secondary {
+    background: light-dark(#fff, #ffffff0b);
+    border-color: light-dark(#e4e4e4, #ffffff26);
+}
+.welcome .connection-error { margin: 0; font-size: 13px; color: light-dark(#b70013, #ff9294); }
+.welcome .footnote { margin: 16px auto 0; color: var(--auth-muted); font-size: 12px; line-height: 16px; }
+.welcome button.text-action {
+    justify-self: center;
+    min-height: 36px;
+    background: transparent;
+    color: inherit;
+    font-size: 15px;
+    font-weight: 500;
+}
+.welcome button.text-action:enabled:hover { background: light-dark(#0000000a, #ffffff0b); filter: none; }
+.welcome #quit { color: var(--auth-muted); font-size: 13px; }
+body.welcome.recovery { grid-template-rows: minmax(90px, 1fr) auto; }
+@media (max-width: 600px) {
+    .welcome-board { background-position: 18% center; background-size: auto max(100%, 270px); }
+}
+@media (max-height: 580px) {
+    .welcome main { padding-block: 44px 8px; }
+    .welcome .foreman { width: 64px; height: auto; inset-block-start: -40px; }
+}

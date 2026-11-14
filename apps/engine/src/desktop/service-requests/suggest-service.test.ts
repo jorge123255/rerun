@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { desktopServiceRequestFingerprint, findDesktopServiceRequest, parseDesktopServiceRequestInput, type DesktopServiceRequestRow } from '@rerun/contracts'
 import type { RunContext } from '../../runtime/context.js'
-import { HITL_ACK } from '../../tools/builtin/hitl.js'
+import { HITL_ACK_CALL_FIRST } from '../../tools/builtin/hitl.js'
 import { decideDesktopServiceRequestTurn, desktopServicePendingMessage } from './admission.js'
 import { desktopSuggestServiceTools } from './suggest-service.js'
 
@@ -28,7 +28,7 @@ describe('desktop suggest_service', () => {
         const suggest = tools.suggest_service!
         await expect(suggest.execute!({ services: [{ slug: 'notion' }, { slug: 'notion', reason: 'again' }] }, options)).rejects.toThrow('Duplicate slugs were not delivered')
         await expect(suggest.execute!({ services: [{ slug: 'notion@abcdef' }] }, options)).rejects.toThrow('exact catalog slugs')
-        expect(await suggest.execute!({ services: [{ slug: 'notion', reason: 'pages' }, { slug: 'slack' }] }, options)).toEqual(HITL_ACK)
+        expect(await suggest.execute!({ services: [{ slug: 'notion', reason: 'pages' }, { slug: 'slack' }] }, options)).toEqual(HITL_ACK_CALL_FIRST)
         expect(suggest.description).toContain('END YOUR TURN')
         expect(suggest.description).not.toContain('rerun_hub_service_')
     })

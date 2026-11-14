@@ -26,6 +26,17 @@ jobs:
       - run: pnpm --filter rerun lint
       - run: pnpm --filter rerun test
 
+  i18n:
+    name: Language packs match the English source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm i18n:check
+
   desktop-files:
     name: macOS engine and desktop file publication
     runs-on: macos-15

@@ -10,5 +10,5 @@ function Loading({ label, children, className }: { label: string; children: Reac
 export function FxFilesLoading() { return <Loading label="Loading files…"><SkeletonFileGrid tiles={10} /></Loading> }
 export function FxMemoriesLoading({ searching = false }: { searching?: boolean }) { return <Loading label={searching ? 'Searching memories…' : 'Loading memories…'}><SkeletonPanelRows rows={5} badge /></Loading> }
 export function FxSettingsLoading() { return <Loading label="Loading coworker settings…" className="flex flex-col gap-4 p-4"><SkeletonForm /></Loading> }
-export function FxSchedulesLoading() { return <Loading label="Loading scheduled tasks…"><SkeletonPanelRows rows={5} lines={3} badge /></Loading> }
+export function FxSchedulesLoading({ label = 'Loading scheduled tasks…' }: { label?: string }) { return <Loading label={label}><SkeletonPanelRows rows={5} lines={3} badge /></Loading> }
 export function FxToolsLoading() { return <Loading label="Loading tools…"><SkeletonCardGrid rows={6} className="p-3" /></Loading> }

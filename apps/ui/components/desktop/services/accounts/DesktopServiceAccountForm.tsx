@@ -15,6 +15,7 @@ export function DesktopServiceAccountForm({
     methods,
     saved,
     submitLabel,
+    oauthSubmitLabel = 'Save configuration',
     onSubmit,
     onCancel,
     disabled = false,
@@ -23,6 +24,7 @@ export function DesktopServiceAccountForm({
     methods: ServiceAccountMethod[]
     saved: DesktopServiceAccountView | null
     submitLabel: string
+    oauthSubmitLabel?: string
     onSubmit: (methodId: string, values: Record<string, string>) => Promise<void>
     onCancel: () => void
     disabled?: boolean
@@ -111,7 +113,7 @@ export function DesktopServiceAccountForm({
                 <>
                     <ServiceFields inputs={inputs} values={draft.values} onChange={(key, value) => { if (!disabled && !pending.current.has(identity)) { epoch.current += 1; update({ values: { ...draft.values, [key]: value } }); setError('') } }} />
                     <div className="flex flex-wrap gap-2">
-                        <Button size="sm" disabled={disabled || busy || missing} onClick={() => void submit()}>{busy ? 'Saving…' : method.kind === 'oauth' ? 'Save configuration' : submitLabel}</Button>
+                        <Button size="sm" disabled={disabled || busy || missing} onClick={() => void submit()}>{busy ? 'Saving…' : method.kind === 'oauth' ? oauthSubmitLabel : submitLabel}</Button>
                         <Button size="sm" variant="ghost" disabled={disabled && !busy} onClick={cancel}>Cancel</Button>
                     </div>
                 </>

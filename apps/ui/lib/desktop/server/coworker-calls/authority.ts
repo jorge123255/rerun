@@ -2,6 +2,7 @@ import 'server-only'
 import {
     desktopCoworkerCallTargetSchema,
     FOREMAN_AGENT_ID,
+    FOREMAN_DISPLAY_NAME,
     type DesktopForemanChatRef,
     type DesktopCoworkerCallTarget,
 } from '@rerun/contracts'
@@ -124,7 +125,7 @@ export async function authorizeDesktopCoworkerCall(runtime: DesktopRuntime, db: 
                 || (await ownedForemanDispatch(runtime, db, input.engineSessionId, input.engineRunId)).chat.chatId !== owner.chat.chatId) throw new Error('Owner changed')
             signal.throwIfAborted()
             assertDesktopWorkspaceAdmission(runtime)
-            return { ok: true, caller: { publicAgentId: FOREMAN_AGENT_ID, publicSessionId: owner.chat.chatId, name: 'Foreman', targets } }
+            return { ok: true, caller: { publicAgentId: FOREMAN_AGENT_ID, publicSessionId: owner.chat.chatId, name: FOREMAN_DISPLAY_NAME, targets } }
         } catch { return { ok: false, reason: 'This Foreman run can no longer call a coworker.' } }
     }
     const local = await db.execute({ sql: 'SELECT id, name, enabled, engine_agent_id FROM desktop_agents WHERE engine_agent_id = ? AND workspace_id = 1', args: [input.engineAgentId] })

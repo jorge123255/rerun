@@ -1,62 +1,266 @@
-import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, session } from 'electron'
+import * as electron from 'electron'
+import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { mkdir } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
 import { createWorkspaceCoordinator, seedLegacyCatalog, getWorkspace } from './workspaces/index.mjs'
-import { loadBundle, loadIdentity, workspaceIdentity } from './runtime.mjs'
+import { DesktopSecureStorageError, loadBundle, loadIdentityFromSafeStorage, workspaceIdentity } from './runtime.mjs'
 import { RuntimeSupervisor } from './supervisor.mjs'
 import { createDesktopNotifications } from './notifications.mjs'
-import { createNotificationClickHandoff } from './notification-click-handoff.mjs'
-import { BeforeQuitDrafts, completeDesktopQuit } from './before-quit.mjs'
+import { createNotificationClickHandoff, createNotificationClickRouter } from './notification-click-handoff.mjs'
+import { completeDesktopQuit } from './before-quit.mjs'
 import { createDesktopTemplateFiles } from './templates.mjs'
 import { createDesktopCoworkerShareFiles } from './coworker-share-files.mjs'
 import { createNativeRemoteMachines } from './remote-machines/binding.mjs'
 import { createRemoteMachineIpc } from './remote-machines/ipc.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
-import { createDesktopResultFileSave } from './result-files.mjs'
-import { handleFindInPage } from './find-in-page.mjs'
+import { createDesktopFileSaves, safeDisplayedImageError } from './result-files.mjs'
+import { installMacApplicationMenu } from './application-menu.mjs'
+import { approvedQuitAction, BUILD_RELEASE, createMacUpdater } from './mac-updates.mjs'
+import { loadShellLanguage, localizeStartupStatus, shellCopy, shellText } from './shell-language.mjs'
+import { createMacMenuBar, macLoginItemSettings, setMacOpenAtLogin } from './mac-menu-bar.mjs'
+import { attachDesktopContextMenu, externalDesktopLink } from './window-context-menu.mjs'
+import { createWindowFind } from './window-find.mjs'
+import { createQuickAskWindow } from './quick-ask-window.mjs'
+import { loadQuickAskShortcut } from './quick-ask-shortcut.mjs'
+import { cascadeWindowBounds, createBoardWindows } from './board-windows.mjs'
+import { captureWindowPlacement, createWindowPlacements, macWorkspaceMinimumSize, restoreWindowZoom } from './window-placement.mjs'
+import { hideWorkspaceWindow, revealWorkspaceWindow } from './window-visibility.mjs'
+import { createConnectedHubs } from './connected-hubs.mjs'
+import { hubConnectionError } from './connected-hub-messages.mjs'
+import { parseHubLink, registerHubProtocol } from './connected-hub-policy.mjs'
+import { configureStartupProfile, hasLocalWorkspace, loadStartupWorkspace } from './startup-workspace.mjs'
+import { createMacPhonePairingService } from './mac-phone-pairing/index.mjs'
+import { pairingQrImage } from './mac-phone-pairing/qr.mjs'
+import { createPhonePairingWindow } from './mac-phone-pairing-window.mjs'
 
+const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, screen, shell, session, Tray, WebContentsView } = electron
 const directory = fileURLToPath(new URL('.', import.meta.url))
+const resources = app.isPackaged ? process.resourcesPath : resolve(directory, '../../resources')
 const startup = resolve(directory, 'startup.html')
+const mac = process.platform === 'darwin'
+let dataRoot
+let windowPlacements
+const boardPlacement = 'local-board'
+const startupRevealDelay = 3000
+let storageSetupError
 let window
+let menuBar
+let shellLanguage
+let shortcutPreference
+let lastWorkspaceWindow
+let saveBoardPlacement
+let showWindowOnReady = true
 let supervisor
 let runtime
 let workspaces
 let remoteMachines
 let remoteInstallId
-let rendererEpoch = randomUUID()
 const remoteClosures = new Map()
 let activeSession
 let activeWorkspaceId
+let connectedHubs
+let pendingHubLink
+let reopeningHub
+let openingStartupCloud
+let deferringStartupWindow = false
 let transitioning = false
+let mountingWorkspaceRuntime
 let quitting = false
 let quittingNow = false
-let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
+let phonePairing
+let openingLocalWorkspace
+let startupWorkspace
+let bootStatus = { state: 'starting' }
 const profile = 'persist:rerun-desktop-local'
-const draftQuit = new BeforeQuitDrafts()
-const saveResultFile = createDesktopResultFileSave({ dialog, context: () => {
-    if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
-    return { runtime, window }
-} })
-const templateFiles = createDesktopTemplateFiles({ dialog, context: () => {
-    if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
-    return { runtime, window }
-} })
-const coworkerShareFiles = createDesktopCoworkerShareFiles({ dialog, context: () => {
-    if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
-    return { runtime, window }
-} })
-const remoteMachineIpc = createRemoteMachineIpc({ trusted, context: () => {
+const boards = createBoardWindows({ startupUrl: pathToFileURL(startup).href, isDesktopPage })
+const rendererCrashInterval = 60_000
+const rendererFailureStatus = { state: 'error', messageKey: 'rendererClosed' }
+const changingBoards = new Set()
+const phonePairingCopy = () => shellCopy(shellLanguage?.forScope('local'), 'phonePairing')
+const phonePairingWindow = createPhonePairingWindow({ BrowserWindow, title: () => phonePairingCopy().title })
+const quickAsk = createQuickAskWindow({ app, BrowserWindow, screen, showBoard: revealWorkspaceWindow,
+    language: () => shellLanguage?.forScope('local'), boardScope: candidate => {
+        const context = boardContext(candidate)
+        return context ? { epoch: context.rendererEpoch, contents: candidate.webContents, appearance: boards.get(candidate).appearance } : null
+    },
+})
+const windowFind = createWindowFind({ WebContentsView, scopeOf: candidate => boardContext(candidate)?.rendererEpoch ?? connectedHubs?.scopeOf(candidate),
+    language: candidate => shellLanguage?.forScope(connectedHubs?.languageScopeOf(candidate) ?? 'local'),
+    appearance: candidate => boards.get(candidate)?.appearance ?? connectedHubs?.appearanceOf(candidate) ?? null,
+    topInset: candidate => mac && !candidate.isFullScreen() ? 28 : 0,
+})
+function boardContext(candidate) {
+    const entry = boards.get(candidate)
+    if (quitting || transitioning || changingBoards.has(candidate) || !runtimeScope() || !boards.ready(entry, runtime)) return null
+    return { runtime, window: candidate, rendererEpoch: entry.epoch }
+}
+const filesFor = candidate => createDesktopFileSaves({ dialog, context: () => boardContext(candidate) })
+const templatesFor = candidate => createDesktopTemplateFiles({ dialog, context: () => boardContext(candidate) })
+const sharesFor = candidate => createDesktopCoworkerShareFiles({ dialog, context: () => boardContext(candidate) })
+const remoteMachineIpc = createRemoteMachineIpc({ trusted: trustedPrimary, context: () => {
     const current = supervisor?.runtime
     if (quitting || transitioning || !remoteMachines || !runtime || runtime !== current || supervisor.status.state !== 'ready'
-        || remoteClosures.has(current.workspaceId) || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
+        || remoteClosures.has(current.workspaceId) || !boards.ready(boards.get(window), current)) return null
     return { binding: remoteMachines, actor: { installId: remoteInstallId, workspaceId: current.workspaceId,
-        launchNonce: current.launchNonce, rendererEpoch } }
+        launchNonce: current.launchNonce, rendererEpoch: boards.get(window).epoch } }
 } })
 const clickHandoff = createNotificationClickHandoff()
+const clickRouter = createNotificationClickRouter({
+    canRoute: () => !quitting && !transitioning,
+    currentScope: clickScope,
+    switchWorkspace: workspaceId => runWorkspaceTransition(() => workspaces.switchTo({ workspaceId, requestId: randomUUID() })),
+    deliver(target, scope) {
+        showMainWindow()
+        clickHandoff.accept(target, scope)
+        flushNotificationClicks()
+    },
+})
 let clickReady = null
-let desktopNotifications = createNotices()
+const desktopNotifications = createDesktopNotifications({ Notification, onClick: openDesktopNotice })
+let localUnread = 0
+let hubUnread = 0
+function startupChoices(includeLocal = true) {
+    const t = shellText(shellLanguage?.forScope('local'))
+    return {
+        ...(includeLocal ? { local: t('startup.runLocally') } : {}),
+        cloud: t('startup.signInCloud'), connect: t('startup.connectServer'),
+        connecting: t('server.connecting'), unreachable: t('server.unreachable'),
+    }
+}
+function publishBootStatus(status) {
+    bootStatus = status
+    if (window && !window.isDestroyed()) window.webContents.send('desktop:status', startupStatus(bootStatus))
+}
+function startupStatus(status) {
+    return localizeStartupStatus(shellLanguage?.forScope('local'), status)
+}
+function workspaceChoiceStatus() {
+    return { state: 'choose', messageKey: 'chooseWorkspace', choices: startupChoices() }
+}
+function leaveLocalUnlock() {
+    if (bootStatus.state !== 'keychain') return
+    openingLocalWorkspace?.abort()
+    openingLocalWorkspace = null
+    publishBootStatus(workspaceChoiceStatus())
+}
+function reportStartupError(error) {
+    deferringStartupWindow = false
+    const secureStorageBlocked = mac && error instanceof DesktopSecureStorageError
+    if (supervisor) supervisor.publish('error', 'verificationFailed')
+    else if (secureStorageBlocked) {
+        const t = shellText(shellLanguage?.forScope('local'))
+        publishBootStatus({ state: 'error', messageKey: 'keychainBlocked', choices: startupChoices(false),
+            retryLabel: t('startup.restartToRetry') })
+    } else publishBootStatus({ state: 'error', messageKey: 'setupFailed' })
+}
+function showMainWindow() {
+    showWindowOnReady = true
+    revealWorkspaceWindow(window)
+}
+function selectLocalWorkspace() {
+    if (quitting) return
+    showMainWindow()
+    if (runtimeScope()) void startupWorkspace.remember('local')
+    else if (bootStatus.state === 'choose') void openLocalWorkspace()
+}
+function reopenRememberedHub() {
+    if (!reopeningHub) {
+        const controller = new AbortController()
+        const promise = connectedHubs.reopenRemembered({
+            signal: controller.signal, reveal: () => showWindowOnReady,
+        }).catch(() => false).finally(() => { if (reopeningHub?.controller === controller) reopeningHub = null })
+        reopeningHub = { controller, promise }
+    }
+    return reopeningHub.promise
+}
+function showWorkspaceWindow() {
+    if (quitting) return
+    showWindowOnReady = true
+    if (deferringStartupWindow) {
+        if (bootStatus.messageKey === 'reconnecting'
+            && !connectedHubs.restorePickerOnActivation(BrowserWindow.getFocusedWindow())) showMainWindow()
+        return
+    }
+    const focused = BrowserWindow.getFocusedWindow()
+    if (connectedHubs?.restorePickerOnActivation(focused)) return
+    for (const candidate of [focused, lastWorkspaceWindow]) {
+        if (connectedHubs?.focusWindow(candidate)) return
+        if (boardContext(candidate)) { revealWorkspaceWindow(candidate); return }
+    }
+    if (connectedHubs && bootStatus.state === 'choose' && !openingLocalWorkspace && !supervisor) {
+        void reopenRememberedHub().then(opened => {
+            if (!opened && !quitting && !openingLocalWorkspace
+                && !connectedHubs.restorePickerOnActivation(BrowserWindow.getFocusedWindow())) showMainWindow()
+        })
+    } else showMainWindow()
+}
+function publishMacUnread() {
+    if (process.platform !== 'darwin') return
+    const count = Math.min(localUnread + hubUnread, 9999)
+    app.setBadgeCount(count)
+    try { menuBar?.setUnread(count) }
+    catch { console.warn('Could not update the Rerun menu-bar item.') }
+}
+function setMacUnread(count) {
+    localUnread = count
+    publishMacUnread()
+}
+function toggleQuickAsk(candidate) {
+    if (quitting) return
+    const focused = candidate ?? BrowserWindow.getFocusedWindow() ?? lastWorkspaceWindow
+    const background = !supervisor && bootStatus.state === 'choose' && !openingLocalWorkspace
+    if (connectedHubs?.toggleQuickAsk(focused, { background })) {
+        quickAsk.reset()
+        return
+    }
+    if (!focused || focused.isDestroyed() || boardContext(focused) || quickAsk.ownsWindow(focused)) {
+        connectedHubs?.resetQuickAsk()
+        quickAsk.toggle(focused && !focused.isDestroyed() ? focused : window)
+    }
+}
+function desktopSettings() {
+    return { quickAsk: shortcutPreference.state().enabled, closeToTray: true, openAtLogin: macLoginItemSettings(app)?.openAtLogin === true }
+}
+async function changeDesktopSettings(patch, assertCurrent) {
+    if (typeof patch?.quickAsk === 'boolean') {
+        try { await shortcutPreference.change(patch.quickAsk, assertCurrent) }
+        catch { assertCurrent(); return desktopSettings() }
+    }
+    assertCurrent()
+    setMacOpenAtLogin(app, patch?.openAtLogin)
+    return desktopSettings()
+}
+function openExternal(href) {
+    const url = externalDesktopLink(href)
+    if (url) void shell.openExternal(url).catch(() => {})
+}
+function reportImageSaveFailure(candidate, error) {
+    const options = { type: 'warning', title: 'Save Image', message: safeDisplayedImageError(error), buttons: ['OK'], defaultId: 0, noLink: true }
+    const parent = candidate && !candidate.isDestroyed() ? candidate : null
+    void (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options)).catch(() => {})
+}
+function focusedBoard() {
+    const focused = BrowserWindow.getFocusedWindow()
+    return boards.get(focused) ? focused : window
+}
+function workspaceMenuTarget(candidate) {
+    const last = lastWorkspaceWindow && !lastWorkspaceWindow.isDestroyed() ? lastWorkspaceWindow : window
+    const target = candidate ?? BrowserWindow.getFocusedWindow() ?? last
+    // A picker or child window is not a workspace command target.
+    return boards.get(target) || connectedHubs?.ownsWindow(target) ? target : null
+}
+async function confirmDiscard(candidate, action) {
+    const options = {
+        type: 'warning', title: 'Unsaved changes',
+        message: 'Some changes haven’t been saved.',
+        detail: 'Stay in Rerun to review or save your changes.',
+        buttons: ['Stay', action + ' without saving'], defaultId: 0, cancelId: 0, noLink: true,
+    }
+    const parent = candidate && !candidate.isDestroyed() ? candidate : null
+    revealWorkspaceWindow(parent)
+    const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
+    return result.response === 1
+}
 function runtimeScope() {
     const current = supervisor?.runtime
     if (!current || !runtime || runtime !== current || supervisor.status.state !== 'ready') return null
@@ -68,67 +272,84 @@ function clickScope() {
 }
 function flushNotificationClicks() {
     clickHandoff.flush(clickScope(), target => {
-        if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return false
+        if (quitting || transitioning || !boards.ready(boards.get(window), runtime)) return false
         if (!clickReady || clickReady.contents !== window.webContents) return false
         window.webContents.send('desktop:notification-click', target)
         return true
     })
 }
-function createNotices() { return createDesktopNotifications({ Notification, onClick: (target, scope) => {
-    const current = clickScope()
-    if (!scope || !current || scope.workspaceId !== current.workspaceId || scope.launchNonce !== current.launchNonce) return
-    if (window && !window.isDestroyed()) {
-        if (window.isMinimized()) window.restore()
-        window.show(); window.focus()
-    }
-    // Bind the click to the runtime that originally submitted the notice, even after reload.
-    clickHandoff.accept(target, scope)
-    flushNotificationClicks()
-} }) }
+function openDesktopNotice(target, scope) {
+    if (!quitting) void clickRouter.accept(target, scope)
+}
 
-if (!app.requestSingleInstanceLock()) app.quit()
+let refreshUpdateSurfaces = () => {}
+const macUpdates = mac && !process.mas ? createMacUpdater({
+    autoUpdater: electron.autoUpdater, app, dialog, release: { ...BUILD_RELEASE, packaged: app.isPackaged },
+    getWindow: () => BrowserWindow.getFocusedWindow() ?? focusedBoard(),
+    text: () => shellText(shellLanguage?.locale()),
+    onState: () => refreshUpdateSurfaces(),
+}) : null
+
+try {
+    dataRoot = configureStartupProfile(app)
+    windowPlacements = mac ? createWindowPlacements({ dataRoot, screen }) : null
+} catch (error) { storageSetupError = error }
+
+if (storageSetupError) {
+    dialog.showErrorBox('Rerun could not start', 'Check that Rerun can open its data folder and try again.')
+    app.exit(1)
+} else if (!app.requestSingleInstanceLock()) app.quit()
 else {
-    app.on('second-instance', () => { if (window?.isMinimized()) window.restore(); window?.show(); window?.focus() })
-    app.on('activate', () => { window?.show(); window?.focus() })
+    if (mac) app.on('open-url', (event, address) => {
+        const link = parseHubLink(address)
+        if (!link) return
+        event.preventDefault()
+        if (link.kind === 'open' && (!connectedHubs || deferringStartupWindow)) {
+            pendingHubLink = link
+            reopeningHub?.controller.abort()
+        } else if (connectedHubs) void connectedHubs.openLink(link).catch(() => {})
+    })
+    app.on('second-instance', showWorkspaceWindow)
+    app.on('activate', showWorkspaceWindow)
     app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
     app.on('before-quit', event => {
         if (quittingNow) return
         event.preventDefault()
-        if (quitting || transitioning) return
+        if (quitting || transitioning || changingBoards.size) return
         quitting = true
+        for (const board of boards.list()) windowFind.close(board.window)
+        quickAsk.reset()
         void completeDesktopQuit({
-            flush: () => {
-                if (!window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url) || !draftQuit.ready) return true
-                return draftQuit.request(value => window.webContents.send('desktop:before-quit', value))
+            flush: () => boards.flushAll(runtime),
+            confirmDiscard: () => confirmDiscard(focusedBoard(), 'Quit'),
+            stop: async () => {
+                openingLocalWorkspace?.abort()
+                await connectedHubs?.closeAll()
+                await shortcutPreference?.flush()
+                await remoteMachines?.close()
+                phonePairingWindow.close()
+                await phonePairing?.stop()
+                await supervisor?.stop()
+                saveBoardPlacement?.()
+                await windowPlacements?.flush()
+                await shellLanguage?.flush()
+                await startupWorkspace?.flush()
             },
-            confirmDiscard: async () => {
-                const options = {
-                    type: 'warning', title: 'Unsent drafts could not be saved',
-                    message: 'Some unsent drafts could not be saved.',
-                    detail: 'Stay in Rerun to try again, or quit without saving the latest draft changes.',
-                    buttons: ['Stay', 'Quit without saving'], defaultId: 0, cancelId: 0, noLink: true,
-                }
-                const parent = window && !window.isDestroyed() ? window : null
-                if (parent) { parent.show(); parent.focus() }
-                const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
-                return result.response === 1
-            },
-            stop: async () => { await remoteMachines?.close(); await supervisor?.stop() },
-            quit: () => { clickHandoff.stop(); quittingNow = true; app.quit() },
+            quit: () => { clickHandoff.stop(); desktopNotifications.close(); quittingNow = true; approvedQuitAction(macUpdates, app) },
             cancelled: resumeAfterCancelledQuit,
         }).catch(() => { if (!quittingNow) resumeAfterCancelledQuit() })
     })
-    app.whenReady().then(launch).catch(() => {
-        bootStatus = { state: 'error', message: 'Desktop setup failed. Check that this app has a complete bundled runtime and access to Mac secure storage.' }
-        if (supervisor) supervisor.publish('error', 'Workspace state could not be verified. Restore the workspace state before retrying.')
-        else window?.webContents.send('desktop:status', bootStatus)
-    })
+    app.whenReady().then(launch).catch(reportStartupError)
 }
 
 function trusted(event) {
-    if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('Untrusted desktop request')
-    const url = new URL(event.senderFrame.url)
-    if (url.href !== pathToFileURL(startup).href && (!runtime || url.origin !== runtime.app.origin || url.pathname !== '/desktop')) throw new Error('Untrusted desktop page')
+    return boards.trusted(event, runtime)
+}
+
+function trustedPrimary(event) {
+    const entry = trusted(event)
+    if (!entry.primary || entry.window !== window) throw new Error('This operation requires the main workspace window')
+    return entry
 }
 
 function isDesktopPage(href) {
@@ -142,29 +363,236 @@ function isDesktopPage(href) {
 function resumeAfterCancelledQuit() {
     quitting = false
     // The renderer stays frozen after an ACK, until shutdown or this explicit cancellation.
-    try {
-        if (window && !window.isDestroyed() && isDesktopPage(window.webContents.mainFrame.url)) {
-            window.webContents.send('desktop:quit-cancelled')
-        }
-    } catch {}
+    for (const board of boards.list()) resumeBoard(board)
     flushNotificationClicks()
 }
 
+function resumeBoard(board) {
+    try { if (boards.ready(board, runtime)) board.contents.send('desktop:quit-cancelled') } catch {}
+}
+
 async function launch() {
-    const dataRoot = resolve(app.getPath('appData'), 'Rerun Desktop Preview')
-    await mkdir(dataRoot, { recursive: true, mode: 0o700 })
-    app.setPath('userData', dataRoot)
+    deferringStartupWindow = mac
+    if (mac) {
+        startupWorkspace = await loadStartupWorkspace(dataRoot)
+        if (app.isPackaged && !registerHubProtocol(app)) console.warn('Could not register Rerun development links with macOS.')
+        // A packaged app carries its icon in the bundle. A development run is Electron's own
+        // bundle, so the Dock would show Electron's icon.
+        if (!app.isPackaged) {
+            const icon = nativeImage.createFromPath(resolve(directory, '../../build-resources/icon.png'))
+            if (!icon.isEmpty()) app.dock?.setIcon(icon)
+        }
+        shortcutPreference = await loadQuickAskShortcut({ dataRoot, globalShortcut, open: toggleQuickAsk })
+        const currentLanguageScope = () => {
+            const focused = BrowserWindow.getFocusedWindow()
+            if (boards.get(focused)) return 'local'
+            return connectedHubs?.languageScopeOf(focused) ?? connectedHubs?.languageScopeOf(lastWorkspaceWindow) ?? 'local'
+        }
+        shellLanguage = await loadShellLanguage({ dataRoot,
+            systemLanguages: [...app.getPreferredSystemLanguages(), app.getLocale()], currentScope: currentLanguageScope,
+            onChange: () => { refreshApplicationMenu(); menuBar?.refresh() } })
+        connectedHubs = createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
+            updates: macUpdates, canRestartForUpdate: () => !transitioning && !changingBoards.size,
+            available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate),
+            setUnread: count => { hubUnread = count; publishMacUnread() }, desktopSettings, changeDesktopSettings,
+            setLanguage: (scope, locale) => shellLanguage.set(scope, locale), language: scope => shellLanguage.forScope(scope),
+            onConnect: ({ remembered }) => {
+                if (bootStatus.choices && !supervisor && !openingLocalWorkspace && window && !window.isDestroyed()) {
+                    hideWorkspaceWindow(window)
+                }
+                if (remembered) return startupWorkspace.remember('connected')
+            },
+            systemAppearance: () => nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+            localAppearance: candidate => boards.get(candidate)?.appearance ?? null })
+        app.on('browser-window-focus', (_event, candidate) => {
+            const hub = connectedHubs.ownsWindow(candidate)
+            if (boards.get(candidate) || hub) {
+                if (hub || boardContext(candidate)) lastWorkspaceWindow = candidate
+                shellLanguage.select(connectedHubs.languageScopeOf(candidate) ?? 'local')
+            }
+        })
+        app.once('will-quit', shortcutPreference.unregister)
+        const refreshApplicationMenu = () => installMacApplicationMenu({
+            Menu, appName: app.name, isDesktopPage, locale: shellLanguage.locale(),
+            settingsWindow: candidate => {
+                const target = workspaceMenuTarget(candidate)
+                return boardContext(target) && boards.get(target).drafts.ready ? target : null
+            },
+            openDocumentation: () => openExternal('https://docs.rerun.build'),
+            openFind: (_item, candidate) => windowFind.open(workspaceMenuTarget(candidate)),
+            openQuickAsk: (_item, candidate) => toggleQuickAsk(candidate),
+            openLocalWorkspace: selectLocalWorkspace,
+            openNewWindow: (_item, candidate) => {
+                const target = workspaceMenuTarget(candidate)
+                if (connectedHubs.duplicateWindow(target) || !boardContext(target)) return
+                void openAdditionalBoard(cascadeWindowBounds(target, screen)).catch(() => {})
+            },
+            openHubPicker: (_item, candidate) => {
+                reopeningHub?.controller.abort()
+                openingStartupCloud?.abort()
+                leaveLocalUnlock()
+                connectedHubs.openPicker(workspaceMenuTarget(candidate))
+            },
+            openPhonePairing: () => phonePairingWindow.open(),
+            reloadWindow: (_item, candidate) => {
+                const target = workspaceMenuTarget(candidate)
+                if (!connectedHubs.reloadWindow(target)) void reloadBoard(target).catch(() => {})
+            },
+            devTools: !app.isPackaged,
+            checkForUpdates: macUpdates ? () => { void macUpdates.checkFromMenu() } : undefined,
+            updateItem: macUpdates?.menuItem(),
+        })
+        refreshApplicationMenu()
+        try {
+            menuBar = createMacMenuBar({ app, Menu, Tray, nativeImage, openWindow: showWorkspaceWindow, locale: shellLanguage.locale, updates: macUpdates,
+                quickAsk: { enabled: () => shortcutPreference.state().enabled, open: toggleQuickAsk } })
+            showWindowOnReady = !menuBar.startedAtLogin
+        } catch {
+            console.warn('Could not start the Rerun menu-bar item.')
+        }
+        if (macUpdates) {
+            refreshUpdateSurfaces = () => {
+                refreshApplicationMenu()
+                try { menuBar?.refresh() } catch { /* The menu bar is optional. */ }
+                const state = macUpdates.state()
+                connectedHubs.publishUpdate(state)
+                for (const board of boards.list()) {
+                    try { if (boards.ready(board, runtime)) board.contents.send('desktop:update-state', state) } catch {}
+                }
+            }
+            macUpdates.start({ scheduleChecks: true })
+        }
+    }
     await prepareWorkspaceWindow(1, false)
-    ipcMain.handle('desktop:status', event => { trusted(event); return supervisor?.status ?? bootStatus })
-    ipcMain.handle('desktop:retry', async event => {
+    ipcMain.handle('desktop:status', event => {
+        if (boards.recoveryPage(event, runtime)) return startupStatus(rendererFailureStatus)
         trusted(event)
-        if (transitioning || quitting) return false
-        if (!supervisor) { app.relaunch(); app.quit(); return true }
+        return startupStatus(supervisor?.status ?? bootStatus)
+    })
+    if (mac) {
+        const onStartupPage = event => {
+            trustedPrimary(event)
+            return event.senderFrame.url === pathToFileURL(startup).href && !quitting
+        }
+        const canConnectToServer = event => onStartupPage(event) && !!bootStatus.choices && !supervisor
+        ipcMain.handle('desktop:startup-local', event => onStartupPage(event) && bootStatus.state === 'choose' && openLocalWorkspace())
+        ipcMain.handle('desktop:startup-cloud', async event => {
+            if (!canConnectToServer(event)) return { ok: false }
+            if (openingStartupCloud && !openingStartupCloud.signal.aborted) return { ok: false, reason: 'busy' }
+            const attempt = new AbortController()
+            openingStartupCloud = attempt
+            try {
+                const restore = reopeningHub
+                restore?.controller.abort()
+                await restore?.promise
+                if (attempt.signal.aborted || !canConnectToServer(event)) return { ok: false, reason: 'cancelled' }
+                leaveLocalUnlock()
+                const locale = shellLanguage.forScope('local')
+                const result = await connectedHubs.openCloud(attempt.signal)
+                if (attempt.signal.aborted) return { ok: false, reason: 'cancelled' }
+                return result.ok ? result : { ...result, message: hubConnectionError(locale, result) }
+            } finally {
+                if (openingStartupCloud === attempt) openingStartupCloud = null
+            }
+        })
+        ipcMain.handle('desktop:startup-connect', event => {
+            if (!canConnectToServer(event)) return false
+            reopeningHub?.controller.abort()
+            openingStartupCloud?.abort()
+            leaveLocalUnlock()
+            connectedHubs.openPicker(window)
+            return true
+        })
+        ipcMain.on('desktop:find-open', event => {
+            try { windowFind.open(trusted(event).window) } catch { /* Ignore untrusted frames. */ }
+        })
+        ipcMain.on('desktop:find-query', (event, input) => windowFind.search(event, input))
+        ipcMain.on('desktop:find-close', event => windowFind.dismiss(event))
+        ipcMain.on('desktop:language', (event, value) => {
+            try {
+                const board = trusted(event)
+                if (boardContext(board.window)) shellLanguage.set('local', value)
+            } catch { /* Ignore untrusted frames. */ }
+        })
+        const assertBoard = (event, { allowMounting = false } = {}) => {
+            const board = trusted(event)
+            const mounting = allowMounting && runtime === mountingWorkspaceRuntime
+            if (quitting || (transitioning && !mounting) || !runtimeScope() || !isDesktopPage(event.senderFrame.url)) {
+                throw new Error('The workspace is unavailable')
+            }
+            return board
+        }
+        ipcMain.on('desktop:appearance', (event, value) => {
+            if (value !== 'light' && value !== 'dark') return
+            try {
+                const board = assertBoard(event, { allowMounting: true })
+                if (!changingBoards.has(board.window)) board.appearance = value
+            } catch { /* Ignore untrusted frames. */ }
+        })
+        ipcMain.handle('desktop:mac-fullscreen', event => (boards.recoveryPage(event, runtime) ?? trusted(event)).window.isFullScreen())
+        const localMacSettings = () => ({
+            openAtLogin: macLoginItemSettings(app)?.openAtLogin ?? null,
+            version: app.isPackaged ? app.getVersion() : null,
+            updatesAvailable: macUpdates?.enabled() === true,
+        })
+        ipcMain.handle('desktop:mac-settings', event => { assertBoard(event, { allowMounting: true }); return localMacSettings() })
+        ipcMain.handle('desktop:mac-set-open-at-login', (event, enabled) => {
+            assertBoard(event)
+            setMacOpenAtLogin(app, enabled)
+            return localMacSettings()
+        })
+        ipcMain.handle('desktop:mac-open-phone-pairing', event => {
+            assertBoard(event)
+            phonePairingWindow.open()
+        })
+        ipcMain.handle('desktop:update-state', event => { assertBoard(event, { allowMounting: true }); return macUpdates?.state() ?? { status: 'idle' } })
+        ipcMain.handle('desktop:update-check', event => { assertBoard(event); return macUpdates?.checkForUpdates(false) ?? { status: 'idle' } })
+        ipcMain.handle('desktop:update-install', event => {
+            assertBoard(event)
+            if (changingBoards.size) return false
+            return macUpdates?.requestRestart() ?? false
+        })
+        ipcMain.handle('desktop:quick-ask-settings', event => { assertBoard(event, { allowMounting: true }); return shortcutPreference.state() })
+        ipcMain.handle('desktop:quick-ask-set-shortcut', (event, enabled) => {
+            assertBoard(event)
+            return shortcutPreference.change(enabled, () => assertBoard(event))
+        })
+        ipcMain.handle('desktop:quick-ask-send', (event, text) => quickAsk.send(event, text))
+        ipcMain.on('desktop:quick-ask-close', event => quickAsk.close(event))
+        for (const [channel, action] of [
+            ['desktop:quick-ask-ready', (event, value, board) => quickAsk.register(event, value, board.epoch)],
+            ['desktop:quick-ask-unready', quickAsk.unregister],
+            ['desktop:quick-ask-ack', quickAsk.acknowledge],
+        ]) {
+            ipcMain.on(channel, (event, value) => {
+                try {
+                    const board = trusted(event)
+                    if (isDesktopPage(event.senderFrame.url)) action(event, value, board)
+                } catch {}
+            })
+        }
+    }
+    ipcMain.handle('desktop:retry', async event => {
+        const board = boards.recoveryPage(event, runtime)
+        if (board) {
+            if (!canRecoverBoard(board, runtime)) return false
+            return reopenBoardRenderer(board, board.rendererCrash)
+        }
+        trustedPrimary(event)
+        if (event.senderFrame.url !== pathToFileURL(startup).href || transitioning || quitting || changingBoards.size) return false
+        if (!supervisor) {
+            if (bootStatus.state !== 'error') return false
+            // Electron caches the asynchronous encryptor for this process, including a refused Keychain key.
+            app.relaunch()
+            app.quit()
+            return true
+        }
         if (!workspaces) return false
         if (['starting', 'stopping'].includes(supervisor.status.state)) return false
         const pending = (await workspaces.reconcile()).openReceipt
         if (pending) return runWorkspaceTransition(() => workspaces.recoverSwitch({ requestId: pending.requestId, workspaceId: pending.toWorkspaceId }))
         await closeRemoteWorkspace(supervisor.runtime?.workspaceId)
+        retireAdditionalBoards()
         runtime = null
         await window.loadFile(startup)
         await supervisor.stop()
@@ -190,35 +618,81 @@ async function launch() {
         if (quitting || transitioning) return { ok: false, code: 'busy', message: 'Wait for this workspace change to finish.' }
         return runWorkspaceTransition(() => workspaces.recoverSwitch(input))
     })
-    ipcMain.handle('desktop:quit', event => { trusted(event); app.quit() })
-    ipcMain.handle('desktop:find-in-page', (event, input) => { trusted(event); return handleFindInPage(event.sender, input) })
+    ipcMain.handle('desktop:quit', event => {
+        if (!boards.recoveryPage(event, runtime)) trusted(event)
+        app.quit()
+    })
+    const assertPhonePairingWindow = event => {
+        if (!phonePairingWindow.isTrusted(event) || quitting) throw new Error('Phone pairing is unavailable.')
+    }
+    const trustedPhonePairing = event => {
+        assertPhonePairingWindow(event)
+        if (!phonePairing) throw new Error('Open a local workspace before pairing an iPhone.')
+        return phonePairing
+    }
+    ipcMain.handle('desktop:phone-pairing-status', async event => {
+        assertPhonePairingWindow(event)
+        return { ...await phonePairing?.status(), copy: phonePairingCopy() }
+    })
+    ipcMain.handle('desktop:phone-pairing-open-local', event => {
+        assertPhonePairingWindow(event)
+        selectLocalWorkspace()
+    })
+    ipcMain.handle('desktop:phone-pairing-enable', (event, enabled) => trustedPhonePairing(event).setPhoneAccessEnabled(enabled === true))
+    ipcMain.handle('desktop:phone-pairing-retry', event => trustedPhonePairing(event).restore())
+    ipcMain.handle('desktop:phone-pairing-network', (event, address) => trustedPhonePairing(event).setLanAddress(address))
+    ipcMain.handle('desktop:phone-pairing-offer', async (event, workspaceId) => {
+        if (!Number.isSafeInteger(workspaceId) || workspaceId < 1) throw new Error('Choose a local workspace before pairing an iPhone.')
+        const offer = await trustedPhonePairing(event).createOffer(workspaceId)
+        const qr = await pairingQrImage(resources, offer)
+        trustedPhonePairing(event)
+        return { offer, qr }
+    })
+    ipcMain.handle('desktop:phone-pairing-approve', (event, deviceId) => trustedPhonePairing(event).approveDevice(deviceId))
+    ipcMain.handle('desktop:phone-pairing-decline', (event, deviceId) => trustedPhonePairing(event).declineDevice(deviceId))
+    ipcMain.handle('desktop:phone-pairing-send-permission', (event, deviceId, enabled) => trustedPhonePairing(event).setSendMessages(deviceId, enabled === true))
+    ipcMain.handle('desktop:phone-pairing-revoke', (event, deviceId) => trustedPhonePairing(event).revokeDevice(deviceId))
     ipcMain.handle('desktop:remote-machines-actor', event => remoteMachineIpc.actor(event))
     ipcMain.handle('desktop:remote-machines-execute', (event, command) => remoteMachineIpc.execute(event, command))
-    ipcMain.handle('desktop:coworker-share-pick', event => { trusted(event); return coworkerShareFiles.pickImport() })
-    ipcMain.handle('desktop:template-pick', event => { trusted(event); return templateFiles.pickImport() })
-    ipcMain.handle('desktop:template-save', (event, value) => { trusted(event); return templateFiles.saveArtifact(value) })
-    ipcMain.handle('desktop:result-save', (event, value) => { trusted(event); return saveResultFile(value) })
+    ipcMain.handle('desktop:coworker-share-pick', event => sharesFor(trusted(event).window).pickImport())
+    ipcMain.handle('desktop:template-pick', event => templatesFor(trusted(event).window).pickImport())
+    ipcMain.handle('desktop:template-save', (event, value) => templatesFor(trusted(event).window).saveArtifact(value))
+    ipcMain.handle('desktop:result-save', (event, value) => filesFor(trusted(event).window).saveResultFile(value))
+    ipcMain.handle('desktop:coworker-file-save', (event, value) => filesFor(trusted(event).window).saveCoworkerFile(value))
+    ipcMain.handle('desktop:shared-file-save', (event, value) => filesFor(trusted(event).window).saveSharedFile(value))
     ipcMain.handle('desktop:notify', (event, value) => {
         trusted(event)
         const scope = clickScope()
         if (!scope || !isDesktopPage(event.senderFrame.url)) return { status: 'unavailable' }
         return desktopNotifications.notify(value, scope)
     })
+    ipcMain.on('desktop:inbox-badge', (event, value) => {
+        try {
+            trustedPrimary(event)
+            const scope = runtimeScope()
+            if (!scope || !isDesktopPage(event.senderFrame.url) || value?.workspaceId !== scope.workspaceId
+                || value.launchNonce !== scope.launchNonce || !Number.isSafeInteger(value.count) || value.count < 0) return
+            setMacUnread(Math.min(value.count, 9999))
+        } catch { /* A stale or untrusted renderer cannot update native badges. */ }
+    })
     ipcMain.handle('desktop:save-draining-draft', (event, value) => {
-        trusted(event)
-        const signal = draftQuit.signalFor(value)
+        const board = trusted(event)
+        const signal = board.drafts.signalFor(value)
         if (!signal || !runtime || runtime !== supervisor?.runtime || !isDesktopPage(event.senderFrame.url)) {
             throw new Error('The pending draft save is no longer active')
         }
         return supervisor.saveDrainingDraft(value.agentId, value.body, signal)
     })
     for (const [channel, handle] of [
-        ['desktop:drafts-ready', value => draftQuit.register(value?.registrationId)],
-        ['desktop:drafts-unready', value => draftQuit.unregister(value?.registrationId)],
-        ['desktop:drafts-flushed', value => draftQuit.acknowledge(value)],
+        ['desktop:drafts-ready', (drafts, value) => drafts.register(value?.registrationId)],
+        ['desktop:drafts-unready', (drafts, value) => drafts.unregister(value?.registrationId)],
+        ['desktop:drafts-flushed', (drafts, value) => drafts.acknowledge(value)],
     ]) ipcMain.on(channel, (event, value) => {
         // Event handlers must ignore untrusted frames rather than throw in the main process.
-        try { trusted(event); if (isDesktopPage(event.senderFrame.url)) handle(value) } catch {}
+        try {
+            const board = trusted(event)
+            if (boards.ready(board, runtime)) handle(board.drafts, value)
+        } catch {}
     })
     const clickRegistration = value => {
         const registrationId = value?.registrationId
@@ -226,7 +700,7 @@ async function launch() {
     }
     ipcMain.on('desktop:notification-clicks-ready', (event, value) => {
         try {
-            trusted(event)
+            trustedPrimary(event)
             const registrationId = clickRegistration(value)
             if (!registrationId || !isDesktopPage(event.senderFrame.url)) return
             clickReady = { contents: event.sender, registrationId }
@@ -235,40 +709,115 @@ async function launch() {
     })
     ipcMain.on('desktop:notification-clicks-unready', (event, value) => {
         try {
-            trusted(event)
+            trustedPrimary(event)
             const registrationId = clickRegistration(value)
             if (registrationId && clickReady?.registrationId === registrationId && clickReady.contents === event.sender) clickReady = null
         } catch {}
     })
-    await window.loadFile(startup)
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('Mac secure storage is unavailable')
-    const identity = await loadIdentity(dataRoot, { encrypt: value => safeStorage.encryptString(value), decrypt: value => safeStorage.decryptString(value) })
-    const resources = app.isPackaged ? process.resourcesPath : resolve(directory, '../../resources')
+    const existingLocal = !mac || await hasLocalWorkspace(dataRoot)
+    const restoreConnected = startupWorkspace?.selection() === 'connected'
+    if (mac) {
+        bootStatus = existingLocal && !restoreConnected && !pendingHubLink
+            ? { state: 'starting', messageKey: 'keychainPrompt' } : workspaceChoiceStatus()
+    }
+    let openedHub = false
+    let linkResult
+    try {
+        await window.loadFile(startup)
+        if (!pendingHubLink && (restoreConnected || !existingLocal)) {
+            // Give a healthy server a chance to take over without flashing the chooser.
+            // A slow server still needs a visible startup surface, as in upstream Rerun.
+            const initialStatus = bootStatus
+            const reconnecting = { ...initialStatus, messageKey: 'reconnecting' }
+            const reveal = setTimeout(() => {
+                if (quitting || pendingHubLink || bootStatus !== initialStatus) return
+                publishBootStatus(reconnecting)
+                if (showWindowOnReady) showMainWindow()
+            }, startupRevealDelay)
+            try {
+                openedHub = await reopenRememberedHub()
+            } finally {
+                clearTimeout(reveal)
+                if (bootStatus === reconnecting) publishBootStatus(initialStatus)
+            }
+        }
+        while (pendingHubLink && !quitting) {
+            const link = pendingHubLink
+            pendingHubLink = null
+            publishBootStatus(workspaceChoiceStatus())
+            linkResult = await connectedHubs.openLink(link)
+        }
+    } finally {
+        deferringStartupWindow = false
+    }
+    if (mac && !openedHub && linkResult !== 'workspace' && showWindowOnReady && !quitting) {
+        if (linkResult === 'picker') window.showInactive()
+        else if (!window.isVisible()) showMainWindow()
+    }
+    if (existingLocal && !restoreConnected && !linkResult) await startLocalWorkspace()
+}
+
+function openLocalWorkspace() {
+    reopeningHub?.controller.abort()
+    return startLocalWorkspace()
+}
+
+async function startLocalWorkspace() {
+    if (quitting || openingLocalWorkspace || supervisor) return false
+    openingStartupCloud?.abort()
+    const attempt = new AbortController()
+    openingLocalWorkspace = attempt
+    try {
+        if (mac) publishBootStatus({ state: 'keychain', messageKey: 'keychainPrompt',
+            choices: startupChoices(false) })
+        const identity = await loadIdentityFromSafeStorage(dataRoot, safeStorage, { signal: attempt.signal })
+        if (attempt.signal.aborted || quitting) return false
+        publishBootStatus({ state: 'starting' })
+        await initializeLocalWorkspace(identity)
+        return true
+    } catch (error) {
+        if (!attempt.signal.aborted && !quitting) reportStartupError(error)
+        return false
+    } finally {
+        if (openingLocalWorkspace === attempt) openingLocalWorkspace = null
+    }
+}
+
+async function initializeLocalWorkspace(identity) {
     const bundle = await loadBundle(resources)
-    supervisor = new RuntimeSupervisor({ bundle, root: dataRoot, identity })
+    if (quitting) return
+    if (process.platform === 'darwin') app.setAboutPanelOptions({ version: bundle.buildId })
+    supervisor = new RuntimeSupervisor({ bundle, root: dataRoot, identity, appStoreBuild: process.mas === true,
+        systemLanguages: [...app.getPreferredSystemLanguages(), app.getLocale()] })
     remoteInstallId = identity.installId
     remoteMachines = createNativeRemoteMachines({ dataRoot, installId: identity.installId, safeStorage,
         workspaceKey: workspaceId => workspaceIdentity(identity, workspaceId).encryptionKey,
-        supervisor, draftQuit,
+        supervisor,
+        draftQuit: {
+            get ready() { return boards.get(window)?.drafts.ready === true },
+            request: () => boards.flushAll(runtime, true),
+        },
         currentRenderer: () => {
             const current = supervisor.runtime
             if (quitting || transitioning || !runtime || current !== runtime || supervisor.status.state !== 'ready'
-                || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
-            return { epoch: rendererEpoch, workspaceId: current.workspaceId, launchNonce: current.launchNonce }
-        },
-        sendDraftFlush: value => {
-            if (!window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) throw new Error('The workspace window is unavailable')
-            window.webContents.send('desktop:before-quit', value)
+                || !boards.ready(boards.get(window), current)) return null
+            return { epoch: boards.get(window).epoch, workspaceId: current.workspaceId, launchNonce: current.launchNonce }
         },
         // The canonical local workspace supervisor is connected here. Remote activation
         // needs an owned loopback gateway and durable lifecycle receipts; neither is
         // replaced by a health response. Missing transitions fail before any effect.
     })
     supervisor.on('status', status => {
-        if (!window?.isDestroyed()) window.webContents.send('desktop:status', status)
-        if (status.state === 'error') { runtime = null; void window.loadFile(startup) }
+        const localized = startupStatus(status)
+        for (const board of boards.list()) board.contents.send('desktop:status', localized)
+        if (status.state === 'error') {
+            retireAdditionalBoards()
+            runtime = null
+            if (window && !window.isDestroyed()) void window.loadFile(startup)
+        }
     })
     await seedLegacyCatalog(dataRoot, identity.installId)
+    if (quitting) return
     workspaces = createWorkspaceCoordinator({ dataRoot, installId: identity.installId, ports: {
         isQuitInProgress: () => quitting,
         freezeAdmissions: context => supervisor.admissions('freeze', context.requestId),
@@ -276,11 +825,7 @@ async function launch() {
             await supervisor.admissions('unfreeze', context.requestId)
             if (runtime === supervisor.runtime) resumeAfterCancelledQuit()
         },
-        flushDrafts: async () => {
-            if (!runtime || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return { saved: true }
-            if (!draftQuit.ready) return { saved: false }
-            return { saved: await draftQuit.request(value => window.webContents.send('desktop:before-quit', value)) }
-        },
+        flushDrafts: async () => ({ saved: await boards.flushAll(runtime, true) }),
         prepareRecovery: () => supervisor.prepareWorkspaceRecovery(),
         stopAndDrain: async () => { await closeRemoteWorkspace(supervisor.runtime?.workspaceId); await supervisor.stop() },
         bindAndStart: async workspaceId => {
@@ -290,6 +835,15 @@ async function launch() {
         },
         verifyRuntimeIdentity: async workspaceId => supervisor.status.state === 'ready' && supervisor.runtime?.workspaceId === workspaceId,
     } })
+    if (mac) {
+        phonePairing = createMacPhonePairingService({
+            dataRoot,
+            installId: identity.installId,
+            getRuntime: () => !quitting && !transitioning && runtimeScope() ? runtime : null,
+        })
+        // An unavailable optional listener cannot prevent the local board from opening.
+        void phonePairing.restore().catch(() => console.warn('Could not restore local phone pairing.'))
+    }
     await startWorkspace()
 }
 
@@ -307,33 +861,78 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
     const partition = workspaceId === 1 ? profile : `persist:rerun-desktop-workspace-${workspaceId}`
     const desktopSession = session.fromPartition(partition)
     const microphone = desktopMicrophonePermissions({
-        context: () => !quitting && !transitioning && window && !window.isDestroyed() && window.isVisible() ? window : null,
+        context: contents => {
+            if (!contents || contents.isDestroyed()) return null
+            const candidate = BrowserWindow.fromWebContents(contents)
+            return boardContext(candidate) && contents.session === desktopSession && candidate.isVisible() ? candidate : null
+        },
         isDesktopPage,
     })
     desktopSession.setPermissionRequestHandler(microphone.request)
     desktopSession.setPermissionCheckHandler(microphone.check)
     const old = window
-    const bounds = old && !old.isDestroyed() ? old.getBounds() : null
+    const placement = mac
+        ? (old && captureWindowPlacement(old)) || await windowPlacements.restore(boardPlacement)
+        : { bounds: old && !old.isDestroyed() ? old.getBounds() : null }
     if (old && !old.isDestroyed()) old.destroy()
-    desktopNotifications.close()
-    desktopNotifications = createNotices()
-    window = new BrowserWindow({
-        ...(bounds || { width: 1220, height: 820 }), minWidth: 720, minHeight: 520, show: false,
+    window = createBoardWindow(desktopSession, placement.bounds, { primary: true, showOnReady: load || !mac }).window
+    if (windowPlacements) {
+        restoreWindowZoom(window, placement.maximized)
+        saveBoardPlacement = windowPlacements.track(boardPlacement, window)
+    }
+    activeSession = desktopSession
+    activeWorkspaceId = workspaceId
+    if (load) await window.loadFile(startup)
+}
+
+function createBoardWindow(desktopSession, bounds, { primary = false, showOnReady = true } = {}) {
+    const boardWindow = new BrowserWindow({
+        ...(bounds || { width: 1220, height: 820 }),
+        ...(mac ? macWorkspaceMinimumSize : { minWidth: 720, minHeight: 520 }), show: false,
         title: 'Rerun Desktop Preview', backgroundColor: '#101214',
-        webPreferences: { preload: resolve(directory, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, partition },
+        ...(mac ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 12, y: 8 } } : {}),
+        webPreferences: { preload: resolve(directory, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, session: desktopSession },
     })
-    window.once('ready-to-show', () => window.show())
-    window.on('close', event => {
-        if (quitting && !quittingNow) { event.preventDefault(); return }
-        if (!quittingNow && process.platform === 'darwin') { event.preventDefault(); window.hide() }
+    const board = boards.register(boardWindow, { primary })
+    boardWindow.once('ready-to-show', () => {
+        if (showOnReady && (primary ? showWindowOnReady && window === boardWindow : boards.ready(board, runtime))) boardWindow.show()
     })
-    const contents = window.webContents
-    rendererEpoch = randomUUID()
+    boardWindow.on('close', event => {
+        if (quittingNow) return
+        if (quitting || transitioning || changingBoards.has(boardWindow)) { event.preventDefault(); return }
+        if (!mac) return
+        event.preventDefault()
+        if (primary) hideWorkspaceWindow(boardWindow)
+        else void closeAdditionalBoard(board)
+    })
+    const { contents } = board
+    if (mac) {
+        // The authenticated board draws its strip on first paint. This marker only affects layout.
+        contents.setUserAgent(contents.getUserAgent() + ' RerunLocalDesktopMac/1')
+        const reportFullscreen = () => {
+            if (contents.isDestroyed()) return
+            const frame = contents.mainFrame
+            if (((primary || board.rendererFailure === runtime && runtime) && frame?.url === pathToFileURL(startup).href)
+                || boards.ready(board, runtime)) {
+                frame.send('desktop:mac-fullscreen-changed', boardWindow.isFullScreen())
+            }
+        }
+        boardWindow.on('enter-full-screen', reportFullscreen)
+        boardWindow.on('leave-full-screen', reportFullscreen)
+    }
+    if (mac) attachDesktopContextMenu({
+        window: boardWindow, Menu, clipboard, openExternal, locale: () => shellLanguage.forScope('local'),
+        currentScope: () => boardContext(boardWindow)?.rendererEpoch ?? null,
+        saveImage: (pageURL, srcURL) => filesFor(boardWindow).saveDisplayedImage(pageURL, srcURL),
+        reportFailure: error => reportImageSaveFailure(boardWindow, error),
+    })
     const invalidateRenderer = () => {
-        if (window?.webContents !== contents) return
-        rendererEpoch = randomUUID()
+        windowFind.close(boardWindow)
+        if (!contents.isDestroyed()) boards.invalidate(board)
+        quickAsk.invalidate(contents)
+        if (!primary || window !== boardWindow) return
+        setMacUnread(0)
         clickReady = null
-        draftQuit.reset()
         // Revoke the lease immediately, then drain only this workspace's remote work.
         // A failed drain cannot turn an old receipt into a successful connection.
         void closeRemoteWorkspace(activeWorkspaceId).catch(() => {})
@@ -341,65 +940,159 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
     contents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
         if (isMainFrame && !isInPlace) invalidateRenderer()
     })
-    contents.on('render-process-gone', invalidateRenderer)
-    contents.on('destroyed', invalidateRenderer)
-    window.webContents.on('will-attach-webview', event => event.preventDefault())
-    window.webContents.on('will-navigate', (event, target) => {
-        let url
-        try { url = new URL(target) } catch { event.preventDefault(); return }
-        if (!runtime || url.origin !== runtime.app.origin || url.pathname !== '/desktop') event.preventDefault()
+    contents.on('render-process-gone', (_event, details) => {
+        invalidateRenderer()
+        const current = board.runtime
+        if (!mac || details.reason === 'clean-exit' || !canRecoverBoard(board, current)) return
+        const at = performance.now()
+        const repeated = board.rendererCrash?.runtime === current && at - board.rendererCrash.at < rendererCrashInterval
+        const crash = { runtime: current, at }
+        board.rendererCrash = crash
+        if (repeated && contents.getURL() === pathToFileURL(startup).href) return
+        if (repeated || board.rendererFailure === current) void showBoardRendererFailure(board, crash)
+        else void reopenBoardRenderer(board, crash)
     })
-    window.webContents.setWindowOpenHandler(({ url }) => {
-        try {
-            const parsed = new URL(url)
-            if (parsed.protocol === 'https:' && !parsed.username && !parsed.password) void shell.openExternal(parsed.href)
-        } catch {}
+    contents.on('destroyed', invalidateRenderer)
+    contents.on('will-attach-webview', event => event.preventDefault())
+    for (const eventName of ['will-navigate', 'will-redirect']) {
+        contents.on(eventName, (event, target) => {
+            if (!runtime || board.runtime !== runtime || !isDesktopPage(target)) event.preventDefault()
+        })
+    }
+    contents.setWindowOpenHandler(({ url }) => {
+        openExternal(url)
         return { action: 'deny' }
     })
-    activeSession = desktopSession
-    activeWorkspaceId = workspaceId
-    if (load) await window.loadFile(startup)
+    return board
+}
+
+function canRecoverBoard(board, current) {
+    return !!current && !quitting && !transitioning && runtime === current && board.runtime === current
+        && runtimeScope() && boards.get(board.window) === board
+}
+
+async function showBoardRendererFailure(board, crash) {
+    if (board.rendererCrash !== crash || !canRecoverBoard(board, crash.runtime)) return
+    board.rendererFailure = crash.runtime
+    await board.window.loadFile(startup).catch(() => {})
+}
+
+async function reopenBoardRenderer(board, crash) {
+    if (board.rendererCrash !== crash || !canRecoverBoard(board, crash.runtime)) return false
+    try {
+        await loadBoard(board, crash.runtime)
+        if (board.rendererCrash !== crash || !canRecoverBoard(board, crash.runtime)) return false
+        board.rendererFailure = null
+        return true
+    } catch {
+        await showBoardRendererFailure(board, crash)
+        return false
+    }
+}
+
+async function reloadBoard(candidate) {
+    const context = boardContext(candidate)
+    if (!context) return
+    const board = boards.get(candidate)
+    changingBoards.add(candidate)
+    try {
+        await boards.reload(board, context.runtime, () => confirmDiscard(candidate, 'Reload'), () => resumeBoard(board))
+    } finally { changingBoards.delete(candidate) }
+}
+
+async function closeAdditionalBoard(board) {
+    const candidate = board.window
+    if (changingBoards.has(candidate)) return
+    changingBoards.add(candidate)
+    try {
+        windowFind.close(candidate)
+        await completeDesktopQuit({
+            flush: () => boards.flush(board, runtime),
+            confirmDiscard: () => confirmDiscard(candidate, 'Close'),
+            stop: async () => {},
+            quit: () => { if (!candidate.isDestroyed()) candidate.destroy() },
+            cancelled: () => resumeBoard(board),
+        })
+    } finally { changingBoards.delete(candidate) }
+}
+
+async function loadBoard(board, current) {
+    board.runtime = current
+    await board.window.loadURL(`${current.app.origin}/desktop`)
+}
+
+function retireAdditionalBoards() {
+    return boards.list().filter(board => !board.primary).map(board => {
+        const bounds = board.window.getBounds()
+        board.window.destroy()
+        return bounds
+    })
+}
+
+async function openAdditionalBoard(bounds) {
+    const current = runtime
+    if (!mac || !runtimeScope() || !activeSession) return
+    const board = createBoardWindow(activeSession, bounds)
+    try {
+        await loadBoard(board, current)
+        if (boards.ready(board, runtime) && !board.window.isVisible()) board.window.show()
+    }
+    catch { if (!board.window.isDestroyed()) board.window.destroy() }
 }
 
 async function displayWorkspace() {
     const current = supervisor.runtime
     if (!current || supervisor.status.state !== 'ready') throw new Error('Workspace is not ready')
+    const extraBounds = retireAdditionalBoards()
     runtime = current
     if (activeWorkspaceId !== current.workspaceId) await prepareWorkspaceWindow(current.workspaceId)
     await activeSession.cookies.set({ url: current.app.origin, name: 'rerun-desktop-session', value: current.app.sessionToken, httpOnly: true, sameSite: 'strict', path: '/' })
-    await window.loadURL(`${current.app.origin}/desktop`)
+    // The new board reads app preferences and reports its appearance on mount.
+    // Only the incoming runtime can use these calls before the switch settles.
+    if (transitioning) mountingWorkspaceRuntime = current
+    await loadBoard(boards.get(window), current)
+    await Promise.all(extraBounds.map(bounds => openAdditionalBoard(bounds)))
     clickHandoff.retain(runtimeScope())
 }
 async function startWorkspace() {
     try {
         const selected = await workspaces.coldLaunchTarget()
         if (!selected.ok) {
-            supervisor.publish('error', 'A workspace switch needs recovery. Choose Retry to recover the same workspace.')
+            supervisor.publish('error', 'switchRecovery')
             return
         }
         await supervisor.startFor(selected.workspaceId, selected.workspace)
         await displayWorkspace()
+        if (!quitting && runtimeScope()) await startupWorkspace?.remember('local')
     } catch {
-        supervisor.publish('error', 'This workspace could not open safely. Choose Retry to try again.')
+        supervisor.publish('error', 'openFailed')
     }
 }
 async function runWorkspaceTransition(operation) {
-    if (transitioning) return { ok: false, code: 'busy', message: 'A workspace change is already in progress.' }
+    if (transitioning || changingBoards.size) return { ok: false, code: 'busy', message: 'A window or workspace change is already in progress.' }
     transitioning = true
+    quickAsk.reset()
     const previous = supervisor.runtime
     try {
         const result = await operation()
-        if (result.ok) await displayWorkspace()
+        if (result.ok) {
+            if (supervisor.runtime !== previous || runtime !== previous) await displayWorkspace()
+        }
         else if (supervisor.runtime !== previous || (await workspaces.reconcile()).requiresManualRecovery) {
             runtime = null
             await window.loadFile(startup)
-            supervisor.publish('error', 'A workspace switch needs recovery. Choose Retry to recover the same workspace.')
+            supervisor.publish('error', 'switchRecovery')
         }
         return result
     } catch {
         runtime = null
         await window.loadFile(startup)
-        supervisor.publish('error', 'Workspace state needs recovery. Choose Retry to try again.')
+        supervisor.publish('error', 'stateRecovery')
         return { ok: false, code: 'path_corrupt', message: 'Workspace state needs recovery before continuing.' }
-    } finally { transitioning = false; flushNotificationClicks() }
+    } finally {
+        mountingWorkspaceRuntime = undefined
+        transitioning = false
+        void clickRouter.flush()
+        flushNotificationClicks()
+    }
 }

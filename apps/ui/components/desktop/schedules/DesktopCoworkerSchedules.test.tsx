@@ -2,6 +2,9 @@
 import { act, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages } from '@/lib/desktop/locale'
+import { DesktopLocale } from '../DesktopLocale'
 vi.mock('@/lib/desktop/use-schedule-tool-notices', () => ({ useDesktopScheduleToolNotices: () => null }))
 vi.mock('@/components/ui/panel-steps', () => ({ PanelSteps: ({ children }: { children: ReactNode }) => <>{children}</> }))
 vi.mock('@/components/agent/RunModelField', () => ({
@@ -14,11 +17,12 @@ import { DesktopCoworkerSchedules } from './DesktopCoworkerSchedules'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const grantMessage = 'Enable Schedules in this coworker’s Capabilities to use routines'
+const revision = 'a'.repeat(64)
 const task = (slug: string, extra: Record<string, unknown> = {}) => ({
     slug, name: `Saved ${slug}`, description: '', body: 'Return a short report.', enabled: true,
     cron: '0 8 * * *', runAt: null, timezone: 'America/Chicago', nextRunAt: null,
     connectionId: null, provider: null, model: null,
-    lastResult: null, lastResultUnknown: false, ...extra,
+    lastResult: null, revision, setupPending: false, ...extra,
 })
 const modelView = {
     catalog: [{ connectionId: 'conn-b', name: 'OpenAI B', provider: 'openai', models: [{ id: 'gpt-exact', label: 'Exact model' }] }],
@@ -45,6 +49,82 @@ function deferred() {
     const promise = new Promise<Response>(done => { resolve = done })
     return { promise, resolve }
 }
+
+test('uses the selected language for the coworker list, editor and saved run status', async () => {
+    const language = { preference: 'fr', locale: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) } as const
+    const chat = { agentId: 'alice', sessionId: 'result', engineSessionId: 'engine-result', tabUid: 'schedule:result', title: 'Daily', runId: 'run' }
+    respond = async (url, init) => {
+        if (url.endsWith('/model')) return Response.json(modelView)
+        if (init?.method === 'PUT') putBodies.push(JSON.parse(String(init.body)))
+        return Response.json([task('daily', { enabled: false, lastResult: { status: 'done', runId: chat.runId, chat } })])
+    }
+    await act(async () => root.render(<DesktopLocale initial={language}><DesktopCoworkerSchedules agentId="alice" onOpenSession={vi.fn()} /></DesktopLocale>))
+    expect(container.textContent).toContain('1 tâche planifiée')
+    expect(container.textContent).toContain('en pause')
+    expect(container.textContent).toContain('Dernier résultat : ' + language.messages.routines.status.done)
+    await act(async () => { row('Saved daily').click() })
+    expect(container.textContent).toContain('Modifier la tâche')
+    expect(container.querySelector('input[aria-label="Nom"]')).toBeTruthy()
+    expect(container.querySelector('select[aria-label="Type de planification"]')).toBeTruthy()
+    expect(button('Historique')).toBeTruthy()
+    await act(async () => { button('Enregistrer').click() })
+    expect(putBodies[0]?.input).toMatchObject({ cron: '0 8 * * *', timezone: 'America/Chicago', enabled: false })
+})
+
+test('requires an explicit offset for a one-shot time and saves that exact instant', async () => {
+    respond = async (url, init) => {
+        if (url.endsWith('/model')) return Response.json(modelView)
+        if (init?.method === 'PUT') putBodies.push(JSON.parse(String(init.body)))
+        return Response.json([task('daily', { cron: null, runAt: '2026-12-02T08:00:00-06:00' })])
+    }
+    await render()
+    await act(async () => { row('Saved daily').click() })
+    const field = container.querySelector<HTMLInputElement>('input[aria-label^="Run at"]')!
+    const enter = (value: string) => act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, value)
+        field.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await enter('2026-12-02T08:00:00')
+    expect(button('Save changes').disabled).toBe(true)
+    await enter('2026-02-30T08:00:00-06:00')
+    expect(button('Save changes').disabled).toBe(true)
+    await enter('2026-12-02T09:30:00-06:00')
+    expect(button('Save changes').disabled).toBe(false)
+    await act(async () => { button('Save changes').click() })
+    expect(putBodies[0]?.input).toMatchObject({ runAt: '2026-12-02T15:30:00.000Z', timezone: 'America/Chicago', cron: null })
+})
+
+test('opens the exact older execution and preserves the routine draft when returning from History', async () => {
+    const onOpenSession = vi.fn()
+    const chat = { agentId: 'alice', sessionId: 'saved-old', engineSessionId: 'engine-old', tabUid: 'schedule:saved-old', title: 'Daily report', runId: 'older' }
+    const posts: unknown[] = []
+    respond = async (url, init) => {
+        if (url.endsWith('/model')) return Response.json(modelView)
+        if (url.endsWith('?history=daily')) return Response.json([
+            { id: 'newer', status: 'error', startedAt: '2026-11-01T08:00:00Z' },
+            { id: 'older', status: 'done', startedAt: '2026-10-31T08:00:00Z' },
+        ])
+        if (init?.method === 'POST') { posts.push(JSON.parse(String(init.body))); return Response.json(chat) }
+        return Response.json([task('daily')])
+    }
+    await act(async () => { root.render(<DesktopCoworkerSchedules agentId="alice" onOpenSession={onOpenSession} />) })
+    await act(async () => { row('Saved daily').click() })
+    const name = container.querySelector<HTMLInputElement>('input[aria-label="Name"]')!
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(name, 'Unsaved name')
+        name.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { button('History').click() })
+    expect(container.textContent).toContain('Error')
+    expect(container.textContent).toContain('Done')
+    const results = [...container.querySelectorAll('button')].filter(node => node.textContent?.trim() === 'Open result chat')
+    expect(results).toHaveLength(2)
+    await act(async () => { results[1].click() })
+    expect(posts).toEqual([{ action: 'open-run', slug: 'daily', runId: 'older' }])
+    expect(onOpenSession).toHaveBeenCalledWith(chat)
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click() })
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="Name"]')?.value).toBe('Unsaved name')
+})
 
 test('a denied initial read preserves the Capabilities guidance without claiming zero tasks, and Refresh recovers', async () => {
     respond = async () => Response.json({ error: grantMessage }, { status: 403 })
@@ -142,6 +222,41 @@ async function setControlValue(selector: string, value: string) {
     Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(control, value)
     await act(async () => { control.dispatchEvent(new Event('input', { bubbles: true })) })
 }
+
+test('Test Run uses the reviewed revision for a paused routine after setup', async () => {
+    const onOpenSession = vi.fn()
+    const chat = { agentId: 'alice', sessionId: 'saved', engineSessionId: 'engine-saved', tabUid: 'schedule:saved', title: 'Daily report', runId: 'run-a' }
+    const requests: unknown[] = []
+    respond = async (url, init) => {
+        if (url.endsWith('/model')) return Response.json(modelView)
+        if (init?.method === 'POST') {
+            requests.push(JSON.parse(String(init.body)))
+            return Response.json(chat)
+        }
+        return Response.json([task('daily', { enabled: false })])
+    }
+    await act(async () => { root.render(<DesktopCoworkerSchedules agentId="alice" onOpenSession={onOpenSession} />) })
+    await act(async () => { row('Saved daily').click() })
+    expect(button('Test Run').disabled).toBe(false)
+    await act(async () => { button('Test Run').click() })
+    expect(requests).toEqual([{ action: 'run', slug: 'daily', requestId: expect.any(String), expectedRevision: revision }])
+    expect(onOpenSession).toHaveBeenCalledExactlyOnceWith(chat)
+})
+
+test('Test Run waits for setup on a paused routine and for an edited model to be saved', async () => {
+    exactModelResponses([task('setup', { enabled: false, setupPending: true }), task('ready')])
+    await render()
+    await act(async () => { row('Saved setup').click() })
+    expect(button('Test Run').disabled).toBe(true)
+    expect(container.textContent).toContain('Test Run unlocks once the setup is finished.')
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click() })
+    await act(async () => { row('Saved ready').click() })
+    expect(button('Test Run').disabled).toBe(false)
+    await act(async () => { button('Use exact model').click() })
+    expect(button('Test Run').disabled).toBe(true)
+    await act(async () => { button('Use coworker default').click() })
+    expect(button('Test Run').disabled).toBe(false)
+})
 
 test('an exact catalog selection is saved with its connection provider and model', async () => {
     exactModelResponses()

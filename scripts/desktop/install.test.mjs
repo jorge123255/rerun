@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { bundleName, electronAsar, installPreview, verifyBundle } from './install.mjs'
+import { macTarget } from './mac-target.mjs'
 
 const macTest = process.platform === 'darwin' ? test : test.skip
-const A = { protocolVersion: 1, sourceCommit: 'a'.repeat(40), buildId: 'aaaaaaa-desktop-0.1.0' }
+const { arch, appDirectory } = macTarget()
+const A = { protocolVersion: 1, sourceCommit: 'a'.repeat(40), buildId: 'aaaaaaa-desktop-0.1.0', arch }
 const B = { ...A, sourceCommit: 'b'.repeat(40), buildId: 'bbbbbbb-desktop-0.1.0' }
 const id = 'build.rerun.desktop.preview'
 
@@ -20,7 +24,7 @@ async function fixture(t) {
     const applications = join(root, 'Applications'), target = join(applications, bundleName)
     const asar = electronAsar()
     async function build(out, stamp, { bad, identity = id } = {}) {
-        const bundle = join(out, 'mac-arm64', bundleName)
+        const bundle = join(out, appDirectory, bundleName)
         const resources = join(bundle, 'Contents/Resources')
         const shell = await mkdtemp(join(root, 'test-shell-'))
         await mkdir(join(shell, 'dist/main'), { recursive: true })
@@ -48,7 +52,7 @@ macTest('fresh install, repeat and atomic upgrade leave one app and no backup bu
     const f = await fixture(t)
     assert.deepEqual(await f.install(A, { commit: A.sourceCommit }), { destination: f.target, commit: A.sourceCommit })
     await verifyBundle(f.target, A)
-    const stale = join(f.applications, '.rerun-desktop-install.noindex/build/mac-arm64/old.app')
+    const stale = join(f.applications, '.rerun-desktop-install.noindex/build', appDirectory, 'old.app')
     await mkdir(stale, { recursive: true })
     await f.install(B)
     await verifyBundle(f.target, B)
@@ -64,6 +68,9 @@ macTest('a mismatched packaged receipt or bundle identity never replaces the ins
         await assert.rejects(f.install(B, { build: out => f.build(out, B, { bad }) }), /receipt does not match/)
         await verifyBundle(f.target, A)
     }
+    const otherArch = arch === 'arm64' ? 'x64' : 'arm64'
+    await assert.rejects(f.install(B, { build: out => f.build(out, { ...B, arch: otherArch }) }), /receipt does not match/)
+    await verifyBundle(f.target, A)
     await assert.rejects(f.install(B, { build: out => f.build(out, B, { identity: 'some.other.app' }) }), /bundle ID/)
     assert.deepEqual(await f.stages(), ['install.lock'])
 })
@@ -92,7 +99,7 @@ macTest('concurrent installs cannot remove each other’s staging output', async
         await f.build(out, A)
         reached()
         await hold
-        await access(join(out, 'mac-arm64', bundleName))
+        await access(join(out, appDirectory, bundleName))
     } })
     try {
         await started
@@ -118,4 +125,27 @@ macTest('refuses a foreign app or symlink destination even if it appears during 
         await writeFile(join(f.target, 'keep'), 'foreign')
     } }))
     assert.equal(await readFile(join(f.target, 'keep'), 'utf8'), 'foreign')
+})
+
+macTest('disk image installation requires pinned input and preserves the installed app on verification failure', async t => {
+    const f = await fixture(t)
+    await f.install(A)
+    const image = join(f.root, 'candidate.dmg')
+    const bundle = await f.build(join(f.root, 'image-source'), B)
+    execFileSync('/usr/bin/hdiutil', ['create', '-quiet', '-srcfolder', join(bundle, '..'), '-format', 'UDZO', image])
+    const sha256 = createHash('sha256').update(await readFile(image)).digest('hex')
+    const options = { image, commit: B.sourceCommit, sha256 }
+    await assert.rejects(f.install(undefined, { ...options, commit: undefined }), /requires --commit/)
+    await assert.rejects(f.install(undefined, { ...options, sha256: '0'.repeat(64) }), /SHA-256 does not match/)
+    const stagedImage = join(f.applications, '.rerun-desktop-install.noindex', 'in-use.dmg')
+    await writeFile(stagedImage, 'keep')
+    await assert.rejects(f.install(undefined, { ...options, image: stagedImage }), /outside the preview installer/)
+    assert.equal(await readFile(stagedImage, 'utf8'), 'keep')
+    await rm(stagedImage)
+    await verifyBundle(f.target, A)
+
+    await rm(f.target, { recursive: true })
+    await assert.rejects(f.install(undefined, options), /codesign.*exited/)
+    await assert.rejects(access(f.target), { code: 'ENOENT' })
+    assert.deepEqual(await f.stages(), ['install.lock'])
 })

@@ -1,6 +1,6 @@
 import { useDesktopLocale } from './DesktopLocale'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { CopyPlusIcon, Link2, MessageCircle, PencilIcon, PowerIcon, PowerOffIcon, Trash2Icon } from 'lucide-react'
+import { CopyPlusIcon, Link2, MessageCircle, PencilIcon, PowerIcon, PowerOffIcon, SettingsIcon, Trash2Icon } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { RenameAgentDialog } from '@/components/dialogs/RenameAgentDialog'
 import { DeleteCoworkerConfirmation } from '@/components/dialogs/DeleteCoworkerConfirmation'
@@ -10,9 +10,10 @@ import type { DesktopBoardState } from '@/lib/desktop/spaces'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { desktopSpaceLabel, firstDesktopSpacePosition } from './desktop-space-layout'
 
-export function DesktopBoardMenu({ agents, onOpen, onRename, onShare, onDuplicate, onSetEnabled, onDelete, disabled, children, spaces, onRenameSpace, onDeleteSpace, onMoveAgent, onInteractionChange }: {
+export function DesktopBoardMenu({ agents, onOpen, onOpenSettings, onRename, onShare, onDuplicate, onSetEnabled, onDelete, disabled, children, spaces, onRenameSpace, onDeleteSpace, onMoveAgent, onInteractionChange }: {
     agents: DesktopAgentView[]
     onOpen: (id: string) => void
+    onOpenSettings?: (id: string) => void
     onRename?: (id: string, name: string) => Promise<void>
     onShare?: (agent: DesktopAgentView) => void
     onDuplicate?: (agent: DesktopAgentView) => void
@@ -33,7 +34,7 @@ export function DesktopBoardMenu({ agents, onOpen, onRename, onShare, onDuplicat
     const [renaming, setRenaming] = useState<DesktopAgentView>()
     const [deleting, setDeleting] = useState<DesktopAgentView>()
     const board = useRef<HTMLDivElement>(null)
-    const startingPlacement = useRef(false)
+    const skipFocusRestore = useRef(false)
     const saving = useRef(false)
     const [activation, setActivation] = useState<{ id: string; name: string; enabled: boolean; error?: string } | null>(null)
     const target = agents.find(agent => agent.id === targetId)
@@ -44,8 +45,8 @@ export function DesktopBoardMenu({ agents, onOpen, onRename, onShare, onDuplicat
     const menuIdentity = useRef({ scope: menuScope, generation: 0 })
     if (menuIdentity.current.scope !== menuScope) menuIdentity.current = { scope: menuScope, generation: menuIdentity.current.generation + 1 }
     const menuGeneration = menuIdentity.current.generation
-    const latest = useRef({ agents, disabled, spaces, onMoveAgent, onRenameSpace, onDeleteSpace })
-    latest.current = { agents, disabled, spaces, onMoveAgent, onRenameSpace, onDeleteSpace }
+    const latest = useRef({ agents, disabled, spaces, onOpenSettings, onMoveAgent, onRenameSpace, onDeleteSpace })
+    latest.current = { agents, disabled, spaces, onOpenSettings, onMoveAgent, onRenameSpace, onDeleteSpace }
     const interactionCallback = useRef(onInteractionChange)
     interactionCallback.current = onInteractionChange
     const interacting = menuOpen || !!renaming || !!deleting || (!!activation && !activation.error)
@@ -98,18 +99,24 @@ export function DesktopBoardMenu({ agents, onOpen, onRename, onShare, onDuplicat
                 </div>
             </ContextMenuTrigger>
             {target && <ContextMenuContent onCloseAutoFocus={event => {
-                if (startingPlacement.current) { event.preventDefault(); startingPlacement.current = false }
+                if (skipFocusRestore.current) { event.preventDefault(); skipFocusRestore.current = false }
             }}>
                 <ContextMenuLabel className="max-w-56 truncate pl-7">{target.name}</ContextMenuLabel>
                 <ContextMenuSeparator />
                 <ContextMenuItem onSelect={() => onOpen(target.id)}><MessageCircle className="size-4" />{t('coworker.open')}</ContextMenuItem>
                 {onRename && <ContextMenuItem onSelect={() => setRenaming(target)}><PencilIcon className="size-4" />{t('coworker.rename')}</ContextMenuItem>}
+                {onOpenSettings && <ContextMenuItem onSelect={() => {
+                    const openSettings = latest.current.onOpenSettings
+                    if (!openSettings || !currentMenu() || !latest.current.agents.some(agent => agent.id === target.id)) return
+                    skipFocusRestore.current = true
+                    openSettings(target.id)
+                }}><SettingsIcon className="size-4" />{t('coworker.boardSettings')}</ContextMenuItem>}
                 {onShare && <ContextMenuItem onSelect={() => {
                     if (!currentMenu() || !latest.current.agents.some(agent => agent.id === target.id)) return
-                    startingPlacement.current = true
+                    skipFocusRestore.current = true
                     onShare(target)
                 }}><Link2 className="size-4" />{t('coworker.share')}</ContextMenuItem>}
-                {onDuplicate && <ContextMenuItem onSelect={() => { startingPlacement.current = true; onDuplicate(target) }}>
+                {onDuplicate && <ContextMenuItem onSelect={() => { skipFocusRestore.current = true; onDuplicate(target) }}>
                     <CopyPlusIcon className="size-4" />{t('coworker.duplicate')}
                 </ContextMenuItem>}
                 {spaces && onMoveAgent && <ContextMenuSub>

@@ -156,6 +156,11 @@ function fixture(initialTheme: ThemePreference = 'system') {
     const tabs = { revision: 0, activeIndex: 0, tabs: [{ uid: 'command-tab', id: 'command-chat', title: 'Saved review' }] }
     drafts.seedTabs(coworker.id, tabs.tabs)
     let savedTheme = initialTheme
+    let changelogSeen = date
+    const changelog = {
+        slug: 'synthetic-rerun-update', title: 'Synthetic Rerun update', publishedAt: '2026-11-09T12:00:00.000Z',
+        body: 'The official announcement appears here.', image: null, darkImage: null, imageAlt: '',
+    }
     const writes: { body: { action: 'appearance'; theme: ThemePreference }; finish: (response: Response) => void }[] = []
     const reads: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -179,6 +184,14 @@ function fixture(initialTheme: ThemePreference = 'system') {
             }
         }
         if (url.pathname === '/api/desktop/workspace/icon' && method === 'GET') return Response.json({ catalogId: null })
+        if (url.pathname === '/api/desktop/changelog') {
+            if (method === 'PATCH') {
+                expect(JSON.parse(String(init?.body))).toEqual({ slug: changelog.slug, publishedAt: changelog.publishedAt })
+                changelogSeen = changelog.publishedAt
+                return Response.json({ seenAt: changelogSeen })
+            }
+            return Response.json({ entries: [changelog], seenAt: changelogSeen, stale: false })
+        }
         if (url.pathname === '/api/desktop/board-activity') return Response.json({ agents: { [coworker.id]: 'idle' } })
         if (url.pathname === '/api/desktop/completions') return Response.json({ items: [], unavailableAgentIds: [], enabledAt: date, checkedAt: date, nextCursor: null })
         if (url.pathname === '/api/desktop/pending-inbox') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: date })
@@ -196,14 +209,14 @@ function fixture(initialTheme: ThemePreference = 'system') {
         throw new Error(`Unexpected request: ${method} ${raw}`)
     }))
     return {
-        writes, reads, savedTheme: () => savedTheme,
-        async mount() {
+        writes, reads, savedTheme: () => savedTheme, changelogSeen: () => changelogSeen,
+        async mount(overrides?: Partial<DesktopBootstrap>) {
             const container = document.createElement('div')
             document.body.append(container)
             const root = createRoot(container)
             roots.add(root)
             const initialData: DesktopBootstrap = { ...providers, theme: savedTheme, profile: { id: 1, displayName: 'Local' },
-                workspace: { id: 1, name: 'Command studio' }, agents: [coworker], recentCoworkers: recent.snapshot() }
+                workspace: { id: 1, name: 'Command studio' }, agents: [coworker], recentCoworkers: recent.snapshot(), ...overrides }
             await act(async () => { root.render(<DesktopApp initialData={initialData} />) })
             return { container, async unmount() { await act(async () => { root.unmount() }); roots.delete(root); container.remove() } }
         },
@@ -253,6 +266,24 @@ test('the real workspace command opens the existing picker while retaining the b
     view.unchanged()
     expect(app.reads).toEqual(readsBefore)
     expect(app.writes).toEqual([])
+})
+
+test('What’s new opens from Control Center without losing the open chat or its draft', async () => {
+    const app = fixture()
+    const mounted = await app.mount({ runtimeLaunchNonce: 'changelog-command' })
+    const view = await openChat(mounted.container)
+    await openCommands()
+    await runCommand("What's new")
+    const update = () => [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find(dialog =>
+        dialog.querySelector('h2')?.textContent === 'Synthetic Rerun update')
+    const dialog = await until(update)
+    expect(dialog.textContent).toContain('The official announcement appears here.')
+    expect(commandField()).toBeNull()
+    view.unchanged(true)
+    await click('Done', dialog)
+    await until(() => !update())
+    expect(app.changelogSeen()).toBe('2026-11-09T12:00:00.000Z')
+    view.unchanged()
 })
 
 test('Quit waits for the admitted theme save and applies its durable result before finishing', async () => {
@@ -386,7 +417,7 @@ test('the /hotkeys command opens the original help view with the eight supported
     ])
     expect(dialog.textContent).toContain('Previous file')
     expect(dialog.textContent).toContain('Next file')
-    expect(dialog.textContent).not.toMatch(/Ask Rerun|Hold to talk|Search in the page|×2/)
+    expect(dialog.textContent).not.toMatch(/Ask (?:Rerun|your Chief of Staff)|Hold to talk|Search in the page|×2/)
     view.unchanged(true)
     await closeShortcutsWithEscape(dialog)
     expect(commandField()).toBeNull()

@@ -67,6 +67,8 @@ export async function refreshDesktopOpencodeLimits(input: {
 export function refreshStaleDesktopOpencodeLimits(input: Parameters<typeof refreshDesktopOpencodeLimits>[0]): Promise<DesktopOpencodeWindow[] | null> | null {
     const now = input.now ?? Date.now()
     const name = keyOf(input.workspaceId, input.connectionId)
+    const pending = inFlight.get(name)
+    if (pending) return pending
     if (now - (attemptedAt.get(name) ?? 0) < DESKTOP_OPENCODE_USAGE_STALE_MS) return null
     return refreshDesktopOpencodeLimits(input)
 }

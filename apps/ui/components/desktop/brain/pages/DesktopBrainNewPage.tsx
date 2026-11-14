@@ -10,6 +10,7 @@ import { z } from 'zod'
 import { brainPageTypeSchema } from '@rerun/contracts'
 import { holdDraftAdmission } from '@/lib/desktop/draft-writes'
 import { brainMutationIntent, reserveBrainMutation, settleBrainMutation } from './mutation-intents'
+import { useBrainTranslations } from '@/components/brain/brain-translations'
 import { BrainTopBar } from '@/components/brain/BrainTopBar'
 import { brainSlugify } from '@/lib/brain/labels'
 import { BRAIN_PAGE_ICONS } from '@/lib/brain/page-icons'
@@ -34,6 +35,7 @@ type DesktopBrainNewPageProps = {
  * so the [[links]] other pages hold keep working.
  */
 export function DesktopBrainNewPage({ pages, titles, actions, files = [], onOpenPage, onOpenFile, onAcceptFileDrop, onCreated }: DesktopBrainNewPageProps) {
+    const t = useBrainTranslations()
     const [pendingCreate, setPendingCreate] = useState(() => { try { return brainMutationIntent('create') } catch { return null } })
     const [formSaved] = useState(() => {
         try {
@@ -71,11 +73,11 @@ export function DesktopBrainNewPage({ pages, titles, actions, files = [], onOpen
         if (!trimmed || started.current || formSaved.error) return
         const slug = brainSlugify(trimmed)
         if (!slug) {
-            setError('Use at least one letter or digit in the title.')
+            setError(t('newPage.slugInvalid'))
             return
         }
         if (!pendingCreate && titles.has(slug)) {
-            setError(`A page "${titles.get(slug)}" already exists. Pick another title.`)
+            setError(t('newPage.exists', { title: titles.get(slug) ?? slug }))
             return
         }
         started.current = true
@@ -107,7 +109,7 @@ export function DesktopBrainNewPage({ pages, titles, actions, files = [], onOpen
 
     return (
         <div className="flex min-h-0 flex-1 flex-col">
-            <BrainTopBar crumbs={[{ label: 'Pages' }, { label: title.trim() || 'New page', icon: BRAIN_PAGE_ICONS[type] }]} status={creating ? 'Saving…' : null} />
+            <BrainTopBar crumbs={[{ label: t('crumbs.pages') }, { label: title.trim() || t('crumbs.newPage'), icon: BRAIN_PAGE_ICONS[type] }]} status={creating ? t('page.saving') : null} />
             <div className="min-h-0 flex-1 overflow-y-auto">
                 <PageColumn>
                     <PageTypeIcon type={type} />
@@ -128,11 +130,11 @@ export function DesktopBrainNewPage({ pages, titles, actions, files = [], onOpen
                     {error ? (
                         <div role="alert" className="mt-1 text-xs text-destructive">{error}<Button size="xs" variant="outline" disabled={creating} onClick={() => void create()}>Try again</Button></div>
                     ) : (
-                        title.trim() && <p className="mt-1 text-xs text-muted-foreground">Coworkers link to it as [[{brainSlugify(title)}]]</p>
+                        title.trim() && <p className="mt-1 text-xs text-muted-foreground">{t('newPage.linkHint', { slug: brainSlugify(title) })}</p>
                     )}
 
                     <div className="mt-4 space-y-0.5 border-b border-border pb-4">
-                        <PageProperty label="Type">
+                        <PageProperty label={t('page.type')}>
                             <PageTypeSelect value={type} onChange={next => { setType(next); saveFormEdit({ type: next }) }} disabled={creating || !!pendingCreate || !!formSaved.error} />
                         </PageProperty>
                     </div>
@@ -145,7 +147,7 @@ export function DesktopBrainNewPage({ pages, titles, actions, files = [], onOpen
                         titles={titles}
                         files={files}
                         handleRef={editorHandle}
-                        placeholder="Give the page a title, then type / for commands"
+                        placeholder={t('newPage.placeholder')}
                         onOpenPage={onOpenPage}
                         onOpenFile={onOpenFile}
                         onAcceptFileDrop={onAcceptFileDrop}

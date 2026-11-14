@@ -3,7 +3,7 @@
 import { PanelEditorHeader } from '@/components/ui/panel-editor'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { SiblingFiles } from '@/components/files/useSiblingFiles'
-import { useEffect, useState, type Ref } from 'react'
+import { useEffect, useState, type ReactNode, type Ref } from 'react'
 import { FileSiblingControls } from './DesktopFileSiblingNav'
 
 const RASTER_NAME = /^.+\.(?:png|jpe?g|gif|webp|svg|avif|ico|bmp)$/i
@@ -24,8 +24,10 @@ export type DesktopFileImagePreviewProps = {
     srcUrl: string
     onBack: () => void
     siblings?: SiblingFiles | null
+    headerActions?: ReactNode
     viewerRef?: Ref<HTMLDivElement>
     onPreviewIdentity?: (hash: string | null) => void
+    chrome?: 'files' | 'body'
 }
 
 type View = { loading: true } | { error: string } | { src: string }
@@ -34,7 +36,7 @@ type View = { loading: true } | { error: string } | { src: string }
  * The original preview is `<img src={rawUrl}>`. This Mac route has no hosted file URL, so the
  * same bytes are shown from a blob. GIF and animated WebP stay in that `<img>` and are not
  * drawn to a canvas or played as audio or video. */
-export function DesktopFileImagePreview({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef, onPreviewIdentity }: DesktopFileImagePreviewProps) {
+export function DesktopFileImagePreview({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef, headerActions, onPreviewIdentity, chrome = 'files' }: DesktopFileImagePreviewProps) {
     const [view, setView] = useState<View>({ loading: true })
     const requestKey = `${path}\0${identity ?? ''}\0${srcUrl}`
     const [requestKeySeen, setRequestKeySeen] = useState(requestKey)
@@ -84,9 +86,9 @@ export function DesktopFileImagePreview({ name, path, identity, srcUrl, onBack, 
     }, [identity, path, srcUrl, onPreviewIdentity])
 
     return <div ref={viewerRef} className="flex min-h-0 flex-1 flex-col">
-        <PanelEditorHeader title={name} onBack={onBack} mono>
-            <FileSiblingControls siblings={siblings} />
-        </PanelEditorHeader>
+        {chrome === 'files' && <PanelEditorHeader title={name} onBack={onBack} mono>
+            <FileSiblingControls siblings={siblings} />{headerActions}
+        </PanelEditorHeader>}
         <div key={path} className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {'src' in view ? <div className="flex h-full items-center justify-center overflow-auto bg-muted p-3">
                 <img src={view.src} alt={name} data-testid="file-image-preview" className="max-h-full max-w-full object-contain"

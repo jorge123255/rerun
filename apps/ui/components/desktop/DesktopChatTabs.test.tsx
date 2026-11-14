@@ -131,7 +131,7 @@ test.each(['thread', 'general'] as const)('regeneration of a %s stays on its own
             Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(composer, 'A draft for the original')
             composer.dispatchEvent(new Event('input', { bubbles: true }))
         })
-        await click('Regenerate reply')
+        await click('Regenerate')
         await click('Other')
         expect(visible().textContent).toContain('other answer')
         await act(async () => { resolve(new Response('data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream', 'x-session-id': 'alternate' } })) })
@@ -160,6 +160,7 @@ test('keeps an unaccepted first send open, then allows its bound running tab to 
     let finish!: () => void
     let stopRequests = 0
     let sent: unknown
+    const workspaceModel = { connectionId: 'fixture-openai', provider: 'openai', name: 'Fixture OpenAI', model: 'fixture-model', label: 'Fixture model' }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
         const draftResponse = drafts.handle(input, options)
         if (draftResponse) return draftResponse
@@ -171,7 +172,7 @@ test('keeps an unaccepted first send open, then allows its bound running tab to 
         if (url.endsWith('/chat')) { sent = JSON.parse(String(options?.body)); return new Promise<Response>(r => { accept = r }) }
         if (url.endsWith('/messages')) return Response.json({ messages: [] })
         if (url.endsWith('/stop')) { if (options?.method === 'POST') stopRequests++; return Response.json({ running: false }) }
-        if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
+        if (url.includes('/model')) return Response.json({ catalog: [], workspace: workspaceModel, coworker: null, conversation: null, effective: { source: 'workspace', ...workspaceModel, available: true } })
         const background = desktopBackgroundRead(input, options); if (background) return background
         throw Error('Unexpected request: ' + url)
     }))
@@ -257,7 +258,7 @@ test('a refused fork layout keeps the source tab and draft instead of restoring 
             Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'Keep this with the original')
             input.dispatchEvent(new Event('input', { bubbles: true }))
         })
-        const regenerate = [...container.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Regenerate reply')
+        const regenerate = [...container.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Regenerate')
         expect(regenerate).toBeDefined()
         await act(async () => { regenerate!.click() })
         expect(rejected).toBe(1)

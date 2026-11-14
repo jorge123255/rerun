@@ -24,7 +24,7 @@ export function serviceSkillJournal(db: Client) {
   return row ? decode(row) : null
  }
  return { read,
-  async reserve(record: ServiceInstall, index: number, hash: string) {
+  async reserve(record: Pick<ServiceInstall, 'id' | 'owner' | 'engineId'>, index: number, hash: string) {
    if (!z.uuid().safeParse(record.id).success || !Number.isInteger(index) || index < 0 || index >= 8 || !/^[a-f0-9]{64}$/.test(hash)) throw new Error('Invalid skill reservation')
    const prefix = createHash('sha256').update(record.id).digest('hex').slice(0, 24), slug = `svc-${prefix}-${index}`, stageSlug = `${slug}-pending`
    await db.execute({ sql: "INSERT INTO desktop_service_skill_resources(owner,engine_id,installation_id,ordinal,slug,stage_slug,content_hash,state) VALUES(?,?,?,?,?,?,?,'reserved') ON CONFLICT(owner,installation_id,ordinal) DO NOTHING", args: [record.owner, record.engineId, record.id, index, slug, stageSlug, hash] })

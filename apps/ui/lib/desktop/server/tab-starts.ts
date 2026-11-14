@@ -12,6 +12,10 @@ import { DesktopHttpError } from './auth'
 import { GENERAL_SESSION_TITLE, generalTabUid, openingMessage } from '../general-threads'
 import { createDesktopSession, type DesktopAgent } from './store'
 
+export type DesktopPhoneFirstTurn = { sessionId: string; runId: string }
+
+export const desktopPhoneTabUid = (sessionId: string) => 'mac-phone:' + sessionId
+
 type StartInput = DesktopAttachmentFields & DesktopCoworkerMentionFields & { text: string; modelChoice?: DesktopModelPick; documents?: DesktopDocumentSendSelection }
 
 function fingerprint(input: StartInput) {
@@ -41,7 +45,12 @@ export async function readTabStart(db: Client, agent: DesktopAgent, uid: string,
     return { row, matches: row.input_hash === fingerprint(input) }
 }
 
-export async function existingTabStart(db: Client, agent: DesktopAgent, uid: string, input: StartInput) {
+export async function existingTabStart(db: Client, agent: DesktopAgent, uid: string, input: StartInput, phone?: DesktopPhoneFirstTurn) {
+    if (phone) {
+        const { row } = await readTabStart(db, agent, uid, input)
+        return row ? validate(row, fingerprint(input)) : null
+    }
+    if (uid.startsWith(desktopPhoneTabUid(''))) throw new DesktopHttpError(404, 'Open this coworker’s new conversation before sending.')
     const args = { agent: agent.id, uid }
     const [open, previous] = await db.batch([
         { sql: `SELECT json_extract(tab.value,'$.id') AS id ${tabSource}`, args },
@@ -53,13 +62,13 @@ export async function existingTabStart(db: Client, agent: DesktopAgent, uid: str
     return null
 }
 
-export async function reserveTabStart(db: Client, agent: DesktopAgent, uid: string, input: StartInput, launch: string) {
+export async function reserveTabStart(db: Client, agent: DesktopAgent, uid: string, input: StartInput, launch: string, phone?: DesktopPhoneFirstTurn) {
     const hash = fingerprint(input)
     const [, current] = await db.batch([{
         sql: `INSERT INTO desktop_tab_starts (agent_id, uid, input_hash, engine_session_id, run_id, title, model_choice, launch_nonce)
-              SELECT :agent,:uid,:hash,:engine,:run,:title,:model,:launch ${tabSource} AND json_extract(tab.value,'$.id') IS NULL
+              SELECT :agent,:uid,:hash,:engine,:run,:title,:model,:launch ${phone ? 'WHERE EXISTS (SELECT 1 FROM desktop_agents WHERE id = :agent AND workspace_id = 1)' : tabSource + " AND json_extract(tab.value,'$.id') IS NULL"}
               ON CONFLICT(agent_id, uid) DO NOTHING`,
-        args: { agent: agent.id, uid, hash, engine: tabUuid([agent.id,uid]), run: tabUuid([agent.id,uid,hash]), title: desktopChatTitle(input), model: JSON.stringify(input.modelChoice ?? null), launch },
+        args: { agent: agent.id, uid, hash, engine: phone?.sessionId ?? tabUuid([agent.id,uid]), run: phone?.runId ?? tabUuid([agent.id,uid,hash]), title: desktopChatTitle(input), model: JSON.stringify(input.modelChoice ?? null), launch },
     }, {
         sql: 'SELECT * FROM desktop_tab_starts WHERE agent_id = ? AND uid = ?', args: [agent.id, uid],
     }], 'write')
@@ -76,6 +85,7 @@ export async function recoverTabSession(db: Client, conn: EngineConnection, agen
     if (!runs.some(run => run.id === row.run_id && run.sessionId === engineSessionId)) return null
     const general = String(row.uid) === generalTabUid(agent.id)
     const saved = await createDesktopSession(db, {
+        id: String(row.uid) === desktopPhoneTabUid(engineSessionId) ? engineSessionId : undefined,
         agentId: agent.id, engineSessionId,
         title: general ? GENERAL_SESSION_TITLE : String(row.title),
         model: JSON.parse(String(row.model_choice)),

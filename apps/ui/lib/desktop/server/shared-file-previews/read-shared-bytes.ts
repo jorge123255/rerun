@@ -4,7 +4,7 @@ import { lstat, realpath } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import type { FileHandle } from 'node:fs/promises'
 import { openWithoutLinks } from '../../../../../engine/src/desktop/open-without-links'
-import { SharedWorkspaceFileError, type SharedFileAccess } from '../../../../../engine/src/desktop/shared-workspace-files'
+import { SharedWorkspaceFileError, sharedFileRevision, type SharedFileAccess } from '../../../../../engine/src/desktop/shared-workspace-files'
 import { desktopAudioKind, inspectDesktopAudioBytes } from '../audio-bytes'
 import { desktopRasterKind, inspectDesktopImageBytes } from '../image-bytes'
 import { desktopPdfKind, inspectDesktopPdfBytes } from '../pdf-bytes'
@@ -15,6 +15,7 @@ import { desktopSharedDirectory, rethrowDesktopSharedFileError } from '../shared
 
 export type SharedPreviewKind = 'image' | 'audio' | 'video' | 'pdf' | 'download'
 export type SharedPreviewBytes = { path: string; name: string; bytes: Uint8Array; contentType: string; identity: string }
+type SharedPreviewAccess = SharedFileAccess & { version?: string }
 
 const MAX_BYTES = 16 * 1024 * 1024
 const MAX_DEPTH = 32
@@ -53,7 +54,7 @@ async function directory(path: string): Promise<FileHandle> {
     }
 }
 
-export async function readSharedBytes(runtime: DesktopRuntime, path: string, kind: SharedPreviewKind, access?: SharedFileAccess): Promise<SharedPreviewBytes> {
+export async function readSharedBytes(runtime: DesktopRuntime, path: string, kind: SharedPreviewKind, access?: SharedPreviewAccess): Promise<SharedPreviewBytes> {
     try { return await read(runtime, path, kind, access) }
     catch (error) {
         if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') throw new DesktopHttpError(404, 'Shared file not found.')
@@ -61,8 +62,11 @@ export async function readSharedBytes(runtime: DesktopRuntime, path: string, kin
     }
 }
 
-async function read(runtime: DesktopRuntime, path: string, kind: SharedPreviewKind, access?: SharedFileAccess): Promise<SharedPreviewBytes> {
+async function read(runtime: DesktopRuntime, path: string, kind: SharedPreviewKind, access?: SharedPreviewAccess): Promise<SharedPreviewBytes> {
     const parts = partsOf(path)
+    if (access?.version !== undefined && (parts.join('/') !== path || parts.some(part => part.startsWith('.')))) {
+        throw new SharedWorkspaceFileError(400, 'Choose a listed shared file to save.')
+    }
     const name = parts.at(-1)!
     const root = await desktopSharedDirectory(runtime, access?.signal)
     const rel = parts.join('/')
@@ -92,6 +96,9 @@ async function read(runtime: DesktopRuntime, path: string, kind: SharedPreviewKi
         if (opened.size > BigInt(MAX_BYTES)) throw new SharedWorkspaceFileError(413, 'This shared file is too large to preview or save.')
         if (opened.size !== listed.size || opened.ctimeNs !== listed.ctimeNs) {
             throw new SharedWorkspaceFileError(409, 'This file changed while it was being read.')
+        }
+        if (access?.version !== undefined && sharedFileRevision(opened) !== access.version) {
+            throw new SharedWorkspaceFileError(409, 'This shared file changed. Reopen it before saving.')
         }
         const size = Number(opened.size)
         const bytes = Buffer.alloc(size)

@@ -1,6 +1,7 @@
-import { sessionSourceSchema } from '@rerun/contracts'
+import { desktopAutomationResultSchema, sessionSourceSchema } from '@rerun/contracts'
 import { z } from 'zod'
-import { messageDayLabel } from '@/lib/time'
+import { messageDayLabel } from '@rerun/i18n/format'
+import { conversationSearchKey } from './chat-search'
 
 export const desktopChatFilterSchema = z.enum(['all', 'chats', 'automations', 'needs'])
 export type DesktopChatFilter = z.infer<typeof desktopChatFilterSchema>
@@ -17,13 +18,14 @@ export const desktopChatHistoryConversationSchema = z.object({
     pendingQuestion: z.string().nullable(),
     kind: z.enum(['general', 'thread']).optional(),
     firstMessage: z.string().nullable().optional(),
+    automationOutcome: desktopAutomationResultSchema.shape.outcome.optional(),
 })
 export type DesktopChatHistoryConversation = z.infer<typeof desktopChatHistoryConversationSchema>
 
 export const desktopChatHistorySchema = z.object({
     conversations: z.array(desktopChatHistoryConversationSchema),
     enrichment: z.enum(['ok', 'unavailable']),
-    questions: z.enum(['ok', 'unavailable']),
+    questions: z.enum(['ok', 'unavailable', 'not-requested']),
 })
 export type DesktopChatHistory = z.infer<typeof desktopChatHistorySchema>
 
@@ -52,7 +54,7 @@ export function sortDesktopChats(conversations: readonly DesktopChatHistoryConve
 }
 
 export function filterDesktopChats(conversations: readonly DesktopChatHistoryConversation[], filter: DesktopChatFilter, query: string): DesktopChatHistoryConversation[] {
-    const needle = query.trim().toLocaleLowerCase()
+    const needle = conversationSearchKey(query.trim())
     const seen = new Set<string>()
     return sortDesktopChats(conversations.filter(conversation => {
         if (seen.has(conversation.id) || conversation.kind === 'general') return false
@@ -60,15 +62,16 @@ export function filterDesktopChats(conversations: readonly DesktopChatHistoryCon
         if (filter === 'automations' && !isAutomatedChat(conversation)) return false
         if (filter === 'chats' && !isOrdinaryChat(conversation)) return false
         if (filter === 'needs' && !conversation.needsYou) return false
-        const haystack = `${conversation.title}\n${conversation.firstMessage ?? ''}`.toLocaleLowerCase()
+        const haystack = conversationSearchKey(`${conversation.title}\n${conversation.firstMessage ?? ''}`)
         return !needle || haystack.includes(needle)
     }))
 }
 
-export function groupDesktopChats(conversations: readonly DesktopChatHistoryConversation[], now = new Date()) {
+export function groupDesktopChats(conversations: readonly DesktopChatHistoryConversation[],
+    { now = new Date(), locale = 'en', unknownDate = 'Date unavailable' } = {}) {
     const groups: { day: string; entries: DesktopChatHistoryConversation[] }[] = []
     for (const conversation of sortDesktopChats(conversations)) {
-        const day = Number.isFinite(Date.parse(conversation.updatedAt)) ? messageDayLabel(conversation.updatedAt, now) : 'Date unavailable'
+        const day = Number.isFinite(Date.parse(conversation.updatedAt)) ? messageDayLabel(conversation.updatedAt, locale, now) : unknownDate
         const last = groups.at(-1)
         if (last?.day === day) last.entries.push(conversation)
         else groups.push({ day, entries: [conversation] })

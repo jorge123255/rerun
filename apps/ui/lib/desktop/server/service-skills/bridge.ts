@@ -2,15 +2,19 @@ import 'server-only'
 import { z } from 'zod'
 import { authenticateDesktopEngineRequest, DesktopHttpError } from '../auth'
 import { boundedText } from '../mcp/remote'
-import { readDesktopServiceSkillOwners } from './authority'
+import { readDesktopServiceSkillOwners, syncDesktopVaultSkills } from './authority'
 
 export async function handleDesktopServiceSkillOwners(request: Request): Promise<Response> {
     try {
         const runtime = await authenticateDesktopEngineRequest(request)
         if (request.method !== 'POST') return new Response(null, { status: 405 })
         const signal = AbortSignal.any([request.signal, AbortSignal.timeout(10_000)])
-        const { engineAgentId } = z.object({ engineAgentId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/) }).strict()
+        const { engineAgentId, syncVault } = z.object({ engineAgentId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), syncVault: z.literal(true).optional() }).strict()
             .parse(JSON.parse(await boundedText(new Response(request.body), signal, 2048)))
+        if (syncVault) {
+            const hidden = await syncDesktopVaultSkills(runtime, engineAgentId, signal)
+            return Response.json({ engineAgentId, hidden: [...hidden] }, { headers: { 'Cache-Control': 'no-store' } })
+        }
         const owners = await readDesktopServiceSkillOwners(runtime, engineAgentId, signal)
         if (owners.size > 2048) throw new Error('Ownership limit exceeded')
         const output = { engineAgentId, owners: [...owners].map(([slug, name]) => ({ slug, name })) }

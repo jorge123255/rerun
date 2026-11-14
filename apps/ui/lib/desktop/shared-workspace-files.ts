@@ -1,8 +1,9 @@
-export type DesktopSharedEntry = { name: string; type: 'file' | 'dir'; size: number; modified: string }
+export type DesktopSharedEntry = { name: string; type: 'file' | 'dir'; size: number; modified: string; deleteRevision?: string }
 
 export type DesktopSharedListing = { path: string; entries: DesktopSharedEntry[]; truncated: boolean }
 
-export type DesktopSharedPreview = { path: string; content: string; size: number; truncated: boolean; offset: number; nextOffset: number | null; editIdentity?: { expectedBytes: number; expectedSha256: string } | null }
+export type DesktopSharedTextIdentity = { expectedBytes: number; expectedSha256: string }
+export type DesktopSharedPreview = { path: string; content: string; size: number; truncated: boolean; offset: number; nextOffset: number | null; editIdentity?: DesktopSharedTextIdentity | null; deleteRevision?: string }
 
 const BASE = '/api/desktop/shared-files'
 const deadline = (signal?: AbortSignal) => AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30_000)])
@@ -16,11 +17,11 @@ async function parse<T>(response: Response): Promise<T> {
 export async function listDesktopSharedFolder(path: string, signal?: AbortSignal): Promise<DesktopSharedListing> {
     const query = new URLSearchParams({ path })
     const response = await fetch(`${BASE}?${query}`, { cache: 'no-store', signal: deadline(signal) })
-    const listing = await parse<{ path: string; entries: { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string }[]; truncated: boolean }>(response)
+    const listing = await parse<{ path: string; entries: (Omit<DesktopSharedEntry, 'modified'> & { modifiedAt: string })[]; truncated: boolean }>(response)
     return {
         path: listing.path,
         truncated: listing.truncated,
-        entries: listing.entries.map(entry => ({ name: entry.name, type: entry.type, size: entry.size, modified: entry.modifiedAt })),
+        entries: listing.entries.map(({ modifiedAt, ...entry }) => ({ ...entry, modified: modifiedAt })),
     }
 }
 
@@ -50,9 +51,36 @@ export async function importDesktopSharedFiles(folder: string, files: readonly F
     return (await parse<{ results: DesktopSharedImportResult[] }>(response)).results
 }
 
-export async function renameDesktopSharedFile(path: string, name: string, signal?: AbortSignal): Promise<{ path: string; name: string }> {
-    return parse(await fetch(BASE, {
+export async function renameDesktopSharedEntry(workspaceId: number, path: string, name: string, revision: string, signal: AbortSignal): Promise<{ path: string; name: string }> {
+    const result = await parse<{ path: string; name: string; workspaceId: number }>(await fetch(BASE, {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ path, name }), signal: deadline(signal),
+        body: JSON.stringify({ workspaceId, path, name, revision }), signal: deadline(signal),
     }))
+    const parent = path.slice(0, path.lastIndexOf('/') + 1)
+    if (result?.workspaceId !== workspaceId || typeof result.name !== 'string'
+        || result.name.normalize('NFC') !== name.normalize('NFC') || result.path !== parent + result.name) {
+        throw new Error('The rename could not be confirmed. Refresh Shared files before trying again.')
+    }
+    return result
+}
+
+export async function deleteDesktopSharedEntry(workspaceId: number, path: string, revision: string, signal: AbortSignal) {
+    const removed = await parse<{ path: string; workspaceId: number }>(await fetch(BASE, {
+        method: 'DELETE', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workspaceId, path, revision }), signal: deadline(signal),
+    }))
+    if (removed?.path !== path || removed.workspaceId !== workspaceId) {
+        throw new Error('The delete could not be confirmed. Refresh Shared files before trying again.')
+    }
+}
+
+export async function replaceDesktopSharedText(workspaceId: number, path: string, content: string, base: DesktopSharedTextIdentity, signal: AbortSignal) {
+    const saved = await parse<{ ok: true; workspaceId: number; path: string; editIdentity: DesktopSharedTextIdentity; recoveryPath?: string; deleteRevision?: string }>(await fetch(BASE, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workspaceId, path, content, base }), signal: deadline(signal),
+    }))
+    if (!saved?.ok || saved.workspaceId !== workspaceId || saved.path !== path || !saved.editIdentity) {
+        throw new Error('The shared file save could not be confirmed.')
+    }
+    return saved
 }

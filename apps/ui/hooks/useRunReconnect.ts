@@ -11,6 +11,7 @@ type RunStatus = { status: string; error?: string | null }
 // a chase that takes a minute, and it has to finish on the one it started with.
 export type RunReconnectTarget = {
     runId: string
+    isCurrent?: () => boolean
     getRun: () => Promise<RunStatus | null>
     fetchMessages: () => Promise<unknown[]>
     onSettled: (outcome: { errored: boolean; errorText: string | null }) => Promise<void> | void
@@ -54,6 +55,7 @@ export function useRunReconnect({ error, completedRef, start, resumeStream, setM
         reconnectingRef.current = true
         setReconnecting(true)
         completedRef.current = false
+        const isCurrent = () => mountedRef.current && (target.isCurrent?.() ?? true)
         const failureMessage = error.message
         ;(async () => {
             let errored = false
@@ -61,11 +63,11 @@ export function useRunReconnect({ error, completedRef, start, resumeStream, setM
             try {
                 // Bounded on purpose: a run whose provider wedged answers "running" forever, and an
                 // unbounded loop kept the conversation spinning with no way out.
-                for (let attempt = 0; attempt < RECONNECT_ATTEMPTS && mountedRef.current; attempt++) {
+                for (let attempt = 0; attempt < RECONNECT_ATTEMPTS && isCurrent(); attempt++) {
                     await resumeStream().catch(() => {})
-                    if (!mountedRef.current || completedRef.current) break
+                    if (!isCurrent() || completedRef.current) break
                     let finished = false
-                    for (let i = 0; i < 3 && mountedRef.current; i++) {
+                    for (let i = 0; i < 3 && isCurrent(); i++) {
                         const run = await target.getRun().catch(() => null)
                         if (completedRef.current) {
                             finished = true
@@ -88,16 +90,17 @@ export function useRunReconnect({ error, completedRef, start, resumeStream, setM
                         errorText = 'The run stopped responding. Stop it to send another message.'
                     }
                 }
-                if (!mountedRef.current) return
+                if (!isCurrent()) return
                 if (!completedRef.current) {
                     const data = await target.fetchMessages().catch(() => [])
+                    if (!isCurrent()) return
                     if (data.length > 0) setMessages(data as never[])
                 }
                 await target.onSettled({ errored, errorText })
-                setReconnecting(false)
-                clearError()
+                if (isCurrent()) clearError()
             } finally {
                 reconnectingRef.current = false
+                if (mountedRef.current) setReconnecting(false)
             }
         })()
     }, [error, completedRef, setMessages, clearError, resumeStream])

@@ -9,6 +9,7 @@ import type { DesktopAttention, DesktopAttentionItem } from '../attention'
 import { readDesktopTakeover } from './takeover'
 import { readDesktopApproval } from './approvals'
 import { assertCoworkerNotDeleting } from './coworker-delete'
+import { createDesktopHumanRequestHistory } from './human-request-history'
 import { openDesktopDatabase } from './database'
 import { readDesktopQuestion } from './questions'
 import type { DesktopRuntime } from './runtime'
@@ -49,17 +50,16 @@ async function collect(runtime: DesktopRuntime): Promise<DesktopAttention> {
             let pending: Pick<DesktopAttentionItem, 'id' | 'kind' | 'summary' | 'requestedAt'> | undefined
             let failed = false
             try {
-                // Sequential resolvers preserve the workspace-wide bound of four active
-                // history reads. Both already exclude accepted answer/decision receipts.
-                const { question } = await readDesktopQuestion(runtime, session.id, { signal })
+                const history = createDesktopHumanRequestHistory(runtime, agent.id, signal)
+                const { question } = await readDesktopQuestion(runtime, session.id, { signal, history })
                 if (question) pending = { id: question.id, kind: 'question', summary: summary(question.questions[0].question), requestedAt: question.requestedAt ?? undefined }
                 else {
                     signal.throwIfAborted()
-                    const { approval } = await readDesktopApproval(runtime, session.id, { signal })
+                    const { approval } = await readDesktopApproval(runtime, session.id, { signal, history })
                     if (approval) pending = { id: approval.id, kind: 'approval', summary: summary(approval.approvals[0].action), requestedAt: approval.requestedAt ?? undefined }
                     else {
                         signal.throwIfAborted()
-                        const { takeover } = await readDesktopTakeover(runtime, session.id, { signal })
+                        const { takeover } = await readDesktopTakeover(runtime, session.id, { signal, history })
                         if (takeover) pending = { id: takeover.id, kind: 'takeover', summary: summary(takeover.reason), requestedAt: takeover.requestedAt }
                         else {
                             signal.throwIfAborted()

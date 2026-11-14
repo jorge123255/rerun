@@ -13,6 +13,7 @@ const { writeAgentConfig } = await import('../../agents/config-write.js')
 const { agentDir } = await import('../../config/paths.js')
 const { createSession, touchSession } = await import('../../db/repos/sessions.js')
 const { appendMessage } = await import('../../db/repos/messages.js')
+const { reserveDesktopQueuedTurn } = await import('../../db/repos/desktop-queued-turns.js')
 
 const id = 'sessionagent'
 const app = createServer()
@@ -61,6 +62,41 @@ describe('GET /agents/:id/sessions', () => {
 })
 
 describe('GET /agents/:id/sessions?view=threads', () => {
+    it('publishes only the result of an owned automation with a successful terminal receipt', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const { startRun, finishRun } = await import('../../db/repos/runs.js')
+        const { recordRunCompletion } = await import('../../db/completed-runs.js')
+        const { readUnlabelledAutomationReport, recordDesktopAutomationResult } = await import('../../db/desktop-automation-results.js')
+        const { closeSystemDb } = await import('../../db/systemDb.js')
+        try {
+            const routine = await createSession(id, 'schedule: digest', undefined, 'schedule')
+            const run = await startRun(id, routine.id)
+            const identity = { agentId: id, sessionId: routine.id, runId: run.id, source: 'schedule' } as const
+            const signal = new AbortController().signal
+            const result = { title: 'No new leads', outcome: 'nothing' } as const
+            await finishRun(id, run.id, null, 0)
+            expect(await readUnlabelledAutomationReport(identity)).toBeNull()
+            await recordDesktopAutomationResult(identity, result, signal)
+            expect((await (await app.request(`/agents/${id}/sessions?view=threads`)).json()).threads
+                .find((row: Session) => row.id === routine.id)).not.toHaveProperty('automationResult')
+            await recordRunCompletion({ ...identity, trigger: { source: 'schedule', name: 'Digest', slug: 'digest' }, text: 'No new leads were found and nothing changed.' })
+            expect(await readUnlabelledAutomationReport({ ...identity, source: 'trigger' })).toBeNull()
+            expect(await readUnlabelledAutomationReport({ ...identity, agentId: 'other-owner' })).toBeNull()
+            expect(await readUnlabelledAutomationReport(identity)).toContain('No new leads')
+            await recordDesktopAutomationResult(identity, result, signal)
+            await recordDesktopAutomationResult(identity, { title: 'Duplicate result', outcome: 'done' }, signal)
+            expect(await readUnlabelledAutomationReport(identity)).toBeNull()
+            closeSystemDb(id)
+            for (const path of ['', '?view=threads']) {
+                const response = await app.request(`/agents/${id}/sessions${path}`)
+                expect(response.status).toBe(200)
+                const body = await response.json()
+                expect((body.threads ?? body.sessions).find((row: Session) => row.id === routine.id)).toMatchObject({ automationResult: result })
+            }
+            expect((await listed()).find(row => row.id === routine.id)?.title).toBe('schedule: digest')
+        } finally { vi.unstubAllEnvs() }
+    })
+
     it('projects only owned branch metadata without returning run errors or the scheduled prompt', async () => {
         vi.stubEnv('RERUN_DESKTOP_APP', '1')
         const { startRun, finishRun, failRun } = await import('../../db/repos/runs.js')
@@ -132,6 +168,60 @@ describe('GET /agents/:id/sessions/:sid/messages', () => {
             ['user', 'first'],
             ['assistant', 'second'],
         ])
+    })
+
+    it('restores a settled compaction only on its owned Mac prompt after reopening the database', async () => {
+        const { recordDesktopCompaction } = await import('../../db/repos/compactions.js')
+        const { closeSystemDb } = await import('../../db/systemDb.js')
+        closeSystemDb(id)
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const session = await createSession(id, 'Compacted')
+            const sibling = await createSession(id, 'Other')
+            const runId = crypto.randomUUID()
+            const user = await reserveDesktopQueuedTurn(id, { runId, sessionId: session.id, message: 'Saved prompt' })
+            const wrong = await appendMessage(id, session.id, { role: 'user', content: 'Saved prompt' })
+            const other = await appendMessage(id, sibling.id, { role: 'user', content: 'Saved prompt' })
+            const receipt = { id: 'a'.repeat(21), status: 'done' as const, messagesCompacted: 8, tokensRecovered: 1234 }
+            await recordDesktopCompaction(id, session.id, runId, wrong.id, { id: 'b'.repeat(21), status: 'error' })
+            await recordDesktopCompaction(id, session.id, runId, other.id, { id: 'b'.repeat(21), status: 'error' })
+            await recordDesktopCompaction(id, session.id, runId, user.id, receipt)
+            await recordDesktopCompaction(id, session.id, runId, user.id, { id: 'b'.repeat(21), status: 'error' })
+            closeSystemDb(id)
+            const path = `/agents/${id}/sessions/${session.id}/messages`
+            const { messages } = await (await app.request(path + '?view=desktop-decisions')).json()
+            expect(messages[0]).toMatchObject({ id: user.id, desktopCompaction: receipt })
+            expect(messages[1]).not.toHaveProperty('desktopCompaction')
+            expect(messages[0].contentJson).not.toContain(receipt.id)
+            expect((await (await app.request(path)).json()).messages[0]).not.toHaveProperty('desktopCompaction')
+            expect((await app.request(`/agents/otheragent/sessions/${session.id}/messages?view=desktop-decisions`)).status).toBe(404)
+        } finally { vi.unstubAllEnvs() }
+    })
+
+
+    it('adds the exact queued user binding only to the desktop decision history view', async () => {
+        const { closeSystemDb } = await import('../../db/systemDb.js')
+        const session = await createSession(id, 'decisions')
+        const sibling = await createSession(id, 'sibling')
+        const runId = crypto.randomUUID()
+        const user = await reserveDesktopQueuedTurn(id, { runId, sessionId: session.id, message: 'Saved decision' })
+        const normal = await appendMessage(id, session.id, { role: 'user', content: 'Saved decision' })
+        await reserveDesktopQueuedTurn(id, { runId: crypto.randomUUID(), sessionId: sibling.id, message: 'Other chat' })
+        const path = `/agents/${id}/sessions/${session.id}/messages`
+        closeSystemDb(id)
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const result = await app.request(path + '?view=desktop-decisions')
+            expect(result.status).toBe(200)
+            expect(result.headers.get('cache-control')).toBe('no-store')
+            const { messages } = await result.json()
+            expect(messages.map((message: { id: string; desktopRunId?: string }) =>
+                [message.id, message.desktopRunId])).toEqual([[user.id, runId], [normal.id, null]])
+            expect((await (await app.request(path)).json()).messages[0]).not.toHaveProperty('desktopRunId')
+            expect((await app.request(`/agents/otheragent/sessions/${session.id}/messages?view=desktop-decisions`)).status).toBe(404)
+            vi.stubEnv('RERUN_DESKTOP_APP', '0')
+            expect((await (await app.request(path + '?view=desktop-decisions')).json()).messages[0]).not.toHaveProperty('desktopRunId')
+        } finally { vi.unstubAllEnvs() }
     })
 
     it('404s on a session that belongs to another agent', async () => {

@@ -14,7 +14,7 @@ import { POST } from './read/route'
 const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime
 let alice: DesktopAgent, bob: DesktopAgent, a1: DesktopSession, a2: DesktopSession, b1: DesktopSession
-let beforeReply: (() => Promise<void>) | undefined
+let beforeReply: ((url: URL) => Promise<void>) | undefined
 let beforeAdoptionReply: (() => Promise<void>) | undefined
 const remoteSessions = new Map<string, Record<string, unknown>>(), remoteRuns = new Map<string, Record<string, unknown>>()
 const rows: EngineRunCompletion[] = [], calls: URL[] = [], failed = new Set<string>()
@@ -70,7 +70,7 @@ beforeEach(async () => {
                 row.completedAt < before.completedAt || (row.completedAt === before.completedAt && (row.id < before.id || (before.inclusiveId && row.id === before.id)))))
                 .sort((a, b) => a.completedAt === b.completedAt ? (a.id < b.id ? 1 : a.id === b.id ? 0 : -1) : a.completedAt < b.completedAt ? 1 : -1)
                 .slice(0, ids?.length ?? Number(url.searchParams.get('limit') ?? 50))
-            await beforeReply?.()
+            await beforeReply?.(url)
             res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ completions: result }))
         })().catch(() => res.writeHead(500).end())
     })
@@ -120,16 +120,59 @@ test('pages raw interleaved chat rows without dropping the middle conversation o
     expect(ids).toEqual([newest, middle, oldest].map(row => identity(alice, row)))
 })
 
-test('advances through more than 100 seen rows and exposes the older unread result', async () => {
-    for (let n = 101; n > 0; n--) completion(alice, a1, `run-${n}`, n)
-    expect((await mark(rows.slice(0, 100).map(row => identity(alice, row)))).status).toBe(200)
-    let page = await read('?limit=50')
-    expect(page.items).toEqual([]); expect(page.nextCursor).not.toBeNull()
-    page = await read(`?limit=50&before=${encodeURIComponent(page.nextCursor!)}`)
-    expect(page.items).toEqual([]); expect(page.nextCursor).not.toBeNull()
-    page = await read(`?limit=50&before=${encodeURIComponent(page.nextCursor!)}`)
-    expect(page.items.flatMap(item => item.completionIds)).toEqual([identity(alice, rows[100])])
+test('the initial poll surfaces an older unread result when recent raw pages are all seen', async () => {
+    const older = completion(alice, a2, 'older-unread', 1)
+    for (let n = 2; n <= 42; n++) completion(alice, a1, `seen-${n}`, n)
+    expect((await mark(rows.slice(1).map(row => identity(alice, row)))).status).toBe(200)
+
+    const page = await read()
+    expect(page.items.flatMap(item => item.completionIds)).toEqual([identity(alice, older)])
     expect(page.nextCursor).toBeNull()
+    expect(await seen()).toHaveLength(41)
+})
+
+test('bounds lookahead and keeps a cursor past a long fully acknowledged prefix', async () => {
+    const older = completion(alice, a2, 'deep-unread', 1)
+    for (let n = 2; n <= 122; n++) completion(alice, a1, `seen-${n}`, n)
+    expect((await mark(rows.slice(1).map(row => identity(alice, row)))).status).toBe(200)
+    calls.length = 0
+    const first = await read()
+    expect(first.items).toEqual([])
+    expect(first.nextCursor).not.toBeNull()
+    expect(calls.filter(url => url.pathname.includes('/engine-a/'))).toHaveLength(6)
+    const next = await read(`?before=${encodeURIComponent(first.nextCursor!)}`)
+    expect(next.items.flatMap(item => item.completionIds)).toEqual([identity(alice, older)])
+    expect(next.nextCursor).toBeNull()
+})
+
+test('fills a sparse page without skipping later results when lookahead overfills it', async () => {
+    const unread = [1, 2, 3, 6].map(n => completion(alice, a1, `unread-${n}`, n))
+    const recentSeen = [4, 5].map(n => completion(alice, a2, `seen-${n}`, n))
+    expect((await mark(recentSeen.map(row => identity(alice, row)))).status).toBe(200)
+    const first = await read('?limit=3')
+    expect(first.items.flatMap(item => item.completionIds)).toEqual([unread[3], unread[2], unread[1]].map(row => identity(alice, row)))
+    expect(first.nextCursor).not.toBeNull()
+    const second = await read(`?limit=3&before=${encodeURIComponent(first.nextCursor!)}`)
+    expect(second.items.flatMap(item => item.completionIds)).toEqual([identity(alice, unread[0])])
+    expect(second.nextCursor).toBeNull()
+})
+
+test('retains the last confirmed cursor when an owner fails during lookahead', async () => {
+    const older = completion(bob, b1, 'older-bob', 1)
+    for (let n = 2; n <= 21; n++) completion(alice, a1, `seen-${n}`, n)
+    expect((await mark(rows.slice(1).map(row => identity(alice, row)))).status).toBe(200)
+    beforeReply = async url => {
+        if (url.pathname.includes('/engine-b/') && !url.searchParams.has('before')) failed.add(bob.engineAgentId)
+    }
+    const first = await read()
+    expect(first.items).toEqual([])
+    expect(first.unavailableAgentIds).toEqual([bob.id])
+    expect(first.nextCursor).not.toBeNull()
+
+    beforeReply = undefined
+    failed.clear()
+    const next = await read(`?before=${encodeURIComponent(first.nextCursor!)}`)
+    expect(next.items.flatMap(item => item.completionIds)).toEqual([identity(bob, older)])
 })
 
 test('keeps equal run IDs/timestamps in two owner databases distinct for paging and marking read', async () => {

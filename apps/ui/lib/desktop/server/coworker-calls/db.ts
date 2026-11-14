@@ -2,6 +2,7 @@ import 'server-only'
 import {
     DESKTOP_COWORKER_CALL_INTERRUPTED_REASON,
     DESKTOP_COWORKER_CALL_MAX_FANOUT,
+    FOREMAN_AGENT_ID,
     desktopCoworkerCallProgressSchema,
     desktopCoworkerCallStatuses,
     type DesktopCoworkerCallProgress,
@@ -235,6 +236,16 @@ export async function listDesktopCoworkerCallRows(db: Reader, parentSessionId: s
     return result.rows.map(row => recordOf(row as Record<string, unknown>))
 }
 
+export async function listDesktopForemanCallSources(db: Reader, chatId: string, sessionId: string) {
+    const { rows } = await db.execute({
+        sql: `SELECT call_id, engine_parent_run_id FROM desktop_coworker_calls
+            WHERE parent_agent_id = ? AND parent_session_id = ? AND engine_parent_agent_id = ? AND engine_parent_session_id = ?
+            ORDER BY created_at DESC, call_id LIMIT 5000`,
+        args: [FOREMAN_AGENT_ID, chatId, FOREMAN_AGENT_ID, sessionId],
+    })
+    return rows.map(row => ({ callId: String(row.call_id), runId: String(row.engine_parent_run_id) }))
+}
+
 export async function inboundDesktopCoworkerCall(db: Reader, engineRunId: string): Promise<CoworkerCallRecord | null> {
     return one(db, `${SELECT} WHERE engine_child_run_id = ?`, [engineRunId])
 }
@@ -299,11 +310,11 @@ export async function patchDesktopCoworkerCall(db: Client, callId: string, expec
     } finally { tx.close() }
 }
 
-export async function reserveDesktopCoworkerCallStop(db: Client, input: { requestId: string; callId: string; parentSessionId: string; expectedRevision: string }): Promise<void> {
+export async function reserveDesktopCoworkerCallStop(db: Client, input: { requestId: string; callId: string; parentAgentId: string; parentSessionId: string; expectedRevision: string }): Promise<void> {
     const tx = await db.transaction('write')
     try {
         const call = await getDesktopCoworkerCall(tx, input.callId)
-        if (!call || call.parentSessionId !== input.parentSessionId) throw new DesktopHttpError(404, 'Coworker call not found.')
+        if (!call || call.parentSessionId !== input.parentSessionId || call.parentAgentId !== input.parentAgentId) throw new DesktopHttpError(404, 'Coworker call not found.')
         const previous = (await tx.execute({ sql: 'SELECT * FROM desktop_coworker_call_stop_intents WHERE request_id = ?', args: [input.requestId] })).rows[0]
         if (previous && (previous.call_id !== input.callId || previous.parent_session_id !== input.parentSessionId || previous.expected_revision !== input.expectedRevision)) {
             throw new DesktopHttpError(409, 'That stop belongs to a different coworker call.')

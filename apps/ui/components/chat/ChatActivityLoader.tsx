@@ -1,11 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { TextShimmer } from '@rerun/ui'
-
-import { Message, MessageContent } from '@/components/ai-elements/message'
-import { DotSpinner } from '@/components/ui/dot-spinner'
-import { TextLoop } from '@/components/ui/text-loop'
+import { ChatActivityPresentation } from './ChatActivityPresentation'
 import { useToolDisplay } from '@/hooks/useToolDisplay'
 import { liveActivityLabel, loadingLabels } from '@/lib/agent-chat-loader'
 
@@ -20,25 +16,5 @@ export function ChatActivityLoader({ agentId, message, indicator }: ChatActivity
     const toolDisplay = useToolDisplay(agentId)
     const activity = liveActivityLabel(message, (toolName, input) => toolDisplay(toolName, input).label)
 
-    return (
-        <Message from="assistant">
-            {/* La bulle coupe ce qui déborde, et le bloom de l'orbe déborde de sa boîte par
-                construction : sans ça il est raboté net au ras du contour, à gauche comme en haut.
-                Rien d'autre ne déborde ici, le `px-3` de la pile absorbe le reste. */}
-            <MessageContent className="overflow-visible">
-                <div className="flex items-center gap-2 py-1">
-                    {indicator ?? <DotSpinner variant="light" size="xs" />}
-                    {activity ? (
-                        <TextShimmer className="text-sm">{activity}</TextShimmer>
-                    ) : (
-                        <TextLoop className="text-sm" interval={2.5}>
-                            {loadingLabels.map(label => (
-                                <TextShimmer key={label}>{label}</TextShimmer>
-                            ))}
-                        </TextLoop>
-                    )}
-                </div>
-            </MessageContent>
-        </Message>
-    )
+    return <ChatActivityPresentation activity={activity} labels={loadingLabels} indicator={indicator} />
 }

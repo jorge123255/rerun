@@ -4,7 +4,7 @@ const state = vi.hoisted(() => {
     class RequestError extends Error { constructor(readonly status: number) { super('private engine diagnostic') } }
     return { RequestError, status: 409 }
 })
-vi.mock('@/lib/engine/client', () => ({ EngineRequestError: state.RequestError, request: async () => { throw new state.RequestError(state.status) }, getAgent: vi.fn(), listRuns: vi.fn() }))
+vi.mock('@/lib/engine/client', () => ({ EngineRequestError: state.RequestError, request: async () => { throw new state.RequestError(state.status) }, getAgent: vi.fn(), listLatestScheduleRuns: vi.fn() }))
 vi.mock('../database', () => ({ openDesktopDatabase: async () => ({}) }))
 vi.mock('../store', () => ({ findDesktopAgent: async () => ({ id: 'local-a', engineAgentId: 'engine-a', enabled: true }), listDesktopAgents: async () => [] }))
 vi.mock('../settings', () => ({ engineOf: () => ({ baseUrl: 'http://127.0.0.1:12345', apiKey: 'fake' }) }))

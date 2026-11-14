@@ -66,6 +66,12 @@ describe('desktopPlanUsage', () => {
         })
     })
 
+    it('shows the readings Grok and Kimi report', () => {
+        expect(desktopPlanUsage(connection({ provider: 'grok-build' }), NOW)).toMatchObject({ status: 'ready', reason: 'fresh' })
+        expect(desktopPlanUsage(connection({ provider: 'kimi-code' }), NOW)).toMatchObject({ status: 'ready', reason: 'fresh' })
+        expect(desktopPlanUsage(connection({ provider: 'devin' }), NOW).reason).toBe('unsupported-provider')
+    })
+
     it('bounds model windows by highest reported use after session and weekly', () => {
         const low = { ...weekly, kind: 'model' as const, label: 'GPT-4', usedPercent: 12 }
         const high = { ...weekly, kind: 'model' as const, label: 'GPT-5', usedPercent: 93 }

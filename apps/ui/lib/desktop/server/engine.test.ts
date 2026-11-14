@@ -1,4 +1,4 @@
-import { DEFAULT_CONNECTION_MODELS } from '@rerun/contracts'
+import { DEFAULT_CONNECTION_MODELS, type ConnectionSummary } from '@rerun/contracts'
 import { changeDesktopSettings } from './settings'
 import { connectionFixture } from '@/test/desktop-connection-engine'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -24,6 +24,7 @@ type SeenBody = {
 }
 type SeenRequest = { method: string; url: string; authorization: string | null; body: SeenBody | null }
 const seen: SeenRequest[] = []
+let savedConnections: ConnectionSummary[]
 let server: Server
 let root: string
 let runtime: DesktopRuntime
@@ -43,7 +44,8 @@ beforeEach(async () => {
     creationGate = undefined; creationStarted = undefined; releaseCreation = undefined
     seen.length = 0
     root = await mkdtemp(join(tmpdir(), 'rerun-desktop-engine-'))
-    const connections = connectionFixture()
+    savedConnections = []
+    const connections = connectionFixture(savedConnections)
     server = createServer(async (req, res) => {
         const body = await bodyOf(req)
         seen.push({ method: req.method!, url: req.url!, authorization: req.headers.authorization ?? null, body })
@@ -68,11 +70,11 @@ beforeEach(async () => {
             })
             return res.end('data: {"type":"text-delta","delta":"Hello back"}\n\n')
         }
-        if (req.method === 'GET' && req.url === '/agents/engine-agent-1/sessions/engine-session-1/messages') {
+        if (req.method === 'GET' && req.url === '/agents/engine-agent-1/sessions/engine-session-1/messages?view=desktop-decisions') {
             return json(res, { messages: [{ id: 'message-1', sessionId: 'engine-session-1', role: 'user', contentJson: JSON.stringify({ text: 'Hello' }), toolCallsJson: null, createdAt: '2026-01-01T00:00:00.000Z' }] })
         }
-        if (req.url === '/agents/engine-agent-1/sessions/unavailable/messages') return json(res, { error: 'engine unavailable' }, 503)
-        if (req.url === '/agents/engine-agent-1/sessions/empty/messages') return json(res, { messages: [] })
+        if (req.url === '/agents/engine-agent-1/sessions/unavailable/messages?view=desktop-decisions') return json(res, { error: 'engine unavailable' }, 503)
+        if (req.url === '/agents/engine-agent-1/sessions/empty/messages?view=desktop-decisions') return json(res, { messages: [] })
         json(res, { error: 'not found' }, 404)
     })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -138,6 +140,25 @@ describe('desktop engine workflows', () => {
         expect(seen.find(req => req.method === 'POST')?.body?.keys).toEqual({ OPENAI_API_KEY: 'first-api-key' })
         expect(seen.filter(request => request.method === 'POST' && request.url === '/connections')).toHaveLength(1)
         expect(seen.find(req => req.method === 'PATCH')?.body).toEqual({ set: { OPENAI_API_KEY: 'replacement-api-key' } })
+    })
+
+    it('keeps a named connection out of legacy Settings writes and the OpenAI compatibility form', async () => {
+        const named = { id: 'cnx_fixture-named', name: 'Named OpenAI', provider: 'openai' as const,
+            models: ['fixture-model'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }
+        savedConnections.push(named)
+        for (const connectionId of [named.id, named.id.toUpperCase()]) {
+            await expect(changeDesktopSettings(runtime, { action: 'default', connectionId, model: named.models[0]! }))
+                .rejects.toMatchObject({ status: 409, message: expect.stringContaining('Named API model selection is unavailable') })
+            await expect(changeDesktopSettings(runtime, { action: 'key', connectionId, provider: 'openai', apiKey: 'fixture-only' }))
+                .rejects.toMatchObject({ status: 409, message: expect.stringContaining('Your API keys') })
+        }
+        expect(seen).toEqual([])
+        await expect(connectDesktopOpenAI(runtime, 'fixture-new-standard-key')).resolves.toMatchObject({ id: 'connection-2', provider: 'openai' })
+        await connectDesktopOpenAI(runtime, 'fixture-standard-replacement')
+        expect(seen.filter(request => request.method !== 'GET').map(request => [request.method, request.url])).toEqual([
+            ['POST', '/connections'], ['PATCH', '/connections/connection-2/keys'],
+        ])
+        expect(savedConnections[0]).toEqual(named)
     })
 
     it('creates a coworker and streams chat with only the local session ID exposed', async () => {

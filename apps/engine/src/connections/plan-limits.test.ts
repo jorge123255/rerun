@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { forgetPlanLimits, planLimitWindowsFromClaude, planLimitWindowsFromCodex, readPlanLimits, recordPlanLimits } from './plan-limits.js'
+import { forgetPlanLimits, planLimitWindowsFromClaude, planLimitWindowsFromCodex, mergePlanLimits, planLimitWindowsFromClaudeEvent, planLimitWindowsFromGrok, planLimitWindowsFromKimi, readPlanLimits, recordPlanLimits } from './plan-limits.js'
 
 describe('planLimitWindowsFromClaude', () => {
     it('reads the session, weekly and per-model windows', () => {
@@ -54,6 +54,77 @@ describe('planLimitWindowsFromCodex', () => {
     it('reads nothing off a failed read', () => {
         expect(planLimitWindowsFromCodex(null)).toEqual([])
         expect(planLimitWindowsFromCodex({ rateLimits: null })).toEqual([])
+    })
+})
+
+describe('planLimitWindowsFromClaudeEvent', () => {
+    it('reads both windows of a live event, as percents', () => {
+        expect(planLimitWindowsFromClaudeEvent({ status: 'allowed', unifiedWindows: { five_hour: { utilization: 0.41, resetsAt: 1794675600 }, seven_day: { utilization: 1.2, resetsAt: 1795000000000 } } })).toEqual([
+            { kind: 'session', label: null, usedPercent: 41, resetsAt: new Date(1794675600_000).toISOString() },
+            { kind: 'weekly', label: null, usedPercent: 120, resetsAt: new Date(1795000000000).toISOString() },
+        ])
+    })
+
+    it('reads the single window an older runner sends, and nothing from an event without one', () => {
+        expect(planLimitWindowsFromClaudeEvent({ rateLimitType: 'seven_day', utilization: 0.5, resetsAt: 1794675600 })).toMatchObject([{ kind: 'weekly', usedPercent: 50 }])
+        expect(planLimitWindowsFromClaudeEvent({ status: 'allowed' })).toEqual([])
+        expect(planLimitWindowsFromClaudeEvent(null)).toEqual([])
+    })
+
+    it('names a model family window by its family and leaves the plan-surface windows out', () => {
+        const window = { utilization: 0.3, resetsAt: 1794675600 }
+        expect(planLimitWindowsFromClaudeEvent({ unifiedWindows: { seven_day: window, seven_day_fable: { ...window, utilization: 0.62 }, seven_day_opus: window, seven_day_oauth_apps: window, seven_day_overage_included: window } })
+            .map(found => [found.kind, found.label, Math.round(found.usedPercent)])).toEqual([['weekly', null, 30], ['model', 'Fable', 62], ['model', 'Opus', 30]])
+    })
+
+    it('keeps the windows a partial event does not mention', () => {
+        forgetPlanLimits('merge-fixture')
+        recordPlanLimits('merge-fixture', [{ kind: 'session', label: null, usedPercent: 10, resetsAt: null }, { kind: 'weekly', label: null, usedPercent: 20, resetsAt: null }])
+        mergePlanLimits('merge-fixture', [{ kind: 'weekly', label: null, usedPercent: 25, resetsAt: null }])
+        expect(readPlanLimits('merge-fixture')?.windows.map(window => [window.kind, window.usedPercent])).toEqual([['session', 10], ['weekly', 25]])
+        forgetPlanLimits('merge-fixture')
+    })
+})
+
+describe('planLimitWindowsFromGrok', () => {
+    const period = { type: 'BILLING_PERIOD_TYPE_WEEKLY', start: '2026-11-09T19:49:24.473066+00:00', end: '2026-11-16T19:49:24.473066+00:00' }
+
+    it('reads the weekly credit use and its reset', () => {
+        expect(planLimitWindowsFromGrok({ config: { creditUsagePercent: 23, currentPeriod: period } }))
+            .toEqual([{ kind: 'weekly', label: null, usedPercent: 23, resetsAt: '2026-11-16T19:49:24.473Z' }])
+    })
+
+    it('reads a period with nothing used yet, which Grok writes without a percent', () => {
+        expect(planLimitWindowsFromGrok({ config: { currentPeriod: period } })[0]).toMatchObject({ kind: 'weekly', usedPercent: 0 })
+    })
+
+    it('names a period that is not a week by its length', () => {
+        const monthly = { start: '2026-11-01T00:00:00Z', end: '2026-12-01T00:00:00Z' }
+        expect(planLimitWindowsFromGrok({ config: { creditUsagePercent: 150, currentPeriod: monthly } }))
+            .toEqual([{ kind: 'model', label: '30-day credits', usedPercent: 100, resetsAt: '2026-12-01T00:00:00.000Z' }])
+    })
+
+    it('has no reading without a current period or with a percent that is not a number', () => {
+        expect(planLimitWindowsFromGrok(null)).toEqual([])
+        expect(planLimitWindowsFromGrok({ config: { creditUsagePercent: 10 } })).toEqual([])
+        expect(planLimitWindowsFromGrok({ config: { creditUsagePercent: '10', currentPeriod: period } })).toEqual([])
+    })
+})
+
+describe('planLimitWindowsFromKimi', () => {
+    it('reads the five-hour, weekly and monthly quotas, each a ratio of 1', () => {
+        expect(planLimitWindowsFromKimi({ usages: {
+            limit_5h: { used_ratio: 0.25, reset_time: '2026-11-14T18:00:00Z' }, limit_7d: { used_ratio: '0.5' }, limit_month_total: { used_ratio: 1.4, reset_time: '2026-12-01T00:00:00Z' },
+        } })).toEqual([
+            { kind: 'session', label: null, usedPercent: 25, resetsAt: '2026-11-14T18:00:00.000Z' },
+            { kind: 'weekly', label: null, usedPercent: 50, resetsAt: null },
+            { kind: 'model', label: 'Monthly', usedPercent: 100, resetsAt: '2026-12-01T00:00:00.000Z' },
+        ])
+    })
+
+    it('has no reading for an answer without quotas', () => {
+        expect(planLimitWindowsFromKimi(null)).toEqual([])
+        expect(planLimitWindowsFromKimi({ usages: { limit_5h: { used_ratio: 'soon' }, limit_7d: null } })).toEqual([])
     })
 })
 

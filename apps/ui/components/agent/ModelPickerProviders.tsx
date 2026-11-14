@@ -5,10 +5,11 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { ProviderIcon } from '@/lib/engine/provider-icons'
 import { BrainCircuitIcon, ChevronRightIcon, Settings2Icon } from '@/lib/icons'
 import type { Provider } from '@rerun/contracts'
+import type { AddableProvider } from '@/lib/engine/ai-sources'
 import { Badge } from '@rerun/ui/primitives'
 import { useRef, useState } from 'react'
 
-export type AddableProvider = Exclude<Provider, 'rerun' | 'custom'>
+export type { AddableProvider } from '@/lib/engine/ai-sources'
 export type SubscriptionProvider = Extract<AddableProvider, 'claude' | 'codex'>
 
 export const SUBSCRIPTION_PROVIDERS: SubscriptionProvider[] = ['claude', 'codex']

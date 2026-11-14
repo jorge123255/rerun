@@ -1,6 +1,8 @@
 import { beforeEach, afterEach, expect, test, vi } from 'vitest'
-const question = vi.hoisted(() => ({ read: vi.fn() }))
-vi.mock('./question.js', () => ({ readForemanQuestion: question.read }))
+import { createHash, randomUUID } from 'node:crypto'
+import { foremanDocumentScope, foremanRequestIdentityInput } from '@rerun/contracts'
+const question = vi.hoisted(() => ({ read: vi.fn(), approval: vi.fn() }))
+vi.mock('./question.js', () => ({ readForemanQuestion: question.read, readForemanApproval: question.approval, foremanApprovalEnabled: async () => true }))
 const state = vi.hoisted(() => ({ replay: false, session: null as null | { id: string; agentId: string; source: string; status: string; originAgentId: null; originSessionId: null }, run: null as null | { id: string; agentId: string; sessionId: string }, reserve: vi.fn(async () => ({ id: 'queued-user' })), model: vi.fn(async () => ({ connection: { id: 'conn' }, provider: 'codex', model: 'terra' })), claim: vi.fn(() => null), release: vi.fn() }))
 vi.mock('../../agents/lock.js', () => ({ withAgentLock: async (_id: string, work: () => Promise<unknown>) => work() }))
 vi.mock('../../agents/registry.js', () => ({ getAgent: async () => ({ id: 'foreman', config: { kind: 'foreman', enabled: true } }) }))
@@ -17,8 +19,8 @@ import { createDesktopForemanRoutes } from './routes.js'
 import type { createDesktopForemanBridge } from './bridge.js'
 const body = { binding: { workspaceId: '1', chatId: 'fmc_chat-0001', runId: '00000000-0000-4000-8000-000000000001', model: { connectionId: 'conn', model: 'terra' } }, sessionId: '00000000-0000-4000-8000-000000000002', text: 'Plan a team.', brief: { instructions: 'Propose, never approve.', tools: [] } }
 const request = (input: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
-const bridge = () => ({ admit: vi.fn(async () => {}), binding: vi.fn(), request: vi.fn(), close: vi.fn() }) as ReturnType<typeof createDesktopForemanBridge>
-beforeEach(() => { state.replay = false; state.session = null; state.run = null; vi.clearAllMocks(); question.read.mockResolvedValue(null) })
+const bridge = () => ({ admit: vi.fn(async () => {}), documents: vi.fn(), binding: vi.fn(), request: vi.fn(), close: vi.fn() }) as ReturnType<typeof createDesktopForemanBridge>
+beforeEach(() => { state.replay = false; state.session = null; state.run = null; vi.clearAllMocks(); question.read.mockResolvedValue(null); question.approval.mockResolvedValue(null) })
 afterEach(() => vi.restoreAllMocks())
 test('replay miss creates no session, model resolution, admission or provider work', async () => {
     const port = bridge(), app = createDesktopForemanRoutes(() => port)
@@ -33,7 +35,35 @@ test('saved exact receipt resumes without needing the original model or an admis
 test('new message reserves its first session atomically only after two exact UI admission checks', async () => {
     const port = bridge(), response = await createDesktopForemanRoutes(() => port).request('/chat', request(body))
     expect(response.status).toBe(200); expect(port.admit).toHaveBeenCalledTimes(2)
-    expect(state.reserve).toHaveBeenCalledWith('foreman', expect.objectContaining({ foreman: { binding: body.binding, brief: body.brief }, message: body.text }), undefined, undefined, undefined, true)
+    expect(state.reserve).toHaveBeenCalledWith('foreman', expect.objectContaining({ foreman: { binding: body.binding, brief: body.brief }, message: body.text }), undefined, undefined, undefined, true, undefined)
+})
+test('admits a file-only turn using the exact conversation-bound manifest and server-resolved bytes', async () => {
+    const scope = foremanDocumentScope(body.binding, body.sessionId)
+    const reference = { scope, attachmentId: randomUUID(), name: 'brief.md', kind: 'text' as const, mimeType: 'text/markdown',
+        sha256: 'a'.repeat(64), byteLength: 15 }
+    const documents = { scope, admissionId: randomUUID(), attachmentIds: [reference.attachmentId], modelChoice: body.binding.model }
+    const turn = { ...body, text: '', documents }
+    const port = bridge(), app = createDesktopForemanRoutes(() => port)
+    const resolved = [{ reference, text: 'Verified upload' }]
+    vi.mocked(port.documents).mockResolvedValueOnce([{ ...resolved[0]!, reference: { ...reference, scope: { ...scope, sessionId: randomUUID() } } }])
+    expect((await app.request('/chat', request(turn))).status).toBe(409)
+    expect(state.reserve).not.toHaveBeenCalled()
+    vi.mocked(port.documents).mockResolvedValueOnce(resolved)
+    expect((await app.request('/chat', request(turn))).status).toBe(200)
+    expect(port.documents).toHaveBeenLastCalledWith(turn, expect.any(AbortSignal))
+    expect(state.reserve).toHaveBeenCalledWith('foreman', expect.objectContaining({ documents }), undefined, undefined, undefined, true, resolved)
+})
+test('checks mention ranges before reserving and binds the selected ID to the engine turn', async () => {
+    const port = bridge(), app = createDesktopForemanRoutes(() => port)
+    const mention = { targetId: randomUUID(), token: '@Sam', start: 0, end: 4 }
+    const turn = { ...body, text: '@Sam can help.', coworkerMentions: [mention] }
+    expect((await app.request('/chat', request({ ...turn, coworkerMentions: [{ ...mention, end: 5 }] }))).status).toBe(400)
+    expect(port.admit).not.toHaveBeenCalled()
+    expect(state.reserve).not.toHaveBeenCalled()
+    expect((await app.request('/chat', request(turn))).status).toBe(200)
+    expect(port.admit).toHaveBeenLastCalledWith(turn, expect.any(AbortSignal))
+    expect(state.reserve).toHaveBeenCalledWith('foreman', expect.objectContaining({ coworkerMentions: [mention] }),
+        undefined, undefined, undefined, true, undefined)
 })
 test('hosted tool grants and a foreign existing session are refused without reserving a run', async () => {
     const port = bridge(), app = createDesktopForemanRoutes(() => port)
@@ -73,4 +103,53 @@ test('a replayed answer reads its existing receipt without looking for a second 
     expect(response.status).toBe(204)
     expect(question.read).not.toHaveBeenCalled()
     expect(state.reserve).not.toHaveBeenCalled()
+})
+
+test('claims the exact completed approval and refuses a stale, revoked or unguarded reply', async () => {
+    const guard = { runId: randomUUID(), sourceMessageId: 'saved-approval', toolCallId: 'approval-call', digest: 'a'.repeat(64) }
+    state.session = { id: body.sessionId, agentId: 'foreman', source: 'dashboard', status: 'open', originAgentId: null, originSessionId: null }
+    question.approval.mockImplementation(async () => {
+        expect(state.claim).toHaveBeenCalledWith(body.sessionId, body.binding.runId)
+        return { guard, approvals: [{ action: 'Publish the fixture summary' }] }
+    })
+    const port = bridge(), app = createDesktopForemanRoutes(() => port)
+    expect((await app.request('/chat', request(body))).status).toBe(409)
+    expect((await app.request('/chat', request({ ...body, approval: { ...guard, digest: 'b'.repeat(64) } }))).status).toBe(409)
+    expect((await app.request('/chat', request({ ...body, approval: guard, question: guard }))).status).toBe(400)
+    question.approval.mockResolvedValueOnce(null)
+    expect((await app.request('/chat', request({ ...body, approval: guard }))).status).toBe(409)
+    expect(state.reserve).not.toHaveBeenCalled()
+    expect((await app.request('/chat', request({ ...body, approval: guard }))).status).toBe(200)
+    expect(state.reserve).toHaveBeenCalledExactlyOnceWith('foreman', expect.objectContaining({
+        foreman: expect.objectContaining({ approval: guard }),
+    }), undefined, undefined, undefined, false, undefined)
+})
+
+test('admits answer files only for the question derived from the exact producing run', async () => {
+    const guard = { runId: randomUUID(), sourceMessageId: 'saved-message', toolCallId: 'ask-call', digest: 'a'.repeat(64) }
+    state.session = { id: body.sessionId, agentId: 'foreman', source: 'dashboard', status: 'open', originAgentId: null, originSessionId: null }
+    question.read.mockResolvedValue({ guard, questions: [{ question: 'Send the notes?', options: [] }] })
+    const questionId = createHash('sha256').update(foremanRequestIdentityInput(body.binding, body.sessionId, guard)).digest('hex')
+    const scope = foremanDocumentScope(body.binding, body.sessionId, questionId)
+    const reference = { scope, attachmentId: randomUUID(), name: 'notes.txt', kind: 'text' as const,
+        mimeType: 'text/plain', sha256: 'f'.repeat(64), byteLength: 12 }
+    const documents = { scope, admissionId: randomUUID(), attachmentIds: [reference.attachmentId] }
+    const turn = { ...body, question: guard, documents }
+    const port = bridge(), app = createDesktopForemanRoutes(() => port)
+
+    expect((await app.request('/chat', request({ ...body, documents }))).status).toBe(409)
+    expect((await app.request('/chat', request({ ...turn, documents: { ...documents, scope: { ...scope, questionId: 'd'.repeat(64) } } }))).status).toBe(409)
+    expect((await app.request('/chat', request({ ...turn, documents: { ...documents, modelChoice: body.binding.model } }))).status).toBe(409)
+    expect(port.documents).not.toHaveBeenCalled()
+    expect(state.reserve).not.toHaveBeenCalled()
+
+    vi.mocked(port.documents).mockResolvedValueOnce([{ reference: { ...reference, scope: foremanDocumentScope(body.binding, body.sessionId) }, text: 'Wrong scope' }])
+    expect((await app.request('/chat', request(turn))).status).toBe(409)
+    expect(state.reserve).not.toHaveBeenCalled()
+
+    const resolved = [{ reference, text: 'Verified notes' }]
+    vi.mocked(port.documents).mockResolvedValue(resolved)
+    expect((await app.request('/chat', request(turn))).status).toBe(200)
+    expect(state.reserve).toHaveBeenCalledExactlyOnceWith('foreman', expect.objectContaining({ documents,
+        foreman: expect.objectContaining({ question: guard }) }), undefined, undefined, undefined, false, resolved)
 })

@@ -17,6 +17,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 // The slide driver needs browser animation frames; retain the actual panel/editor below.
 vi.mock('@/components/ui/panel-steps',()=>({PanelSteps:({children}:{children:ReactNode})=><>{children}</>}))
 import { DesktopCoworkerMcp, DesktopMcpServerEditor } from './DesktopCoworkerMcp'
+
+it('uses the saved device configuration and lets the editor remove it', async () => {
+    const onSave=vi.fn(async()=>{})
+    render(<DesktopMcpServerEditor server={{name:'docs',url:'https://docs.example/mcp',revision:'r1',hasBearer:false,
+        deviceClient:{clientId:'fixture-client',verificationUri:'https://auth.example/activate'}}} onSave={onSave} onBack={()=>{}}/>)
+    expect(screen.getByLabelText(/Public OAuth client ID/).value).toBe('fixture-client')
+    expect(screen.getByLabelText(/Verification page/).value).toBe('https://auth.example/activate')
+    fireEvent.click(screen.getByLabelText(/Configure device sign-in/))
+    await act(async()=>fireEvent.click(screen.getByRole('button',{name:'Save'})))
+    expect(onSave).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({revision:'r1',deviceClient:null}))
+})
 function mockFetch(implementation:(url:string,init:RequestInit)=>unknown){vi.stubGlobal('fetch',vi.fn((url:string,init:RequestInit)=>url.endsWith('/mcp-stdio')?Promise.resolve(Response.json([])):implementation(url,init)))}
 
 afterEach(()=>{for(const {root,host} of roots.splice(0)){act(()=>root.unmount());host.remove()}vi.unstubAllGlobals()})

@@ -33,7 +33,7 @@ export const COMPANY_BRIEF_AGENT_NAME = 'Company research'
 export const COMPANY_BRIEF_PROPOSAL_REASON = 'Approved from the company brief review.'
 
 // Exact connected providers; subscription calls use the existing isolated one-shot runner. No fallback.
-export const COMPANY_BRIEF_MODEL_PROVIDERS = ['openai', 'anthropic', 'google', 'openrouter', 'codex', 'claude'] as const
+export const COMPANY_BRIEF_MODEL_PROVIDERS = ['openai', 'anthropic', 'google', 'openrouter', 'codex', 'claude', 'opencode'] as const
 export const companyBriefModelSchema = z.strictObject({
     connectionId: z.string().min(1).max(256),
     provider: z.enum(COMPANY_BRIEF_MODEL_PROVIDERS),

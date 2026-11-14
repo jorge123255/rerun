@@ -33,6 +33,23 @@ test('final flush drains the latest human framing and close never initiates anot
     expect(await controller.flush()).toBe(true); expect(write.mock.calls.at(-1)?.[0].camera).toEqual(final)
     controller.close(); await vi.runAllTimersAsync(); expect(write).toHaveBeenCalledTimes(2)
 })
+test('a pending read-only camera restore does not block draining a clean board', async () => {
+    let resolve!: (value: { workspaceId: number; revision: number; camera: typeof camera }) => void
+    const write = vi.fn()
+    const controller = new FxBoardCameraController(1, {
+        read: async () => new Promise(done => { resolve = done }),
+        write,
+    }, () => 1)
+    const read = controller.load()
+    expect(controller.snapshot().phase).toBe('loading')
+    expect(await controller.flush()).toBe(true)
+    expect(write).not.toHaveBeenCalled()
+    resolve({ workspaceId: 1, revision: 3, camera })
+    await read
+    expect(controller.snapshot().initialCamera).toEqual(camera)
+    expect(write).not.toHaveBeenCalled()
+    controller.close()
+})
 test('missing authority, corrupt camera and late load are truthful and never treated as saved', async () => {
     expect(fxCameraSchema.safeParse({ ...camera, zoom: 9 }).success).toBe(false)
     expect(fxCameraSchema.safeParse({ ...camera, pan: { x: Infinity, y: 0 } }).success).toBe(false)

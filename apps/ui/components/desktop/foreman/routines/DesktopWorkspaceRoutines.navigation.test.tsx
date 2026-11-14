@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { desktopWorkspaceRoutineFingerprint } from '@/lib/desktop/server/workspace-routines/mutations'
-import { desktopWorkspaceRoutinesViewSchema } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
+import { desktopWorkspaceRoutinesViewSchema } from '@rerun/contracts'
 
 type SavedRun = { id: string; agentId: string; sessionId: string; triggerSource: string; triggerSlug: string; status: string; startedAt: string }
 const state = vi.hoisted(() => ({ db: null as unknown as Client, runs: [] as SavedRun[], receipt: null as null | { fingerprint: string; result: unknown }, launches: 0 }))
@@ -29,8 +29,8 @@ vi.mock('@/lib/desktop/server/settings', () => ({ engineOf: (runtime: DesktopRun
 vi.mock('@/lib/desktop/server/schedules-binding', () => ({ authorizeDesktopSchedules: async () => {} }))
 vi.mock('@/lib/engine/client', () => ({
     EngineRequestError: class extends Error {},
-    getAgent: async (_engine: unknown, id: string) => { expect(id).toBe('engine-copy'); return { config: { enabled: true, setup: { required: false } } } },
-    listRuns: async (_engine: unknown, id: string) => { expect(id).toBe('engine-copy'); return state.runs },
+    getAgent: async (_engine: unknown, id: string) => { expect(id).toBe('engine-copy'); return { config: { enabled: true, tools: { desktopToolGrants: { schedule: true } }, setup: { required: false } } } },
+    listLatestScheduleRuns: async (_engine: unknown, id: string) => { expect(id).toBe('engine-copy'); return state.runs },
     getSession: async (_engine: unknown, id: string, sessionId: string) => { expect(id).toBe('engine-copy'); expect(sessionId).toBe('engine-result-session'); return { id: sessionId, agentId: id, source: 'schedule', title: 'Copy result NOTICE27', createdAt: '2026-11-06T08:00:00.000Z' } },
     getRun: async (_engine: unknown, id: string, runId: string) => { expect(id).toBe('engine-copy'); return state.runs.find(run => run.id === runId) },
     request: async <T,>(_engine: unknown, path: string, init: RequestInit, parse: (body: unknown) => T) => {
@@ -61,8 +61,9 @@ beforeEach(async () => {
     await state.db.executeMultiple(`CREATE TABLE desktop_agents(id TEXT,engine_agent_id TEXT,workspace_id INTEGER);
         INSERT INTO desktop_agents VALUES('local-copy','engine-copy',1),('local-original','engine-original',1);
         CREATE TABLE desktop_deletions(agent_id TEXT);
-        CREATE TABLE desktop_sessions(id TEXT,agent_id TEXT,engine_session_id TEXT UNIQUE,title TEXT,created_at TEXT,updated_at TEXT);
-        INSERT INTO desktop_sessions VALUES('original-chat','local-original','original-engine-chat','Original conversation','2026-11-01','2026-11-01');`)
+        CREATE TABLE desktop_sessions(id TEXT,agent_id TEXT,engine_session_id TEXT UNIQUE,title TEXT,title_search TEXT,created_at TEXT,updated_at TEXT);
+        INSERT INTO desktop_sessions(id,agent_id,engine_session_id,title,created_at,updated_at)
+            VALUES('original-chat','local-original','original-engine-chat','Original conversation','2026-11-01','2026-11-01');`)
     vi.stubGlobal('fetch', async (_url: string, init?: RequestInit) => {
         // Exercise the production runtime, API schemas, canonical adoption and client
         // parser together. The external engine boundary alone is synthetic.

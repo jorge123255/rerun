@@ -10,7 +10,7 @@ vi.mock('./mcp/store', async original => {
 })
 vi.mock('./mcp/remote', async original => {
     const actual = await original<typeof import('./mcp/remote')>()
-    return { ...actual, remoteMcpRuntime: (...args: Parameters<typeof actual.remoteMcpRuntime>) => { mocks.access = args[1]; return actual.remoteMcpRuntime(...args) } }
+    return { ...actual, remoteMcpRuntime: (...args: Parameters<typeof actual.remoteMcpRuntime>) => { mocks.access ??= args[1]; return actual.remoteMcpRuntime(...args) } }
 })
 import { getDesktopRemoteMcpService, handleDesktopMcpBridge, handleDesktopMcpManagement, handleDesktopMcpOAuth, shutdownDesktopRemoteMcp, withDesktopMcpOwnerTransition } from './mcp-binding'
 const runtime: DesktopRuntime = { protocolVersion: 1, workspaceId: 1, dataRoot: '/test-only-mcp', launchNonce: 'launch', buildId: 'test', app: { origin: 'http://127.0.0.1:3001', sessionToken: 'unused' }, engine: { origin: 'http://127.0.0.1:3002', apiKey: 'engine-only' } }

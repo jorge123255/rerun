@@ -111,6 +111,34 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
         }
     }
 
+    /** App-side scripted onboarding. Called with the exact reserved choice under the chat lock. */
+    async function recordStarterPlan(chat: DesktopForemanChatRef, starter: NonNullable<DesktopForemanRevision['starter']>,
+        cards: ReadonlyArray<{ templateId: string; revision: string; title: string }>, assertCurrent: () => void): Promise<DesktopForemanRevision> {
+        await assertWorkspace(chat)
+        const title = (await input.companyName()).trim().slice(0, DESKTOP_FOREMAN_LIMITS.maxTitle) || 'Starter team'
+        const sealed = sealShownPlan({ title, items: cards.map(card => ({ kind: 'template', templateId: card.templateId,
+            title: card.title.slice(0, DESKTOP_FOREMAN_LIMITS.maxTitle) })) })
+        if (!sealed.ok) throw new ForemanError('invalid_plan', sealed.message)
+        const plan = { ...sealed.plan, items: sealed.plan.items.map((item, index) =>
+            item.kind === 'template' ? { ...item, templateRevision: cards[index]!.revision } : item) }
+        return tx(async db => {
+            if (!await db.starterPlanCurrent?.(chat, starter)) throw new ForemanError('stale_revision', 'This starter offer is no longer current.')
+            const all = await db.revisionsOf(chat)
+            assertCurrent()
+            const revisionId = `fmr_${starter.offerId}`
+            const existing = all.find(entry => entry.revisionId === revisionId)
+            if (existing) {
+                if (existing.starter?.digest !== starter.digest) throw new ForemanError('conflict', 'This starter offer already showed a different plan.')
+                return existing
+            }
+            if (all.length) throw new ForemanError('stale_revision', 'Foreman already showed a plan for this conversation.')
+            const value: DesktopForemanRevision = { planId: `fmp_${starter.offerId}`, revisionId, revision: 1,
+                chat, starter, runId: null, toolCallId: null, model: null, digest: digestOf(plan), plan, state: 'shown', shownAt: now() }
+            await db.putRevision(value)
+            return value
+        })
+    }
+
     function fingerprintOf(raw: ReturnType<typeof foremanDecisionInputSchema.parse>) {
         return digestOf(raw)
     }
@@ -131,6 +159,7 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
             if (!target || target.planId !== request.planId) throw new ForemanError('not_found', 'That plan is not part of this conversation.')
             if (target.digest !== request.digest) throw new ForemanError('digest_mismatch', 'The plan changed after it was shown. Review the current card.')
             if (revisions.at(-1)?.revisionId !== target.revisionId || target.state !== 'shown') throw new ForemanError('stale_revision', 'A newer card replaced this one, or it was already answered.')
+            if (target.starter && !await db.starterPlanCurrent?.(request.chat, target.starter)) throw new ForemanError('stale_revision', 'This starter offer is no longer current.')
             const decisions = await db.decisionsOf(request.chat.chatId)
             if (decisions.some(entry => entry.state === 'pending' || entry.state === 'uncertain')) throw new ForemanError('uncertain', 'An earlier answer is still unresolved. Wait for it to settle.')
             const builds = await db.buildsOf(request.chat.chatId)
@@ -280,7 +309,16 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
         if (!revision) return void (await fail('workspace_changed', 'This plan belongs to another workspace.'))
         if (revision.chat.workspaceId !== (await auth.workspace.currentWorkspaceId())) return void (await fail('workspace_changed', 'The workspace changed before the team was built.'))
         const model = row.intents.model
-        if (!(await auth.run.modelAvailable(model))) return void (await fail('model_unavailable', 'The model this plan was made with is not available. Choose a model, then resume.'))
+        if ((!model && !revision.starter) || (model && !await auth.run.modelAvailable(model))) return void (await fail('model_unavailable', 'The model this plan was made with is not available. Choose a model, then resume.'))
+        if (revision.starter) {
+            const validate = auth.creation.assertTemplateRevision
+            if (!validate) return void (await fail('authority_missing', 'The saved template revisions could not be checked.'))
+            for (const item of revision.plan.items) {
+                if (item.kind !== 'template' || !item.templateRevision) return void (await fail('template_failed', 'The starter plan has an incomplete template revision.'))
+                const checked = await attempt(() => validate(item.templateId, item.templateRevision!))
+                if (checked.kind !== 'ok') return void (await fail('template_failed', checked.message))
+            }
+        }
         await mutate(buildId, build => {
             if (build.state !== 'reserved' && build.state !== 'running') return null
             build.state = 'running'
@@ -330,11 +368,13 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
             const result =
                 item.kind === 'agent'
                     ? await attempt(async () => {
+                          if (!model) throw new ForemanRefusal('model_unavailable', 'This plan needs a connected model.')
                           const created = await auth.creation.createCoworker({ requestId, spaceId: space.spaceId!, name: item.name, description: item.role, soulMd: firstSoul(item as SealedAgentItem, revision.plan, company, asked), installMd: firstInstall(item as SealedAgentItem, asked), model })
                           return { agentIds: [created.agentId], spaceId: space.spaceId!, sessionId: null }
                       })
                     : await attempt(async () => {
-                          const installed = await auth.creation.installTemplate({ requestId, templateId: item.templateId, spaceId: space.spaceId!, ...(item.focus ? { focus: item.focus } : {}) })
+                          const installed = await auth.creation.installTemplate({ requestId, templateId: item.templateId, spaceId: space.spaceId!,
+                              ...(item.focus ? { focus: item.focus } : {}), ...(item.templateRevision ? { templateRevision: item.templateRevision } : {}) })
                           return { agentIds: installed.agentIds, spaceId: space.spaceId!, sessionId: null }
                       })
             await mutate(buildId, build => {
@@ -604,7 +644,14 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
         const chat = foremanChatRefSchema.parse(rawChat)
         await assertWorkspace(chat)
         const [state, live, agents] = await Promise.all([
-            tx(async db => ({ revisions: await db.revisionsOf(chat), decisions: await db.decisionsOf(chat.chatId), builds: await db.buildsOf(chat.chatId), discovery: await db.latestDiscovery(chat.chatId) })),
+            tx(async db => {
+                const revisions = await db.revisionsOf(chat)
+                const latest = revisions.at(-1)
+                if (latest?.starter && latest.state === 'shown' && !await db.starterPlanCurrent?.(chat, latest.starter)) {
+                    revisions[revisions.length - 1] = { ...latest, state: 'superseded' }
+                }
+                return { revisions, decisions: await db.decisionsOf(chat.chatId), builds: await db.buildsOf(chat.chatId), discovery: await db.latestDiscovery(chat.chatId) }
+            }),
             auth.run.currentLive(chat),
             auth.workspace.agentCount(),
         ])
@@ -712,5 +759,5 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
         await discoveryWork.get(discoveryId)
     }
 
-    return { waitDiscovery: async (discoveryId: string) => { await discoveryWork.get(discoveryId) }, recordShownPlan, decide, recoverDecision, buildAction, runBuild, reconcileBuild, reconcile, readView, emitNavigation, startDiscovery, stopDiscovery }
+    return { waitDiscovery: async (discoveryId: string) => { await discoveryWork.get(discoveryId) }, recordShownPlan, recordStarterPlan, decide, recoverDecision, buildAction, runBuild, reconcileBuild, reconcile, readView, emitNavigation, startDiscovery, stopDiscovery }
 }

@@ -15,7 +15,7 @@ const { agentConfigSchema } = await import('../agents/types.js')
 const { writeAgentConfig } = await import('../agents/config-write.js')
 const { readAgentConfig } = await import('../agents/loader.js')
 const { buildTools } = await import('../tools/registry.js')
-const { HITL_ACK } = await import('../tools/builtin/hitl.js')
+const { HITL_ACK_CALL_FIRST } = await import('../tools/builtin/hitl.js')
 const { createServer } = await import('../http/server.js')
 const app = createServer()
 const alpha = 'question-alpha', bravo = 'question-bravo'
@@ -51,7 +51,7 @@ describe('desktop ask_user grant', () => {
         expect(Object.keys(tools)).toEqual(['ask_user'])
         expect((await registry(bravo)).ask_user).toBeUndefined()
         expect((await readAgentConfig(alpha)).tools.askUser).toBe(false)
-        expect(await tools.ask_user!.execute!(input, options)).toEqual(HITL_ACK)
+        expect(await tools.ask_user!.execute!(input, options)).toEqual(HITL_ACK_CALL_FIRST)
     })
 
     it('keeps the original batched, free-text and null-tolerant question schema and end-turn result', async () => {
@@ -59,7 +59,7 @@ describe('desktop ask_user grant', () => {
         const ask = (await registry(alpha)).ask_user!
         const schema = ask.inputSchema as z.ZodTypeAny
         const parsed = schema.parse({ questions: JSON.stringify([{ question: 'Which color?', options: ['Blue', 'Green'], multiple: true }, { question: 'What title?', options: null }]) })
-        expect(await ask.execute!(parsed, options)).toEqual(HITL_ACK)
+        expect(await ask.execute!(parsed, options)).toEqual(HITL_ACK_CALL_FIRST)
         expect(ask.description).toContain('END YOUR TURN')
         expect(ask.description).not.toContain('card_file')
         expect(schema.safeParse({ questions: [{ question: 'Which?', options: ['Only one'] }] }).success).toBe(false)
@@ -74,7 +74,7 @@ describe('desktop ask_user grant', () => {
         await patch(alpha, { enabled: false, tools: { desktopToolGrants: { askUser: true } } })
         await expect(ask.execute!(input, options)).rejects.toThrow('turned off')
         await patch(alpha, { enabled: true })
-        expect(await ask.execute!(input, options)).toEqual(HITL_ACK)
+        expect(await ask.execute!(input, options)).toEqual(HITL_ACK_CALL_FIRST)
     })
 
     it('never acknowledges a cancelled run or a coworker whose configuration disappeared', async () => {

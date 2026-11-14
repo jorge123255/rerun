@@ -1,9 +1,11 @@
 'use client'
 
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { UsersIcon, Share2Icon, DownloadIcon } from '@/lib/icons'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { desktopCoworkerShareImportInputSchema, desktopCoworkerSnapshotResultSchema, desktopRemoteActorSchema, type DesktopCoworkerShareExportInput, type DesktopCoworkerShareImportInput, type DesktopCoworkerShareRevokeInput, type DesktopRemoteActor, type DesktopRemoteCommand, type DesktopRemoteMachineBridge, type DesktopRemoteResult } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { createDesktopCoworkerShareClient, type DesktopCoworkerShareClient } from '@/lib/desktop/coworker-share/client'
 import { createDesktopCoworkerShareServerAttempts } from '@/lib/desktop/coworker-share/attempts'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
@@ -19,7 +21,7 @@ export type DesktopWorkspaceNativeTools = {
 export function DesktopWorkspaceDialogStatus({ title, error, onClose, onRetry }: { title: string; error?: string | null; onClose: () => void; onRetry?: () => void }) {
     return <Dialog open onOpenChange={next => { if (!next) onClose() }}>
         <DialogContent className="sm:max-w-lg">
-            <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
+            <DialogHeaderBar icon={UsersIcon} title={title} />
             <p role={error ? 'alert' : 'status'} className="text-sm text-muted-foreground">{error ?? 'Opening…'}</p>
             {error && onRetry && <Button type="button" variant="outline" onClick={onRetry}>Retry</Button>}
         </DialogContent>
@@ -122,7 +124,7 @@ export function DesktopCoworkerShareLauncher({ workspaceId, agentId, agentName, 
     }
     if (open && error && (savedExports.length || savedRevocations.length || recoveredSnapshot || recoveryNotice)) return <Dialog open onOpenChange={next => { if (!next) onClose() }}>
         <DialogContent className="sm:max-w-lg">
-            <DialogHeader><DialogTitle>Share {agentName}</DialogTitle></DialogHeader>
+            <DialogHeaderBar icon={Share2Icon} title={<>Share {agentName}</>} />
             <p role="alert" className="text-sm text-muted-foreground">The current coworker source is unavailable or stale. New share review is disabled. {error}</p>
             {savedExports.map(input => <Button type="button" variant="outline" key={input.requestId} disabled={recoveryBusy} onClick={() => void recover('export',input)}>Recover saved export {input.requestId.slice(0,8)}</Button>)}
             {savedRevocations.map(input => <Button type="button" variant="outline" key={input.requestId} disabled={recoveryBusy} onClick={() => void recover('revoke',input)}>Recover withdrawal {input.requestId.slice(0,8)}</Button>)}
@@ -174,7 +176,7 @@ export function DesktopPortableCoworkerImport({ workspaceId, onClose, onImported
     }, [workspaceId, attempt, attempts, mode])
     if (!picked && !loading && !error && savedImports.length) return <Dialog open onOpenChange={next => { if (!next) onClose() }}>
         <DialogContent className="sm:max-w-lg">
-            <DialogHeader><DialogTitle>Import coworker</DialogTitle></DialogHeader>
+            <DialogHeaderBar icon={DownloadIcon} title="Import coworker" />
             <p className="text-sm text-muted-foreground">An earlier import is saved on this Mac. Review it to recover the same fresh copy.</p>
             <div className="flex flex-col gap-2">{savedImports.map(input => <Button type="button" variant="outline" key={input.requestId} onClick={() => {
                 if (!isDesktopQuitting()) setPicked({ snapshotId: input.snapshotId,fileName: 'Saved coworker archive' })

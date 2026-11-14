@@ -118,6 +118,44 @@ test('the closed pill loads pending and exact finished-run totals, then observes
     expect(posts(fetcher)).toEqual([])
 })
 
+test('the Mac Dock badge tracks the closed inbox while hidden, counting each run in a grouped row', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    const setInboxBadge = vi.fn()
+    vi.stubGlobal('desktopApp', { notifications: { setInboxBadge } })
+    let done = [doneScheduled]
+    const fetcher = api(() => pendingResponse([question]), () => doneResponse(done))
+    vi.stubGlobal('fetch', fetcher)
+    const { container, root } = await mount(<DesktopActionsInbox workspaceId={7} launchNonce="workspace-launch" />)
+    expect(setInboxBadge).toHaveBeenLastCalledWith({ workspaceId: 7, launchNonce: 'workspace-launch', count: 3 })
+    expect(labelOf(container)).toBe('Actions: 1 pending · 2 done')
+
+    done = [expandedSchedule]
+    await act(async () => { root.render(<DesktopActionsInbox workspaceId={7} launchNonce="workspace-launch" hidden />) })
+    await tick()
+    expect(container.innerHTML).toBe('')
+    expect(setInboxBadge).toHaveBeenLastCalledWith({ workspaceId: 7, launchNonce: 'workspace-launch', count: 4 })
+    expect(posts(fetcher)).toEqual([])
+})
+
+test('a partial empty inbox does not clear the Dock badge until a complete read confirms it', async () => {
+    const setInboxBadge = vi.fn()
+    vi.stubGlobal('desktopApp', { notifications: { setInboxBadge } })
+    let pending = [question]
+    let unavailable: string[] = []
+    vi.stubGlobal('fetch', api(() => pendingResponse(pending, unavailable), () => doneResponse()))
+    await mount(<DesktopActionsInbox workspaceId={7} launchNonce="workspace-launch" />)
+    expect(setInboxBadge).toHaveBeenLastCalledWith({ workspaceId: 7, launchNonce: 'workspace-launch', count: 1 })
+
+    pending = []
+    unavailable = ['researcher']
+    await tick()
+    expect(setInboxBadge).toHaveBeenCalledTimes(1)
+
+    unavailable = []
+    await tick()
+    expect(setInboxBadge).toHaveBeenLastCalledWith({ workspaceId: 7, launchNonce: 'workspace-launch', count: 0 })
+})
+
 test('a closed observer preserves visible-chat auto-read only for that conversation, never pending or mixed-session groups', async () => {
     vi.mocked(document.hasFocus).mockReturnValue(true)
     let done = [doneChat, otherChat, doneScheduled]

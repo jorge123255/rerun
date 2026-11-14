@@ -82,16 +82,16 @@ test('regenerates the selected saved reply in a separate chat and retries a lost
         Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(composer, text)
         composer.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    const accepted = () => new Response('data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream', 'x-session-id': 'alternate' } })
+    const accepted = () => new Response('data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream', 'x-session-id': 'alternate', 'x-run-id': 'alternate-run' } })
     try {
         await act(async () => { root.render(<Harness />) })
-        expect(buttons('Regenerate reply')).toHaveLength(2)
-        expect(buttons('Regenerate reply')[0].title).toContain('keeps the original')
+        expect(buttons('Regenerate')).toHaveLength(2)
+        expect(buttons('Regenerate')[0].getAttribute('aria-description')).toContain('keeps the original')
         await click('Attach from Files')
         await click('pending.md')
         await click('Done')
         await writeDraft('Draft for the original')
-        const firstButton = buttons('Regenerate reply')[0]
+        const firstButton = buttons('Regenerate')[0]
         await act(async () => { firstButton.click(); firstButton.click() })
         expect(requests).toHaveLength(1)
         expect(requests[0]).toEqual({ agentId: 'agent', sessionId: 'original', regenerateMessageId: 'engine-a1', requestId: expect.stringMatching(/^[\da-f-]{36}$/i) })
@@ -100,9 +100,9 @@ test('regenerates the selected saved reply in a separate chat and retries a lost
         await act(async () => { completeRequest(Response.json({ error: 'The response was lost' }, { status: 502 })) })
         expect(container.querySelector('[role="alert"]')?.textContent).toContain('The response was lost')
         expect(container.textContent).toContain('Later question')
-        expect(buttons('Regenerate reply')).toHaveLength(2)
+        expect(buttons('Regenerate')).toHaveLength(2)
 
-        await click('Regenerate reply')
+        await click('Regenerate')
         expect(requests[1]).toEqual(requests[0])
         await act(async () => { completeRequest(accepted()) })
         expect(container.querySelector('select')!.value).toBe('alternate')
@@ -119,7 +119,7 @@ test('regenerates the selected saved reply in a separate chat and retries a lost
         await switchTo('alternate')
         expect(container.querySelector('textarea')!.value).toBe('Draft for the alternate')
         await switchTo('original')
-        await click('Regenerate reply')
+        await click('Regenerate')
         expect(requests[2].requestId).not.toBe(requests[0].requestId)
         await act(async () => { completeRequest(accepted()) })
         expect(requests).toHaveLength(3)
@@ -146,10 +146,10 @@ test('stopping a regenerating reply cancels only the alternate run', async () =>
                 init?.signal?.addEventListener('abort', () => controller.close(), { once: true })
                 controller.enqueue(new TextEncoder().encode('data: {"type":"start","messageId":"streaming"}\n\n'))
             } })
-            return new Response(body, { headers: { 'content-type': 'text/event-stream', 'x-session-id': 'alternate' } })
+            return new Response(body, { headers: { 'content-type': 'text/event-stream', 'x-session-id': 'alternate', 'x-run-id': 'alternate-run' } })
         }
         if (url.pathname.endsWith('/stop') && init?.method === 'POST') {
-            stopped.push(url.pathname)
+            stopped.push(url.pathname + url.search)
             return Response.json({ canceled: 1 })
         }
         return Response.json({ running: false })
@@ -160,12 +160,12 @@ test('stopping a regenerating reply cancels only the alternate run', async () =>
     const button = (label: string) => [...container.querySelectorAll('button')].filter(el => el.textContent?.trim() === label).at(-1)
     try {
         await act(async () => { root.render(<Harness />) })
-        await act(async () => { button('Regenerate reply')!.click() })
+        await act(async () => { button('Regenerate')!.click() })
         expect(container.querySelector('select')!.value).toBe('alternate')
-        expect(button('Regenerate reply')).toBeUndefined()
+        expect(button('Regenerate')).toBeUndefined()
         expect(button('Stop')?.disabled).toBe(false)
         await act(async () => { button('Stop')!.click() })
-        expect(stopped).toEqual(['/api/desktop/sessions/alternate/stop'])
+        expect(stopped).toEqual(['/api/desktop/sessions/alternate/stop?runId=alternate-run'])
         expect(button('Stop')).toBeUndefined()
     } finally {
         await act(async () => { root.unmount() })

@@ -12,6 +12,60 @@ function scopeOf(scope) {
     return { workspaceId: scope.workspaceId, launchNonce: scope.launchNonce }
 }
 
+// The click comes from a notice owned by this process. Only its workspace is carried across a
+// switch. The target renderer still validates the exact conversation against its own live data.
+export async function routeDesktopNotificationClick(value, submittedScope, { currentScope, switchWorkspace, deliver }) {
+    const target = notificationClickTarget(value)
+    const submitted = scopeOf(submittedScope)
+    let current = scopeOf(currentScope())
+    if (!target || !submitted || !current) return false
+    if (current.workspaceId !== submitted.workspaceId) {
+        const result = await switchWorkspace(submitted.workspaceId)
+        if (!result?.ok) return false
+        current = scopeOf(currentScope())
+        if (current?.workspaceId !== submitted.workspaceId) return false
+    }
+    deliver(target, current)
+    return true
+}
+
+// A click during a workspace change waits for a stable runtime. If multiple clicks
+// arrive before routing settles, the most recent one owns the navigation.
+export function createNotificationClickRouter({ canRoute, currentScope, switchWorkspace, deliver }) {
+    let pending
+    let routing = false
+
+    async function flush() {
+        if (routing) return
+        routing = true
+        try {
+            while (pending && canRoute()) {
+                const { target, scope } = pending
+                pending = null
+                try {
+                    await routeDesktopNotificationClick(target, scope, {
+                        currentScope, switchWorkspace,
+                        deliver: (value, bound) => { if (!pending) deliver(value, bound) },
+                    })
+                } catch { /* A failed route does not prevent the next click. */ }
+            }
+        } finally {
+            routing = false
+        }
+    }
+
+    return {
+        accept(value, submittedScope) {
+            const target = notificationClickTarget(value)
+            const scope = scopeOf(submittedScope)
+            if (!target || !scope) return
+            pending = { target, scope }
+            return flush()
+        },
+        flush,
+    }
+}
+
 export function createNotificationClickHandoff() {
     let held = []
     let delivered = []

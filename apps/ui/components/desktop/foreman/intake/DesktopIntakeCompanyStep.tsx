@@ -7,6 +7,7 @@ import { Field } from '@/components/ui/field'
 import { IconBadge } from '@/components/ui/icon-badge'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
+import { useDesktopLocale } from '@/components/desktop/DesktopLocale'
 import { CheckIcon } from '@/lib/icons'
 import type { DesktopForemanIntakeController } from '@/lib/desktop/foreman-intake'
 import type { IntakeDraft } from '@/lib/desktop/foreman-intake'
@@ -15,6 +16,7 @@ import { desktopIntakeFieldHandlers } from './DesktopIntakeField'
 type Props = {
     draft: IntakeDraft
     siteRead: DesktopForemanIntakeController['siteRead']
+    platform: string | null
     disabled?: boolean
     autoFocus?: boolean
     onChange: (patch: Partial<IntakeDraft>) => void
@@ -28,16 +30,19 @@ const ADORNMENT_MOTION = {
     transition: { duration: 0.16 },
 }
 
-export function DesktopIntakeCompanyStep({ draft, siteRead, disabled, autoFocus = true, onChange, onEnter }: Props) {
+export function DesktopIntakeCompanyStep({ draft, siteRead, platform, disabled, autoFocus = true, onChange, onEnter }: Props) {
     const siteId = useId()
+    const { t } = useDesktopLocale()
     const still = useReducedMotion()
     const motionProps = still ? { initial: false, animate: {}, exit: {}, transition: { duration: 0 } } : ADORNMENT_MOTION
 
     return (
-        <Field label="Company website" htmlFor={siteId}>
+        <Field label={t('foreman.intake.website.label')} htmlFor={siteId}>
             <div className="relative">
                 <Input
                     id={siteId}
+                    aria-invalid={platform ? true : undefined}
+                    aria-describedby={platform ? siteId + '-platform' : undefined}
                     autoFocus={autoFocus}
                     value={draft.companyUrl}
                     disabled={disabled}
@@ -61,6 +66,7 @@ export function DesktopIntakeCompanyStep({ draft, siteRead, disabled, autoFocus 
                     </AnimatePresence>
                 </div>
             </div>
+            {platform && <p id={siteId + '-platform'} className="text-xs text-destructive">{t('foreman.intake.website.platform', { domain: platform })}</p>}
         </Field>
     )
 }

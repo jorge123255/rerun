@@ -11,6 +11,7 @@ import { ChevronLeftIcon, PanelRightCloseIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { DesktopPortableTemplateActions } from '@/lib/desktop/portable-template-actions'
 import type { DesktopTemplatesClient } from '@/lib/desktop/templates-client'
+import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopTemplateDetailPanel } from './DesktopTemplateDetailPanel'
 import { DesktopTemplateLibraryBrowser } from './DesktopTemplateLibraryBrowser'
 import type { DesktopTemplateDetail, DesktopTemplateIdentity, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt, DesktopTemplateSummary } from './types'
@@ -31,6 +32,8 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
     onPickImport?: () => Promise<{ uploadId: string; requestId?: string } | null>
     onSaveExport?: (artifactId: string) => Promise<{ saved: boolean }>
 }) {
+    const { language } = useDesktopLocale()
+    const copy = language.messages.templateLibrary
     const reduceMotion = useReducedMotion() ?? false
     const isMobile = useIsMobile()
     const [templates, setTemplates] = useState<DesktopTemplateSummary[]>([])
@@ -167,7 +170,7 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
                 setView('list')
             }}
         >
-            <DialogTitle className="sr-only">Private template library</DialogTitle>
+            <DialogTitle className="sr-only">{copy.title}</DialogTitle>
             <div className={cn(
                 'flex min-h-0 flex-1 transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
                 'sm:grid sm:h-[min(56rem,92dvh)] lg:h-[min(56rem,calc(100dvh-6rem))]',
@@ -194,10 +197,10 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
                 <div ref={detailRef} tabIndex={-1} inert={isMobile ? view === 'list' : !selection} className="flex w-full min-h-0 min-w-0 shrink-0 flex-col outline-none sm:w-auto sm:overflow-hidden">
                     <div className="relative flex w-full min-h-0 flex-1 flex-col border-l max-sm:border-l-0 sm:w-[420px] sm:bg-muted/20 sm:shadow-[inset_2px_0_4px_0_rgb(0_0_0/0.05)]">
                         <div className="flex shrink-0 items-center border-b px-2 py-1.5 sm:hidden">
-                            <Button type="button" variant="ghost" size="sm" className="gap-1.5 pl-1.5" onClick={() => setView('list')}><ChevronLeftIcon className="size-4" />Templates</Button>
+                            <Button type="button" variant="ghost" size="sm" className="gap-1.5 pl-1.5" onClick={() => setView('list')}><ChevronLeftIcon className="size-4" />{copy.templates}</Button>
                         </div>
                         <span className="absolute top-2 left-2 z-20 flex rounded-md bg-background/70 backdrop-blur max-sm:hidden">
-                            <TooltipLabeled label="Hide details" side="bottom"><Button type="button" variant="ghost" size="icon-sm" aria-label="Hide details" onClick={collapseDetail}><PanelRightCloseIcon /></Button></TooltipLabeled>
+                            <TooltipLabeled label={copy.hideDetails} side="bottom"><Button type="button" variant="ghost" size="icon-sm" aria-label={copy.hideDetails} onClick={collapseDetail}><PanelRightCloseIcon /></Button></TooltipLabeled>
                         </span>
                         <StepTransition stepKey={shown ? `${shown.templateId}:${shown.revision}` : selection ? 'loading' : 'empty'} direction={1} className="flex min-h-0 flex-1 flex-col">
                             {shown ? <DesktopTemplateDetailPanel

@@ -124,6 +124,27 @@ test('aligns a selectable layer to the displayed crop and moves Find to the matc
     expect(layer()?.dataset.pdfRotation).toBe('0')
 })
 
+test('keyboard Find keeps its input focused while another PDF page loads', async () => {
+    const pending = deferred<Response>()
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'http://127.0.0.1')
+        if (url.pathname.endsWith('/files/pdf-text')) return Promise.resolve(textResponse())
+        return url.searchParams.get('page') === '2' ? pending.promise : Promise.resolve(pageResponse())
+    }))
+    await render()
+    await typeQuery('Alpha')
+    await click('Next match')
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Find text"]')!
+    input.focus()
+    await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+    expect(document.activeElement).toBe(input)
+    expect(input.value).toBe('Alpha')
+    await act(async () => { pending.resolve(pageResponse(2)) })
+    expect(document.activeElement).toBe(input)
+    expect(count()).toBe('3 of 3')
+    expect(layer()?.dataset.pdfRotation).toBe('90')
+})
+
 test('a newer query replaces the previous match count', async () => {
     installFetch(); await render(); await typeQuery('Alpha')
     expect(count()).toBe('1 of 3')

@@ -90,9 +90,14 @@ export function DesktopCoworkerCallBlock({ client, call, active = true, live = f
         />
         {call.status === 'waiting-human' && <p role="status" className="break-words text-xs text-muted-foreground">Waiting for you in {call.targetName}’s chat.</p>}
         {!call.targetSessionId && <p role="status" className="break-words text-xs text-muted-foreground">Target chat is being prepared…</p>}
-        {onOpenTarget && <Button type="button" variant="secondary" size="sm" disabled={!active || !call.targetSessionId || action !== null} onClick={() => { void open() }}>
-            {action === 'open' ? 'Opening chat…' : 'Open chat'}
-        </Button>}
+        <div className="flex flex-wrap gap-2 empty:hidden">
+            {onOpenTarget && <Button type="button" variant="secondary" size="sm" disabled={!active || !call.targetSessionId || action !== null} onClick={() => { void open() }}>
+                {action === 'open' ? 'Opening chat…' : 'Open chat'}
+            </Button>}
+            {call.status === 'dispatched' && onChange && <Button type="button" variant="outline" size="sm" disabled={!active || action !== null} onClick={() => { void stop(call.callId) }}>
+                {action === 'stop' ? 'Stopping call…' : 'Stop call'}
+            </Button>}
+        </div>
         {(openError || stopError) && <p role="alert" className="break-words text-xs text-destructive">{openError || stopError}</p>}
     </div>
 }

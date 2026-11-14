@@ -1,7 +1,7 @@
 import 'server-only'
 import { z } from 'zod'
-import { request as engineRequest, EngineRequestError, getAgent, listRuns } from '@/lib/engine/client'
-import { desktopScheduleRecordSchema, desktopWorkspaceRoutineChatSchema, type DesktopWorkspaceRoutineMutation, type DesktopWorkspaceRoutineMutationResult } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
+import { request as engineRequest, EngineRequestError, getAgent, listLatestScheduleRuns } from '@/lib/engine/client'
+import { desktopRerunGrantsOf, desktopScheduleRecordSchema, desktopWorkspaceRoutineChatSchema, type DesktopWorkspaceRoutineMutation, type DesktopWorkspaceRoutineMutationResult } from '@rerun/contracts'
 import { openDesktopDatabase } from '../database'
 import { findDesktopAgent, listDesktopAgents } from '../store'
 import { engineOf } from '../settings'
@@ -27,15 +27,20 @@ export async function desktopWorkspaceRoutinesAuthority(runtime: DesktopRuntime)
         const rows = await engineRequest(engine, `/desktop/workspace-routines/${encodeURIComponent(o.engineAgentId)}`, { method: 'GET', signal, cache: 'no-store' }, value => z.object({ schedules: z.array(z.object({}).passthrough()) }).parse(value).schedules)
         signal?.throwIfAborted()
         if ((await owner(id)).engineAgentId !== o.engineAgentId) throw new DesktopHttpError(409, 'Coworker changed')
-        return rows.map(row => desktopScheduleRecordSchema.parse({ agentId: o.id, slug: row.slug, name: row.name, description: row.description, body: row.body, cron: row.cron, runAt: row.runAt, timezone: row.timezone ?? 'UTC', enabled: row.enabled, revision: row.revision, lastRunAt: row.lastRunAt }))
+        return rows.map(row => desktopScheduleRecordSchema.parse({
+            agentId: o.id, slug: row.slug, name: row.name, description: row.description, body: row.body, cron: row.cron,
+            runAt: row.runAt, timezone: row.timezone ?? 'UTC', enabled: row.enabled, revision: row.revision, lastRunAt: row.lastRunAt,
+            connectionId: row.connectionId, provider: row.provider, model: row.model,
+        }))
     }
     const read: DesktopWorkspaceRoutinesAuthority = {
         async listOwners(signal) {
             const rows = await listDesktopAgents(db)
             const settled = await Promise.allSettled(rows.filter(row => row.enabled).map(async row => {
-                const current = await getAgent(engine, row.engineAgentId)
+                const current = await getAgent(engine, row.engineAgentId, { signal })
                 signal?.throwIfAborted()
-                return { agentId: row.id, engineAgentId: row.engineAgentId, name: row.name, enabled: row.enabled && current.config.enabled, setupPending: current.config.setup?.required === true && !current.config.setup?.completedAt }
+                return { agentId: row.id, engineAgentId: row.engineAgentId, name: row.name, enabled: row.enabled && current.config.enabled, setupPending: current.config.setup?.required === true && !current.config.setup?.completedAt,
+                    scheduleGranted: desktopRerunGrantsOf(current.config.tools).schedule }
             }))
             signal?.throwIfAborted()
             const failed = settled.filter((value): value is PromiseRejectedResult => value.status === 'rejected')
@@ -43,8 +48,17 @@ export async function desktopWorkspaceRoutinesAuthority(runtime: DesktopRuntime)
             return settled.flatMap(value => value.status === 'fulfilled' ? [value.value] : [])
         },
         listSchedules: (owner, signal) => records(owner.agentId, signal),
-        async listRuns(owner, signal) { return (await listRuns(engine, owner.engineAgentId, { limit: 100 }, { signal })).map(run => ({ id: run.id, agentId: owner.agentId, sessionId: run.sessionId, triggerSource: run.triggerSource ?? 'chat', triggerSlug: run.triggerSlug ?? null, status: run.status, startedAt: run.startedAt })) },
-        adopt: async (owner, run, signal) => routineChat(await adoptDesktopScheduledSession(db, engine, { agentId: owner.agentId, engineAgentId: owner.engineAgentId, engineSessionId: run.sessionId, runId: run.id }, { signal })),
+        async listLatestRuns(owner, signal) {
+            return (await listLatestScheduleRuns(engine, owner.engineAgentId, signal))
+                .filter(run => run.agentId === owner.engineAgentId)
+                .map(run => ({ ...run, agentId: owner.agentId }))
+        },
+        adopt: async (owner, run, signal) => {
+            if (run.triggerSlug === null) throw new DesktopHttpError(409, 'The routine result has no schedule identity.')
+            return routineChat(await adoptDesktopScheduledSession(db, engine, {
+                agentId: owner.agentId, engineAgentId: owner.engineAgentId, scheduleSlug: run.triggerSlug, runId: run.id,
+            }, { signal }))
+        },
         canRename: async () => true,
     }
     async function command(input: DesktopWorkspaceRoutineMutation, operation: 'read' | 'mutate', signal?: AbortSignal) {

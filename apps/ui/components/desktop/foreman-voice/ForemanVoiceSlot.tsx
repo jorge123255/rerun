@@ -8,9 +8,11 @@ import { useDesktopVoicePlayback } from '@/lib/desktop/voice/useDesktopVoicePlay
 import { foremanVoiceAudioUrl } from '@/lib/desktop/foreman-voice/client'
 import type { ForemanVoiceSlotController } from '@/lib/desktop/foreman-voice/useForemanVoiceSlot'
 import { FOREMAN_VOICE_HOLD_MS } from '@rerun/contracts'
+import { useDesktopLocale } from '../DesktopLocale'
 
 export type ForemanVoiceSlotProps = { voice: ForemanVoiceSlotController; onOpenTranscriptionSettings(): void }
 export function ForemanVoiceSlot({ voice, onOpenTranscriptionSettings }: ForemanVoiceSlotProps) {
+    const { t } = useDesktopLocale()
     const timer = useRef<ReturnType<typeof setTimeout> | null>(null), held = useRef(false)
     const clearHold = () => { if (timer.current) clearTimeout(timer.current); timer.current = null }
     const { controller, view, stream } = voice
@@ -26,7 +28,7 @@ export function ForemanVoiceSlot({ voice, onOpenTranscriptionSettings }: Foreman
                     : busy ? <TextShimmer className="truncate text-sm">{view.phase === 'restoring' ? 'Restoring recording…' : view.phase === 'starting' ? 'Opening microphone…' : view.phase === 'saving' ? 'Saving recording…' : 'Sending…'}</TextShimmer> : null}
         {view.pending && <Review voice={voice} />}
         {view.error && <p role="alert" className="break-words text-xs text-destructive">{view.error}</p>}
-        {view.snapshot?.setup === 'transcription' && <Button type="button" size="sm" variant="outline" onClick={onOpenTranscriptionSettings}>Set up transcription</Button>}
+        {view.snapshot?.setup === 'transcription' && <Button type="button" size="sm" variant="outline" onClick={onOpenTranscriptionSettings}>{t('setUpTranscription')}</Button>}
         <div className="flex flex-wrap gap-2">
             {['idle', 'starting', 'listening'].includes(view.phase) && <Button type="button" size="sm" variant="ghost" disabled={!view.restored || !voice.active}
                 onPointerDown={event => {
@@ -42,7 +44,7 @@ export function ForemanVoiceSlot({ voice, onOpenTranscriptionSettings }: Foreman
                 }}
                 onPointerCancel={() => { held.current = false; clearHold(); void controller.cancel() }}
                 onLostPointerCapture={() => { if (held.current) { held.current = false; clearHold(); void controller.cancel() } }}
-                aria-label="Hold to talk to Foreman">Hold to talk</Button>}
+                aria-label={t('shortcutDialog.actions.holdToTalk')}>Hold to talk</Button>}
             {view.phase === 'idle' && !view.restored && <Button type="button" size="sm" variant="outline" onClick={() => void controller.restore()}>Restore recording</Button>}
             {view.phase === 'error' && !view.pending && <Button type="button" size="sm" variant="outline" onClick={() => { void controller.cancel().then(() => controller.restore()).then(() => controller.start()) }}>Try again</Button>}
             {view.phase === 'listening' && <Button type="button" size="sm" variant="outline" onClick={() => void controller.release(true)}>Review</Button>}

@@ -1,5 +1,4 @@
 import { desktopRoute } from '@/lib/desktop/server/http'
-import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { readDesktopNotificationEvents } from '@/lib/desktop/server/notifications'
 
 export const dynamic = 'force-dynamic'
@@ -9,7 +8,7 @@ export const dynamic = 'force-dynamic'
 // never replays old history as new.
 export function GET(request: Request) {
     return desktopRoute(request, async runtime => {
-        const events = await readDesktopNotificationEvents(runtime)
+        const events = await readDesktopNotificationEvents(runtime, request.headers.get('accept-language'))
         return Response.json(events, { headers: { 'cache-control': 'no-store' } })
     })
 }

@@ -45,27 +45,28 @@ export function desktopDocumentAttachmentsApi(service: DesktopDocumentAttachment
                 const search = new URL(request.url).searchParams
                 if ([...search.keys()].some(key => search.getAll(key).length > 1)) throw new DesktopHttpError(400, 'Duplicate document query fields.')
                 const query = readQuery.parse(Object.fromEntries(search))
-                const scope = { agentId, tabUid: query.tabUid, ...(query.sessionId ? { sessionId: query.sessionId } : {}) }
+                const scope = { agentId, tabUid: query.tabUid, ...(query.sessionId ? { sessionId: query.sessionId } : {}), ...(query.questionId ? { questionId: query.questionId } : {}) }
                 if (!query.attachmentId) {
                     if (query.view || query.sha256 || query.page || query.scale) throw new DesktopHttpError(400, 'Choose an attachment.')
                     return Response.json({ attachments: await service.list(scope, signal) }, { headers })
                 }
                 if (!query.sha256 || !query.view) throw new DesktopHttpError(400, 'Choose an exact attachment identity.')
-                const result = await service.read(scope, query.attachmentId, query.sha256, signal)
+                const result = await service.read(scope, query.attachmentId, query.sha256, signal, query.view === 'preview' ? 'preview' : 'source')
                 if (query.view === 'preview') {
-                    const response = await previewResultBytes(result.attachment.name, result.bytes, { signal, page: query.page, scale: query.scale })
+                    const response = await previewResultBytes(result.renderedImage ? 'preview.png' : result.attachment.name,
+                        result.bytes, { signal, page: query.page, scale: query.scale })
                     await service.assertReadable(scope, query.attachmentId, query.sha256, signal)
                     response.headers.set('x-rerun-document-sha256', query.sha256)
                     return response
                 }
                 await service.assertReadable(scope, query.attachmentId, query.sha256, signal)
                 const name = encodeURIComponent(result.attachment.name).replace(/['()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
-                return new Response(new Uint8Array(result.bytes), { headers: { ...headers, 'Content-Type': query.view === 'download' ? 'application/octet-stream' : result.attachment.mimeType, 'Content-Length': String(result.bytes.byteLength), 'Content-Disposition': `attachment; filename*=UTF-8''${name}`, 'x-rerun-document-sha256': query.sha256 } })
+                return new Response(new Uint8Array(result.bytes), { headers: { ...headers, 'Content-Type': query.view === 'download' || result.attachment.conversion.renderedImage ? 'application/octet-stream' : result.attachment.mimeType, 'Content-Length': String(result.bytes.byteLength), 'Content-Disposition': `attachment; filename*=UTF-8''${name}`, 'x-rerun-document-sha256': query.sha256 } })
             }
             if (request.method !== 'POST') return Response.json({ error: 'Method unavailable.' }, { status: 405, headers })
             const body = desktopDocumentRequestSchema.parse(await readJson(request, signal))
             if (body.agentId !== agentId) throw new DesktopHttpError(409, 'These attachments belong to another coworker.')
-            const scope = { agentId, tabUid: body.tabUid, ...(body.sessionId ? { sessionId: body.sessionId } : {}) }
+            const scope = { agentId, tabUid: body.tabUid, ...(body.sessionId ? { sessionId: body.sessionId } : {}), ...(body.questionId ? { questionId: body.questionId } : {}) }
             switch (body.operation) {
                 case 'upload': {
                     const { operation: _operation, audioBase64, ...input } = body

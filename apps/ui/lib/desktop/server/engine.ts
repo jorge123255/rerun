@@ -1,19 +1,21 @@
 import type { DesktopDocumentSendSelection } from '@rerun/contracts'
 import { admitDesktopChatDocuments } from './document-attachments/chat'
 import { consumeDesktopDocumentAdmission } from './document-attachments/binding'
-import { checkedDesktopCoworkerMentions, desktopCoworkerMentionFieldsOf, desktopStoredCoworkerMentions, visibleText, type DesktopCoworkerMention } from '@rerun/contracts'
+import { checkedDesktopCoworkerMentions, desktopCoworkerMentionFieldsOf, desktopStoredCoworkerMentions, hasDesktopApiConnectionPrefix, visibleText, type DesktopCoworkerMention } from '@rerun/contracts'
 import { validateDesktopCoworkerMentionsAtSend } from './coworker-mentions'
 import { assertDesktopSetupChatAllowed } from './setup/service'
 import type { DesktopTakeoverGuard } from '@rerun/contracts'
 import 'server-only'
 import { desktopChatTitle } from '../chat-content'
+import { questionDocumentId } from '../question-documents'
 import { startQueuedChat } from './queued-chat'
 import { DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES, desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf, desktopRerunGrantsOf, type DesktopQuestionGuard, type DesktopApprovalGuard, type DesktopAttachmentItem, type DesktopResolvedAttachment } from '@rerun/contracts'
 import { EngineRequestError, cancelRun, chat, createAgent, getAgent, getSessionMessages, patchAgent } from '@/lib/engine/client'
 import type { DesktopCoworkerPatch, DesktopCoworkerSettings } from '../coworker-settings'
+import { withDesktopSavedDecisions } from './saved-chat-decisions'
 import { publicDesktopHistory, transformEngineMessages, type HistoryMessage } from '@/lib/chat/engine-history'
 import { sanitizeIdentifier } from '@/lib/utils'
-import { resolveDesktopChatModel, savedChoice } from './chat-model'
+import { assertDesktopImageModel, resolveDesktopChatModel, savedChoice } from './chat-model'
 import type { DesktopModelPick } from '../chat-model'
 import { changeDesktopSettings, desktopModel, engineOf, readDesktopProviders } from './settings'
 import { DesktopHttpError } from './auth'
@@ -24,7 +26,7 @@ import { readCoworkerFile } from './coworker-files'
 import { readDesktopImageSnapshots } from './composer-image-files'
 import { openDesktopDatabase } from './database'
 import { GENERAL_ALREADY_OPEN, GENERAL_SESSION_TITLE, generalTabUid, openingMessage } from '../general-threads'
-import { discardTabStart, existingTabStart, readTabStart, recoverTabSession, reserveTabStart } from './tab-starts'
+import { desktopPhoneTabUid, discardTabStart, existingTabStart, readTabStart, recoverTabSession, reserveTabStart, type DesktopPhoneFirstTurn } from './tab-starts'
 import type { DesktopRuntime } from './runtime'
 import { GeneralAlreadyOpenError, createDesktopAgentWithinRosterWrite, createDesktopSession, findDesktopAgent, findDesktopGeneralSession, findDesktopSession, regenerationRequestId } from './store'
 import { withRosterWrite } from './roster-writes'
@@ -39,7 +41,7 @@ export async function desktopCoworkerMentionTargets(runtime: DesktopRuntime, age
 export async function connectDesktopOpenAI(runtime: DesktopRuntime, apiKey: string) {
     await changeDesktopSettings(runtime, { action: 'key', provider: 'openai', apiKey })
     const { connections } = await readDesktopProviders(runtime)
-    const connection = connections.find(c => c.provider === 'openai')
+    const connection = connections.find(c => c.provider === 'openai' && !hasDesktopApiConnectionPrefix(c.id))
     if (!connection) throw new DesktopHttpError(502, 'Could not read the saved connection.')
     return { id: connection.id, provider: connection.provider, name: connection.name }
 }
@@ -104,7 +106,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
 }
 
 type DesktopChatInput = { agentId: string } & (
-    | { sessionId?: string; text: string; documents?: DesktopDocumentSendSelection; coworkerMentions?: DesktopCoworkerMention[]; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard }
+    | { sessionId?: string; text: string; documents?: DesktopDocumentSendSelection; questionDocumentId?: string; coworkerMentions?: DesktopCoworkerMention[]; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard }
     | { sessionId: string; regenerateMessageId: string; requestId: string }
 )
 
@@ -116,7 +118,17 @@ async function readDesktopAttachments(runtime: DesktopRuntime, agentId: string, 
     return files
 }
 
-export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopChatInput, internalCreationRequestId?: string): Promise<{ response: Response; sessionId: string }> {
+export function startDesktopPhoneConversation(runtime: DesktopRuntime, input: { agentId: string; text: string }, start: DesktopPhoneFirstTurn) {
+    return startDesktopChat(runtime, input, undefined, start)
+}
+
+export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopChatInput, internalCreationRequestId?: string, phoneStart?: DesktopPhoneFirstTurn): Promise<{ response: Response; sessionId: string }> {
+    if ('text' in input && input.documents) {
+        const questionId = questionDocumentId(input.documents.scope.tabUid)
+        if (questionId && (!input.question || input.questionDocumentId !== questionId)) {
+            throw new DesktopHttpError(409, 'These files can only be sent with their original question.')
+        }
+    }
     const db = await openDesktopDatabase(runtime.dataRoot)
     await assertCoworkerNotDeleting(db, input.agentId)
     const kickoff = await assertDesktopCreationSettled(db, input.agentId, internalCreationRequestId)
@@ -138,7 +150,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     const attachmentPaths = regenerate ? [] : desktopAttachmentSelectionsOf(input)
     const attachmentFields = desktopAttachmentFieldsOf(attachmentPaths)
     const openingGeneral = !regenerate && !existing && 'text' in input && input.tabUid === generalTabUid(agent.id)
-    let uid = !regenerate && !existing ? input.tabUid : undefined
+    let uid = !regenerate && !existing ? (phoneStart ? desktopPhoneTabUid(phoneStart.sessionId) : input.tabUid) : undefined
     if (openingGeneral && uid) {
         const seen = await readTabStart(db, agent, uid, input)
         // A different first message lost the race. Resume only after the winning turn is durable;
@@ -151,7 +163,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             uid = undefined
         }
     }
-    const previousStart = !regenerate && uid ? await existingTabStart(db, agent, uid, input) : null
+    const previousStart = !regenerate && uid ? await existingTabStart(db, agent, uid, input, phoneStart) : null
     if (previousStart) {
         const id = await recoverTabSession(db, engineOf(runtime), agent, previousStart)
         if (id && !regenerate && input.documents) await consumeDesktopDocumentAdmission(runtime, input.documents, AbortSignal.timeout(10_000))
@@ -211,16 +223,12 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     const firstChoice = !regenerate && !existing ? input.modelChoice : undefined
     const { connectionId, model } = replay ? {} : await resolveDesktopChatModel(runtime, agent, existing, firstChoice)
     const images = attachmentPaths.filter((item): item is Exclude<typeof item, string> => typeof item !== 'string')
-    if (!replay && images.length) {
-        const { connections } = await readDesktopProviders(runtime)
-        if (connections.find(connection => connection.id === connectionId)?.provider !== 'codex')
-            throw new DesktopHttpError(400, 'Image attachments need a ChatGPT / Codex model. Choose one before sending.')
-    }
     const files = !replay && !regenerate ? await readDesktopAttachments(runtime, agent.id,
         attachmentPaths.filter((item): item is string => typeof item === 'string')) : []
     const documents = !replay && !regenerate && input.documents ? await admitDesktopChatDocuments(runtime, db, { ...input, documents: input.documents }) : []
+    if (!replay && (images.length || documents.some(item => 'dataBase64' in item))) await assertDesktopImageModel(runtime, connectionId)
     if (documents.length && !regenerate && input.documents?.modelChoice && (input.documents.modelChoice.connectionId !== connectionId || input.documents.modelChoice.model !== model)) throw new DesktopHttpError(409, 'The model changed after the documents were prepared. Review them before sending.')
-    if (files.reduce((sum, file) => sum + file.size, 0) + documents.reduce((sum, file) => sum + Buffer.byteLength(file.text), 0) > DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments must be 128 KiB or smaller in total.')
+    if (files.reduce((sum, file) => sum + file.size, 0) + documents.reduce((sum, file) => sum + ('text' in file ? Buffer.byteLength(file.text) : 0), 0) > DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments must be 128 KiB or smaller in total.')
     const resolvedImages = !replay && images.length ? await readDesktopImageSnapshots(runtime, agent.id, images) : new Map<string, Uint8Array>()
     const resolved: DesktopResolvedAttachment[] = (replay ? [] : attachmentPaths).map(item => typeof item === 'string'
         ? { type: 'text', path: item, content: files.find(file => file.path === item)!.content }
@@ -232,7 +240,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
         const result = await validateDesktopCoworkerMentionsAtSend({ listTargets: (owner, options) => desktopCoworkerMentionTargets(runtime, owner, options) }, { agentId: agent.id, text: sourceText, mentions: selected })
         if (!result.ok) throw new DesktopHttpError(409, result.error)
     }
-    const start = !regenerate && uid ? previousStart ?? await reserveTabStart(db, agent, uid, input, runtime.launchNonce) : null
+    const start = !regenerate && uid ? previousStart ?? await reserveTabStart(db, agent, uid, input, runtime.launchNonce, phoneStart) : null
     const engineResponse = replay ?? await (queued ? startQueuedChat : chat)(engineOf(runtime), agent.engineAgentId, {
         ...(regenerate ? {
             sessionId: existing!.engineSessionId,
@@ -283,7 +291,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
         session = regenerate
             ? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: 'Alternate · ' + existing!.title.replace(/^Alternate · /, ''), regenerationRequestId: requestId, model: savedChoice(existing) })
             : existing ?? await createDesktopSession(db, {
-                agentId: agent.id, engineSessionId,
+                id: phoneStart?.sessionId, agentId: agent.id, engineSessionId,
                 title: openingGeneral ? GENERAL_SESSION_TITLE : desktopChatTitle(input),
                 model: firstChoice,
                 kind: openingGeneral ? 'general' : 'thread',
@@ -299,7 +307,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
         }
         throw error
     }
-    if (!regenerate && input.documents) await consumeDesktopDocumentAdmission(runtime, input.documents, AbortSignal.timeout(10_000))
+    if (!regenerate && input.documents && !input.questionDocumentId) await consumeDesktopDocumentAdmission(runtime, input.documents, AbortSignal.timeout(10_000))
     const headers = new Headers({
         'content-type': engineResponse.headers.get('content-type') ?? 'text/event-stream',
         'x-vercel-ai-ui-message-stream': engineResponse.headers.get('x-vercel-ai-ui-message-stream') ?? 'v1',
@@ -313,19 +321,23 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     return { response: new Response(body, { status: 200, headers }), sessionId: session.id }
 }
 
-export async function readDesktopHistory(runtime: DesktopRuntime, sessionId: string): Promise<HistoryMessage[]> {
+export async function readDesktopHistory(runtime: DesktopRuntime, sessionId: string, { acknowledgeAlternate = true } = {}): Promise<HistoryMessage[]> {
     const db = await openDesktopDatabase(runtime.dataRoot)
     const session = await findDesktopSession(db, sessionId)
     if (!session) throw new DesktopHttpError(404, 'Conversation not found')
     const agent = await findDesktopAgent(db, session.agentId)
     if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
     try {
-        const messages = await getSessionMessages(engineOf(runtime), agent.engineAgentId, session.engineSessionId, { requireSuccess: true })
-        const history = transformEngineMessages(messages, { desktopSummaries: true, preserveSourceSteps: true })
+        const messages = await getSessionMessages(engineOf(runtime), agent.engineAgentId, session.engineSessionId, { requireSuccess: true, desktopDecisions: true })
+        if (messages.some(message => message.sessionId !== session.engineSessionId)) throw new Error('Foreign conversation history')
+        const history = publicDesktopHistory(transformEngineMessages(messages, { desktopSummaries: true, preserveSourceSteps: true }))
+        const projected = await withDesktopSavedDecisions(db, agent.id, session.id, messages, history)
         // Only a read of this specific alternate acknowledges it. Opening the original, or an
         // older alternate while a newer request is pending, leaves the pending attempt alone.
-        await db.execute({ sql: 'UPDATE desktop_regeneration_requests SET pending = 0 WHERE alternate_session_id = ? AND pending = 1', args: [session.id] })
-        return publicDesktopHistory(history)
+        if (acknowledgeAlternate) {
+            await db.execute({ sql: 'UPDATE desktop_regeneration_requests SET pending = 0 WHERE alternate_session_id = ? AND pending = 1', args: [session.id] })
+        }
+        return projected
     } catch (cause) {
         if (cause instanceof EngineRequestError && cause.status === 404) throw new DesktopHttpError(404, 'Conversation not found')
         throw new DesktopHttpError(502, 'Could not load this conversation. Try again.')

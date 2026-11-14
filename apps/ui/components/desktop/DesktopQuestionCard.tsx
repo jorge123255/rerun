@@ -1,18 +1,28 @@
 'use client'
 
-import { QuestionForm } from '@rerun/ui/chat'
+import { QuestionForm, type QuestionAttachments } from '@rerun/ui/chat'
 import { useEffect, useRef, useState } from 'react'
+import type { DesktopDocumentScope } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 import { useDesktopLocale } from './DesktopLocale'
+import { useDesktopQuestionVoice, type DesktopQuestionVoiceTarget } from './voice/useDesktopQuestionVoice'
+import { DesktopDocumentChips } from './document-attachments/DesktopDocumentChips'
+import { DESKTOP_IMAGE_UPLOAD_ACCEPT } from '@/lib/desktop/composer-image'
+import { useDesktopDocumentAttachments } from '@/lib/desktop/document-attachments/useDesktopDocumentAttachments'
+import { QUESTION_DOCUMENT_POSITIONS, questionDocumentIndex } from '@/lib/desktop/question-documents'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer, DesktopQuestionPayload } from '@/lib/desktop/questions'
 
 export type DesktopQuestionCardProps = {
     question: DesktopPendingQuestion
     disabled?: boolean
+    voiceTarget?: DesktopQuestionVoiceTarget
+    documentScope?: DesktopDocumentScope
     onAnswer: (payload: DesktopQuestionAnswer) => Promise<void>
 }
 
-function QuestionCard({ question, disabled, onAnswer }: DesktopQuestionCardProps) {
+function QuestionCard({ question, disabled, voiceTarget, onAnswer, files }: DesktopQuestionCardProps & {
+    files?: ReturnType<typeof useDesktopDocumentAttachments>
+}) {
     const { language, t } = useDesktopLocale()
     const latest = useRef({ question, disabled, onAnswer })
     latest.current = { question, disabled, onAnswer }
@@ -32,6 +42,7 @@ function QuestionCard({ question, disabled, onAnswer }: DesktopQuestionCardProps
         // Match the server's canonical intent, including the order of multiple selections.
         const canonical: DesktopQuestionPayload = payload.action === 'cancel' ? payload : {
             action: 'answer', answers: payload.answers.map(values => values.map(value => value.trim()).filter(Boolean)),
+            ...(payload.documents && { documents: payload.documents }),
         }
         const key = JSON.stringify(canonical)
         let requestId = requests.current.get(key)
@@ -75,6 +86,48 @@ function QuestionCard({ question, disabled, onAnswer }: DesktopQuestionCardProps
         ? { ...question.attempt, questionId: question.id }
         : cancellation
     const locked = disabled || status !== 'idle'
+    // A new answer or dismissal must account for the saved selection. An exact
+    // retry already carries its document IDs and is checked again on the server.
+    const restoringFiles = !!files && !files.loaded
+    const formLocked = locked || restoringFiles
+    const { voice, error: voiceError } = useDesktopQuestionVoice(voiceTarget, question.id, !formLocked && !attempt)
+    const group = (index: number) => files?.attachments.filter(file => questionDocumentIndex(file.position) === index) ?? []
+    const removeFiles = async (ids: string[]) => {
+        for (const id of ids) if (!await files?.remove(id)) return false
+        return true
+    }
+    const attachments: QuestionAttachments | undefined = files?.loaded ? {
+        accept: DESKTOP_IMAGE_UPLOAD_ACCEPT + '.txt,.md,.csv,.json,.log,.pdf,.wav,.mp3,.m4a,.ogg',
+        onPick: (index, selected) => {
+            const start = index * QUESTION_DOCUMENT_POSITIONS
+            files.add(selected, { start, end: start + QUESTION_DOCUMENT_POSITIONS })
+        },
+        onClear: index => {
+            const ids = group(index).map(file => file.attachmentId)
+            return ids.length ? removeFiles(ids) : undefined
+        },
+        count: index => group(index).length,
+        render: index => <DesktopDocumentChips attachments={group(index)} onRemove={files.remove} onRetry={files.retry} disabled={locked || files.busy > 0} />,
+    } : undefined
+
+    async function submit(answers: string[][]) {
+        let documents
+        try { documents = (await files?.settle())?.selection }
+        catch (cause) {
+            setError(cause instanceof Error ? cause.message : t('question.failed'))
+            throw cause
+        }
+        await send(identify({ action: 'answer', answers, ...(documents && { documents }) }))
+    }
+
+    async function dismiss() {
+        if (files && (!files.loaded || !await removeFiles(files.attachments.map(file => file.attachmentId)))) {
+            const cause = new Error('Wait for the question files to finish saving or remove them before dismissing.')
+            setError(cause.message)
+            throw cause
+        }
+        await send(identify({ action: 'cancel' }))
+    }
     return <div className="space-y-2" aria-busy={status === 'sending'}>
         {attempt ? <div className="relative space-y-3 overflow-hidden rounded-lg border border-border bg-muted/30 p-3">
             {attempt.action === 'answer' ? question.questions.map((item, index) => (
@@ -82,7 +135,10 @@ function QuestionCard({ question, disabled, onAnswer }: DesktopQuestionCardProps
                     <p className="text-sm font-medium leading-snug">{item.question}</p>
                     {attempt.answers[index]?.length
                         ? attempt.answers[index].map((answer, answerIndex) => <p key={answerIndex} className="whitespace-pre-wrap wrap-anywhere text-sm text-muted-foreground">{answer}</p>)
-                        : <p className="text-sm italic text-muted-foreground">{t('question.skipped')}</p>}
+                        : !group(index).some(file => attempt.documents?.attachmentIds.includes(file.attachmentId)) && <p className="text-sm italic text-muted-foreground">{t('question.skipped')}</p>}
+                    {group(index).filter(file => attempt.documents?.attachmentIds.includes(file.attachmentId)).map(file => (
+                        <p key={file.attachmentId} className="text-xs text-muted-foreground">{file.name}</p>
+                    ))}
                 </div>
             )) : <p className="text-sm text-muted-foreground">{t('question.dismissed')}</p>}
             <p role="status" className="text-xs text-muted-foreground">{status === 'sent'
@@ -93,15 +149,28 @@ function QuestionCard({ question, disabled, onAnswer }: DesktopQuestionCardProps
             <Button type="button" size="sm" variant="outline" disabled={locked} onClick={() => { void send(attempt).catch(() => {}) }}>
                 {attempt.action === 'cancel' ? t('question.retryCancellation') : t('question.retry')}
             </Button>
-        </div> : <QuestionForm inline labels={language.messages.questionForm} questions={question.questions} disabled={locked}
-            onSubmit={answers => send(identify({ action: 'answer', answers: answers.map(item => item.answers) }))}
-            onCancel={() => { void send(identify({ action: 'cancel' })).catch(() => {}) }} />}
+        </div> : <QuestionForm inline labels={language.messages.questionForm} questions={question.questions} disabled={formLocked} voice={voice} attachments={attachments}
+            onSubmit={answers => submit(answers.map(item => item.answers))}
+            onCancel={dismiss} />}
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+        {voiceError && <p role="alert" className="text-sm text-destructive">{voiceError}</p>}
+        {!attempt && restoringFiles && !files.error && <p role="status" className="text-xs text-muted-foreground">{t('question.loadingAttachments')}</p>}
+        {files?.error && <p role="alert" className="text-sm text-destructive">{files.error}</p>}
+        {files?.error && !files.loaded && <Button type="button" size="sm" variant="outline" disabled={locked}
+            onClick={() => { void files.refresh().catch(() => {}) }}>{t('question.retryAttachments')}</Button>}
     </div>
+}
+
+function QuestionWithDocuments(props: DesktopQuestionCardProps & { documentScope: DesktopDocumentScope }) {
+    const files = useDesktopDocumentAttachments({ ...props.documentScope,
+        enabled: !props.disabled && !props.question.attempt })
+    return <QuestionCard {...props} files={files} />
 }
 
 export function DesktopQuestionCard(props: DesktopQuestionCardProps) {
     // Scope local drafts and request IDs to the authoritative question, even if a parent reuses
     // this component when a different coworker or conversation becomes active.
-    return <QuestionCard key={props.question.id} {...props} />
+    return props.documentScope
+        ? <QuestionWithDocuments key={props.question.id} {...props} documentScope={props.documentScope} />
+        : <QuestionCard key={props.question.id} {...props} />
 }

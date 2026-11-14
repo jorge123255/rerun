@@ -63,14 +63,16 @@ export class BeforeQuitDrafts {
     }
 }
 
-export async function completeDesktopQuit({ flush, confirmDiscard, stop, quit, cancelled = () => {} }) {
+export async function approveDesktopDraftDrain(flush, confirmDiscard, current = () => true) {
     let saved = false
     try { saved = await flush() === true } catch {}
-    if (!saved) {
-        let discard = false
-        try { discard = await confirmDiscard() === true } catch {}
-        if (!discard) { cancelled(); return false }
-    }
+    if (!current()) return false
+    if (saved) return true
+    try { return await confirmDiscard() === true && current() } catch { return false }
+}
+
+export async function completeDesktopQuit({ flush, confirmDiscard, stop, quit, cancelled = () => {} }) {
+    if (!await approveDesktopDraftDrain(flush, confirmDiscard)) { cancelled(); return false }
     // An unconfirmed process drain is not a successful Quit. Restore the existing
     // renderer cancellation protocol so the user can see and retry the error.
     try { await stop() } catch { cancelled(); return false }

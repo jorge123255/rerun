@@ -42,10 +42,14 @@ export function templateHeadline(template: { title: string; tagline: string; age
     return { headline: template.title, subline: template.tagline }
 }
 
-export function matchesQuery(template: LibraryTemplate, query: string): boolean {
-    const q = query.trim().toLowerCase()
+type SearchableTemplate = Pick<LibraryTemplate, 'title' | 'tagline'> & { agents: readonly { name: string }[] } & Partial<Pick<LibraryTemplate, 'creator' | 'tags'>>
+
+export function matchesQuery(template: SearchableTemplate, query: string): boolean {
+    const fold = (text: string) => text.normalize('NFC').toLowerCase().normalize('NFC')
+    const q = fold(query.trim())
     if (!q) return true
-    return [template.title, template.tagline, template.creator?.name ?? '', ...template.agents.map(agent => agent.name), ...template.tags].some(field => field.toLowerCase().includes(q))
+    return [template.title, template.tagline, template.creator?.name ?? '', ...template.agents.map(agent => agent.name), ...(template.tags ?? [])]
+        .some(field => fold(field).includes(q))
 }
 
 // "Other" goes last whatever its size: it is the drawer, not a shelf anyone came for.

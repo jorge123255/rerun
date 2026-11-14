@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <link rel="stylesheet" href="startup.css">
+  <link rel="stylesheet" href="mac-phone-pairing.css">
+  <title data-copy="title">Connect iPhone</title>
+</head>
+<body class="auth-surface">
+  <main>
+    <header>
+      <img class="foreman" src="startup-assets/foreman.webp" alt="" width="56" height="57">
+      <h1 data-copy="title">Connect iPhone</h1>
+    </header>
+    <div id="pairing-entry">
+      <p id="pairing-state" class="footnote" role="status" data-copy="openWorkspaceHint">Open a local workspace to connect your iPhone.</p>
+      <button id="open-local" type="button" data-copy="openWorkspace" disabled>Open Local Workspace</button>
+    </div>
+    <div id="pairing-controls" hidden>
+      <p id="current-workspace" class="footnote" role="status"></p>
+      <label class="toggle">
+        <input id="enable-access" type="checkbox" disabled>
+        <span data-copy="allow">Allow local pairing</span>
+      </label>
+      <label class="toggle">
+        <span data-copy="networkLabel">Pair over</span>
+        <select id="network" disabled>
+          <option value="" data-copy="thisMac">This Mac only</option>
+        </select>
+      </label>
+      <p class="footnote" data-copy="networkHint">Local network pairing requires a compatible client that verifies this Mac’s certificate. You approve each phone before it can read saved chats.</p>
+      <p id="origin" class="footnote" role="status" hidden></p>
+      <div class="actions">
+        <button id="retry-pairing" type="button" class="secondary" data-copy="retry" hidden>Try again</button>
+        <button id="create-offer" data-copy="createOffer" hidden>Create pairing offer</button>
+      </div>
+      <section id="pairing-code" hidden>
+        <img id="pairing-qr" alt="Mac pairing QR code" hidden>
+        <p id="qr-instructions" class="footnote" data-copy="qrInstructions" hidden>In Rerun on your iPhone, choose Connect to This Mac, then Scan QR code.</p>
+        <details id="manual-offer">
+          <summary data-copy="manualOffer">Show code for manual pairing</summary>
+          <pre id="offer"></pre>
+        </details>
+      </section>
+      <section id="pending" hidden>
+        <h2 data-copy="pending">Waiting for approval</h2>
+        <ul id="pending-list"></ul>
+      </section>
+      <section id="unfinished" hidden>
+        <h2 data-copy="unfinished">Unfinished pairing</h2>
+        <ul id="unfinished-list"></ul>
+      </section>
+      <section id="approved" hidden>
+        <h2 data-copy="approved">Paired phones</h2>
+        <p class="footnote" data-copy="sendHint">Allow a phone to send messages only if it should be able to start coworker runs using your existing tools and model settings.</p>
+        <ul id="approved-list"></ul>
+      </section>
+    </div>
+    <p id="error" class="error" role="alert" hidden></p>
+  </main>
+  <script src="mac-phone-pairing.js"></script>
+</body>
+</html>

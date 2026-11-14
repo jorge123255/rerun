@@ -8,6 +8,8 @@ import type { DeviceApprovalLease } from './custody'
 import { createEncryptedDeviceCustodyStore, desktopMcpDeviceCustodySchema } from './store'
 import { deviceApprovalSchema, type DeviceApproval } from './model'
 import { remoteMcpStore, remoteMcpOAuthSchema } from '../mcp/store'
+import { credentialGenerationToken } from '../mcp/credential-generation'
+import { createMcpOAuthAttempts, remoteMcpOAuthAttemptSchema } from '../mcp/oauth-attempt'
 import { desktopMcpSignInDecisionSchema } from '../../../../../../packages/contracts/src/desktop-mcp-sign-in'
 
 const databases: Client[] = []
@@ -20,16 +22,18 @@ afterEach(async () => {
 async function fixture() {
     const root = await mkdtemp(join(tmpdir(), 'rerun-device-custody-'))
     roots.push(root)
-    const db = createClient({ url: `file:${join(root, 'app.db')}` }); databases.push(db)
+    const open = () => { const db = createClient({ url: `file:${join(root, 'app.db')}` }); databases.push(db); return db }
+    const db = open()
     await db.executeMultiple(`CREATE TABLE desktop_agents(id TEXT PRIMARY KEY); INSERT INTO desktop_agents VALUES('agent');
         CREATE TABLE desktop_remote_mcp(id TEXT,transport TEXT,agent_id TEXT,name TEXT,url TEXT,revision TEXT,bearer TEXT, PRIMARY KEY(agent_id,name));
         INSERT INTO desktop_remote_mcp VALUES('registration','http','agent','docs','https://docs.example/mcp','r1',NULL);
-        ${remoteMcpOAuthSchema} ${desktopMcpDeviceCustodySchema}`)
+        ${remoteMcpOAuthSchema} ${remoteMcpOAuthAttemptSchema} ${desktopMcpDeviceCustodySchema}`)
     const key = () => Buffer.alloc(32, 29), store = remoteMcpStore(db, key)
+    const initial = (await store.credentialState('agent', 'docs'))!
     const identity = { engineAgentId: 'engine', sessionId: 'chat', runId: 'run' }
     const approval: DeviceApproval = {
         approvalId: 'human-approval', workspaceId: 'workspace', owner: 'agent', engineAgentId: 'engine', sessionId: 'chat', registrationId: 'registration',
-        name: 'docs', revision: 'r1', credentialGeneration: 'g1', approvedUntil: 2_000_000,
+        name: 'docs', revision: 'r1', credentialGeneration: credentialGenerationToken(key(), 'agent', 'docs', initial, initial.sealed), approvedUntil: 2_000_000,
         method: { kind: 'device-code-link-v1', resource: 'https://docs.example/mcp', issuer: 'https://auth.example/', deviceEndpoint: 'https://auth.example/device',
             tokenEndpoint: 'https://auth.example/token', verificationUri: 'https://auth.example/activate', clientId: 'fixture-client' },
     }
@@ -53,7 +57,7 @@ async function fixture() {
     }
     const binding = bindApprovedMcpDeviceCustody(options), signal = new AbortController().signal
     const request = { identity, toolCallId: 'start-id', action: 'start', name: 'docs' }
-    return { db, store, approval, options, service, binding, signal, start, poll, request, revoked,
+    return { db, open, store, approval, options, service, binding, signal, start, poll, request, revoked,
         custodyStore: createEncryptedDeviceCustodyStore(db, key),
         target: { owner: 'agent', identity, name: 'docs', revision: 'r1', url: 'https://docs.example/mcp' },
         advance: (ms = 5000) => { time += ms }, stopRun: () => { current = false }, switchOwner: () => { epoch++ },
@@ -80,6 +84,72 @@ it('a credential write with failed probe never announces a successful connection
     expect(response).toMatchObject({ result: { view: { state: 'failed' } } })
     expect(JSON.stringify(response)).not.toContain('OFFLINE_')
     expect(await f.store.readOAuth('agent', 'docs')).not.toBeNull()
+    f.binding.dispose()
+})
+
+it('keeps pending device ownership across database reopen and releases it only on exact cancellation', async () => {
+    const f = await fixture()
+    await expect(f.binding.dispatch(f.request, f.signal)).resolves.toMatchObject({ result: { view: { state: 'waiting' } } })
+    f.binding.dispose()
+    const reopened = f.open()
+    const attempts = createMcpOAuthAttempts(reopened, f.options.now)
+    const browser = { owner: 'agent', name: 'docs', registrationId: 'registration', revision: 'r1', method: 'browser' as const, attemptId: 'browser-id' }
+    const deadline = f.options.now() + 300_000
+    await expect(attempts.reserve(browser, deadline)).rejects.toThrow('already in progress')
+    const restored = bindApprovedMcpDeviceCustody({ ...f.options, db: reopened })
+    try {
+        await restored.stop({ ...f.approval, approvalId: 'older-review' })
+        await expect(attempts.reserve(browser, deadline)).rejects.toThrow('already in progress')
+        await restored.stop(f.approval)
+        await attempts.reserve(browser, deadline)
+        await restored.stop(f.approval)
+        await attempts.assertCurrent(browser)
+    } finally { restored.dispose() }
+})
+
+it('preserves a newer credential written by another connection during a device poll', async () => {
+    const f = await fixture()
+    await f.binding.dispatch(f.request, f.signal)
+    f.advance()
+    const writer = remoteMcpStore(f.open(), f.options.key)
+    const newer = { accessToken: 'newer-approval', resource: f.target.url, expiresAt: Date.now() + 60_000,
+        issuer: f.approval.method.issuer, tokenEndpoint: f.approval.method.tokenEndpoint, clientId: 'different-client' }
+    f.poll.mockImplementationOnce(async () => {
+        await writer.writeOAuth('agent', 'docs', f.target.revision, newer, f.signal)
+        return { state: 'authorized', token: { accessToken: 'late-device-approval', tokenType: 'Bearer', expiresIn: 600 } }
+    })
+    const response = await f.binding.dispatch({ ...f.request, action: 'complete', toolCallId: 'complete-after-replacement' }, f.signal)
+    expect(await f.store.readOAuth('agent', 'docs')).toEqual(newer)
+    expect(response).toMatchObject({ result: { view: { state: 'unknown' } } })
+    expect(f.service.runtime.probe).not.toHaveBeenCalled()
+    f.binding.dispose()
+})
+
+it('refuses a stale approved generation before reserving or starting device authorization', async () => {
+    const f = await fixture()
+    const writer = remoteMcpStore(f.open(), f.options.key)
+    await writer.writeOAuth('agent', 'docs', f.target.revision, {
+        accessToken: 'newer-approval', resource: f.target.url, expiresAt: Date.now() + 60_000,
+        issuer: f.approval.method.issuer, tokenEndpoint: f.approval.method.tokenEndpoint, clientId: 'different-client',
+    }, f.signal)
+    await expect(f.binding.dispatch(f.request, f.signal)).resolves.toMatchObject({ result: { view: { state: 'approval_required' } } })
+    expect(f.start).not.toHaveBeenCalled()
+    expect(await f.custodyStore.read(f.approval)).toBeNull()
+    f.binding.dispose()
+})
+
+it('rolls back a device credential when SQLite refuses its terminal custody receipt', async () => {
+    const f = await fixture()
+    await f.binding.dispatch(f.request, f.signal)
+    f.advance()
+    await f.db.executeMultiple(`CREATE TRIGGER fixture_reject_device_receipt BEFORE UPDATE ON desktop_mcp_device_custody
+        WHEN NEW.version=5 AND EXISTS(SELECT 1 FROM desktop_remote_mcp_oauth)
+        BEGIN SELECT RAISE(ABORT,'fixture terminal receipt unavailable'); END;`)
+    const response = await f.binding.dispatch({ ...f.request, action: 'complete', toolCallId: 'refused-receipt' }, f.signal)
+    expect(await remoteMcpStore(f.open(), f.options.key).readOAuth('agent', 'docs')).toBeNull()
+    expect(response).toMatchObject({ result: { view: { state: 'unknown' } } })
+    expect((await f.custodyStore.read(f.approval))?.value).toMatchObject({ phase: 'unknown' })
+    expect(f.service.runtime.probe).not.toHaveBeenCalled()
     f.binding.dispose()
 })
 

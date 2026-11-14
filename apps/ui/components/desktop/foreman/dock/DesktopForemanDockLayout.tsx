@@ -19,6 +19,9 @@ export type DesktopForemanDockLayoutProps = {
     onPlacement: (placement: ForemanPlacement) => void; onDock: (dock: DockExtras) => void; onClose: () => void
     onLayout?: (layout: { scope: string; open: boolean; placement: ForemanPlacement; dragging: boolean; mobile: boolean }) => void
     returnFocus: () => HTMLElement | null
+    // The panel takes the whole of the space it is given, as the Simple view's middle column does:
+    // no docking, floating, dragging or resizing while it does.
+    fill?: boolean
     children: (header: DockHeaderBindings) => ReactNode
 }
 
@@ -47,7 +50,9 @@ export function DesktopForemanDockLayout(props: DesktopForemanDockLayoutProps) {
         : placement.mode === 'float'
             ? { position: 'fixed', ...CORNERS[placement.corner], width: placement.width, height: placement.height, maxWidth: 'calc(100vw - 32px - 2*var(--board-inset,0px))', maxHeight: 'calc(100dvh - 32px - 2*var(--board-inset,0px))' }
             : { position: 'relative', height: '100%', width: placement.dockWidth, gridColumn: placement.side === 'left' ? 1 : 3, gridRow: 1 }
-    const style: CSSProperties = position ? { position: 'fixed', top: position.y, left: position.x, width: p.width, height: p.height } : rectStyle(p)
+    const fill = !!props.fill && !mobile
+    const style: CSSProperties = fill ? { position: 'relative', height: '100%', width: '100%', gridColumn: '1 / -1', gridRow: 1 }
+        : position ? { position: 'fixed', top: position.y, left: position.x, width: p.width, height: p.height } : rectStyle(p)
     const growLeft = p.mode === 'float' && p.corner.endsWith('right'), growUp = p.mode === 'float' && p.corner.startsWith('bottom')
     const resizeKey: KeyboardEventHandler<HTMLElement> = e => {
         if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home'].includes(e.key)) return
@@ -67,10 +72,10 @@ export function DesktopForemanDockLayout(props: DesktopForemanDockLayoutProps) {
     return <>
         <AnimatePresence>{geometry.preview && <motion.div aria-hidden initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: reduce ? 0 : 0.18 }} style={{ ...rectStyle(boundedPlacement(geometry.preview, v)), position: 'fixed', ...(geometry.preview.mode === 'dock' ? { top: 8, bottom: 8, height: 'auto', [geometry.preview.side]: 8 } : {}), borderRadius: 14 }} className="pointer-events-none z-40 border-2 border-primary/40 bg-primary/5" />}</AnimatePresence>
         <motion.div layout={!position && !reduce} transition={{ duration: reduce ? 0 : 0.22, ease: 'easeOut' }} ref={panel} data-desktop-foreman-panel hidden={!!props.hidden} aria-hidden={!props.open} inert={!props.open || !!props.hidden} animate={{ opacity: props.open ? 1 : 0, y: mobile && !props.open ? '100%' : 0, scale: !props.open && p.mode === 'float' ? 0.95 : 1 }} style={{ ...style, pointerEvents: props.open && !props.hidden ? 'auto' : 'none' }}
-            className={cn('z-50 min-h-0 min-w-0 max-w-full rounded-xl border border-border bg-background shadow-2xl motion-reduce:transition-none', mobile && 'rounded-t-2xl', p.mode === 'dock' && !mobile && 'rounded-3xl shadow')}>
+            className={cn('z-50 min-h-0 min-w-0 max-w-full rounded-xl border border-border bg-background shadow-2xl motion-reduce:transition-none', mobile && 'rounded-t-2xl', p.mode === 'dock' && !mobile && 'rounded-3xl shadow', fill && 'rounded-none border-0 shadow-none')}>
             {mobile && <button type="button" data-sheet-grabber aria-label={t('foreman.resize')} className="absolute inset-x-0 top-0 z-30 flex h-6 w-full touch-none items-center justify-center" onPointerDown={e => geometry.begin('sheet', e)} onClick={() => { if (!geometry.consumeClick()) props.onDock({ ...props.dock, sheetDetent: props.dock.sheetDetent === 'medium' ? 'large' : 'medium' }) }}><span className="h-1 w-10 rounded-full bg-muted-foreground/30" /></button>}
-            <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[inherit]">{props.children({ onPointerDown: e => geometry.begin('drag', e) })}</div>
-            {!mobile && <div role="separator" tabIndex={0} aria-label={t('foreman.resize')} aria-orientation={p.mode === 'dock' ? 'vertical' : undefined}
+            <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[inherit]">{props.children({ onPointerDown: e => { if (!fill) geometry.begin('drag', e) } })}</div>
+            {!mobile && !fill && <div role="separator" tabIndex={0} aria-label={t('foreman.resize')} aria-orientation={p.mode === 'dock' ? 'vertical' : undefined}
                 className={cn('absolute z-30 touch-none border-transparent hover:border-ring/70 focus-visible:border-ring focus-visible:outline-none', p.mode === 'dock' ? `inset-y-0 w-2 cursor-col-resize ${p.side === 'right' ? 'left-0' : 'right-0'}` : `size-4 border-2 ${growLeft ? 'left-0' : 'right-0'} ${growUp ? 'top-0' : 'bottom-0'} ${growLeft === growUp ? 'cursor-nwse-resize' : 'cursor-nesw-resize'}`)}
                 onPointerDown={e => geometry.begin(p.mode === 'dock' ? 'dock-size' : 'float-size', e)} onKeyDown={resizeKey} onDoubleClick={() => props.onPlacement({ ...props.placement, width: 480, height: 720, dockWidth: 480 })} />}
         </motion.div>

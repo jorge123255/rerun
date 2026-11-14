@@ -6,16 +6,19 @@ import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/
 import { createDesktopAgent, createDesktopSession } from '@/lib/desktop/server/store'
 import { adoptDesktopCoworkerCallEpoch, getDesktopCoworkerCall, initializeDesktopCoworkerCalls, insertDesktopCoworkerCall, patchDesktopCoworkerCall, type CoworkerCallRecord } from '@/lib/desktop/server/coworker-calls/db'
 import { GET, POST } from './route'
+import { GET as getForeman, POST as postForeman } from '@/app/api/desktop/foreman/[chatId]/coworker-calls/route'
+import { ensureForemanChat } from '@/lib/desktop/server/foreman/chat-store'
 
 const originalEnv = { ...process.env }
 const originalFetch = globalThis.fetch
 let root: string
 let sessionId = ''
+let parentAgentId = ''
 let otherSessionId = ''
 const origin = 'http://127.0.0.1:3191'
 const calls: string[] = []
 
-const request = (session: string, payload?: unknown) => new Request(`${origin}/api/desktop/sessions/${session}/coworker-calls`, {
+const request = (session: string, payload?: unknown, resource = 'sessions') => new Request(`${origin}/api/desktop/${resource}/${session}/coworker-calls`, {
     method: payload === undefined ? 'GET' : 'POST',
     headers: { host: '127.0.0.1:3191', origin, cookie: `rerun-desktop-session=${'s'.repeat(48)}`, 'content-type': 'application/json' },
     ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
@@ -25,7 +28,7 @@ const stop = (callId: string, revision: string, requestId = crypto.randomUUID(),
 
 function record(overrides: Partial<CoworkerCallRecord> = {}): CoworkerCallRecord {
     return {
-        callId: crypto.randomUUID(), revision: 1, sourceKey: crypto.randomUUID(), requestFingerprint: '0'.repeat(64), parentAgentId: crypto.randomUUID(), parentSessionId: sessionId,
+        callId: crypto.randomUUID(), revision: 1, sourceKey: crypto.randomUUID(), requestFingerprint: '0'.repeat(64), parentAgentId, parentSessionId: sessionId,
         parentRunId: crypto.randomUUID(), toolCallId: 'tool-1', targetAgentId: crypto.randomUUID(), targetSessionId: null, targetName: 'Bob', wait: true,
         status: 'running', phase: 'launched', launchEpoch: 'epoch-1', launchClaimed: true, engineParentAgentId: 'engine-secret-parent',
         engineParentSessionId: 'engine-secret-session', engineParentRunId: 'engine-secret-run', engineTargetAgentId: 'engine-target',
@@ -43,6 +46,7 @@ beforeEach(async () => {
         app: { origin, sessionToken: 's'.repeat(48) }, engine: { origin: 'http://127.0.0.1:1', apiKey: 'engine-key' } }), { mode: 0o600 })
     const db = await openDesktopDatabase(root)
     const agent = await createDesktopAgent(db, { name: 'Ann', engineAgentId: 'engine-ann' })
+    parentAgentId = agent.id
     sessionId = (await createDesktopSession(db, { agentId: agent.id, engineSessionId: 'engine-ann-session', title: 'Chat' })).id
     otherSessionId = (await createDesktopSession(db, { agentId: agent.id, engineSessionId: 'engine-other-session', title: 'Other' })).id
     globalThis.fetch = (async (url: string | URL | Request) => {
@@ -58,6 +62,43 @@ afterEach(async () => {
     await closeDesktopDatabase(root)
     process.env = { ...originalEnv }
     await rm(root, { recursive: true, force: true })
+})
+
+test('Chief of Staff can read and stop calls only for its owned public chat', async () => {
+    const db = await openDesktopDatabase(root)
+    await initializeDesktopCoworkerCalls(db)
+    await adoptDesktopCoworkerCallEpoch(db, 'epoch-1', '2026-11-05T00:00:00.000Z')
+    const owner = await ensureForemanChat(db, '1')
+    const foreign = await ensureForemanChat(db, '2')
+    const chatId = owner.chat.chatId
+    const exact = record({ parentAgentId: 'foreman', parentSessionId: chatId })
+    const mismatched = record({ parentSessionId: chatId, engineChildRunId: 'foreign-run' })
+    await insertDesktopCoworkerCall(db, exact)
+    await insertDesktopCoworkerCall(db, mismatched)
+    const context = (id: string) => ({ params: Promise.resolve({ chatId: id }) })
+    const read = (id: string) => getForeman(request(id, undefined, 'foreman'), context(id))
+    const stopCall = (id: string, callId: string) => postForeman(request(id, {
+        operation: 'stop', requestId: crypto.randomUUID(), callId, expectedRevision: '1',
+    }, 'foreman'), context(id))
+
+    const response = await read(chatId)
+    expect(response.status).toBe(200)
+    const body = await response.text()
+    expect(body).not.toContain('engine-run')
+    expect(JSON.parse(body).calls.map((call: { callId: string }) => call.callId)).toEqual([exact.callId])
+    expect((await read(foreign.chat.chatId)).status).toBe(404)
+    expect((await read(owner.sessionId)).status).toBe(404)
+    const anonymous = request(chatId, undefined, 'foreman')
+    anonymous.headers.delete('cookie')
+    expect((await getForeman(anonymous, context(chatId))).status).toBe(401)
+    expect((await stopCall(chatId, mismatched.callId)).status).toBe(404)
+    expect((await stopCall(foreign.chat.chatId, exact.callId)).status).toBe(404)
+    expect(calls).toEqual([])
+
+    const stopped = await stopCall(chatId, exact.callId)
+    expect(stopped.status).toBe(200)
+    expect((await stopped.json()).call).toMatchObject({ callId: exact.callId, status: 'cancelled' })
+    expect(calls).toEqual(['http://127.0.0.1:1/agents/engine-target/runs/engine-run-1/cancel'])
 })
 
 test('lists public snapshots without engine ids and rejects a body that is not a stop', async () => {

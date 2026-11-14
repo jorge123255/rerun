@@ -1,5 +1,6 @@
 'use client'
 
+import { platformHost } from '@rerun/contracts'
 import { StepDots } from '@rerun/ui/chat'
 import { AnimatePresence, motion } from 'motion/react'
 
@@ -42,7 +43,8 @@ export function ForemanIntakeCard({ intake, autoFocus = true, className }: { int
     const busy = submitting
     // Un champ vide n'a rien à valider : le bouton du pied propose de passer sur le site, et la
     // question du métier prend sa place.
-    const skippable = step === 'company' && !draft.companyUrl.trim()
+    const platform = platformHost(draft.companyUrl)
+    const skippable = step === 'company' && (!draft.companyUrl.trim() || !!platform)
 
     return (
         <div className={cn('relative mb-2 flex flex-col gap-3 overflow-hidden rounded-lg border border-border bg-muted/30 p-3', className)}>
@@ -52,7 +54,7 @@ export function ForemanIntakeCard({ intake, autoFocus = true, className }: { int
             <AnimatedHeight>
                 <AnimatePresence mode="popLayout" initial={false}>
                     <motion.div key={step} {...STEP_MOTION}>
-                        {step === 'company' && <IntakeCompanyStep draft={draft} siteRead={siteRead} disabled={busy} autoFocus={autoFocus} onChange={set} onEnter={next} />}
+                        {step === 'company' && <IntakeCompanyStep draft={draft} siteRead={siteRead} platform={platform} disabled={busy} autoFocus={autoFocus} onChange={set} onEnter={next} />}
                         {step === 'industry' && <IntakeIndustryStep draft={draft} disabled={busy} onChange={set} onChoose={chooseIndustry} onEnter={next} />}
                         {step === 'role' && <IntakeChoiceStep label="Your role" options={rolesForIndustry(industry)} value={draft.position} placeholder="Head of Growth" disabled={busy} onChange={position => set({ position })} onChoose={chooseRole} onEnter={next} />}
                         {step === 'name' && <IntakeTextStep label="First name" value={draft.firstName} placeholder="John" disabled={busy} onChange={firstName => set({ firstName })} onEnter={next} />}

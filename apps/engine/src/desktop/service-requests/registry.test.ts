@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { agentConfigSchema, desktopRerunGrantsOf, desktopRerunToolCatalog, type AgentConfig } from '@rerun/contracts'
 import type { RunContext } from '../../runtime/context.js'
 import type { LoadedAgent } from '../../agents/types.js'
-import { HITL_ACK } from '../../tools/builtin/hitl.js'
+import { HITL_ACK_CALL_FIRST } from '../../tools/builtin/hitl.js'
 
 const current = vi.hoisted(() => ({ config: null as AgentConfig | null }))
 vi.mock('../../agents/loader.js', async original => ({
@@ -41,7 +41,7 @@ it('registers only the separately granted suggestion tool and rechecks revocatio
         expect(Object.keys(built.tools)).toEqual(['suggest_service'])
         expect(desktopRerunGrantsOf(owner.config.tools).services).toBe(false)
         const options = { messages: [], toolCallId: 'suggestion-call' }
-        expect(await built.tools.suggest_service!.execute!({ services: [{ slug: 'notion', reason: null }] }, options)).toEqual(HITL_ACK)
+        expect(await built.tools.suggest_service!.execute!({ services: [{ slug: 'notion', reason: null }] }, options)).toEqual(HITL_ACK_CALL_FIRST)
         current.config = agent(false, true).config
         await expect(built.tools.suggest_service!.execute!({ services: [{ slug: 'notion' }] }, options)).rejects.toThrow('turned off')
     } finally { await built.close() }

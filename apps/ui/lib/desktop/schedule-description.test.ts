@@ -17,9 +17,14 @@ describe('validateDesktopSchedulePreview', () => {
     })
 
     it('validates one-shot output with an explicit offset and uses its label fallback', () => {
-        expect(validateDesktopSchedulePreview({ mode: 'runAt', runAt: '2026-11-10T08:00:00-06:00' }, 'America/Chicago')).toEqual({
+        expect(validateDesktopSchedulePreview({ mode: 'runAt', runAt: '2026-11-10T08:00:00-06:00' }, 'America/Chicago', Date.parse('2026-11-09T18:00:00Z'))).toEqual({
             selection: { mode: 'runAt', cron: null, runAt: '2026-11-10T08:00:00-06:00', timezone: 'America/Chicago' }, label: '2026-11-10T08:00:00-06:00',
         })
+    })
+
+    it('refuses a one-shot preview when the offset resolves to a time that has passed', () => {
+        expect(validateDesktopSchedulePreview({ mode: 'runAt', runAt: '2026-11-10T08:00:00-06:00' },
+            'America/Chicago', Date.parse('2026-11-10T14:00:00Z'))).toBeNull()
     })
 
     it('shows an explicit valid returned timezone in the preview', () => {

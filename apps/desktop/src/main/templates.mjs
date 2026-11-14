@@ -40,7 +40,8 @@ export function createDesktopTemplateFiles({ dialog, context, fetch: request = f
             const initial = context()
             const check = () => {
                 const current = context()
-                if (!initial?.runtime || current?.runtime !== initial.runtime || current.window !== initial.window) throw new Error('The workspace changed. Reopen the template library.')
+                if (!initial?.runtime || current?.runtime !== initial.runtime || current.window !== initial.window
+                    || current.rendererEpoch !== initial.rendererEpoch) throw new Error('The workspace changed. Reopen the template library.')
             }
             check()
             const engine = initial.runtime.engine

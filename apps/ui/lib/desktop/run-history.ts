@@ -25,15 +25,14 @@ export function desktopRunView(run: Run): DesktopRunView {
     })
 }
 
-export function recordedRunUsage(run: DesktopRunView): string {
+export function recordedRunUsage(run: DesktopRunView) {
     const total = run.totalTokens ?? (run.inputTokens !== null && run.outputTokens !== null ? run.inputTokens + run.outputTokens : null)
-    const parts = [
-        total !== null ? `${total.toLocaleString()} tokens` : null,
-        run.inputTokens !== null ? `${run.inputTokens.toLocaleString()} input` : null,
-        run.outputTokens !== null ? `${run.outputTokens.toLocaleString()} output` : null,
-        run.cachedInputTokens !== null ? `${run.cachedInputTokens.toLocaleString()} cached input` : null,
-        run.reasoningTokens !== null ? `${run.reasoningTokens.toLocaleString()} reasoning` : null,
-        run.costMicros !== null ? `$${(run.costMicros / 1_000_000).toLocaleString('en-US', { maximumFractionDigits: 6 })} recorded cost` : null,
-    ].filter(Boolean)
-    return parts.length ? parts.join(' · ') : 'Usage not recorded'
+    return {
+        total,
+        input: run.inputTokens,
+        output: run.outputTokens,
+        cachedInput: run.cachedInputTokens,
+        reasoning: run.reasoningTokens,
+        cost: run.costMicros === null ? null : run.costMicros / 1_000_000,
+    }
 }

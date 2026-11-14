@@ -1,5 +1,6 @@
 'use client'
 
+import { useBrainTranslations } from '@/components/brain/brain-translations'
 import { BrainSidebar } from '@/components/brain/BrainSidebar'
 import { selectionDepth, selectionKey, type BrainSelection } from '@/components/brain/selection'
 import { BrainChromeContext, BrainTopBar } from '@/components/brain/BrainTopBar'
@@ -27,6 +28,7 @@ import { useIsMobile } from '@rerun/ui/primitives/use-is-mobile'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { brainMutationIntent, reserveBrainMutation, settleBrainMutation } from './mutation-intents'
+import { useDesktopLocale } from '../../DesktopLocale'
 import { DesktopBrainHistory } from './DesktopBrainHistory'
 import { DesktopBrainNewPage } from './DesktopBrainNewPage'
 import { DesktopBrainPage } from './DesktopBrainPage'
@@ -34,11 +36,6 @@ import { acceptedSharedFileDrop, authorizedSharedFilePath, linkableSharedFiles, 
 import type { DesktopBrainActions, DesktopBrainOverview, DesktopBrainRoute } from './types'
 
 type PageState = { slug: string; detail: BrainPageDetail | null; missing: boolean; error?: string; version: number }
-
-const SHARED_TABLES_EMPTY = {
-    title: 'No shared tables yet',
-    description: 'Every coworker of the workspace reads and writes this database. When they need a common record (a catalog, a queue, a list several coworkers work through), they create tables here that you can browse anytime.',
-}
 
 function PageSkeleton() {
     return (
@@ -106,6 +103,8 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
      */
     workspaceId?: number | null
 }) {
+    const t = useBrainTranslations()
+    const { t: desktop } = useDesktopLocale()
     const isMobile = useIsMobile()
     const listedFiles = useDesktopSharedFilesTree()
     const files = filesProp ?? listedFiles
@@ -427,18 +426,18 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
         if (offline) {
             return (
                 <>
-                    <BrainTopBar crumbs={[{ label: 'Brain', icon: BrainIcon }]} />
+                    <BrainTopBar crumbs={[{ label: t('crumbs.brain'), icon: BrainIcon }]} />
                     {offline === 'no_machine' ? (
                         <EmptyState
                             icon={BrainIcon}
-                            title="Your Brain comes with your first coworker"
-                            description="It lives on the machine of this workspace, which exists once a coworker does. From then on, what every coworker knows about your company shows up here."
+                            title={t('workspace.noMachineTitle')}
+                            description={t('workspace.noMachineDescription')}
                         />
                     ) : (
                         <EmptyState
                             icon={BrainIcon}
-                            title="Could not reach your workspace"
-                            description="The local engine did not answer. It may still be starting."
+                            title={t('workspace.unreachableTitle')}
+                            description={desktop('brainDesktop.engineUnavailable')}
                             action={<Button size="sm" variant="outline" onClick={() => {
                                 void files.refresh('')
                                 void loadWorkspace().then(next => {
@@ -455,30 +454,30 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
             if (available && pages.length === 0) {
                 return (
                     <>
-                        <BrainTopBar crumbs={[{ label: 'Company' }]} />
+                        <BrainTopBar crumbs={[{ label: t('crumbs.company') }]} />
                         <EmptyState
                             icon={BrainIcon}
-                            title="Your company brain is empty"
-                            description="It is what every coworker reads about your company before it works: what you sell, to whom, your team, your voice and your tools."
-                            action={<Button size="sm" onClick={() => select({ kind: 'new-page' })}>Write the first page</Button>}
+                            title={t('workspace.emptyTitle')}
+                            description={desktop('brainDesktop.emptyDescription')}
+                            action={<Button size="sm" onClick={() => select({ kind: 'new-page' })}>{t('workspace.writeYourself')}</Button>}
                         />
                     </>
                 )
             }
-            return <BrainTopBar crumbs={[{ label: 'Brain', icon: BrainIcon }]} />
+            return <BrainTopBar crumbs={[{ label: t('crumbs.brain'), icon: BrainIcon }]} />
         }
         switch (selection.kind) {
             case 'page': {
                 if (pageState?.slug !== selection.slug || (!pageState.detail && !pageState.missing && !pageState.error)) return <PageSkeleton />
-                if (pageState.error) return <><BrainTopBar crumbs={[{ label: 'Pages' }, { label: selection.slug }]} /><EmptyState icon={BrainIcon}
-                    title="Could not read this page" description={pageState.error}
-                    action={<Button size="sm" onClick={() => void loadPage(selection.slug)}>Retry</Button>} /></>
+                if (pageState.error) return <><BrainTopBar crumbs={[{ label: t('crumbs.pages') }, { label: selection.slug }]} /><EmptyState icon={BrainIcon}
+                    title={desktop('brainDesktop.pageUnavailable')} description={pageState.error}
+                    action={<Button size="sm" onClick={() => void loadPage(selection.slug)}>{t('workspace.retry')}</Button>} /></>
                 if (!pageState.detail) {
                     return (
                         <>
-                            <BrainTopBar crumbs={[{ label: 'Pages' }, { label: selection.slug }]} />
-                            <EmptyState icon={BrainIcon} title={`No page "${selection.slug}" yet`} description="A link points here, but nothing has been written on this page."
-                                action={<Button size="sm" variant="outline" onClick={() => { try { if (brainMutationIntent('delete:' + selection.slug)) void deletePage(selection.slug); else void loadPage(selection.slug) } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not read the pending request.') } }}>Retry</Button>} />
+                            <BrainTopBar crumbs={[{ label: t('crumbs.pages') }, { label: selection.slug }]} />
+                            <EmptyState icon={BrainIcon} title={t('workspace.missingPageTitle', { slug: selection.slug })} description={t('workspace.missingPageDescription')}
+                                action={<Button size="sm" variant="outline" onClick={() => { try { if (brainMutationIntent('delete:' + selection.slug)) void deletePage(selection.slug); else void loadPage(selection.slug) } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not read the pending request.') } }}>{t('workspace.retry')}</Button>} />
                         </>
                     )
                 }
@@ -519,34 +518,34 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
             case 'new-page':
                 return <DesktopBrainNewPage pages={pages} titles={titles} files={linkableFiles} actions={actions} onOpenPage={openPage} onOpenFile={openListedFile} onAcceptFileDrop={acceptFileDrop} onCreated={createdPage} />
             case 'proposals':
-                return renderProposals ? <>{renderProposals()}</> : <BrainTopBar crumbs={[{ label: 'Brain', icon: BrainIcon }]} />
+                return renderProposals ? <>{renderProposals()}</> : <BrainTopBar crumbs={[{ label: t('crumbs.brain'), icon: BrainIcon }]} />
             case 'folder':
-                return <DesktopBrainFolder key={dropWorkspace} path={selection.path} files={files} onSelect={select} onUpload={uploadFiles} importResults={importResults} importing={importing} onRetryImport={result => void retryImport(result)} />
+                return <DesktopBrainFolder key={dropWorkspace} path={selection.path} files={files} onSelect={select} onUpload={uploadFiles} importResults={importResults} importing={importing} onRetryImport={result => void retryImport(result)} workspaceId={workspaceId} />
             case 'file':
-                return <DesktopBrainFile path={selection.path} files={files} onSelect={select} />
+                return <DesktopBrainFile path={selection.path} files={files} onSelect={select} workspaceId={workspaceId} />
             case 'database':
                 if (!tables || tables.length > 0) return <PageSkeleton />
                 return (
                     <>
-                        <BrainTopBar crumbs={[{ label: 'Database', icon: DatabaseIcon }]} />
+                        <BrainTopBar crumbs={[{ label: t('crumbs.database'), icon: DatabaseIcon }]} />
                         {tablesError ? (
-                            <EmptyState icon={DatabaseIcon} title="Database unavailable" description={tablesError} />
+                            <EmptyState icon={DatabaseIcon} title={t('workspace.databaseUnavailable')} description={tablesError} />
                         ) : (
-                            <EmptyState icon={DatabaseIcon} title={SHARED_TABLES_EMPTY.title} description={SHARED_TABLES_EMPTY.description} />
+                            <EmptyState icon={DatabaseIcon} title={desktop('sharedData.emptyTitle')} description={desktop('sharedData.emptyDescription')} />
                         )}
                     </>
                 )
             case 'table': {
                 const name = selection.name
                 const crumbs = [
-                    { label: 'Database', icon: DatabaseIcon },
+                    { label: t('crumbs.database'), icon: DatabaseIcon },
                     { label: humanizeTableName(name), icon: TableIcon },
                 ]
                 if (tables && !tables.some(table => table.name === name)) {
                     return (
                         <>
                             <BrainTopBar crumbs={crumbs} />
-                            <EmptyState icon={TableIcon} title={`No table "${name}"`} description="It may have been deleted, or the coworker that mentioned it has not created it yet." />
+                            <EmptyState icon={TableIcon} title={t('workspace.missingTableTitle', { name })} description={t('workspace.missingTableDescription')} />
                         </>
                     )
                 }
@@ -608,7 +607,7 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
                 <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
                     {isMobile && !offline && (
                         <div className="flex h-9 shrink-0 items-center px-2">
-                            <Button size="icon-sm" variant="ghost" onClick={() => setSidebarOpen(true)} aria-label="Show pages" title="Show pages">
+                            <Button size="icon-sm" variant="ghost" onClick={() => setSidebarOpen(true)} aria-label={t('topBar.showSidebar')} title={t('topBar.showSidebar')}>
                                 <PanelLeftIcon />
                             </Button>
                         </div>

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createNotificationClickHandoff } from '../src/main/notification-click-handoff.mjs'
+import { createNotificationClickHandoff, createNotificationClickRouter, routeDesktopNotificationClick } from '../src/main/notification-click-handoff.mjs'
 
 const scope = { workspaceId: 4, launchNonce: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }
 const otherWorkspace = { workspaceId: 9, launchNonce: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }
@@ -82,4 +82,95 @@ test('a malformed click, a committed quit, and diagnostics omit notification cop
     assert.equal(diagnostics.some(entry => entry.reason === 'quitting' && entry.sessionId === 'chat-quit'), true)
     assert.equal(JSON.stringify(diagnostics).includes(secret), false)
     assert.equal(JSON.stringify(diagnostics).includes('Coworker'), false)
+})
+
+test('a click switches to its submitted workspace before handing the target to the current runtime', async () => {
+    let current = otherWorkspace
+    let complete
+    const switched = new Promise(resolve => { complete = resolve })
+    const steps = []
+    const handoff = createNotificationClickHandoff()
+    const route = routeDesktopNotificationClick(target('event:return'), scope, {
+        currentScope: () => current,
+        switchWorkspace: workspaceId => { steps.push(workspaceId); return switched },
+        deliver: (value, scope) => handoff.accept(value, scope),
+    })
+    assert.deepEqual(steps, [scope.workspaceId])
+    assert.equal(handoff.snapshot().held.length, 0)
+    current = reloadedRuntime
+    complete({ ok: true })
+    assert.equal(await route, true)
+    assert.deepEqual(handoff.snapshot().held, [{ key: 'event:return', ...reloadedRuntime, sessionId: 'chat-7' }])
+    assert.deepEqual(handoff.flush(current, () => true).map(item => item.sessionId), ['chat-7'])
+
+    assert.equal(await routeDesktopNotificationClick(target('event:reopen'), scope, {
+        currentScope: () => current,
+        switchWorkspace: () => assert.fail('Already in the owning workspace'),
+        deliver: (value, scope) => handoff.accept(value, scope),
+    }), true)
+    assert.deepEqual(handoff.flush(current, () => true).map(item => item.sessionId), ['chat-7'])
+})
+
+test('a refused switch or changed workspace cannot deliver the notice', async () => {
+    for (const result of [{ ok: false }, { ok: true }]) {
+        let switches = 0
+        assert.equal(await routeDesktopNotificationClick(target('event:blocked'), scope, {
+            currentScope: () => otherWorkspace,
+            switchWorkspace: async () => { switches++; return result },
+            deliver: () => assert.fail('Unexpected delivery'),
+        }), false)
+        assert.equal(switches, 1)
+    }
+    assert.equal(await routeDesktopNotificationClick(target('event:quitting'), scope, {
+        currentScope: () => null,
+        switchWorkspace: () => assert.fail('No active runtime'),
+        deliver: () => assert.fail('Unexpected delivery'),
+    }), false)
+})
+
+test('a click waits for a workspace change to settle and opens the chat in its owning workspace', async () => {
+    let switching = true
+    let current = scope
+    const switches = []
+    const delivered = []
+    const router = createNotificationClickRouter({
+        canRoute: () => !switching,
+        currentScope: () => current,
+        switchWorkspace: async workspaceId => {
+            switches.push(workspaceId)
+            current = reloadedRuntime
+            return { ok: true }
+        },
+        deliver: (value, bound) => delivered.push([value.key, value.sessionId, bound]),
+    })
+
+    await router.accept(target('event:earlier'), scope)
+    await router.accept(target('event:latest', 'chat-latest'), scope)
+    assert.deepEqual(switches, [])
+    assert.deepEqual(delivered, [])
+    current = otherWorkspace
+    switching = false
+    await router.flush()
+    await router.flush()
+    assert.deepEqual(switches, [scope.workspaceId])
+    assert.deepEqual(delivered, [['event:latest', 'chat-latest', reloadedRuntime]])
+})
+
+test('a newer click supersedes navigation already waiting on a workspace switch', async () => {
+    let current = otherWorkspace
+    let complete
+    const switched = new Promise(resolve => { complete = resolve })
+    const delivered = []
+    const router = createNotificationClickRouter({
+        canRoute: () => true,
+        currentScope: () => current,
+        switchWorkspace: () => switched,
+        deliver: (value, bound) => delivered.push([value.key, bound]),
+    })
+    const first = router.accept(target('event:older'), scope)
+    await router.accept(target('event:newer'), scope)
+    current = reloadedRuntime
+    complete({ ok: true })
+    await first
+    assert.deepEqual(delivered, [['event:newer', reloadedRuntime]])
 })

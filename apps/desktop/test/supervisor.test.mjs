@@ -227,15 +227,27 @@ for (const { name, code, signal, accepted } of [
     })
 }
 
-test('real supervised processes require authenticated nonce readiness and Quit removes owned children', async () => {
+for (const appStoreBuild of [false, true]) test(`real supervised processes require authenticated readiness and quit cleanly (${appStoreBuild ? 'App Store' : 'direct build'})`, async () => {
     const root = await mkdtemp(join(tmpdir(), 'rerun-supervisor-'))
     const children = []
     const workspaceIdentity = identity()
     const supervisor = new RuntimeSupervisor({
-        root, identity: workspaceIdentity, bundle: { nodePath: process.execPath, uiRoot: root, engineEntry: 'fixture', buildId: 'example-build' },
+        root, identity: workspaceIdentity, appStoreBuild,
+        bundle: { nodePath: process.execPath, uiRoot: root, engineEntry: 'fixture', buildId: 'example-build',
+            codexPath: '/fixture/codex', claudePath: '/fixture/claude', claudeSandboxPath: '/fixture/claude.sb',
+            grokBuildPath: '/fixture/grok', kimiCodePath: '/fixture/kimi',
+            subscriptionSandboxPath: '/fixture/subscription.sb', subscriptionLoginSandboxPath: '/fixture/login.sb',
+            renameHelperPath: '/fixture/rename' },
         launch: (command, args, options) => {
             assert.equal(options.env.RERUN_DESKTOP_SECRET_KEY, workspaceIdentity.encryptionKey)
             const engine = args.includes('desktop-run')
+            assert.equal(options.env.RERUN_DESKTOP_APP_STORE, appStoreBuild ? '1' : undefined)
+            assert.equal(options.env.RERUN_DESKTOP_RENAME_HELPER, '/fixture/rename')
+            for (const [key, file] of [
+                ['CODEX_RUNNER', 'codex'], ['CLAUDE_RUNNER', 'claude'], ['CLAUDE_SANDBOX', 'claude.sb'],
+                ['GROK_BUILD_RUNNER', 'grok'], ['KIMI_CODE_RUNNER', 'kimi'],
+                ['SUBSCRIPTION_SANDBOX', 'subscription.sb'], ['SUBSCRIPTION_LOGIN_SANDBOX', 'login.sb'],
+            ]) assert.equal(options.env['RERUN_DESKTOP_' + key], engine && !appStoreBuild ? '/fixture/' + file : undefined)
             const child = spawn(command, [fixture], { ...options, env: { ...options.env, FIXTURE_KIND: engine ? 'engine' : 'ui', FIXTURE_STOP_EXIT_CODE: engine ? '0' : '143' } })
             children.push(child)
             return child

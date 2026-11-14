@@ -7,7 +7,7 @@ import { DesktopControlCenterParityView } from './control-center-parity/DesktopC
 import { useDesktopControlParity, type DesktopParityCallbacks } from './control-center-parity/useDesktopControlParity'
 import type { ControlRow, ControlSection } from '@/components/control-center/types'
 import { useModKeyLabel } from '@/hooks/useModKeyLabel'
-import { BrainIcon, BellIcon, FolderIcon, BoxIcon, CirclePlusIcon, FocusCenterIcon, HelpCircleIcon, KeyboardIcon, LayoutGridIcon, ListChecksIcon, LockKeyholeIcon, MessageCircle, MessagesSquare, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from '@/lib/icons'
+import { BrainIcon, BellIcon, FolderIcon, BoxIcon, CirclePlusIcon, FocusCenterIcon, HelpCircleIcon, KeyboardIcon, LayoutGridIcon, ListChecksIcon, LockKeyholeIcon, MegaphoneIcon, MessageCircle, MessagesSquare, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from '@/lib/icons'
 import { parseQuery, searchItems } from '@/lib/control-center/search'
 import { buildDesktopControlCommands, buildDesktopControlCoworkerTabs, useDesktopConversationSearch, useDesktopControlCenterKeys, type DesktopControlCommand, type DesktopControlCommandId } from '@/lib/desktop/control-center'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
@@ -16,13 +16,14 @@ import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { useDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import type { DesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers.schema'
 import { useDesktopControlCenterChats } from '@/lib/desktop/use-control-center-chats'
-import type { DesktopOpenChat } from '@/lib/desktop/control-center-chats'
+import { DESKTOP_RECENT_CHAT_LIMIT, type DesktopOpenChat } from '@/lib/desktop/control-center-chats'
 import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
 import type { DesktopAgentView } from './DesktopApp'
 import type { DesktopBoardState } from '@/lib/desktop/spaces'
 import { firstDesktopSpacePosition } from './desktop-space-layout'
 
 type Page = { kind: 'root' } | { kind: 'coworker'; coworkerId: string } | { kind: 'box'; spaceId: string } | { kind: 'move'; coworkerId: string }
+type ScopedNotice = { scope: string; message: 'requestChanged' | 'requestCheckFailed' | 'pendingGone' | 'pendingFailed' | 'chatChanged' }
 
 const ROOT: Page = { kind: 'root' }
 
@@ -44,6 +45,7 @@ const COMMAND_ICONS: Record<DesktopControlCommandId, ComponentType<{ className?:
     shortcuts: KeyboardIcon,
     getting_started: ListChecksIcon,
     help: HelpCircleIcon,
+    whats_new: MegaphoneIcon,
     notifications: BellIcon,
 }
 
@@ -55,6 +57,7 @@ export type DesktopControlCenterProps = DesktopParityCallbacks & {
     open?: boolean
     onOpenChange?: (open: boolean) => void
     disabled?: boolean
+    anchorToOrb?: boolean
     initialRecent?: DesktopRecentCoworkers
     activity?: BoardActivitySnapshot
     onRefreshActivity?: () => Promise<BoardActivitySnapshot | null>
@@ -77,6 +80,7 @@ export type DesktopControlCenterProps = DesktopParityCallbacks & {
     onShortcuts?: () => void
     onGettingStarted?: () => void
     onHelp?: () => void
+    onChangelog?: () => void
     onNotifications?: (agentId?: string) => void
     onWorkspaceSettings?: () => void
     onRecenterBoard?: () => void
@@ -85,9 +89,10 @@ export type DesktopControlCenterProps = DesktopParityCallbacks & {
     darkTheme?: boolean
 }
 
-export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, runtimeWorkspaceId, runtimeLaunchNonce, onOpenDesktop, onAskAssistant, open: controlledOpen, onOpenChange, disabled = false, initialRecent, activity, onRefreshActivity, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onGettingStarted, onHelp, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
+export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, runtimeWorkspaceId, runtimeLaunchNonce, onOpenDesktop, onAskAssistant, open: controlledOpen, onOpenChange, disabled = false, anchorToOrb = false, initialRecent, activity, onRefreshActivity, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onGettingStarted, onHelp, onChangelog, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
     const { language, t } = useDesktopLocale()
     const copy = language.messages.controlCenter
+    const details = copy.details
     const translated = language.locale === 'en' ? undefined : copy
     const [internalOpen, setInternalOpen] = useState(false)
     const requestedOpen = controlledOpen ?? internalOpen
@@ -123,7 +128,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
 
     const mod = useModKeyLabel()
     const page = pages[pages.length - 1]
-    const { scope, text } = parseQuery(query)
+    const { scope, text } = parseQuery(query.normalize('NFC'))
     const pageCoworker = page.kind === 'coworker' || page.kind === 'move' ? coworkers.find(coworker => coworker.id === page.coworkerId) : undefined
     const pageSpace = page.kind === 'box' ? board?.spaces.find(space => space.id === page.spaceId) : undefined
     const membership = (coworkerId: string) => board?.placements.find(placed => placed.agentId === coworkerId)?.spaceId
@@ -134,12 +139,12 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
     const selectionScope = JSON.stringify([openCycle, pageKey(page), query])
     const showCoworkerChats = open && page.kind === 'coworker' && !!pageCoworker && query.trim() === ''
     const chats = useDesktopControlCenterChats(pageCoworker?.id ?? null, showCoworkerChats, selectionScope)
-    const [chatNotice, setChatNotice] = useState<{ scope: string; text: string } | null>(null)
-    const [attentionNotice, setAttentionNotice] = useState<{ scope: string; text: string } | null>(null)
+    const [chatNotice, setChatNotice] = useState<ScopedNotice | null>(null)
+    const [attentionNotice, setAttentionNotice] = useState<ScopedNotice | null>(null)
     const selectingAttention = useRef<{ scope: string } | null>(null)
     const selectingChat = useRef<{ scope: string } | null>(null)
-    const latest = useRef({ open, disabled, selectionScope, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onGettingStarted, onHelp, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
-    latest.current = { open, disabled, selectionScope, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onGettingStarted, onHelp, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
+    const latest = useRef({ open, disabled, selectionScope, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onGettingStarted, onHelp, onChangelog, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
+    latest.current = { open, disabled, selectionScope, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onGettingStarted, onHelp, onChangelog, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
     const available = () => latest.current.open && !latest.current.disabled && !isDesktopQuitting() && latest.current.selectionScope === selectionScope
     const sameBoard = () => !!board && latest.current.board?.revision === board.revision
 
@@ -174,7 +179,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
         switch (activity?.statuses[coworker.id]) {
             case 'waiting_human': return { label: copy.status.waiting_human, tone: 'orange' }
             case 'working': return { label: copy.status.working, tone: 'cyan' }
-            case 'unreachable': return { label: 'Activity unavailable', tone: 'neutral' }
+            case 'unreachable': return { label: details.activityUnavailable, tone: 'neutral' }
         }
     }
 
@@ -221,7 +226,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
                     const fresh = current.onRefreshActivity ? await current.onRefreshActivity() : current.activity
                     if (!available() || selectingAttention.current !== attempt) return
                     if (!fresh || !stillPending(fresh) || !stillPending(latest.current.activity)) {
-                        setAttentionNotice({ scope: selectionScope, text: fresh ? 'This request changed. Choose from the refreshed list.' : 'Could not check this request. Try again.' })
+                        setAttentionNotice({ scope: selectionScope, message: fresh ? 'requestChanged' : 'requestCheckFailed' })
                         return
                     }
                     const owner = latest.current.coworkers.find(current => current.id === coworker.id)!
@@ -229,7 +234,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
                     close()
                     latest.current.onOpenConversation({ id: confirmed.sessionId, agentId: owner.id, agentName: owner.name, title: confirmed.title })
                 } catch {
-                    if (available()) setAttentionNotice({ scope: selectionScope, text: 'Could not check this request. Try again.' })
+                    if (available()) setAttentionNotice({ scope: selectionScope, message: 'requestCheckFailed' })
                 } finally {
                     if (selectingAttention.current === attempt) selectingAttention.current = null
                 }
@@ -242,7 +247,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
             return [{
                 id: section,
                 heading,
-                rows: [{ id: `${section}-retry`, label: 'Could not search saved chats', detail: 'Try again', leading: { kind: 'icon', icon: RefreshCwIcon }, onSelect: () => { if (available()) latest.current.search.retry() } }],
+                rows: [{ id: `${section}-retry`, label: details.searchFailed, detail: details.retry, leading: { kind: 'icon', icon: RefreshCwIcon }, onSelect: () => { if (available()) latest.current.search.retry() } }],
             }]
         }
         const hits = search.hits.filter(hit => (!coworkerId || hit.agentId === coworkerId) && coworkers.some(coworker => coworker.id === hit.agentId))
@@ -298,35 +303,39 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
                     return
                 }
             }
-            setChatNotice({ scope: selectionScope, text: 'This chat changed. Choose it again from the refreshed list.' })
+            setChatNotice({ scope: selectionScope, message: 'chatChanged' })
         } finally {
             if (selectingChat.current === attempt) selectingChat.current = null
         }
     }
 
+    const threadDetail = (firstMessage: string | null | undefined) => firstMessage
+        ? t('controlCenter.details.threadWithOpener', { message: firstMessage }) : details.thread
+
     const coworkerChatSections = (): ControlSection[] => {
         const retry = () => { if (available()) { setChatNotice(null); void latest.current.chats.refresh() } }
-        if (chats.failed) return [{ id: 'coworker-chats-error', heading: 'Chats', rows: [{
-            id: 'coworker-chats-retry', label: 'Could not load chats', detail: 'Try again', leading: { kind: 'icon', icon: RefreshCwIcon }, onSelect: retry,
+        if (chats.failed) return [{ id: 'coworker-chats-error', heading: details.chats, rows: [{
+            id: 'coworker-chats-retry', label: details.openChatsFailed, detail: details.retry, leading: { kind: 'icon', icon: RefreshCwIcon }, onSelect: retry,
         }] }]
-        if (!chats.data) return [{ id: 'open-chats', heading: 'Open chats', rows: [], loading: chats.loading }]
+        if (!chats.data) return [{ id: 'open-chats', heading: details.openChats, rows: [], loading: chats.loading }]
         const openRows: ControlRow[] = chats.data.openChats.map(chat => ({
             id: `open-chat-${chat.tabUid}`,
-            label: chat.kind === 'general' ? 'General' : chat.title,
-            detail: chat.kind === 'general' ? 'Main conversation' : chat.kind === 'thread' ? (chat.firstMessage ? `Thread · ${chat.firstMessage}` : 'Thread') : undefined,
+            label: chat.kind === 'general' ? language.messages.general
+                : translated && chat.sessionId === null ? language.messages.newThread : chat.title,
+            detail: chat.kind === 'general' ? details.mainConversation : chat.kind === 'thread' ? threadDetail(chat.firstMessage) : undefined,
             leading: { kind: 'icon', icon: chat.kind === 'general' ? MessagesSquare : MessageCircle },
-            disabledReason: !onOpenChat && chat.sessionId === null ? 'Open this chat from the coworker panel.' : undefined,
+            disabledReason: !onOpenChat && chat.sessionId === null ? details.openFromCoworker : undefined,
             onSelect: () => { void selectCoworkerChat({ kind: 'open', chat }) },
         }))
         const recentRows: ControlRow[] = chats.data.recentStatus === 'unavailable' ? [{
-            id: 'recent-chats-retry', label: 'Could not load recent conversations', detail: 'Try again', leading: { kind: 'icon', icon: RefreshCwIcon }, onSelect: retry,
+            id: 'recent-chats-retry', label: details.recentChatsFailed, detail: details.retry, leading: { kind: 'icon', icon: RefreshCwIcon }, onSelect: retry,
         }] : chats.data.recentChats.map(chat => ({
             id: `recent-chat-${chat.id}`, label: chat.title,
-            detail: chat.kind === 'thread' ? (chat.firstMessage ? `Thread · ${chat.firstMessage}` : 'Thread') : undefined,
+            detail: chat.kind === 'thread' ? threadDetail(chat.firstMessage) : undefined,
             leading: { kind: 'icon', icon: MessageCircle },
             onSelect: () => { void selectCoworkerChat({ kind: 'recent', chat }) },
         }))
-        return [{ id: 'open-chats', heading: 'Open chats', rows: openRows }, { id: 'recent-chats', heading: 'Recent conversations', rows: recentRows }]
+        return [{ id: 'open-chats', heading: details.openChats, rows: openRows }, { id: 'recent-chats', heading: 'Recent conversations', rows: recentRows }]
     }
 
     const commandRow = (command: DesktopControlCommand): ControlRow => ({
@@ -340,7 +349,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
             const action = {
                 add_coworker: current.onAddCoworker, team_board: current.onBackToBoard, model_settings: current.onModelSettings,
                 new_box: current.onAddBox, shared_files: current.onSharedFiles, company_brain: current.onBrain,
-                shortcuts: current.onShortcuts, getting_started: current.onGettingStarted, help: current.onHelp, notifications: current.onNotifications, workspace_settings: current.onWorkspaceSettings, recenter_board: current.onRecenterBoard, toggle_theme: current.onToggleTheme,
+                shortcuts: current.onShortcuts, getting_started: current.onGettingStarted, help: current.onHelp, whats_new: current.onChangelog, notifications: current.onNotifications, workspace_settings: current.onWorkspaceSettings, recenter_board: current.onRecenterBoard, toggle_theme: current.onToggleTheme,
             }[command.id]
             // A retained row cannot dismiss the center when its action was removed, or invoke
             // the opposite of the theme choice the user saw before the appearance changed.
@@ -353,7 +362,14 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
     const coworkerPanelSection = (coworkerId: string): ControlSection[] => onOpenCoworkerPanel || onOpenCoworkerSetup ? [{
         id: 'coworker-open', heading: 'Open',
         rows: searchItems(buildDesktopControlCoworkerTabs({ panels: !!onOpenCoworkerPanel, setup: !!onOpenCoworkerSetup,
-            actions: !!onRefreshActivity && activity?.statuses[coworkerId] === 'waiting_human' && !!latestBoardAttention(activity.attention, coworkerId) }), text).map(tab => ({
+            actions: !!onRefreshActivity && activity?.statuses[coworkerId] === 'waiting_human' && !!latestBoardAttention(activity.attention, coworkerId) }).map(tab => {
+            if (!translated) return tab
+            const localized = copy.coworkerTabs[tab.id]
+            return {
+                ...tab, label: localized.label, description: tab.id === 'triggers' ? details.triggersDetail : localized.description,
+                keywords: [tab.label, tab.description ?? ''],
+            }
+        }), text).map(tab => ({
             id: `tab-${tab.id}`, label: tab.label, detail: tab.description,
             leading: { kind: 'icon', icon: tab.icon },
             onSelect: () => {
@@ -376,14 +392,14 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
                             const fresh = await current.onRefreshActivity!()
                             if (!available() || selectingAttention.current !== attempt) return
                             if (!fresh || fresh.statuses[coworkerId] !== 'waiting_human' || !latestBoardAttention(fresh.attention, coworkerId)) {
-                                setAttentionNotice({ scope: selectionScope, text: fresh ? 'Nothing is waiting for this coworker now.' : 'Could not check pending requests. Try again.' })
+                                setAttentionNotice({ scope: selectionScope, message: fresh ? 'pendingGone' : 'pendingFailed' })
                                 return
                             }
                             const now = latest.current
                             if (!now.onOpenCoworkerPanel || !now.coworkers.some(owner => owner.id === coworkerId)) return
                             close()
                             now.onOpenCoworkerPanel(coworkerId, 'actions')
-                        } catch { if (available()) setAttentionNotice({ scope: selectionScope, text: 'Could not check pending requests. Try again.' }) }
+                        } catch { if (available()) setAttentionNotice({ scope: selectionScope, message: 'pendingFailed' }) }
                         finally { if (selectingAttention.current === attempt) selectingAttention.current = null }
                     })()
                     return
@@ -400,7 +416,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
         const spaceId = membership(coworkerId)
         if (board && board.spaces.length > 1 && spaceId && onMoveCoworker) {
             const enter = drill({ kind: 'move', coworkerId })
-            rows.push({ id: 'coworker-move', label: 'Move to another Box', detail: boxName(spaceId), keywords: ['box', 'team'],
+            rows.push({ id: 'coworker-move', label: copy.agent.move, detail: boxName(spaceId), keywords: ['box', 'team', 'Move to another Box'],
                 leading: { kind: 'icon', icon: BoxIcon }, onSelect: enter, onDrill: enter })
         }
         if (onNotifications) rows.push({
@@ -422,7 +438,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
         return [{ id: 'move', heading: 'Move to', rows: searchItems(board.spaces.filter(space => space.id !== sourceId)
             .map(space => ({ space, label: space.name })), text).map(({ space, label }): ControlRow => ({
             id: `move-${space.id}`, label, leading: { kind: 'icon', icon: BoxIcon },
-            disabledReason: firstDesktopSpacePosition(board, space.id, coworkerId) ? null : 'This Box has no free spot for a coworker.',
+            disabledReason: firstDesktopSpacePosition(board, space.id, coworkerId) ? null : details.noBoxSpace,
             onSelect: () => {
                 const current = latest.current
                 const live = current.board
@@ -451,7 +467,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
                 : conversationSection('coworker-conversations', 'Conversations', page.coworkerId))]
         }
 
-        const commands = buildDesktopControlCommands({ brain: !!onBrain, sharedFiles: !!onSharedFiles, addBox: !!board && !!onAddBox, shortcuts: !!onShortcuts, gettingStarted: !!onGettingStarted, help: !!onHelp, notifications: !!onNotifications, workspaceSettings: !!onWorkspaceSettings, recenterBoard: !!onRecenterBoard, toggleTheme: !!onToggleTheme, darkTheme }).map(command => {
+        const commands = buildDesktopControlCommands({ brain: !!onBrain, sharedFiles: !!onSharedFiles, addBox: !!board && !!onAddBox, shortcuts: !!onShortcuts, gettingStarted: !!onGettingStarted, help: !!onHelp, changelog: !!onChangelog, notifications: !!onNotifications, workspaceSettings: !!onWorkspaceSettings, recenterBoard: !!onRecenterBoard, toggleTheme: !!onToggleTheme, darkTheme }).map(command => {
             const label = localizedControlLabel(`command-${command.id}`, command.label, darkTheme, translated)
             return label === command.label ? command : { ...command, label, keywords: [...command.keywords, command.label] }
         })
@@ -478,13 +494,13 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
                 || unchecked && !!activity?.attention.checkedAt
             const attentionRows = waiting.map(attentionRow)
             if (unavailable) attentionRows.push({
-                id: 'needs-you-retry', label: 'Could not check all coworkers', detail: onRefreshActivity ? 'Try again' : undefined,
+                id: 'needs-you-retry', label: details.attentionUnavailable, detail: onRefreshActivity ? details.retry : undefined,
                 leading: { kind: 'icon', icon: RefreshCwIcon }, onSelect: () => {
                     if (available()) { setAttentionNotice(null); void latest.current.onRefreshActivity?.().catch(() => {}) }
                 },
             })
             const retryRows: ControlRow[] = recentState.error ? [{
-                id: 'recent-retry', label: recentState.error, detail: 'Try again', leading: { kind: 'icon', icon: RefreshCwIcon },
+                id: 'recent-retry', label: details.recentCoworkersFailed, detail: details.retry, leading: { kind: 'icon', icon: RefreshCwIcon },
                 onSelect: () => { if (available()) recentState.retry() },
             }] : []
             return [
@@ -501,20 +517,20 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
                 .map(({ space, label }): ControlRow => {
                     const count = coworkers.filter(coworker => membership(coworker.id) === space.id).length
                     const enter = drill({ kind: 'box', spaceId: space.id })
-                    return { id: `box-${space.id}`, label, detail: count === 1 ? '1 coworker' : `${count} coworkers`, leading: { kind: 'icon', icon: BoxIcon }, onSelect: enter, onDrill: enter }
+                    return { id: `box-${space.id}`, label, detail: t('controlCenter.details.boxCoworkers', { count }), leading: { kind: 'icon', icon: BoxIcon }, onSelect: enter, onDrill: enter }
                 }) },
             ...commandSections,
             ...conversationSection('conversations', 'Conversations', null),
         ]
     }
 
-    const crumbs = page.kind === 'box' ? [pageSpace?.name ?? 'Box'] : page.kind === 'move' ? [pageCoworker?.name ?? '', 'Move to another Box'] : page.kind === 'coworker' ? [pageCoworker?.name ?? ''] : []
+    const crumbs = page.kind === 'box' ? [pageSpace?.name ?? translated?.unnamedBox ?? 'Box'] : page.kind === 'move' ? [pageCoworker?.name ?? '', copy.agent.move] : page.kind === 'coworker' ? [pageCoworker?.name ?? ''] : []
     const placeholder = page.kind === 'box' ? translated?.placeholder.box ?? 'Search coworkers in this Box…'
         : page.kind === 'move' ? copy.placeholder.move
         : page.kind === 'coworker' ? pageCoworker ? t('controlCenter.placeholder.agent', { name: pageCoworker.name }) : translated?.placeholder.agentUnknown ?? 'Search in this coworker…'
         : copy.search
-    const emptyLabel = page.kind === 'box' && !text ? 'No coworkers in this Box yet.' : showCoworkerChats ? 'No open chats or recent conversations yet.' : page.kind === 'coworker' && text.length < MIN_CONVERSATION_QUERY
-        ? 'Type at least 2 characters to search this coworker’s saved chats.'
+    const emptyLabel = page.kind === 'box' && !text ? details.noCoworkersInBox : showCoworkerChats ? details.noChats : page.kind === 'coworker' && text.length < MIN_CONVERSATION_QUERY
+        ? details.shortQuery
         : copy.empty.noMatch
     const headings: Record<string, string> = {
         Actions: copy.headings.actions, Settings: copy.headings.settings, Coworkers: translated?.headings.agents ?? 'Coworkers',
@@ -525,16 +541,17 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
 
     return (
         <DesktopControlCenterParityView
-            busy={parity.state.busy} notice={parity.state.notice}
+            busy={parity.state.busy} notice={parity.state.notice} openingLabel={details.opening}
             open={open}
             onOpenChange={setOpen}
-            anchorToOrb={false}
+            anchorToOrb={anchorToOrb}
             description={copy.desktopDescription}
             labels={{ title: copy.title, back: copy.back, open: copy.hints.open, more: copy.hints.more, askRerun: copy.askRerun }}
             closeHint={copy.closeHint}
-            resultsHint={attentionNotice?.scope === selectionScope ? attentionNotice.text : showCoworkerChats
-                ? chatNotice?.scope === selectionScope ? chatNotice.text : chats.loading && chats.data ? 'Refreshing chats…' : chats.data?.hasMore ? 'Showing 8 recent conversations. Type to search older chats.' : undefined
-                : search.hasMore ? 'Showing the first 50 matches. Refine your search for more.' : undefined}
+            resultsHint={attentionNotice?.scope === selectionScope ? details[attentionNotice.message] : showCoworkerChats
+                ? chatNotice?.scope === selectionScope ? details[chatNotice.message] : chats.loading && chats.data ? details.refreshingChats
+                    : chats.data?.hasMore ? t('controlCenter.details.recentLimit', { count: DESKTOP_RECENT_CHAT_LIMIT }) : undefined
+                : search.hasMore ? t('controlCenter.details.searchLimit', { count: 50 }) : undefined}
             onCloseAutoFocus={event => {
                 event.preventDefault()
                 if (latest.current.open) return

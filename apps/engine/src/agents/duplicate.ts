@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { relative, resolve, sep } from 'node:path'
 import { agentDuplicateResultSchema, type AgentDuplicateResult, type DuplicateAgentInput, type McpServer } from '@rerun/contracts'
@@ -10,6 +10,7 @@ import { closeSystemDb } from '../db/systemDb.js'
 import { withKeyedLock } from '../lib/lock.js'
 import { copyDesktopFiles, readCopyReceipt, writeCopyReceipt } from '../desktop/duplicate.js'
 import { beginDesktopAgentWork } from '../desktop/agent-lifecycle.js'
+import { recordUnusedScreen } from '../desktop/isolated-screen/ownership.js'
 import { checkpointAgentDb, closeAgentDb } from '../db/agentDb.js'
 import { withAgentLock } from './lock.js'
 import { agentConfigSchema, type AgentConfig } from './types.js'
@@ -97,7 +98,7 @@ async function readStagedEnv(staging: string): Promise<Record<string, string>> {
 }
 
 export async function duplicateAgent(sourceId: string, input: DuplicateAgentInput, desktopRequestId?: string): Promise<AgentDuplicateResult> {
-    if (!desktopRequestId) return makeCopy(newId(), sourceId, input, false)
+    if (!desktopRequestId) return makeCopy(newId(), sourceId, input, 'hosted')
     const id = `copy-${desktopRequestId}`
     const releaseCopy = beginDesktopAgentWork(id)
     let releaseSource: (() => void) | undefined
@@ -116,12 +117,13 @@ export async function duplicateAgent(sourceId: string, input: DuplicateAgentInpu
                 closeSystemDb(id)
                 await rm(agentDir(id), { recursive: true, force: true })
             }
-            return makeCopy(id, sourceId, input, true)
+            return makeCopy(id, sourceId, input, previous ? 'desktop-recovery' : 'desktop-new')
         })
     } finally { releaseSource?.(); releaseCopy() }
 }
 
-async function makeCopy(id: string, sourceId: string, input: DuplicateAgentInput, desktop: boolean): Promise<AgentDuplicateResult> {
+async function makeCopy(id: string, sourceId: string, input: DuplicateAgentInput, mode: 'hosted' | 'desktop-new' | 'desktop-recovery'): Promise<AgentDuplicateResult> {
+    const desktop = mode !== 'hosted'
     await mkdir(stagingRoot(), { recursive: true })
     const scratch = await mkdtemp(resolve(stagingRoot(), 'duplicate-'))
     const staging = resolve(scratch, 'agent')
@@ -149,6 +151,8 @@ async function makeCopy(id: string, sourceId: string, input: DuplicateAgentInput
 
         await mkdir(agentsDir(), { recursive: true })
         if (desktop) await writeCopyReceipt(staging, sourceId)
+        // A recovered partial copy may already have started using its durable ID.
+        if (mode === 'desktop-new') await recordUnusedScreen(id, await realpath(staging))
         await rename(staging, agentDir(id))
         published = true
 

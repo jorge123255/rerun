@@ -69,8 +69,25 @@ test('an old refresh cannot undo an accepted board write even if its server igno
     const signal = fetcher.mock.calls[0]![1].signal as AbortSignal
     await act(async () => { await state.command(rename) })
     expect(signal.aborted).toBe(true)
-    await act(async () => { old.resolve(Response.json({ board: initial })); await read })
+    await act(async () => { old.resolve(Response.json({ board: initial })); expect(await read).toBe(false) })
     expect(state.board).toEqual(saved())
+})
+
+test('cancelling the caller suppresses a late board refresh without exposing an error', async () => {
+    const response = deferred<Response>()
+    const fetcher = vi.fn().mockReturnValue(response.promise)
+    vi.stubGlobal('fetch', fetcher)
+    const owner = new AbortController()
+    let read!: Promise<boolean>
+    await act(async () => { read = state.refresh(owner.signal) })
+    owner.abort()
+    expect((fetcher.mock.calls[0]![1].signal as AbortSignal).aborted).toBe(true)
+    await act(async () => {
+        response.resolve(Response.json({ board: saved() }))
+        expect(await read).toBe(false)
+    })
+    expect(state.board).toEqual(initial)
+    expect(state.error).toBeUndefined()
 })
 
 test('an invalid success response remains retryable using the same request identity', async () => {

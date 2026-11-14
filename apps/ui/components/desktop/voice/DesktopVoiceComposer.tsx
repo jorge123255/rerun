@@ -9,7 +9,7 @@ import { DesktopVoiceComposerControls } from './DesktopVoiceComposerControls'
 import { DesktopVoiceRecorderBar } from './DesktopVoiceRecorderBar'
 import { DesktopVoiceReview } from './DesktopVoiceReview'
 
-export function DesktopVoiceComposer({ agentId, tabUid, sessionId, besideSend = false, disabled = false, active = true, reviewTarget, modelChoice, onActivity, onSent }: DesktopVoiceScope & {
+export function DesktopVoiceComposer({ agentId, tabUid, sessionId, besideSend = false, disabled = false, active = true, reviewTarget, modelChoice, onActivity, onSent, onOpenTranscriptionSettings }: DesktopVoiceScope & {
     besideSend?: boolean
     disabled?: boolean
     active?: boolean
@@ -17,6 +17,7 @@ export function DesktopVoiceComposer({ agentId, tabUid, sessionId, besideSend = 
     modelChoice?: DesktopVoiceRevisionAction['modelChoice']
     onActivity?: (state: { busy: boolean; dirty: boolean }) => void
     onSent?: (result: DesktopVoiceSendReceipt & { text: string }) => void
+    onOpenTranscriptionSettings?: () => void
 }) {
     const voice = useDesktopVoiceMessage({ agentId, tabUid, sessionId, enabled: !disabled, active, modelChoice, onSent })
     const busy = ['starting', 'recording', 'uploading', 'transcribing', 'sending'].includes(voice.status)
@@ -26,7 +27,8 @@ export function DesktopVoiceComposer({ agentId, tabUid, sessionId, besideSend = 
     const scope = { agentId, tabUid, sessionId }
     const review = voice.status === 'starting' || voice.status === 'recording'
             ? <DesktopVoiceRecorderBar status={voice.status} stream={voice.stream} getLiveState={voice.getLiveState} />
-            : voice.status === 'idle' || voice.status === 'sent' ? null : <DesktopVoiceReview scope={scope} take={voice.take} draft={voice.draft} error={voice.error} />
+            : voice.status === 'idle' || voice.status === 'sent' ? null : <DesktopVoiceReview scope={scope} take={voice.take} draft={voice.draft}
+                error={voice.error} active={active} onOpenTranscriptionSettings={onOpenTranscriptionSettings} />
     return <TooltipProvider><div className="relative flex min-w-0 shrink-0 items-center gap-2">
         {reviewTarget ? createPortal(review, reviewTarget) : review}
         <div className="flex shrink-0 items-center gap-1">

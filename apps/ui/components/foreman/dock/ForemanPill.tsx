@@ -1,6 +1,6 @@
 'use client'
 
-import type { ReactNode } from 'react'
+import type { ReactNode, Ref } from 'react'
 import { BorderBeam, type BorderBeamProps } from '@rerun/ui'
 import { ChromeBar } from '@rerun/ui/chrome'
 
@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 export type ForemanPillSide = 'left' | 'right'
 
 type ForemanPillProps = {
+    ref?: Ref<HTMLDivElement>
     side: ForemanPillSide
     /** A width class. It is transitioned, so the pill grows where it stands. */
     width: string
@@ -23,9 +24,10 @@ type ForemanPillProps = {
  * The parked Foreman grown into a field: a chrome-high pill whose outer cap is the ball itself.
  * Laid in the ball's own slot, on its axis, it leaves under the ball the room the ball takes.
  */
-export function ForemanPill({ side, width, tone, hidden = false, children }: ForemanPillProps) {
+export function ForemanPill({ ref, side, width, tone, hidden = false, children }: ForemanPillProps) {
     return (
         <ChromeBar
+            ref={ref}
             start={side === 'left' ? 'control' : 'text'}
             end={side === 'left' ? 'text' : 'control'}
             beamTone={tone ? 'white' : 'brand'}

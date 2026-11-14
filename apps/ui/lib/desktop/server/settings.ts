@@ -1,6 +1,6 @@
 import 'server-only'
 import { writeDesktopWorkspaceIcon } from './workspace-icon'
-import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS } from '@rerun/contracts'
+import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, connectionReasoningOptions, hasDesktopApiConnectionPrefix, isDesktopSubscriptionProvider } from '@rerun/contracts'
 import { createConnection, listConnections, patchConnection, setBoxDefault, updateConnectionKeys } from '@/lib/engine/client'
 import type { SettingsChange } from '../settings'
 import { desktopConnections } from '../chat-model'
@@ -11,8 +11,9 @@ import { reconcileDesktopEnabled } from './coworker-enabled'
 import { reconcileDesktopDeletions } from './coworker-delete'
 import { openDesktopDatabase } from './database'
 import { readDesktopBootstrap } from './store'
+import { desktopProfileDatabase } from './local-profile'
 import { desktopAgentView } from './views'
-import type { DesktopRuntime } from './runtime'
+import { desktopAppStoreBuild, type DesktopRuntime } from './runtime'
 
 export function engineOf(runtime: DesktopRuntime) {
     return { baseUrl: runtime.engine.origin, apiKey: runtime.engine.apiKey }
@@ -21,7 +22,7 @@ export function engineOf(runtime: DesktopRuntime) {
 export async function readDesktopProviders(runtime: DesktopRuntime) {
     const list = await listConnections(engineOf(runtime), { cache: 'no-store' })
     const connections = desktopConnections(list.connections)
-    return { connections, default: list.default }
+    return { connections, default: list.default, efforts: list.efforts }
 }
 
 export async function readDesktopWorkspace(runtime: DesktopRuntime) {
@@ -31,11 +32,11 @@ export async function readDesktopWorkspace(runtime: DesktopRuntime) {
             await reconcileDesktopRenames(db, engineOf(runtime), runtime.launchNonce)
             await reconcileDesktopDuplicates(db, engineOf(runtime))
             await reconcileDesktopEnabled(db, engineOf(runtime))
-            return readDesktopBootstrap(db)
+            return readDesktopBootstrap(db, await desktopProfileDatabase(runtime))
         }),
         readDesktopProviders(runtime),
     ])
-    return { ...bootstrap, ...providers, runtimeWorkspaceId: runtime.workspaceId, runtimeLaunchNonce: runtime.launchNonce, agents: bootstrap.agents.map(desktopAgentView) }
+    return { ...bootstrap, ...providers, ...(desktopAppStoreBuild() && { appStoreBuild: true }), runtimeWorkspaceId: runtime.workspaceId, runtimeLaunchNonce: runtime.launchNonce, agents: bootstrap.agents.map(desktopAgentView) }
 }
 
 export async function desktopModel(runtime: DesktopRuntime) {
@@ -45,7 +46,7 @@ export async function desktopModel(runtime: DesktopRuntime) {
     if (!pick || !connection?.connected || ![...connection.models, ...connection.extraModels].includes(pick.model)) {
         throw new DesktopHttpError(400, 'Connect a provider and choose a default model in Settings.')
     }
-    return { connection, model: pick.model, connections: list.connections }
+    return { connection, model: pick.model, connections: list.connections, default: pick }
 }
 
 // Serialize settings writes inside the desktop UI server. Two rapid submissions should update
@@ -71,10 +72,16 @@ async function applyChange(runtime: DesktopRuntime, change: SettingsChange) {
         await writeDesktopWorkspaceIcon(db, { name: change.name })
         return
     }
+    if (change.connectionId && hasDesktopApiConnectionPrefix(change.connectionId)) {
+        throw new DesktopHttpError(409, change.action === 'default'
+            ? 'Named API model selection is unavailable. Choose another provider for the workspace default.'
+            : 'Manage this named API key from Your API keys.')
+    }
     const engine = engineOf(runtime)
     const list = await readDesktopProviders(runtime)
     if (change.action === 'key') {
-        const existing = change.connectionId ? list.connections.find(c => c.id === change.connectionId) : list.connections.find(c => c.provider === change.provider)
+        const existing = change.connectionId ? list.connections.find(c => c.id === change.connectionId)
+            : list.connections.find(c => c.provider === change.provider && !hasDesktopApiConnectionPrefix(c.id))
         if (change.connectionId && existing?.provider !== change.provider) throw new DesktopHttpError(400, 'This connection is unavailable.')
         const keys = { [CONNECTION_TOKEN_KEY[change.provider]]: change.apiKey }
         if (existing) await updateConnectionKeys(engine, existing.id, { set: keys })
@@ -87,14 +94,22 @@ async function applyChange(runtime: DesktopRuntime, change: SettingsChange) {
         if (!connection.connected || ![...connection.models, ...connection.extraModels].includes(change.model))
             throw new DesktopHttpError(400, 'Choose a model offered by a connected provider.')
         if (change.reasoningEffort !== undefined) {
-            if (connection.provider !== 'codex' || list.default?.connectionId !== connection.id || list.default.model !== change.model)
-                throw new DesktopHttpError(400, 'Choose the current Codex model before changing reasoning effort.')
-            if (change.reasoningEffort !== null && !connection.codexReasoning?.[change.model]?.supported.includes(change.reasoningEffort))
-                throw new DesktopHttpError(400, 'Choose a reasoning effort offered by this Codex model.')
+            if (list.default?.connectionId !== connection.id || list.default.model !== change.model)
+                throw new DesktopHttpError(400, 'Choose the current model before changing reasoning effort.')
+            if (connection.provider === 'custom') {
+                if (!connection.customRevision || connection.customRevision !== change.customReasoningRevision)
+                    throw new DesktopHttpError(409, 'The provider connection changed. Refresh its models before choosing an effort.')
+            } else if (connection.provider !== 'codex' && !isDesktopSubscriptionProvider(connection.provider)) {
+                throw new DesktopHttpError(400, 'This connection does not offer reasoning controls.')
+            }
+            if (change.reasoningEffort !== null && !connectionReasoningOptions(connection, change.model)?.supported.includes(change.reasoningEffort))
+                throw new DesktopHttpError(400, 'Choose a reasoning effort offered by this model.')
         }
-        await setBoxDefault(engine, { connectionId: connection.id, model: change.model, reasoningEffort: change.reasoningEffort })
+        await setBoxDefault(engine, { connectionId: connection.id, model: change.model, reasoningEffort: change.reasoningEffort,
+            customReasoningRevision: change.customReasoningRevision })
         return
     }
+    if (isDesktopSubscriptionProvider(connection.provider)) throw new DesktopHttpError(400, 'Refresh subscription models in Settings.')
     if (change.action === 'endpoint') {
         if (connection.provider !== 'openrouter') throw new DesktopHttpError(400, 'Only OpenRouter supports a custom endpoint.')
         await patchConnection(engine, connection.id, { baseUrl: change.baseUrl })

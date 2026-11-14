@@ -1,6 +1,11 @@
+import { desktopOpencodeLanguageModel } from '../desktop/opencode/model.js'
+import { desktopOpencodeCredential } from '../desktop/opencode/registry.js'
+import { isCredentialRejected } from '../connections/credential-rejections.js'
 import { customInferenceModel } from '../desktop/custom-providers/model.js'
+import { createDesktopSubscriptionModel } from '../desktop/subscription-acp/model.js'
+import { findDesktopSubscriptionConnection } from '../desktop/subscription-acp/connections.js'
 import { desktopDelegationCodexCwd } from '../desktop/delegation/child-scope.js'
-import { createProviderRegistry, wrapLanguageModel, type LanguageModel, type ToolSet } from 'ai'
+import { APICallError, createProviderRegistry, wrapLanguageModel, type LanguageModel, type LanguageModelMiddleware, type ToolSet } from 'ai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
@@ -15,11 +20,11 @@ import {
     type LocalTool,
 } from 'ai-sdk-provider-codex-cli'
 import type { ZodObject, ZodRawShape, ZodType } from 'zod'
-import { desktopCodexGrantsOf, desktopRerunGrantsOf, desktopRerunToolCatalog, type ContextOccupancy, type McpServer, type Provider } from '@rerun/contracts'
+import { desktopCodexGrantsOf, desktopRerunGrantsOf, desktopRerunToolCatalog, isDesktopSubscriptionProvider, parseDesktopSubscriptionConnectionId, type ContextOccupancy, type McpServer, type Provider } from '@rerun/contracts'
 import { env } from '../config/env.js'
 import { codexHomeDir } from '../config/paths.js'
 import { allowedModel } from '../connections/plan.js'
-import { RERUN_CONNECTION_ID } from '@rerun/contracts'
+import { RERUN_CONNECTION_ID, type CLAUDE_EFFORT_LEVELS } from '@rerun/contracts'
 import { newId } from '../lib/ids.js'
 import { resolveTransport } from '../tools/mcp.js'
 import { relayMcpServer, type RunMcpServer } from '../tools/mcp-relay.js'
@@ -36,6 +41,7 @@ import { cacheBreakpointsFetch } from './openrouter-cache.js'
 import { openrouterStreamRetryMiddleware } from './openrouter-stream-retry.js'
 import { agentProcessEnv } from './process-env.js'
 import { BRIDGE_SERVER_NAME, CLI_PROVIDERS, type LoadedAgent } from './types.js'
+import { apiCreditsMessage } from '../runtime/provider-errors.js'
 import { hubCallerHeaders } from '../runtime/hub.js'
 import { desktopClaudeRuntime } from '../desktop/claude-plan/runtime.js'
 import { desktopCodexRuntime, signedInFlag } from '../desktop/codex-runtime.js'
@@ -95,6 +101,9 @@ export const CODEX_DISABLED_FEATURES = ['multi_agent', 'multi_agent_v2'] as cons
 // `features.skills` flag, so the `[skills]` table of config.toml is what closes it.
 export const CODEX_SKILL_OVERRIDES = { 'skills.bundled.enabled': false, 'skills.include_instructions': false } as const
 
+// The namespace Codex 0.166 gives its built-in image tool.
+export const CODEX_IMAGE_NAMESPACE = 'image_gen'
+
 // The package declares these but does not export them.
 type CodexMcpServerConfig = NonNullable<CodexAppServerSettings['mcpServers']>[string]
 type CodexConfigOverrides = NonNullable<CodexAppServerSettings['configOverrides']>
@@ -123,7 +132,10 @@ export const CODEX_HARNESS_OVERRIDES: CodexConfigOverrides = {
     'features.goals': false,
     'features.tool_suggest': false,
     'features.hooks': false,
-    'features.code_mode': false,
+    // The model catalog can require Code Mode even when the feature is off. Keep
+    // the Rerun MCP namespace directly callable in that catalog mode.
+    'features.code_mode.enabled': false,
+    'features.code_mode.direct_only_tool_namespaces': [`mcp__${BRIDGE_SERVER_NAME}`],
     // Running a command is shell_exec, the Rerun tool. These two close Codex's own shell whole:
     // with them the model answers that it has no way to run a command.
     'features.shell_tool': false,
@@ -262,7 +274,7 @@ export function codexMcpConfig(tools?: ToolSet, mcpServers: McpServer[] = [], sc
 // one-shot call (compaction, curator, vision) has none here and keeps passing its own to
 // generateText, where the provider folds it into the user turn. `claudeTools` reopens named Claude
 // built-ins for that call alone; a run has only CLAUDE_RUN_TOOLS.
-export type CliModelOptions = { system?: string; claudeTools?: readonly string[]; screenshots?: ScreenshotLookup; nativeWorker?: DesktopNativeWorker; desktopVision?: boolean }
+export type CliModelOptions = { effort?: string; system?: string; claudeTools?: readonly string[]; screenshots?: ScreenshotLookup; nativeWorker?: DesktopNativeWorker; desktopVision?: boolean }
 
 // The subscription pays for the CLI's own web search, where Rerun's web_search would bill Brave to
 // Rerun. Its WebFetch stays closed: it hands back a summary of the page, web_fetch the page itself.
@@ -310,6 +322,8 @@ function claudeProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers: RunMcpS
             // Without this the CLI emits no thinking block at all, so the chat never shows what the
             // agent is working through. `adaptive` leaves the model to decide when it is worth it.
             thinking: { type: 'adaptive', display: 'summarized' },
+            // The effort the user chose for this model; absent, the model keeps its own.
+            ...(options.effort ? { effort: options.effort as (typeof CLAUDE_EFFORT_LEVELS)[number] } : {}),
             env: {
                 ...agentEnv,
                 ...CLAUDE_HARNESS_ENV,
@@ -380,7 +394,10 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
     const native = desktopCodexGrantsOf(agent.config.tools)
     const worker = options.nativeWorker
     if (desktop && (native.shell || native.workspaceWrite) && !worker) throw new Error('The isolated Codex command worker is unavailable.')
-    const directNamespaces = [...(names.length ? [`mcp__${BRIDGE_SERVER_NAME}`] : []), ...(worker ? ['functions'] : [])]
+    // OpenAI's catalog marks every Codex model code_mode_only, which moves the image tool
+    // (`image_gen.imagegen`) inside exec. With the code-mode host off the model then has no way to
+    // make an image even when this coworker's image permission is on.
+    const directNamespaces = [...(names.length ? [`mcp__${BRIDGE_SERVER_NAME}`] : []), ...(worker ? ['functions'] : []), ...(desktop && native.images ? [CODEX_IMAGE_NAMESPACE] : [])]
     return createCodexAppServer({
         defaultSettings: {
             ...shared,
@@ -389,6 +406,7 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
                     ...shared.env,
                     RERUN_DESKTOP_CODEX_WEB: native.webSearch ? '1' : '0',
                     RERUN_DESKTOP_CODEX_CODE_MODE: native.codeMode ? '1' : '0',
+                    RERUN_DESKTOP_CODEX_IMAGES: native.images ? '1' : '0',
                     RERUN_NATIVE_EXEC_URL: worker?.url ?? '',
                     RERUN_NATIVE_SHELL: worker && native.shell ? '1' : '0',
                 },
@@ -450,6 +468,33 @@ function openrouterCompatibleOptions(agent: LoadedAgent, provider: 'rerun' | 'op
     }
 }
 
+// The SDK retries HTTP 429 by default. Retrying a definitive billing refusal cannot recover the
+// turn, but a transient rate limit should still use the normal backoff.
+async function withoutOpenAICreditsRetry<T>(call: () => PromiseLike<T>): Promise<T> {
+    try {
+        return await call()
+    } catch (error) {
+        if (!APICallError.isInstance(error) || !error.isRetryable || !apiCreditsMessage('openai', error)) throw error
+        throw new APICallError({
+            message: error.message,
+            url: error.url,
+            requestBodyValues: error.requestBodyValues,
+            statusCode: error.statusCode,
+            responseHeaders: error.responseHeaders,
+            responseBody: error.responseBody,
+            data: error.data,
+            cause: error.cause,
+            isRetryable: false,
+        })
+    }
+}
+
+const openAICreditsMiddleware: LanguageModelMiddleware = {
+    specificationVersion: 'v3',
+    wrapGenerate: ({ doGenerate }) => withoutOpenAICreditsRetry(doGenerate),
+    wrapStream: ({ doStream }) => withoutOpenAICreditsRetry(doStream),
+}
+
 function registryFor(agent: LoadedAgent, tools?: ToolSet, mcpServers?: McpServer[], options?: CliModelOptions) {
     const e = connectionEnv(agent)
     return createProviderRegistry({
@@ -477,11 +522,37 @@ function pairFor(agent: LoadedAgent, override?: ModelOverride): { provider: Prov
     return { provider, model: allowedModel(provider, override?.model ?? agent.resolved.model) }
 }
 
+function subscriptionModel(agent: LoadedAgent, model: string, reasoning?: string) {
+    const id = agent.resolved.connection?.id
+    const pin = parseDesktopSubscriptionConnectionId(id)
+    const connection = id && findDesktopSubscriptionConnection(id)
+    const selected = connection && connection.config.subscriptionModels?.find(item => item.id === model)
+    if (!pin || !selected || pin.provider !== agent.resolved.provider) throw new Error('The selected subscription model is unavailable.')
+    return createDesktopSubscriptionModel({
+        ...pin, model, reasoning: reasoning ?? selected.reasoning?.default,
+    })
+}
+
+function opencodeModel(agent: LoadedAgent, model: string, sessionId?: string) {
+    const connection = agent.resolved.connection
+    if (!connection?.opencode || isCredentialRejected(connection.id)) throw new Error('Connect OpenCode in Settings.')
+    return desktopOpencodeLanguageModel({
+        workspaceId: connection.opencode.workspaceId, connectionId: connection.id, modelId: model, sessionId,
+        enabledModelIds: connection.opencode.enabledModelIds, consoleEnabled: connection.opencode.consoleEnabled,
+        credential: signal => desktopOpencodeCredential(connection, signal),
+    })
+}
+
 // For one-shot calls with no tools. Codex resolves to the exec transport here, which spawns per call
 // and exits — nothing to dispose. A run that streams must use `resolveModel` instead.
 export function modelFor(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: McpServer[], options?: CliModelOptions): LanguageModel {
     const { provider, model } = pairFor(agent, override)
+    if (provider === 'opencode') {
+        const entry = opencodeModel(agent, model)
+        return wrapLanguageModel({ model: entry.model, middleware: entry.middleware })
+    }
     if (provider === 'custom') return customInferenceModel(agent.resolved.connection, model).model
+    if (isDesktopSubscriptionProvider(provider)) return subscriptionModel(agent, model).model
     if (desktopApp() && provider === 'codex' && options?.desktopVision) {
         return wrapLanguageModel({
             model: codexExecProvider(agent).languageModel(model),
@@ -537,7 +608,8 @@ export function modelFor(agent: LoadedAgent, override?: ModelOverride, tools?: T
             },
         } })
     }
-    return registryFor(agent, tools, mcpServers, options).languageModel(`${provider}:${model}`)
+    const languageModel = registryFor(agent, tools, mcpServers, options).languageModel(`${provider}:${model}`)
+    return provider === 'openai' ? wrapLanguageModel({ model: languageModel, middleware: openAICreditsMiddleware }) : languageModel
 }
 
 // A model plus whatever has to be torn down once the run is over. Only the Codex app-server holds a
@@ -549,7 +621,7 @@ export type ResolvedModel = { model: LanguageModel; close: () => Promise<void>; 
 
 const noClose = async (): Promise<void> => {}
 
-export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: RunMcpServer[], system?: string, screenshots?: ScreenshotLookup, nativeWorker?: DesktopNativeWorker, imageRun?: DesktopCodexImageRun): ResolvedModel {
+export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: RunMcpServer[], system?: string, screenshots?: ScreenshotLookup, nativeWorker?: DesktopNativeWorker, imageRun?: DesktopCodexImageRun, reasoningEffort?: string, sessionId?: string): ResolvedModel {
     const { provider, model } = pairFor(agent, override)
     // `wrapLanguageModel` runs the list from the end: the guard sits nearest the model, so no other
     // middleware ever reads a fake tool call, the card tags go next, and the quick replies read the
@@ -557,14 +629,22 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
     const replies = createQuickRepliesCapture()
     const cardTags = createCardTagGuard(agent.id, provider)
     const guard = createFakeToolCallGuard(agent.id)
+    if (provider === 'opencode') {
+        const entry = opencodeModel(agent, model, sessionId)
+        return { model: wrapLanguageModel({ model: entry.model, middleware: [replies.middleware, cardTags, ...entry.middleware, guard] }), close: noClose, quickReplies: replies.read }
+    }
+    if (isDesktopSubscriptionProvider(provider)) {
+        const subscription = subscriptionModel(agent, model, reasoningEffort)
+        return { model: wrapLanguageModel({ model: subscription.model, middleware: [replies.middleware, cardTags, guard] }), close: subscription.close, quickReplies: replies.read }
+    }
     if (provider === 'custom') {
-        const custom = customInferenceModel(agent.resolved.connection, model)
+        const custom = customInferenceModel(agent.resolved.connection, model, reasoningEffort, sessionId ? { agentId: agent.id, sessionId } : undefined)
         return { model: wrapLanguageModel({ model: custom.model, middleware: [replies.middleware, cardTags, guard] }), close: custom.close, quickReplies: replies.read }
     }
     if (provider === 'codex') {
         const codex = codexAppServerProvider(agent, tools, mcpServers, { system, screenshots, nativeWorker })
-        // Accepts an already-named image_generation result for this run. The 0.166 CLI patch is not
-        // changed here, so a live ChatGPT image turn stays a root gate. Other adapters never get this.
+        // Accepts the image_generation result the patched 0.166 provider names for this run. A live
+        // ChatGPT image turn on the Mac still awaits acceptance. Other adapters never get this.
         const image = imageRun && desktopApp()
             ? createDesktopCodexImageMiddleware({ provider, agent, ...imageRun })
             : undefined
@@ -574,7 +654,7 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
     if (provider === 'claude') {
         const capture = claudeContextCapture(agent.resolved.connection?.id)
         const desktopRuntime = desktopApp() ? desktopClaudeRuntime(agent.resolved.connection?.id, connectionEnv(agent).CLAUDE_CODE_OAUTH_TOKEN ?? '', CLAUDE_HARNESS_ENV) : undefined
-        const claude = claudeProvider(agent, tools, mcpServers, capture, { system, screenshots, claudeTools: agent.config.tools.web ? CLAUDE_RUN_TOOLS : [] }, desktopRuntime).languageModel(model)
+        const claude = claudeProvider(agent, tools, mcpServers, capture, { system, screenshots, claudeTools: agent.config.tools.web ? CLAUDE_RUN_TOOLS : [], effort: reasoningEffort }, desktopRuntime).languageModel(model)
         return { model: wrapLanguageModel({ model: claude, middleware: [claudeScreenshotMiddleware, replies.middleware, cardTags, guard] }), close: desktopRuntime?.close ?? noClose, contextUsage: capture.read, quickReplies: replies.read }
     }
     // Asking for the reasoning and reading it back are both off the OpenAI chat format, so they are
@@ -584,6 +664,8 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
         const openrouter = openaiChat({ ...openrouterCompatibleOptions(agent, provider), fetch: provider === 'openrouter' ? cacheBreakpointsFetch(reasoningFetch) : reasoningFetch })
         return { model: wrapLanguageModel({ model: openrouter.languageModel(model), middleware: [openrouterStreamRetryMiddleware, openrouterReasoningMiddleware, replies.middleware, cardTags, guard] }), close: noClose, quickReplies: replies.read }
     }
-    const middleware = provider === 'google' ? [googleToolSchemaMiddleware, replies.middleware, cardTags, guard] : [replies.middleware, cardTags, guard]
+    const middleware = [replies.middleware, cardTags, guard]
+    if (provider === 'google') middleware.unshift(googleToolSchemaMiddleware)
+    if (provider === 'openai') middleware.push(openAICreditsMiddleware)
     return { model: wrapLanguageModel({ model: registryFor(agent, tools, mcpServers).languageModel(`${provider}:${model}`), middleware }), close: noClose, quickReplies: replies.read }
 }

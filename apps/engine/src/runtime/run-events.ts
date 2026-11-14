@@ -72,6 +72,7 @@ export async function emitRunTerminal(terminal: RunTerminal): Promise<void> {
     }
     if (trigger.source === 'schedule') metadata.scheduleSlug = trigger.slug
     if (trigger.source === 'trigger') metadata.triggerSlug = trigger.slug
+    if (trigger.source !== 'chat') metadata.sourceName = trigger.name
     // The hub titles an automated session after what its run did, from this answer: the routine's
     // name alone makes every run of it look the same in the list.
     const finalText = terminal.text?.trim()

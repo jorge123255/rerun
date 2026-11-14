@@ -184,6 +184,20 @@ describe('a run always reaches a terminal state', () => {
         expect((await getRun(id, run.runId))?.status).toBe('done')
     })
 
+    it('persists the quota failure once without forwarding provider billing text', async () => {
+        stream.parts = [
+            { type: 'stream-start', warnings: [] },
+            { type: 'error', error: { code: 'insufficient_quota', message: 'Private provider billing detail' } },
+        ]
+        const session = await createSession(id, 'Check API credits')
+        const run = await runAgent(await getAgent(id), session.id, 'Check API credits', { provider: 'openai', model: 'gpt-5.4-mini' })
+        expect(await run.settled).toEqual({ kind: 'error', error: 'OpenAI API credits used up', errorCode: 'provider_usage_limit' })
+        expect(await getRun(id, run.runId)).toMatchObject({ status: 'error', error: 'OpenAI API credits used up' })
+        expect(sent.filter(event => event.event === 'agent.message.completed')).toEqual([
+            expect.objectContaining({ kind: 'error', metadata: expect.objectContaining({ error: 'OpenAI API credits used up', errorCode: 'provider_usage_limit' }) }),
+        ])
+    })
+
     // An error part makes the SDK call onError *and then* onFinish. Both used to write the run, so
     // the `done` arriving second overwrote the failure: a spent Claude subscription was stored as a
     // successful empty turn and the session went back to idle with nothing to show for it.

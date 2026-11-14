@@ -18,6 +18,7 @@ import {
     type DesktopServiceRequestGuard,
     type DesktopServiceRequestView,
     type DesktopServiceSetupEntry,
+    type DesktopServiceVaultAccount,
     type ServiceSuggestionItem,
 } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
@@ -26,13 +27,14 @@ import { disabledCoworkerMessage } from '../coworker-enabled'
 export type ServiceRequestScope = { agentId: string; sessionId: string; enabled: boolean }
 export type ServiceRequestDatabase = Pick<Client, 'execute'>
 export type ServiceRequestSealAuthority = {
-    installations: (db: ServiceRequestDatabase) => Promise<DesktopServiceConnection[] | 'unavailable'>
+    installations: (db: ServiceRequestDatabase, choices?: DesktopServiceChoice[]) => Promise<DesktopServiceConnection[] | 'unavailable'>
     check: () => void
 }
 export type ServiceRequestPorts = {
     source: () => Promise<DesktopServiceRequest | null>
     catalog: (slug: string) => Promise<DesktopServiceRequestCatalog>
     installations: () => Promise<DesktopServiceConnection[] | 'unavailable'>
+    vaultAccounts?: () => Promise<DesktopServiceVaultAccount[]>
     prepareSeal: () => Promise<ServiceRequestSealAuthority>
     send: (receipt: SealedReceipt, mode: 'send' | 'replay') => Promise<FollowUpResponse>
 }
@@ -192,9 +194,10 @@ function installFact(connection: DesktopServiceConnection): DesktopServiceInstal
 
 async function project(db: Client, card: Card, ports: ServiceRequestPorts): Promise<DesktopServiceRequestView['request']> {
     const receipt = await receiptByService(db, card.serviceRequestId, card)
-    const [catalogs, installations] = await Promise.all([
+    const [catalogs, installations, vaultAccounts] = await Promise.all([
         Promise.all(card.services.map(service => ports.catalog(service.slug).catch((): DesktopServiceRequestCatalog => ({ status: 'unavailable' })))),
         ports.installations().catch(() => 'unavailable' as const),
+        ports.vaultAccounts?.().catch(() => []) ?? [],
     ])
     const request = {
         serviceRequestId: card.serviceRequestId, revision: card.revision, source: guardOf(card), currentIndex: card.currentIndex, choices: card.choices,
@@ -203,6 +206,7 @@ async function project(db: Client, card: Card, ports: ServiceRequestPorts): Prom
             ...(service.reason !== undefined ? { reason: service.reason } : {}),
             catalog: catalogs[index] ?? { status: 'unavailable' as const },
             connections: installations === 'unavailable' ? null : installations.filter(item => item.slug === service.slug),
+            ...(vaultAccounts.some(item => item.slug === service.slug) && { vaultAccounts: vaultAccounts.filter(item => item.slug === service.slug).slice(0, 64) }),
             connectionsStatus: installations === 'unavailable' ? 'unavailable' as const : 'ready' as const,
         })),
         retry: receipt ? { phase: receipt.accepted ? 'accepted' as const : 'finishing' as const, requestId: receipt.requestId } : { phase: 'open' as const },
@@ -268,14 +272,14 @@ function progressBody(input: DesktopServiceProgress): string {
 
 async function assertSelectedInstallations(input: DesktopServiceProgress, ports: ServiceRequestPorts) {
     if (!input.choices.some(choice => choice.choice === 'use-connection')) return
-    const installations = await ports.installations()
+    const [installations, vaultAccounts] = await Promise.all([ports.installations(), ports.vaultAccounts?.() ?? []])
     if (installations === 'unavailable') refusal(502, 'App connections could not be read. Nothing was saved.')
     for (const choice of input.choices) {
         if (choice.choice !== 'use-connection') continue
         const parsed = desktopServiceChoiceSchema.safeParse(choice)
         if (!parsed.success || parsed.data.choice !== 'use-connection') refusal(400, 'Choose a saved app connection.')
         const installation = parsed.data.installation
-        const match = installations.find(item => item.key === installation.key && item.slug === choice.slug && item.revision === installation.revision)
+        const match = [...installations, ...vaultAccounts].some(item => item.key === installation.key && item.slug === choice.slug && item.revision === installation.revision)
         if (!match) refusal(409, 'That app connection changed. Refresh the card and choose the current connection.')
     }
 }
@@ -396,7 +400,7 @@ export async function finishDesktopServiceRequest(db: Client, scope: ServiceRequ
         assertAligned(input, current)
         const raced = await receiptByService(tx, current.serviceRequestId, current)
         if (raced) return raced
-        const confirmed = deriveFinish(current, catalogs, await authority.installations(tx))
+        const confirmed = deriveFinish(current, catalogs, await authority.installations(tx, current.choices))
         const text = serializeServiceSetupResult(confirmed)
         const sealed: SealedReceipt = { requestId: input.requestId, serviceRequestId: current.serviceRequestId, sessionId: current.sessionId, revision: current.revision, guard: guardOf(current), text, entries: confirmed, accepted: false }
         const createdAt = new Date().toISOString()

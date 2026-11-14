@@ -5,7 +5,21 @@ import { sourceStamp, writeStamp } from './provenance.mjs'
 
 const required = [
     'index.js', 'index.mjs', 'preload.cjs', 'before-quit.mjs', 'startup.html',
-    'startup.css', 'startup.js', 'runtime.mjs', 'supervisor.mjs', 'ui-host.mjs', 'notifications.mjs',
+    'startup-assets/board-dark.webp', 'startup-assets/board-light.webp', 'startup-assets/foreman.webp',
+    'startup.css', 'startup.js', 'startup-workspace.mjs', 'runtime.mjs', 'supervisor.mjs', 'ui-host.mjs', 'notifications.mjs', 'application-menu.mjs',
+    'shell-language.mjs', ...['de', 'en', 'es', 'fr', 'pt'].map(locale => `shell-messages/${locale}.json`),
+    'mac-updates.mjs', 'mac-update-signature.mjs', 'release-config.mjs',
+    'mac-menu-bar.mjs', 'tray/trayTemplate.png', 'tray/trayTemplate@2x.png',
+    'window-context-menu.mjs', 'displayed-image.mjs', 'board-windows.mjs',
+    'connected-hub-policy.mjs', 'connected-hub-auth.mjs', 'connected-hubs.mjs', 'connected-hub-downloads.mjs',
+    'connected-hub-quick-ask.mjs', 'connected-hub-service-sign-in.mjs', 'connected-hub-payment.mjs',
+    'connected-hub-recovery.mjs', 'connected-hub-messages.mjs', 'connected-hub-offline.html', 'connected-hub-offline.js',
+    'connected-hub-preload.cjs', 'connected-hub.html', 'connected-hub.js', 'connected-hub.css',
+    'mac-phone-pairing-window.mjs', 'mac-phone-pairing-preload.cjs', 'mac-phone-pairing.html', 'mac-phone-pairing.js', 'mac-phone-pairing.css',
+    'mac-phone-pairing/lan-identity.mjs', 'mac-phone-pairing/qr.mjs',
+    'mac-phone-pairing/index.mjs', 'mac-phone-pairing/protocol.mjs', 'mac-phone-pairing/crypto.mjs', 'mac-phone-pairing/store.mjs', 'mac-phone-pairing/offers.mjs', 'mac-phone-pairing/workspace-access.mjs', 'mac-phone-pairing/workspace-reads.mjs', 'mac-phone-pairing/transport.mjs', 'mac-phone-pairing/service.mjs',
+    'window-visibility.mjs', 'window-find.mjs', 'find-preload.cjs', 'find.html', 'find.js', 'find.css',
+    'quick-ask-window.mjs', 'quick-ask-shortcut.mjs', 'quick-ask-preload.cjs', 'quick-ask.html', 'quick-ask.js', 'quick-ask.css',
 ]
 
 const src = join(desktopDir, 'src', 'main')

@@ -270,13 +270,23 @@ export async function migrateSystemDb(client: Client, file: string): Promise<voi
     await migrateSqlite(client, SYSTEM_DB_MIGRATIONS, file)
 }
 
+export const DESKTOP_CHAT_COMPACTIONS_SQL = `
+    CREATE TABLE IF NOT EXISTS desktop_chat_compactions (
+        message_id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL UNIQUE REFERENCES runs(id) ON DELETE CASCADE,
+        receipt TEXT NOT NULL
+    );
+`
+
 async function open(id: string): Promise<SystemDb> {
     mkdirSync(agentDataDir(id), { recursive: true })
     const client = createClient({ url: `file:${systemDbPath(id)}` })
     await migrateSystemDb(client, systemDbPath(id))
-    // Only the managed Mac Foreman records reply provenance. Reconcile this independent
-    // table on open so either desktop or hosted migration ladders can open the profile.
-    if (desktopApp() && id === FOREMAN_AGENT_ID) await client.execute(`
+    // Mac display receipts have an additive table, independent of the shared engine ladder.
+    // A profile can already be on a newer shared ladder and still need this local table.
+    if (desktopApp()) await client.execute(DESKTOP_CHAT_COMPACTIONS_SQL)
+    // Reconcile the managed Mac Foreman's tables independently of the shared migration ladder.
+    if (desktopApp() && id === FOREMAN_AGENT_ID) await client.executeMultiple(`
         CREATE TABLE IF NOT EXISTS desktop_foreman_reply_sources (
             run_id TEXT PRIMARY KEY NOT NULL,
             workspace_id TEXT NOT NULL,
@@ -284,7 +294,21 @@ async function open(id: string): Promise<SystemDb> {
             user_message_id TEXT NOT NULL,
             assistant_message_id TEXT UNIQUE,
             reply_digest TEXT
-        )
+        );
+        CREATE TABLE IF NOT EXISTS desktop_foreman_alternate_sessions (
+            request_id TEXT PRIMARY KEY NOT NULL,
+            workspace_id TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            source_session_id TEXT NOT NULL,
+            source_message_id TEXT NOT NULL,
+            source_run_id TEXT NOT NULL,
+            source_user_message_id TEXT NOT NULL,
+            reply_digest TEXT NOT NULL,
+            transcript_revision TEXT NOT NULL,
+            session_id TEXT UNIQUE NOT NULL,
+            run_id TEXT UNIQUE NOT NULL,
+            user_message_id TEXT UNIQUE NOT NULL
+        );
     `)
     const entry: SystemDb = { client, db: drizzle(client, { schema }) }
     pool.set(id, entry)
@@ -306,6 +330,15 @@ export async function getSystemDb(id: string): Promise<SystemDb> {
 
 export function systemDbExists(id: string): boolean {
     return existsSync(systemDbPath(id))
+}
+
+/** Caller holds the deletion lease. Flush the existing writer before a byte-pinned snapshot. */
+export async function checkpointAndCloseSystemDb(id: string): Promise<void> {
+    const entry = pool.get(id)
+    if (!entry) return
+    const { rows } = await entry.client.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+    if (Number(rows[0]?.busy) !== 0) throw new Error('Coworker database is still in use')
+    closeSystemDb(id)
 }
 
 export function closeSystemDb(id: string): void {

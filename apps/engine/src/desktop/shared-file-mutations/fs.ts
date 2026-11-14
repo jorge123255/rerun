@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, readFile, realpath, type FileHandle } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
-import { importSharedText, listSharedDirectory, readSharedText, SharedWorkspaceFileError, type SharedFileAccess } from '../shared-workspace-files.ts'
+import { importSharedText, listSharedDirectory, readSharedText, withSharedPublicationLease, SharedWorkspaceFileError, type SharedFileAccess } from '../shared-workspace-files.ts'
 import { sharedRegexLines } from './regex.ts'
 
 // Create, exact edit, and search under an already resolved shared root.
@@ -170,9 +170,8 @@ export async function editSharedDocument(root: string, input: SharedEditInput, a
     if (canonicalRoot !== root) throw outside()
     // All desktop mutation requests execute in the canonical UI authority process.
     // Share the queue across factory/module instances and distinct run/call identities.
-    // Keep compare, recovery publication, write/truncate and readback in one admission.
-    // The recovery import takes its existing native publication lease independently;
-    // recursively taking that lease here would deadlock its create-only publication.
+    // Keep recovery and publication together for this process. The recovery import
+    // releases the native lease before the final byte check and write acquire it again.
     const queues = editQueues(), previous = queues.get(canonicalRoot) ?? Promise.resolve()
     const result = previous.catch(() => {}).then(() => {
         access?.signal?.throwIfAborted()
@@ -182,6 +181,18 @@ export async function editSharedDocument(root: string, input: SharedEditInput, a
     queues.set(canonicalRoot,tail)
     try { return await result }
     finally { if (queues.get(canonicalRoot) === tail) queues.delete(canonicalRoot) }
+}
+
+async function readExact(handle: FileHandle, size: number, signal?: AbortSignal): Promise<Buffer | null> {
+    const bytes = Buffer.alloc(size)
+    let offset = 0
+    while (offset < size) {
+        signal?.throwIfAborted()
+        const { bytesRead } = await handle.read(bytes, offset, size - offset, offset)
+        if (!bytesRead) return null
+        offset += bytesRead
+    }
+    return bytes
 }
 
 async function editSharedDocumentUnlocked(root: string, input: SharedEditInput, access?: SharedFileAccess): Promise<SharedEditOutcome> {
@@ -203,15 +214,8 @@ async function editSharedDocumentUnlocked(root: string, input: SharedEditInput, 
         const opened = await handle.stat({ bigint: true })
         if (opened.dev !== listed.dev || opened.ino !== listed.ino || opened.nlink !== BigInt(1) || !opened.isFile() || opened.uid !== uid()) throw outside()
         const size = Number(opened.size)
-        const current = Buffer.alloc(size)
-        let read = 0
-        while (read < size) {
-            access?.signal?.throwIfAborted()
-            const chunk = await handle.read(current, read, size - read, read)
-            if (!chunk.bytesRead) break
-            read += chunk.bytesRead
-        }
-        if (read !== size) throw new SharedMutationError('uncertain', 'The shared file could not be read completely. Nothing was written.')
+        const current = await readExact(handle, size, access?.signal)
+        if (!current) throw new SharedMutationError('uncertain', 'The shared file could not be read completely. Nothing was written.')
         const sha256 = hashOf(current)
         if (size !== input.expectedBytes || sha256 !== input.expectedSha256) {
             return { status: 'refused', path: rel, code: 'conflict', message: `The shared file changed. It was kept. Current identity is ${size} bytes, sha256 ${sha256}.`, bytes: size, sha256, committed: false }
@@ -231,35 +235,45 @@ async function editSharedDocumentUnlocked(root: string, input: SharedEditInput, 
         // crash or partial native write must not destroy the only copy of the user's document.
         const recoveryName = `shared-edit-recovery-${randomUUID()}.txt`
         await importSharedText(root, parts.slice(0, -1).join('/'), recoveryName, current, access)
-        await access?.beforeCommit?.()
-        access?.signal?.throwIfAborted()
-        const again = await handle.stat({ bigint: true })
-        const named = await lstat(target,{ bigint: true })
-        if (again.dev !== opened.dev || again.ino !== opened.ino || again.size !== opened.size || again.ctimeNs !== opened.ctimeNs || named.dev !== opened.dev || named.ino !== opened.ino || named.isSymbolicLink() || named.nlink !== BigInt(1)) {
-            return { status: 'refused', path: rel, code: 'conflict', message: 'The shared file changed. It was kept.', bytes: size, sha256, committed: false }
+        let writing = false
+        try {
+            return await withSharedPublicationLease(root, access?.signal, async guard => {
+                await access?.beforeCommit?.()
+                const original = await readExact(handle, size, access?.signal)
+                const again = await handle.stat({ bigint: true })
+                const named = await lstat(target, { bigint: true }).catch(error => {
+                    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+                    throw error
+                })
+                if (!original?.equals(current) || again.dev !== opened.dev || again.ino !== opened.ino || again.size !== opened.size
+                    || again.ctimeNs !== opened.ctimeNs || named?.dev !== opened.dev || named.ino !== opened.ino
+                    || named.isSymbolicLink() || named.nlink !== BigInt(1)) {
+                    return { status: 'refused', path: rel, code: 'conflict', message: 'The shared file changed. It was kept.', bytes: size, sha256, committed: false }
+                }
+                await guard()
+                writing = true
+                let written = 0
+                while (written < next.length) {
+                    const part = await handle.write(next, written, next.length - written, written)
+                    if (!part.bytesWritten) throw new Error('No bytes were written')
+                    written += part.bytesWritten
+                    if (written < next.length) await guard()
+                }
+                if (next.length < size) { await guard(); await handle.truncate(next.length) }
+                await handle.sync()
+                const confirmed = await readExact(handle, next.length, access?.signal)
+                const after = await handle.stat({ bigint: true })
+                const published = await lstat(target, { bigint: true })
+                if (!confirmed?.equals(next) || after.size !== BigInt(next.length) || after.dev !== opened.dev || after.ino !== opened.ino
+                    || after.nlink !== BigInt(1) || published.dev !== after.dev || published.ino !== after.ino
+                    || published.isSymbolicLink() || published.nlink !== BigInt(1) || published.size !== after.size) throw new Error('Readback changed')
+                const digest = hashOf(next)
+                return { status: 'saved', path: rel, message: `Edited shared file (${occurrences} replacement${occurrences === 1 ? '' : 's'}). Previous bytes kept as ${recoveryName}.`, bytes: next.length, sha256: digest, occurrences, committed: true }
+            })
+        } catch (error) {
+            if (writing) throw new SharedMutationError('uncertain', 'The edit was not confirmed. Inspect the original file and its recovery copy before another change.')
+            throw error
         }
-        let written = 0
-        while (written < next.length) {
-            const part = await handle.write(next, written, next.length - written, written)
-            if (!part.bytesWritten) throw new SharedMutationError('uncertain', 'The edit was not confirmed. Inspect the original file before another change.')
-            written += part.bytesWritten
-        }
-        if (next.length < size) await handle.truncate(next.length)
-        await handle.sync()
-        const check = Buffer.alloc(next.length)
-        let seen = 0
-        while (seen < next.length) {
-            const chunk = await handle.read(check, seen, next.length - seen, seen)
-            if (!chunk.bytesRead) break
-            seen += chunk.bytesRead
-        }
-        const after = await handle.stat({ bigint: true })
-        const published = await lstat(target,{ bigint: true })
-        if (seen !== next.length || !check.equals(next) || after.dev !== opened.dev || after.ino !== opened.ino || after.nlink !== BigInt(1) || published.dev !== after.dev || published.ino !== after.ino || published.isSymbolicLink() || published.nlink !== BigInt(1)) {
-            throw new SharedMutationError('uncertain', 'The edit was not confirmed. The file was not written again.')
-        }
-        const digest = hashOf(next)
-        return { status: 'saved', path: rel, message: `Edited shared file (${occurrences} replacement${occurrences === 1 ? '' : 's'}). Previous bytes kept as ${recoveryName}.`, bytes: next.length, sha256: digest, occurrences, committed: true }
     } finally { await handle.close() }
 }
 

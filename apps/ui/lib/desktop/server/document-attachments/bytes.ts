@@ -1,11 +1,18 @@
 import { createHash } from 'node:crypto'
-import { DESKTOP_DOCUMENT_MAX_BYTES, desktopDocumentKindForName } from '@rerun/contracts'
+import { DESKTOP_DOCUMENT_IMAGE_MAX_BYTES, DESKTOP_DOCUMENT_INPUT_MAX_BYTES, DESKTOP_DOCUMENT_MAX_BYTES, desktopDocumentKindForName } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
+import { desktopImageKindForName, type DesktopImageKind } from '../../composer-image'
 import { desktopAudioKind, inspectDesktopAudioBytes } from '../audio-bytes'
 import { inspectDesktopPdfBytes } from '../pdf-bytes'
 import { desktopVideoKind, inspectDesktopVideoBytes } from '../video-bytes'
 
 export { desktopDocumentKindForName } from '@rerun/contracts'
+
+const imageTypes: Record<DesktopImageKind, readonly [string, ...string[]]> = {
+    png: ['image/png'], jpeg: ['image/jpeg'], webp: ['image/webp'], gif: ['image/gif'],
+    avif: ['image/avif'], ico: ['image/x-icon', 'image/vnd.microsoft.icon'],
+    bmp: ['image/bmp', 'image/x-ms-bmp'], svg: ['image/svg+xml'],
+}
 
 export function inspectDesktopDocumentUpload(input: { name: string; mimeType: string }, bytes: Uint8Array) {
     if (!input.name || new TextEncoder().encode(input.name).length > 255 || input.name.includes('/') || input.name.includes('\\') || input.name.includes('\0') || input.name.startsWith('.') || /\p{Cc}/u.test(input.name)) {
@@ -15,7 +22,16 @@ export function inspectDesktopDocumentUpload(input: { name: string; mimeType: st
     if (bytes.byteLength < 1 || bytes.byteLength > DESKTOP_DOCUMENT_MAX_BYTES) throw new DesktopHttpError(413, 'Documents can be up to 16 MB.')
     const kind = desktopDocumentKindForName(input.name)
     let mimeType = input.mimeType
-    if (kind === 'pdf') {
+    if (kind === 'image') {
+        if (bytes.byteLength > DESKTOP_DOCUMENT_IMAGE_MAX_BYTES) throw new DesktopHttpError(413, 'Images can be up to 8 MB.')
+        const types = imageTypes[desktopImageKindForName(input.name)!]
+        if (!types.includes(input.mimeType.toLowerCase()) && input.mimeType !== 'application/octet-stream') throw new DesktopHttpError(415, 'Image type does not match its contents.')
+        mimeType = types[0]
+    } else if (kind === 'text') {
+        // Never serve a browser-supplied active media type for these UTF-8 documents.
+        readDesktopPlainText(bytes)
+        mimeType = 'text/plain'
+    } else if (kind === 'pdf') {
         if (!['application/pdf', 'application/octet-stream', ''].includes(input.mimeType)) throw new DesktopHttpError(400, 'PDF type does not match its contents.')
         mimeType = inspectDesktopPdfBytes('pdf', bytes).contentType
     } else if (kind === 'audio') {
@@ -31,4 +47,13 @@ export function inspectDesktopDocumentUpload(input: { name: string; mimeType: st
         throw new DesktopHttpError(400, 'This media type is not supported by the desktop readers.')
     }
     return { kind, mimeType, sha256: createHash('sha256').update(bytes).digest('hex'), byteLength: bytes.byteLength }
+}
+
+export function readDesktopPlainText(bytes: Uint8Array): string {
+    if (bytes.byteLength > DESKTOP_DOCUMENT_INPUT_MAX_BYTES) throw new DesktopHttpError(413, 'Text attachments can be up to 128 KiB.')
+    let text: string
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
+    catch { throw new DesktopHttpError(400, 'Choose a UTF-8 text file.') }
+    if (!text.trim() || text.includes('\0')) throw new DesktopHttpError(400, 'Choose a non-empty UTF-8 text file.')
+    return text
 }

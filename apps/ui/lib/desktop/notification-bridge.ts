@@ -27,6 +27,16 @@ export type DesktopNotificationTarget = {
 type DesktopNotificationsBridge = {
     notify?: (notification: DesktopNotificationCopy & DesktopNotificationTarget) => Promise<DesktopNotificationBridgeResult>
     onNotificationClick?: (handler: (target: DesktopNotificationTarget) => void) => () => void
+    setInboxBadge?: (badge: { workspaceId: number; launchNonce: string; count: number }) => void
+}
+
+function nativeNotifications() {
+    return typeof window === 'undefined' ? undefined
+        : (window as Window & { desktopApp?: { notifications?: DesktopNotificationsBridge } }).desktopApp?.notifications
+}
+
+export function desktopInboxBadge() {
+    return nativeNotifications()?.setInboxBadge
 }
 
 export type DesktopNotificationsHandle = {
@@ -37,7 +47,7 @@ export type DesktopNotificationsHandle = {
 
 export function desktopNotificationsBridge(): DesktopNotificationsHandle {
     if (typeof window === 'undefined') return { available: false, notify: async () => ({ status: 'unavailable' }), onClick: () => () => {} }
-    const bridge = (window as Window & { desktopApp?: { notifications?: DesktopNotificationsBridge } }).desktopApp?.notifications
+    const bridge = nativeNotifications()
     return {
         available: typeof bridge?.notify === 'function',
         notify: async payload => {

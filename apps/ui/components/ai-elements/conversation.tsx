@@ -80,6 +80,8 @@ export type PendingHitlCue = {
   key: string;
   summary: PendingHitlSummary;
   blockRef: RefObject<HTMLElement | null>;
+  jumpLabel?: string;
+  focusOnJump?: boolean;
 };
 
 export type ConversationScrollButtonProps = ComponentProps<typeof Button> & {
@@ -112,8 +114,9 @@ export const ConversationScrollButton = ({
 
   const jumpToPending = () => {
     const blockEl = pending?.blockRef.current;
-    if (!blockEl) return;
-    bringBlockIn(context, blockEl, "smooth");
+    if (!blockEl || !scrollRef.current?.contains(blockEl)) return;
+    bringBlockIn(context, blockEl, "smooth", pending?.focusOnJump ? "start" : "auto");
+    if (pending?.focusOnJump) blockEl.focus({ preventScroll: true });
   };
 
   return (
@@ -136,7 +139,7 @@ export const ConversationScrollButton = ({
         )}
         {cue === "pill" && pending && (
           <motion.div key="pill" {...CUE_MOTION} className="pointer-events-auto flex max-w-full justify-center">
-            <PendingHitlPill summary={pending.summary} onJump={jumpToPending} />
+            <PendingHitlPill summary={pending.summary} onJump={jumpToPending} jumpLabel={pending.jumpLabel} />
           </motion.div>
         )}
       </AnimatePresence>

@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
-const root = mkdtempSync(resolve(tmpdir(), 'rerun-post25-engine-'))
+// The profile's files refuse a symbolic link anywhere in their path, and macOS keeps its temporary folder behind one.
+const root = mkdtempSync(resolve(realpathSync(tmpdir()), 'rerun-post25-engine-'))
 process.env.RERUN_DATA_DIR = root
 process.env.RERUN_API_KEY = ''
 process.env.RERUN_LOG_LEVEL = 'error'
@@ -88,6 +89,7 @@ test('an earlier desktop data-dir 8 and system.db 10 upgrade once and stay put o
     expect(createHash('sha256').update(await readFile(scheduleFile(AGENT, 'morning-digest'), 'utf8')).digest('hex')).toBe(routineBefore)
     expect(await tableNames(raw(), customTables)).toEqual(expectedCustom)
     expect(await tableNames(reopened.client, triggerTables)).toEqual(expectedTrigger)
+    expect((await reopened.client.execute('SELECT receipt FROM desktop_chat_compactions')).rows).toEqual([])
     closeSystemDb(AGENT)
     expect(agentDataDir(AGENT).startsWith(root)).toBe(true)
 

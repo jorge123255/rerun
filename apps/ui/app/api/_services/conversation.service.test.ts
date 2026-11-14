@@ -1,5 +1,5 @@
 import { assertAgentInWorkspace, type WorkspaceContext } from '@/app/api/_auth/ownership'
-import { createSessionRow, getSessionEngineContext, lastRunError, listSessionRuns, readUsageSeed, resolveAgentTarget } from '@/app/api/_services/chat.service'
+import { createSessionRow, getSessionEngineContext, lastRunError, listSessionRuns, readUsageSeed, resolveAgentTarget, updateSessionStatus } from '@/app/api/_services/chat.service'
 import { transformEngineMessages } from '@/lib/chat/engine-history'
 import { cancelRun, getSession, getSessionMessages, listRuns, listSessions, listSkillProposals } from '@/lib/engine/client'
 import { createClient } from '@/supabase/server'
@@ -8,7 +8,7 @@ import { selectMany, selectMaybeSingle } from '@/supabase/supabase-helpers'
 import { fakeSupabase } from '@/test/supabase-fake'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { adoptEngineSession, cancelSessionRuns, EMPTY_SESSION_SNAPSHOT, listAgentConversations, listWorkspaceConversationOverview, markSessionsHandled, readSessionSnapshot, searchWorkspaceConversations } from './conversation.service'
+import { adoptEngineSession, cancelSessionRuns, EMPTY_SESSION_SNAPSHOT, finalizeSession, listAgentConversations, listWorkspaceConversationOverview, markSessionsHandled, readSessionSnapshot, searchWorkspaceConversations } from './conversation.service'
 
 vi.mock('@/supabase/supabase-helpers', () => ({ selectMany: vi.fn(), selectMaybeSingle: vi.fn() }))
 vi.mock('@/supabase/serviceRole', () => ({ createServiceRoleClient: vi.fn() }))
@@ -80,6 +80,27 @@ describe('listWorkspaceConversationOverview', () => {
 
         expect(await listWorkspaceConversationOverview(ctx)).toEqual([])
         expect(selectMany).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe('finalizeSession', () => {
+    it.each(['idle', 'error'] as const)('only settles a working session to %s after reconnect', async status => {
+        vi.clearAllMocks()
+        const db = fakeSupabase()
+        vi.mocked(createServiceRoleClient).mockReturnValue(db.client)
+        await finalizeSession('s1', status, { onlyWhileWorking: true })
+        expect(updateSessionStatus).not.toHaveBeenCalled()
+        expect(db.writes('sessions')[0]).toMatchObject({ payload: { status } })
+        expect(db.writes('sessions')[0].filters.map(call => call.args)).toEqual([['id', 's1'], ['status', 'working']])
+    })
+
+    it('keeps explicit Stop unconditional', async () => {
+        vi.clearAllMocks()
+        const db = fakeSupabase()
+        vi.mocked(createServiceRoleClient).mockReturnValue(db.client)
+        await finalizeSession('s1', 'idle')
+        expect(updateSessionStatus).toHaveBeenCalledWith('s1', 'idle')
+        expect(db.writes('sessions')).toEqual([])
     })
 })
 

@@ -139,6 +139,24 @@ test('hidden files join the order only while that listing shows them', async () 
     act(() => root.unmount())
 })
 
+test('returns focus to the current file and then to its containing folder', async () => {
+    const root = await openDocs()
+    try {
+        expect(document.activeElement).toBe(button('..'))
+        button('alpha.md')!.focus()
+        await click('alpha.md')
+        expect(document.activeElement).toBe(button('Back to folder'))
+        await click('Previous file')
+        expect(document.querySelector('[data-testid="file-preview"]')?.textContent).toBe('zeta body')
+        await click('Back to folder')
+        expect(document.activeElement).toBe(button('zeta.txt'))
+        await click('..')
+        expect(document.activeElement).toBe(button('docs'))
+    } finally {
+        act(() => root.unmount())
+    }
+})
+
 test('one file in the folder has no arrows', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input), 'http://127.0.0.1')

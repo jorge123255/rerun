@@ -17,9 +17,11 @@ import { engineOf } from '../settings'
 import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 import { foremanTurn, ownedForemanChat } from './chat-store'
 import { readDesktopForemanIntakeReceipt } from './intake-profile'
+import type { createDesktopLocalStarterOffers } from '../foreman-starter/local-offer'
 
 type IntakeApp = {
     db: Client
+    starterOffers?: ReturnType<typeof createDesktopLocalStarterOffers>
     send(chat: DesktopForemanChatRef, requestId: string, text: string): Promise<{ runId: string }>
 }
 const notConfirmed = () => new DesktopHttpError(503, 'The original Foreman intake message could not be confirmed. Retry the same intake.')
@@ -55,7 +57,13 @@ export function createDesktopForemanIntakeBinding(runtime: DesktopRuntime, app: 
         async lookup(input) {
             const { owner, receipt } = await reserved(input)
             const turn = await foremanTurn(app.db, input.requestId)
-            if (!turn) return null
+            const industry = receipt.answers.industry ?? receipt.answers.decidedIndustry
+            if (!turn) {
+                if (await app.starterOffers?.read(input.chat, input.requestId) || await app.starterOffers?.stopped(input.chat, input.requestId)) {
+                    return { ...input, conversationId: owner.sessionId, runId: null, industry }
+                }
+                return null
+            }
             const binding = foremanBindingSchema.safeParse(turn.body.binding)
             const expectedText = foremanIntakeMessage(receipt.answers)
             const expectedFingerprint = createHash('sha256').update(JSON.stringify([input.chat, expectedText, null])).digest('hex')
@@ -75,13 +83,20 @@ export function createDesktopForemanIntakeBinding(runtime: DesktopRuntime, app: 
                     throw notConfirmed()
                 }
             }
-            return { ...input, conversationId: owner.sessionId, runId: input.requestId, industry: receipt.answers.industry ?? receipt.answers.decidedIndustry }
+            return { ...input, conversationId: owner.sessionId, runId: input.requestId, industry }
         },
         async deliver(input) {
             assertDesktopWorkspaceAdmission(runtime)
-            const { receipt } = await reserved(input)
+            const { owner, receipt } = await reserved(input)
             if (fingerprintIntakeAnswers(input.answers, input.chat, input.requestId) !== receipt.fingerprint) throw notConfirmed()
-            const result = await app.send(input.chat, input.requestId, foremanIntakeMessage(receipt.answers))
+            const offer = await app.starterOffers?.prepare(input.chat, input.requestId, receipt.fingerprint, AbortSignal.timeout(10_000))
+            const withoutRun = { conversationId: owner.sessionId, runId: null, industry: receipt.answers.industry ?? receipt.answers.decidedIndustry }
+            if (offer || await app.starterOffers?.stopped(input.chat, input.requestId)) return withoutRun
+            const result = await app.send(input.chat, input.requestId, foremanIntakeMessage(receipt.answers)).catch(async error => {
+                if (await app.starterOffers?.stopped(input.chat, input.requestId)) return null
+                throw error
+            })
+            if (!result) return withoutRun
             if (result.runId !== input.requestId) throw notConfirmed()
             const confirmed = await completion.lookup(input)
             if (!confirmed) throw notConfirmed()

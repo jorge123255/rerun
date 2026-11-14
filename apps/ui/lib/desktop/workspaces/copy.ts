@@ -1,21 +1,13 @@
 /** Product-language helpers for the local workspace UI (matches main copy.mjs). */
 export const DESKTOP_WORKSPACE_UI_COPY = {
-    newWorkspace: 'New workspace',
-    nameTitle: 'Name your workspace',
-    nameHelp: 'A workspace groups your Boxes, coworkers and files. You can rename it later.',
-    iconTitle: 'Pick an icon',
-    iconHelp: 'Choose an illustration for your workspace. You can change it later.',
-    create: 'Create workspace',
-    creating: 'Creating',
     cancel: 'Cancel',
-    continue: 'Continue',
-    back: 'Back',
     renameTitle: 'Workspace settings',
     renameHelp: 'Choose a name and logo for your workspace.',
     save: 'Save',
     saving: 'Saving',
     busySwitch: 'A workspace switch is already in progress. Wait for it to finish, then try again.',
     draftsKept: 'Your unsent drafts stay in the workspace you are leaving.',
+    switchLabel: 'Switch workspace',
     openWorkspace: 'Open workspace',
     retry: 'Try again',
 } as const

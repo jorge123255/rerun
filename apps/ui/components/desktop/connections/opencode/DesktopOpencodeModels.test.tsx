@@ -34,6 +34,9 @@ async function click(label: string) {
 
 it('protects the default model and requires explicit Console opt-in', async () => {
     const onModelsChange = await mount()
+    expect(document.body.textContent).toContain('Paid by your Go plan.')
+    expect(document.body.textContent).toContain('Billed per token, off until you switch one on.')
+    expect(document.body.textContent).not.toMatch(/\b\d+ of \d+ on\b/)
     const defaultToggle = document.querySelector('[aria-label="Turn off DeepSeek V4 Pro"]')
     expect(defaultToggle).toHaveProperty('disabled', true)
     expect(document.querySelector('[aria-label="Turn on GPT-5"]')).toHaveProperty('disabled', true)
@@ -41,6 +44,19 @@ it('protects the default model and requires explicit Console opt-in', async () =
     expect(onModelsChange).toHaveBeenCalledWith({ enabledModelIds: ['go/deepseek-v4-pro', 'console/gpt-5'], consoleEnabled: true })
     await click('Turn on Kimi K3')
     expect(onModelsChange).toHaveBeenCalledWith({ enabledModelIds: ['go/deepseek-v4-pro', 'go/kimi-k3'], consoleEnabled: false })
+})
+
+it('badges a free Go model and switches it on independently of Console', async () => {
+    const free = { ...model('go/beam-free', 'Beam Free'), price: { input: 0, output: 0, cacheRead: 0 } }
+    const onModelsChange = await mount({ catalog: catalog([model('go/deepseek-v4-pro'), free, model('console/gpt-5')]) })
+    expect(document.body.textContent).toContain('The free ones are off until you switch them on.')
+    const toggle = document.querySelector('[aria-label="Turn on Beam Free"]')
+    expect(toggle?.getAttribute('aria-checked')).toBe('false')
+    expect([...toggle!.closest('li')!.querySelectorAll('span')].some(item => item.textContent === 'Free')).toBe(true)
+    expect(onModelsChange).not.toHaveBeenCalled()
+    await click('Turn on Beam Free')
+    expect(onModelsChange).toHaveBeenCalledOnce()
+    expect(onModelsChange).toHaveBeenCalledWith({ enabledModelIds: ['go/deepseek-v4-pro', 'go/beam-free'], consoleEnabled: false })
 })
 
 it('keeps retired selected models visible for removal and filters both plans', async () => {

@@ -23,7 +23,7 @@ export function DraftBlock({ code, meta, isIncomplete, writeText, onCopyError }:
         <div role="group" aria-label={title} data-streamdown="code-block" data-language={DRAFT_LANGUAGE} data-incomplete={isIncomplete || undefined} className="my-4 flex w-full flex-col gap-2 rounded-xl border border-border bg-sidebar p-2">
             <div data-streamdown="code-block-header" className="flex h-8 items-center justify-between gap-2 text-muted-foreground text-xs">
                 <span className="ml-1 truncate">{title}</span>
-                <Button type="button" size="xs" variant="ghost" aria-label="Copy draft" disabled={isIncomplete} onClick={() => copy(text)} className="text-muted-foreground">
+                <Button type="button" size="xs" variant="ghost" aria-label="Copy draft" data-chat-find-ignore disabled={isIncomplete} onClick={() => copy(text)} className="text-muted-foreground">
                     {copied ? <CheckIcon className="text-emerald-500" /> : <CopyIcon />}
                     <span aria-live="polite">{copied ? 'Copied' : 'Copy'}</span>
                 </Button>

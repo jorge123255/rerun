@@ -1,0 +1,28 @@
+body.server-picker { grid-template-rows: minmax(90px, 1fr) auto; }
+.server-picker .actions { text-align: start; }
+.server-picker label { font-size: 13px; font-weight: 500; }
+.server-picker input {
+    min-width: 0;
+    min-height: 52px;
+    padding: 8px 16px;
+    border: 1px solid var(--auth-border);
+    border-radius: 14px;
+    color: inherit;
+    background: var(--auth-card);
+    font: inherit;
+    font-size: 17px;
+}
+.server-picker input::placeholder { color: var(--auth-muted); }
+.server-picker input:focus-visible {
+    outline: 2px solid light-dark(#4d34f7, #b7a8ff);
+    outline-offset: 2px;
+}
+.server-picker input[aria-invalid="true"] { border-color: light-dark(#b70013, #ff9294); }
+.server-picker .connection-error { line-height: 1.4; overflow-wrap: anywhere; }
+.server-picker .connection-options {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0 8px;
+}
+.server-picker #cancel { color: var(--auth-muted); }

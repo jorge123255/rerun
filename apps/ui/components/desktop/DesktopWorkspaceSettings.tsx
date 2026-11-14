@@ -4,16 +4,18 @@ import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { z } from 'zod'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { Field } from '@/components/ui/field'
 import { FileDropzone } from '@rerun/ui/forms'
 import { Input } from '@/components/ui/input'
-import { CheckIcon, Loader2Icon, UploadIcon } from '@/lib/icons'
+import { CheckIcon, Loader2Icon, UploadIcon, SettingsIcon } from '@/lib/icons'
 import { DESKTOP_WORKSPACE_ICONS, DESKTOP_WORKSPACE_LOGO_ACCEPT, desktopWorkspaceIconSelectionUrl, desktopWorkspaceIconUrl, desktopWorkspaceUploadIconUrl, type DesktopWorkspaceIcon, type DesktopWorkspaceSavedIcon } from '@/lib/desktop/icon-catalog'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 import { cn } from '@/lib/utils'
 import { ScrollFade } from '@rerun/ui/primitives'
+import { useDesktopLocale } from './DesktopLocale'
 import { DesktopWorkspaceWebsiteLogo } from './DesktopWorkspaceWebsiteLogo'
 
 const VISIBLE_ILLUSTRATIONS = 10
@@ -40,6 +42,7 @@ type Props = {
 // Save/Cancel footer. Website previews use reviewed local bytes and the same atomic icon write.
 // Workspace switching and account or member features stay out of the Mac slice.
 export function DesktopWorkspaceSettings({ open, onOpenChange, workspaceName, onSaved }: Props) {
+    const { t } = useDesktopLocale()
     const [saving, setSaving] = useState(false)
     const quitting = useSyncExternalStore(subscribeDraftShutdown, isDesktopQuitting, () => false)
     const lifetime = useRef({ open, generation: 0, saving: false })
@@ -52,7 +55,7 @@ export function DesktopWorkspaceSettings({ open, onOpenChange, workspaceName, on
     }
     useEffect(() => { setSaving(false) }, [generation])
     return <Dialog open={open} onOpenChange={change} asSheet={false} dismissible={!saving && !quitting}>
-        <DialogContent className="flex flex-col gap-0 overflow-hidden p-0 sm:max-w-lg" showCloseButton={!saving && !quitting}
+        <DialogContent className="flex flex-col gap-0 overflow-hidden p-0 sm:max-w-lg" showCloseButton={!saving && !quitting} closeLabel={t('workspaceForm.close')}
             onEscapeKeyDown={event => { if (lifetime.current.saving || isDesktopQuitting()) event.preventDefault() }}
             onCloseAutoFocus={event => {
                 event.preventDefault()
@@ -73,6 +76,7 @@ type LogoDraft = { kind: 'current' } | { kind: 'catalog'; catalogId: string }
     | { kind: 'upload' | 'link'; file: File; previewUrl: string } | { kind: 'link-pending' }
 
 function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quitting }: { workspaceName: string; onSaved: Props['onSaved']; onCancel: () => void; onSaving: (saving: boolean) => void; quitting: boolean }) {
+    const { t } = useDesktopLocale()
     const [name, setName] = useState(workspaceName)
     // Null keeps the workspace's current icon, like the original form's `current` draft.
     const [draft, setDraft] = useState<LogoDraft>({ kind: 'current' })
@@ -159,7 +163,7 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
         if (!mounted.current || savingRef.current || isDesktopQuitting() || !name.trim()) return
         const selected = currentDraft.current
         if (selected.kind === 'link-pending') return
-        if (name.trim().length > WORKSPACE_NAME_MAX) { setError(`Use ${WORKSPACE_NAME_MAX} characters or fewer for the workspace name.`); return }
+        if (name.trim().length > WORKSPACE_NAME_MAX) { setError(t('workspaceForm.nameTooLong', { max: WORKSPACE_NAME_MAX })); return }
         savingRef.current = true
         onSaving(true)
         setSaving(true)
@@ -198,16 +202,13 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
 
     return (
         <form className="flex max-h-full min-h-0 flex-1 flex-col" onSubmit={event => { event.preventDefault(); void save() }}>
-            <DialogHeader className="px-6 pt-6 pb-4">
-                <DialogTitle>Workspace settings</DialogTitle>
-                <DialogDescription>Choose a name and logo for your workspace.</DialogDescription>
-            </DialogHeader>
-            <ScrollFade className="min-h-0 flex-1 px-6 pt-1 pb-6">
+            <DialogHeaderBar icon={SettingsIcon} title={t('workspaceForm.title')} description={t('workspaceForm.description')} />
+            <ScrollFade className="min-h-0 flex-1 p-4">
                 <div className="space-y-6">
                     <div className="flex items-end gap-4">
                         <FileDropzone onFiles={files => upload(files[0])} accept={DESKTOP_WORKSPACE_LOGO_ACCEPT} overlayLabel="" disabled={saving || quitting} className="shrink-0">
                             {({ inputId }) => (
-                                <label htmlFor={inputId} aria-label="Upload a logo" className="group relative block size-16 cursor-pointer">
+                                <label htmlFor={inputId} aria-label={t('workspaceForm.uploadLogo')} className="group relative block size-16 cursor-pointer">
                                     <img src={previewSrc || undefined} alt="" className="size-full rounded-2xl bg-muted object-cover" />
                                     <span className="absolute -right-1 -bottom-1 flex size-6 items-center justify-center rounded-full border bg-background shadow-sm transition-colors group-hover:bg-muted">
                                         <UploadIcon className="size-3.5" />
@@ -216,7 +217,7 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
                             )}
                         </FileDropzone>
                         <div className="min-w-0 flex-1">
-                            <Input id="workspace-settings-name" label="Name" required placeholder="e.g. Acme Inc."
+                            <Input id="workspace-settings-name" label={t('workspaceForm.name')} required placeholder={t('workspaceForm.namePlaceholder')}
                                 maxLength={WORKSPACE_NAME_MAX} value={name} disabled={saving || quitting} onChange={event => setName(event.target.value)} />
                         </div>
                     </div>
@@ -234,23 +235,23 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
                         selectDraft(pending ? { kind: 'link-pending' } : selection ? { kind: 'link', ...selection } : { kind: 'current' })
                         setError('')
                     }} />
-                    <Field label="Or pick an illustration">
+                    <Field label={t('workspaceForm.pickIllustration')}>
                         <IllustrationGrid selectedUrl={selectedUrl} onPick={pickIllustration} disabled={saving || quitting} />
                     </Field>
                     {readError && <div role="alert" className="space-y-2 text-sm text-destructive">
                         <p>Could not load the workspace icon. You can still save the name or pick an illustration.</p>
-                        <Button type="button" variant="outline" size="sm" disabled={saving || quitting} onClick={() => setReadAttempt(value => value + 1)}>Retry</Button>
+                        <Button type="button" variant="outline" size="sm" disabled={saving || quitting} onClick={() => setReadAttempt(value => value + 1)}>{t('workspaceForm.retry')}</Button>
                     </div>}
                     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
                 </div>
             </ScrollFade>
-            <DialogFooter className="m-0 shrink-0 px-6 py-4">
+            <DialogFooter className="m-0 shrink-0">
                 <Button type="button" variant="outline" disabled={saving || quitting} onClick={() => { if (mounted.current && !savingRef.current && !isDesktopQuitting()) onCancel() }}>
-                    Cancel
+                    {t('workspaceForm.cancel')}
                 </Button>
                 <Button type="submit" disabled={saving || quitting || draft.kind === 'link-pending' || !name.trim()}>
                     {saving && <Loader2Icon className="animate-spin" />}
-                    {saving ? 'Saving' : 'Save'}
+                    {t(saving ? 'workspaceForm.saving' : 'workspaceForm.save')}
                 </Button>
             </DialogFooter>
         </form>
@@ -289,6 +290,7 @@ const desktopIconSelection = desktopIconDescriptor.refine(exclusiveIcon)
 const desktopIconSaved = desktopIconDescriptor.extend({ name: z.string().trim().min(1).max(WORKSPACE_NAME_MAX) }).refine(exclusiveIcon)
 
 function IllustrationGrid({ selectedUrl, onPick, disabled }: { selectedUrl: string | undefined; onPick: (catalogId: string) => void; disabled: boolean }) {
+    const { t } = useDesktopLocale()
     const [expanded, setExpanded] = useState(false)
     const icons: readonly DesktopWorkspaceIcon[] = expanded ? DESKTOP_WORKSPACE_ICONS : DESKTOP_WORKSPACE_ICONS.slice(0, VISIBLE_ILLUSTRATIONS)
 
@@ -310,7 +312,7 @@ function IllustrationGrid({ selectedUrl, onPick, disabled }: { selectedUrl: stri
                 })}
             </div>
             <Button type="button" variant="ghost" size="sm" disabled={disabled} className="-ml-2 text-muted-foreground" onClick={() => setExpanded(value => !value)}>
-                {expanded ? 'Show less' : `Show all ${DESKTOP_WORKSPACE_ICONS.length}`}
+                {expanded ? t('workspaceForm.showLess') : t('workspaceForm.showAll', { count: DESKTOP_WORKSPACE_ICONS.length })}
             </Button>
         </div>
     )

@@ -37,7 +37,8 @@ export function DesktopThreadBranch({ thread, needsYou, onOpen }: { thread: Desk
                     <Stripes fade="right" color={THREAD_STRIPES_INK} band={4} period={8} className="rotate-180 opacity-60 transition-opacity group-hover:opacity-100" />
                     {state === 'live' && <span role="img" aria-label={t('running')}><StateDot state="live" /></span>}
                     {automated && <SourceIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
-                    <span className={cn('min-w-0 truncate font-medium', state === 'error' && automated && 'text-destructive')}>{thread.title}</span>
+                    <span className={cn('min-w-0 truncate font-medium',
+                        automated && (state === 'error' ? 'text-destructive' : thread.automationOutcome === 'nothing' && 'text-muted-foreground'))}>{thread.title}</span>
                     {(state === 'needs' || state === 'error') && <Badge size="xs" tone={state === 'needs' ? 'orange' : 'red'} glow={false} className="shrink-0">{t(state)}</Badge>}
                     {when && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{when}</span>}
                     <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />

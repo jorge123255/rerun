@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { rename, writeFile } from 'node:fs/promises'
-import { boxPlanSchema, trialModelFor, type BoxPlan, type Provider } from '@rerun/contracts'
+import { boxPlanSchema, isDesktopSubscriptionProvider, trialModelFor, type BoxPlan, type Provider } from '@rerun/contracts'
 import { boxPlanPath } from '../config/paths.js'
 import { clearAgentCache } from '../agents/registry.js'
+import { desktopApp } from '../desktop/policy.js'
 
 const UNRESTRICTED: BoxPlan = { premiumModels: true }
 
@@ -32,8 +33,9 @@ export async function writeBoxPlan(next: BoxPlan): Promise<BoxPlan> {
     return next
 }
 
-// The model a run really gets. The pin itself is never rewritten, so paying gives Opus back to every
-// agent that asked for it.
+// Hosted box plans can substitute a model at run time. The Mac uses its own connections and keeps
+// the selected model even if its data directory contains a plan from a hosted box.
 export function allowedModel(provider: Provider, model: string): string {
-    return provider === 'custom' || readBoxPlan().premiumModels ? model : trialModelFor(provider, model)
+    if (desktopApp() || provider === 'custom' || provider === 'opencode' || isDesktopSubscriptionProvider(provider)) return model
+    return readBoxPlan().premiumModels ? model : trialModelFor(provider, model)
 }

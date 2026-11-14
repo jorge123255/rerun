@@ -126,6 +126,55 @@ test('probes before create, then keeps a typed model when the server lists none'
     expect(client.probe).toHaveBeenCalled()
 })
 
+test('a new endpoint origin does not inherit the draft key or unlisted model', async () => {
+    const { client } = await mount()
+    await typeInto('Base URL', 'https://api.groq.com/openai/v1')
+    await typeInto('API key', 'synthetic-key-for-first-origin')
+    await act(async () => { button('Connect').click() })
+    await flush()
+    await typeInto('Model id', 'first-origin-model')
+    await typeInto('Base URL', 'https://api.together.xyz/v1')
+    expect(field('API key').value).toBe('')
+    expect(document.body.textContent).not.toContain('Model id')
+    expect(button('Connect').disabled).toBe(true)
+    await act(async () => { button('Connect').click() })
+    expect(client.probeDraft).toHaveBeenCalledTimes(1)
+    await typeInto('API key', 'synthetic-key-for-second-origin')
+    await act(async () => { button('Connect').click() })
+    await flush()
+    expect(client.probeDraft.mock.calls[1]?.[0]).toMatchObject({
+        baseUrl: 'https://api.together.xyz/v1', apiKey: 'synthetic-key-for-second-origin',
+    })
+    expect(client.probeDraft.mock.calls[1]?.[0]).not.toHaveProperty('manualModel')
+})
+
+test('editing a saved endpoint requires an explicit key decision for a different origin', async () => {
+    const client = adapter()
+    client.read.mockResolvedValue({ ok: true, value: snapshot({ configuredSecret: true }) })
+    await mount({ identity, adapter: client })
+    await typeInto('API key', 'synthetic-replacement-for-local')
+    await typeInto('Base URL', 'https://api.x.ai/v1')
+    await blur('Base URL')
+    expect(field('API key').value).toBe('')
+    expect(button('Save').disabled).toBe(true)
+    expect(document.body.textContent).toContain('Enter a key for the new server or remove the saved key before saving.')
+    await act(async () => { button('Save').click() })
+    expect(client.change).not.toHaveBeenCalled()
+})
+
+test('a confirmed catalog refresh reloads the available reasoning choices in parent Settings', async () => {
+    const client = adapter()
+    const onCatalogChanged = vi.fn()
+    client.probe.mockResolvedValue({ ok: true, value: probe({
+        status: 'fresh', problem: null, manualModel: null, manualUsable: false,
+        models: [{ ...manual, source: 'discovered', reasoning: { supported: ['low', 'xhigh'], default: 'low' } }],
+    }) })
+    await mount({ identity, adapter: client, onCatalogChanged })
+    await act(async () => { button('Retry').click() })
+    await flush()
+    expect(onCatalogChanged).toHaveBeenCalledOnce()
+})
+
 test('an uncertain create is retried with the same request and an edited save waits', async () => {
     const client = adapter()
     client.change.mockImplementation(async (body: CustomProviderChange) => ({

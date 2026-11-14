@@ -46,7 +46,7 @@ async function readStopBody(request: Request, signal: AbortSignal): Promise<unkn
     return JSON.parse(text)
 }
 
-export function delegationApi(runtime: DelegationRuntime, authorize: DelegationSessionAuthority) {
+export function delegationApi(runtime: Pick<DelegationRuntime, 'list' | 'stop'>, authorize: DelegationSessionAuthority) {
     return async (request: Request, sessionId: string): Promise<Response> => {
         const signal = AbortSignal.any([request.signal, AbortSignal.timeout(10_000)])
         try {

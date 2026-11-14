@@ -15,6 +15,45 @@ export function bindDesktopSkillOwnerReader(reader: Reader): void { globals[read
 const projection = z.object({ engineAgentId: z.string(), owners: z.array(z.object({
     slug: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), name: z.string().max(256),
 }).strict()).max(2048) }).strict()
+const vaultProjection = z.object({ engineAgentId: z.string(), hidden: z.array(z.string().regex(/^svc-[a-f0-9]{16,24}-[0-9]+(?:-pending)?$/)).max(8192) }).strict()
+
+async function skillBridge(workspace: string, signal: AbortSignal, syncVault?: true) {
+    const engineAgentId = basename(dirname(workspace)), root = process.env.RERUN_DATA_DIR
+    if (!root || !/^[A-Za-z0-9_-]{1,128}$/.test(engineAgentId) || resolve(/* turbopackIgnore: true */ workspace) !== join(/* turbopackIgnore: true */ resolve(/* turbopackIgnore: true */ root), 'agents', engineAgentId, 'workspace')) throw unavailable()
+    const origin = new URL(process.env.RERUN_HUB_BASE_URL ?? '')
+    const token = process.env.RERUN_API_KEY
+    if (origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1' || !origin.port || origin.pathname !== '/' || origin.username || origin.password || origin.search || origin.hash || !token) throw unavailable()
+    const response = await fetch(`${origin.origin}/api/desktop/internal/service-skills`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engineAgentId, syncVault }), signal, redirect: 'error', credentials: 'omit', cache: 'no-store',
+    })
+    const reader = response.body?.getReader()
+    if (!reader) throw unavailable()
+    const chunks: Uint8Array[] = []; let size = 0
+    try {
+        for (;;) {
+            const part = await reader.read(); signal.throwIfAborted()
+            if (part.done) break
+            size += part.value.byteLength
+            if (size > 524_288) throw unavailable()
+            chunks.push(part.value)
+        }
+        if (!response.ok) throw unavailable()
+        const result = (syncVault ? vaultProjection : projection).parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+        if (result.engineAgentId !== engineAgentId) throw unavailable()
+        return result
+    } finally { void reader.cancel().catch(() => {}) }
+}
+
+export async function syncDesktopVaultSkillVisibility(workspace: string, stop?: AbortSignal) {
+    const signal = AbortSignal.any([...(stop ? [stop] : []), AbortSignal.timeout(10_000)])
+    signal.throwIfAborted()
+    // In-process owner readers are used by UI publication and isolated engine fixtures.
+    if (!desktopSkillAuthorityRequired() || globals[readerKey]) return new Set<string>()
+    const result = await skillBridge(workspace, signal, true)
+    if (!('hidden' in result)) throw unavailable()
+    return new Set(result.hidden)
+}
 
 export async function trustedSkillOwners(workspace: string, stop?: AbortSignal): Promise<Map<string, string>> {
     const signal = AbortSignal.any([...(stop ? [stop] : []), AbortSignal.timeout(10_000)])
@@ -22,31 +61,9 @@ export async function trustedSkillOwners(workspace: string, stop?: AbortSignal):
     let owners: Map<string, string>
     if (globals[readerKey]) owners = await globals[readerKey]!(workspace, signal)
     else {
-        const engineAgentId = basename(dirname(workspace)), root = process.env.RERUN_DATA_DIR
-        if (!root || !/^[A-Za-z0-9_-]{1,128}$/.test(engineAgentId) || resolve(/* turbopackIgnore: true */ workspace) !== join(/* turbopackIgnore: true */ resolve(/* turbopackIgnore: true */ root), 'agents', engineAgentId, 'workspace')) throw unavailable()
-        const origin = new URL(process.env.RERUN_HUB_BASE_URL ?? '')
-        const token = process.env.RERUN_API_KEY
-        if (origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1' || !origin.port || origin.pathname !== '/' || origin.username || origin.password || origin.search || origin.hash || !token) throw unavailable()
-        const response = await fetch(`${origin.origin}/api/desktop/internal/service-skills`, {
-            method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ engineAgentId }), signal, redirect: 'error', credentials: 'omit', cache: 'no-store',
-        })
-        const reader = response.body?.getReader()
-        if (!reader) throw unavailable()
-        const chunks: Uint8Array[] = []; let size = 0
-        try {
-            for (;;) {
-                const part = await reader.read(); signal.throwIfAborted()
-                if (part.done) break
-                size += part.value.byteLength
-                if (size > 262_144) throw unavailable()
-                chunks.push(part.value)
-            }
-            if (!response.ok) throw unavailable()
-            const parsed = projection.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
-            if (parsed.engineAgentId !== engineAgentId) throw unavailable()
-            owners = new Map(parsed.owners.map(owner => [owner.slug, owner.name]))
-        } finally { void reader.cancel().catch(() => {}) }
+        const result = await skillBridge(workspace, signal)
+        if (!('owners' in result)) throw unavailable()
+        owners = new Map(result.owners.map(owner => [owner.slug, owner.name]))
     }
     // Unacknowledged, legacy and forged resources in the reserved namespace stay protected.
     const entries = await readdir(/* turbopackIgnore: true */ join(/* turbopackIgnore: true */ dirname(workspace), 'skills')).catch((error: NodeJS.ErrnoException) => {

@@ -61,10 +61,10 @@ export function createForemanWorkspaceReadTools(ports: ForemanWorkspaceReadPorts
         ctx.signal.throwIfAborted()
         await ctx.assertCurrent()
         if (await ports.grant(workspaceId) !== true) throw new Error(M.refused)
-        const first = classify(parseForemanWorkspaceSnapshot(await ports.snapshot(workspaceId)), workspaceId)
+        const first = classify(parseForemanWorkspaceSnapshot(await ports.snapshot(ctx.binding, ctx.signal)), workspaceId)
         await ctx.assertCurrent()
         if (await ports.grant(workspaceId) !== true) throw new Error(M.refused)
-        const second = classify(parseForemanWorkspaceSnapshot(await ports.snapshot(workspaceId)), workspaceId)
+        const second = classify(parseForemanWorkspaceSnapshot(await ports.snapshot(ctx.binding, ctx.signal)), workspaceId)
         await ctx.assertCurrent()
         if (await ports.grant(workspaceId) !== true) throw new Error(M.refused)
         if (foremanWorkspaceFingerprint(first) !== foremanWorkspaceFingerprint(second)) throw new Error(M.stale)
@@ -94,14 +94,16 @@ export function createForemanWorkspaceReadTools(ports: ForemanWorkspaceReadPorts
         if (!listed || listed.acknowledgement !== 'ready') throw new Error(M.unavailable)
         await ctx.assertCurrent()
         if (await ports.grant(ctx.binding.workspaceId) !== true) throw new Error(M.refused)
-        const again = classify(parseForemanWorkspaceSnapshot(await ports.snapshot(ctx.binding.workspaceId)), ctx.binding.workspaceId)
+        const again = classify(parseForemanWorkspaceSnapshot(await ports.snapshot(ctx.binding, ctx.signal)), ctx.binding.workspaceId)
+        await ctx.assertCurrent()
+        if (await ports.grant(ctx.binding.workspaceId) !== true) throw new Error(M.refused)
         if (foremanWorkspaceFingerprint(snapshot) !== foremanWorkspaceFingerprint(again)) throw new Error(M.stale)
         const members = new Map(listed.value.map(member => [member.publicId, member]))
         if (!sameIds(snapshot.roster.map(row => row.id), [...members.keys()])) throw new Error(M.unavailable)
         const rows = snapshot.roster.map(row => {
             const member = members.get(row.id)
             if (!member || member.publicId !== row.id) throw new Error(M.unavailable)
-            if (member.spaceId && row.spaceId && member.spaceId !== row.spaceId) throw new Error(M.stale)
+            if (member.spaceId !== row.spaceId || member.name !== row.name || member.enabled !== row.enabled) throw new Error(M.stale)
             return {
                 ...row,
                 name: member.name,

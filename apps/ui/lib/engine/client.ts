@@ -4,8 +4,12 @@ import type { DesktopTakeoverGuard } from '@rerun/contracts'
 import { z } from 'zod'
 import {
     type BoxDefaultUpdate,
+    type ModelEfforts,
+    type ModelEffortUpdate,
+    modelEffortsSchema,
     ENGINE_CAPABILITY_DESKTOP,
     desktopStatusSchema,
+    desktopScheduledRunSchema,
     desktopThreadMetadataListSchema,
     takeoverResultSchema,
     type DesktopApp,
@@ -185,6 +189,10 @@ export async function listConnections(conn: EngineConnection, init: RequestInit 
 }
 
 // The pair every agent that picked no model of its own runs on. `null` clears it.
+export async function setModelEffort(conn: EngineConnection, update: ModelEffortUpdate): Promise<{ efforts: ModelEfforts }> {
+    return request(conn, '/connections/model-effort', { method: 'PUT', body: JSON.stringify(update) }, d => z.object({ efforts: modelEffortsSchema }).parse(d))
+}
+
 export async function setBoxDefault(conn: EngineConnection, pick: BoxDefaultUpdate | null): Promise<void> {
     if (!pick) {
         await request(conn, '/connections/default', { method: 'DELETE' }, () => undefined)
@@ -311,6 +319,8 @@ export async function listAgentTools(conn: EngineConnection, agentId: string): P
 // be turned into a write by a crafted statement. `base` picks which database is addressed,
 // exactly like the files router: an agent's private one, or the one shared by the whole Box.
 export const agentDataBase = (agentId: string) => `/agents/${encodeURIComponent(agentId)}/data`
+
+export const agentFilesBase = (agentId: string) => `/agents/${encodeURIComponent(agentId)}/files`
 export const SPACE_DATA_BASE = '/shared/data'
 
 export async function listDbTables(conn: EngineConnection, base: string): Promise<EngineDbTable[]> {
@@ -462,8 +472,9 @@ export async function getSession(conn: EngineConnection, agentId: string, sessio
     return engineSessionSchema.parse(await res.json())
 }
 
-export async function getSessionMessages(conn: EngineConnection, agentId: string, sessionId: string, options: { requireSuccess?: boolean; signal?: AbortSignal } = {}): Promise<EngineMessage[]> {
-    const path = `/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/messages`
+export async function getSessionMessages(conn: EngineConnection, agentId: string, sessionId: string, options: { requireSuccess?: boolean; signal?: AbortSignal; desktopDecisions?: boolean } = {}): Promise<EngineMessage[]> {
+    const path = `/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/messages` +
+        (options.desktopDecisions ? '?view=desktop-decisions' : '')
     try {
         return await request(conn, path, { method: 'GET', signal: options.signal }, body => engineMessagesListSchema.parse(body).messages)
     } catch (cause) {
@@ -775,8 +786,13 @@ export async function runScheduleNow(conn: EngineConnection, agentId: string, sl
     return request(conn, `/agents/${encodeURIComponent(agentId)}/schedules/${encodeURIComponent(slug)}/run`, { method: 'POST' }, d => d as { runId: string; sessionId: string })
 }
 
-export async function deleteSchedule(conn: EngineConnection, agentId: string, slug: string): Promise<void> {
-    const res = await fetch(`${conn.baseUrl}/agents/${encodeURIComponent(agentId)}/schedules/${encodeURIComponent(slug)}`, { method: 'DELETE', headers: buildHeaders(conn) })
+export async function deleteSchedule(conn: EngineConnection, agentId: string, slug: string, condition?: { expectedRevision: string; signal?: AbortSignal }): Promise<void> {
+    const path = `/agents/${encodeURIComponent(agentId)}/schedules/${encodeURIComponent(slug)}`
+    if (condition) {
+        await request(conn, path, { method: 'DELETE', headers: { 'x-desktop-schedule-revision': condition.expectedRevision }, signal: condition.signal }, body => z.object({ deleted: z.literal(slug) }).parse(body))
+        return
+    }
+    const res = await fetch(`${conn.baseUrl}${path}`, { method: 'DELETE', headers: buildHeaders(conn) })
     if (!res.ok && res.status !== 404) {
         const body = await res.text().catch(() => 'Unknown error')
         throw new Error(`rerun-engine DELETE /agents/${agentId}/schedules/${slug} failed: ${res.status} ${body}`)
@@ -855,15 +871,21 @@ export async function requestEngineUpdate(conn: EngineConnection, force = false,
 
 // --- Runs (execution history) ---
 
-export type RunFilter = { limit?: number; sessionId?: string; status?: EngineRun['status'] }
+export type RunFilter = { limit?: number; sessionId?: string; status?: EngineRun['status']; scheduleSlug?: string }
 
-// An engine that predates `session` / `status` ignores them and returns its most recent runs, so
+export async function listLatestScheduleRuns(conn: EngineConnection, agentId: string, signal?: AbortSignal) {
+    return request(conn, `/agents/${encodeURIComponent(agentId)}/runs/latest-scheduled`, { method: 'GET', signal },
+        data => z.object({ runs: z.array(desktopScheduledRunSchema) }).parse(data).runs)
+}
+
+// An engine that predates a filter ignores it and returns its most recent runs, so
 // callers keep filtering what comes back.
-export async function listRuns(conn: EngineConnection, agentId: string, { limit, sessionId, status }: RunFilter = {}, options: { signal?: AbortSignal } = {}): Promise<EngineRun[]> {
+export async function listRuns(conn: EngineConnection, agentId: string, { limit, sessionId, status, scheduleSlug }: RunFilter = {}, options: { signal?: AbortSignal } = {}): Promise<EngineRun[]> {
     const params = new URLSearchParams()
     if (limit) params.set('limit', String(limit))
     if (sessionId) params.set('session', sessionId)
     if (status) params.set('status', status)
+    if (scheduleSlug) params.set('schedule', scheduleSlug)
     const qs = params.size > 0 ? `?${params}` : ''
     return request(conn, `/agents/${encodeURIComponent(agentId)}/runs${qs}`, { method: 'GET', signal: options.signal }, d => engineRunsListSchema.parse(d).runs)
 }
@@ -878,6 +900,7 @@ export const engineRunCompletionSchema = z.object({
     runId: z.string().nullable(),
     source: z.enum(['chat', 'schedule', 'trigger']),
     slug: z.string().nullable(),
+    sourceName: z.string().max(200).optional(),
     completedAt: z.string(),
     text: z.string().nullable(),
     provider: z.string().nullable(),

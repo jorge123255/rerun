@@ -3,6 +3,7 @@
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { entriesFromFileList, type UploadEntry } from '@/lib/files/upload'
+import { useFileTranslations } from '@/lib/files/translations'
 import { FolderUpIcon, UploadIcon } from '@/lib/icons'
 import { useRef } from 'react'
 
@@ -14,6 +15,7 @@ type FileUploadMenuProps = {
 // Picking files no longer blocks: the upload reports itself in the tray, so this stays a plain
 // trigger with no pending state of its own.
 export function FileUploadMenu({ onPick, disabled = false }: FileUploadMenuProps) {
+    const t = useFileTranslations()
     const fileInputRef = useRef<HTMLInputElement>(null)
     const folderInputRef = useRef<HTMLInputElement>(null)
 
@@ -29,18 +31,18 @@ export function FileUploadMenu({ onPick, disabled = false }: FileUploadMenuProps
             <input ref={folderInputRef} type="file" multiple className="hidden" onChange={handleChange} {...{ webkitdirectory: '' }} />
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon-sm" title="Upload" disabled={disabled}>
+                    <Button variant="ghost" size="icon-sm" title={t('upload.menu')} aria-label={t('upload.menu')} disabled={disabled}>
                         <UploadIcon className="size-3.5" />
                     </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                     <DropdownMenuItem className="whitespace-nowrap" onSelect={() => fileInputRef.current?.click()}>
                         <UploadIcon />
-                        Upload files
+                        {t('upload.files')}
                     </DropdownMenuItem>
                     <DropdownMenuItem className="whitespace-nowrap" onSelect={() => folderInputRef.current?.click()}>
                         <FolderUpIcon />
-                        Upload folder
+                        {t('upload.folder')}
                     </DropdownMenuItem>
                 </DropdownMenuContent>
             </DropdownMenu>

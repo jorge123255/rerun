@@ -157,3 +157,30 @@ test('a failed read clears the old target and foreign-only attention cannot rout
     expect(onOpenConversation).not.toHaveBeenCalled()
     await act(async () => { root.unmount() })
 })
+
+test('shows an unopened result on its coworker tile and opens the exact saved chat', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const at = '2026-11-04T12:00:00Z'
+    const fetcher = vi.fn(async (url: string) => {
+        if (url === '/api/desktop/board-activity') return withAttention({ researcher: 'idle', reviewer: 'idle' }, [])
+        return Response.json({ items: [{
+            id: 'done:result', agentId: 'researcher', agentName: 'Researcher', agentEnabled: true,
+            sessionId: 'result-chat', sessionIds: ['result-chat'], title: 'Morning result', message: 'The result',
+            source: 'chat', slug: null, count: 1, completedAt: at, completionIds: ['result-terminal'],
+        }], nextCursor: null, unavailableAgentIds: [], enabledAt: at, checkedAt: at })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container), onOpen = vi.fn(), onOpenConversation = vi.fn()
+    await act(async () => { root.render(<DesktopBoard agents={agents} workspaceName="W" onOpen={onOpen} onOpenConversation={onOpenConversation} onCreate={() => {}} />) })
+    const researcher = container.querySelector<HTMLElement>('[data-tile-id="researcher"]')!
+    const reviewer = container.querySelector<HTMLElement>('[data-tile-id="reviewer"]')!
+    expect(researcher.querySelector('.lucide-flag')).not.toBeNull()
+    expect(reviewer.querySelector('.lucide-flag')).toBeNull()
+    expect(fetcher.mock.calls.filter(([url]) => url === '/api/desktop/completions')).toHaveLength(1)
+    await act(async () => researcher.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+    expect(onOpenConversation).toHaveBeenCalledExactlyOnceWith({ id: 'result-chat', agentId: 'researcher', agentName: 'Researcher', title: 'Morning result' })
+    expect(onOpen).not.toHaveBeenCalled()
+    expect(fetcher.mock.calls.some(([url]) => url.endsWith('/read'))).toBe(false)
+    await act(async () => root.unmount())
+})

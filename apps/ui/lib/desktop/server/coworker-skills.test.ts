@@ -25,6 +25,9 @@ import {
     writeCoworkerSkillFile,
 } from './coworker-skills'
 import type { DesktopRuntime } from './runtime'
+import { createDesktopSecretCrypto } from './secret-requests/crypto'
+import { desktopVault } from './vault/store'
+import { handleDesktopServiceSkillOwners } from './service-skills/bridge'
 
 const originalHelper = process.env.RERUN_DESKTOP_RENAME_HELPER
 let helper: Awaited<ReturnType<typeof prepareSkillHelperFixture>>
@@ -217,6 +220,7 @@ describe('desktop coworker skills server', () => {
     afterEach(async () => {
         await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
         vi.restoreAllMocks()
+        vi.unstubAllEnvs()
         await closeDesktopDatabase(root)
         await rm(root, { recursive: true, force: true })
     })
@@ -239,6 +243,48 @@ describe('desktop coworker skills server', () => {
         await writeFile(join(skillFolder('from-app'), 'SKILL.md'), '---\nname: from-app\ndescription: App procedure\n---\n\nDo this.\n')
         const shelf = await listCoworkerSkills(runtime, agentId)
         expect(shelf.find(s => s.slug === 'from-app')?.fromConnector).toBe(true)
+    })
+
+    it('publishes and retracts only the assigned Vault app skill across reopen, while preserving an altered file', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const db = await openDesktopDatabase(root)
+        const vault = desktopVault(db, createDesktopSecretCrypto(() => Buffer.alloc(32, 17)), 1)
+        const [entry] = (await vault.mutate({ operation: 'add-app', slug: 'linear', methodId: 'oauth', values: {} }, () => {})).entries
+        await mkdir(skillFolder('linear-usage'), { recursive: true })
+        const personal = '---\nname: linear-usage\ndescription: Personal notes\n---\n\nUser-authored content.\n'
+        const personalFile = join(skillFolder('linear-usage'), 'SKILL.md')
+        await writeFile(personalFile, personal)
+        expect((await listCoworkerSkills(runtime, agentId)).filter(skill => skill.fromConnector)).toEqual([])
+        const attached = await vault.assignCoworker(agentId, { id: entry.id, revision: entry.revision, attached: true }, () => {})
+        const [owned] = (await listCoworkerSkills(runtime, agentId)).filter(skill => skill.fromConnector)
+        expect(owned?.name).toBe('linear-usage')
+        expect(owned?.slug).toMatch(/^svc-/)
+        expect((await getCoworkerSkill(runtime, agentId, owned.slug))?.body).toContain('Use the linear_* tools')
+        expect((await deleteCoworkerSkill(runtime, agentId, owned.slug)).error).toMatch(/read.only|managed/i)
+        const unauthorized = await handleDesktopServiceSkillOwners(new Request(runtime.app.origin + '/api/desktop/internal/service-skills', {
+            method: 'POST', body: JSON.stringify({ engineAgentId: 'engine-agent-1', syncVault: true }),
+        }))
+        expect(unauthorized.ok).toBe(false)
+
+        await closeDesktopDatabase(root)
+        const reopened = await openDesktopDatabase(root)
+        const next = desktopVault(reopened, createDesktopSecretCrypto(() => Buffer.alloc(32, 17)), 1)
+        expect((await listCoworkerSkills(runtime, agentId)).filter(skill => skill.fromConnector).map(skill => skill.slug)).toEqual([owned.slug])
+        const detached = await next.assignCoworker(agentId, { id: entry.id, revision: attached.attached[0].revision, attached: false }, () => {})
+        expect((await listCoworkerSkills(runtime, agentId)).map(skill => skill.slug)).toContain('linear-usage')
+        expect(await getCoworkerSkill(runtime, agentId, owned.slug)).toBeNull()
+        expect(existsSync(skillFolder(owned.slug))).toBe(false)
+        expect(await readFile(personalFile, 'utf8')).toBe(personal)
+        const reattached = await next.assignCoworker(agentId, { id: entry.id, revision: detached.available[0].revision, attached: true }, () => {})
+        const [copy] = (await listCoworkerSkills(runtime, agentId)).filter(skill => skill.fromConnector)
+        expect(copy?.slug).toBeTruthy()
+        expect(copy.slug).not.toBe(owned.slug)
+        const changedFile = join(skillFolder(copy.slug), 'SKILL.md')
+        await writeFile(changedFile, '---\nname: changed\n---\nPreserve this file.')
+        await next.mutate({ operation: 'delete', id: entry.id, revision: reattached.attached[0].revision }, () => {})
+        expect((await listCoworkerSkills(runtime, agentId)).some(skill => skill.slug === copy.slug)).toBe(false)
+        expect(await getCoworkerSkill(runtime, agentId, copy.slug)).toBeNull()
+        expect(await readFile(changedFile, 'utf8')).toContain('Preserve this file.')
     })
 
     it('creates a skill on disk without calling the engine import', async () => {

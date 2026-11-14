@@ -1,5 +1,5 @@
 import { APICallError, LoadAPIKeyError, RetryError } from 'ai'
-import { CONTEXT_WINDOW, PROVIDER_OVERLOADED, SUBSCRIPTION_LIMIT, type Provider } from '@rerun/contracts'
+import { CONTEXT_WINDOW, OPENAI_API_CREDITS_USED_UP, PROVIDER_API_CREDITS_USED_UP, PROVIDER_OVERLOADED, SUBSCRIPTION_LIMIT, type Provider } from '@rerun/contracts'
 import { isRerunBudgetError, RERUN_BUDGET_ERROR_CODE } from './budget-latch.js'
 
 export const RUN_ERROR_CODES = {
@@ -112,6 +112,23 @@ export function refusalReason(error: unknown): string | null {
     return /^provider returned error$/i.test(error.message.trim()) ? null : error.message
 }
 
+function isInsufficientQuota(value: unknown): boolean {
+    if (typeof value !== 'object' || value === null) return false
+    const body = value as { code?: unknown; error?: { code?: unknown } }
+    return body.code === 'insufficient_quota' || body.error?.code === 'insufficient_quota'
+}
+
+/** A durable, provider-scoped notice. Do not attach raw billing links or error bodies. */
+export function apiCreditsMessage(provider: string, error: unknown): string | null {
+    const cause = RetryError.isInstance(error) ? error.lastError : error
+    const quota = APICallError.isInstance(cause)
+        ? isInsufficientQuota(cause.data) || isInsufficientQuota(cause.responseBody ? parseJson(cause.responseBody) : null)
+        : isInsufficientQuota(cause)
+    const noCredits = /no credits remaining/i.test(errorText(cause))
+    if (!quota && !noCredits) return null
+    return provider === 'openai' ? OPENAI_API_CREDITS_USED_UP : PROVIDER_API_CREDITS_USED_UP
+}
+
 function apiCallErrorCode(error: unknown): RunErrorCode | null {
     if (!APICallError.isInstance(error)) return null
     const data = error.data as { exitCode?: unknown; code?: unknown } | undefined
@@ -124,6 +141,7 @@ function apiCallErrorCode(error: unknown): RunErrorCode | null {
 
 export function classifyProviderError(provider: Provider, error: unknown): RunErrorCode | null {
     if (provider === 'rerun' && isRerunBudgetError(error)) return RERUN_BUDGET_ERROR_CODE
+    if (apiCreditsMessage(provider, error)) return RUN_ERROR_CODES.usageLimit
     const text = `${errorText(error)} ${upstreamReason(error) ?? ''}`
     // Both CLIs surface a spent subscription as free text on a generic error, with no status code
     // and no error kind of their own. Claude Code names the window that ran out rather than saying

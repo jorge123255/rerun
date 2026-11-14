@@ -41,14 +41,16 @@ export async function handleDesktopWebSearch(request: Request) {
         const owner = await getDesktopRemoteMcpService(runtime), db = await openDesktopDatabase(runtime.dataRoot)
         const localOwner = await owner.authorizeRun({ engineAgentId: body.identity.agentId, sessionId: body.identity.sessionId, runId: body.identity.runId }, signal, 'webSearch')
         const credentials = desktopAuxiliaryStore(db), backend = desktopAuxiliaryBackends(credentials)
-        const configured = await credentials.read('search')
+        const { credential, generation } = await credentials.readSearch()
         const service = createDesktopWebSearchService({
             authority: async (identity, stop) => {
                 await owner.authorizeRun({ engineAgentId: identity.agentId, sessionId: identity.sessionId, runId: identity.runId }, stop, 'webSearch')
-                return { adapterGeneration: (await credentials.read('search')).revision }
+                return { adapterGeneration: (await credentials.readSearch()).generation }
             },
-            adapter: configured.key ? { generation: configured.revision, search: input => backend.search(input, configured.revision, input.signal) } : null,
-            readiness: async () => ({ status: configured.key ? 'ready' : 'unconfigured', retryable: false, message: configured.key ? 'Brave Search key saved.' : 'Add a Brave Search key in Settings → Tool services.' }),
+            adapter: credential ? { generation, search: input => backend.search(input, generation, input.signal) } : null,
+            readiness: async () => credential
+                ? { status: 'ready', retryable: false, message: credential.provider === 'brave' ? 'Brave Search key saved.' : 'Keirolabs key saved.' }
+                : { status: 'unconfigured', retryable: false, message: 'Add a Brave Search or Keirolabs key in Settings → Tool services.' },
             outcomes: desktopSearchOutcomes(db, localOwner),
         })
         return Response.json(await service.search(body.identity, body.input, signal), { headers })

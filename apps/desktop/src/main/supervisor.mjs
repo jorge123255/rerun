@@ -5,7 +5,7 @@ import { createServer } from 'node:net'
 import { isAbsolute, resolve } from 'node:path'
 import { lstat, rm, realpath } from 'node:fs/promises'
 import { workspaceDirectory, validWorkspaceId } from './workspaces/paths.mjs'
-import { atomicPrivateJSON, bindWorkspace, childEnvironment, publicStatus, PROTOCOL_VERSION, workspaceIdentity } from './runtime.mjs'
+import { atomicPrivateJSON, bindWorkspace, childEnvironment, PROTOCOL_VERSION, workspaceIdentity } from './runtime.mjs'
 
 const wait = ms => new Promise(done => setTimeout(done, ms))
 const SHUTDOWN_DIAGNOSTIC_EVENTS = new Set([
@@ -23,13 +23,13 @@ export async function candidatePort() {
 }
 
 export class RuntimeSupervisor extends EventEmitter {
-    constructor({ bundle, root, identity, launch = spawn, fetcher = fetch, port = candidatePort, startupTimeout = 60000, stopTimeout = 35000 }) {
+    constructor({ bundle, root, identity, appStoreBuild = false, systemLanguages = [], launch = spawn, fetcher = fetch, port = candidatePort, startupTimeout = 60000, stopTimeout = 35000 }) {
         super()
-        Object.assign(this, { bundle, root, identity, launch, fetcher, port, startupTimeout, stopTimeout })
+        Object.assign(this, { bundle, root, identity, appStoreBuild, systemLanguages, launch, fetcher, port, startupTimeout, stopTimeout })
         // Engine drains include a 25-second isolated-screen close plus final worker cleanup.
         // Wait for their acknowledgement without treating a legitimate drain as a failure.
         this.children = new Set()
-        this.status = publicStatus('stopped')
+        this.status = { state: 'stopped' }
         this.operation = null
         this.stopping = false
         this.shutdownEvents = []
@@ -74,8 +74,8 @@ export class RuntimeSupervisor extends EventEmitter {
         }).catch(() => {}) // Diagnostics must never change shutdown success or failure.
     }
 
-    publish(state, message = '') {
-        this.status = publicStatus(state, message)
+    publish(state, messageKey) {
+        this.status = { state, messageKey }
         this.emit('status', this.status)
     }
 
@@ -101,7 +101,7 @@ export class RuntimeSupervisor extends EventEmitter {
             this.children.delete(child)
             if (!this.cleaning && !this.stopping && this.status.state === 'starting') startup?.abort()
             if (!this.stopping && this.status.state === 'ready') {
-                this.publish('error', 'A local service stopped. Retry to restart the app services.')
+                this.publish('error', 'serviceStopped')
                 void this.stop({ preserveError: true }).catch(() => {})
             }
         })
@@ -127,7 +127,7 @@ export class RuntimeSupervisor extends EventEmitter {
 
     async startServices() {
         this.stopping = false
-        this.publish('starting', 'Starting your local workspace…')
+        this.publish('starting', 'starting')
         const workspaceId = this.workspaceId ?? 1
         const installRoot = await realpath(this.root)
         const engineRoot = await bindWorkspace(installRoot, this.identity, workspaceId)
@@ -148,14 +148,24 @@ export class RuntimeSupervisor extends EventEmitter {
                 const runtimeFile = resolve(this.root, 'runtime.json')
                 await atomicPrivateJSON(runtimeFile, runtime)
                 const shared = { ...childEnvironment(), RERUN_DESKTOP_APP: '1', RERUN_DESKTOP_DATA_DIR: dataRoot, RERUN_DESKTOP_RUNTIME_FILE: runtimeFile, RERUN_DESKTOP_SECRET_KEY: identity.encryptionKey, RERUN_DESKTOP_WORKSPACE_ID: String(workspaceId), RERUN_DESKTOP_INSTALL_ROOT: installRoot, RERUN_DESKTOP_INSTALL_DIR: installRoot, RERUN_DESKTOP_ENGINE_ROOT: engineRoot, RERUN_DESKTOP_WORKSPACE_NAME: this.workspaceMetadata?.name || 'My workspace', RERUN_DESKTOP_WORKSPACE_ICON: this.workspaceMetadata?.iconCatalogId || '', RERUN_DESKTOP_ADMISSIONS_FROZEN: this.workspaceMetadata?.frozen ? '1' : '0' }
-                const ui = this.spawnOwned([this.bundle.uiHost], { ...shared, RERUN_DESKTOP_UI_ROOT: this.bundle.uiRoot, RERUN_DESKTOP_RENAME_HELPER: this.bundle.renameHelperPath, RERUN_DESKTOP_PDF_HELPER: this.bundle.pdfHelperPath, RERUN_DESKTOP_PDF_TEXT_HELPER: this.bundle.pdfTextHelperPath, PORT: String(uiPort), HOSTNAME: '127.0.0.1' }, undefined, 'ui')
+                if (this.appStoreBuild) shared.RERUN_DESKTOP_APP_STORE = '1'
+                const ui = this.spawnOwned([this.bundle.uiHost], { ...shared, RERUN_DESKTOP_SYSTEM_LANGUAGES: this.systemLanguages.join(','), RERUN_DESKTOP_UI_ROOT: this.bundle.uiRoot, RERUN_DESKTOP_RENAME_HELPER: this.bundle.renameHelperPath, RERUN_DESKTOP_PDF_HELPER: this.bundle.pdfHelperPath, RERUN_DESKTOP_PDF_TEXT_HELPER: this.bundle.pdfTextHelperPath, PORT: String(uiPort), HOSTNAME: '127.0.0.1' }, undefined, 'ui')
                 await this.waitForHealth(ui, `${runtime.app.origin}/api/desktop/health`, { Cookie: `rerun-desktop-session=${runtime.app.sessionToken}` }, runtime)
                 const engine = this.spawnOwned([this.bundle.engineEntry, 'desktop-run'], {
                     ...shared, RERUN_HOST: '127.0.0.1', RERUN_PORT: String(enginePort), RERUN_API_KEY: identity.engineApiKey,
                     RERUN_DATA_DIR: engineRoot, RERUN_HUB_BASE_URL: runtime.app.origin, RERUN_DESKTOP: 'off',
-                    RERUN_DESKTOP_CODEX_RUNNER: this.bundle.codexPath,
-                    RERUN_DESKTOP_CLAUDE_RUNNER: this.bundle.claudePath,
-                    RERUN_DESKTOP_CLAUDE_SANDBOX: this.bundle.claudeSandboxPath,
+                    // App Sandbox can host the services. Its children cannot start the
+                    // separate Seatbelt profiles used by these subscription and command runners.
+                    ...(!this.appStoreBuild && {
+                        RERUN_DESKTOP_CODEX_RUNNER: this.bundle.codexPath,
+                        RERUN_DESKTOP_CLAUDE_RUNNER: this.bundle.claudePath,
+                        RERUN_DESKTOP_CLAUDE_SANDBOX: this.bundle.claudeSandboxPath,
+                        RERUN_DESKTOP_GROK_BUILD_RUNNER: this.bundle.grokBuildPath,
+                        RERUN_DESKTOP_KIMI_CODE_RUNNER: this.bundle.kimiCodePath,
+                        RERUN_DESKTOP_DEVIN_RUNNER: this.bundle.devinPath,
+                        RERUN_DESKTOP_SUBSCRIPTION_SANDBOX: this.bundle.subscriptionSandboxPath,
+                        RERUN_DESKTOP_SUBSCRIPTION_LOGIN_SANDBOX: this.bundle.subscriptionLoginSandboxPath,
+                    }),
                     RERUN_DESKTOP_RENAME_HELPER: this.bundle.renameHelperPath,
                 }, runtime.launchNonce)
                 const ready = await this.waitForEngine(engine, runtime)
@@ -170,8 +180,8 @@ export class RuntimeSupervisor extends EventEmitter {
                 await this.stopChildren()
                 if (attempt === 2 || this.stopping) {
                     await rm(resolve(this.root, 'runtime.json'), { force: true })
-                    this.publish('error', 'The local services could not start. Retry, or check the bundled runtime installation.')
-                    throw new Error(this.status.message)
+                    this.publish('error', 'servicesFailed')
+                    throw new Error('The local services could not start')
                 }
             }
         }
@@ -307,7 +317,7 @@ export class RuntimeSupervisor extends EventEmitter {
         this.shutdownDiagnostic('stop-requested')
         this.stopping = true
         this.startupAbort?.abort()
-        if (!preserveError) this.publish('stopping', 'Closing local services…')
+        if (!preserveError) this.publish('stopping', 'stopping')
         try {
             if (this.runtime && this.toolsDrainedRuntime !== this.runtime) await this.confirmToolsStopped(this.runtime)
             if (!await this.stopChildren(false)) throw new Error('Local service cleanup was not confirmed')
@@ -323,7 +333,7 @@ export class RuntimeSupervisor extends EventEmitter {
             this.shutdownDiagnostic('stop-failed', undefined, { confirmed: false })
             await this.shutdownDiagnosticWrites
             this.stopping = false
-            this.publish('error', 'A local program or service could not confirm it stopped. Quit was cancelled. Try again before reopening the workspace.')
+            this.publish('error', 'shutdownFailed')
             throw error
         }
     }

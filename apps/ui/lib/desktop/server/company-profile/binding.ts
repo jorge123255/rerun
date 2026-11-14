@@ -83,7 +83,7 @@ export function createDesktopCompanyProfileBinding(
         models: { decision: selected, profile: selected },
         engine: options?.engine ?? createDesktopCompanyProfileEngineClient(runtime),
         collector: options?.collector ?? collectDesktopCompanyProfileEvidence,
-        actor: options?.actor ?? createDesktopLocalProfileActorAuthority(app.db),
+        actor: options?.actor ?? createDesktopLocalProfileActorAuthority(runtime),
         now: options?.now,
     })
     let ready: Promise<void> | null = null

@@ -1,9 +1,12 @@
 // @vitest-environment happy-dom
 // Authored only: root owns execution and native restart acceptance.
+import { loadMessages } from '@rerun/i18n/messages'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
+import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
 import type { DesktopAgentView } from './DesktopApp'
+import { DesktopLocale } from './DesktopLocale'
 import { DesktopCoworkerSetup } from './DesktopCoworkerSetup'
 
 type EditorProps = Parameters<typeof import('./setup/DesktopAgentPanelSetup')['DesktopAgentPanelSetup']>[0]
@@ -27,9 +30,10 @@ const click = (label: string) => act(async () => {
 const escape = () => act(async () => {
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
 })
-async function render(owner = agent(), control?: Parameters<typeof DesktopCoworkerSetup>[0]['dialogControl']) {
+async function render(owner = agent(), control?: Parameters<typeof DesktopCoworkerSetup>[0]['dialogControl'], language?: DesktopLanguage) {
     if (!root) root = createRoot(document.body.appendChild(document.createElement('div')))
-    await act(async () => { root!.render(<DesktopCoworkerSetup agent={owner} dialogControl={control} />) })
+    const setup = <DesktopCoworkerSetup agent={owner} dialogControl={control} />
+    await act(async () => { root!.render(language ? <DesktopLocale initial={language}>{setup}</DesktopLocale> : setup) })
 }
 afterEach(async () => {
     await act(async () => { root?.unmount() })
@@ -95,4 +99,18 @@ test('controlled opening stays scoped and a removed owner cannot close the new o
     expect(onOpenChange).not.toHaveBeenCalled()
     await act(async () => { editor.current!.onCancel!() })
     expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false)
+})
+
+test('the Install dialog and discard actions use the selected workspace language', async () => {
+    const source = await loadMessages('fr')
+    await render(agent(), undefined, { locale: 'fr', preference: 'fr', messages: desktopMessages('fr', source) })
+    await click(source.agent.agentTabs.setup.label)
+    expect(dialog()?.querySelector('h2')?.textContent).toBe(source.agent.agentTabs.setup.label)
+    expect(dialog()?.textContent).toContain(source.agent.agentTabs.setup.description)
+    await act(async () => { editor.current!.onDirtyChange!(true) })
+    await click(source.kit.close)
+    expect(confirm()?.textContent).toContain('Ignorer les modifications de l’installation ?')
+    await click('Continuer la modification')
+    expect(confirm()).toBeNull()
+    expect(dialog()).not.toBeNull()
 })

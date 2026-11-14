@@ -73,6 +73,11 @@
             "setup": "Installation"
         }
     },
+    "sessionRename": {
+        "rename": "Umbenennen",
+        "label": "Name der Unterhaltung",
+        "failed": "Umbenennen fehlgeschlagen. Versuch es noch einmal."
+    },
     "openChatsTabs": {
         "closeTab": "{title} schließen",
         "newThread": "Neuer Thread",

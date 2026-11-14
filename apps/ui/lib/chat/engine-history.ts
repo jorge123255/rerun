@@ -1,6 +1,6 @@
 import { desktopToolInstallReferenceOf } from '@/lib/desktop/tool-install-reference'
 import { DESKTOP_FOREMAN_DOCS_LIMITS, RERUN_PUBLIC_DOCS_CORPUS, desktopForemanDocsResultSchema, desktopStoredDocumentReferences, type DesktopDocumentReference } from '@rerun/contracts'
-import { desktopStoredCoworkerMentions, desktopCoworkerMentionFieldsOf, type DesktopCoworkerMentionFields } from '@rerun/contracts'
+import { type DesktopCompactionReceipt, desktopStoredCoworkerMentions, desktopCoworkerMentionFieldsOf, type DesktopCoworkerMentionFields } from '@rerun/contracts'
 import { desktopQuickReplyInputOf } from '@/lib/desktop/quick-replies'
 import type { EngineMessage } from '@/lib/engine/types'
 import { desktopSummaryMetadata, isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
@@ -19,6 +19,8 @@ import { desktopFileCardOf, desktopImageGenerationOutput } from '@/lib/desktop/f
 import { desktopSkillProposalIdOf } from '@/lib/desktop/skill-proposal-source'
 import { hitlKindOf } from '@/lib/chat-hitl'
 import { desktopApprovalInput, desktopQuestionInput, QUICK_REPLIES_TOOL, desktopSourceParts, desktopAttachmentFieldsOf, type DesktopSourcePart, isContextPart, visibleText, desktopStoredAttachmentSelections, desktopImageSnapshotSchema, type DesktopAttachmentFields, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
+
+import type { DesktopSavedChatReceipt } from '@/lib/desktop/saved-chat-decision'
 
 type TextPart = { type: 'text'; text: string }
 type ToolReceiptState = 'input-streaming' | 'input-available' | 'approval-requested' | 'approval-responded' | 'output-available' | 'output-error' | 'output-denied' | 'cancelled' | 'canceled' | 'unknown'
@@ -41,7 +43,7 @@ type ToolInvocationPart = {
     output?: unknown
 }
 type UIMessagePart = { type: 'file'; url: string; mediaType: string; filename: string } | TextPart | ToolInvocationPart | DesktopSourcePart | { type: 'step-start' } | { type: 'reasoning'; text: string; providerMetadata: typeof desktopSummaryMetadata }
-export type HistoryMessage = { id: string; role: 'user' | 'assistant'; parts: UIMessagePart[]; metadata?: DesktopAttachmentFields & DesktopCoworkerMentionFields & { authorId?: string; createdAt?: string; documents?: DesktopDocumentReference[] } }
+export type HistoryMessage = { id: string; role: 'user' | 'assistant'; parts: UIMessagePart[]; metadata?: DesktopAttachmentFields & DesktopCoworkerMentionFields & { authorId?: string; createdAt?: string; documents?: DesktopDocumentReference[]; savedDecision?: DesktopSavedChatReceipt; compactionReceipt?: DesktopCompactionReceipt } }
 
 function safeParse(json: string | null | undefined): unknown {
     if (!json) return null
@@ -107,7 +109,7 @@ export function transformEngineMessages(messages: EngineMessage[], options?: { d
                 if (!image.success || part.mediaType !== image.data.mediaType || part.data.length > 4 * Math.ceil(image.data.byteLength / 3) || !/^[A-Za-z0-9+/]+={0,2}$/.test(part.data)) continue
                 images.push({ type: 'file', url: `data:${image.data.mediaType};base64,${part.data}`, mediaType: image.data.mediaType, filename: image.data.name })
             }
-            result.push({ id: `engine-${m.id}`, role: 'user', parts: [{ type: 'text', text: extractText(content) }, ...images], metadata: { ...(desktopStoredDocumentReferences(content).length && { documents: desktopStoredDocumentReferences(content) }), createdAt: m.createdAt, ...(m.authorId && { authorId: m.authorId }), ...attachment, ...desktopCoworkerMentionFieldsOf(desktopStoredCoworkerMentions(content)) } })
+            result.push({ id: `engine-${m.id}`, role: 'user', parts: [{ type: 'text', text: extractText(content) }, ...images], metadata: { ...(m.desktopCompaction && { compactionReceipt: m.desktopCompaction }), ...(desktopStoredDocumentReferences(content).length && { documents: desktopStoredDocumentReferences(content) }), createdAt: m.createdAt, ...(m.authorId && { authorId: m.authorId }), ...attachment, ...desktopCoworkerMentionFieldsOf(desktopStoredCoworkerMentions(content)) } })
             continue
         }
 

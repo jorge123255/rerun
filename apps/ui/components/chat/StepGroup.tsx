@@ -69,12 +69,16 @@ function Activity({ label }: { label: string }) {
  * The run of steps between two pieces of text: the coworker and what it is doing while it works,
  * beside a pill with every tool used so far. The pill opens on the full list of steps.
  */
-export function StepGroup({ items, agentId }: { items: StepGroupItem[]; agentId?: string }) {
+export function StepGroup({ items, agentId, labels }: {
+    items: StepGroupItem[]
+    agentId?: string
+    labels?: { count: string; accessible: string; failed: string }
+}) {
     const [open, setOpen] = useState(false)
     const running = items.find(item => item.status === 'running')
     const live = !!running
     const failed = items.filter(item => item.status === 'error').length
-    const count = `${items.length} ${items.length > 1 ? 'steps' : 'step'}`
+    const count = labels?.count ?? `${items.length} ${items.length > 1 ? 'steps' : 'step'}`
 
     return (
         <div className="flex w-full flex-col">
@@ -84,13 +88,13 @@ export function StepGroup({ items, agentId }: { items: StepGroupItem[]; agentId?
                 <button
                     type="button"
                     aria-expanded={open}
-                    aria-label={failed > 0 ? `${count}, ${failed} failed` : count}
+                    aria-label={labels?.accessible ?? (failed > 0 ? `${count}, ${failed} failed` : count)}
                     onClick={() => setOpen(!open)}
                     className="flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-border bg-muted/40 pr-2 pl-1 transition-colors hover:bg-muted/70"
                 >
                     <ToolStack items={items} />
                     <span className="tabular-nums">{live ? items.length : count}</span>
-                    {failed > 0 && <span className="text-red-500">{failed} failed</span>}
+                    {failed > 0 && <span className="text-red-500">{labels?.failed ?? `${failed} failed`}</span>}
                     <ChevronRightIcon className={cn('size-3 shrink-0 transition-transform', open && 'rotate-90')} />
                 </button>
             </div>

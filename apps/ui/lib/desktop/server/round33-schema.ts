@@ -8,7 +8,7 @@ import { desktopToolInstallSchema } from './tool-install/schema'
 import { SERVICE_OAUTH_SCHEMA_SQL } from './services/oauth/store'
 import { SERVICE_TRANSPORT_SCHEMA_SQL } from './services/transports/store'
 import { DESKTOP_FOREMAN_SCHEMA_STATEMENTS } from './foreman/store'
-import { DESKTOP_FOREMAN_CHAT_SCHEMA } from './foreman/chat-store'
+import { LEGACY_DESKTOP_FOREMAN_CHAT_SCHEMA } from './foreman/chat-store'
 
 export async function initializeDesktopRound33(db: Client) {
     const steps = [
@@ -17,7 +17,7 @@ export async function initializeDesktopRound33(db: Client) {
         { version: 20, id: 'reviewed-guest-tool-install', sql: desktopToolInstallSchema },
         { version: 21, id: 'catalog-service-oauth', sql: SERVICE_OAUTH_SCHEMA_SQL.join(';') },
         { version: 22, id: 'catalog-service-transport-receipts', sql: SERVICE_TRANSPORT_SCHEMA_SQL },
-        { version: 23, id: 'local-foreman-plan-and-chat', sql: [DESKTOP_FOREMAN_CHAT_SCHEMA, ...DESKTOP_FOREMAN_SCHEMA_STATEMENTS, DESKTOP_FOREMAN_CREATION_SCHEMA_SQL].join(';') },
+        { version: 23, id: 'local-foreman-plan-and-chat', sql: [LEGACY_DESKTOP_FOREMAN_CHAT_SCHEMA, ...DESKTOP_FOREMAN_SCHEMA_STATEMENTS, DESKTOP_FOREMAN_CREATION_SCHEMA_SQL].join(';') },
         { version: 24, id: 'mcp-install-pending-inbox', sql: DESKTOP_REVIEW_PENDING_INBOX_SCHEMA },
     ]
     for (const step of steps) {

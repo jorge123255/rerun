@@ -2,12 +2,14 @@ import 'server-only'
 import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto'
 
 export type DesktopSecretEncryptionContext = {
-    domain: 'credential' | 'staging'
+    domain: 'credential' | 'staging' | 'vault'
     agentId: string
     key: string
     version: number
     requestId?: string
     attemptId?: string
+    workspaceId?: number
+    revision?: string
 }
 
 export type DesktopSecretCrypto = {
@@ -22,7 +24,9 @@ export function createDesktopSecretCrypto(keyReader: () => Buffer): DesktopSecre
         if (!Buffer.isBuffer(value) || value.length !== 32) throw new Error('Desktop secret encryption is unavailable.')
         return value
     }
-    const aad = (context: DesktopSecretEncryptionContext) => Buffer.from(JSON.stringify(['desktop-secret-request-v1', context]))
+    const aad = (context: DesktopSecretEncryptionContext) => Buffer.from(JSON.stringify(context.domain === 'vault'
+        ? ['desktop-vault-v1', context.workspaceId, context.agentId, context.key, context.revision]
+        : ['desktop-secret-request-v1', context]))
     return {
         async seal(context, value) {
             const iv = randomBytes(12)

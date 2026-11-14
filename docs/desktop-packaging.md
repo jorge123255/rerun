@@ -1,6 +1,7 @@
 # Desktop packaging (internal preview)
 
-Packages the desktop shell as an arm64 macOS `.app` using the stable local
+Packages the desktop shell as a macOS `.app` for the build's Node architecture
+(arm64 or x64) using the stable local
 preview signing identity. The preview is for internal development. Public
 distribution still requires a release signing and notarization workflow.
 
@@ -10,8 +11,9 @@ distribution still requires a release signing and notarization workflow.
 pnpm install                                   # workspace deps incl. electron + electron-builder
 pnpm desktop:install                           # update ~/Applications/Rerun Desktop Preview.app
 pnpm desktop:install --commit FULL_SHA          # install only this checked-out commit
+pnpm desktop:install --dmg IMAGE --commit FULL_SHA --sha256 DIGEST
 pnpm desktop:package                           # build a separate signed preview
-pnpm desktop:package -- --dmg                  # request the preview DMG
+pnpm desktop:package --dmg                     # build and verify the preview DMG
 pnpm desktop:stage                             # rebuild runtime resources for QA without making an .app
 pnpm desktop:verify                            # re-run runtime checks only
 ```
@@ -19,7 +21,7 @@ pnpm desktop:verify                            # re-run runtime checks only
 ## Update the app on this Mac
 
 Quit Rerun Desktop Preview, then run `pnpm desktop:install` in a clean build worktree.
-The command builds its arm64 preview inside `~/Applications/.rerun-desktop-install.noindex`
+The command builds its preview inside `~/Applications/.rerun-desktop-install.noindex`
 and installs it at `~/Applications/Rerun Desktop Preview.app`. Open that app after installation.
 Pass `--commit` with the full SHA to pin the build you reviewed.
 
@@ -29,8 +31,50 @@ macOS swaps the verified bundle into place atomically. A failed build or exchang
 installed app intact. The installer clears its staging output on completion and recovers leftovers
 from an interrupted install on the next run. A kernel lock allows only one installer at a time.
 
+To install an already verified preview disk image, pass its path with `--dmg`
+and the full commit and SHA-256 from the build report. This uses the signed
+bundle in the image. The installer checks the digest, signature, Electron
+integrity and source receipts before the same atomic exchange. An upgrade
+must also satisfy the installed preview’s signing requirement.
+
 For agents reviewing code in separate worktrees, run `pnpm desktop:stage` for runtime QA.
 Use `pnpm desktop:package` when you need a separate signed preview.
+The DMG filename includes the build ID and target architecture. Packaging verifies
+the disk image, mounts it read-only, checks the app inside against the same source
+receipts and signature checks as the separate bundle, and detaches it.
+
+To run the staged app beside the installed preview on the same Mac, use a
+separate development profile:
+
+```bash
+pnpm desktop:stage
+profile="$(mktemp -d "${TMPDIR:-/tmp}/rerun-desktop-development.XXXXXX")"
+RERUN_DESKTOP_USER_DATA="$profile" pnpm --filter @rerun/desktop exec electron .
+```
+
+Use the same profile path after quitting to check persistence. The directory
+must already exist and be outside the installed preview's profile. This launch
+uses the development app name for Keychain storage. Packaged apps use the
+installed preview profile.
+
+## Mac App Store sandbox testing
+
+Use an Apple Development identity and a Mac development provisioning profile
+for `build.rerun.desktop.preview` that includes the test Mac. From a clean
+checkout, build the App Sandbox variant into its own directory:
+
+```bash
+RERUN_MAS_DEV_PROFILE="/absolute/path/to/Rerun Development.provisionprofile" \
+  pnpm desktop:package --mas-dev --output-dir "/absolute/path/to/mas-dev-output"
+```
+
+The command validates the profile and signing identity before staging. It uses
+the Mac App Store Electron runtime, then verifies the signed app and its native
+helper entitlements. Launch the app on a registered test Mac. Verify Cloud
+sign-in, local engine startup and restart, native file import and save, and
+local provider runners with their existing restrictions. The App Store manages
+updates for this variant. This development target produces a local `.app`.
+TestFlight requires App Store distribution signing and a separate upload.
 
 ## Native macOS notification QA
 
@@ -63,7 +107,7 @@ apps/desktop/
   resources/
     runtime-manifest.json        { protocolVersion:1, buildId, nodePath, uiRoot, engineEntry }
     runtime/
-      node/bin/node              pinned Node v22.23.4 darwin-arm64 (sha256-checked tarball)
+      node/bin/node              pinned Node v22.23.4 for the selected Mac architecture
       node/lib/node_modules/     bundled npm (+corepack) for engine MCP installs
       ui/                        Next standalone server.js + traced node_modules +
                                  .next/static + public
@@ -81,8 +125,9 @@ Resources, refuses symlinks escaping Resources, and runs no executable from PATH
 
 - `stage-main.mjs` — copies `apps/desktop/src/main/*` to `dist/main/`, checks the
   required entry/preload/startup files exist.
-- `stage-node.mjs` — downloads the pinned Node 22 darwin-arm64 tarball, verifies its
-  sha256 (pinned in `lib.mjs`), stages `bin` + `lib/node_modules` (npm included).
+- `stage-node.mjs` — downloads the pinned Node 22 tarball for the selected Mac
+  architecture, verifies its SHA-256 from `mac-target.mjs`, and stages
+  `bin` + `lib/node_modules` (npm included).
   No user-installed Node is used or required.
 - `stage-ui.mjs` — builds `@rerun/contracts` then `rerun` with
   `RERUN_DESKTOP_STANDALONE=1` (enables `output:'standalone'` +

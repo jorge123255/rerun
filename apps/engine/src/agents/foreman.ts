@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { FOREMAN_AGENT_ID, TOOL_KEYS, type AgentConfig, type ToolKey } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, FOREMAN_DISPLAY_NAME, TOOL_KEYS, type AgentConfig, type ToolKey } from '@rerun/contracts'
 import { configPath, soulPath, workspaceDir } from '../config/paths.js'
 import { writeAgentConfig } from './config-write.js'
 import { agentConfigSchema } from './types.js'
@@ -7,9 +7,9 @@ import { unloadAgent } from './registry.js'
 
 // Only what the hub does not send: the brief of each chat request replaces it. A run that reaches
 // the foreman without a brief (an old hub, a direct call) still has something coherent to say.
-const FOREMAN_SOUL = `# Foreman
+const FOREMAN_SOUL = `# ${FOREMAN_DISPLAY_NAME}
 
-You are the Foreman of this Rerun workspace: the assistant that sets up and runs the user's team of coworkers from outside the board. Answer in the user's language, lead with the result, and keep it short.
+You are the ${FOREMAN_DISPLAY_NAME} of this Rerun workspace: the assistant that sets up and runs the user's team of coworkers from outside the board. Answer in the user's language, lead with the result, and keep it short.
 `
 
 // The orchestrator works on the box like any agent (files, shell, web, sub-agents, the company
@@ -25,7 +25,7 @@ function foremanConfig(choice: ForemanChoice): AgentConfig {
         ...choice.model,
         name: FOREMAN_AGENT_ID,
         kind: 'foreman',
-        displayName: 'Foreman',
+        displayName: FOREMAN_DISPLAY_NAME,
         tools: { ...tools, desktopToolGrants: choice.grants },
         selfImprovement: { enabled: false, allowToolInstall: false, allowSoulEdit: false, autoMemory: false },
         setup: { required: false },
@@ -33,7 +33,7 @@ function foremanConfig(choice: ForemanChoice): AgentConfig {
 }
 
 type ModelPin = Pick<AgentConfig, 'connectionId' | 'provider' | 'model'>
-type ForemanChoice = { model: ModelPin; grants: { foremanAgentFilesRead: boolean; foremanAgentFilesWrite: boolean; delegate?: boolean; callAgent?: boolean } }
+type ForemanChoice = { model: ModelPin; grants: { foremanAgentFilesRead: boolean; foremanAgentFilesWrite: boolean; delegate?: boolean; callAgent?: boolean; requestApproval?: boolean; foremanWorkspaceRead?: boolean } }
 
 // Preserve only the user's model and explicit desktop permissions; program-owned
 // identity, instructions and every other capability are still rebuilt from code.
@@ -45,6 +45,8 @@ async function currentChoice(): Promise<ForemanChoice> {
             foremanAgentFilesWrite: tools.desktopToolGrants?.foremanAgentFilesWrite === true,
             ...(tools.desktopToolGrants?.delegate === true && { delegate: true }),
             ...(tools.desktopToolGrants?.callAgent === true && { callAgent: true }),
+            ...(tools.desktopToolGrants?.requestApproval === true && { requestApproval: true }),
+            ...(tools.desktopToolGrants?.foremanWorkspaceRead === true && { foremanWorkspaceRead: true }),
         } }
     } catch {
         return { model: { connectionId: null, provider: null, model: null }, grants: { foremanAgentFilesRead: false, foremanAgentFilesWrite: false } }

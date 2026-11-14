@@ -72,6 +72,55 @@ test('keeps duplicate-title identities and coworker labels after closing and reo
     expect(await search('Shared')).toEqual(before)
 })
 
+test('matches international titles by literal Unicode text and preserves the original title and scope', async () => {
+    const db = await openDesktopDatabase(root)
+    const samples = [
+        ['ÉVALUATION (Q4)', 'e\u0301valuation (q4)'],
+        ['MAN\u0303ANA', 'mañana'],
+        ['AÇÕES E DECISÕES', 'ações'],
+        ['ÜBERBLICK ZUR STRAẞE', 'überblick zur straße'],
+    ] as const
+    for (const [index, [title, query]] of samples.entries()) {
+        const { id } = await createDesktopSession(db, { agentId: alice, engineSessionId: `localized-${index}`, title })
+        const body = { hits: [{ id, agentId: alice, agentName: 'Alice', title }], hasMore: false }
+        expect(await search(query)).toEqual(body)
+        expect(await search(query, alice)).toEqual(body)
+        expect(await search(query, bob)).toEqual({ hits: [], hasMore: false })
+    }
+    expect((await search('evaluation')).hits).toEqual([])
+    expect((await search('.*')).hits).toEqual([])
+    expect(await search('é', alice)).toEqual({ hits: [], hasMore: false })
+    expect(await search('e\u0301', alice)).toEqual({ hits: [], hasMore: false })
+})
+
+test('backfills all legacy title batches and picks up a later legacy write after restart', async () => {
+    const db = await openDesktopDatabase(root)
+    await db.batch([
+        'DELETE FROM desktop_schema_migrations WHERE version = 42',
+        'ALTER TABLE desktop_sessions DROP COLUMN title_search',
+        { sql: `WITH RECURSIVE entries(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM entries WHERE n < 260)
+            INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, created_at, updated_at)
+            SELECT 'legacy-' || n, ?, 'engine-legacy-' || n, 'E' || char(769) || 'QUIPE ' || n, '2026-11-01', '2026-11-01' FROM entries`, args: [alice] },
+    ], 'write')
+    await closeDesktopDatabase(root)
+
+    const upgraded = await openDesktopDatabase(root)
+    expect((await upgraded.execute('SELECT count(*) AS missing FROM desktop_sessions WHERE title_search IS NULL')).rows[0].missing).toBe(0)
+    expect((await search('équipe', alice)).hasMore).toBe(true)
+    expect((await search('équipe 260', alice)).hits).toEqual([
+        { id: 'legacy-260', agentId: alice, agentName: 'Alice', title: 'E\u0301QUIPE 260' },
+    ])
+    await upgraded.execute({
+        sql: `INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, created_at, updated_at)
+              VALUES ('older-writer', ?, 'engine-older-writer', 'RÉUNION', '2026-11-01', '2026-11-01')`,
+        args: [alice],
+    })
+    await closeDesktopDatabase(root)
+    expect((await search('réunion', alice)).hits).toEqual([
+        { id: 'older-writer', agentId: alice, agentName: 'Alice', title: 'RÉUNION' },
+    ])
+})
+
 test('scopes to the coworker before the result limit so other coworkers cannot hide an older matching chat', async () => {
     const db = await openDesktopDatabase(root)
     for (let index = 0; index < 52; index++) await createDesktopSession(db, { agentId: bob, engineSessionId: `engine-bob-shared-${index}`, title: `Shared plan ${index}` })
