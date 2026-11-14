@@ -174,10 +174,15 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     }
     const localRuntime = stdioRuntime(localStore, localAuthority, undefined, material,
         owner => assignedVaultMcpPrograms(db, owner), vaultProgramMaterials(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId))
+    // Connector actions that delete, send, share, post, pay or change credentials wait for the person's answer.
+    const askFirst: DesktopMcpCallAdmission = async call => {
+        const kind = desktopConnectorActionKind(call.tool, call.destructive)
+        return kind ? admitConnectorCall(db, { owner: call.owner, sessionId: call.sessionId, tool: call.tool, kind, arguments: call.arguments }) : null
+    }
     const localBridge = stdioEngineBridge(localRuntime, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'localMcpStdio')
         return (await historicalOwner(identity, signal)).owner.id
-    })
+    }, askFirst)
     const installedServices = serviceStore(db, masterKey, true)
     const serviceAuthority: ServiceAuthority = async (owner, action, identity, signal) => {
         const stop = AbortSignal.any([signal, entry.shutdown.signal])
@@ -216,11 +221,6 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
             store, key: masterKey, authorizeRun: (identity, signal) => authorizeRun(identity, signal, 'services'),
             remoteAccess: access, watchOwner: owner => watchDesktopMcpOwner(runtime, owner),
         })
-    // Connector actions that delete, send, share, post, pay or change credentials wait for the person's answer.
-    const askFirst: DesktopMcpCallAdmission = async call => {
-        const kind = desktopConnectorActionKind(call.tool, call.destructive)
-        return kind ? admitConnectorCall(db, { owner: call.owner, sessionId: call.sessionId, tool: call.tool, kind, arguments: call.arguments }) : null
-    }
     const servicesBridge = serviceEngineBridge(installedServices, services, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'services')
         return (await historicalOwner(identity, signal)).owner.id
