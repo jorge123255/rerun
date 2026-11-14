@@ -49,13 +49,44 @@ export async function readDesktopClaudePlanUsage(token: string, harness: Record<
     }
 }
 
+const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
+
+/**
+ * Asks Anthropic's own usage endpoint with the plan sign-in this engine already holds. The runner
+ * started with that sign-in alone does not know the plan and answers that it has no limits to
+ * report, so this is the reading that works; the token goes to its issuer and nowhere else.
+ */
+export async function fetchDesktopClaudePlanUsage(token: string, request: typeof fetch = fetch): Promise<ClaudePlanUsage | null> {
+    try {
+        const response = await request(USAGE_URL, {
+            headers: { accept: 'application/json', authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20', 'user-agent': 'rerun-desktop' },
+            redirect: 'error', signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+        })
+        if (!response.ok) {
+            logger.warn({ status: response.status }, 'claude plan usage endpoint refused')
+            return null
+        }
+        const body: unknown = await response.json()
+        return body && typeof body === 'object' && !Array.isArray(body) ? { rate_limits: body as ClaudePlanUsage['rate_limits'] } : null
+    } catch (error) {
+        logger.warn({ err: (error as Error).message }, 'claude plan usage endpoint unreachable')
+        return null
+    }
+}
+
+/** The endpoint first; the runner only when the endpoint gave nothing to show. */
+async function readEither(token: string, harness: Record<string, string>): Promise<ClaudePlanUsage | null> {
+    const direct = await fetchDesktopClaudePlanUsage(token)
+    return planLimitWindowsFromClaude(direct).length ? direct : readDesktopClaudePlanUsage(token, harness)
+}
+
 let reading: Promise<void> | undefined, attemptedAt = 0
 
 /**
  * Keeps the Claude plan's limits current for the providers list: read when asked, at most every
  * five minutes. A reply still records them itself when it ends.
  */
-export function refreshStaleDesktopClaudePlanLimits(connection: LoadedConnection, harness: Record<string, string>, read = readDesktopClaudePlanUsage, now = Date.now()): Promise<void> {
+export function refreshStaleDesktopClaudePlanLimits(connection: LoadedConnection, harness: Record<string, string>, read = readEither, now = Date.now()): Promise<void> {
     const token = connection.env.CLAUDE_CODE_OAUTH_TOKEN
     if (connection.id !== DESKTOP_CLAUDE_CONNECTION_ID || !token || !desktopClaudeAvailable()) return Promise.resolve()
     if (reading) return reading

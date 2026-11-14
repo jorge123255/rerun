@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DESKTOP_CLAUDE_CONNECTION_ID } from '@rerun/contracts'
 import { forgetPlanLimits, readPlanLimits } from '../../connections/plan-limits.js'
 import type { LoadedConnection } from '../../connections/types.js'
-import { refreshStaleDesktopClaudePlanLimits, resetDesktopClaudePlanLimitPacing } from './usage.js'
+import { fetchDesktopClaudePlanUsage, refreshStaleDesktopClaudePlanLimits, resetDesktopClaudePlanLimitPacing } from './usage.js'
+import { planLimitWindowsFromClaude } from '../../connections/plan-limits.js'
 
 const names = ['RERUN_DESKTOP_APP', 'RERUN_DESKTOP_CLAUDE_RUNNER', 'RERUN_DESKTOP_CLAUDE_SANDBOX'] as const
 const saved = names.map(name => process.env[name])
@@ -48,5 +49,20 @@ describe('Claude plan limits on demand', () => {
         expect(read).not.toHaveBeenCalled()
         await refreshStaleDesktopClaudePlanLimits(connection(), {}, read, 1_000_000)
         expect(readPlanLimits(DESKTOP_CLAUDE_CONNECTION_ID)).toBeNull()
+    })
+
+    it('reads the windows from Anthropic\'s usage endpoint with the plan sign-in', async () => {
+        const request = vi.fn(async () => Response.json({ five_hour: { utilization: 41, resets_at: '2026-11-14T15:00:00Z' }, seven_day: { utilization: 12, resets_at: null }, seven_day_opus: null }))
+        const usage = await fetchDesktopClaudePlanUsage('fixture-token', request as unknown as typeof fetch)
+        const [url, init] = request.mock.calls[0] as unknown as [string, RequestInit]
+        expect(url).toBe('https://api.anthropic.com/api/oauth/usage')
+        expect(init.headers).toMatchObject({ authorization: 'Bearer fixture-token', 'anthropic-beta': 'oauth-2025-04-20' })
+        expect(init.redirect).toBe('error')
+        expect(planLimitWindowsFromClaude(usage)).toMatchObject([{ kind: 'session', usedPercent: 41 }, { kind: 'weekly', usedPercent: 12 }])
+    })
+
+    it('has no reading when the endpoint refuses or cannot be reached', async () => {
+        expect(await fetchDesktopClaudePlanUsage('fixture-token', (async () => new Response('', { status: 401 })) as unknown as typeof fetch)).toBeNull()
+        expect(await fetchDesktopClaudePlanUsage('fixture-token', (async () => { throw new Error('offline') }) as unknown as typeof fetch)).toBeNull()
     })
 })
