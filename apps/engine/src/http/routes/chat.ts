@@ -1,6 +1,6 @@
 import { assertDesktopRunAdmission } from '../../desktop/workspace-admission.js'
 import { prepareTriggerHumanAdmission, withoutStoppedTriggerRequests } from '../../desktop/triggers/human.js'
-import { desktopDocumentSendSelectionSchema, desktopResolvedDocumentsSchema, desktopMcpSignInGuardSchema } from '@rerun/contracts'
+import { isContextPart, desktopDocumentSendSelectionSchema, desktopResolvedDocumentsSchema, desktopMcpSignInGuardSchema } from '@rerun/contracts'
 import { assertDesktopMcpSignInContinuation } from '../../desktop/mcp-sign-in/admission.js'
 import { readDesktopMcpSignInSource } from '../../desktop/mcp-sign-in/source.js'
 import { desktopCoworkerMentionsSchema, checkedDesktopCoworkerMentions, desktopCoworkerMentionFieldsOf } from '@rerun/contracts'
@@ -19,6 +19,7 @@ import { getAgent } from '../../agents/registry.js'
 import { claimInstallSession } from '../../agents/setup.js'
 import { createSession, getSession } from '../../db/repos/sessions.js'
 import { extractText, listMessages, storedContent } from '../../db/repos/messages.js'
+import type { MessageRow } from '../../db/schema.js'
 import { forkReply, getRegeneration } from '../../db/repos/regenerations.js'
 import { getDesktopTabRun, startDesktopTabRun } from '../../db/repos/desktop-tab-runs.js'
 import { getDesktopQueuedTurn, reserveDesktopQueuedTurn } from '../../db/repos/desktop-queued-turns.js'
@@ -270,10 +271,14 @@ chatRoutes.post('/chat', async c => {
         const claim = sessionClaim(session.id)
         return c.json({ error: 'a run is already in flight on this session', code: 'run_in_flight', runId: holder, sessionId: session.id, startedAt: claim ? new Date(claim.claimedAt).toISOString() : null, authorId: claim?.authorId ?? null }, 409)
     }
+    let retried: MessageRow | undefined
     if (desktopApp()) {
         try {
             await assertImageModel(provider, agentId, images.length > 0, session.id)
-            const messages = await withoutStoppedTriggerRequests(agentId, session.id, await listMessages(agentId, session.id))
+            const stored = await listMessages(agentId, session.id)
+            const plainTurn = !Object.keys(attachmentTrigger).length && !Object.keys(documentTrigger).length && !images.length && !body.coworkerMentions?.length
+            if (plainTurn) retried = unansweredRepeat(stored, body.message, body.author?.id)
+            const messages = await withoutStoppedTriggerRequests(agentId, session.id, stored)
             const question = findDesktopQuestion(messages)
             const approval = findDesktopApproval(messages)
             const takeover = findDesktopTakeover(messages)
@@ -303,5 +308,20 @@ chatRoutes.post('/chat', async c => {
     })
     return streamChat(runAgentView, session.id, run.id, body.message, override, meta, {
         source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), userLanguage: claim ? body.userLanguage : undefined, ...attachmentTrigger, ...documentTrigger,
+        ...(retried ? { savedUser: retried } : {}),
     })
 })
+
+/**
+ * A turn that failed leaves its message as the conversation's last row. Sending the same words
+ * again is a retry of that turn: the run reuses the stored row instead of adding a second copy.
+ */
+export function unansweredRepeat(rows: MessageRow[], text: string, authorId?: string): MessageRow | undefined {
+    const last = rows.at(-1)
+    if (!last || last.role !== 'user' || (last.authorId ?? undefined) !== authorId) return undefined
+    const parts = storedContent(last.contentJson)
+    if (!Array.isArray(parts) || parts.some(part => part.type !== 'text')) return undefined
+    const said = parts.filter(part => !isContextPart(part)), context = parts.filter(part => isContextPart(part))
+    if (said.length !== 1 || said[0]!.type !== 'text' || said[0]!.text !== text || context.length > 1) return undefined
+    return last
+}
