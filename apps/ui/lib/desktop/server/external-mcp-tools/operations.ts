@@ -13,6 +13,7 @@ import {
     listDbTables,
     listRuns,
     listSchedules,
+    createMemory,
     patchAgent,
     queryDb,
     SPACE_DATA_BASE,
@@ -21,6 +22,9 @@ import {
 import { desktopRunView } from '../../run-history'
 import { DesktopHttpError } from '../auth'
 import { assertExternalMcpCatalogOmitsAuthorityFields } from './catalog'
+import { importCoworkerFile, IMPORT_BYTES } from '../coworker-files'
+import { withCoworkerMemories } from '../memories'
+import { MAX_MEMORIES_PER_CALL, MAX_MEMORY_CHARS } from '@/lib/mcp/account-tools'
 import { createCoworkerSkill, deleteCoworkerSkill, getCoworkerSkill, listCoworkerSkills, readCoworkerSkillFile, updateCoworkerSkill, writeCoworkerSkillFile } from '../coworker-skills'
 import { deleteDesktopCoworker } from '../coworker-delete'
 import { renameDesktopCoworker } from '../coworker-rename'
@@ -391,6 +395,51 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
         }))
         if (!updated.success || !updated.skill) throw new Error(updated.error ?? 'Skill update failed.')
         return { skill: updated.skill, created: false }
+    }
+
+    if (tool === 'write_memory') {
+        const agent = await externalMcpOwnedAgent(db, context, deps.recheck, signal, requireString(args.agentId, 'agentId'))
+        if (!Array.isArray(args.memories) || args.memories.length === 0) throw new Error('memories must be a non-empty array of { content, kind?, tags? }.')
+        if (args.memories.length > MAX_MEMORIES_PER_CALL) throw new Error(`At most ${MAX_MEMORIES_PER_CALL} memories per call. Send the rest in another call.`)
+        const entries = args.memories.map((entry, index) => {
+            const content = entry && typeof entry === 'object' ? (entry as { content?: unknown }).content : undefined
+            if (typeof content !== 'string' || !content.trim()) throw new Error(`memories[${index}].content must be a non-empty string.`)
+            if (content.length > MAX_MEMORY_CHARS) throw new Error(`memories[${index}] is over ${MAX_MEMORY_CHARS} characters. Split it into several memories.`)
+            const { kind, tags } = entry as { kind?: unknown; tags?: unknown }
+            return { content, ...(typeof kind === 'string' && { kind }), ...(Array.isArray(tags) && { tags: tags.filter((tag): tag is string => typeof tag === 'string') }) }
+        })
+        const written: string[] = [], failed: { index: number; error: string }[] = []
+        // One at a time, each behind the key's live check: a key revoked midway stops the rest.
+        for (const [index, memory] of entries.entries()) {
+            try {
+                const { id } = await externalMcpGuarded(context, deps.recheck, signal, () => withCoworkerMemories(runtime, agent.id, (connection, engineAgentId) => createMemory(connection, engineAgentId, memory)))
+                if (id) written.push(id)
+            } catch (error) {
+                failed.push({ index, error: messageOf(error) })
+            }
+        }
+        return { written: written.length, ids: written, ...(failed.length > 0 && { failed }) }
+    }
+
+    if (tool === 'upload_workspace_file') {
+        const agent = await externalMcpOwnedAgent(db, context, deps.recheck, signal, requireString(args.agentId, 'agentId'))
+        const path = requireString(args.path, 'path').replace(/^\/+/, '')
+        const content = typeof args.content === 'string' ? args.content : ''
+        const bytes = Buffer.from(content, args.encoding === 'base64' ? 'base64' : 'utf8')
+        if (bytes.byteLength > IMPORT_BYTES) throw new Error('Files can be up to 1 MB on this Mac.')
+        const parts = path.split('/').filter(Boolean)
+        const name = parts.pop()
+        if (!name || parts.some(part => part === '.' || part === '..')) throw new Error('path must name a file inside the workspace, e.g. "notes/clients.md".')
+        // The Mac's import writes text and Markdown, never replaces a file, and creates no folders.
+        const write = (folder: string, fileName: string) => externalMcpGuarded(context, deps.recheck, signal, () => importCoworkerFile(runtime, agent.id, folder, fileName, bytes))
+        try {
+            const saved = await write(parts.join('/'), name)
+            return { path: saved.path, bytes: bytes.byteLength }
+        } catch (error) {
+            if (!(error instanceof DesktopHttpError) || error.status !== 404 || parts.length === 0) throw error
+            const saved = await write('', [...parts, name].join('__'))
+            return { path: saved.path, bytes: bytes.byteLength, note: 'That folder does not exist and folders are not created through this connection: the file was written at the top level with the folders folded into its name.' }
+        }
     }
 
     if (tool === 'list_schedules' || tool === 'upsert_schedule' || tool === 'run_schedule_now' || tool === 'delete_schedule') {

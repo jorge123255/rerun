@@ -6,6 +6,8 @@ import type { DesktopRuntime } from '../runtime'
 import { recheckDesktopExternalMcp } from '../external-mcp-authority/client'
 import { createLocalExternalMcpTools } from './factory'
 import type { ExternalMcpServicesAuthority } from './operations'
+import { openDesktopDatabase } from '../database'
+import { admitDesktopImportCall, desktopImportToolNames, readDesktopImportKey } from './import-keys'
 
 export function createDesktopExternalMcpToolsHandler(options: {
     services?: (runtime: DesktopRuntime) => Promise<ExternalMcpServicesAuthority>
@@ -28,9 +30,25 @@ export function createDesktopExternalMcpToolsHandler(options: {
             const services = options.services ? await options.services(runtime) : undefined
             signal.throwIfAborted()
             const dispatch = createLocalExternalMcpTools({ recheck, services })
-            const result = input.action === 'list'
-                ? externalMcpToolRegistrationSchema.array().parse(await dispatch.listTools(principal))
-                : externalMcpToolResultSchema.parse(await dispatch.callTool(input.context, signal))
+            // A key made for an import sees and reaches only the import tools, and writes only to the
+            // one coworker it creates. Any other key passes through unchanged.
+            const db = await openDesktopDatabase(runtime.dataRoot)
+            let result: unknown
+            if (input.action === 'list') {
+                const tools = externalMcpToolRegistrationSchema.array().parse(await dispatch.listTools(principal))
+                result = await readDesktopImportKey(db, keyId) ? tools.filter(tool => desktopImportToolNames.has(tool.name)) : tools
+            } else {
+                const admitted = await admitDesktopImportCall(db, keyId, input.context.tool, input.context.arguments as Record<string, unknown>, input.context.requestId)
+                try {
+                    const called = externalMcpToolResultSchema.parse(await dispatch.callTool(input.context, signal))
+                    const created = (called.structuredContent as { agent?: { id?: unknown } } | undefined)?.agent?.id
+                    await admitted?.settle(typeof created === 'string' ? created : null)
+                    result = called
+                } catch (error) {
+                    await admitted?.settle(null)
+                    throw error
+                }
+            }
             signal.throwIfAborted()
             return Response.json(result, { headers: { 'cache-control': 'no-store' } })
         } catch (error) {
