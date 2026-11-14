@@ -3,6 +3,9 @@ import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { decideConnectorApproval, forgetConnectorRule, readConnectorApprovals } from '@/lib/desktop/server/connector-approvals/store'
+import { tellConnectorCaller } from '@/lib/desktop/server/connector-approvals/tell-caller'
+import { startDesktopChat } from '@/lib/desktop/server/engine'
+import { desktopForeman } from '@/lib/desktop/server/foreman/binding'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -39,6 +42,18 @@ export async function POST(request: Request, { params }: Params): Promise<Respon
         }
         const result = await decideConnectorApproval(db, sessionId, parsed.data.id, parsed.data.decision)
         if (!result) throw new DesktopHttpError(409, 'This action was already answered.')
+        // A chat opened by another coworker's call: that caller did not see the card, so it is told the answer.
+        // It runs after this response; the answer stands whether or not the caller can be reached.
+        const chatId = (await params).sessionId
+        void tellConnectorCaller(db, chatId, result, {
+            async coworker(agentId, callerSessionId, text) {
+                const { response } = await startDesktopChat(runtime, { agentId, sessionId: callerSessionId, text })
+                await response.arrayBuffer()
+            },
+            async foreman(foremanChatId, requestId, text) {
+                await (await desktopForeman(runtime)).send({ workspaceId: String(runtime.workspaceId), chatId: foremanChatId }, requestId, text)
+            },
+        }).catch(() => {})
         return Response.json(result)
     })
 }
