@@ -19,7 +19,8 @@ export function desktopSubscriptionDeviceOutput(
     let complete = false
 
     function line(text: string) {
-        const cleaned = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').trim()
+        // Colour codes, and the hyperlink wrappers a terminal run puts around an address.
+        const cleaned = text.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').trim()
         if (provider === 'devin') {
             // "Visit <address> to sign in, then copy the code and paste it below."
             const address = cleaned.match(/^Visit (https:\/\/\S+) to sign in\b/)?.[1]

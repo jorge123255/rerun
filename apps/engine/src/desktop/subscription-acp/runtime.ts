@@ -177,7 +177,8 @@ export function createDesktopSubscriptionDeviceAttempt(provider: DesktopSubscrip
         launch(proxy: string, port: number) {
             const { binary } = bundlePaths(provider)
             const sandbox = ownedFile(process.env.RERUN_DESKTOP_SUBSCRIPTION_LOGIN_SANDBOX)
-            return spawnRunner(provider, { binary, sandbox }, account, runners[provider].login, { proxy, port })
+            // Devin only takes its sign-in code from a terminal: its sign-in runs on a pseudo-terminal.
+            return spawnRunner(provider, { binary, sandbox }, account, runners[provider].login, { proxy, port }, false, provider === 'devin')
         },
         approve() {
             if (workers.has(provider)) throw unavailable()
@@ -369,10 +370,13 @@ function spawnRunner(
     args: readonly string[],
     relay?: { proxy: string; port: number; close?: () => Promise<void> },
     turn = false,
+    terminal = false,
 ) {
     if (stopping || workers.has(provider)) throw unavailable()
     const definition = runners[provider]
-    const child = spawn('/usr/bin/sandbox-exec', [
+    // `script` only lends its pseudo-terminal; the runner under it is confined exactly as without it.
+    const child = spawn(terminal ? '/usr/bin/script' : '/usr/bin/sandbox-exec', [
+        ...(terminal ? ['-q', '/dev/null', '/usr/bin/sandbox-exec'] : []),
         '-D', `RUNNER=${binary}`, '-D', `RUNNER_DIR=${dirname(binary)}`, '-D', `PROFILE=${profile}`,
         ...(relay ? ['-D', `AUTH_RELAY=localhost:${relay.port}`] : []),
         '-f', sandbox, binary, ...args,

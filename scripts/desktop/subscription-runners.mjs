@@ -48,8 +48,10 @@ export async function stageSubscriptionRunners(engine, env = process.env) {
         }
         const policy = await readFile(join(repoRoot, 'scripts/desktop/subscription-runner.sb'), 'utf8')
         await writeFile(join(staged, 'rerun-subscriptions.sb'), policy)
+        // Devin reads its sign-in code from the terminal it is run on.
         await writeFile(join(staged, loginPolicyName), policy +
-            '\n(allow network-outbound (remote ip (param "AUTH_RELAY")))\n')
+            '\n(allow network-outbound (remote ip (param "AUTH_RELAY")))\n' +
+            '(allow file-read* file-write-data file-ioctl (literal "/dev/tty") (regex #"^/dev/ttys[0-9]+$"))\n')
         await rename(staged, directory(engine))
     } finally {
         await rm(staged, { recursive: true, force: true })

@@ -146,3 +146,10 @@ test('Devin publishes its sign-in page and no device code', () => {
     desktopSubscriptionDeviceOutput('devin', other)(Buffer.from('Visit https://example.com/login?state=abc to sign in, then copy the code and paste it below.\n'))
     expect(other).not.toHaveBeenCalled()
 })
+
+test('Devin’s sign-in page is read through the hyperlink codes of a terminal run', () => {
+    const seen = vi.fn()
+    const url = 'https://windsurf.com/devin/account/login?redirect_uri=chisel-show-auth-token&state=abc&code_challenge=xyz'
+    desktopSubscriptionDeviceOutput('devin', seen)(Buffer.from(`\r\nVisit \x1b]8;;${url}\x1b\\${url}\x1b]8;;\x1b\\ to sign in, then copy the code and paste it below.\r\n`))
+    expect(seen).toHaveBeenCalledExactlyOnceWith({ verificationUrl: url })
+})
