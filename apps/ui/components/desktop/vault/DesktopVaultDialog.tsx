@@ -8,7 +8,9 @@ import { ArrowLeft, ChevronRight, KeyRound, Plug, Plus } from 'lucide-react'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { PanelDialogContent } from '@/components/dialogs/PanelDialogContent'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { LockKeyholeIcon } from '@/lib/icons'
 import { Input } from '@/components/ui/input'
 import { PanelRow } from '@/components/ui/panel-row'
 import { PanelSteps } from '@/components/ui/panel-steps'
@@ -43,10 +45,7 @@ export function DesktopVaultDialog({ onClose, suggestedApp, coworkerApp }: { onC
                     : document.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                 target?.focus({ preventScroll: true })
             }}>
-            <DialogHeader className="border-b px-4 py-4 pr-12">
-                <DialogTitle>{suggestedApp ? 'Add account to Vault' : coworkerApp ? 'Manage app in Vault' : 'Vault'}</DialogTitle>
-                <DialogDescription>Store apps, MCP servers, and secrets for this workspace and choose their coworkers.</DialogDescription>
-            </DialogHeader>
+            <DialogHeaderBar icon={LockKeyholeIcon} title={suggestedApp ? 'Add account to Vault' : coworkerApp ? 'Manage app in Vault' : 'Vault'} description="Store apps, MCP servers, and secrets for this workspace and choose their coworkers." />
             <VaultPanel suggestedApp={suggestedApp} coworkerApp={coworkerApp} onClose={onClose} />
         </PanelDialogContent>
     </Dialog>

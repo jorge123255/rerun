@@ -4,11 +4,12 @@ import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { z } from 'zod'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { Field } from '@/components/ui/field'
 import { FileDropzone } from '@rerun/ui/forms'
 import { Input } from '@/components/ui/input'
-import { CheckIcon, Loader2Icon, UploadIcon } from '@/lib/icons'
+import { CheckIcon, Loader2Icon, UploadIcon, SettingsIcon } from '@/lib/icons'
 import { DESKTOP_WORKSPACE_ICONS, DESKTOP_WORKSPACE_LOGO_ACCEPT, desktopWorkspaceIconSelectionUrl, desktopWorkspaceIconUrl, desktopWorkspaceUploadIconUrl, type DesktopWorkspaceIcon, type DesktopWorkspaceSavedIcon } from '@/lib/desktop/icon-catalog'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
@@ -201,10 +202,7 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
 
     return (
         <form className="flex max-h-full min-h-0 flex-1 flex-col" onSubmit={event => { event.preventDefault(); void save() }}>
-            <DialogHeader className="px-6 pt-6 pb-4">
-                <DialogTitle>{t('workspaceForm.title')}</DialogTitle>
-                <DialogDescription>{t('workspaceForm.description')}</DialogDescription>
-            </DialogHeader>
+            <DialogHeaderBar icon={SettingsIcon} title={t('workspaceForm.title')} description={t('workspaceForm.description')} />
             <ScrollFade className="min-h-0 flex-1 px-6 pt-1 pb-6">
                 <div className="space-y-6">
                     <div className="flex items-end gap-4">

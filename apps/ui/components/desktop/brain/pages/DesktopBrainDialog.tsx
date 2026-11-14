@@ -1,7 +1,9 @@
 'use client'
 
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { BrainIcon } from '@/lib/icons'
 import { flushDesktopBrainDrafts } from '@/lib/desktop/use-brain-page-draft'
 import { hydrateBrainUiState } from '@/lib/desktop/brain-ui-state'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
@@ -66,10 +68,7 @@ export function DesktopBrainDialog({ actions, dialogControl, hideTrigger = false
     return <Dialog open={open} onOpenChange={requestOpen} asSheet={false}>
         {!hideTrigger && <DialogTrigger asChild><Button type="button" variant="outline" size="sm">{triggerLabel ?? t('brainDesktop.title')}</Button></DialogTrigger>}
         {open && <DialogContent className="flex h-[85dvh] flex-col gap-0 p-0 sm:max-w-6xl">
-            <DialogHeader className="border-b border-border px-4 py-3">
-                <DialogTitle>{t('brainDesktop.title')}</DialogTitle>
-                <DialogDescription>{t('brainDesktop.description')}</DialogDescription>
-            </DialogHeader>
+            <DialogHeaderBar icon={BrainIcon} title={t('brainDesktop.title')} description={t('brainDesktop.description')} />
             {ready ? <DesktopBrainPanel actions={actions} onClose={() => { void requestOpen(false) }} renderProposals={renderProposals} refreshKey={refreshKey} openProposalsKey={openProposalsKey} openSlug={openSlug} onOpenConsumed={onOpenConsumed} route={route} onRouteConsumed={onRouteConsumed} workspaceId={workspaceId} />
                 : <div className="p-6" role={restoreError === null ? 'status' : 'alert'}>{restoreError === null ? t('brainDesktop.restoring') : restoreError || t('brainDesktop.restoreFailed')}
                     {restoreError !== null && <Button size="sm" onClick={() => setRestoreAttempt(value => value + 1)}>{t('brain.workspace.retry')}</Button>}</div>}

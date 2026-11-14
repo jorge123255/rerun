@@ -2,7 +2,9 @@
 
 import { useRef, useState, useSyncExternalStore } from 'react'
 import { ProfilePanel } from '@/components/account/ProfilePanel'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { CircleUserIcon } from '@/lib/icons'
 import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 import { desktopProfilePhotoUrl, desktopProfileSchema, type DesktopProfile } from '@/lib/desktop/local-profile'
 import { useDesktopLocale } from './DesktopLocale'
@@ -47,10 +49,7 @@ export function DesktopLocalProfileDialog({ open, profile, onOpenChange, onSaved
                 event.preventDefault()
                 document.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')?.focus({ preventScroll: true })
             }}>
-            <DialogHeader className="border-b px-5 py-4">
-                <DialogTitle>{copy.title}</DialogTitle>
-                <DialogDescription>{copy.description}</DialogDescription>
-            </DialogHeader>
+            <DialogHeaderBar icon={CircleUserIcon} title={copy.title} description={copy.description} />
             {open && <ProfilePanel name={profile.displayName} avatarUrl={photo} fallbackLabel={null}
                 photoFileUrl={value => value === photo ? value : null}
                 copy={{ ...copy.fields, photoHelp: copy.photoHelp }}
