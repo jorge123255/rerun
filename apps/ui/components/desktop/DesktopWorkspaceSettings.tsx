@@ -203,7 +203,7 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
     return (
         <form className="flex max-h-full min-h-0 flex-1 flex-col" onSubmit={event => { event.preventDefault(); void save() }}>
             <DialogHeaderBar icon={SettingsIcon} title={t('workspaceForm.title')} description={t('workspaceForm.description')} />
-            <ScrollFade className="min-h-0 flex-1 px-6 pt-1 pb-6">
+            <ScrollFade className="min-h-0 flex-1 p-4">
                 <div className="space-y-6">
                     <div className="flex items-end gap-4">
                         <FileDropzone onFiles={files => upload(files[0])} accept={DESKTOP_WORKSPACE_LOGO_ACCEPT} overlayLabel="" disabled={saving || quitting} className="shrink-0">
