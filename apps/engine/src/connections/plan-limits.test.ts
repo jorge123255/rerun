@@ -71,6 +71,12 @@ describe('planLimitWindowsFromClaudeEvent', () => {
         expect(planLimitWindowsFromClaudeEvent(null)).toEqual([])
     })
 
+    it('names a model family window by its family and leaves the plan-surface windows out', () => {
+        const window = { utilization: 0.3, resetsAt: 1794675600 }
+        expect(planLimitWindowsFromClaudeEvent({ unifiedWindows: { seven_day: window, seven_day_fable: { ...window, utilization: 0.62 }, seven_day_opus: window, seven_day_oauth_apps: window, seven_day_overage_included: window } })
+            .map(found => [found.kind, found.label, Math.round(found.usedPercent)])).toEqual([['weekly', null, 30], ['model', 'Fable', 62], ['model', 'Opus', 30]])
+    })
+
     it('keeps the windows a partial event does not mention', () => {
         forgetPlanLimits('merge-fixture')
         recordPlanLimits('merge-fixture', [{ kind: 'session', label: null, usedPercent: 10, resetsAt: null }, { kind: 'weekly', label: null, usedPercent: 20, resetsAt: null }])

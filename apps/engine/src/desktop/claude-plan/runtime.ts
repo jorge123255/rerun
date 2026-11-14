@@ -126,7 +126,7 @@ export function desktopClaudeRuntime(connectionId: string | undefined, token: st
                 const output = desktopClaudeOutputFilter(token, undefined, undefined, info => {
                     const windows = planLimitWindowsFromClaudeEvent(info)
                     mergePlanLimits(DESKTOP_CLAUDE_CONNECTION_ID, windows)
-                    noteDesktopPlanUsage('claude-reply', { outcome: windows.length ? 'read' : 'no-windows', fields: info && typeof info === 'object' ? Object.keys(info) : [] })
+                    noteDesktopPlanUsage('claude-reply', { outcome: windows.length ? 'read' : 'no-windows', fields: info && typeof info === 'object' ? [...Object.keys(info), ...Object.keys((info as { unifiedWindows?: object }).unifiedWindows ?? {}).map(key => `window:${key}`)] : [] })
                 }), diagnostic = desktopClaudeOutputFilter(token, 65536, 65536)
                 child.stdout = child.stdout.pipe(output)
                 child.stderr = child.stderr.pipe(diagnostic)

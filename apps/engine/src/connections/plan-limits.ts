@@ -83,13 +83,21 @@ export function planLimitWindowsFromClaudeEvent(info: unknown): PlanLimitWindow[
     const event = info as { unifiedWindows?: unknown; rateLimitType?: unknown }
     const windows = (event.unifiedWindows && typeof event.unifiedWindows === 'object' ? event.unifiedWindows
         : typeof event.rateLimitType === 'string' ? { [event.rateLimitType]: info } : {}) as Record<string, { utilization?: unknown; resetsAt?: unknown } | null | undefined>
-    const read = (kind: PlanLimitWindow['kind'], window: { utilization?: unknown; resetsAt?: unknown } | null | undefined): PlanLimitWindow[] => {
+    const read = (kind: PlanLimitWindow['kind'], _label: null, window: { utilization?: unknown; resetsAt?: unknown } | null | undefined): PlanLimitWindow[] => {
         if (typeof window?.utilization !== 'number' || !Number.isFinite(window.utilization) || window.utilization < 0) return []
         const reset = typeof window.resetsAt === 'number' && window.resetsAt > 0 ? (window.resetsAt > 100_000_000_000 ? window.resetsAt : window.resetsAt * 1000) : NaN
         return [{ kind, label: null, usedPercent: window.utilization * 100, resetsAt: Number.isFinite(reset) ? new Date(reset).toISOString() : null }]
     }
-    return [...read('session', windows.five_hour), ...read('weekly', windows.seven_day)]
+    // A weekly window of one model family (`seven_day_opus`, `seven_day_fable`, …) is named by its
+    // family. The other `seven_day_*` entries meter surfaces of the plan, not a model.
+    const models = Object.entries(windows).flatMap(([key, window]) => {
+        const family = /^seven_day_([a-z0-9]+)$/.exec(key)?.[1]
+        if (!family || NOT_A_MODEL.has(family)) return []
+        return read('model', null, window).map(found => ({ ...found, label: family[0]!.toUpperCase() + family.slice(1) }))
+    })
+    return [...read('session', null, windows.five_hour), ...read('weekly', null, windows.seven_day), ...models]
 }
+const NOT_A_MODEL = new Set(['overage', 'oauth', 'cowork', 'omelette'])
 
 /** Records the windows of a partial reading over the last one, keeping the windows it does not mention. */
 export function mergePlanLimits(connectionId: string, windows: PlanLimitWindow[]): void {
