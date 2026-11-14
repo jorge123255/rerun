@@ -22,7 +22,7 @@ export function engineOf(runtime: DesktopRuntime) {
 export async function readDesktopProviders(runtime: DesktopRuntime) {
     const list = await listConnections(engineOf(runtime), { cache: 'no-store' })
     const connections = desktopConnections(list.connections)
-    return { connections, default: list.default }
+    return { connections, default: list.default, efforts: list.efforts }
 }
 
 export async function readDesktopWorkspace(runtime: DesktopRuntime) {

@@ -34,12 +34,24 @@ export const connectionConfigSchema = z.object({
 })
 export type ConnectionConfig = z.infer<typeof connectionConfigSchema>
 
+export const CLAUDE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+
+/** One effort per model of a connection, chosen by the user. It applies wherever that model runs. */
+export const modelEffortKey = (connectionId: string, model: string) => `${connectionId}::${model}`
+export const modelEffortsSchema = z.record(z.string(), reasoningLevel)
+export type ModelEfforts = z.infer<typeof modelEffortsSchema>
+export const modelEffortUpdateSchema = z.object({ connectionId: z.string().min(1).max(256), model: z.string().min(1).max(256), reasoningEffort: reasoningLevel.max(32).nullable() }).strict()
+export type ModelEffortUpdate = z.infer<typeof modelEffortUpdateSchema>
+
 export function connectionReasoningOptions(
     connection: Pick<ConnectionConfig, 'provider' | 'codexReasoning' | 'customReasoning' | 'subscriptionModels'>,
     model: string,
 ): { supported: string[]; default?: string } | undefined {
     if (connection.provider === 'codex') return Object.hasOwn(connection.codexReasoning ?? {}, model)
         ? connection.codexReasoning?.[model] : undefined
+    // The Claude subscription runner takes one of its own effort levels for any model; leaving it
+    // unset keeps the model's own default.
+    if (connection.provider === 'claude') return { supported: [...CLAUDE_EFFORT_LEVELS] }
     if (isDesktopSubscriptionProvider(connection.provider)) return connection.subscriptionModels?.find(item => item.id === model)?.reasoning
     if (connection.provider === 'custom' && Object.hasOwn(connection.customReasoning ?? {}, model)) return connection.customReasoning?.[model]
 }
@@ -96,6 +108,8 @@ export const connectionsListSchema = z.object({
     connections: z.array(connectionSummarySchema),
     // Defaulted rather than required: an engine older than box defaults answers a list without it.
     default: boxDefaultModelSchema.nullable().default(null),
+    // The effort chosen for a model, keyed by `modelEffortKey`. Missing on an engine without it.
+    efforts: modelEffortsSchema.optional(),
 })
 export type ConnectionsList = z.infer<typeof connectionsListSchema>
 

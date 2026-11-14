@@ -23,6 +23,7 @@ import { useDesktopForemanIntake } from '@/lib/desktop/foreman-intake'
 import { createDesktopForemanIntakeClient } from '@/lib/desktop/foreman-intake/client'
 import { DesktopForemanFilePermissions } from './DesktopForemanFilePermissions'
 import { buildDesktopModelView } from '@/lib/desktop/chat-model'
+import { saveDesktopModelEffort } from '../DesktopModelEffort'
 import { DesktopForemanModelPill, type DesktopForemanModelPillHandle } from './DesktopForemanModelPill'
 import { DesktopForemanContext } from './DesktopForemanContext'
 import { DesktopForemanConversations } from './DesktopForemanConversations'
@@ -94,6 +95,8 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const [voice, setVoice] = useState<{ slot: ReactNode; busy: boolean } | null>(null)
     const [modelSaving, setModelSaving] = useState(false)
     const modelPicker = useRef<DesktopForemanModelPillHandle>(null)
+    // What this panel saved, shown at once; the workspace's next read brings the same map.
+    const [efforts, setEfforts] = useState<Record<string, string>>()
     const [error, setError] = useState<string | null>(null)
     const current = useRef(props)
     current.current = props
@@ -199,6 +202,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         workspace: providers.default,
         conversation: state.model,
         coworker: null,
+        efforts: efforts ?? providers.efforts,
     })
     const effective = view?.effective
     const voiceModel = props.modelChoice ?? state.model ?? (effective?.available && effective.connectionId && effective.model
@@ -240,6 +244,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         composerTrailing={props.composerTrailing ?? (modelPickerView && <div className="flex min-w-0 items-center">
             <DesktopForemanModelPill ref={modelPicker} view={modelPickerView} connections={providers?.connections} saving={modelSaving}
                 onSettings={props.onOpenModelSettings} disabled={modelDisabled}
+                onEffort={async (connectionId, model, effort) => { setEfforts(await saveDesktopModelEffort(connectionId, model, effort)) }}
                 onPick={async model => {
                     setModelSaving(true)
                     try { await client.setModel(state.model, model) } finally { setModelSaving(false) }

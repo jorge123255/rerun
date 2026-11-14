@@ -13,6 +13,7 @@ import { desktopModelViewSchema, type DesktopModelPick, type DesktopModelView } 
 import { cn } from '@/lib/utils'
 import { useDesktopLocale } from './DesktopLocale'
 
+import { DesktopModelEffort, saveDesktopModelEffort } from './DesktopModelEffort'
 export type DesktopModelBlock = 'setup' | 'unavailable' | 'reasoning'
 
 type Props = {
@@ -114,6 +115,22 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, connection
             setPending(sessionId ? null : nextPending)
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : 'Could not save this model')
+        } finally {
+            setSaving(false)
+        }
+    }
+
+    async function chooseEffort(connectionId: string, model: string, effort: string | null) {
+        version.current++
+        setSaving(true)
+        setError(undefined)
+        try {
+            await saveDesktopModelEffort(connectionId, model, effort)
+            const next = await load()
+            version.current++
+            setState(next)
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : 'Could not save this model’s reasoning effort.')
         } finally {
             setSaving(false)
         }
@@ -221,7 +238,12 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, connection
                         </div>
                     ))}
                     {current && effective?.model && !effective.available && <p className="px-2.5 py-2 text-xs text-muted-foreground">{t('modelPicker.savedUnavailable')}</p>}
-                    {!pending && current?.effective.reasoning && <p className="px-2.5 py-2 text-xs text-muted-foreground">{current.effective.reasoning.source === 'workspace' ? `Reasoning effort ${current.effective.reasoning.effort} from the workspace default.` : `Reasoning effort ${current.effective.reasoning.effort}, this model’s default.`}</p>}
+                    {!pending && current?.effective.reasoningOptions && current.effective.connectionId && current.effective.model
+                        ? <DesktopModelEffort model={current.effective.label} options={current.effective.reasoningOptions} disabled={disabled || saving}
+                            chosen={current.effective.reasoning?.source === 'model' ? current.effective.reasoning.effort : undefined}
+                            inherited={current.effective.reasoning && current.effective.reasoning.source !== 'model' ? current.effective.reasoning.effort : undefined}
+                            onChoose={effort => void chooseEffort(current.effective.connectionId!, current.effective.model!, effort)} />
+                        : !pending && current?.effective.reasoning && <p className="px-2.5 py-2 text-xs text-muted-foreground">{current.effective.reasoning.source === 'workspace' ? `Reasoning effort ${current.effective.reasoning.effort} from the workspace default.` : `Reasoning effort ${current.effective.reasoning.effort}, this model’s default.`}</p>}
                     {effective?.reasoningUnavailable && <p className="px-2.5 py-2 text-xs text-muted-foreground">The saved reasoning effort needs review in model settings.</p>}
                 </div>
                 {onOpenSettings && <Button type="button" size="sm" variant="ghost" className="justify-start" onClick={() => { setOpen(false); onOpenSettings() }}>{t('modelPicker.manage')}</Button>}

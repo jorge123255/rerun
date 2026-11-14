@@ -4,6 +4,9 @@ import type { DesktopTakeoverGuard } from '@rerun/contracts'
 import { z } from 'zod'
 import {
     type BoxDefaultUpdate,
+    type ModelEfforts,
+    type ModelEffortUpdate,
+    modelEffortsSchema,
     ENGINE_CAPABILITY_DESKTOP,
     desktopStatusSchema,
     desktopScheduledRunSchema,
@@ -186,6 +189,10 @@ export async function listConnections(conn: EngineConnection, init: RequestInit 
 }
 
 // The pair every agent that picked no model of its own runs on. `null` clears it.
+export async function setModelEffort(conn: EngineConnection, update: ModelEffortUpdate): Promise<{ efforts: ModelEfforts }> {
+    return request(conn, '/connections/model-effort', { method: 'PUT', body: JSON.stringify(update) }, d => z.object({ efforts: modelEffortsSchema }).parse(d))
+}
+
 export async function setBoxDefault(conn: EngineConnection, pick: BoxDefaultUpdate | null): Promise<void> {
     if (!pick) {
         await request(conn, '/connections/default', { method: 'DELETE' }, () => undefined)

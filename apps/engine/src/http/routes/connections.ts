@@ -1,11 +1,12 @@
 import { withDesktopOpencodeSelection } from '../../desktop/opencode/registry.js'
 import { Hono } from 'hono'
-import { DESKTOP_OPENCODE_CONNECTION_ID, RERUN_CONNECTION_ID, boxDefaultUpdateSchema, connectionReasoningOptions, createConnectionSchema, hasDesktopApiConnectionPrefix, parseDesktopSubscriptionConnectionId, updateConnectionKeysSchema, updateConnectionSchema } from '@rerun/contracts'
+import { DESKTOP_CLAUDE_CONNECTION_ID, DESKTOP_OPENCODE_CONNECTION_ID, RERUN_CONNECTION_ID, boxDefaultUpdateSchema, connectionReasoningOptions, modelEffortUpdateSchema, createConnectionSchema, hasDesktopApiConnectionPrefix, parseDesktopSubscriptionConnectionId, updateConnectionKeysSchema, updateConnectionSchema } from '@rerun/contracts'
 import { connectionExists, isConnected, toSummary } from '../../connections/loader.js'
 import { findConnection, getConnection, listConnections } from '../../connections/registry.js'
 import { assertConnectionDeletable, createConnection, deleteConnection, patchConnection, updateConnectionKeys } from '../../connections/store.js'
 import { connectionUsage, releaseConnection } from '../../connections/release.js'
 import { clearBoxDefault, readBoxDefault, updateBoxDefault, writeBoxDefault } from '../../connections/default.js'
+import { readModelEfforts, writeModelEffort } from '../../connections/model-efforts.js'
 import { withConnectionLock } from '../../connections/lock.js'
 import { servesModel } from '../../connections/resolve.js'
 import { defaultModelOf } from '../../agents/availability.js'
@@ -32,7 +33,22 @@ connectionRoutes.get('/', async c => {
     const all = await listConnections()
     const connections = desktopApp() ? all.filter(connection => desktopProviderAllowed(connection.config.provider, connection.id)) : all
     refreshStaleCodexPlanLimits(connections)
-    return c.json({ connections: connections.map(toSummary), default: await readBoxDefault() })
+    return c.json({ connections: connections.map(toSummary), default: await readBoxDefault(), efforts: await readModelEfforts() })
+})
+
+// One effort per model, chosen in the chat's model picker. `null` returns the model to its own default.
+connectionRoutes.put('/model-effort', async c => {
+    if (!desktopApp()) return c.json({ error: 'not found' }, 404)
+    const { connectionId, model, reasoningEffort } = modelEffortUpdateSchema.parse(await c.req.json())
+    const connection = await findConnection(connectionId)
+    if (!connection) return c.json({ error: 'connection not found' }, 404)
+    assertDesktopProvider(connection.config.provider, connection.id)
+    // A custom endpoint's efforts are tied to a revision of its catalog and stay in Settings.
+    if (connection.custom) return c.json({ error: 'Choose this connection’s reasoning effort in Settings.' }, 400)
+    if (!isConnected(connection) || !servesModel(connection, model)) return c.json({ error: 'Choose a model from a connected provider.' }, 400)
+    if (reasoningEffort !== null && !connectionReasoningOptions(connection.config, model)?.supported.includes(reasoningEffort))
+        return c.json({ error: 'Choose a reasoning effort supported by this model.' }, 400)
+    return c.json({ efforts: await writeModelEffort(connectionId, model, reasoningEffort) })
 })
 
 // Registered before `/:id`: Hono matches same-method routes in registration order, so `/default`
@@ -41,13 +57,14 @@ connectionRoutes.put('/default', async c => {
     const { connectionId, model, reasoningEffort, customReasoningRevision } = boxDefaultUpdateSchema.parse(await c.req.json())
     if (namedDesktopConnection(connectionId)) return c.json({ error: 'Named API model selection is unavailable. The workspace default was not changed.' }, 409)
     const subscription = parseDesktopSubscriptionConnectionId(connectionId)
-    if (desktopApp() && (connectionId === DESKTOP_CODEX_ID || subscription)) {
+    const claudePlan = connectionId === DESKTOP_CLAUDE_CONNECTION_ID
+    if (desktopApp() && (connectionId === DESKTOP_CODEX_ID || subscription || claudePlan)) {
         return withConnectionLock(connectionId, async () => {
             const connection = await findConnection(connectionId)
             if (!connection) return c.json({ error: 'connection not found' }, 404)
             assertDesktopProvider(connection.config.provider, connectionId)
-            if (connection.config.provider !== (subscription?.provider ?? 'codex') || !isConnected(connection) || !servesModel(connection, model)) {
-                return c.json({ error: subscription ? 'Choose a model from the connected subscription.' : 'Choose a model from the connected Codex account.' }, 400)
+            if (connection.config.provider !== (subscription?.provider ?? (claudePlan ? 'claude' : 'codex')) || !isConnected(connection) || !servesModel(connection, model)) {
+                return c.json({ error: subscription ? 'Choose a model from the connected subscription.' : claudePlan ? 'Choose a model from the connected Claude account.' : 'Choose a model from the connected Codex account.' }, 400)
             }
             const supported = connectionReasoningOptions(connection.config, model)?.supported ?? []
             return c.json(await updateBoxDefault(current => {

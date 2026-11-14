@@ -1,5 +1,5 @@
 import { isFreeDesktopOpencodeModel } from '@rerun/contracts'
-import { PROVIDER_LABELS, connectionReasoningOptions, modelLabel, type BoxDefaultModel, type ConnectionSummary, type Provider } from '@rerun/contracts'
+import { PROVIDER_LABELS, connectionReasoningOptions, modelEffortKey, modelLabel, type BoxDefaultModel, type ConnectionSummary, type ModelEfforts, type Provider } from '@rerun/contracts'
 import { z } from 'zod'
 import { desktopProvider } from './settings'
 
@@ -11,7 +11,7 @@ import { desktopProvider } from './settings'
 
 export type DesktopModelPick = { connectionId: string; model: string }
 export type DesktopModelSource = 'conversation' | 'coworker' | 'workspace'
-export type DesktopReasoning = { effort: string; source: 'workspace' | 'model-default' }
+export type DesktopReasoning = { effort: string; source: 'model' | 'workspace' | 'model-default' }
 
 export const desktopModelPickSchema = z.object({
     connectionId: z.string().trim().min(1).max(256),
@@ -19,7 +19,7 @@ export const desktopModelPickSchema = z.object({
 })
 
 const catalogModelSchema = z.object({ id: z.string(), label: z.string() })
-const reasoningSchema = z.object({ effort: z.string(), source: z.enum(['workspace', 'model-default']) })
+const reasoningSchema = z.object({ effort: z.string(), source: z.enum(['model', 'workspace', 'model-default']) })
 export const desktopModelViewSchema = z.object({
     catalog: z.array(z.object({
         connectionId: z.string(),
@@ -57,6 +57,8 @@ export const desktopModelViewSchema = z.object({
         label: z.string(),
         available: z.boolean(),
         reasoning: reasoningSchema.optional(),
+        // The efforts this model can be given from the picker. Absent when it has none to choose.
+        reasoningOptions: z.array(z.string()).optional(),
         reasoningUnavailable: z.boolean().optional(),
     }),
 })
@@ -93,10 +95,13 @@ export function customReasoningUnavailable(connection: CatalogConnection | null,
         || !connectionReasoningOptions(connection, workspace.model)?.supported.includes(workspace.reasoningEffort)
 }
 
-export function desktopReasoningChoice(connection: CatalogConnection | null, model: string | null, workspace: BoxDefaultModel | null): DesktopReasoning | undefined {
+export function desktopReasoningChoice(connection: CatalogConnection | null, model: string | null, workspace: BoxDefaultModel | null, efforts: ModelEfforts = {}): DesktopReasoning | undefined {
     if (!connection || !model || customReasoningUnavailable(connection, model, workspace)) return
     const options = connectionReasoningOptions(connection, model)
     if (!options) return
+    // The effort chosen for this model wins wherever the model runs.
+    const chosen = efforts[modelEffortKey(connection.id, model)]
+    if (chosen && options.supported.includes(chosen)) return { effort: chosen, source: 'model' }
     if (workspace?.connectionId === connection.id && workspace.model === model && workspace.reasoningEffort && options.supported.includes(workspace.reasoningEffort)) {
         return { effort: workspace.reasoningEffort, source: 'workspace' }
     }
@@ -113,6 +118,7 @@ export function buildDesktopModelView(input: {
     workspace: BoxDefaultModel | null
     coworker: { connectionId: string | null; provider: string | null; model: string | null } | null
     conversation: DesktopModelPick | null
+    efforts?: ModelEfforts
 }): DesktopModelView {
     const connections = desktopConnections(input.connections)
     const workspaceConnection = usableConnection(connections, input.workspace)
@@ -144,7 +150,10 @@ export function buildDesktopModelView(input: {
     const selectedConnection = usableConnection(connections, selected) ?? (selected ? connections.find(item => item.id === selected.connectionId) ?? null : null)
     const model = selected?.model ?? null
     const available = !!usableConnection(connections, selected)
-    const reasoning = desktopReasoningChoice(available ? selectedConnection : null, model, input.workspace)
+    const reasoning = desktopReasoningChoice(available ? selectedConnection : null, model, input.workspace, input.efforts)
+    // A custom endpoint's efforts follow a revision of its catalog and stay in Settings.
+    const reasoningOptions = available && selectedConnection && model && selectedConnection.provider !== 'custom'
+        ? connectionReasoningOptions(selectedConnection, model)?.supported : undefined
     const reasoningUnavailable = available && customReasoningUnavailable(selectedConnection, model, input.workspace)
     return desktopModelViewSchema.parse({
         catalog: connections.filter(item => item.connected && offeredModelIds(item).length > 0).map(item => ({
@@ -165,6 +174,7 @@ export function buildDesktopModelView(input: {
             label: desktopConnectionModelLabel(selectedConnection, model),
             available,
             ...(reasoning ? { reasoning } : {}),
+            ...(reasoningOptions?.length ? { reasoningOptions } : {}),
             ...(reasoningUnavailable && { reasoningUnavailable }),
         },
     })

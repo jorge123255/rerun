@@ -47,6 +47,27 @@ describe('desktop model selection', () => {
         expect(desktopReasoningChoice(codex, 'terra', null)).toEqual({ effort: 'medium', source: 'model-default' })
     })
 
+    it('uses the effort chosen for a model wherever it runs, ahead of the workspace default and the model default', () => {
+        const efforts = { 'codex::terra': 'low', 'codex::luna': 'ultra' }
+        expect(desktopReasoningChoice(codex, 'terra', workspace, efforts)).toEqual({ effort: 'low', source: 'model' })
+        // An effort the model no longer offers is ignored.
+        expect(desktopReasoningChoice(codex, 'luna', workspace, efforts)).toEqual({ effort: 'low', source: 'model-default' })
+        const view = buildDesktopModelView({ connections: [codex, local], workspace, coworker: null, conversation: { connectionId: 'codex', model: 'terra' }, efforts })
+        expect(view.effective).toMatchObject({ reasoning: { effort: 'low', source: 'model' }, reasoningOptions: ['low', 'medium', 'high'] })
+        // A model with no effort levels offers nothing to choose.
+        expect(buildDesktopModelView({ connections: [codex, local], workspace, coworker: null, conversation: { connectionId: 'local', model: 'model-chat' } }).effective.reasoningOptions).toBeUndefined()
+    })
+
+    it('offers the Claude subscription its own effort levels, with no default of its own', () => {
+        const claude = connection({ id: 'mac-claude', name: 'Claude', provider: 'claude', models: ['claude-opus-5-5'] })
+        const pick = { connectionId: 'mac-claude', model: 'claude-opus-5-5' }
+        const plain = buildDesktopModelView({ connections: [claude], workspace: pick, coworker: null, conversation: null })
+        expect(plain.effective.reasoningOptions).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+        expect(plain.effective.reasoning).toBeUndefined()
+        const chosen = buildDesktopModelView({ connections: [claude], workspace: pick, coworker: null, conversation: null, efforts: { 'mac-claude::claude-opus-5-5': 'xhigh' } })
+        expect(chosen.effective.reasoning).toEqual({ effort: 'xhigh', source: 'model' })
+    })
+
     it('offers exact registered custom models and keeps disconnected choices unavailable', () => {
         const custom = connection({ id: 'custom-fixture', name: 'Fixture endpoint', provider: 'custom', customRevision: 1, models: ['synthetic/model'] })
         const missingRevision = connection({ id: 'unregistered', provider: 'custom', models: ['unregistered/model'] })

@@ -1,6 +1,6 @@
 import 'server-only'
-import { EngineRequestError, getAgent, patchAgent } from '@/lib/engine/client'
-import type { ConnectionSummary } from '@rerun/contracts'
+import { EngineRequestError, getAgent, patchAgent, setModelEffort } from '@/lib/engine/client'
+import { connectionReasoningOptions, type ConnectionSummary } from '@rerun/contracts'
 import { buildDesktopModelView, customReasoningUnavailable, offeredModelIds, usableConnection, type DesktopModelPick, type DesktopModelSource, type DesktopModelView } from '../chat-model'
 import { DesktopHttpError } from './auth'
 import { disabledCoworkerMessage } from './coworker-enabled'
@@ -52,11 +52,11 @@ function offered(connections: ConnectionSummary[], pick: DesktopModelPick): Conn
 export async function readDesktopModelState(runtime: DesktopRuntime, agentId: string, sessionId?: string): Promise<DesktopModelView> {
     const agent = await agentOrThrow(runtime, agentId)
     const session = sessionId ? await sessionFor(runtime, agent, sessionId) : null
-    const [{ connections, default: workspace }, coworker] = await Promise.all([
+    const [{ connections, default: workspace, efforts }, coworker] = await Promise.all([
         readDesktopProviders(runtime),
         engineCoworker(runtime, agent),
     ])
-    return buildDesktopModelView({ connections, workspace, coworker, conversation: savedChoice(session) })
+    return buildDesktopModelView({ connections, workspace, coworker, conversation: savedChoice(session), efforts })
 }
 
 export async function setDesktopCoworkerModel(runtime: DesktopRuntime, agentId: string, pick: DesktopModelPick | null, sessionId?: string): Promise<DesktopModelView> {
@@ -114,4 +114,19 @@ export async function resolveDesktopChatModel(runtime: DesktopRuntime, agent: De
     }
     if (!offeredModelIds(workspace.connection).includes(workspace.model)) throw new DesktopHttpError(400, WORKSPACE_REQUIRED)
     return select({ connectionId: workspace.connection.id, model: workspace.model }, 'workspace')
+}
+
+/** One effort per model: it applies wherever that model runs, the Chief of Staff included. */
+export async function setDesktopModelEffort(runtime: DesktopRuntime, change: { connectionId: string; model: string; effort: string | null }) {
+    const { connections } = await readDesktopProviders(runtime)
+    const connection = offered(connections, { connectionId: change.connectionId, model: change.model })
+    if (connection.provider === 'custom') throw new DesktopHttpError(400, 'Choose this connection’s reasoning effort in Settings.')
+    if (change.effort !== null && !connectionReasoningOptions(connection, change.model)?.supported.includes(change.effort))
+        throw new DesktopHttpError(400, 'Choose a reasoning effort this model offers.')
+    try {
+        return await setModelEffort(engineOf(runtime), { connectionId: connection.id, model: change.model, reasoningEffort: change.effort })
+    } catch (error) {
+        if (error instanceof EngineRequestError && error.status < 500) throw new DesktopHttpError(error.status, error.message)
+        throw new DesktopHttpError(502, 'Could not save this model’s reasoning effort. Try again.')
+    }
 }

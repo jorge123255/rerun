@@ -24,7 +24,7 @@ import { desktopCodexGrantsOf, desktopRerunGrantsOf, desktopRerunToolCatalog, is
 import { env } from '../config/env.js'
 import { codexHomeDir } from '../config/paths.js'
 import { allowedModel } from '../connections/plan.js'
-import { RERUN_CONNECTION_ID } from '@rerun/contracts'
+import { RERUN_CONNECTION_ID, type CLAUDE_EFFORT_LEVELS } from '@rerun/contracts'
 import { newId } from '../lib/ids.js'
 import { resolveTransport } from '../tools/mcp.js'
 import { relayMcpServer, type RunMcpServer } from '../tools/mcp-relay.js'
@@ -274,7 +274,7 @@ export function codexMcpConfig(tools?: ToolSet, mcpServers: McpServer[] = [], sc
 // one-shot call (compaction, curator, vision) has none here and keeps passing its own to
 // generateText, where the provider folds it into the user turn. `claudeTools` reopens named Claude
 // built-ins for that call alone; a run has only CLAUDE_RUN_TOOLS.
-export type CliModelOptions = { system?: string; claudeTools?: readonly string[]; screenshots?: ScreenshotLookup; nativeWorker?: DesktopNativeWorker; desktopVision?: boolean }
+export type CliModelOptions = { effort?: string; system?: string; claudeTools?: readonly string[]; screenshots?: ScreenshotLookup; nativeWorker?: DesktopNativeWorker; desktopVision?: boolean }
 
 // The subscription pays for the CLI's own web search, where Rerun's web_search would bill Brave to
 // Rerun. Its WebFetch stays closed: it hands back a summary of the page, web_fetch the page itself.
@@ -322,6 +322,8 @@ function claudeProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers: RunMcpS
             // Without this the CLI emits no thinking block at all, so the chat never shows what the
             // agent is working through. `adaptive` leaves the model to decide when it is worth it.
             thinking: { type: 'adaptive', display: 'summarized' },
+            // The effort the user chose for this model; absent, the model keeps its own.
+            ...(options.effort ? { effort: options.effort as (typeof CLAUDE_EFFORT_LEVELS)[number] } : {}),
             env: {
                 ...agentEnv,
                 ...CLAUDE_HARNESS_ENV,
@@ -652,7 +654,7 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
     if (provider === 'claude') {
         const capture = claudeContextCapture(agent.resolved.connection?.id)
         const desktopRuntime = desktopApp() ? desktopClaudeRuntime(agent.resolved.connection?.id, connectionEnv(agent).CLAUDE_CODE_OAUTH_TOKEN ?? '', CLAUDE_HARNESS_ENV) : undefined
-        const claude = claudeProvider(agent, tools, mcpServers, capture, { system, screenshots, claudeTools: agent.config.tools.web ? CLAUDE_RUN_TOOLS : [] }, desktopRuntime).languageModel(model)
+        const claude = claudeProvider(agent, tools, mcpServers, capture, { system, screenshots, claudeTools: agent.config.tools.web ? CLAUDE_RUN_TOOLS : [], effort: reasoningEffort }, desktopRuntime).languageModel(model)
         return { model: wrapLanguageModel({ model: claude, middleware: [claudeScreenshotMiddleware, replies.middleware, cardTags, guard] }), close: desktopRuntime?.close ?? noClose, contextUsage: capture.read, quickReplies: replies.read }
     }
     // Asking for the reasoning and reading it back are both off the OpenAI chat format, so they are

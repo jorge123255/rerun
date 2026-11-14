@@ -5,6 +5,7 @@ import type { ConnectionSummary, DesktopForemanModelRef } from '@rerun/contracts
 import { UsageRing } from '@/components/agent/UsageRing'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { DesktopModelEffort } from '../DesktopModelEffort'
 import type { DesktopModelView } from '@/lib/desktop/chat-model'
 import { ProviderIcon } from '@/lib/engine/provider-icons'
 import { CheckIcon, ChevronDownIcon } from '@/lib/icons'
@@ -13,13 +14,15 @@ import { DesktopModelPillUsageTooltip, useDesktopModelPillUsage } from '../usage
 
 export type DesktopForemanModelPillHandle = { open(): void }
 
-export function DesktopForemanModelPill({ ref, view, connections, disabled, saving, onPick, onSettings }: {
+export function DesktopForemanModelPill({ ref, view, connections, disabled, saving, onPick, onEffort, onSettings }: {
     ref?: Ref<DesktopForemanModelPillHandle>
     view: DesktopModelView
     connections?: readonly ConnectionSummary[]
     disabled: boolean
     saving: boolean
     onPick(model: DesktopForemanModelRef | null): Promise<void>
+    /** Saves the effort of the model in use. It applies wherever that model answers. */
+    onEffort?(connectionId: string, model: string, effort: string | null): Promise<void>
     onSettings?: () => void
 }) {
     const { t } = useDesktopLocale()
@@ -79,6 +82,14 @@ export function DesktopForemanModelPill({ ref, view, connections, disabled, savi
                     })}
                 </div>)}
             </div>
+            {onEffort && effective.available && effective.reasoningOptions && effective.connectionId && effective.model && <DesktopModelEffort
+                model={effective.label} options={effective.reasoningOptions} disabled={disabled || saving}
+                chosen={effective.reasoning?.source === 'model' ? effective.reasoning.effort : undefined}
+                inherited={effective.reasoning && effective.reasoning.source !== 'model' ? effective.reasoning.effort : undefined}
+                onChoose={effort => {
+                    setError('')
+                    void onEffort(effective.connectionId!, effective.model!, effort).catch(cause => setError(cause instanceof Error ? cause.message : 'Could not save this model’s reasoning effort.'))
+                }} />}
             {onSettings && <Button type="button" size="sm" variant="ghost" className="justify-start" disabled={saving}
                 onClick={() => { setOpen(false); onSettings() }}>{t('settings')}</Button>}
         </PopoverContent>

@@ -1,6 +1,7 @@
 import type { streamText } from 'ai'
 import { connectionReasoningOptions, isDesktopSubscriptionProvider, type Provider } from '@rerun/contracts'
 import { readBoxDefault } from '../connections/default.js'
+import { chosenModelEffort } from '../connections/model-efforts.js'
 import { DESKTOP_CODEX_ID } from '../desktop/codex-runtime.js'
 import { desktopApp } from '../desktop/policy.js'
 import type { RunModel } from './availability.js'
@@ -26,6 +27,9 @@ export async function desktopCodexEffort({ provider, connection, model }: RunMod
     if (provider !== 'codex' || !desktopApp() || connection?.id !== DESKTOP_CODEX_ID) return
     const options = connection.config.codexReasoning?.[model]
     if (!options) return
+    // The effort chosen for this model wins over the workspace default's and the model's own.
+    const chosen = await chosenModelEffort(connection.id, model, options.supported)
+    if (chosen) return chosen
     const selected = await readBoxDefault()
     if (selected?.connectionId === connection.id && selected.model === model &&
         selected.reasoningEffort && options.supported.includes(selected.reasoningEffort)) return selected.reasoningEffort
@@ -38,10 +42,24 @@ export async function desktopSubscriptionEffort({ provider, connection, model }:
     if (!isDesktopSubscriptionProvider(provider) || !connection) return
     const options = connectionReasoningOptions(connection.config, model)
     if (!options) return
+    const chosen = await chosenModelEffort(connection.id, model, options.supported)
+    if (chosen) return chosen
     const selected = await readBoxDefault()
     if (selected?.connectionId === connection.id && selected.model === model && selected.reasoningEffort &&
         options.supported.includes(selected.reasoningEffort)) return selected.reasoningEffort
     return options.default
+}
+
+/** The Claude subscription runner's effort. Unset leaves the model its own default. */
+export async function desktopClaudeEffort({ provider, connection, model }: RunModel): Promise<string | undefined> {
+    if (provider !== 'claude' || !desktopApp() || !connection) return
+    const options = connectionReasoningOptions(connection.config, model)
+    if (!options) return
+    const chosen = await chosenModelEffort(connection.id, model, options.supported)
+    if (chosen) return chosen
+    const selected = await readBoxDefault()
+    if (selected?.connectionId === connection.id && selected.model === model && selected.reasoningEffort &&
+        options.supported.includes(selected.reasoningEffort)) return selected.reasoningEffort
 }
 
 export async function desktopCustomEffort({ provider, connection, model }: RunModel): Promise<string | undefined> {
