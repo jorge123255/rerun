@@ -634,8 +634,8 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
     }
     if (provider === 'codex') {
         const codex = codexAppServerProvider(agent, tools, mcpServers, { system, screenshots, nativeWorker })
-        // Accepts an already-named image_generation result for this run. The 0.166 CLI patch is not
-        // changed here, so a live ChatGPT image turn stays a root gate. Other adapters never get this.
+        // Accepts the image_generation result the patched 0.166 provider names for this run. A live
+        // ChatGPT image turn on the Mac still awaits acceptance. Other adapters never get this.
         const image = imageRun && desktopApp()
             ? createDesktopCodexImageMiddleware({ provider, agent, ...imageRun })
             : undefined
