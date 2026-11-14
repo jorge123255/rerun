@@ -1,0 +1,139 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createClient, type Client } from '@libsql/client'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+
+vi.mock('server-only', () => ({}))
+const { createDesktopSecretCrypto } = await import('../secret-requests/crypto')
+const { initializeDesktopRound62 } = await import('../round62-schema')
+const { desktopManagedApps, managedAppCatalog } = await import('./service')
+const { COMPOSIO_API } = await import('./client')
+
+const KEY = 'fixture-composio-key-0001'
+let db: Client, dir: string
+beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'managed-apps-'))
+    db = createClient({ url: `file:${join(dir, 'app.db')}` })
+    await db.execute('CREATE TABLE desktop_schema_migrations(version INTEGER PRIMARY KEY, id TEXT NOT NULL)')
+    await initializeDesktopRound62(db)
+    await initializeDesktopRound62(db)
+})
+afterEach(async () => { db.close(); await rm(dir, { recursive: true, force: true }) })
+
+// A pretend Composio: one project, one key, and what was asked of it.
+function composio() {
+    const seen: { method: string; path: string; body?: Record<string, unknown> }[] = []
+    const state = { status: 'INITIATED', authConfigs: [] as { id: string; toolkit: string }[], executed: [] as unknown[], removed: [] as string[], user: '' }
+    const network = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input)), path = url.pathname.replace('/api/v3.1', '') + url.search
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined
+        expect(String(input).startsWith(COMPOSIO_API)).toBe(true)
+        if (new Headers(init?.headers).get('x-api-key') !== KEY) return Response.json({ error: { message: `bad key ${new Headers(init?.headers).get('x-api-key')}` } }, { status: 401 })
+        seen.push({ method: init?.method ?? 'GET', path, ...(body ? { body } : {}) })
+        if (path.startsWith('/auth_configs?limit=1')) return Response.json({ items: [] })
+        if (path.startsWith('/auth_configs?toolkit_slug=')) return Response.json({ items: state.authConfigs.filter(row => row.toolkit === url.searchParams.get('toolkit_slug')).map(row => ({ id: row.id, status: 'ENABLED', is_composio_managed: true, toolkit: { slug: row.toolkit } })) })
+        if (path === '/auth_configs') { const made = { id: `ac_${state.authConfigs.length + 1}`, toolkit: body.toolkit.slug }; state.authConfigs.push(made); return Response.json({ toolkit: { slug: made.toolkit }, auth_config: { id: made.id } }, { status: 201 }) }
+        if (path === '/connected_accounts/link') { state.user = body.user_id; return Response.json({ connected_account_id: 'ca_1', redirect_url: 'https://connect.composio.example/link/ca_1' }) }
+        if (path === '/connected_accounts/ca_1' && init?.method === 'DELETE') { state.removed.push('ca_1'); return Response.json({ success: true }) }
+        if (path === '/connected_accounts/ca_1') return Response.json({ id: 'ca_1', user_id: state.user, status: state.status, toolkit: { slug: 'gmail' } })
+        if (path.startsWith('/tools?')) return Response.json({ items: [
+            { slug: 'GMAIL_SEND_EMAIL', description: 'Send an email', input_parameters: { type: 'object', properties: { to: { type: 'string' } } } },
+            { slug: 'GMAIL_FETCH_EMAILS', description: 'Read mail', input_parameters: { type: 'object', properties: {} } },
+            { slug: 'GMAIL_DELETE_MESSAGE', description: 'Not offered by the catalog', input_parameters: { type: 'object', properties: {} }, tags: ['destructiveHint'] },
+        ], next_cursor: null })
+        if (path === '/tools/execute/GMAIL_SEND_EMAIL') { state.executed.push(body); return Response.json({ successful: true, data: { id: 'msg_1' } }) }
+        if (path === '/tools/execute/GMAIL_FETCH_EMAILS') return Response.json({ successful: false, error: 'quota' })
+        return Response.json({}, { status: 404 })
+    }) as typeof fetch
+    return { network, seen, state }
+}
+function apps(network: typeof fetch) {
+    const crypto = createDesktopSecretCrypto(() => Buffer.alloc(32, 7))
+    return desktopManagedApps(db, crypto, 1, { network, returnUrl: 'http://127.0.0.1:4000/api/desktop/managed-apps/return', coworkerExists: async id => id === 'coworker-1' })
+}
+
+test('the catalog offers the managed apps, Gmail among them', () => {
+    expect(managedAppCatalog.map(app => app.slug)).toEqual(expect.arrayContaining(['gmail', 'outlook', 'googlecalendar', 'linkedin'].filter(slug => managedAppCatalog.some(app => app.slug === slug))))
+    const gmail = managedAppCatalog.find(app => app.slug === 'gmail')!
+    expect(gmail).toMatchObject({ name: 'Gmail', toolkit: 'gmail' })
+    expect(gmail.allowedTools).toContain('GMAIL_SEND_EMAIL')
+    expect(managedAppCatalog.length).toBeGreaterThanOrEqual(20)
+})
+
+test('a key is tried before it is kept, is sealed at rest, and never comes back out', async () => {
+    const fake = composio(), service = apps(fake.network)
+    expect((await service.view()).configured).toBe(false)
+    await expect(service.act({ action: 'set-key', key: 'wrong-key-000000' })).rejects.toThrow('Composio refused this key.')
+    expect((await service.view()).configured).toBe(false)
+    await expect(service.act({ action: 'connect', slug: 'gmail' })).rejects.toThrow('Add your Composio key first.')
+
+    const saved = await service.act({ action: 'set-key', key: KEY })
+    expect(saved.view.configured).toBe(true)
+    expect(JSON.stringify(saved)).not.toContain(KEY)
+    const row = (await db.execute('SELECT sealed FROM desktop_managed_app_key')).rows[0]!
+    expect(String(row.sealed)).not.toContain(KEY)
+    expect(Buffer.from(String(row.sealed), 'base64').toString('latin1')).not.toContain(KEY)
+})
+
+test('connect, sign in, attach to a coworker, call, detach and remove', async () => {
+    const fake = composio(), service = apps(fake.network), signal = new AbortController().signal
+    await service.act({ action: 'set-key', key: KEY })
+    const connected = await service.act({ action: 'connect', slug: 'gmail' })
+    expect(connected.signIn).toBe('https://connect.composio.example/link/ca_1')
+    const [account] = connected.view.accounts
+    expect(account).toMatchObject({ slug: 'gmail', name: 'Gmail', status: 'pending', agentIds: [] })
+    expect(fake.seen.find(call => call.path === '/auth_configs')!.body).toEqual({ toolkit: { slug: 'gmail' }, auth_config: { type: 'use_composio_managed_auth', credentials: {} } })
+    expect(fake.seen.find(call => call.path === '/connected_accounts/link')!.body).toMatchObject({ auth_config_id: 'ac_1', callback_url: 'http://127.0.0.1:4000/api/desktop/managed-apps/return' })
+    await expect(service.act({ action: 'connect', slug: 'gmail' })).rejects.toThrow('already has an account')
+
+    // Not signed in yet: it cannot be attached and offers no tools.
+    await expect(service.act({ action: 'attach', id: account!.id, agentId: 'coworker-1', attached: true })).rejects.toThrow('Finish signing in')
+    expect((await service.act({ action: 'refresh', id: account!.id })).view.accounts[0]!.status).toBe('pending')
+    fake.state.status = 'ACTIVE'
+    expect((await service.act({ action: 'refresh', id: account!.id })).view.accounts[0]!.status).toBe('active')
+    await expect(service.act({ action: 'attach', id: account!.id, agentId: 'someone-else', attached: true })).rejects.toThrow('no longer available')
+    expect((await service.act({ action: 'attach', id: account!.id, agentId: 'coworker-1', attached: true })).view.accounts[0]!.agentIds).toEqual(['coworker-1'])
+
+    // Only the coworker that holds the account gets its tools, and only the ones the catalog allows.
+    expect(await service.tools('coworker-2', signal)).toEqual([])
+    const tools = await service.tools('coworker-1', signal)
+    expect(tools.map(tool => tool.name)).toEqual(['GMAIL_SEND_EMAIL', 'GMAIL_FETCH_EMAILS'])
+    const sent = await tools[0]!.execute({ to: 'pat@example.test' }, signal, 'call-1')
+    expect(sent).toEqual({ source: 'remote_mcp', untrusted: true, result: { content: [{ type: 'text', text: '{"id":"msg_1"}' }] } })
+    expect(fake.state.executed).toEqual([{ user_id: fake.state.user, arguments: { to: 'pat@example.test' } }])
+    expect(fake.state.user).toMatch(/^rerun_mac_[0-9a-f-]{36}$/)
+    expect((await tools[1]!.execute({}, signal, 'call-2')).result).toEqual({ content: [{ type: 'text', text: '{"error":"quota"}' }], isError: true })
+    expect(fake.seen.filter(call => call.path.startsWith('/tools?')).length).toBe(1)
+
+    // Detached: the tool a run still holds stops at the call.
+    await service.act({ action: 'attach', id: account!.id, agentId: 'coworker-1', attached: false })
+    await expect(tools[0]!.execute({ to: 'pat@example.test' }, signal, 'call-3')).rejects.toThrow('no longer attached')
+    expect(fake.state.executed).toHaveLength(1)
+    expect(await service.tools('coworker-1', signal)).toEqual([])
+
+    expect((await service.act({ action: 'remove', id: account!.id })).view.accounts).toEqual([])
+    expect(fake.state.removed).toEqual(['ca_1'])
+})
+
+test('removing the key removes the accounts that belonged to it', async () => {
+    const fake = composio(), service = apps(fake.network)
+    await service.act({ action: 'set-key', key: KEY })
+    const { view } = await service.act({ action: 'connect', slug: 'gmail' })
+    fake.state.status = 'ACTIVE'
+    await service.act({ action: 'refresh', id: view.accounts[0]!.id })
+    await service.act({ action: 'attach', id: view.accounts[0]!.id, agentId: 'coworker-1', attached: true })
+    const cleared = await service.act({ action: 'remove-key' })
+    expect(cleared.view).toMatchObject({ configured: false, accounts: [] })
+    expect(fake.state.removed).toEqual(['ca_1'])
+    expect(await service.tools('coworker-1', new AbortController().signal)).toEqual([])
+    expect((await db.execute('SELECT COUNT(*) AS n FROM desktop_managed_app_attachments')).rows[0]!.n).toBe(0)
+})
+
+test('an account signed in by someone else, or to another app, is never marked usable', async () => {
+    const fake = composio(), service = apps(fake.network)
+    await service.act({ action: 'set-key', key: KEY })
+    const { view } = await service.act({ action: 'connect', slug: 'gmail' })
+    fake.state.status = 'ACTIVE'; fake.state.user = 'somebody_else'
+    expect((await service.act({ action: 'refresh', id: view.accounts[0]!.id })).view.accounts[0]!.status).toBe('pending')
+})

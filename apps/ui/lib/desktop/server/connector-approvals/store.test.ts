@@ -27,7 +27,7 @@ describe('which connector actions ask first', () => {
     it('recognizes the action by the tool’s first verb', () => {
         const kinds: [string, string | null][] = [
             ['gmail_send_email', 'send'], ['GMAIL_REPLY_TO_THREAD', 'send'], ['slack_create_message', 'send'], ['calendar_invite_attendee', 'send'],
-            ['drive_delete_file', 'delete'], ['HUBSPOT_ARCHIVE_CONTACT', 'delete'], ['notion_trash_page', 'delete'], ['gmail_removeLabel', 'delete'],
+            ['drive_delete_file', 'delete'], ['GMAIL_MOVE_TO_TRASH', 'delete'], ['GMAIL_SEND_EMAIL', 'send'], ['GMAIL_CREATE_EMAIL_DRAFT', null], ['GMAIL_FETCH_EMAILS', null], ['HUBSPOT_ARCHIVE_CONTACT', 'delete'], ['notion_trash_page', 'delete'], ['gmail_removeLabel', 'delete'],
             ['drive_share_file', 'share'], ['drive_add_permission', 'share'], ['github_add_collaborator', 'share'],
             ['x_create_tweet', 'post'], ['linkedin_publish_article', 'post'], ['github_create_release', 'post'],
             ['stripe_create_refund', 'pay'], ['stripe_charge_customer', 'pay'], ['shop_place_order', 'pay'],

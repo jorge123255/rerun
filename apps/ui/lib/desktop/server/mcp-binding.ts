@@ -32,6 +32,7 @@ import { nativeWritebackService } from './native-writeback/service'
 import { nativeWritebackApi } from './native-writeback/api'
 import { authenticateDesktopEngineRequest, authenticateDesktopRequest, DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
+import { openDesktopManagedApps } from './managed-apps/binding'
 import { desktopConnectorActionKind } from '@rerun/contracts'
 import { admitConnectorCall } from './connector-approvals/store'
 import type { DesktopRuntime } from './runtime'
@@ -232,7 +233,8 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         const http = await vaultCatalog.tools(owner, active, async stop => {
             if (await authorizeRun(identity, stop, 'services') !== owner) throw new Error('Service run owner changed')
         })
-        return [...http, ...await vaultCatalog.sseTools(owner, identity, active)]
+        // Managed apps (Gmail and the like) join the same path, so the same permission and the same ask-first check apply.
+        return [...http, ...await vaultCatalog.sseTools(owner, identity, active), ...await (await openDesktopManagedApps(runtime)).tools(owner, active)]
     }, askFirst)
     const accounts = await canonicalServiceAccounts(runtime, installedServices, services, masterKey, {
         additionalTransport: (record, run, signal) => serviceTransports?.service(record, run, signal),

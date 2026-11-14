@@ -2,6 +2,7 @@
 
 import { vaultAccountHealthText } from './vault-account-health'
 import { DesktopVaultCatalog } from './DesktopVaultCatalog'
+import { DesktopManagedApps } from './DesktopManagedApps'
 import { DesktopMcpOAuthAuthorize } from '../mcp/DesktopMcpOAuthAuthorize'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowLeft, ChevronRight, KeyRound, Plug, Plus } from 'lucide-react'
@@ -156,6 +157,7 @@ function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: Sug
                                     actions={<ChevronRight className="size-4" />} onClick={() => navigate(item.id)} />)}
                             </section>
                         })}
+                    {!coworkerApp && <DesktopManagedApps coworkers={listing.coworkers} disabled={busy} />}
                 </>}
         </PanelScroller>
     </PanelSteps>

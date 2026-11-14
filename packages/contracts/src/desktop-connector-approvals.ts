@@ -53,10 +53,14 @@ export function desktopConnectorActionKind(toolName: string, destructive = false
         if (CHANGING.has(word) && rest.some(next => CREDENTIAL.has(next))) return 'credential'
         if (CHANGING.has(word) && rest.join('').includes('apikey')) return 'credential'
         if (MAKING.has(word)) {
+            // A draft is made for the person to look at; nothing leaves until it is sent.
+            if (rest.includes('draft')) break
             const made = rest.map(next => MADE[next]).find(Boolean)
             if (made) return made
             break
         }
+        // Moving something to the trash is deleting it, whatever the verb.
+        if (word === 'move' && rest.includes('trash')) return 'delete'
         if (ORDINARY.has(word) || CHANGING.has(word)) break
         // The web's POST method is not posting: STRIPE_POST_V1_PLANS reads a request path.
         if (word === 'post' && /^(v\d+|api|request)$/.test(rest[0] ?? '')) break
