@@ -262,6 +262,8 @@ export function bindDesktopCliUpdates(installRoot: string, overrides: Partial<De
         if (!builtIn.size) return
         await mkdir(root, { recursive: true, mode: 0o700 })
         root = await realpath(root)
+        // Asked now, so the first look at the providers list does not wait for them.
+        for (const tool of builtIn.keys()) void builtInVersion(tool)
         try {
             const value = JSON.parse(await readFile(join(root, 'state.json'), 'utf8'))
             if (value?.version === 1 && value.tools && typeof value.tools === 'object') stored = value
@@ -303,6 +305,9 @@ export function bindDesktopCliUpdates(installRoot: string, overrides: Partial<De
     }
     async function status(): Promise<DesktopCliUpdates> {
         await (ready ??= restore())
+        // The built-in copies are asked for their versions together: one after another, five slow
+        // starts on a busy Mac outlast the window's wait for this answer.
+        await Promise.all([...builtIn.keys()].map(builtInVersion))
         const tools: DesktopCliToolStatus[] = []
         for (const tool of builtIn.keys()) {
             const state = stored.tools[tool] ?? {}, job = jobs.get(tool), error = state.error ?? null
