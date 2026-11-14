@@ -112,7 +112,7 @@ export function remoteMcpRuntime(store: Pick<RemoteMcpStore, 'read' | 'readOAuth
                 if (!Array.isArray(result.tools)) throw new Error('Invalid tool list')
                 for (const t of result.tools) {
                     if (!t || typeof t.name !== 'string' || !/^[\w.-]{1,128}$/.test(t.name) || !t.inputSchema || t.inputSchema.type !== 'object' || tools.some(x=>x.name===t.name)) throw new Error('Invalid MCP tool schema')
-                    tools.push({name:t.name,description:typeof t.description==='string' ? t.description.slice(0,8000) : undefined,inputSchema:t.inputSchema})
+                    tools.push({name:t.name,description:typeof t.description==='string' ? t.description.slice(0,8000) : undefined,inputSchema:t.inputSchema,...(t.annotations?.destructiveHint===true ? {destructive:true} : {})})
                 }
                 if (tools.length > 256 || Buffer.byteLength(JSON.stringify(tools)) > LIMIT) throw new Error('MCP tool list exceeds limit')
                 const next = result.nextCursor

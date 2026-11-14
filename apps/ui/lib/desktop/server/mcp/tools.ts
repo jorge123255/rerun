@@ -33,7 +33,7 @@ export async function remoteMcpTools(agent: string, store: Pick<RemoteMcpStore, 
             if (name.length > 128 || names.size >= 256) throw new Error('MCP catalog exceeds limit')
             names.add(name)
             definitions.push({ name, description:tool.description ?? tool.name, inputSchema:tool.inputSchema,
-                destructive:(tool as { annotations?: { destructiveHint?: unknown } }).annotations?.destructiveHint === true,
+                destructive:tool.destructive === true,
                 execute:async (args:Record<string,unknown>, stop:AbortSignal = signal) => {
                     current()
                     const combined=AbortSignal.any([signal,stop])
