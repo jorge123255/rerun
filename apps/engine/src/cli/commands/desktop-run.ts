@@ -39,6 +39,7 @@ import { env } from '../../config/env.js'
 import { desktopCodexAction, desktopClaudePlanActionSchema, desktopCliUpdateActionSchema, desktopSubscriptionLoginAction } from '@rerun/contracts'
 import { readDesktopProviderUsage } from '../../desktop/provider-usage/usage.js'
 import { bindDesktopCliUpdates } from '../../desktop/cli-updates/updates.js'
+import { keepDesktopPlanLimits } from '../../desktop/plan-limits-file.js'
 import { codexLoginAction, codexLoginStatus, stopCodexLogin } from '../../desktop/codex-login.js'
 import { desktopApp, desktopRouteAllowed } from '../../desktop/policy.js'
 import { bindDesktopSchedules } from '../../desktop/schedule-binding.js'
@@ -168,6 +169,7 @@ export async function desktopRunCommand(): Promise<void> {
     app.get('/desktop/codex-login', async c => c.json(await codexLoginStatus()))
     app.get('/desktop/provider-usage', async c => c.json(await readDesktopProviderUsage(), 200, { 'Cache-Control': 'no-store' }))
     // Downloaded tool versions take over from the built-in copies before the first reply can start.
+    keepDesktopPlanLimits()
     const cliUpdates = bindDesktopCliUpdates(installRoot)
     void cliUpdates.restore().catch(() => {})
     app.get('/desktop/cli-updates', async c => c.json(await cliUpdates.status(), 200, { 'Cache-Control': 'no-store' }))

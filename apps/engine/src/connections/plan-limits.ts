@@ -2,11 +2,22 @@ import type { PlanLimitWindow, PlanLimits } from '@rerun/contracts'
 
 // Kept in memory on purpose: a reading is only as good as its age, and the next run or the next
 // read refills it. Nothing here is worth a file a restored data-dir would have to carry.
+// The Mac app is the exception: several of its plans only report while they answer, so it keeps
+// the last readings in a file of its own (see `keepPlanLimits`) and shows them with their age.
 const readings = new Map<string, PlanLimits>()
+let keeper: ((all: Record<string, PlanLimits>) => void) | undefined
+const kept = () => { try { keeper?.(Object.fromEntries(readings)) } catch { /* the reading itself stands */ } }
+
+/** Starts from the readings a keeper saved earlier and tells it of every change from here on. */
+export function keepPlanLimits(saved: Record<string, PlanLimits>, save: (all: Record<string, PlanLimits>) => void): void {
+    for (const [connectionId, reading] of Object.entries(saved)) if (!readings.has(connectionId)) readings.set(connectionId, reading)
+    keeper = save
+}
 
 export function recordPlanLimits(connectionId: string, windows: PlanLimitWindow[]): void {
     if (!windows.length) return
     readings.set(connectionId, { windows, capturedAt: new Date().toISOString() })
+    kept()
 }
 
 export function readPlanLimits(connectionId: string): PlanLimits | null {
@@ -14,7 +25,7 @@ export function readPlanLimits(connectionId: string): PlanLimits | null {
 }
 
 export function forgetPlanLimits(connectionId: string): void {
-    readings.delete(connectionId)
+    if (readings.delete(connectionId)) kept()
 }
 
 type ClaudeWindow = { utilization?: number | null; resets_at?: string | null } | null
