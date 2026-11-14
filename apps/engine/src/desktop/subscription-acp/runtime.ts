@@ -27,6 +27,15 @@ const runners = {
         turn: ['acp'],
         login: ['login', '--region', 'global'],
     },
+    devin: {
+        variable: 'RERUN_DESKTOP_DEVIN_RUNNER',
+        // Devin keeps its account, settings and caches under the XDG folders; all four are private here.
+        home: 'XDG_DATA_HOME',
+        args: ['acp'],
+        turn: ['acp'],
+        // Its page shows a code to paste back, so no local listener is needed inside the sandbox.
+        login: ['auth', 'login', '--force-manual-token-flow'],
+    },
 } as const
 
 const unavailable = () => new Error('The subscription provider runner is unavailable.')
@@ -274,7 +283,9 @@ export async function refreshDesktopSubscriptionCatalog(provider: DesktopSubscri
     const models = []
     try {
         if (!initial) throw new SubscriptionAcpError('selection-unavailable')
-        for (const option of initial.options) {
+        // Devin names one model per effort. They are listed once, with the efforts as its levels.
+        if (provider === 'devin') models.push(...desktopDevinModels(initial.options))
+        else for (const option of initial.options) {
             const selected = await session.selectModel(option.value, signal)
             const reasoning = selected.find(selector => selector.category === 'thought_level')
             models.push({
@@ -377,6 +388,7 @@ function spawnRunner(
             NODE_ENV: 'production',
             [definition.home]: vendorHome,
             ...(provider === 'kimi-code' ? { KIMI_DISABLE_TELEMETRY: '1', KIMI_CODE_WATCH: '0' } : {}),
+            ...(provider === 'devin' ? { XDG_CONFIG_HOME: join(vendorHome, 'config'), XDG_CACHE_HOME: join(vendorHome, 'cache'), XDG_STATE_HOME: join(vendorHome, 'state') } : {}),
             ...(relay ? {
                 HTTPS_PROXY: relay.proxy, HTTP_PROXY: relay.proxy,
                 https_proxy: relay.proxy, http_proxy: relay.proxy,
@@ -415,4 +427,35 @@ export async function stopDesktopSubscriptionRunners() {
 async function drainWorkers(active: readonly { dispose: Worker }[]) {
     const results = await Promise.allSettled(active.map(worker => worker.dispose()))
     if (results.some(result => result.status === 'rejected')) throw shutdownUnconfirmed()
+}
+
+const devinEfforts = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+const devinVariant = /^(.+)-(low|medium|high|xhigh|max)(-fast|-lightning)?$/
+
+/** `claude-opus-5-5` + `high` (+ `-fast`) is the id Devin's own selector uses. */
+export function desktopDevinModelId(model: string, effort: string | undefined) {
+    const split = model.match(/^(.+?)(-fast|-lightning)?$/)
+    return effort && split ? `${split[1]}-${effort}${split[2] ?? ''}` : model
+}
+
+/** Folds Devin's per-effort model ids into one model each, its efforts listed lowest first. */
+export function desktopDevinModels(options: readonly { value: string; name: string }[]) {
+    const families = new Map<string, { id: string; label: string; efforts: Set<string> }>()
+    const plain: { id: string; label: string }[] = []
+    for (const option of options) {
+        const match = option.value.match(devinVariant)
+        if (!match) { plain.push({ id: option.value, label: option.name }); continue }
+        const id = match[1]! + (match[3] ?? '')
+        const family = families.get(id) ?? { id, label: option.name, efforts: new Set<string>() }
+        // The selector names a family by its plain variant; a Fast or Lightning one says so.
+        if (match[3] && !/fast|lightning/i.test(family.label)) family.label = `${option.name} ${match[3] === '-fast' ? 'Fast' : 'Lightning'}`
+        family.efforts.add(match[2]!)
+        families.set(id, family)
+    }
+    const grouped = [...families.values()].map(({ id, label, efforts }) => {
+        const supported = devinEfforts.filter(effort => efforts.has(effort))
+        return { id, label, reasoning: { supported: [...supported], default: supported.includes('medium') ? 'medium' : supported[0]! } }
+    })
+    // The catalog holds at most 128 models: the plain ones first, then the families as Devin lists them.
+    return [...plain, ...grouped].slice(0, 128)
 }

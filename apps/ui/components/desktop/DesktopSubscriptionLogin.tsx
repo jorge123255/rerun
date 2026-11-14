@@ -7,9 +7,10 @@ import {
 } from '@rerun/contracts'
 import { DesktopDeviceCode } from './DesktopDeviceCode'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
-const names = { 'grok-build': 'Grok Build', 'kimi-code': 'Kimi Code' } as const
-const providers = ['grok-build', 'kimi-code'] as const
+const names = { 'grok-build': 'Grok Build', 'kimi-code': 'Kimi Code', devin: 'Devin' } as const
+const providers = ['grok-build', 'kimi-code', 'devin'] as const
 const errorText = {
     failed: 'Sign-in failed. Try again.',
     expired: 'The sign-in attempt expired. Request a new code.',
@@ -26,7 +27,9 @@ async function read(action?: DesktopSubscriptionLoginAction, signal?: AbortSigna
         signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     })
     if (!response.ok) throw new Error('Sign-in could not be confirmed.')
-    return desktopSubscriptionLoginSnapshot.parse(await response.json())
+    // An answer without a provider this app knows means that provider is not offered there.
+    const body = await response.json() as Record<string, unknown> | null
+    return desktopSubscriptionLoginSnapshot.parse({ devin: { phase: 'unavailable' }, ...body })
 }
 
 export function DesktopSubscriptionLogin({ only, onConnectionsChanged }: { only?: DesktopSubscriptionProvider; onConnectionsChanged?: () => void } = {}) {
@@ -100,7 +103,9 @@ export function DesktopSubscriptionLogin({ only, onConnectionsChanged }: { only?
                     <a className="text-sm font-medium underline" href={state.verificationUrl} target="_blank" rel="noreferrer">Open {name} verification</a>
                     <p role="status" className="text-xs text-muted-foreground">Waiting for approval</p>
                     <Button type="button" variant="outline" disabled={pending} onClick={() => send('cancel')}>Cancel sign-in</Button>
-                </> : state.phase === 'starting' ? <>
+                </> : state.phase === 'code' ? <DevinCode name={name} url={state.verificationUrl} pending={pending}
+                    onSubmit={code => void act({ provider, action: 'submit-code', code })} onCancel={() => send('cancel')} />
+                : state.phase === 'starting' ? <>
                     <p role="status" className="text-sm">Requesting code…</p>
                     <Button type="button" variant="outline" disabled={pending} onClick={() => send('cancel')}>Cancel sign-in</Button>
                 </> : state.phase === 'cancelling' ? <p role="status" className="text-sm">Cancelling sign-in…</p> : state.phase === 'approved' ? <>
@@ -130,4 +135,22 @@ export function DesktopSubscriptionLogin({ only, onConnectionsChanged }: { only?
             </section>
         })}
     </div>
+}
+
+// Devin signs in on its own page, which then shows a code. Pasted here, it finishes the sign-in
+// inside the app's private Devin profile.
+function DevinCode({ name, url, pending, onSubmit, onCancel }: { name: string; url: string; pending: boolean; onSubmit(code: string): void; onCancel(): void }) {
+    const [code, setCode] = useState('')
+    const [sent, setSent] = useState(false)
+    return <form className="space-y-3" onSubmit={event => { event.preventDefault(); if (code.trim()) { setSent(true); onSubmit(code.trim()) } }}>
+        <p className="text-sm">Sign in on {name}’s page, then paste the code it shows here.</p>
+        <a className="text-sm font-medium underline" href={url} target="_blank" rel="noreferrer">Open {name} sign-in</a>
+        <div className="flex gap-2">
+            <Input aria-label={`${name} sign-in code`} type="password" autoComplete="off" spellCheck={false} placeholder="Paste the code" value={code} disabled={sent}
+                onChange={event => setCode(event.target.value)} />
+            <Button type="submit" disabled={pending || sent || !code.trim()}>Finish sign-in</Button>
+        </div>
+        <p role="status" className="text-xs text-muted-foreground">{sent ? 'Checking the code…' : 'Waiting for the code'}</p>
+        <Button type="button" variant="outline" disabled={pending} onClick={onCancel}>Cancel sign-in</Button>
+    </form>
 }

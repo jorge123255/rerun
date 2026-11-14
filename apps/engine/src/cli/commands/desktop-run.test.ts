@@ -143,9 +143,10 @@ test('exposes only runner availability to authenticated desktop engine callers',
     await expect(installed.json()).resolves.toEqual({
         'grok-build': { runtimeAvailable: true },
         'kimi-code': { runtimeAvailable: false },
+        devin: { runtimeAvailable: false },
     })
     await expect((await request('/desktop/subscription-login')).json()).resolves.toEqual({
-        'grok-build': { phase: 'idle' }, 'kimi-code': { phase: 'unavailable' },
+        'grok-build': { phase: 'idle' }, 'kimi-code': { phase: 'unavailable' }, devin: { phase: 'unavailable' },
     })
     expect((await request('/desktop/subscription-login', 'POST')).status).toBe(400)
 })

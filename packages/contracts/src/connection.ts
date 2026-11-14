@@ -168,6 +168,7 @@ export const CONNECTION_TOKEN_KEY: Record<z.infer<typeof providerSchema>, string
     opencode: '',
     'grok-build': '',
     'kimi-code': '',
+    devin: '',
 }
 
 // What is wrong with a value about to be stored as a Claude subscription token, or null when it
@@ -194,6 +195,7 @@ export const CONNECTION_SATELLITE_KEYS: Record<z.infer<typeof providerSchema>, s
     opencode: [],
     'grok-build': [],
     'kimi-code': [],
+    devin: [],
 }
 
 // Every env var name that used to live on an agent and now belongs to a connection. What the boot
@@ -266,6 +268,7 @@ export const DEFAULT_CONNECTION_MODELS: Record<z.infer<typeof providerSchema>, s
     opencode: [],
     'grok-build': [],
     'kimi-code': [],
+    devin: [],
 }
 
 // How a connection names itself when nobody has yet: the boot migration builds "Claude (Theo)"
@@ -282,6 +285,7 @@ export const PROVIDER_LABELS: Record<z.infer<typeof providerSchema>, string> = {
     opencode: 'OpenCode',
     'grok-build': 'Grok Build',
     'kimi-code': 'Kimi Code',
+    devin: 'Devin',
 }
 
 // The model the app's picker offers for one coworker, grouped and labelled by the hub with the web

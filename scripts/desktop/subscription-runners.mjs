@@ -1,6 +1,6 @@
 import { copyFile, mkdir, mkdtemp, realpath, lstat, chmod, rename, rm, readFile, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative } from 'node:path'
-import { existsSync, repoRoot, sha256File } from './lib.mjs'
+import { existsSync, output, repoRoot, sha256File } from './lib.mjs'
 
 // Opt-in local QA assets. An ordinary stage leaves the provider entries absent.
 const runners = [
@@ -12,6 +12,12 @@ const runners = [
     {
         key: 'kimiCodePath', name: 'kimi-code', env: 'RERUN_STAGE_KIMI_CODE',
         sha256: 'ae3fa721a361a2c9e9b6b3960560d1572a0bca6a8d1407e2017e6b70f80e7f97',
+    },
+    {
+        // Devin replaces itself with each release, so no single digest stays true. It is accepted
+        // when Apple's signature check says the file is intact and signed by Devin's publisher.
+        key: 'devinPath', name: 'devin', env: 'RERUN_STAGE_DEVIN',
+        teamId: '83Z2LHX6XW',
     },
 ]
 const directory = engine => join(engine, 'subscription-runners')
@@ -51,7 +57,17 @@ export async function stageSubscriptionRunners(engine, env = process.env) {
 }
 
 async function verifyRunner(path, runner) {
-    if (!(await lstat(path)).isFile() || await sha256File(path) !== runner.sha256) {
+    if (!(await lstat(path)).isFile()) throw new Error(`Invalid ${runner.name} runner.`)
+    if (runner.teamId) {
+        if (!/^[A-Z0-9]{10}$/.test(runner.teamId)) throw new Error(`Invalid ${runner.name} publisher.`)
+        try {
+            await output('/usr/bin/codesign', ['--verify', '--strict', `-R=anchor apple generic and certificate leaf[subject.OU] = "${runner.teamId}"`, path])
+        } catch {
+            throw new Error(`The ${runner.name} runner is not signed by its publisher.`)
+        }
+        return
+    }
+    if (await sha256File(path) !== runner.sha256) {
         throw new Error(`The ${runner.name} runner does not match the reviewed arm64 asset.`)
     }
 }

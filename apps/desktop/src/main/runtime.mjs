@@ -20,7 +20,7 @@ export async function loadBundle(resources) {
     const root = await realpath(resources)
     const paths = {}
     const baseFields = ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath', 'claudePath', 'claudeSandboxPath', 'renameHelperPath', 'pdfHelperPath', 'pdfTextHelperPath']
-    const runners = ['grokBuildPath', 'kimiCodePath'].filter(field => Object.hasOwn(manifest, field))
+    const runners = ['grokBuildPath', 'kimiCodePath', 'devinPath'].filter(field => Object.hasOwn(manifest, field))
     const runnerFields = runners.length ? [...runners, 'subscriptionSandboxPath'] : []
     if (Object.hasOwn(manifest, 'subscriptionLoginSandboxPath')) {
         if (!runners.length) throw new Error('Invalid bundled subscription sign-in manifest')

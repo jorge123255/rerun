@@ -5,7 +5,7 @@ import {
     type DesktopSubscriptionProvider,
 } from '@rerun/contracts'
 
-type Challenge = { verificationUrl: string; userCode: string }
+type Challenge = { verificationUrl: string; userCode?: string }
 
 export function desktopSubscriptionDeviceOutput(
     provider: DesktopSubscriptionProvider,
@@ -20,6 +20,13 @@ export function desktopSubscriptionDeviceOutput(
 
     function line(text: string) {
         const cleaned = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').trim()
+        if (provider === 'devin') {
+            // "Visit <address> to sign in, then copy the code and paste it below."
+            const address = cleaned.match(/^Visit (https:\/\/\S+) to sign in\b/)?.[1]
+            const checked = address ? desktopSubscriptionVerificationUrl(provider, address) : null
+            if (checked) { complete = true; publish({ verificationUrl: checked }) }
+            return
+        }
         const url = provider === 'grok-build'
             ? cleaned.match(/^(https:\/\/\S+)$/)?.[1]
             : cleaned.match(/^Opening browser for Kimi device login: (https:\/\/\S+)$/)?.[1]

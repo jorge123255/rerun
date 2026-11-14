@@ -118,6 +118,7 @@ export const DEFAULT_PROVIDER_MODEL: Record<Provider, string> = {
     custom: '', // A custom connection must offer the exact selected model.
     'grok-build': '',
     'kimi-code': '',
+    devin: '',
 }
 
 // How much prose the agent addresses to the user, independent of how much work it does. `normal`

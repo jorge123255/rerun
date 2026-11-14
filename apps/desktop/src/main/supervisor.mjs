@@ -162,6 +162,7 @@ export class RuntimeSupervisor extends EventEmitter {
                         RERUN_DESKTOP_CLAUDE_SANDBOX: this.bundle.claudeSandboxPath,
                         RERUN_DESKTOP_GROK_BUILD_RUNNER: this.bundle.grokBuildPath,
                         RERUN_DESKTOP_KIMI_CODE_RUNNER: this.bundle.kimiCodePath,
+                        RERUN_DESKTOP_DEVIN_RUNNER: this.bundle.devinPath,
                         RERUN_DESKTOP_SUBSCRIPTION_SANDBOX: this.bundle.subscriptionSandboxPath,
                         RERUN_DESKTOP_SUBSCRIPTION_LOGIN_SANDBOX: this.bundle.subscriptionLoginSandboxPath,
                     }),

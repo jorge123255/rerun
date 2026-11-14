@@ -17,7 +17,7 @@ afterEach(() => {
 test('scopes the device-code controls to the installed provider and cancels an active attempt', async () => {
     let snapshot: DesktopSubscriptionLoginSnapshot = {
         'grok-build': { phase: 'idle' },
-        'kimi-code': { phase: 'unavailable' },
+        'kimi-code': { phase: 'unavailable' }, devin: { phase: 'unavailable' },
     }
     const actions: unknown[] = []
     vi.stubGlobal('fetch', vi.fn(async (_path: string, init?: RequestInit) => {
@@ -54,7 +54,7 @@ test('scopes the device-code controls to the installed provider and cancels an a
 test('shows a saved approval without claiming coworker chat is connected', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({
         'grok-build': { phase: 'unavailable' },
-        'kimi-code': { phase: 'approved' },
+        'kimi-code': { phase: 'approved' }, devin: { phase: 'unavailable' },
     })))
     const container = document.createElement('div')
     document.body.append(container)
@@ -70,7 +70,7 @@ test('refreshes the approved model catalog and removes it on disconnect', async 
     const changed = vi.fn()
     let state: DesktopSubscriptionLoginSnapshot = {
         'grok-build': { phase: 'unavailable' },
-        'kimi-code': { phase: 'approved', canRefreshModels: true },
+        'kimi-code': { phase: 'approved', canRefreshModels: true }, devin: { phase: 'unavailable' },
     }
     vi.stubGlobal('fetch', vi.fn(async (_path: string, init?: RequestInit) => {
         if (init?.method === 'POST') {
@@ -100,7 +100,7 @@ test('lists saved Grok models and reasoning without marking the connection chat 
     const changed = vi.fn()
     let state: DesktopSubscriptionLoginSnapshot = {
         'grok-build': { phase: 'approved', canRefreshModels: true, chatReady: false },
-        'kimi-code': { phase: 'unavailable' },
+        'kimi-code': { phase: 'unavailable' }, devin: { phase: 'unavailable' },
     }
     vi.stubGlobal('fetch', vi.fn(async (_path: string, init?: RequestInit) => {
         if (init?.method === 'POST') {
@@ -133,7 +133,7 @@ test('a recovered status clears its own error and preserves a failed action mess
         if (++reads === 1) return new Response(null, { status: 503 })
         return Response.json({
             'grok-build': { phase: 'unavailable' },
-            'kimi-code': { phase: 'waiting', userCode: 'TEST-QA22', verificationUrl: 'https://auth.kimi.ai/device' },
+            'kimi-code': { phase: 'waiting', userCode: 'TEST-QA22', verificationUrl: 'https://auth.kimi.ai/device' }, devin: { phase: 'unavailable' },
         })
     })
     vi.stubGlobal('fetch', fetchStatus)

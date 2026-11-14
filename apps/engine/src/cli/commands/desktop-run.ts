@@ -167,10 +167,11 @@ export async function desktopRunCommand(): Promise<void> {
     app.get('/desktop/subscription-providers', c => c.json({
         'grok-build': { runtimeAvailable: desktopSubscriptionRunnerAvailable('grok-build') },
         'kimi-code': { runtimeAvailable: desktopSubscriptionRunnerAvailable('kimi-code') },
+        devin: { runtimeAvailable: desktopSubscriptionRunnerAvailable('devin') },
     }, 200, { 'Cache-Control': 'no-store' }))
     const subscriptionStatus = () => {
         const state = subscriptionLogin.snapshot()
-        for (const provider of ['grok-build', 'kimi-code'] as const) {
+        for (const provider of ['grok-build', 'kimi-code', 'devin'] as const) {
             if (state[provider].phase !== 'approved') continue
             const catalog = readDesktopSubscriptionCatalog(provider)
             state[provider] = {

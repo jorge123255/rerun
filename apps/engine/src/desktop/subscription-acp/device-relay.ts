@@ -6,6 +6,8 @@ import type { DesktopSubscriptionProvider } from '@rerun/contracts'
 const deviceDestinations = {
     'grok-build': new Set(['auth.x.ai:443']),
     'kimi-code': new Set(['auth.kimi.ai:443', 'api.kimi.ai:443']),
+    // Sign-in, feature flags and inference. Its error reporting host is left closed.
+    devin: new Set(['app.devin.ai:443', 'api.devin.ai:443', 'windsurf.com:443', 'server.codeium.com:443', 'unleash.codeium.com:443', 'static.devin.ai:443']),
 }
 const catalogDestinations = {
     ...deviceDestinations,

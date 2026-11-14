@@ -122,7 +122,7 @@ test('cancels all pending attempts when workspace admissions freeze', async () =
         provider: provider as DesktopSubscriptionProvider, action: 'start',
     })))
     await f.login.cancelPending()
-    expect(f.login.snapshot()).toEqual({ 'grok-build': { phase: 'idle' }, 'kimi-code': { phase: 'idle' } })
+    expect(f.login.snapshot()).toEqual({ 'grok-build': { phase: 'idle' }, 'kimi-code': { phase: 'idle' }, devin: { phase: 'idle' } })
     expect(f.discard).toHaveBeenCalledTimes(2)
 })
 
@@ -134,4 +134,15 @@ test('expires a pending attempt without saving an account', async () => {
     await vi.advanceTimersByTimeAsync(500)
     expect(login.snapshot()['kimi-code']).toEqual({ phase: 'error', reason: 'expired' })
     expect(f.discard).toHaveBeenCalledTimes(1)
+})
+
+test('Devin publishes its sign-in page and no device code', () => {
+    const seen = vi.fn()
+    const parse = desktopSubscriptionDeviceOutput('devin', seen)
+    parse(Buffer.from('2026-11-14T07:00:00Z  INFO chisel: startup\nVisit https://app.devin.ai/auth/cli/continue?state=abc&code_challenge=xyz&code_challenge_method=S256 to sign in, then copy the code and paste it below.\n'))
+    expect(seen).toHaveBeenCalledExactlyOnceWith({ verificationUrl: 'https://app.devin.ai/auth/cli/continue?state=abc&code_challenge=xyz&code_challenge_method=S256' })
+    // An address on any other host is not shown.
+    const other = vi.fn()
+    desktopSubscriptionDeviceOutput('devin', other)(Buffer.from('Visit https://example.com/login?state=abc to sign in, then copy the code and paste it below.\n'))
+    expect(other).not.toHaveBeenCalled()
 })

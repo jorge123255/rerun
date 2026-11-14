@@ -9,13 +9,16 @@ const MAX_REPLY_BYTES = 1024 * 1024;
 const authParams = {
     'grok-build': { methodId: 'cached_token', _meta: { headless: true } },
     'kimi-code': { methodId: 'login' },
+    // Devin reads the sign-in saved in its private folders; its only auth method opens a browser.
+    devin: null,
 } as const;
 
 const idSchema = z.string().min(1).max(512);
 const optionSchema = z.object({ value: idSchema, name: z.string().min(1).max(512) });
+// Devin lists one model per effort: well over a hundred entries.
 const optionsSchema = z.union([
-    z.array(optionSchema).max(128),
-    z.array(z.object({ options: z.array(optionSchema).max(128) })).max(128)
+    z.array(optionSchema).max(512),
+    z.array(z.object({ options: z.array(optionSchema).max(512) })).max(128)
         .transform((groups) => groups.flatMap((group) => group.options)),
 ]);
 const selectorSchema = z.object({
@@ -60,6 +63,11 @@ interface OpenOptions {
     beforePrompt?: () => void;
 }
 
+function devinModelId(model: string, effort: string | undefined): string {
+    const split = model.match(/^(.+?)(-fast|-lightning)?$/);
+    return effort && split ? `${split[1]}-${effort}${split[2] ?? ''}` : model;
+}
+
 function parse<T>(schema: z.ZodType<T>, raw: unknown): T {
     const result = schema.safeParse(raw);
     if (!result.success) throw new SubscriptionAcpError('protocol');
@@ -73,7 +81,7 @@ function readSelectors(raw: unknown): Selector[] {
             (option.category !== 'model' && option.category !== 'thought_level')) return [];
         const selector = parse(selectorSchema, option);
         const ids = new Set(selector.options.map(({ value }) => value));
-        if (ids.size > 128 || ids.size !== selector.options.length ||
+        if (ids.size > 512 || ids.size !== selector.options.length ||
             !ids.has(selector.currentValue)) {
             throw new SubscriptionAcpError('protocol');
         }
@@ -158,18 +166,37 @@ export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd
             protocolVersion: 1,
             clientCapabilities: {},
         }, { cancellation }));
-        if (!initialization.authMethods?.some(({ id }) => id === auth.methodId)) {
-            throw new SubscriptionAcpError('auth-required');
+        if (auth) {
+            if (!initialization.authMethods?.some(({ id }) => id === auth.methodId)) {
+                throw new SubscriptionAcpError('auth-required');
+            }
+            await peer.request('authenticate', auth, { cancellation });
         }
-        await peer.request('authenticate', auth, { cancellation });
+        let modes: unknown;
         await peer.request('session/new', { cwd, mcpServers: [] }, {
             cancellation,
             onResult: (raw) => {
                 const session = parse(newSessionSchema, raw);
                 sessionId = session.sessionId;
                 selectors = readSelectors(session.configOptions);
+                modes = session.configOptions;
             },
         });
+        if (provider === 'devin') {
+            // Ask mode answers in text and runs none of Devin's own tools. A session that cannot be
+            // put in it is not used.
+            const mode = (Array.isArray(modes) ? modes : []).find((option) => isObject(option) && option.category === 'mode');
+            if (!isObject(mode) || typeof mode.id !== 'string') throw new SubscriptionAcpError('protocol');
+            await peer.request('session/set_config_option', { sessionId, configId: mode.id, value: 'ask' }, {
+                cancellation,
+                onResult: (raw) => {
+                    const result = parse(z.object({ configOptions: z.array(z.unknown()) }), raw);
+                    const confirmed = result.configOptions.find((option) => isObject(option) && option.category === 'mode');
+                    if (!isObject(confirmed) || confirmed.currentValue !== 'ask') throw new SubscriptionAcpError('protocol');
+                    selectors = readSelectors(result.configOptions);
+                },
+            });
+        }
     } catch (error) {
         await peer.shutdown();
         throw error;
@@ -194,7 +221,10 @@ export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd
             used = true;
             const chunks: string[] = [];
             let bytes = 0;
-            const { signal, text, model, reasoning, onText } = options;
+            const { signal, text, onText } = options;
+            // Devin has no effort selector: the effort is part of the model's id.
+            const model = provider === 'devin' && options.model !== undefined ? devinModelId(options.model, options.reasoning) : options.model;
+            const reasoning = provider === 'devin' ? undefined : options.reasoning;
             const selection = { model, reasoning };
             try {
                 throwIfCancelled(signal);

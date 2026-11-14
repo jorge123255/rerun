@@ -28,6 +28,8 @@ interface Pending {
     abort: AbortController
     done: Promise<void>
     status: DesktopSubscriptionLoginStatus
+    /** Devin only: hands the pasted code to the waiting sign-in. One use. */
+    submit?: (code: string) => void
 }
 
 export function bindDesktopSubscriptionDeviceLogin(io: typeof ports = ports, timeoutMs = deviceTimeoutMs) {
@@ -42,7 +44,7 @@ export function bindDesktopSubscriptionDeviceLogin(io: typeof ports = ports, tim
     }
 
     function snapshot(): DesktopSubscriptionLoginSnapshot {
-        return { 'grok-build': status('grok-build'), 'kimi-code': status('kimi-code') }
+        return { 'grok-build': status('grok-build'), 'kimi-code': status('kimi-code'), devin: status('devin') }
     }
 
     async function run(provider: DesktopSubscriptionProvider, entry: Pending) {
@@ -61,14 +63,24 @@ export function bindDesktopSubscriptionDeviceLogin(io: typeof ports = ports, tim
             signal.throwIfAborted()
             worker = attempt.launch(relay.proxy, relay.port)
             worker.child.stdin.on('error', () => {})
-            worker.child.stdin.end()
-            worker.child.stdout.resume()
-            worker.child.stderr.on('data', desktopSubscriptionDeviceOutput(provider, challenge => {
-                if (!signal.aborted) entry.status = { phase: 'waiting', ...challenge }
-            }))
+            const output = desktopSubscriptionDeviceOutput(provider, challenge => {
+                if (signal.aborted) return
+                entry.status = challenge.userCode ? { phase: 'waiting', verificationUrl: challenge.verificationUrl, userCode: challenge.userCode }
+                    : { phase: 'code', verificationUrl: challenge.verificationUrl }
+            })
+            if (provider === 'devin') {
+                // Devin prints its sign-in address and then reads the code from its input.
+                const stdin = worker.child.stdin
+                entry.submit = code => { entry.submit = undefined; stdin.end(code + '\n') }
+                worker.child.stdout.on('data', output)
+            } else {
+                worker.child.stdin.end()
+                worker.child.stdout.resume()
+            }
+            worker.child.stderr.on('data', output)
             const cancelled = new Promise<null>(resolve => signal.addEventListener('abort', () => resolve(null), { once: true }))
             const exit = await Promise.race([once(worker.child, 'close'), cancelled])
-            if (exit?.[0] === 0 && entry.status.phase === 'waiting' && !signal.aborted) {
+            if (exit?.[0] === 0 && (entry.status.phase === 'waiting' || entry.status.phase === 'code') && !signal.aborted) {
                 await relay.close()
                 await worker.dispose()
                 signal.throwIfAborted()
@@ -106,8 +118,13 @@ export function bindDesktopSubscriptionDeviceLogin(io: typeof ports = ports, tim
     return {
         snapshot,
         cancelPending,
-        async action({ provider, action }: DesktopSubscriptionLoginAction) {
+        async action({ provider, action, code }: DesktopSubscriptionLoginAction) {
             const active = running.get(provider)
+            if (action === 'submit-code') {
+                // Accepted once, while that sign-in waits for it. The outcome shows in the next status.
+                if (code && active?.status.phase === 'code') active.submit?.(code)
+                return snapshot()
+            }
             const previous = settled.get(provider)
             const canRetry = previous?.phase !== 'error' || previous.reason !== 'unconfirmed'
             if (action === 'start' && !closed && !active && canRetry && io.available(provider) && !io.approved(provider)) {
