@@ -3,7 +3,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { bindDesktopCliUpdates, type DesktopCliUpdatePorts } from './updates.js'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { bindDesktopCliUpdates, desktopCliFetch, type DesktopCliUpdatePorts } from './updates.js'
 import { cliSources, newerCliVersion } from './sources.js'
 
 const mac = process.platform === 'darwin' && process.arch === 'arm64'
@@ -163,6 +165,21 @@ describe.skipIf(!mac)('desktop CLI updates', () => {
 })
 
 describe('vendor sources', () => {
+    it('gives up on a vendor that accepts the connection and never answers', async () => {
+        const sockets = new Set<import('node:net').Socket>()
+        const server = createServer(() => { /* never answers */ }).on('connection', socket => { sockets.add(socket) })
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+        const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/latest`
+        try {
+            const started = Date.now()
+            await expect(cliSources['grok-build'].latest((address, kind) => desktopCliFetch(address === 'https://x.ai/cli/stable' ? url : address, kind, { metadata: 300, download: 60_000 }), { claudeSdk: '0.3.322' })).rejects.toThrow()
+            expect(Date.now() - started).toBeLessThan(5000)
+        } finally {
+            for (const socket of sockets) socket.destroy()
+            await new Promise(resolve => server.close(resolve))
+        }
+    })
+
     it('asks for versions and manifests as small requests', async () => {
         const kinds: (string | undefined)[] = []
         await cliSources['grok-build'].latest(async (_url, kind) => { kinds.push(kind); return new Response('1.0.78') }, { claudeSdk: '0.3.322' })

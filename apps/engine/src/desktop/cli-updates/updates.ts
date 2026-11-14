@@ -62,10 +62,15 @@ async function probe(tool: DesktopCliTool, runner: string, scratch: string) {
     }
 }
 
+/**
+ * A vendor that does not answer a version request fails the check in seconds, not after the
+ * quarter hour a large download is allowed.
+ */
+export const desktopCliFetch = (url: string, kind: 'metadata' | 'download' = 'download', limits = { metadata: 20_000, download: 15 * 60_000 }) =>
+    fetch(url, { signal: AbortSignal.timeout(limits[kind]), headers: { 'User-Agent': 'rerun-desktop' } })
+
 const defaults: DesktopCliUpdatePorts = {
-    // A vendor that does not answer a version request fails the check in seconds, not after the
-    // quarter hour a large download is allowed.
-    fetch: (url, kind = 'download') => fetch(url, { signal: AbortSignal.timeout(kind === 'metadata' ? 20_000 : 15 * 60_000), headers: { 'User-Agent': 'rerun-desktop' } }),
+    fetch: (url, kind) => desktopCliFetch(url, kind),
     verifySignature: async (path, teamId) => { await run('/usr/bin/codesign', ['--verify', '--strict', `-R=anchor apple generic and certificate leaf[subject.OU] = "${teamId}"`, path]) },
     probe,
     idle: () => activeRunCount() === 0,
