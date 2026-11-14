@@ -10,7 +10,9 @@ import { useFileUnloadGuard } from '@/components/files/useFileUnloadGuard'
 import { DeleteCoworkerConfirmation } from '@/components/dialogs/DeleteCoworkerConfirmation'
 import { RenameAgentDialog } from '@/components/dialogs/RenameAgentDialog'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogFooter, DialogTrigger } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { SettingsIcon } from '@/lib/icons'
 import { Field } from '@/components/ui/field'
 import { MarkdownTextarea } from '@/components/ui/markdown-textarea'
 import { Segmented } from '@/components/ui/segmented'
@@ -240,10 +242,7 @@ export function DesktopCoworkerSettingsBody({ agent, authority, disabled, regist
     return <DialogContent className="sm:max-w-xl" showCloseButton={!saving}
         onEscapeKeyDown={event => { if (savingNow.current) event.preventDefault() }}
         onInteractOutside={event => { if (savingNow.current) event.preventDefault() }}>
-        <DialogHeader>
-            <DialogTitle>{t('coworker.edit')}</DialogTitle>
-            <DialogDescription>{t('coworker.editDescription', { name: agent.name })}</DialogDescription>
-        </DialogHeader>
+        <DialogHeaderBar icon={SettingsIcon} title={t('coworker.edit')} description={t('coworker.editDescription', { name: agent.name })} />
         {content}
     </DialogContent>
 }

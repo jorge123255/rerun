@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { RunStatusBadge } from '@rerun/ui/monitoring'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogClose, DialogContent, DialogFooter, DialogTrigger } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import { DESKTOP_RUN_HISTORY_LIMIT, desktopRunsSchema, recordedRunUsage, type DesktopRunView } from '@/lib/desktop/run-history'
 import { fullDateTime, formatNumber } from '@rerun/i18n/format'
@@ -15,7 +16,7 @@ import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { useDesktopLocale } from './DesktopLocale'
 import type { DesktopAgentView } from './DesktopApp'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { ChevronRightIcon, ScrollTextIcon } from '@/lib/icons'
+import { ChevronRightIcon, ScrollTextIcon, HistoryIcon } from '@/lib/icons'
 import { DesktopRunDetails } from './DesktopRunDetails'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 
@@ -113,10 +114,7 @@ export function DesktopRunHistory({ agent, dialogControl }: { agent: DesktopAgen
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
         <DialogTrigger asChild><Button type="button" variant="outline" size="sm">{t('runHistory.button')}</Button></DialogTrigger>
         <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-xl">
-            <DialogHeader className="shrink-0">
-                <DialogTitle>{t('runHistory.title')}</DialogTitle>
-                <DialogDescription>{t('runHistory.description', { limit: DESKTOP_RUN_HISTORY_LIMIT, name: agent.name })}</DialogDescription>
-            </DialogHeader>
+            <DialogHeaderBar icon={HistoryIcon} title={t('runHistory.title')} description={t('runHistory.description', { limit: DESKTOP_RUN_HISTORY_LIMIT, name: agent.name })} />
             {open && <DesktopRunHistoryBody key={agent.id} agentId={agent.id}
                 dismiss={<DialogClose asChild><Button type="button">{t('runHistory.close')}</Button></DialogClose>} />}
         </DialogContent>

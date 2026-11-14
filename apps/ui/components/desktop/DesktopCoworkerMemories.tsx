@@ -7,13 +7,14 @@ import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { useFileUnloadGuard } from '@/components/files/useFileUnloadGuard'
 import { ClearMemoriesDialog } from '@/components/dialogs/ClearMemoriesDialog'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogClose, DialogContent, DialogFooter, DialogTrigger } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
 import { PanelList, PanelListHeader, PanelScroller } from '@/components/ui/panel-list'
 import { FxMemoriesLoading } from './fx-repairs/PanelLoadingSkeletons'
 import { Textarea } from '@/components/ui/textarea'
-import { BrainIcon, PlusIcon, SearchIcon, Trash2Icon, XIcon } from '@/lib/icons'
+import { BrainIcon, PlusIcon, SearchIcon, Trash2Icon, XIcon, BookmarkIcon } from '@/lib/icons'
 import type { EngineMemory } from '@/lib/engine/types'
 import type { DesktopAgentView } from './DesktopApp'
 import { desktopFileDraftHost, holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
@@ -260,10 +261,7 @@ export function DesktopCoworkerMemoriesBody({ agent, registerCloseGuard, inDialo
     return <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-xl" showCloseButton={!writing}
         onEscapeKeyDown={event => { if (writingNow.current) event.preventDefault() }}
         onInteractOutside={event => { if (writingNow.current) event.preventDefault() }}>
-        <DialogHeader>
-            <DialogTitle>Memories</DialogTitle>
-            <DialogDescription>Saved memories for {agent.name}.</DialogDescription>
-        </DialogHeader>
+        <DialogHeaderBar icon={BookmarkIcon} title="Memories" description={<>Saved memories for {agent.name}.</>} />
         {content}
     </DialogContent>
 }

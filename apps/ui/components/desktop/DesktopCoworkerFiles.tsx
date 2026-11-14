@@ -8,7 +8,8 @@ import { useFileNavigation } from '@/components/files/useFileNavigation'
 import { useSiblingFiles } from '@/components/files/useSiblingFiles'
 import { Button } from '@/components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogClose, DialogContent, DialogFooter, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { Input } from '@/components/ui/input'
 import { PanelDeleteButton } from '@/components/ui/panel-editor'
 import { ArrowLeftIcon, ChevronRightIcon, DownloadIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, PencilIcon, RefreshCwIcon, Trash2Icon, XIcon } from '@/lib/icons'
@@ -712,10 +713,7 @@ export function DesktopCoworkerFiles({ agent, dialogControl, initialFilePath, on
             // Let the inline field cancel its name edit without dismissing the Files dialog.
             if (event.target instanceof HTMLElement && event.target.hasAttribute('data-desktop-file-rename')) event.preventDefault()
         }}>
-            <DialogHeader>
-                <DialogTitle>Files</DialogTitle>
-                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import files and folders. Preview supported images and PDFs, or play audio and video already in the folder.</DialogDescription>
-            </DialogHeader>
+            <DialogHeaderBar icon={FolderIcon} title="Files" description={<>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import files and folders. Preview supported images and PDFs, or play audio and video already in the folder.</>} />
             <DesktopCoworkerFilesBody key={agent.id} agent={agent} initialFilePath={initialFilePath} registerCloseGuard={register} />
             <DialogFooter><DialogClose asChild><Button type="button">Done</Button></DialogClose></DialogFooter>
         </DialogContent>}

@@ -3,7 +3,8 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogFooter, DialogTrigger } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { Icon } from '@/components/ui/icon'
 import { PanelGrid, PanelScroller, PanelSection } from '@/components/ui/panel-list'
 import { PANEL_CARD } from '@/components/ui/panel-row'
@@ -176,10 +177,7 @@ export function DesktopCoworkerToolsBody({ agent, disabled = false, registerClos
     return <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-2xl" showCloseButton={!saving}
         onEscapeKeyDown={event => { if (savingNow.current) event.preventDefault() }}
         onInteractOutside={event => { if (savingNow.current) event.preventDefault() }}>
-        <DialogHeader>
-            <DialogTitle>Tools</DialogTitle>
-            <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
+        <DialogHeaderBar icon={WrenchIcon} title="Tools" description={description} />
         {content}
         <DialogFooter><Button type="button" disabled={saving} onClick={onDone}>Done</Button></DialogFooter>
     </DialogContent>

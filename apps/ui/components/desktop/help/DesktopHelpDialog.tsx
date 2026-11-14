@@ -2,8 +2,9 @@
 
 import { useRef, useSyncExternalStore } from 'react'
 
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { BookOpenIcon, HandshakeIcon, KeyboardIcon, ListChecksIcon, MegaphoneIcon, UsersIcon } from '@/lib/icons'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { BookOpenIcon, HandshakeIcon, KeyboardIcon, ListChecksIcon, MegaphoneIcon, UsersIcon, HelpCircleIcon } from '@/lib/icons'
 import { desktopGettingStartedAvailable, subscribeDesktopGettingStartedAvailability } from '@/lib/desktop/help/availability'
 import { desktopHelpEntries, desktopHelpKeepsFocus, type DesktopHelpEntry } from '@/lib/desktop/help/entries'
 import { useDesktopLocale } from '../DesktopLocale'
@@ -53,10 +54,7 @@ export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingSt
                     onCloseAutoFocus?.(event)
                 }}
             >
-                <DialogHeader>
-                    <DialogTitle>{t('help')}</DialogTitle>
-                    <DialogDescription>{t('helpDescription')}</DialogDescription>
-                </DialogHeader>
+                <DialogHeaderBar icon={HelpCircleIcon} title={t('help')} description={t('helpDescription')} />
                 <ul className="flex flex-col py-1">
                     {entries.map(entry => {
                         const Icon = ICONS[entry.id]

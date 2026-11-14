@@ -5,7 +5,9 @@ import { Search } from 'lucide-react'
 import { ChromeButton } from '@rerun/ui/chrome'
 import { Button } from '@/components/ui/button'
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { SearchIcon } from '@/lib/icons'
 import { desktopChatSearchSchema, type DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { useDesktopLocale } from './DesktopLocale'
 
@@ -63,10 +65,7 @@ export function DesktopFindChat({ onSelect, compactOnBoard = false }: { onSelect
             className={compactOnBoard ? '@max-4xl/board:w-(--chrome-control) @max-4xl/board:px-0' : undefined}
             label={compactOnBoard ? <span className="@max-4xl/board:hidden">{t('boardUI.title')}</span> : t('boardUI.title')} /></DialogTrigger>
         <DialogContent closeLabel={t('closeDialog')} className="flex max-h-[85dvh] flex-col gap-3 overflow-hidden sm:max-w-xl">
-            <DialogHeader className="shrink-0">
-                <DialogTitle>{t('boardUI.title')}</DialogTitle>
-                <DialogDescription>{t('boardUI.description')}</DialogDescription>
-            </DialogHeader>
+            <DialogHeaderBar icon={SearchIcon} title={t('boardUI.title')} description={t('boardUI.description')} />
             {open && <FindChatPanel onSelect={hit => { setOpen(false); onSelect(hit) }} />}
         </DialogContent>
     </Dialog>
