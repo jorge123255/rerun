@@ -432,13 +432,21 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
         if (!name || parts.some(part => part === '.' || part === '..')) throw new Error('path must name a file inside the workspace, e.g. "notes/clients.md".')
         // The Mac's import writes text and Markdown, never replaces a file, and creates no folders.
         const write = (folder: string, fileName: string) => externalMcpGuarded(context, deps.recheck, signal, () => importCoworkerFile(runtime, agent.id, folder, fileName, bytes))
+        // A file the import refuses (wrong type, already there) was not written, and the caller is told
+        // so in words: thrown, it would reach an outside agent as an outcome nobody knows.
+        const refusal = (error: unknown) => {
+            if (error instanceof DesktopHttpError && [400, 409, 413, 415].includes(error.status)) return { path, written: false, reason: error.status === 409 ? 'A file is already at that path. Files are never replaced through this connection.' : error.message }
+            throw error
+        }
         try {
             const saved = await write(parts.join('/'), name)
-            return { path: saved.path, bytes: bytes.byteLength }
+            return { path: saved.path, written: true, bytes: bytes.byteLength }
         } catch (error) {
-            if (!(error instanceof DesktopHttpError) || error.status !== 404 || parts.length === 0) throw error
-            const saved = await write('', [...parts, name].join('__'))
-            return { path: saved.path, bytes: bytes.byteLength, note: 'That folder does not exist and folders are not created through this connection: the file was written at the top level with the folders folded into its name.' }
+            if (!(error instanceof DesktopHttpError) || error.status !== 404 || parts.length === 0) return refusal(error)
+            try {
+                const saved = await write('', [...parts, name].join('__'))
+                return { path: saved.path, written: true, bytes: bytes.byteLength, note: 'That folder does not exist and folders are not created through this connection: the file was written at the top level with the folders folded into its name.' }
+            } catch (inner) { return refusal(inner) }
         }
     }
 
