@@ -292,9 +292,9 @@ export async function refreshDesktopSubscriptionCatalog(provider: DesktopSubscri
     const models = []
     try {
         if (!initial) throw new SubscriptionAcpError('selection-unavailable')
-        // Devin names one model per effort. They are listed once, with the efforts as its levels.
-        if (provider === 'devin') models.push(...desktopDevinModels(initial.options))
-        else for (const option of initial.options) {
+        // Every provider, Devin included, says a model's efforts through its Thinking selector once
+        // the model is chosen. Devin lists about 150 models at roughly a fifth of a second each.
+        for (const option of initial.options) {
             const selected = await session.selectModel(option.value, signal)
             const reasoning = selected.find(selector => selector.category === 'thought_level')
             models.push({
@@ -516,35 +516,4 @@ export async function stopDesktopSubscriptionRunners() {
 async function drainWorkers(active: readonly { dispose: Worker }[]) {
     const results = await Promise.allSettled(active.map(worker => worker.dispose()))
     if (results.some(result => result.status === 'rejected')) throw shutdownUnconfirmed()
-}
-
-const devinEfforts = ['low', 'medium', 'high', 'xhigh', 'max'] as const
-const devinVariant = /^(.+)-(low|medium|high|xhigh|max)(-fast|-lightning)?$/
-
-/** `claude-opus-5-5` + `high` (+ `-fast`) is the id Devin's own selector uses. */
-export function desktopDevinModelId(model: string, effort: string | undefined) {
-    const split = model.match(/^(.+?)(-fast|-lightning)?$/)
-    return effort && split ? `${split[1]}-${effort}${split[2] ?? ''}` : model
-}
-
-/** Folds Devin's per-effort model ids into one model each, its efforts listed lowest first. */
-export function desktopDevinModels(options: readonly { value: string; name: string }[]) {
-    const families = new Map<string, { id: string; label: string; efforts: Set<string> }>()
-    const plain: { id: string; label: string }[] = []
-    for (const option of options) {
-        const match = option.value.match(devinVariant)
-        if (!match) { plain.push({ id: option.value, label: option.name }); continue }
-        const id = match[1]! + (match[3] ?? '')
-        const family = families.get(id) ?? { id, label: option.name, efforts: new Set<string>() }
-        // The selector names a family by its plain variant; a Fast or Lightning one says so.
-        if (match[3] && !/fast|lightning/i.test(family.label)) family.label = `${option.name} ${match[3] === '-fast' ? 'Fast' : 'Lightning'}`
-        family.efforts.add(match[2]!)
-        families.set(id, family)
-    }
-    const grouped = [...families.values()].map(({ id, label, efforts }) => {
-        const supported = devinEfforts.filter(effort => efforts.has(effort))
-        return { id, label, reasoning: { supported: [...supported], default: supported.includes('medium') ? 'medium' : supported[0]! } }
-    })
-    // In Devin's own order of families first, then the models it names without an effort.
-    return [...grouped, ...plain].slice(0, 512)
 }

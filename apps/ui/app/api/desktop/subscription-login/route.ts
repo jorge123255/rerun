@@ -16,7 +16,7 @@ function proxy(request: Request) {
             catch { throw new DesktopHttpError(400, 'Invalid subscription sign-in action.') }
             const parsed = desktopSubscriptionLoginAction.safeParse(input)
             if (!parsed.success) throw new DesktopHttpError(400, 'Invalid subscription sign-in action.')
-            if (parsed.data.action === 'refresh-models') timeout = 43_000
+            if (parsed.data.action === 'refresh-models') timeout = 93_000
             body = JSON.stringify(parsed.data)
         }
         const state = await engineRequest(engineOf(runtime), '/desktop/subscription-login', {

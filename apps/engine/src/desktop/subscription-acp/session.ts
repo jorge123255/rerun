@@ -65,11 +65,6 @@ interface OpenOptions {
     onPlanUsage?: (usage: unknown) => void;
 }
 
-function devinModelId(model: string, effort: string | undefined): string {
-    const split = model.match(/^(.+?)(-fast|-lightning)?$/);
-    return effort && split ? `${split[1]}-${effort}${split[2] ?? ''}` : model;
-}
-
 function parse<T>(schema: z.ZodType<T>, raw: unknown): T {
     const result = schema.safeParse(raw);
     if (!result.success) throw new SubscriptionAcpError('protocol');
@@ -234,9 +229,7 @@ export async function openDesktopSubscriptionAcpSession({ provider, channel, cwd
             const chunks: string[] = [];
             let bytes = 0;
             const { signal, text, onText } = options;
-            // Devin has no effort selector: the effort is part of the model's id.
-            const model = provider === 'devin' && options.model !== undefined ? devinModelId(options.model, options.reasoning) : options.model;
-            const reasoning = provider === 'devin' ? undefined : options.reasoning;
+            const { model, reasoning } = options;
             const selection = { model, reasoning };
             try {
                 throwIfCancelled(signal);
