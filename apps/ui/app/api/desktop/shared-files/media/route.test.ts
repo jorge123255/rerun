@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -23,7 +23,8 @@ const token = 's'.repeat(48)
 let root: string
 
 beforeEach(async () => {
-    root = await mkdtemp(join(tmpdir(), 'rerun-shared-media-route-'))
+    // Shared files refuse a symbolic link anywhere in their path, and macOS keeps its temporary folder behind one.
+    root = await mkdtemp(join(await realpath(tmpdir()), 'rerun-shared-media-route-'))
     const installId = '0890b231-7957-4d86-9a31-1ab2bdb9482f'
     const dataRoot = join(root, 'workspaces', '2')
     const engineRoot = join(dataRoot, 'engine')

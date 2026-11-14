@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
-const root = mkdtempSync(resolve(tmpdir(), 'rerun-post25-engine-'))
+// The profile's files refuse a symbolic link anywhere in their path, and macOS keeps its temporary folder behind one.
+const root = mkdtempSync(resolve(realpathSync(tmpdir()), 'rerun-post25-engine-'))
 process.env.RERUN_DATA_DIR = root
 process.env.RERUN_API_KEY = ''
 process.env.RERUN_LOG_LEVEL = 'error'

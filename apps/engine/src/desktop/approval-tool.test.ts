@@ -16,7 +16,7 @@ const { writeAgentConfig } = await import('../agents/config-write.js')
 const { readAgentConfig } = await import('../agents/loader.js')
 const { desktopApprovalTools } = await import('./approval-tool.js')
 const { buildTools } = await import('../tools/registry.js')
-const { HITL_ACK } = await import('../tools/builtin/hitl.js')
+const { HITL_ACK_CALL_FIRST } = await import('../tools/builtin/hitl.js')
 const { createServer } = await import('../http/server.js')
 const app = createServer()
 const alpha = 'approval-alpha', bravo = 'approval-bravo'
@@ -54,7 +54,7 @@ describe('desktop request_approval grant', () => {
         expect(config.tools.requestApproval).toBe(false)
         expect(desktopRerunGrantsOf(config.tools).workspaceRead).toBe(false)
         expect(config.tools.desktopCodexGrants).toBeUndefined()
-        expect(await (await registry(alpha)).request_approval!.execute!(input, options)).toEqual(HITL_ACK)
+        expect(await (await registry(alpha)).request_approval!.execute!(input, options)).toEqual(HITL_ACK_CALL_FIRST)
     })
 
     it('keeps Rerun’s approval schema, end-turn acknowledgement and mixed-decision language', async () => {
@@ -62,7 +62,7 @@ describe('desktop request_approval grant', () => {
         const approval = (await registry(alpha)).request_approval!
         const schema = approval.inputSchema as z.ZodTypeAny
         const parsed = schema.parse({ approvals: JSON.stringify([{ action: 'Use blue', detail: null }, { action: 'Use green', detail: 'Subtitle' }]) })
-        expect(await approval.execute!(parsed, options)).toEqual(HITL_ACK)
+        expect(await approval.execute!(parsed, options)).toEqual(HITL_ACK_CALL_FIRST)
         expect(approval.description).toContain('END YOUR TURN')
         expect(approval.description).toContain('must NOT perform a declined action')
         expect(schema.safeParse({ approvals: [] }).success).toBe(false)
@@ -81,8 +81,8 @@ describe('desktop request_approval grant', () => {
         expect(desktopApprovalInput(oversized)).not.toBeNull()
         const tool = desktopApprovalTools(ctx, DESKTOP_FOREMAN_TURN_TEXT_LIMIT).request_approval!
         await expect(tool.execute!(oversized, options)).rejects.toThrow('decisions fit')
-        await expect(tool.execute!(input, options)).resolves.toEqual(HITL_ACK)
-        await expect(desktopApprovalTools(ctx).request_approval!.execute!(oversized, options)).resolves.toEqual(HITL_ACK)
+        await expect(tool.execute!(input, options)).resolves.toEqual(HITL_ACK_CALL_FIRST)
+        await expect(desktopApprovalTools(ctx).request_approval!.execute!(oversized, options)).resolves.toEqual(HITL_ACK_CALL_FIRST)
     })
 
     it('rechecks a cached tool after grant revocation, disable, cancellation and configuration removal', async () => {
