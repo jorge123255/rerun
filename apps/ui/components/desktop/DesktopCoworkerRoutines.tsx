@@ -1,8 +1,10 @@
 'use client'
 
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { CalendarIcon } from '@/lib/icons'
 import { useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { DesktopAgentView } from './DesktopApp'
 import { DesktopCoworkerSchedules } from './schedules/DesktopCoworkerSchedules'
@@ -21,7 +23,7 @@ export function DesktopCoworkerRoutines({ agent, dialogControl, onOpenChat }: { 
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
         <DialogTrigger asChild><Button type="button" variant="outline" size="sm">{t('coworker.destinations.scheduled')}</Button></DialogTrigger>
         {open && <DialogContent className="flex h-[80dvh] flex-col sm:max-w-3xl">
-            <DialogHeader><DialogTitle>{t('coworker.destinations.scheduled')}</DialogTitle><DialogDescription>{t('routines.coworker.dialogDescription', { name: agent.name })}</DialogDescription></DialogHeader>
+            <DialogHeaderBar icon={CalendarIcon} title={t('coworker.destinations.scheduled')} description={t('routines.coworker.dialogDescription', { name: agent.name })} />
             <DesktopCoworkerSchedules key={agent.id} agentId={agent.id} onOpenSession={chat => {
                 if (cycle.current !== captured || !open || chat.agentId !== agent.id || !chat.sessionId) return
                 cycle.current = { scope: '' }

@@ -229,6 +229,14 @@ Upstream `dev` moved to `56bebe60b637b3a6b4e1f746655a34d2762448f6` on November 1
 - [x] Hide "Hire an expert" from the help menu. The Mac help list drops the row at `56e5574c`; fixture evidence only. [Upstream #195](https://github.com/rerun-build/rerun/pull/195)
 - [ ] Removing a Vault entry revokes its Composio account and a Composio user is scoped to its workspace. These belong with the managed accounts port above. [Upstream #192](https://github.com/rerun-build/rerun/pull/192) · [Upstream #199](https://github.com/rerun-build/rerun/pull/199)
 
+## Upstream `dev` from `6b9b0db4` to `742a9cdd` (read November 14, 2026)
+
+Fifteen commits. Billing and credit purchases (#213, #214, #215, #216, #238) belong to hosted workspaces and do not apply to a local Mac workspace. Simple view and the Vault "released to everyone" (#211) were already unconditional on the Mac. The Weekly Rewind that #219 removes was already hidden on the Mac (`DESKTOP_HELP_GATED_IDS`).
+
+- [x] The Simple view's coworker list fades at the edge it can still scroll past, and its tiles keep a small gap from the Chief of Staff row. In source at the Mac sidebar; component tests pass; not yet seen in a build. [Upstream #236](https://github.com/rerun-build/rerun/pull/236) · [Upstream #212](https://github.com/rerun-build/rerun/pull/212)
+- [ ] **Every dialog opens on one shared header** (icon tile, title, description, a line under it). `DialogHeaderBar` is in the Mac branch verbatim and eight of the Mac's dialogs use it: a coworker's Scheduled, Apps and MCP servers, Rename Box, the three share and import notices, and Chief of Staff permissions. Twenty-six Mac dialogs still draw their own header (the tabbed, panelled and wizard ones need upstream's `DialogTabs` header slot and `StepDialogHeader`). None of the converted ones has been looked at in a build. [Upstream #222](https://github.com/rerun-build/rerun/pull/222) · [#223](https://github.com/rerun-build/rerun/pull/223) · [#224](https://github.com/rerun-build/rerun/pull/224) · [#225](https://github.com/rerun-build/rerun/pull/225) · [#234](https://github.com/rerun-build/rerun/pull/234)
+- [x] Not ported: the narrower Chief of Staff history popover of #212 touches upstream's `ForemanHistory`, which the Mac does not use.
+
 ## Audit of upstream between the branch base and the Vault stack
 
 On November 13, 2026 the 63 product commits upstream added between this branch's base `a6d63a4b` and the Vault stack were read one by one against the Mac code (mobile, billing, CI, docs and chore commits left out). The audit read code; it ran nothing. 39 are on the Mac or already in shared code, 16 do not apply to a local Mac app (hosted sign-up, phone codes, cloud box updater, Windows and Linux packaging, hosted publishing), and the other 8 are below (three of them closed the same day).

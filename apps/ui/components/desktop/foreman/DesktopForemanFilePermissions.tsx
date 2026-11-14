@@ -1,10 +1,11 @@
 'use client'
 
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { useEffect, useRef, useState } from 'react'
 import type { DesktopForemanChatRef } from '@rerun/contracts'
 import { FileTextIcon, PencilIcon, WorkflowIcon, MessageSquareIcon, ShieldCheckIcon, LayoutGridIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
 import { SETTINGS_CARD, SettingsSection, SwitchRow } from '@/components/notifications/settings/SettingsSection'
 import { foremanFilePermissionSnapshotSchema, type ForemanFilePermissionSnapshot } from '@/lib/desktop/foreman-file-permissions'
 import { DesktopCoworkerCallTargets } from '../coworker-calls/DesktopCoworkerCallTargets'
@@ -57,7 +58,7 @@ export function DesktopForemanFilePermissions({ chat, disabled = false, onApprov
     return <Dialog open={open} onOpenChange={next => { if (!busy) setOpen(next) }}>
         <DialogTrigger asChild><Button size="sm" variant="ghost" disabled={disabled}>Permissions</Button></DialogTrigger>
         <DialogContent>
-            <DialogHeader><DialogTitle>Chief of Staff permissions</DialogTitle><DialogDescription>Choose whether your Chief of Staff can delegate tasks, call approved coworkers, or work with visible Files. Chats, memories, credentials and hidden stores stay excluded.</DialogDescription></DialogHeader>
+            <DialogHeaderBar icon={ShieldCheckIcon} title="Chief of Staff permissions" description="Choose whether your Chief of Staff can delegate tasks, call approved coworkers, or work with visible Files. Chats, memories, credentials and hidden stores stay excluded." />
             {error ? <div className="space-y-2"><p role="alert" className="text-sm text-destructive">{error}</p><Button size="sm" variant="outline" onClick={() => setRefresh(value => value + 1)} disabled={busy}>Refresh permissions</Button></div>
                 : !snapshot ? <p role="status" className="text-sm text-muted-foreground">Loading permissions…</p>
                 : <><SettingsSection title="Other coworkers’ files"><div className={SETTINGS_CARD}>

@@ -5,7 +5,8 @@ import { shortRelativeTime } from '@rerun/i18n/format'
 import { Orb } from '@rerun/ui/foreman'
 import { AgentBuddy, buddyMoodOfStatus } from '@rerun/ui/iso-grid'
 import { ArrowRight, CopyPlus, Ellipsis, PanelRight, Plus, Search, Users } from 'lucide-react'
-import { useMemo, type ReactNode } from 'react'
+import { useScrollFade } from '@rerun/ui/primitives'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { TooltipLabeled } from '@/components/ui/tooltip'
@@ -52,6 +53,8 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
 }) {
     const { t, language } = useDesktopLocale()
     const ordered = useMemo(() => agents.map(agent => ({ agent, latest: previews?.[agent.id] ?? null })).sort(byRecency), [agents, previews])
+    const [listElement, setListElement] = useState<HTMLElement | null>(null)
+    const listFade = useScrollFade(listElement)
     const newCoworker = t('workspaceView.newCoworker')
 
     return <aside data-testid="desktop-simple-sidebar" className="flex h-full min-h-0 w-full flex-col">
@@ -70,7 +73,9 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
                 <Button variant="ghost" size="icon-sm" aria-label={newCoworker} disabled={disabled} onClick={onNewCoworker}><Plus className="size-4" /></Button>
             </TooltipLabeled>
         </div>
-        <nav aria-label={t('workspaceView.list.label')} className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        {/* The list fades at the edge it can still scroll past and stays sharp at the one it has reached (upstream #236). */}
+        <nav ref={setListElement} aria-label={t('workspaceView.list.label')} data-testid="desktop-simple-list" className="min-h-0 flex-1 overflow-y-auto px-2" style={{ maskImage: listFade, WebkitMaskImage: listFade }}>
+            <div className="space-y-0.5 pb-2">
             {onOpenForeman && <button type="button" disabled={disabled} aria-current={foremanOpen ? 'true' : undefined} onClick={onOpenForeman}
                 className={cn('flex w-full items-center gap-2.5 rounded-lg p-2 text-left transition-colors', foremanOpen ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/60')}>
                 <span className="flex size-8 shrink-0 items-center justify-center"><Orb size={26} state="idle" facing="right" /></span>
@@ -135,6 +140,7 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
                     </li>
                 })}
             </ul>}
+            </div>
         </nav>
     </aside>
 }
