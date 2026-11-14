@@ -8,6 +8,7 @@ name: Desktop macOS release build
 # APPLE_CERTIFICATE_PASSWORD, APPLE_API_KEY_P8, APPLE_API_KEY_ID, APPLE_API_ISSUER.
 # Variables: RERUN_RELEASE_BUNDLE_ID, RERUN_RELEASE_TEAM_ID, RERUN_RELEASE_IDENTITY,
 # RERUN_RELEASE_FEED_URL, RERUN_RELEASE_DOWNLOAD_URL, and optionally RERUN_RELEASE_PRODUCT_NAME.
+# Both addresses must contain {arch}: the Apple silicon and Intel builds each need their own feed.
 #
 # The temporary keychain steps follow CopilotKit/OpenBot's Desktop macOS signing workflow (MIT).
 
@@ -38,9 +39,17 @@ jobs:
       - run: node --test scripts/desktop/release.test.mjs
 
   build:
-    name: Sign and notarize (arm64)
+    name: Sign and notarize (${{ matrix.arch }})
     needs: regressions
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
     environment: desktop-release
     timeout-minutes: 90
     env:
@@ -67,6 +76,10 @@ jobs:
             RERUN_RELEASE_BUNDLE_ID RERUN_RELEASE_TEAM_ID RERUN_RELEASE_IDENTITY RERUN_RELEASE_FEED_URL RERUN_RELEASE_DOWNLOAD_URL; do
             if [ -z "${!name:-}" ]; then missing+=("$name"); fi
           done
+          case "$RERUN_RELEASE_FEED_URL$RERUN_RELEASE_DOWNLOAD_URL" in
+            *'{arch}'*'{arch}'*) ;;
+            *) echo "::error::RERUN_RELEASE_FEED_URL and RERUN_RELEASE_DOWNLOAD_URL must each contain {arch}."; exit 1 ;;
+          esac
           if [ "${#missing[@]}" -gt 0 ]; then
             echo "::error::Not set: ${missing[*]}"
             exit 1
@@ -125,7 +138,7 @@ jobs:
       - name: Keep the signed files
         uses: actions/upload-artifact@v4
         with:
-          name: rerun-macos-arm64-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: rerun-macos-${{ matrix.arch }}-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/release/*.zip
             ${{ runner.temp }}/release/*.dmg

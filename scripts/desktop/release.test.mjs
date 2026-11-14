@@ -145,3 +145,11 @@ test('the startup page is renamed for the release, and only while it still has i
     assert.equal(renamed.includes('Preview</title>'), false)
     assert.throws(() => releaseStartupPage(renamed, 'Rerun'), /no longer has the one title/)
 })
+
+test('each Mac family gets its own feed and download folder', () => {
+    const both = env({ RERUN_RELEASE_FEED_URL: 'https://updates.example.test/mac/{arch}/releases.json', RERUN_RELEASE_DOWNLOAD_URL: 'https://updates.example.test/mac/{arch}/' })
+    assert.equal(releaseSettings(both, '0.1.0', 'arm64').feedUrl, 'https://updates.example.test/mac/arm64/releases.json')
+    assert.equal(releaseSettings(both, '0.1.0', 'x64').feedUrl, 'https://updates.example.test/mac/x64/releases.json')
+    assert.equal(releaseSettings(both, '0.1.0', 'x64').downloadUrl, 'https://updates.example.test/mac/x64')
+    assert.equal(releaseSettings(env(), '0.1.0', 'x64').feedUrl, 'https://updates.example.test/mac/releases.json')
+})

@@ -79,8 +79,8 @@ It uploads nothing. Publish the zip, the disk image and the feed together, the f
 | `RERUN_RELEASE_BUNDLE_ID` | The app's bundle ID. Not the preview's. |
 | `RERUN_RELEASE_TEAM_ID` | Ten-character Apple team ID. |
 | `RERUN_RELEASE_IDENTITY` | Name or SHA-1 of the Developer ID Application certificate. |
-| `RERUN_RELEASE_FEED_URL` | https address the feed file will be served from. |
-| `RERUN_RELEASE_DOWNLOAD_URL` | https folder the zip will be served from. |
+| `RERUN_RELEASE_FEED_URL` | https address the feed file will be served from. `{arch}` becomes `arm64` or `x64`. |
+| `RERUN_RELEASE_DOWNLOAD_URL` | https folder the zip will be served from. `{arch}` as above. |
 | `RERUN_NOTARY_KEYCHAIN_PROFILE` | A `notarytool store-credentials` profile, or instead the three below. |
 | `RERUN_NOTARY_KEY_PATH`, `RERUN_NOTARY_KEY_ID`, `RERUN_NOTARY_ISSUER` | App Store Connect API key. |
 | `RERUN_RELEASE_PRODUCT_NAME` | Optional, default `Rerun`. |
@@ -100,7 +100,10 @@ zip and disk image with the local preview certificate and skips Apple. Its bundl
 (`build.rerun.desktop.localcheck`, "Rerun Local Check") has no update feed and is not for anyone
 else.
 
-Not yet covered: an Intel build, the Kimi, Grok and Devin runners (staged for local QA only),
+The build is for the architecture of the Mac it runs on. The workflow builds Apple silicon and
+Intel side by side, each with its own feed; the Intel leg has never been run.
+
+Not yet covered: the Kimi, Grok and Devin runners (staged for local QA only),
 and moving a preview profile into a release.
 
 ## Mac App Store sandbox testing

@@ -37,9 +37,11 @@ function httpsUrl(value) {
 }
 
 // Everything a release needs, read once and refused together, before any build starts.
-export function releaseSettings(env, packageVersion) {
+// {arch} in the feed and download addresses becomes arm64 or x64, so each Mac family reads the
+// feed that names its own zip. Building both without it would have one feed overwrite the other.
+export function releaseSettings(env, packageVersion, arch = process.arch) {
     const problems = []
-    const value = name => typeof env[name] === 'string' ? env[name].trim() : ''
+    const value = name => typeof env[name] === 'string' ? env[name].trim().replaceAll('{arch}', arch) : ''
     const bundleId = value('RERUN_RELEASE_BUNDLE_ID')
     const teamId = value('RERUN_RELEASE_TEAM_ID')
     const identity = value('RERUN_RELEASE_IDENTITY')
@@ -201,13 +203,14 @@ async function main() {
     const packageVersion = JSON.parse(await readFile(join(desktopDir, 'package.json'), 'utf8')).version
     const listing = await output('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning'])
 
+    const { arch, appDirectory } = macTarget()
     let settings, identity
     if (localCheck) {
         identity = choosePreviewSigningIdentity(listing, process.env.RERUN_DESKTOP_SIGN_IDENTITY)
         settings = { bundleId: LOCAL_CHECK_BUNDLE_ID, productName: LOCAL_CHECK_PRODUCT, version: packageVersion }
         console.log('Local check: preview certificate, no notarization, no update feed. Not for distribution.')
     } else {
-        settings = releaseSettings(process.env, packageVersion)
+        settings = releaseSettings(process.env, packageVersion, arch)
         identity = { ...chooseReleaseIdentity(listing, settings.identity, settings.teamId), type: 'distribution' }
         if (!(await lstat(settings.notary.key ?? '/').catch(() => null))) throw new Error('RERUN_NOTARY_KEY_PATH does not exist.')
     }
@@ -223,7 +226,6 @@ async function main() {
     const startup = join(desktopDir, 'dist', 'main', 'startup.html')
     await writeFile(startup, releaseStartupPage(await readFile(startup, 'utf8'), settings.productName))
 
-    const { arch, appDirectory } = macTarget()
     console.log('\n--- signing with the hardened runtime')
     await must('npx', ['--yes', 'electron-builder@26.18.1', ...releaseBuilderArguments({
         arch, bundleId: settings.bundleId, productName: settings.productName, version: settings.version, identity: identity.hash, type: identity.type, output: out,
