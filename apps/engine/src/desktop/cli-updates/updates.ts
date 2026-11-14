@@ -63,7 +63,9 @@ async function probe(tool: DesktopCliTool, runner: string, scratch: string) {
 }
 
 const defaults: DesktopCliUpdatePorts = {
-    fetch: url => fetch(url, { signal: AbortSignal.timeout(15 * 60_000), headers: { 'User-Agent': 'rerun-desktop' } }),
+    // A vendor that does not answer a version request fails the check in seconds, not after the
+    // quarter hour a large download is allowed.
+    fetch: (url, kind = 'download') => fetch(url, { signal: AbortSignal.timeout(kind === 'metadata' ? 20_000 : 15 * 60_000), headers: { 'User-Agent': 'rerun-desktop' } }),
     verifySignature: async (path, teamId) => { await run('/usr/bin/codesign', ['--verify', '--strict', `-R=anchor apple generic and certificate leaf[subject.OU] = "${teamId}"`, path]) },
     probe,
     idle: () => activeRunCount() === 0,
@@ -126,7 +128,7 @@ export function bindDesktopCliUpdates(installRoot: string, overrides: Partial<De
     }
 
     async function download(release: CliRelease, directory: string, job: Job) {
-        const response = await ports.fetch(release.url).catch(() => { throw new CliUpdateError('offline') })
+        const response = await ports.fetch(release.url, 'download').catch(() => { throw new CliUpdateError('offline') })
         if (!response.ok || !response.body) throw new CliUpdateError('download')
         const length = Number(response.headers.get('content-length'))
         Object.assign(job, { step: 'download', received: 0, ...(Number.isFinite(length) && length > 0 && { total: length }) })

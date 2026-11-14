@@ -163,6 +163,12 @@ describe.skipIf(!mac)('desktop CLI updates', () => {
 })
 
 describe('vendor sources', () => {
+    it('asks for versions and manifests as small requests', async () => {
+        const kinds: (string | undefined)[] = []
+        await cliSources['grok-build'].latest(async (_url, kind) => { kinds.push(kind); return new Response('1.0.78') }, { claudeSdk: '0.3.322' })
+        expect(kinds).toEqual(['metadata'])
+    })
+
     const fetchOf = (pages: Record<string, unknown>) => async (url: string) => url in pages ? new Response(typeof pages[url] === 'string' ? pages[url] as string : JSON.stringify(pages[url])) : new Response('', { status: 404 })
     const context = { claudeSdk: '0.3.322' }
     const sum = 'a'.repeat(64)

@@ -13,7 +13,8 @@ export type CliRelease = {
     /** False when the vendor lists the app integrations it tested and this app's is not among them. */
     tested?: boolean
 }
-export type CliFetch = (url: string) => Promise<Response>
+/** `metadata`: a version pointer or manifest, small and answered at once. `download`: the tool itself. */
+export type CliFetch = (url: string, kind?: 'metadata' | 'download') => Promise<Response>
 export type CliSource = {
     /** The engine variable that names the tool a reply starts. */
     variable: string
@@ -35,7 +36,7 @@ const SHA256 = /^[a-f0-9]{64}$/
 const unreachable = () => new Error('The vendor did not answer with a version.')
 
 async function body(fetch: CliFetch, url: string, limit: number) {
-    const response = await fetch(url)
+    const response = await fetch(url, 'metadata')
     if (!response.ok) throw unreachable()
     const text = await response.text()
     if (text.length > limit) throw unreachable()
