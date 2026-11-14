@@ -221,7 +221,7 @@ Upstream `dev` moved to `56bebe60b637b3a6b4e1f746655a34d2762448f6` on November 1
 
 ## Audit of upstream between the branch base and the Vault stack
 
-On November 13, 2026 the 63 product commits upstream added between this branch's base `a6d63a4b` and the Vault stack were read one by one against the Mac code (mobile, billing, CI, docs and chore commits left out). The audit read code; it ran nothing. 41 are on the Mac or already in shared code, 14 do not apply to a local Mac app (hosted sign-up, phone codes, cloud box updater, Windows and Linux packaging, hosted publishing), and the rest are below.
+On November 13, 2026 the 63 product commits upstream added between this branch's base `a6d63a4b` and the Vault stack were read one by one against the Mac code (mobile, billing, CI, docs and chore commits left out). The audit read code; it ran nothing. 39 are on the Mac or already in shared code, 16 do not apply to a local Mac app (hosted sign-up, phone codes, cloud box updater, Windows and Linux packaging, hosted publishing), and the other 8 are below (three of them closed the same day).
 
 - [x] The context gauge only shows once the context is getting short, in amber then red. Fixture evidence. [Upstream #73](https://github.com/rerun-build/rerun/pull/73)
 - [x] A card called before the message tells a call-first model to write its message now, for the Mac's takeover, sign-in and credential requests too. Engine tests. Upstream `7008c01b`
