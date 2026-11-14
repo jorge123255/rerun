@@ -29,6 +29,27 @@ export async function managedAppsKeyKind(key: string, network: ManagedAppsFetch 
     throw refusal ?? new ManagedAppsError(401, 'Composio refused this key.')
 }
 
+/** Composio Connect: one MCP address that reaches every app, opened with a consumer key in its own header. */
+export const COMPOSIO_CONNECT = 'https://connect.composio.dev/mcp'
+export const COMPOSIO_CONNECT_HEADER = 'x-consumer-api-key'
+
+/** Whether Composio Connect accepts this key. Nothing but the handshake is sent. */
+export async function managedAppsConnectAccepts(key: string, network: ManagedAppsFetch = fetch, signal?: AbortSignal): Promise<boolean> {
+    let response: Response
+    try {
+        response = await network(COMPOSIO_CONNECT, {
+            method: 'POST', redirect: 'error', cache: 'no-store', credentials: 'omit',
+            signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30_000)]),
+            headers: { [COMPOSIO_CONNECT_HEADER]: key, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'rerun-desktop', version: '1.0.0' } } }),
+        })
+    } catch { throw new ManagedAppsError(503, 'Composio could not be reached. Check the connection and try again.') }
+    await response.body?.cancel()
+    if (response.ok) return true
+    if (response.status === 401 || response.status === 403) return false
+    throw new ManagedAppsError(502, `Composio answered ${response.status}.`)
+}
+
 function httpsPicture(value: unknown): string | null {
     if (typeof value !== 'string' || value.length > 700) return null
     try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null } catch { return null }

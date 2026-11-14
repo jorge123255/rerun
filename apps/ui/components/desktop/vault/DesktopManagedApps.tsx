@@ -14,13 +14,14 @@ const URL_PATH = '/api/desktop/managed-apps'
  * person's own Composio account. The key is typed here once and kept sealed on this Mac; the
  * sign-in to each app is held by Composio, which the section says before a key is given.
  */
-export function DesktopManagedApps({ coworkers, disabled = false }: { coworkers: readonly { id: string; name: string }[]; disabled?: boolean }) {
+export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged }: { coworkers: readonly { id: string; name: string }[]; disabled?: boolean; onVaultChanged?: () => void }) {
     const [view, setView] = useState<DesktopManagedAppsView | null>(null)
     const [busy, setBusy] = useState(false)
     const [error, setError] = useState('')
     const [key, setKey] = useState('')
     const [query, setQuery] = useState('')
     const [removeKey, setRemoveKey] = useState(false)
+    const [added, setAdded] = useState('')
 
     const read = useCallback(async () => {
         try {
@@ -38,6 +39,8 @@ export function DesktopManagedApps({ coworkers, disabled = false }: { coworkers:
             if (!response.ok) { setError(typeof body?.error === 'string' ? body.error : 'That did not go through. Try again.'); return false }
             const result = desktopManagedAppsResultSchema.parse(body)
             setView(result.view)
+            // A Composio Connect key became a Vault connector: the Vault list above is read again to show it.
+            if (result.addedToVault) { setAdded(result.addedToVault); onVaultChanged?.() }
             // The sign-in page opens in the browser; the app only ever asks Composio whether it finished.
             if (result.signIn) window.open(result.signIn, '_blank', 'noopener,noreferrer')
             return true
@@ -63,10 +66,13 @@ export function DesktopManagedApps({ coworkers, disabled = false }: { coworkers:
                 </p>
             </div>
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+            {added && <p role="status" className="text-sm text-foreground">
+                Composio was added to the Vault as “{added}”. Open it in the list above and choose its coworkers. A coworker with it finds the app it needs, gives you a sign-in link in the chat the first time, and its sends and deletes still wait for your answer.
+            </p>}
             {!view.configured ? (
                 <form className="space-y-2" onSubmit={(event: FormEvent) => { event.preventDefault(); void act({ action: 'set-key', key: key.trim() }).then(saved => { if (saved) setKey('') }) }}>
                     <p className="text-sm text-muted-foreground">
-                        Your sign-in to each app is held by Composio, not on this Mac, and a coworker’s calls to the app go through Composio. The key itself stays on this Mac and is never shown to a coworker.
+                        Your sign-in to each app is held by Composio, not on this Mac, and a coworker’s calls to the app go through Composio. The key itself stays on this Mac and is never shown to a coworker. A Composio Connect key (it starts with ck_) works here too.
                     </p>
                     <div className="flex flex-wrap gap-2">
                         <Input aria-label="Composio key" type="password" autoComplete="off" spellCheck={false} placeholder="Composio key" className="min-w-0 flex-1"

@@ -14,7 +14,7 @@ const coworkers = [{ id: 'c1', name: 'Pat' }, { id: 'c2', name: 'Sam' }]
 
 async function mount(first: unknown, answers: Record<string, { status?: number; body: unknown }> = {}) {
     const posts: unknown[] = []
-    const opened = vi.fn()
+    const opened = vi.fn(), vaultChanged = vi.fn()
     vi.stubGlobal('open', opened)
     vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
         if (init?.method !== 'POST') return Response.json(first)
@@ -26,9 +26,9 @@ async function mount(first: unknown, answers: Record<string, { status?: number; 
     document.body.appendChild(host)
     const root = createRoot(host)
     roots.push(root)
-    await act(async () => { root.render(<DesktopManagedApps coworkers={coworkers} />) })
+    await act(async () => { root.render(<DesktopManagedApps coworkers={coworkers} onVaultChanged={vaultChanged} />) })
     await act(async () => { await Promise.resolve() })
-    return { host, posts, opened }
+    return { host, posts, opened, vaultChanged }
 }
 const press = async (host: HTMLElement, label: string) => {
     await act(async () => { [...host.querySelectorAll('button')].find(node => (node.getAttribute('aria-label') ?? node.textContent) === label)!.click() })
@@ -86,4 +86,15 @@ test('a large account shows the first matches and search finds the rest', async 
     await act(async () => { type(host.querySelector<HTMLInputElement>('input[aria-label="Search managed apps"]')!, 'billing') })
     expect([...host.querySelectorAll('li p:first-child')].map(node => node.textContent)).toEqual(['App 250'])
     expect(host.textContent).not.toContain('Showing 40')
+})
+
+test('a Composio Connect key becomes a Vault connector and the Vault list is read again', async () => {
+    const empty = { configured: false, apps, accounts: [] }
+    const { host, vaultChanged } = await mount(empty, { 'set-key': { body: { view: empty, addedToVault: 'composio' } } })
+    expect(host.textContent).toContain('A Composio Connect key (it starts with ck_) works here too.')
+    await act(async () => { type(host.querySelector<HTMLInputElement>('input[aria-label="Composio key"]')!, 'ck_fixture_0000000000') })
+    await press(host, 'Save key')
+    expect(vaultChanged).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('[role=status]')!.textContent).toContain('Composio was added to the Vault as “composio”.')
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="Composio key"]')!.value).toBe('')
 })

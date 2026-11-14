@@ -33,7 +33,7 @@ import { nativeWritebackApi } from './native-writeback/api'
 import { authenticateDesktopEngineRequest, authenticateDesktopRequest, DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
 import { openDesktopManagedApps } from './managed-apps/binding'
-import { desktopConnectorActionKind } from '@rerun/contracts'
+import { desktopConnectorCall } from '@rerun/contracts'
 import { admitConnectorCall } from './connector-approvals/store'
 import type { DesktopRuntime } from './runtime'
 import { remoteMcpApi } from './mcp/api'
@@ -177,8 +177,8 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         owner => assignedVaultMcpPrograms(db, owner), vaultProgramMaterials(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId))
     // Connector actions that delete, send, share, post, pay or change credentials wait for the person's answer.
     const askFirst: DesktopMcpCallAdmission = async call => {
-        const kind = desktopConnectorActionKind(call.tool, call.destructive)
-        return kind ? admitConnectorCall(db, { owner: call.owner, sessionId: call.sessionId, tool: call.tool, kind, arguments: call.arguments }) : null
+        const held = desktopConnectorCall(call.tool, call.destructive, call.arguments)
+        return held ? admitConnectorCall(db, { owner: call.owner, sessionId: call.sessionId, tool: held.tool, kind: held.kind, arguments: call.arguments }) : null
     }
     const localBridge = stdioEngineBridge(localRuntime, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'localMcpStdio')

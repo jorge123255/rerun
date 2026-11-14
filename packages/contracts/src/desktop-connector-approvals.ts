@@ -70,6 +70,36 @@ export function desktopConnectorActionKind(toolName: string, destructive = false
     return destructive ? 'delete' : null
 }
 
+// Some connectors offer one tool that runs other tools named in its arguments (Composio Connect's
+// COMPOSIO_MULTI_EXECUTE_TOOL). The action is then what those inner tools do, so they are read out
+// of the arguments and the call is held under their names.
+const RUNS_OTHER_TOOLS = /(?:^|_)(?:MULTI_)?EXECUTE_TOOLS?$/i
+const INNER_TOOL_KEY = /^(?:tool_?slug|tool_?name|tool|slug|action|name)$/i
+const INNER_TOOL = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/
+
+function innerTools(value: unknown, depth = 0, found: string[] = []): string[] {
+    if (depth > 6 || found.length >= 60 || !value || typeof value !== 'object') return found
+    for (const [key, child] of Array.isArray(value) ? value.map((item, index) => [String(index), item] as const) : Object.entries(value)) {
+        if (typeof child === 'string') { if (INNER_TOOL_KEY.test(key) && INNER_TOOL.test(child) && !found.includes(child)) found.push(child) }
+        else innerTools(child, depth + 1, found)
+    }
+    return found
+}
+
+/**
+ * What a connector call is held as: the kind of action and the name it is asked about, or null
+ * for a call that needs no answer. A tool that runs other tools is held under the inner tools
+ * that ask, so the card names what will really happen and an "always allow" covers only that.
+ */
+export function desktopConnectorCall(toolName: string, destructive: boolean, args: unknown): { kind: DesktopConnectorActionKind; tool: string } | null {
+    const own = desktopConnectorActionKind(toolName, destructive)
+    if (own) return { kind: own, tool: toolName }
+    if (!RUNS_OTHER_TOOLS.test(toolName)) return null
+    const asking = innerTools(args).flatMap(tool => { const kind = desktopConnectorActionKind(tool); return kind ? [{ tool, kind }] : [] })
+    if (!asking.length) return null
+    return { kind: asking[0]!.kind, tool: asking.map(item => item.tool).sort().join('+').slice(0, 200) }
+}
+
 export const desktopConnectorApprovalDecisionSchema = z.enum(['once', 'conversation', 'always', 'deny'])
 export type DesktopConnectorApprovalDecision = z.infer<typeof desktopConnectorApprovalDecisionSchema>
 
