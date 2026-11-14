@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
     chooseReleaseIdentity, notarize, notaryArguments, releaseBuilderArguments, releaseConfigSource, releaseRequirement,
-    releaseSettings, stapleWithRetry, updateFeed, LOCAL_CHECK_PRODUCT,
+    releaseSettings, releaseStartupPage, stapleWithRetry, updateFeed, LOCAL_CHECK_PRODUCT,
 } from './release.mjs'
 
 const TEAM = 'ABCDE12345'
@@ -135,4 +135,13 @@ test('the feed names the new zip, keeps earlier versions and drops anything that
     assert.throws(() => updateFeed({ version: '1.1.0', url: 'http://updates.example.test/a.zip', pubDate: 'x' }), /https \.zip/)
     assert.throws(() => updateFeed({ version: '1.1.0', url: 'https://updates.example.test/a.dmg', pubDate: 'x' }), /https \.zip/)
     assert.throws(() => updateFeed({ version: 'latest', url: 'https://updates.example.test/a.zip', pubDate: 'x' }), /1\.2\.3/)
+})
+
+test('the startup page is renamed for the release, and only while it still has its one title', async () => {
+    const { readFile } = await import('node:fs/promises')
+    const html = await readFile(new URL('../../apps/desktop/src/main/startup.html', import.meta.url), 'utf8')
+    const renamed = releaseStartupPage(html, 'Rerun')
+    assert.ok(renamed.includes('<title>Rerun</title>'))
+    assert.equal(renamed.includes('Preview</title>'), false)
+    assert.throws(() => releaseStartupPage(renamed, 'Rerun'), /no longer has the one title/)
 })

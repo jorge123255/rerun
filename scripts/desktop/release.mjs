@@ -100,6 +100,13 @@ export function releaseConfigSource(settings) {
     ].join('\n')
 }
 
+// The startup screen's window title, which is plain HTML and cannot read the config.
+export function releaseStartupPage(html, productName) {
+    const title = '<title>Rerun Desktop Preview</title>'
+    if (html.split(title).length !== 2) throw new Error('The startup page no longer has the one title the release renames.')
+    return html.replace(title, `<title>${productName}</title>`)
+}
+
 export function releaseBuilderArguments({ arch, bundleId, productName, version, identity, type, output }) {
     return ['--mac', 'dir', `--${arch}`, '--publish', 'never', '--config', 'electron-builder.yml',
         `-c.appId=${bundleId}`, `-c.productName=${productName}`, `-c.extraMetadata.version=${version}`,
@@ -213,6 +220,8 @@ async function main() {
     console.log('\n--- staging')
     await must(process.execPath, [join(repoRoot, 'scripts', 'desktop', 'package.mjs'), '--stage-only'], { cwd: repoRoot })
     await writeFile(join(desktopDir, 'dist', 'main', 'release-config.mjs'), releaseConfigSource(settings))
+    const startup = join(desktopDir, 'dist', 'main', 'startup.html')
+    await writeFile(startup, releaseStartupPage(await readFile(startup, 'utf8'), settings.productName))
 
     const { arch, appDirectory } = macTarget()
     console.log('\n--- signing with the hardened runtime')

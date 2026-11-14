@@ -101,7 +101,7 @@ zip and disk image with the local preview certificate and skips Apple. Its bundl
 else.
 
 Not yet covered: an Intel build, the Kimi, Grok and Devin runners (staged for local QA only),
-moving a preview profile into a release, and the window title, which still says Preview.
+and moving a preview profile into a release.
 
 ## Mac App Store sandbox testing
 

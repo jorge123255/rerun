@@ -16,6 +16,7 @@ import { desktopMicrophonePermissions } from './media-permissions.mjs'
 import { createDesktopFileSaves, safeDisplayedImageError } from './result-files.mjs'
 import { installMacApplicationMenu } from './application-menu.mjs'
 import { approvedQuitAction, BUILD_RELEASE, createMacUpdater } from './mac-updates.mjs'
+import { PROFILE_NAME } from './release-config.mjs'
 import { loadShellLanguage, localizeStartupStatus, shellCopy, shellText } from './shell-language.mjs'
 import { createMacMenuBar, macLoginItemSettings, setMacOpenAtLogin } from './mac-menu-bar.mjs'
 import { attachDesktopContextMenu, externalDesktopLink } from './window-context-menu.mjs'
@@ -889,7 +890,7 @@ function createBoardWindow(desktopSession, bounds, { primary = false, showOnRead
     const boardWindow = new BrowserWindow({
         ...(bounds || { width: 1220, height: 820 }),
         ...(mac ? macWorkspaceMinimumSize : { minWidth: 720, minHeight: 520 }), show: false,
-        title: 'Rerun Desktop Preview', backgroundColor: '#101214',
+        title: PROFILE_NAME || 'Rerun Desktop Preview', backgroundColor: '#101214',
         ...(mac ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 12, y: 8 } } : {}),
         webPreferences: { preload: resolve(directory, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, session: desktopSession },
     })
