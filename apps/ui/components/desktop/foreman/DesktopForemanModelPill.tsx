@@ -5,7 +5,7 @@ import type { ConnectionSummary, DesktopForemanModelRef } from '@rerun/contracts
 import { UsageRing } from '@/components/agent/UsageRing'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { DesktopModelEffort } from '../DesktopModelEffort'
+import { DesktopModelEffort, desktopEffortLabel } from '../DesktopModelEffort'
 import type { DesktopModelView } from '@/lib/desktop/chat-model'
 import { ProviderIcon } from '@/lib/engine/provider-icons'
 import { CheckIcon, ChevronDownIcon } from '@/lib/icons'
@@ -40,6 +40,7 @@ export function DesktopForemanModelPill({ ref, view, connections, disabled, savi
     const usage = useDesktopModelPillUsage(effective, connections)
     const label = !effective.model ? t('foreman.modelPicker.setUp') : effective.source === 'workspace'
         ? t('foreman.modelPicker.defaultLabel', { model: effective.label }) : effective.label
+    const pillLabel = effective.available && effective.reasoning?.source === 'model' ? `${label} · ${desktopEffortLabel(effective.reasoning.effort)}` : label
     const pick = async (model: DesktopForemanModelRef | null) => {
         setError(undefined)
         try { await onPick(model); setOpen(false) }
@@ -52,7 +53,7 @@ export function DesktopForemanModelPill({ ref, view, connections, disabled, savi
                     aria-label={`${t('foreman.modelPicker.select')} · ${label}${usage ? ` · ${usage.label}` : ''}`}>
                     {usage ? <UsageRing usage={usage}><ProviderIcon provider={effective.provider} /></UsageRing>
                         : <ProviderIcon provider={effective.provider} className="size-3.5 shrink-0" />}
-                    <span className="truncate">{label}</span><ChevronDownIcon aria-hidden className="size-3 shrink-0" />
+                    <span className="truncate">{pillLabel}</span><ChevronDownIcon aria-hidden className="size-3 shrink-0" />
                 </Button>
             </PopoverTrigger>
         </DesktopModelPillUsageTooltip>
@@ -60,6 +61,14 @@ export function DesktopForemanModelPill({ ref, view, connections, disabled, savi
             <h2 id={titleId} className="px-2 pt-1 text-sm font-semibold">{t('foreman.modelPicker.select')}</h2>
             {error && <p role="alert" className="px-2 text-xs text-destructive">{error}</p>}
             {effective.model && !effective.available && <p className="px-2 text-xs text-muted-foreground">{t('foreman.modelUnavailable')}</p>}
+            {onEffort && effective.available && effective.reasoningOptions && effective.connectionId && effective.model && <DesktopModelEffort
+                model={effective.label} options={effective.reasoningOptions} disabled={disabled || saving}
+                chosen={effective.reasoning?.source === 'model' ? effective.reasoning.effort : undefined}
+                inherited={effective.reasoning && effective.reasoning.source !== 'model' ? effective.reasoning.effort : undefined}
+                onChoose={effort => {
+                    setError('')
+                    void onEffort(effective.connectionId!, effective.model!, effort).catch(cause => setError(cause instanceof Error ? cause.message : 'Could not save this model’s reasoning effort.'))
+                }} />}
             <div className="max-h-[min(420px,50dvh)] overflow-y-auto">
                 <button type="button" disabled={disabled || saving || !conversation} aria-current={!conversation || undefined}
                     className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted/40" onClick={() => void pick(null)}>
@@ -82,14 +91,6 @@ export function DesktopForemanModelPill({ ref, view, connections, disabled, savi
                     })}
                 </div>)}
             </div>
-            {onEffort && effective.available && effective.reasoningOptions && effective.connectionId && effective.model && <DesktopModelEffort
-                model={effective.label} options={effective.reasoningOptions} disabled={disabled || saving}
-                chosen={effective.reasoning?.source === 'model' ? effective.reasoning.effort : undefined}
-                inherited={effective.reasoning && effective.reasoning.source !== 'model' ? effective.reasoning.effort : undefined}
-                onChoose={effort => {
-                    setError('')
-                    void onEffort(effective.connectionId!, effective.model!, effort).catch(cause => setError(cause instanceof Error ? cause.message : 'Could not save this model’s reasoning effort.'))
-                }} />}
             {onSettings && <Button type="button" size="sm" variant="ghost" className="justify-start" disabled={saving}
                 onClick={() => { setOpen(false); onSettings() }}>{t('settings')}</Button>}
         </PopoverContent>
