@@ -52,7 +52,7 @@ export function DesktopSubscriptionLogin({ only, onConnectionsChanged }: { only?
                 if (controller.signal.aborted || revision.current !== current) return
                 setSnapshot(next)
                 setStatusReadFailed(false)
-                repeat = providers.some(provider => ['waiting', 'starting', 'cancelling'].includes(next[provider].phase))
+                repeat = providers.some(provider => ['waiting', 'code', 'starting', 'cancelling'].includes(next[provider].phase))
             } catch {
                 if (!controller.signal.aborted && revision.current === current) {
                     setStatusReadFailed(true)
