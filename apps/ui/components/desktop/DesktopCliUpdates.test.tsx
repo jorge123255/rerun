@@ -9,7 +9,7 @@ import { DesktopCliToolVersion } from './DesktopCliUpdates'
 
 const roots: Root[] = []
 afterEach(() => { for (const root of roots.splice(0)) act(() => { root.unmount() }); document.body.innerHTML = '' })
-const base: DesktopCliToolStatus = { tool: 'kimi-code', current: '2.5.2', source: 'built-in', latest: '2.5.3', checkedAt: '2026-11-14T12:00:00.000Z', state: 'available', pending: null, error: null }
+const base: DesktopCliToolStatus = { tool: 'kimi-code', current: '2.5.2', source: 'built-in', latest: '2.5.3', checkedAt: '2026-11-14T12:00:00.000Z', state: 'available', pending: null, error: null, step: null, progress: null }
 function mount(status: Partial<DesktopCliToolStatus>, onAct = vi.fn()) {
     const host = document.createElement('div')
     document.body.appendChild(host)
@@ -47,4 +47,16 @@ test('a failed update says why and can be tried again; an untested version has n
     const untested = mount({ tool: 'claude', state: 'untested', latest: '2.2.0' })
     expect(untested.host.textContent).toContain('Version 2.2.0 is out but not yet tested with this app.')
     expect(untested.host.querySelector('button')).toBeNull()
+})
+
+test('shows a bar with the step while an update is under way', () => {
+    const downloading = mount({ state: 'downloading', pending: '2.5.3', step: 'download', progress: 0.5 })
+    expect(downloading.host.textContent).toContain('Downloading version 2.5.3… 50%')
+    expect(downloading.host.querySelector('[role=progressbar]')!.getAttribute('aria-valuenow')).toBe('50')
+    expect(downloading.host.querySelector('button')).toBeNull()
+    const checking = mount({ state: 'downloading', pending: '2.5.3', step: 'verify', progress: null })
+    expect(checking.host.textContent).toContain('Checking the download…')
+    expect(checking.host.querySelector('[role=progressbar]')!.hasAttribute('aria-valuenow')).toBe(false)
+    expect(mount({ state: 'downloading', pending: '2.5.3', step: 'install', progress: null }).host.textContent).toContain('Installing version 2.5.3…')
+    expect(mount({ state: 'waiting', pending: '2.5.3' }).host.querySelector('[role=progressbar]')!.getAttribute('aria-valuenow')).toBe('100')
 })

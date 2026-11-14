@@ -51,6 +51,9 @@ export async function readDesktopClaudePlanUsage(token: string, harness: Record<
 }
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
+// The sign-in is a Claude Code one and the app runs the Claude Code runner with it. Asked under any
+// other name the endpoint answered 429 on the first request (seen November 14, 2026).
+const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.322 (external, sdk-ts)'
 
 /**
  * Asks Anthropic's own usage endpoint with the plan sign-in this engine already holds. The runner
@@ -60,7 +63,7 @@ const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 export async function fetchDesktopClaudePlanUsage(token: string, request: typeof fetch = fetch): Promise<ClaudePlanUsage | null> {
     try {
         const response = await request(USAGE_URL, {
-            headers: { accept: 'application/json', authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20', 'user-agent': 'rerun-desktop' },
+            headers: { accept: 'application/json', authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20', 'user-agent': CLAUDE_CODE_USER_AGENT },
             redirect: 'error', signal: AbortSignal.timeout(READ_TIMEOUT_MS),
         })
         if (!response.ok) {

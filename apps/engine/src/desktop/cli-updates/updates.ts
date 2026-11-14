@@ -20,9 +20,10 @@ const VERSION = /^\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$/
 type Failure = NonNullable<DesktopCliToolStatus['error']>
 class CliUpdateError extends Error { constructor(readonly reason: Failure) { super(reason) } }
 
-type Stored = { version: 1; tools: Partial<Record<DesktopCliTool, { active?: string; staged?: string; latest?: string; tested?: boolean; checkedAt?: string }>> }
+// `requested`: an update was asked for and has neither finished nor failed, so a restart takes it up again.
+type Stored = { version: 1; tools: Partial<Record<DesktopCliTool, { active?: string; staged?: string; latest?: string; tested?: boolean; checkedAt?: string; requested?: boolean; error?: Failure }>> }
 /** A switch in progress. `version` null means going back to the copy shipped inside the app. */
-type Job = { phase: 'downloading' | 'waiting'; version: string | null }
+type Job = { phase: 'downloading' | 'waiting'; version: string | null; step?: 'download' | 'verify' | 'install'; received?: number; total?: number }
 
 export type DesktopCliUpdatePorts = {
     fetch: CliFetch
@@ -82,7 +83,6 @@ export function bindDesktopCliUpdates(installRoot: string, overrides: Partial<De
     const builtIn = new Map<DesktopCliTool, string>()
     const builtInVersions = new Map<DesktopCliTool, Promise<string | null>>()
     const jobs = new Map<DesktopCliTool, Job>()
-    const errors = new Map<DesktopCliTool, Failure>()
     let stored: Stored = { version: 1, tools: {} }
     let ready: Promise<void> | undefined, checking: Promise<void> | undefined, stopped = false, lastFailedCheck = 0
 
@@ -125,15 +125,18 @@ export function bindDesktopCliUpdates(installRoot: string, overrides: Partial<De
         await save()
     }
 
-    async function download(release: CliRelease, directory: string) {
+    async function download(release: CliRelease, directory: string, job: Job) {
         const response = await ports.fetch(release.url).catch(() => { throw new CliUpdateError('offline') })
         if (!response.ok || !response.body) throw new CliUpdateError('download')
+        const length = Number(response.headers.get('content-length'))
+        Object.assign(job, { step: 'download', received: 0, ...(Number.isFinite(length) && length > 0 && { total: length }) })
         const file = join(directory, 'download'), sha256 = createHash('sha256'), sha512 = createHash('sha512')
         const out = createWriteStream(file, { mode: 0o600, flags: 'wx' })
         let size = 0
         try {
             for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
                 size += chunk.length
+                job.received = size
                 if (size > DOWNLOAD_LIMIT || stopped) throw new CliUpdateError('download')
                 sha256.update(chunk)
                 sha512.update(chunk)
@@ -150,12 +153,13 @@ export function bindDesktopCliUpdates(installRoot: string, overrides: Partial<De
         return file
     }
 
-    async function install(tool: DesktopCliTool, release: CliRelease) {
+    async function install(tool: DesktopCliTool, release: CliRelease, job: Job) {
         const source = cliSources[tool]
         await mkdir(join(root, tool), { recursive: true, mode: 0o700 })
         const work = await realpath(await mkdtemp(join(root, tool, '.incoming-')))
         try {
-            const file = await download(release, work)
+            const file = await download(release, work, job)
+            job.step = 'verify'
             const target = join(work, 'version')
             await mkdir(target, { mode: 0o755 })
             const place = async (from: string, to: string) => {
@@ -182,6 +186,7 @@ export function bindDesktopCliUpdates(installRoot: string, overrides: Partial<De
             }
             const runner = await verified(tool, release.version, target)
             if (await ports.probe(tool, runner, work) !== release.version) throw new CliUpdateError('start')
+            job.step = 'install'
             const final = versionDirectory(tool, release.version)
             await rm(final, { recursive: true, force: true })
             await rename(target, final)
@@ -211,24 +216,34 @@ export function bindDesktopCliUpdates(installRoot: string, overrides: Partial<De
     }
 
     function begin(tool: DesktopCliTool, work: () => Promise<void>) {
-        errors.delete(tool)
-        void work().catch(error => { errors.set(tool, error instanceof CliUpdateError ? error.reason : 'download') }).finally(() => { jobs.delete(tool) })
+        delete entry(tool).error
+        void work().then(() => { delete entry(tool).requested }, error => {
+            // Stopping the app is not a failure: the request stays, and the next start takes it up.
+            if (stopped) return
+            delete entry(tool).requested
+            entry(tool).error = error instanceof CliUpdateError ? error.reason : 'download'
+        }).finally(() => { jobs.delete(tool); return save().catch(() => {}) })
+    }
+    /** Downloads the vendor's newest version, checks it, and switches to it once no reply is running. */
+    async function runUpdate(tool: DesktopCliTool, job: Job) {
+        Object.assign(job, { phase: 'downloading', step: 'download', received: 0, total: undefined })
+        const release = await cliSources[tool].latest(ports.fetch, { claudeSdk: DESKTOP_CLAUDE_SDK_VERSION }).catch(() => { throw new CliUpdateError('offline') })
+        if (release.tested === false) throw new CliUpdateError('start')
+        job.version = release.version
+        if (stored.tools[tool]?.active === release.version) return
+        await install(tool, release, job)
+        entry(tool).staged = release.version
+        await save()
+        Object.assign(job, { phase: 'waiting', step: undefined })
+        await untilIdle()
+        await use(tool, release.version)
     }
     function update(tool: DesktopCliTool) {
-        jobs.set(tool, { phase: 'downloading', version: stored.tools[tool]?.latest ?? null })
-        begin(tool, async () => {
-            const release = await cliSources[tool].latest(ports.fetch, { claudeSdk: DESKTOP_CLAUDE_SDK_VERSION }).catch(() => { throw new CliUpdateError('offline') })
-            if (release.tested === false) throw new CliUpdateError('start')
-            jobs.set(tool, { phase: 'downloading', version: release.version })
-            if (stored.tools[tool]?.active !== release.version) {
-                await install(tool, release)
-                entry(tool).staged = release.version
-                await save()
-                jobs.set(tool, { phase: 'waiting', version: release.version })
-                await untilIdle()
-                await use(tool, release.version)
-            }
-        })
+        const job: Job = { phase: 'downloading', version: stored.tools[tool]?.latest ?? null }
+        jobs.set(tool, job)
+        entry(tool).requested = true
+        void save().catch(() => {})
+        begin(tool, () => runUpdate(tool, job))
     }
     function revert(tool: DesktopCliTool) {
         jobs.set(tool, { phase: 'waiting', version: null })
@@ -257,7 +272,8 @@ export function bindDesktopCliUpdates(installRoot: string, overrides: Partial<De
             const state = stored.tools[tool]
             const wanted = state?.staged ?? state?.active
             if (wanted) {
-                jobs.set(tool, { phase: 'waiting', version: wanted })
+                const job: Job = { phase: 'waiting', version: wanted }
+                jobs.set(tool, job)
                 begin(tool, async () => {
                     await untilIdle()
                     try { await use(tool, wanted) }
@@ -268,8 +284,11 @@ export function bindDesktopCliUpdates(installRoot: string, overrides: Partial<De
                         await save()
                         throw error
                     }
+                    if (state?.requested) await runUpdate(tool, job)
                 })
             }
+            // An update that was under way when the app closed starts over; nothing half-downloaded is kept.
+            else if (state?.requested) update(tool)
             const keep = new Set([state?.active, state?.staged])
             for (const name of await readdir(join(root, tool)).catch(() => [])) {
                 if (!keep.has(name)) await rm(join(root, tool, name), { recursive: true, force: true })
@@ -286,7 +305,7 @@ export function bindDesktopCliUpdates(installRoot: string, overrides: Partial<De
         await (ready ??= restore())
         const tools: DesktopCliToolStatus[] = []
         for (const tool of builtIn.keys()) {
-            const state = stored.tools[tool] ?? {}, job = jobs.get(tool), error = errors.get(tool) ?? null
+            const state = stored.tools[tool] ?? {}, job = jobs.get(tool), error = state.error ?? null
             const current = state.active ?? await builtInVersion(tool)
             const latest = state.latest ?? null
             const behind = !!latest && (!current || newerCliVersion(latest, current))
@@ -294,6 +313,8 @@ export function bindDesktopCliUpdates(installRoot: string, overrides: Partial<De
                 tool, current, source: state.active ? 'updated' : 'built-in', latest, checkedAt: state.checkedAt ?? null,
                 state: job ? job.phase : error ? 'failed' : behind ? (state.tested === false ? 'untested' : 'available') : 'current',
                 pending: job ? job.version ?? await builtInVersion(tool) : null,
+                step: job?.phase === 'downloading' ? job.step ?? 'download' : null,
+                progress: job?.phase === 'downloading' && job.step === 'download' && job.total ? Math.min(1, (job.received ?? 0) / job.total) : null,
                 error: job ? null : error,
             })
         }

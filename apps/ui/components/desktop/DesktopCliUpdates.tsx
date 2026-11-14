@@ -56,18 +56,30 @@ export function DesktopCliToolVersion({ name, status, acting, onAct }: {
     acting: boolean
     onAct(action: DesktopCliUpdateAction): void
 }) {
-    const { tool, current, latest, pending, state, source, error } = status
+    const { tool, current, latest, pending, state, source, error, step, progress } = status
+    const percent = progress === null ? null : Math.round(progress * 100)
+    const working = state === 'downloading'
+        ? step === 'verify' ? 'Checking the download…' : step === 'install' ? `Installing version ${pending ?? ''}…`.replace(' …', '…')
+            : `Downloading${pending ? ` version ${pending}` : ''}…${percent === null ? '' : ` ${percent}%`}`
+        : null
     const version = current ? `Version ${current}` : 'Version unknown'
     const button = (label: string, action: DesktopCliUpdateAction, primary = false) =>
         <Button type="button" size="sm" variant={primary ? 'default' : 'outline'} disabled={acting} className="h-6 shrink-0 px-2 text-[11px]"
             aria-label={`${label}: ${name}`} onClick={() => onAct(action)}>{label}</Button>
     return <div data-testid="desktop-cli-tool" data-tool={tool} data-state={state} className="mt-1.5 flex items-start justify-between gap-2 text-[11px]">
-        <div className="min-w-0 space-y-0.5">
+        <div className="min-w-0 flex-1 space-y-0.5">
             <p className="text-muted-foreground">{version}{source === 'updated' ? ' · updated in this app' : ''}</p>
             {state === 'available' && <p className="font-medium text-amber-600 dark:text-amber-400">Version {latest} is available.</p>}
             {state === 'untested' && <p className="text-muted-foreground">Version {latest} is out but not yet tested with this app.</p>}
-            {state === 'downloading' && <p role="status" className="text-muted-foreground">Downloading{pending ? ` version ${pending}` : ''}…</p>}
+            {working && <p role="status" className="text-muted-foreground">{working}</p>}
             {state === 'waiting' && <p role="status" className="text-muted-foreground">Version {pending} is ready. It takes over when the running coworkers finish.</p>}
+            {(working || state === 'waiting') && <div role="progressbar" aria-label={`Updating ${name}`} aria-valuemin={0} aria-valuemax={100}
+                {...(state === 'waiting' ? { 'aria-valuenow': 100 } : step === 'download' && percent !== null ? { 'aria-valuenow': percent } : {})}
+                className="mt-1 h-1.5 w-full min-w-40 overflow-hidden rounded-full bg-muted">
+                {/* Download fills the first four fifths; checking and installing the rest. A step with no measure pulses. */}
+                <div className={`h-full rounded-full bg-primary transition-[width] duration-300 ${state === 'downloading' && (step !== 'download' || percent === null) ? 'animate-pulse' : ''}`}
+                    style={{ width: `${state === 'waiting' ? 100 : step === 'install' ? 95 : step === 'verify' ? 85 : percent === null ? 30 : Math.max(3, percent * 0.8)}%` }} />
+            </div>}
             {state === 'failed' && error && <p role="alert" className="text-destructive">{FAILURES[error]}</p>}
         </div>
         {state === 'available' && button('Update', { action: 'update', tool }, true)}

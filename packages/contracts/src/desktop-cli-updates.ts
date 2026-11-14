@@ -23,6 +23,9 @@ export const desktopCliToolStatusSchema = z.object({
     state: z.enum(['current', 'available', 'untested', 'downloading', 'waiting', 'failed']),
     /** The version being downloaded or waiting to take over. */
     pending: version.nullable(),
+    /** While downloading: the step under way, and for `download` how much has arrived (0 to 1) when the vendor says the size. */
+    step: z.enum(['download', 'verify', 'install']).nullable(),
+    progress: z.number().min(0).max(1).nullable(),
     error: z.enum(['offline', 'download', 'verification', 'start']).nullable(),
 })
 export type DesktopCliToolStatus = z.infer<typeof desktopCliToolStatusSchema>

@@ -118,6 +118,32 @@ describe.skipIf(!mac)('desktop CLI updates', () => {
         expect(process.env.RERUN_DESKTOP_KIMI_CODE_RUNNER).toBe(bundled)
     })
 
+    it('takes up an update again that was under way when the app closed', async () => {
+        vendorKimi('2.5.3')
+        let release!: () => void
+        const held = new Promise<void>(resolve => { release = resolve })
+        const first = bind({ verifySignature: () => held })
+        await first.action({ action: 'update', tool: 'kimi-code' })
+        await vi.waitFor(async () => expect((await kimi(first)).step).toBe('verify'), { timeout: 5000 })
+        expect(JSON.parse(readFileSync(join(root, 'cli-tools', 'state.json'), 'utf8')).tools['kimi-code'].requested).toBe(true)
+        first.stop()
+        release()
+        process.env.RERUN_DESKTOP_KIMI_CODE_RUNNER = bundled
+        const second = bind()
+        expect(await settled(second, 'current')).toMatchObject({ current: '2.5.3', source: 'updated' })
+        expect(JSON.parse(readFileSync(join(root, 'cli-tools', 'state.json'), 'utf8')).tools['kimi-code'].requested).toBeUndefined()
+    })
+
+    it('reports how much of the download has arrived, and keeps a failure across a restart', async () => {
+        vendorKimi('2.5.3')
+        const seen: (number | null)[] = []
+        const updates = bind({ verifySignature: async () => { seen.push((await kimi(updates)).progress); throw new Error('not signed') } })
+        const started = (await updates.action({ action: 'update', tool: 'kimi-code' })).tools[0]!
+        expect(started).toMatchObject({ state: 'downloading', step: 'download' })
+        expect(await settled(updates, 'failed')).toMatchObject({ step: null, progress: null, error: 'verification' })
+        expect(await settled(bind(), 'failed')).toMatchObject({ error: 'verification', source: 'built-in' })
+    })
+
     it('goes back to the built-in copy on request', async () => {
         vendorKimi('2.5.3')
         const updates = bind()
