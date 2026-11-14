@@ -37,12 +37,12 @@ async function fixture() {
     let approval: unknown = structuredClone(initialApproval), time = 1_000_000, allowed = true
     const revoked = new AbortController(), shutdown = new AbortController(), lifecycle = remoteMcpLifecycle()
     const start = vi.fn(async () => started as unknown), poll = vi.fn(async () => authorized as unknown)
-    const writeCredential = vi.fn(async () => {})
+    const writeCredential = vi.fn<DeviceCustodyPorts['writeCredential']>(async (_approval, _token, _signal, settle) => { await settle(db) })
     const ports: DeviceCustodyPorts = {
         store, shutdown: shutdown.signal, now: () => time,
         approval: vi.fn(async () => allowed ? { approval, signal: revoked.signal, check: () => { if (!allowed) throw new Error('revoked') } } : null),
         lifecycle: (current, controller) => lifecycle.admit(current.owner, current.name, controller),
-        broker: { start, poll }, writeCredential,
+        broker: { start, poll }, assertCredentialCurrent: async () => {}, writeCredential,
     }
     const make = () => createApprovedMcpDeviceCustody(ports)
     const custody = make(), signal = new AbortController().signal
@@ -63,7 +63,7 @@ describe('approved MCP device custody (offline sources)', () => {
         f.advance(5000)
         const view = await f.complete()
         expect(view).toEqual({ state: 'connected', tools: [] })
-        expect(f.writeCredential).toHaveBeenCalledWith(initialApproval, expect.objectContaining({ accessToken: 'FIXTURE_ACCESS_SECRET', resource: target.url }), expect.any(AbortSignal))
+        expect(f.writeCredential).toHaveBeenCalledWith(initialApproval, expect.objectContaining({ accessToken: 'FIXTURE_ACCESS_SECRET', resource: target.url }), expect.any(AbortSignal), expect.any(Function))
         expect(JSON.stringify([waiting, view])).not.toMatch(/FIXTURE_|deviceCode|accessToken|refreshToken/)
         expect((await f.store.read(initialApproval))?.value.deviceCode).toBeUndefined()
     })
@@ -163,6 +163,24 @@ describe('approved MCP device custody (offline sources)', () => {
         expect((await f.store.read(initialApproval))?.value.deviceCode).toBeUndefined()
         await expect(f.custody.fallback.start({ ...target, requestId: 'retry' }, f.signal)).resolves.toEqual({ state: 'failed' })
         expect(f.start).toHaveBeenCalledTimes(1); expect(f.poll).not.toHaveBeenCalled()
+    })
+
+    it('clears both codes when the issuer requires a longer interval than custody supports', async () => {
+        const f = await fixture()
+        const approval = { ...initialApproval, method: { ...initialApproval.method, kind: 'device-code-rfc8628-v1' as const } }
+        f.change(approval)
+        f.start.mockResolvedValueOnce({ ...started, interval: 60, userCode: 'FIXTURE-HUMAN-CODE' })
+        await expect(f.startAttempt()).resolves.toMatchObject({ state: 'waiting' })
+        f.advance(60_000)
+        f.poll.mockResolvedValueOnce({ state: 'slow_down' })
+        await expect(f.complete()).resolves.toEqual({ state: 'failed' })
+        const saved = (await f.store.read(approval))?.value
+        expect(saved?.phase).toBe('failed')
+        expect(saved?.deviceCode).toBeUndefined()
+        expect(saved?.userCode).toBeUndefined()
+        f.advance(55_000)
+        await expect(f.complete('complete-b')).resolves.toEqual({ state: 'failed' })
+        expect(f.poll).toHaveBeenCalledTimes(1)
     })
 
     it.each(['stop', 'revoke', 'edit', 'shutdown'] as const)('refuses late token publication after %s', async action => {

@@ -1,19 +1,22 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { SETUP_TAB } from '@/components/agent/agent-tabs'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { SettingsIcon } from '@/lib/icons'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { DesktopAgentView } from './DesktopApp'
 import { DesktopAgentPanelSetup } from './setup/DesktopAgentPanelSetup'
+import { useDesktopLocale } from './DesktopLocale'
 
 export function DesktopCoworkerSetup(props: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl }) {
     return <CoworkerSetupDialog key={props.agent.id} {...props} />
 }
 
 function CoworkerSetupDialog({ agent, dialogControl }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl }) {
+    const { t } = useDesktopLocale()
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     const [dirty, setDirty] = useState(false)
     const [saving, setSaving] = useState(false)
@@ -41,19 +44,16 @@ function CoworkerSetupDialog({ agent, dialogControl }: { agent: DesktopAgentView
     }
 
     return <Dialog open={open} onOpenChange={changeOpen} asSheet={false}>
-        <DialogTrigger asChild><Button type="button" variant="outline" size="sm">{SETUP_TAB.label}</Button></DialogTrigger>
-        {open && <DialogContent className="flex h-[80dvh] flex-col sm:max-w-2xl" showCloseButton={!saving}>
-            <DialogHeader>
-                <DialogTitle>{SETUP_TAB.label}</DialogTitle>
-                <DialogDescription>{SETUP_TAB.description}.</DialogDescription>
-            </DialogHeader>
+        <DialogTrigger asChild><Button type="button" variant="outline" size="sm">{t('coworkerSetup.tab.label')}</Button></DialogTrigger>
+        {open && <DialogContent className="flex h-[80dvh] flex-col sm:max-w-2xl" showCloseButton={!saving} closeLabel={t('closeDialog')}>
+            <DialogHeaderBar icon={SettingsIcon} title={t('coworkerSetup.tab.label')} description={<>{t('coworkerSetup.tab.description')}.</>} />
             <div className="min-h-0 flex-1">
                 <DesktopAgentPanelSetup agentId={agent.id} onDirtyChange={setDirty} onSavingChange={setSaving} onCancel={close} />
             </div>
         </DialogContent>}
         {open && confirmDiscard && <ConfirmDialog open onOpenChange={setConfirmDiscard} pending={saving}
-            title="Discard unsaved setup changes?"
-            description="Your changes to the required answer and install instructions will be lost."
-            confirmLabel="Discard changes" cancelLabel="Keep editing" onConfirm={close} />}
+            title={t('coworkerSetup.author.discardTitle')}
+            description={t('coworkerSetup.author.discardDescription')}
+            confirmLabel={t('coworker.discard')} cancelLabel={t('coworker.keepEditing')} onConfirm={close} />}
     </Dialog>
 }

@@ -4,7 +4,7 @@ import { desktopRoute } from '@/lib/desktop/server/http'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-/** One bounded .txt or .md page from the workspace shared folder. */
+/** One bounded editor text page from the workspace shared folder. */
 export function GET(request: Request) {
     return desktopRoute(request, async runtime => {
         const query = new URL(request.url).searchParams

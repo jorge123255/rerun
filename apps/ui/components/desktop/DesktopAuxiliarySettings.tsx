@@ -6,6 +6,7 @@ import { desktopAuxiliarySettingsSchema, type DesktopAuxiliaryStatus } from '@/l
 
 const labels = {
     search: { title: 'Web search', provider: 'Brave Search', description: 'Find web results with Rerun’s web_search tool.' },
+    'keirolabs-search': { title: 'Keirolabs web search', provider: 'Keirolabs', description: 'Rerun uses Keirolabs when no Brave Search key is saved.' },
     embedding: { title: 'Memory search', provider: 'OpenRouter', description: 'Find related saved notes by meaning, using text-embedding-3-small. Keyword search works without a key.' },
     transcription: { title: 'Voice messages', provider: 'OpenRouter', description: 'Turn recordings into chat text, using Whisper large v3 turbo.' },
 }

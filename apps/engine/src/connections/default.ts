@@ -53,7 +53,8 @@ export function updateBoxDefault(update: (current: BoxDefaultModel | null) => Bo
 export function replaceBoxDefaultIfCurrent(previous: BoxDefaultModel | null, next: BoxDefaultModel): Promise<void> {
     return withKeyedLock('box-default', async () => {
         const current = await readBoxDefault()
-        if (current?.connectionId === previous?.connectionId && current?.model === previous?.model && current?.reasoningEffort === previous?.reasoningEffort) {
+        if (current?.connectionId === previous?.connectionId && current?.model === previous?.model
+            && current?.reasoningEffort === previous?.reasoningEffort && current?.customReasoningRevision === previous?.customReasoningRevision) {
             await persistBoxDefault(next)
         }
     })

@@ -14,6 +14,7 @@ export type CompletionRow = {
     runId: string | null
     source: 'chat' | 'schedule' | 'trigger'
     slug: string | null
+    sourceName?: string
     completedAt: string
     text: string | null
     provider: string | null
@@ -74,7 +75,7 @@ export function groupCompletions(rows: CompletionRow[]): CompletionGroup[] {
                 slug: row.slug,
                 sessionId: row.sessionId,
                 sessionIds: [row.sessionId],
-                title: scheduled ? row.slug! : row.title,
+                title: scheduled ? row.sourceName || row.slug! : row.title,
                 message: scheduled ? null : boundedMessage(row.text),
                 count: 1,
                 completedAt: row.completedAt,
@@ -87,7 +88,8 @@ export function groupCompletions(rows: CompletionRow[]): CompletionGroup[] {
         group.completionIds.push(row.id)
         if (at > new Date(group.completedAt).getTime()) {
             Object.assign(group, { completedAt: row.completedAt, sessionId: row.sessionId })
-            if (!scheduled) Object.assign(group, { title: row.title, message: boundedMessage(row.text) })
+            group.title = scheduled ? row.sourceName || row.slug! : row.title
+            if (!scheduled) group.message = boundedMessage(row.text)
         }
     }
     return [...groups.values()].sort((a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime() || a.key.localeCompare(b.key))

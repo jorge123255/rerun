@@ -57,7 +57,9 @@ it('keeps the skip instruction for a hosted coworker whose ask_user tool is on, 
     setup.install = 'Install this coworker.'
     setup.config = agentConfigSchema.parse({ ...setup.config, setup: { required: true, prompt: 'Install this coworker.', completedAt: null, sessionId: null } })
     const prompt = systemPromptText(await buildSystemPrompt(setup, { source: 'chat', calledBy: 'synthetic-caller' }))
-    expect(prompt.slice(prompt.indexOf('<setup>'), prompt.indexOf('</setup>'))).toContain('ask for anything you need with ask_user rather than guessing')
+    const setupText = prompt.slice(prompt.indexOf('<setup>'), prompt.indexOf('</setup>'))
+    expect(setupText).toContain('If the user explicitly skips an optional app, continue with the agreed scope and the tools already available.')
+    expect(setupText).toContain('keep setup pending. Use the granted request tools and wait for their saved outcomes.')
     expect(prompt.slice(prompt.indexOf('<asking_the_user>'), prompt.indexOf('</asking_the_user>'))).toContain(SKIPPED_ANSWER)
     expect(prompt).toContain('Answer the calling coworker from the context you already have')
     expect(prompt).not.toContain('synthetic-caller')

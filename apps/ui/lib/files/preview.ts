@@ -1,27 +1,10 @@
+import { fileExtension, filePreviewKind } from '@rerun/contracts'
 import { ArchiveIcon, AudioWaveformIcon, BinaryIcon, Code2, FilmIcon, type LucideIcon } from '@/lib/icons'
 
-export type FilePreviewKind = 'image' | 'pdf' | 'audio' | 'video' | 'text' | 'binary'
+export { fileExtension, filePreviewKind, type FilePreviewKind } from '@rerun/contracts'
 
-const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'ico', 'bmp'])
-const AUDIO_EXTS = new Set(['mp3', 'wav', 'ogg', 'm4a', 'flac'])
-const VIDEO_EXTS = new Set(['mp4', 'webm', 'mov', 'm4v'])
-const BINARY_EXTS = new Set(['zip', 'gz', 'tar', 'rar', '7z', 'exe', 'bin', 'dmg', 'iso', 'woff', 'woff2', 'ttf', 'otf', 'eot', 'parquet', 'sqlite', 'db', 'wasm', 'so', 'dylib', 'class', 'jar'])
 const ARCHIVE_EXTS = new Set(['zip', 'gz', 'tar', 'rar', '7z', 'dmg', 'iso', 'jar'])
 const CODE_EXTS = new Set(['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'c', 'h', 'cpp', 'cs', 'php', 'swift', 'sh', 'bash', 'zsh', 'sql', 'json', 'yml', 'yaml', 'toml', 'html', 'css', 'scss'])
-
-export function fileExtension(name: string): string {
-    return name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
-}
-
-export function filePreviewKind(name: string): FilePreviewKind {
-    const ext = fileExtension(name)
-    if (IMAGE_EXTS.has(ext)) return 'image'
-    if (ext === 'pdf') return 'pdf'
-    if (AUDIO_EXTS.has(ext)) return 'audio'
-    if (VIDEO_EXTS.has(ext)) return 'video'
-    if (BINARY_EXTS.has(ext)) return 'binary'
-    return 'text'
-}
 
 export function isArchive(name: string): boolean {
     return ARCHIVE_EXTS.has(fileExtension(name))

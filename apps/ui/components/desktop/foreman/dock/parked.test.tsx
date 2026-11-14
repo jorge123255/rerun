@@ -28,7 +28,7 @@ it('never opens on mount/feed/history/reopen; a deliberate trigger opens the exa
     act(() => root.render(<DesktopParkedForeman {...props} />))
     expect(node.textContent).not.toContain('Completed')
     expect(onOpen).not.toHaveBeenCalled()
-    act(() => [...node.querySelectorAll('button')].find(b => b.textContent === 'Ask Rerun')!.click())
+    act(() => [...node.querySelectorAll('button')].find(b => b.textContent === 'Ask your Chief of Staff')!.click())
     expect(onOpen).toHaveBeenCalledOnce()
     act(() => root.unmount()); node.remove()
 })

@@ -18,10 +18,10 @@ export const DEVICE_CUSTODY_LIMITS = {
     requests: 64, registrations: 32, intervalSeconds: 60,
 } as const
 
-// This deliberately excludes user-code prompts and token-bearing verification links:
-// the existing model-facing DeviceView has no private human-only code channel.
+// The reviewed destination contains no code. The broker response may carry a
+// separate human verification code, stored privately with the pending attempt.
 export const approvedDeviceMethodSchema = z.object({
-    kind: z.literal('device-code-link-v1'),
+    kind: z.enum(['device-code-link-v1', 'device-code-rfc8628-v1']),
     resource: https, issuer: https, deviceEndpoint: https, tokenEndpoint: https,
     verificationUri: https, clientId: id, scope: z.string().max(2048).optional(),
 }).strict().superRefine((method, ctx) => {
@@ -38,8 +38,10 @@ export const deviceApprovalSchema = z.object({
 }).strict()
 export type DeviceApproval = z.infer<typeof deviceApprovalSchema>
 
+const userCode = z.string().regex(/^[\x21-\x7e]{1,128}$/)
 export const deviceStartSchema = z.object({
     deviceCode: z.string().regex(/^[\x21-\x7e]{1,8192}$/),
+    userCode: userCode.optional(),
     verificationUri: https,
     expiresIn: z.number().int().min(1).max(1800),
     interval: z.number().int().min(1).max(DEVICE_CUSTODY_LIMITS.intervalSeconds),
@@ -60,9 +62,12 @@ export const deviceRecordSchema = z.object({
     phase: z.enum(['starting', 'waiting', 'polling', 'committing', 'connected', 'unknown', 'expired', 'cancelled', 'failed']),
     startedAt: z.number().int(), expiresAt: z.number().int(), nextPollAt: z.number().int(), interval: z.number().int().min(0).max(60),
     deviceCode: z.string().max(8192).optional(),
+    userCode: userCode.optional(),
     requests: z.record(z.string().regex(/^[a-f0-9]{64}$/), receipt),
 }).strict().superRefine((record, ctx) => {
     if (Object.keys(record.requests).length > DEVICE_CUSTODY_LIMITS.requests) ctx.addIssue({ code: 'custom', message: 'Device receipt limit exceeded' })
+    const carriesCode = (record.phase === 'waiting' || record.phase === 'polling') && record.approval.method.kind === 'device-code-rfc8628-v1'
+    if (carriesCode !== (record.userCode !== undefined)) ctx.addIssue({ code: 'custom', message: 'Human verification code is inconsistent with the pending attempt' })
 })
 export type DeviceRecord = z.infer<typeof deviceRecordSchema>
 export const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')

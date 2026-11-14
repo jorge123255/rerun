@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+  <link rel="stylesheet" href="find.css">
+  <title>Find on Page</title>
+</head>
+<body>
+  <form aria-label="Find on page">
+    <input id="query" type="search" placeholder="Find on page" aria-label="Find on page" maxlength="500" spellcheck="false" autofocus>
+    <output id="count" aria-live="polite"></output>
+    <button id="previous" type="button" title="Previous match" aria-label="Previous match" disabled>↑</button>
+    <button id="next" type="submit" title="Next match" aria-label="Next match" disabled>↓</button>
+    <button id="close" type="button" title="Close find" aria-label="Close find">×</button>
+  </form>
+  <script src="find.js"></script>
+</body>
+</html>

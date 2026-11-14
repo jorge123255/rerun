@@ -1,14 +1,21 @@
 import 'server-only'
-import {createHash,randomBytes} from 'node:crypto'
+import {createHash,randomBytes,randomUUID} from 'node:crypto'
 import {createServer,type Server} from 'node:http'
-import type {RemoteMcpStore,OAuthTokenBundle} from './store'
+import type {RemoteMcpStore,OAuthTokenBundle,BrowserOAuthWriteAdmission,SettleOAuthWrite} from './store'
 import {abortable,type McpAccess} from './remote'
 import {discoverLoopbackOAuth,oauthJson,publicOAuthAddress,type OAuthJson,type OAuthMetadata} from './oauth-network'
+import type {McpOAuthAttempt,McpOAuthAttempts} from './oauth-attempt'
 export type OAuthStatus={state:'idle'|'waiting'|'connected'|'error'|'unsupported';message?:string}
-type Attempt={slot:string;ended:boolean;controller:AbortController;server?:Server;timer:ReturnType<typeof setTimeout>;status:OAuthStatus;revision:string;url:string;used:boolean;release:()=>void}
-export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'writeOAuth'|'lifecycle'>,access:McpAccess,json:OAuthJson=oauthJson) {
+type AttemptStatus={revision:string;url:string;status:OAuthStatus;attemptId?:string}
+type Attempt=AttemptStatus & {slot:string;ended:boolean;controller:AbortController;server?:Server;timer:ReturnType<typeof setTimeout>;used:boolean;release:()=>void;reservation?:McpOAuthAttempt}
+type BrowserCredentialStore=Pick<RemoteMcpStore,'browserCredentialState'> & {
+ replaceOAuth(...args:[...Parameters<RemoteMcpStore['replaceOAuth']>, purpose?: 'refresh']):ReturnType<RemoteMcpStore['replaceOAuth']>
+}
+type BrowserApprovalCheck=(credential:NonNullable<Awaited<ReturnType<BrowserCredentialStore['browserCredentialState']>>>,signal:AbortSignal)=>Promise<BrowserOAuthWriteAdmission>
+const browserLifetime = 300_000
+export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'writeOAuth'|'lifecycle'>,access:McpAccess,json:OAuthJson=oauthJson,credentials?:BrowserCredentialStore,reservations?:McpOAuthAttempts) {
  const attempts=new Map<string,Attempt>(),refreshes=new Map<string,Promise<string>>()
- const terminal=new Map<string,{revision:string;url:string;status:OAuthStatus}>()
+ const terminal=new Map<string,AttemptStatus>()
  const key=(agent:string,name:string)=>JSON.stringify([agent,name])
  let closed=false
  async function authority(agent:string,name:string,revision:string,signal:AbortSignal,check:()=>void) {
@@ -28,8 +35,13 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   if(attempts.get(attempt.slot)===attempt){
    attempts.delete(attempt.slot);terminal.delete(attempt.slot)
    // Connected state comes from the encrypted store, never a process-local success flag.
-   if(status.state==='error' || status.state==='unsupported')terminal.set(attempt.slot,{revision:attempt.revision,url:attempt.url,status})
+   if(status.state==='error' || status.state==='unsupported')terminal.set(attempt.slot,{revision:attempt.revision,url:attempt.url,attemptId:attempt.attemptId,status})
    while(terminal.size>128)terminal.delete(terminal.keys().next().value!)
+  }
+  if(attempt.reservation) {
+   const released=reservations!.release(attempt.reservation)
+   void released.catch(()=>{})
+   return released
   }
  }
  function tokens(data:Record<string,unknown>,meta:OAuthMetadata,clientId:string,previous?:OAuthTokenBundle):OAuthTokenBundle {
@@ -38,21 +50,52 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   if(typeof data.access_token!=='string' || !/^[\x21-\x7e]{1,8192}$/.test(data.access_token) || typeof data.expires_in!=='number' || !Number.isFinite(data.expires_in) || data.expires_in<=0 || data.expires_in>365*86400 || data.refresh_token!==undefined && (typeof data.refresh_token!=='string' || data.refresh_token.length>8192) || data.scope!==undefined && (typeof data.scope!=='string' || data.scope.length>8192))throw new Error('Unsupported token bundle')
   return {accessToken:data.access_token,refreshToken:typeof data.refresh_token==='string'?data.refresh_token:previous?.refreshToken,expiresAt:Date.now()+data.expires_in*1000,resource:meta.resource,issuer:meta.issuer,tokenEndpoint:meta.token,clientId,scope:typeof data.scope==='string'?data.scope:previous?.scope}
  }
- async function start(agent:string,name:string,revision:string,stop:AbortSignal) {
+ async function start(agent:string,name:string,revision:string,stop:AbortSignal,approval?:BrowserApprovalCheck,attemptId?:string) {
   if(closed)throw new Error('OAuth unavailable')
   // A stale dialog must not invalidate a newer attempt or an active bearer/OAuth call.
   const admission=store.lifecycle.watch(agent,name)
-  const admitted=await authority(agent,name,revision,AbortSignal.any([stop,AbortSignal.timeout(30_000)]),admission)
+  const admissionSignal=AbortSignal.any([stop,AbortSignal.timeout(30_000)])
+  const admitted=await authority(agent,name,revision,admissionSignal,admission)
   if(admitted.bearer)throw new Error('Clear the configured bearer before OAuth')
+  const expected=await credentials?.browserCredentialState(agent,name)
+  if((credentials || reservations) && (!expected || expected.registrationId!==admitted.id || expected.revision!==revision || expected.resource!==admitted.url))throw new Error('MCP OAuth credential unavailable')
+  let reservation:McpOAuthAttempt|undefined
+  async function assertCredentialCurrent(signal:AbortSignal) {
+   if(reservation)await abortable(reservations!.assertCurrent(reservation),signal)
+   if(!credentials || !expected){
+    if(approval)throw new Error('MCP OAuth credential unavailable')
+    return
+   }
+   const current=await abortable(credentials.browserCredentialState(agent,name),signal)
+   if(!current || current.registrationId!==expected.registrationId || current.revision!==expected.revision || current.resource!==expected.resource || current.sealed!==expected.sealed)throw new Error('MCP credential generation changed.')
+   return approval?.(current,signal)
+  }
+  if(approval)await assertCredentialCurrent(admissionSignal)
   admission();stop.throwIfAborted()
-  const slot=key(agent,name),old=attempts.get(slot)
-  if(attempts.size>=128 && !old)throw new Error('OAuth unavailable')
-  if(old)end(old,{state:'idle'})
-  terminal.delete(slot)
-  store.lifecycle.disconnect(agent,name)
-  const controller=new AbortController(),ticket=store.lifecycle.admit(agent,name,controller)
+  const slot=key(agent,name)
+  if(attempts.has(slot))throw new Error('Browser sign-in is already in progress for this server.')
+  if(attempts.size>=128)throw new Error('OAuth unavailable')
+  const expiresAt=Date.now()+browserLifetime
+  if(reservations) {
+   if(!admitted.id)throw new Error('MCP OAuth registration unavailable')
+   const target:McpOAuthAttempt={owner:agent,name,registrationId:admitted.id,revision,method:'browser',attemptId:attemptId??randomUUID()}
+   await reservations.reserve(target,expiresAt)
+   reservation=target
+  }
+  const controller=new AbortController()
+  let ticket:ReturnType<typeof store.lifecycle.admit>
+  try {
+   admission();admissionSignal.throwIfAborted()
+   if(attempts.size>=128)throw new Error('OAuth unavailable')
+   terminal.delete(slot)
+   store.lifecycle.disconnect(agent,name)
+   ticket=store.lifecycle.admit(agent,name,controller)
+  } catch(error) {
+   if(reservation)await reservations!.release(reservation).catch(()=>{})
+   throw error
+  }
   const signal=AbortSignal.any([controller.signal,stop,AbortSignal.timeout(30_000)])
-  const attempt:Attempt={slot,ended:false,controller,revision,url:admitted.url,used:false,release:ticket.release,status:{state:'waiting'},timer:setTimeout(()=>end(attempt,{state:'error',message:'Authorization expired. Retry.'}),300_000)}
+  const attempt:Attempt={slot,ended:false,controller,revision,attemptId,reservation,url:admitted.url,used:false,release:ticket.release,status:{state:'waiting'},timer:setTimeout(()=>end(attempt,{state:'error',message:'Authorization expired. Retry.'}),Math.max(1,expiresAt-Date.now()))}
   attempt.timer.unref?.()
   attempts.set(slot,attempt)
   controller.signal.addEventListener('abort',()=>{if(attempt.status.state==='waiting')end(attempt,{state:'error',message:'Authorization cancelled. Retry.'})},{once:true})
@@ -77,9 +120,18 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
       if(url.searchParams.has('error') || url.searchParams.getAll('code').length!==1 || !url.searchParams.get('code') || url.searchParams.getAll('iss').length!==1 || url.searchParams.get('iss')!==meta.issuer)throw new Error('Authorization refused or issuer missing')
       const current=await authority(agent,name,revision,callbackSignal,ticket.assertCurrent)
       if(current.url!==attempt.url)throw new Error('Server changed')
+      await assertCredentialCurrent(callbackSignal)
+      ticket.assertCurrent();callbackSignal.throwIfAborted()
       const token=await json(meta.token,callbackSignal,new URLSearchParams({grant_type:'authorization_code',code:url.searchParams.get('code')!,redirect_uri:redirectUri,client_id:clientId,code_verifier:verifier,resource:meta.resource}))
       await authority(agent,name,revision,callbackSignal,ticket.assertCurrent)
-      await abortable(store.writeOAuth(agent,name,revision,tokens(token,meta,clientId),callbackSignal),callbackSignal)
+      const approvedWrite=approval ? await assertCredentialCurrent(callbackSignal) : undefined
+      ticket.assertCurrent();callbackSignal.throwIfAborted()
+      const bundle=tokens(token,meta,clientId)
+      // The browser may have been open while another writer changed the credential.
+      const reserved=attempt.reservation
+      const settle:SettleOAuthWrite|undefined=reserved ? query=>reservations!.assertCurrent(reserved,query) : undefined
+      if(credentials && expected)await abortable(credentials.replaceOAuth(agent,name,expected,bundle,callbackSignal,approvedWrite,settle),callbackSignal)
+      else await abortable(store.writeOAuth(agent,name,revision,bundle,callbackSignal),callbackSignal)
       await authority(agent,name,revision,callbackSignal,ticket.assertCurrent)
       answer(200,'Connected. You can close this window.');end(attempt,{state:'connected'})
      }catch{answer(400,'Authorization failed. Return to Rerun and retry.');end(attempt,{state:'error',message:'Authorization failed. Retry.'})}
@@ -102,19 +154,22 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
    for(const [k,v] of Object.entries({response_type:'code',client_id:clientId,redirect_uri:redirectUri,state,code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256',resource:meta.resource,...(meta.scope?{scope:meta.scope}:{})}))url.searchParams.set(k,v)
    if(url.href.length>8192)throw new Error('Authorization link exceeds limit')
    await authority(agent,name,revision,signal,ticket.assertCurrent)
+   await assertCredentialCurrent(signal)
    ticket.assertCurrent();signal.throwIfAborted()
    return {authorizationUrl:url.href,status:attempt.status}
   }catch{end(attempt,signal.aborted?{state:'error',message:'Authorization cancelled or timed out. Retry.'}:{state:'unsupported',message:'Unsupported or unavailable provider. Public PKCE and dynamic loopback registration are required.'});return {status:attempt.status}}
  }
- async function status(agent:string,name:string,revision:string,signal:AbortSignal):Promise<OAuthStatus> {
+ async function status(agent:string,name:string,revision:string,signal:AbortSignal,attemptId?:string):Promise<OAuthStatus> {
   const check=store.lifecycle.watch(agent,name)
   const server=await authority(agent,name,revision,signal,check)
-  const attempt=attempts.get(key(agent,name))??terminal.get(key(agent,name))
-  if(attempt && attempt.revision===revision && attempt.url===server.url)return attempt.status
+  const slot=key(agent,name),live=attempts.get(slot)
+  if(live && live.revision===revision && live.url===server.url)return live.attemptId===attemptId?live.status:{state:'idle'}
   const token=await abortable(store.readOAuth(agent,name),signal);check();signal.throwIfAborted()
   if(token && token.expiresAt<=Date.now()+60_000 && !token.refreshToken)return {state:'error',message:'Authorization expired. Reconnect required.'}
   if(token?.refreshPending)return {state:'error',message:'Refresh acknowledgement unavailable. Reconnect required.'}
-  return token?.resource===server.url?{state:'connected'}:{state:'idle'}
+  if(token?.resource===server.url)return {state:'connected'}
+  const previous=terminal.get(slot)
+  return previous?.revision===revision && previous.url===server.url && previous.attemptId===attemptId?previous.status:{state:'idle'}
  }
  async function credential(agent:string,name:string,revision:string,stop:AbortSignal):Promise<string|null> {
   if(closed)throw new Error('OAuth stopped')
@@ -122,10 +177,15 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   const signal=AbortSignal.any([stop,controller.signal,AbortSignal.timeout(30_000)])
   try {
    const server=await authority(agent,name,revision,signal,ticket.assertCurrent)
-   const token=await abortable(store.readOAuth(agent,name),signal);ticket.assertCurrent()
-   if(!token)return null
    const joining=refreshes.get(key(agent,name))
    if(joining){const result=await abortable(joining,signal);await authority(agent,name,revision,signal,ticket.assertCurrent);return result}
+   const expected=await abortable(credentials?.browserCredentialState(agent,name) ?? Promise.resolve(null),signal)
+   const token=await abortable(store.readOAuth(agent,name),signal);ticket.assertCurrent()
+   if(!token)return null
+   if(credentials){
+    const current=await abortable(credentials.browserCredentialState(agent,name),signal)
+    if(!expected || !current || current.registrationId!==server.id || current.revision!==revision || current.resource!==server.url || current.sealed!==expected.sealed)throw new Error('MCP credential changed')
+   }
    if(token.refreshPending)throw new Error('Refresh acknowledgement unavailable; reconnect required')
    if(token.resource!==server.url)throw new Error('OAuth resource mismatch')
    if(token.expiresAt>Date.now()+60_000)return token.accessToken
@@ -137,12 +197,16 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
      const fresh=await discoverLoopbackOAuth(server.url,signal,json)
      if(fresh.issuer!==token.issuer || fresh.token!==token.tokenEndpoint)throw new Error('OAuth issuer changed')
      await authority(agent,name,revision,signal,ticket.assertCurrent)
-     await abortable(store.writeOAuth(agent,name,revision,{...token,refreshPending:randomBytes(24).toString('base64url')},signal),signal)
+     const marked={...token,refreshPending:randomBytes(24).toString('base64url')}
+     let markedSeal:string|undefined
+     if(credentials && expected)markedSeal=await abortable(credentials.replaceOAuth(agent,name,expected,marked,signal,undefined,undefined,'refresh'),signal)
+     else await abortable(store.writeOAuth(agent,name,revision,marked,signal),signal)
      await authority(agent,name,revision,signal,ticket.assertCurrent)
      const result=await json(token.tokenEndpoint,signal,new URLSearchParams({grant_type:'refresh_token',refresh_token:token.refreshToken,client_id:token.clientId,resource:token.resource}))
      const next=tokens(result,fresh,token.clientId,token)
      await authority(agent,name,revision,signal,ticket.assertCurrent)
-     await abortable(store.writeOAuth(agent,name,revision,next,signal),signal)
+     if(credentials && expected && markedSeal)await abortable(credentials.replaceOAuth(agent,name,{...expected,sealed:markedSeal},next,signal,undefined,undefined,'refresh'),signal)
+     else await abortable(store.writeOAuth(agent,name,revision,next,signal),signal)
      await authority(agent,name,revision,signal,ticket.assertCurrent)
      return next.accessToken
     })()
@@ -154,6 +218,21 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
    return result
   }finally{controller.abort();ticket.release()}
  }
- async function cancel(agent:string,name:string,revision:string,signal:AbortSignal){const check=store.lifecycle.watch(agent,name);await authority(agent,name,revision,signal,check);check();signal.throwIfAborted();const slot=key(agent,name),attempt=attempts.get(slot);if(attempt?.revision===revision)end(attempt,{state:'idle'});terminal.delete(slot);store.lifecycle.disconnect(agent,name)}
+ async function cancel(agent:string,name:string,revision:string,signal:AbortSignal,attemptId?:string) {
+  const check=store.lifecycle.watch(agent,name)
+  const server=await authority(agent,name,revision,signal,check)
+  check();signal.throwIfAborted()
+  const slot=key(agent,name),attempt=attempts.get(slot)
+  if(attempt?.revision===revision && attempt.url===server.url && attempt.attemptId===attemptId) {
+   const released=end(attempt,{state:'idle'})
+   store.lifecycle.disconnect(agent,name)
+   await released
+  } else if(attemptId && server.id) {
+   // A saved chat can retire its interrupted listener after a cold restart.
+   await reservations?.release({owner:agent,name,registrationId:server.id,revision,method:'browser',attemptId})
+  }
+  const previous=terminal.get(slot)
+  if(previous?.revision===revision && previous.url===server.url && previous.attemptId===attemptId)terminal.delete(slot)
+ }
  return {start,status,credential,cancel,shutdown(){closed=true;for(const attempt of attempts.values())end(attempt,{state:'idle'});attempts.clear();terminal.clear();store.lifecycle.shutdown()}}
 }

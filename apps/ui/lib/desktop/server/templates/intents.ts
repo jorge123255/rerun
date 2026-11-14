@@ -6,7 +6,7 @@ import { DESKTOP_TEMPLATE_LIMITS, desktopTemplateDetailSchema, desktopTemplateOp
 import { agentsOverlap, containerContainsTile, DEFAULT_SPAN } from '@rerun/ui/iso-grid/iso'
 import { DesktopHttpError } from '../auth'
 import { withRosterWrite } from '../roster-writes'
-import type { DesktopTemplateEngineClient } from './server'
+import { templateRequestFingerprint, type DesktopTemplateEngineClient } from './server'
 import { desktopTemplateInstallIdentitySchema, desktopTemplateInstallStateSchema, type DesktopTemplateInstallState } from '../../template-install-state'
 import { desktopSpacePositionSchema } from '../../spaces'
 
@@ -21,11 +21,15 @@ function canonical(value: unknown): string {
     return JSON.stringify(value)
 }
 
+export function templateInstallIntentKey({ templateId, revision }: Pick<Extract<DesktopTemplateOperation, { operation: 'install' }>, 'templateId' | 'revision'>) {
+    return createHash('sha256').update(canonical({ operation: 'install', templateId, revision })).digest('hex')
+}
+
 export async function readTemplateInstallIntent(db: Client, raw: unknown): Promise<DesktopTemplateInstallState> {
     const parsed = desktopTemplateInstallIdentitySchema.safeParse(raw)
     if (!parsed.success) throw new DesktopHttpError(400, 'Invalid template selection')
     const identity = parsed.data
-    const key = createHash('sha256').update(canonical({ operation: 'install', ...identity })).digest('hex')
+    const key = templateInstallIntentKey(identity)
     const tx = await db.transaction('read')
     try {
         const prior = (await tx.execute({ sql: 'SELECT request_id,operation FROM desktop_template_intents WHERE key=?', args: [key] })).rows[0]
@@ -37,7 +41,7 @@ export async function readTemplateInstallIntent(db: Client, raw: unknown): Promi
         const pending = { status: 'pending' as const, ...identity, requestId: operation.requestId }
         const receipt = (await tx.execute({ sql: 'SELECT * FROM desktop_template_requests WHERE request_id=?', args: [operation.requestId] })).rows[0]
         if (!receipt) return pending
-        const fingerprint = createHash('sha256').update(canonical(operation)).digest('hex')
+        const fingerprint = templateRequestFingerprint(operation)
         if (receipt.operation !== 'install' || receipt.fingerprint !== fingerprint ||
             (receipt.template_id !== null && receipt.template_id !== identity.templateId) ||
             (receipt.revision !== null && receipt.revision !== identity.revision)) {
@@ -73,12 +77,14 @@ export async function prepareTemplateIntent(db: Client, engine: DesktopTemplateE
     const body = input.data.operation
     if ('requestId' in body || !['create-draft', 'plan', 'capture', 'install'].includes(String(body.operation))) throw new DesktopHttpError(400, 'Invalid template attempt')
     if (internal && (!z.uuid().safeParse(internal.requestId).success || !internal.scopeKey.startsWith('foreman:') || input.data.againRequestId)) throw new DesktopHttpError(400, 'Invalid internal template attempt')
-    if (body.operation === 'install' && !installSelectionSchema.safeParse(body).success) throw new DesktopHttpError(400, 'Invalid template placement')
+    const selection = body.operation === 'install' ? installSelectionSchema.safeParse(body) : null
+    if (selection && !selection.success) throw new DesktopHttpError(400, 'Invalid template placement')
     // A human install has one durable identity per template revision. Placement belongs to the
     // saved operation, not its lookup key: reopening or choosing another Box cannot create a
     // second install or hide an unresolved receipt. Keep the original key for existing installs.
-    const identity = body.operation === 'install' ? { operation: 'install', templateId: body.templateId, revision: body.revision } : body
-    const key = createHash('sha256').update(canonical(internal ? { body, scopeKey: internal.scopeKey } : identity)).digest('hex')
+    const key = !internal && selection
+        ? templateInstallIntentKey(selection.data)
+        : createHash('sha256').update(canonical(internal ? { body, scopeKey: internal.scopeKey } : body)).digest('hex')
     const detail = body.operation === 'install' ? desktopTemplateDetailSchema.parse(await engine.get(`/desktop/templates/${encodeURIComponent(String(body.templateId))}?revision=${encodeURIComponent(String(body.revision))}`)) : null
     return withRosterWrite(async () => {
         const tx = await db.transaction('write')

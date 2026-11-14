@@ -48,6 +48,49 @@ test('a restart while the picker is open rejects before upload', async () => {
     assert.equal(calls, 0)
 })
 
+test('reloading the same board while its import picker is open rejects before upload', async () => {
+    let owner = { runtime: runtime(), window: {}, rendererEpoch: 'first' }
+    let uploads = 0
+    const directory = await mkdtemp(join(tmpdir(), 'template-reload-'))
+    try {
+        const path = join(directory, 'Selected.tar.gz')
+        await writeFile(path, bytes)
+        const files = createDesktopTemplateFiles({
+            context: () => owner,
+            dialog: { showOpenDialog: async () => {
+                owner = { ...owner, rendererEpoch: 'reloaded' }
+                return { canceled: false, filePaths: [path] }
+            } },
+            fetch: async (url) => {
+                uploads++
+                return Response.json({ uploadId: url.pathname.split('/').at(-1), fileName: 'Selected.tar.gz', bytes: bytes.length })
+            },
+        })
+        await assert.rejects(files.pickImport(), /workspace changed/)
+        assert.equal(uploads, 0)
+    } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+test('reloading the same board during export preserves the selected destination', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'template-reload-save-'))
+    try {
+        const path = join(directory, 'Existing.tar.gz')
+        await writeFile(path, 'keep original')
+        let owner = { runtime: runtime(), window: {}, rendererEpoch: 'first' }
+        const files = createDesktopTemplateFiles({
+            context: () => owner,
+            dialog: { showSaveDialog: async () => ({ canceled: false, filePath: path }) },
+            fetch: async url => {
+                if (!url.pathname.endsWith('/content')) return Response.json(metadata)
+                owner = { ...owner, rendererEpoch: 'reloaded' }
+                return new Response(bytes)
+            },
+        })
+        await assert.rejects(files.saveArtifact({ artifactId: metadata.artifactId }), /workspace changed/)
+        assert.equal(await readFile(path, 'utf8'), 'keep original')
+    } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
 test('export writes verified artifact bytes only to the native save choice and rejects symlink destinations', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'template-save-'))
     try {

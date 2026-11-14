@@ -1,12 +1,12 @@
 import { assertDesktopRunAdmission } from '../../desktop/workspace-admission.js'
 import { prepareTriggerHumanAdmission, withoutStoppedTriggerRequests } from '../../desktop/triggers/human.js'
-import { desktopDocumentSendSelectionSchema, desktopResolvedDocumentsSchema, desktopMcpSignInGuardSchema } from '@rerun/contracts'
+import { isContextPart, desktopDocumentSendSelectionSchema, desktopResolvedDocumentsSchema, desktopMcpSignInGuardSchema } from '@rerun/contracts'
 import { assertDesktopMcpSignInContinuation } from '../../desktop/mcp-sign-in/admission.js'
 import { readDesktopMcpSignInSource } from '../../desktop/mcp-sign-in/source.js'
 import { desktopCoworkerMentionsSchema, checkedDesktopCoworkerMentions, desktopCoworkerMentionFieldsOf } from '@rerun/contracts'
 import { desktopServiceRequestGuardSchema, desktopTakeoverGuardSchema, findDesktopTakeover } from '@rerun/contracts'
-import { createHash } from 'node:crypto'
-import { chatRequestSchema, desktopApprovalGuardSchema, desktopQuestionGuardSchema, desktopAttachmentSelectionsOf, desktopAttachmentFieldsOf, desktopAttachmentItemsSchema, hasOneDesktopAttachmentField, desktopResolvedAttachmentsSchema, desktopResolvedAttachmentSelections, desktopStoredAttachmentSelections, type DesktopResolvedAttachment, desktopAttachmentPathsSchema, desktopWorkspaceAttachmentSchema, desktopWorkspaceAttachmentsSchema, findDesktopApproval, findDesktopQuestion, type SessionSource } from '@rerun/contracts'
+import { assertImageModel, verifyImageBytes } from '../../desktop/chat-images.js'
+import { chatRequestSchema, desktopApprovalGuardSchema, desktopQuestionGuardSchema, desktopAttachmentSelectionsOf, desktopAttachmentFieldsOf, desktopAttachmentItemsSchema, hasOneDesktopAttachmentField, desktopResolvedAttachmentsSchema, desktopResolvedAttachmentSelections, desktopAttachmentPathsSchema, desktopWorkspaceAttachmentSchema, desktopWorkspaceAttachmentsSchema, findDesktopApproval, findDesktopQuestion, type SessionSource } from '@rerun/contracts'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { desktopApp } from '../../desktop/policy.js'
@@ -19,6 +19,7 @@ import { getAgent } from '../../agents/registry.js'
 import { claimInstallSession } from '../../agents/setup.js'
 import { createSession, getSession } from '../../db/repos/sessions.js'
 import { extractText, listMessages, storedContent } from '../../db/repos/messages.js'
+import type { MessageRow } from '../../db/schema.js'
 import { forkReply, getRegeneration } from '../../db/repos/regenerations.js'
 import { getDesktopTabRun, startDesktopTabRun } from '../../db/repos/desktop-tab-runs.js'
 import { getDesktopQueuedTurn, reserveDesktopQueuedTurn } from '../../db/repos/desktop-queued-turns.js'
@@ -66,24 +67,6 @@ const regenerateRequest = chatRequestSchema.pick({ provider: true, model: true, 
     requestId: z.uuid(),
 }).strict()
 
-function verifyImageBytes(attachments: readonly DesktopResolvedAttachment[]) {
-    for (const attachment of attachments) {
-        if (attachment.type !== 'image') continue
-        const bytes = Buffer.from(attachment.dataBase64, 'base64')
-        if (bytes.byteLength !== attachment.image.byteLength || bytes.toString('base64') !== attachment.dataBase64 ||
-            createHash('sha256').update(bytes).digest('hex') !== attachment.image.sha256) {
-            throw new HttpError(400, 'The image bytes do not match the selected snapshot.')
-        }
-    }
-}
-async function assertImageModel(provider: string, agentId: string, attachments: readonly DesktopResolvedAttachment[], sessionId?: string, throughMessageId?: string) {
-    if (!desktopApp() || provider === 'codex') return
-    const hasImages = attachments.some(item => item.type === 'image') || (sessionId &&
-        (await listMessages(agentId, sessionId, throughMessageId)).some(row => row.role === 'user' &&
-            desktopStoredAttachmentSelections(storedContent(row.contentJson)).some(item => typeof item !== 'string')))
-    if (hasImages) throw new HttpError(400, 'Image attachments need a ChatGPT / Codex model. Choose one before sending.')
-}
-
 function identified(response: Response, sessionId: string, runId: string) {
     response.headers.set('x-session-id', sessionId)
     response.headers.set('x-run-id', runId)
@@ -111,7 +94,7 @@ async function regenerateChat(agent: LoadedAgent, body: z.infer<typeof regenerat
 
     const override = { connectionId: body.connectionId, provider: body.provider, model: body.model }
     const { provider, model } = await resolveRunModel(agent, override)
-    await assertImageModel(provider, agent.id, [], source.id, body.regenerateMessageId)
+    await assertImageModel(provider, agent.id, false, source.id, body.regenerateMessageId)
     if (sessionClaim(source.id)) throw new HttpError(409, 'Wait for the current reply to finish before regenerating.')
     const fork = await forkReply(agent.id, source, body)
     if (!fork.user) return identified(resumeStreamResponse(fork.runId), fork.sessionId, fork.runId)
@@ -156,9 +139,15 @@ chatRoutes.post('/chat', async c => {
     const body = desktopApp() ? desktopChatRequest.parse(input) : { ...chatRequestSchema.parse(input), coworkerMentions: undefined, workspaceAttachment: undefined, workspaceAttachments: undefined, desktopAttachments: undefined, desktopDocuments: undefined, desktopFirstTurn: undefined, desktopQueuedTurn: undefined }
     const attachments = body.workspaceAttachments ?? (body.workspaceAttachment ? [body.workspaceAttachment] : [])
     const resolvedAttachments = body.desktopAttachments ?? []
-    verifyImageBytes(resolvedAttachments)
+    const documentImages = (body.desktopDocuments ?? []).filter(item => 'dataBase64' in item)
+    if (documentImages.length && !body.desktopQueuedTurn?.question) throw new HttpError(400, 'Question images must be sent with their original question.')
+    const images = [
+        ...resolvedAttachments.filter(item => item.type === 'image').map(item => ({ ...item.image, dataBase64: item.dataBase64 })),
+        ...documentImages.map(item => ({ ...('renderedImage' in item ? item.renderedImage : item.reference), dataBase64: item.dataBase64 })),
+    ]
+    verifyImageBytes(images)
     const attachmentSelections = body.desktopAttachments ? desktopResolvedAttachmentSelections(body.desktopAttachments) : attachments.map(attachment => attachment.path)
-    if (resolvedAttachments.filter(item => item.type === 'text').reduce((n, item) => n + Buffer.byteLength(item.content), 0) + attachments.reduce((n, item) => n + Buffer.byteLength(item.content), 0) + (body.desktopDocuments ?? []).reduce((n, item) => n + Buffer.byteLength(item.text), 0) > 128 * 1024) throw new HttpError(413, 'Attachments must be 128 KiB or smaller in total.')
+    if (resolvedAttachments.filter(item => item.type === 'text').reduce((n, item) => n + Buffer.byteLength(item.content), 0) + attachments.reduce((n, item) => n + Buffer.byteLength(item.content), 0) + (body.desktopDocuments ?? []).reduce((n, item) => n + ('text' in item ? Buffer.byteLength(item.text) : 0), 0) > 128 * 1024) throw new HttpError(413, 'Attachments must be 128 KiB or smaller in total.')
     // One attachment keeps the original trigger field, so existing runs, tests and queued
     // receipts keep their shape. Two or more travel as the ordered array.
     const attachmentTrigger = body.desktopAttachments ? { desktopAttachments: body.desktopAttachments } : attachments.length === 1 ? { workspaceAttachment: attachments[0] } : attachments.length > 1 ? { workspaceAttachments: attachments } : {}
@@ -174,7 +163,7 @@ chatRoutes.post('/chat', async c => {
         if (!currentAgent.config.enabled) throw agentDisabled()
         const override = { connectionId: body.connectionId, provider: body.provider, model: body.model }
         const { provider, model } = await resolveRunModel(currentAgent, override)
-        await assertImageModel(provider, agentId, resolvedAttachments)
+        await assertImageModel(provider, agentId, images.length > 0)
         const holder = claimSession(sessionId, runId, body.author?.id)
         if (holder) throw new HttpError(409, 'This conversation is already starting. Retry the same first message.')
         try {
@@ -207,7 +196,7 @@ chatRoutes.post('/chat', async c => {
         const holder = claimSession(session.id, turn.runId, body.author?.id)
         if (holder) return c.json({ error: 'a run is already in flight on this session', code: 'run_in_flight', runId: holder, sessionId: session.id }, 409)
         try {
-            await assertImageModel(provider, agentId, resolvedAttachments, session.id)
+            await assertImageModel(provider, agentId, images.length > 0, session.id)
             // Hold the session claim while checking the durable transcript: an ordinary chat
             // cannot append a new turn between this check and the atomic answer reservation.
             const messages = await withoutStoppedTriggerRequests(agentId, session.id, await listMessages(agentId, session.id))
@@ -282,10 +271,14 @@ chatRoutes.post('/chat', async c => {
         const claim = sessionClaim(session.id)
         return c.json({ error: 'a run is already in flight on this session', code: 'run_in_flight', runId: holder, sessionId: session.id, startedAt: claim ? new Date(claim.claimedAt).toISOString() : null, authorId: claim?.authorId ?? null }, 409)
     }
+    let retried: MessageRow | undefined
     if (desktopApp()) {
         try {
-            await assertImageModel(provider, agentId, resolvedAttachments, session.id)
-            const messages = await withoutStoppedTriggerRequests(agentId, session.id, await listMessages(agentId, session.id))
+            await assertImageModel(provider, agentId, images.length > 0, session.id)
+            const stored = await listMessages(agentId, session.id)
+            const plainTurn = !Object.keys(attachmentTrigger).length && !Object.keys(documentTrigger).length && !images.length && !body.coworkerMentions?.length
+            if (plainTurn) retried = unansweredRepeat(stored, body.message, body.author?.id)
+            const messages = await withoutStoppedTriggerRequests(agentId, session.id, stored)
             const question = findDesktopQuestion(messages)
             const approval = findDesktopApproval(messages)
             const takeover = findDesktopTakeover(messages)
@@ -315,5 +308,20 @@ chatRoutes.post('/chat', async c => {
     })
     return streamChat(runAgentView, session.id, run.id, body.message, override, meta, {
         source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), userLanguage: claim ? body.userLanguage : undefined, ...attachmentTrigger, ...documentTrigger,
+        ...(retried ? { savedUser: retried } : {}),
     })
 })
+
+/**
+ * A turn that failed leaves its message as the conversation's last row. Sending the same words
+ * again is a retry of that turn: the run reuses the stored row instead of adding a second copy.
+ */
+export function unansweredRepeat(rows: MessageRow[], text: string, authorId?: string): MessageRow | undefined {
+    const last = rows.at(-1)
+    if (!last || last.role !== 'user' || (last.authorId ?? undefined) !== authorId) return undefined
+    const parts = storedContent(last.contentJson)
+    if (!Array.isArray(parts) || parts.some(part => part.type !== 'text')) return undefined
+    const said = parts.filter(part => !isContextPart(part)), context = parts.filter(part => isContextPart(part))
+    if (said.length !== 1 || said[0]!.type !== 'text' || said[0]!.text !== text || context.length > 1) return undefined
+    return last
+}

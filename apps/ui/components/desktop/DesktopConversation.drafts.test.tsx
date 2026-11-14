@@ -279,3 +279,26 @@ test('quit waits for an accepted send to clear its saved draft and keeps editing
     await remount()
     expect(composer().value).toBe('')
 })
+
+test('an empty-chat starter sends once through the normal draft and turn path', async () => {
+    await render(null)
+    const starter = 'What can you help me with?'
+    const chip = button(starter)
+    expect(chip).toBeDefined()
+    await act(async () => { chip.click(); chip.click() })
+    expect(posts).toHaveLength(1)
+    expect(posts[0]).toMatchObject({ agentId: agent.id, tabUid, text: starter })
+    expect(writes.some(write => write.text === starter)).toBe(true)
+})
+
+test('starters cannot replace an unsent text or file draft', async () => {
+    stored = { revision: 1, text: 'Keep my own draft' }
+    await render(null)
+    expect(button('What can you help me with?')).toBeUndefined()
+    expect(composer().value).toBe('Keep my own draft')
+    await type('')
+    expect(button('What can you help me with?')).toBeDefined()
+    await click('Choose second.md')
+    expect(button('What can you help me with?')).toBeUndefined()
+    expect(posts).toEqual([])
+})

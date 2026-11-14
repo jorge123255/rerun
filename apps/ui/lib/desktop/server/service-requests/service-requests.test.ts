@@ -11,6 +11,7 @@ import { DesktopHttpError } from '../auth'
 import { describeDesktopServiceRequestCatalog } from './adapters'
 import { desktopServiceSuggestionSchema, ensureDesktopServiceSuggestionSchema } from './schema'
 import { readPendingDesktopServiceToolCall, desktopServiceRequestIdentity, finishDesktopServiceRequest, progressDesktopServiceRequest, readDesktopServiceRequest, type ServiceRequestPorts, type ServiceRequestScope } from './service'
+import { attachServiceVaultAccounts, readServiceVaultAccounts, vaultConnection } from './vault'
 import { desktopServiceConnectionUsable } from './usable'
 import { acknowledgeDesktopServiceRetry, readDesktopServiceRetry, rejectDesktopServiceRetry, reserveDesktopServiceRetry } from './retry'
 
@@ -99,6 +100,9 @@ it('treats a fresh healthy grant as usable and ignores catalog-only health', () 
 it('projects unavailable and unsupported auth without calling either one missing', async () => {
     expect(await describeDesktopServiceRequestCatalog('dynamics-365')).toEqual({ status: 'not-found' })
     expect(await describeDesktopServiceRequestCatalog('microsoft')).toMatchObject({ status: 'available', name: 'Microsoft Learn', verified: false, connected: false, authentication: 'supported' })
+    expect(await describeDesktopServiceRequestCatalog('linear')).toMatchObject({
+        status: 'available', methods: expect.arrayContaining([{ id: 'oauth', supported: true }]),
+    })
     const adobe = await describeDesktopServiceRequestCatalog('adobe')
     expect(adobe.status).not.toBe('not-found')
     expect(adobe.status).not.toBe('unavailable')
@@ -293,4 +297,70 @@ it('reads a pending tool identity without materializing an app request card or r
     expect((await db.execute('SELECT * FROM desktop_service_suggestion_receipts')).rows).toEqual([])
     expect(sent).toEqual([])
     expect(await readPendingDesktopServiceToolCall(db, scope, { source: async () => null })).toBeNull()
+})
+
+it('commits the exact Vault assignment with the receipt and rolls back when another app cannot finish', async () => {
+    const db = await database()
+    await db.executeMultiple(`
+        ALTER TABLE desktop_agents ADD COLUMN workspace_id INTEGER DEFAULT 1;
+        ALTER TABLE desktop_agents ADD COLUMN engine_agent_id TEXT;
+        CREATE TABLE desktop_deletions(agent_id TEXT,engine_agent_id TEXT);
+        CREATE TABLE desktop_remote_mcp(agent_id TEXT,name TEXT);
+        CREATE TABLE desktop_mcp_stdio(owner TEXT,name TEXT);
+        CREATE TABLE desktop_service_installs(id TEXT,owner TEXT,plan TEXT);
+        CREATE TABLE desktop_vault_catalog_adoptions(installation_id TEXT PRIMARY KEY);
+        CREATE TABLE desktop_vault_mcp_servers(id TEXT PRIMARY KEY,name TEXT,revision TEXT,catalog_slug TEXT,catalog_label TEXT,catalog_name TEXT,oauth_enabled INTEGER,shared_with_all INTEGER);
+        CREATE TABLE desktop_vault_mcp_oauth(item_id TEXT,generation TEXT);
+        CREATE TABLE desktop_vault_mcp_attachments(item_id TEXT,agent_id TEXT,PRIMARY KEY(item_id,agent_id));
+        CREATE TABLE desktop_vault_catalog_health(item_id TEXT PRIMARY KEY,revision TEXT,oauth_generation TEXT,launch_nonce TEXT,receipt TEXT);
+    `)
+    const health = { state: 'healthy', checkedAt: new Date().toISOString(), toolCount: 1 }
+    for (const [id, name, label, oauth] of [['vault-one', 'notion', 'Sales', 0], ['vault-two', 'notion-two', 'Support', 0], ['signed-out', 'notion-three', 'Signed out', 1]] as const) {
+        await db.execute({ sql: "INSERT INTO desktop_vault_mcp_servers VALUES(?,?,?,'notion',?,'Notion',?,0)", args: [id, name, installRevision, label, oauth] })
+        await db.execute({ sql: "INSERT INTO desktop_vault_catalog_health VALUES(?,?,NULL,'launch',?)", args: [id, installRevision, JSON.stringify(health)] })
+    }
+
+    let ordinaryUsable = false
+    const { ports, sent } = harness(db, {
+        catalog: async slug => catalog(slug),
+        installations: async () => [connection({ slug: 'slack', usable: ordinaryUsable })],
+        vaultAccounts: async () => (await readServiceVaultAccounts(db, 'agent', 'launch')).filter(account => !account.attached).map(account => account.view),
+        prepareSeal: async () => ({
+            check: () => {},
+            installations: async (tx, choices = []) => {
+                const accounts = await readServiceVaultAccounts(tx, 'agent', 'launch')
+                const attached = await attachServiceVaultAccounts(tx, 'agent', accounts, choices)
+                return [...attached.map(vaultConnection), connection({ slug: 'slack', usable: ordinaryUsable })]
+            },
+        }),
+    })
+    const opened = await open(db, ports)
+    expect(opened.services[0].vaultAccounts?.map(item => item.label)).toEqual(['Sales', 'Support'])
+    expect(await readServiceVaultAccounts(db, 'agent', 'after-restart')).toEqual([])
+    const selection = { action: 'progress' as const, requestId: crypto.randomUUID(), serviceRequestId: opened.serviceRequestId,
+        source: opened.source, expectedRevision: opened.revision, currentIndex: 1, choices: [
+            { slug: 'notion', choice: 'use-connection' as const, installation: { key: 'vault:vault-two', revision: installRevision } },
+            { slug: 'slack', choice: 'use-connection' as const, installation: { key: 'slack', revision: installRevision } },
+        ] }
+    const saved = await progressDesktopServiceRequest(db, scope, ports, selection)
+    const finish = { ...selection, action: 'finish' as const, requestId: crypto.randomUUID(), expectedRevision: saved.revision }
+    await expect(finishDesktopServiceRequest(db, scope, ports, finish)).rejects.toMatchObject({ status: 409 })
+    expect((await db.execute('SELECT * FROM desktop_vault_mcp_attachments')).rows).toEqual([])
+    expect((await db.execute('SELECT * FROM desktop_service_suggestion_receipts')).rows).toEqual([])
+    expect(sent).toEqual([])
+
+    await db.execute("INSERT INTO desktop_remote_mcp VALUES('agent','notion-two')")
+    ordinaryUsable = true
+    await expect(finishDesktopServiceRequest(db, scope, ports, finish)).rejects.toMatchObject({ status: 409 })
+    expect(sent).toEqual([])
+    await db.execute("DELETE FROM desktop_remote_mcp WHERE agent_id='agent'")
+    const response = await finishDesktopServiceRequest(db, scope, ports, finish)
+    expect(response.status).toBe(200)
+    expect((await db.execute('SELECT * FROM desktop_vault_mcp_attachments')).rows).toEqual([{ item_id: 'vault-two', agent_id: 'agent' }])
+    const [current] = (await readServiceVaultAccounts(db, 'agent', 'launch')).filter(account => account.attached)
+    expect(current.view.revision).not.toBe(installRevision)
+    expect((await db.execute("SELECT revision FROM desktop_vault_mcp_servers WHERE id='vault-one'")).rows[0].revision).toBe(installRevision)
+    expect(sent).toEqual(['replay', 'send'])
+    await finishDesktopServiceRequest(db, scope, ports, finish)
+    expect(sent.filter(item => item === 'send')).toHaveLength(1)
 })

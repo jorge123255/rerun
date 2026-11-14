@@ -22,7 +22,8 @@ it('has original templates/assistant ordering, preserves query Ask last, and omi
  const query=buildParityCommands(snapshot,{kind:'root'},'find my work',actions(snapshot))
  const sections=parityCommandSections(query,()=>{})
  expect(sections.at(-1)?.heading).toBe('Assistant')
- expect(sections.at(-1)?.rows[0]?.label).toBe('Ask Rerun')
+ expect(sections.at(-1)?.rows[0]?.label).toBe('Ask your Chief of Staff')
+ expect(query.at(-1)?.intent).toMatchObject({kind:'assistant',chat:snapshot.foreman,draft:'find my work'})
 })
 it('does not duplicate accepted panels and applies unavailable trigger authority to existing rows',()=>{
  const snapshot=fixture(),ports=actions(snapshot)

@@ -10,14 +10,17 @@ export type DesktopMcpSecretVersion = { state: 'present'; version: number } | { 
 export type DesktopMcpSecretOpen<T> = { state: 'present'; version: number; produced: T } | { state: 'missing' } | { state: 'rotated'; version: number } | { state: 'forbidden' } | { state: 'invalid' }
 const MISSING = 'Credential not found for this coworker.'
 
-export function createDesktopMcpSecretLookup(db: Pick<Client, 'execute'>, opener: DesktopMcpSecretOpener) {
+export function createDesktopMcpSecretLookup(db: Pick<Client, 'execute'>, opener: DesktopMcpSecretOpener, readVersion = async (agentId: string, key: string) => {
+    const row = (await db.execute({ sql: 'SELECT version FROM desktop_secret_credentials WHERE agent_id = ? AND key = ?', args: [agentId, key] })).rows[0]
+    return row ? Number(row.version) : undefined
+}) {
     return {
         async version(agentId: string, key: string, gate: DesktopMcpSecretGate): Promise<DesktopMcpSecretVersion> {
             try {
                 await gate.check({ agentId, key })
-                const row = (await db.execute({ sql: 'SELECT version FROM desktop_secret_credentials WHERE agent_id = ? AND key = ?', args: [agentId, key] })).rows[0]
+                const version = await readVersion(agentId, key)
                 await gate.check({ agentId, key })
-                return row ? { state: 'present', version: Number(row.version) } : { state: 'missing' }
+                return version === undefined ? { state: 'missing' } : { state: 'present', version }
             } catch { return { state: 'forbidden' } }
         },
         async open<T>(agentId: string, key: string, expectedVersion: number, gate: DesktopMcpSecretGate, invoke: (value: Uint8Array) => Promise<T>): Promise<DesktopMcpSecretOpen<T>> {

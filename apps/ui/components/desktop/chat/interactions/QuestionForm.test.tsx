@@ -43,3 +43,21 @@ test('custom answer survives a failed acknowledgement and retries without descri
     expect(submit.mock.calls[0][0]).toEqual(submit.mock.calls[1][0])
     expect(submit.mock.calls[1][0]).toEqual([{ question: 'Choose a format', answers: ['My Unicode answer 👋'] }])
 })
+
+test('puts the file picker in the footer even when the custom answer is closed', async () => {
+    const host = document.body.appendChild(document.createElement('div')), root = createRoot(host)
+    const attachments = { onPick: vi.fn(), onClear: vi.fn(), count: () => 0, render: () => null }
+    dispose = async () => { await act(async () => root.unmount()) }
+    await act(async () => root.render(<QuestionForm inline questions={[{ question: 'Choose a file', options: ['Later'] }]} attachments={attachments} onSubmit={vi.fn()} />))
+    expect(host.querySelector('textarea')).toBeNull()
+    const input = host.querySelector<HTMLInputElement>('input[type="file"]')!
+    const picker = vi.spyOn(input, 'click').mockImplementation(() => {})
+    const attach = host.querySelector<HTMLButtonElement>('[data-hitl="attach"]')!
+    expect(attach.closest('div.flex.items-center')?.parentElement?.querySelector('[data-hitl="skip"]')).not.toBeNull()
+    await act(async () => attach.click())
+    expect(picker).toHaveBeenCalledOnce()
+    const file = new File(['fixture'], 'answer.txt', { type: 'text/plain' })
+    Object.defineProperty(input, 'files', { value: [file] })
+    await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })) })
+    expect(attachments.onPick).toHaveBeenCalledExactlyOnceWith(0, [file])
+})

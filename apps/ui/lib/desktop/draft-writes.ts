@@ -17,10 +17,24 @@ type Record = {
 }
 const records = new Map<string, Record>()
 const admissions = new Set<Promise<void>>()
+const unsavedDrafts = new Set<() => boolean>()
 const shutdownListeners = new Set<() => void>()
 let quitting = false
 let saveDuringFlush: DesktopDraftDrain | undefined
 export const isDesktopQuitting = () => quitting
+const fileDraftHost = {
+    isClosing: isDesktopQuitting,
+    registerUnsaved(unsaved: () => boolean) {
+        unsavedDrafts.add(unsaved)
+        return () => { unsavedDrafts.delete(unsaved) }
+    },
+}
+
+export function desktopFileDraftHost() {
+    if (typeof window === 'undefined') return undefined
+    const bridge = (window as Window & { desktopApp?: { onBeforeQuit?: unknown } }).desktopApp
+    return typeof bridge?.onBeforeQuit === 'function' ? fileDraftHost : undefined
+}
 /** Stop new effects before custody drains; listeners run later in the canonical draft flush. */
 export function freezeDesktopAdmissions() { quitting = true }
 export function subscribeDraftShutdown(listener: () => void) { shutdownListeners.add(listener); return () => { shutdownListeners.delete(listener) } }
@@ -215,7 +229,7 @@ export async function flushDesktopDrafts(save?: DesktopDraftDrain): Promise<bool
             const latest = [...records.values()].filter(r => !r.forgotten)
             if (latest.some(r => r.work || (saveDuringFlush && r.dirty && r.blockedByFreeze))) continue
             if (latest.some(r => r.state.error || r.state.conflict || r.dirty)) return false
-            return true
+            return ![...unsavedDrafts].some(unsaved => unsaved())
         }
     } finally {
         if (saveDuringFlush === save) saveDuringFlush = undefined

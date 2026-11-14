@@ -6,24 +6,29 @@ import type { EngineUsageBucket } from '@rerun/contracts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '../primitives/chart'
 import { CHART_FALLBACK_COLOR, CHART_PALETTE, chartColorAt } from './chart-palette'
 import { cn } from '../cn'
-
-const compactFmt = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
-
-function formatCost(n: number): string {
-    return `$${n >= 1 ? n.toFixed(2) : n.toFixed(4)}`
-}
-
-function dayShort(day: string): string {
-    const d = new Date(`${day}T00:00:00`)
-    return Number.isNaN(d.getTime()) ? day : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
+import { chartBucketLabel, chartCost, chartNumber, chartPercent } from './chart-format'
 
 type Series = { key: string; label: string; color: string }
 
 export type TokenUsageDay = { day: string; totalTokens: number; runCount: number }
 
+type TokenUsageLabels = {
+    input: string
+    output: string
+    cached: string
+    cost: string
+    tokens: string
+    totalCost: string
+    totalTokens: string
+    runs: (count: number) => string
+    loading: string
+    noUsage: string
+}
+
 type CommonProps = {
     className?: string
+    locale?: string
+    labels?: TokenUsageLabels
     // Recharts draws itself over ~1.5s in JS, which no CSS lever stops: a screenshot taken while the
     // area is still growing shows a half-drawn chart. Off for anything captured by rerun-shot.
     animated?: boolean
@@ -33,8 +38,13 @@ export type TokenUsageChartProps =
     | (CommonProps & { metric?: 'tokens' | 'cost'; breakdown?: 'total' | 'inputOutput' | 'model'; chartType?: 'area' | 'bar' | 'donut' | 'stat'; buckets: EngineUsageBucket[] | null; days?: undefined })
     | (CommonProps & { metric?: 'tokens'; breakdown?: 'total'; chartType?: 'area' | 'bar' | 'stat'; days: TokenUsageDay[] | null; buckets?: undefined })
 
-export function TokenUsageChart({ metric = 'tokens', breakdown = 'total', chartType = 'area', buckets, days, className, animated = true }: TokenUsageChartProps) {
-    const formatValue = useCallback((n: number) => (metric === 'cost' ? formatCost(n) : compactFmt.format(n)), [metric])
+export function TokenUsageChart({ metric = 'tokens', breakdown = 'total', chartType = 'area', buckets, days, className, animated = true, locale, labels }: TokenUsageChartProps) {
+    const compact = useMemo(() => chartNumber(locale), [locale])
+    const exact = useMemo(() => new Intl.NumberFormat(locale), [locale])
+    const formatValue = useCallback((value: number) => metric === 'cost' ? chartCost(value, locale) : compact.format(value), [metric, locale, compact])
+    const formatTooltipValue = locale ? (value: number) => metric === 'cost' ? chartCost(value, locale, true) : exact.format(value) : undefined
+    const formatDay = (day: string) => chartBucketLabel(day, locale)
+    const metricLabel = metric === 'cost' ? labels?.cost ?? 'Cost' : labels?.tokens ?? 'Tokens'
 
     const daily = useMemo(() => {
         const map = new Map<string, { day: string; tokens: number; cost: number; input: number; output: number; cached: number; runCount: number }>()
@@ -80,7 +90,7 @@ export function TokenUsageChart({ metric = 'tokens', breakdown = 'total', chartT
             }
             const s: Series[] = models.map(m => ({ key: m.key, label: m.name, color: m.color }))
             const r = daily.map(d => {
-                const row: Record<string, number | string> = { day: dayShort(d.day) }
+                const row: Record<string, number | string> = { day: d.day }
                 for (const m of models) row[m.key] = perDay.get(d.day)?.get(m.name) ?? 0
                 return row
             })
@@ -88,17 +98,17 @@ export function TokenUsageChart({ metric = 'tokens', breakdown = 'total', chartT
         }
         if (effectiveBreakdown === 'inputOutput') {
             const s: Series[] = [
-                { key: 'input', label: 'Input', color: CHART_PALETTE[0] },
-                { key: 'output', label: 'Output', color: CHART_PALETTE[1] },
-                { key: 'cached', label: 'Cached', color: CHART_PALETTE[2] },
+                { key: 'input', label: labels?.input ?? 'Input', color: CHART_PALETTE[0] },
+                { key: 'output', label: labels?.output ?? 'Output', color: CHART_PALETTE[1] },
+                { key: 'cached', label: labels?.cached ?? 'Cached', color: CHART_PALETTE[2] },
             ]
-            const r = daily.map(d => ({ day: dayShort(d.day), input: d.input, output: d.output, cached: d.cached }))
+            const r = daily.map(d => ({ day: d.day, input: d.input, output: d.output, cached: d.cached }))
             return { rows: r, series: s }
         }
-        const s: Series[] = [{ key: 'value', label: metric === 'cost' ? 'Cost' : 'Tokens', color: CHART_PALETTE[0] }]
-        const r = measuredDays.map(d => ({ day: dayShort(d.day), value: metric === 'cost' ? (d.cost ?? 0) : d.tokens }))
+        const s: Series[] = [{ key: 'value', label: metricLabel, color: CHART_PALETTE[0] }]
+        const r = measuredDays.map(d => ({ day: d.day, value: metric === 'cost' ? (d.cost ?? 0) : d.tokens }))
         return { rows: r, series: s }
-    }, [buckets, daily, measuredDays, models, metric, effectiveBreakdown])
+    }, [buckets, daily, measuredDays, models, metric, effectiveBreakdown, labels, metricLabel])
 
     const chartConfig = useMemo<ChartConfig>(() => Object.fromEntries(series.map(s => [s.key, { label: s.label, color: s.color }])), [series])
 
@@ -108,13 +118,13 @@ export function TokenUsageChart({ metric = 'tokens', breakdown = 'total', chartT
             const output = daily.reduce((sum, d) => sum + d.output, 0)
             const cached = daily.reduce((sum, d) => sum + d.cached, 0)
             return [
-                { name: 'Input', value: input, fill: CHART_PALETTE[0] },
-                { name: 'Output', value: output, fill: CHART_PALETTE[1] },
-                { name: 'Cached', value: cached, fill: CHART_PALETTE[2] },
+                { name: labels?.input ?? 'Input', value: input, fill: CHART_PALETTE[0] },
+                { name: labels?.output ?? 'Output', value: output, fill: CHART_PALETTE[1] },
+                { name: labels?.cached ?? 'Cached', value: cached, fill: CHART_PALETTE[2] },
             ].filter(s => s.value > 0)
         }
         return models.map(m => ({ name: m.name, value: m.value, fill: m.color })).filter(s => s.value > 0)
-    }, [daily, models, effectiveBreakdown])
+    }, [daily, models, effectiveBreakdown, labels])
 
     const stat = useMemo(() => {
         const total = measuredDays.reduce((sum, d) => sum + (metric === 'cost' ? (d.cost ?? 0) : d.tokens), 0)
@@ -136,17 +146,17 @@ export function TokenUsageChart({ metric = 'tokens', breakdown = 'total', chartT
     return (
         <div className={cn('h-full w-full p-1', className)}>
             {isEmpty ? (
-                <div className="flex h-full items-center justify-center text-center text-[12px] text-muted-foreground">{loading ? 'Loading...' : 'No usage in this period.'}</div>
+                <div className="flex h-full items-center justify-center text-center text-[12px] text-muted-foreground">{loading ? labels?.loading ?? 'Loading...' : labels?.noUsage ?? 'No usage in this period.'}</div>
             ) : chartType === 'stat' ? (
                 <div className="flex h-full flex-col justify-center gap-1 px-2">
                     <div className="text-3xl font-semibold leading-none text-foreground">{formatValue(stat.total)}</div>
                     <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                        <span>{metric === 'cost' ? 'Total cost' : 'Total tokens'}</span>
+                        <span>{metric === 'cost' ? labels?.totalCost ?? 'Total cost' : labels?.totalTokens ?? 'Total tokens'}</span>
                         <span>·</span>
-                        <span>{stat.runCount} runs</span>
-                        {stat.delta !== null && <span className={stat.delta >= 0 ? 'text-emerald-500' : 'text-rose-500'}>{stat.delta >= 0 ? '▲' : '▼'} {Math.abs(stat.delta).toFixed(0)}%</span>}
+                        <span>{labels?.runs(stat.runCount) ?? `${stat.runCount} runs`}</span>
+                        {stat.delta !== null && <span className={stat.delta >= 0 ? 'text-emerald-500' : 'text-rose-500'}>{stat.delta >= 0 ? '▲' : '▼'} {chartPercent(Math.abs(stat.delta) / 100, 0, locale)}</span>}
                     </div>
-                    <ChartContainer config={{ v: { label: metric === 'cost' ? 'Cost' : 'Tokens', color: CHART_PALETTE[0] } }} className="mt-2 h-16 w-full aspect-auto">
+                    <ChartContainer config={{ v: { label: metricLabel, color: CHART_PALETTE[0] } }} className="mt-2 h-16 w-full aspect-auto">
                         <AreaChart data={stat.sparkRows} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
                             <Area dataKey="v" type="monotone" stroke="var(--color-v)" fill="var(--color-v)" fillOpacity={0.15} strokeWidth={1.5} dot={false} isAnimationActive={animated} />
                         </AreaChart>
@@ -155,7 +165,7 @@ export function TokenUsageChart({ metric = 'tokens', breakdown = 'total', chartT
             ) : chartType === 'donut' ? (
                 <ChartContainer config={chartConfig} className="h-full w-full aspect-auto">
                     <PieChart>
-                        <ChartTooltip content={<ChartTooltipContent nameKey="name" hideLabel />} />
+                        <ChartTooltip content={<ChartTooltipContent nameKey="name" hideLabel formatValue={formatTooltipValue} />} />
                         <Pie data={donutData} dataKey="value" nameKey="name" innerRadius="55%" outerRadius="82%" paddingAngle={2} strokeWidth={1} isAnimationActive={animated}>
                             {donutData.map((d, i) => (
                                 <Cell key={i} fill={d.fill} />
@@ -167,9 +177,9 @@ export function TokenUsageChart({ metric = 'tokens', breakdown = 'total', chartT
                 <ChartContainer config={chartConfig} className="h-full w-full aspect-auto">
                     <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 4 }}>
                         <CartesianGrid vertical={false} />
-                        <XAxis dataKey="day" tickLine={false} axisLine={false} tickMargin={6} minTickGap={16} />
+                        <XAxis dataKey="day" tickFormatter={formatDay} tickLine={false} axisLine={false} tickMargin={6} minTickGap={16} />
                         <YAxis tickLine={false} axisLine={false} width={40} tickFormatter={formatValue} />
-                        <ChartTooltip content={<ChartTooltipContent />} />
+                        <ChartTooltip content={<ChartTooltipContent labelFormatter={label => formatDay(String(label))} formatValue={formatTooltipValue} />} />
                         {series.map(s => (
                             <Bar key={s.key} dataKey={s.key} stackId="a" fill={`var(--color-${s.key})`} radius={series.length === 1 ? [3, 3, 0, 0] : 0} isAnimationActive={animated} />
                         ))}
@@ -179,9 +189,9 @@ export function TokenUsageChart({ metric = 'tokens', breakdown = 'total', chartT
                 <ChartContainer config={chartConfig} className="h-full w-full aspect-auto">
                     <AreaChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 4 }}>
                         <CartesianGrid vertical={false} />
-                        <XAxis dataKey="day" tickLine={false} axisLine={false} tickMargin={6} minTickGap={16} />
+                        <XAxis dataKey="day" tickFormatter={formatDay} tickLine={false} axisLine={false} tickMargin={6} minTickGap={16} />
                         <YAxis tickLine={false} axisLine={false} width={40} tickFormatter={formatValue} />
-                        <ChartTooltip content={<ChartTooltipContent />} />
+                        <ChartTooltip content={<ChartTooltipContent labelFormatter={label => formatDay(String(label))} formatValue={formatTooltipValue} />} />
                         {series.map(s => (
                             <Area key={s.key} dataKey={s.key} type="monotone" stackId="a" stroke={`var(--color-${s.key})`} fill={`var(--color-${s.key})`} fillOpacity={0.2} strokeWidth={1.5} isAnimationActive={animated} />
                         ))}

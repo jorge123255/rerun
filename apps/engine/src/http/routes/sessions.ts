@@ -1,8 +1,8 @@
 import { Hono } from 'hono'
 import { agentExists } from '../../agents/loader.js'
 import { getSession, listDesktopThreadMetadata, listSessions, sessionBelongsToAgent } from '../../db/repos/sessions.js'
-import { listMessages } from '../../db/repos/messages.js'
-import { desktopMcpSignInGuardSchema, desktopMcpSignInSourceResponseSchema, desktopThreadMetadataListSchema } from '@rerun/contracts'
+import { listDesktopDecisionMessages, listDesktopForemanMessages, listMessages, readSavedWorkspaceAttachment } from '../../db/repos/messages.js'
+import { desktopAttachmentPathSchema, desktopMcpSignInGuardSchema, desktopMcpSignInSourceResponseSchema, desktopThreadMetadataListSchema, FOREMAN_AGENT_ID } from '@rerun/contracts'
 import { readDesktopMcpSignInSource } from '../../desktop/mcp-sign-in/source.js'
 import { desktopSecretRequestGuardSchema, desktopSecretSourceResponseSchema } from '@rerun/contracts'
 import { z } from 'zod'
@@ -35,7 +35,7 @@ sessionRoutes.get('/', async c => {
         if (!desktopApp() || !agentExists(agentId)) return c.json({ error: 'Not found' }, 404)
         return c.json(desktopThreadMetadataListSchema.parse({ threads: await listDesktopThreadMetadata(agentId) }))
     }
-    return c.json({ sessions: await listSessions(agentId) })
+    return c.json({ sessions: await listSessions(agentId, desktopApp()) })
 })
 
 sessionRoutes.get('/:sid', async c => {
@@ -49,5 +49,19 @@ sessionRoutes.get('/:sid/messages', async c => {
     const agentId = c.req.param('id')!
     const sid = c.req.param('sid')
     if (!(await sessionBelongsToAgent(sid, agentId))) return c.json({ error: 'session not found' }, 404)
+    if (desktopApp() && agentId === FOREMAN_AGENT_ID) return c.json({ messages: await listDesktopForemanMessages(sid) })
+    if (desktopApp() && c.req.query('view') === 'desktop-decisions') {
+        return c.json({ messages: await listDesktopDecisionMessages(agentId, sid) }, 200, { 'cache-control': 'no-store' })
+    }
     return c.json({ messages: await listMessages(agentId, sid) })
+})
+
+sessionRoutes.get('/:sid/messages/:mid/attachment', async c => {
+    if (!desktopApp()) return c.json({ error: 'Not found' }, 404)
+    const paths = c.req.queries('path')
+    const path = desktopAttachmentPathSchema.safeParse(paths?.length === 1 ? paths[0] : undefined)
+    if (!path.success) return c.json({ error: 'Choose a text attachment' }, 400)
+    const attachment = await readSavedWorkspaceAttachment(c.req.param('id')!, c.req.param('sid'), c.req.param('mid'), path.data)
+    if (!attachment) return c.json({ error: 'Saved attachment not found' }, 404)
+    return c.json(attachment, 200, { 'cache-control': 'no-store' })
 })

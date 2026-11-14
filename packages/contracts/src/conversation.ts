@@ -1,7 +1,9 @@
 import { z } from 'zod'
 
 import { runStatusSchema } from './run.js'
-import { sessionSourceSchema } from './session.js'
+import { desktopAutomationResultSchema, sessionSourceSchema } from './session.js'
+
+export const CONVERSATION_TITLE_MAX = 80
 
 export const sessionStatusSchema = z.enum(['idle', 'working', 'error', 'waiting_human', 'awaiting_question', 'awaiting_approval', 'awaiting_connector', 'awaiting_ack'])
 export type SessionStatus = z.infer<typeof sessionStatusSchema>
@@ -13,6 +15,7 @@ export const desktopThreadMetadataListSchema = z.object({
         originAgentId: z.string().nullable(),
         automationName: z.string().nullable(),
         runStatus: runStatusSchema.nullable(),
+        automationResult: desktopAutomationResultSchema.optional(),
     })),
 })
 

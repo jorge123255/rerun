@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { create } from 'zustand'
 import { z } from 'zod'
 import { coworkerRuleOf, mergeNotificationPrefs, normalizeNotificationPrefs, type CoworkerRule, type NotificationPrefs, type NotificationPrefsPatch } from '@rerun/contracts'
-import { DESKTOP_NOTIFICATION_PREFS_URL, desktopNotificationPrefsPatchSchema } from './notifications'
+import { DESKTOP_NOTIFICATION_PREFS_URL, desktopNotificationPrefsPatchSchema, desktopNotificationRuleChangeSchema, type DesktopNotificationRuleChange } from './notifications'
 import { holdDraftAdmission, isDesktopQuitting } from './draft-writes'
 
 // Every local notification surface shares one authoritative snapshot and write queue. Pending
@@ -34,6 +34,17 @@ async function bounded<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
     try { return await Promise.race([work, cancelled]) }
     finally { signal.removeEventListener('abort', stop) }
 }
+async function persistPrefs(method: 'PUT' | 'PATCH', input: NotificationPrefsPatch | DesktopNotificationRuleChange) {
+    const signal = AbortSignal.timeout(10_000)
+    const response = await bounded(fetch(DESKTOP_NOTIFICATION_PREFS_URL, {
+        method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(input), cache: 'no-store', signal,
+    }), signal)
+    if (!response.ok) throw new Error(SAVE_ERROR)
+    const saved = readSavedPrefs(await bounded(response.json(), signal))
+    revision++
+    useDesktopPrefsStore.setState({ confirmed: saved, saveError: null })
+}
+
 function publishPending() {
     const confirmed = useDesktopPrefsStore.getState().confirmed
     useDesktopPrefsStore.setState({ pending: confirmed && queued.length ? queued.reduce((value, entry) => mergeNotificationPrefs(value, entry.patch), confirmed) : null })
@@ -64,14 +75,14 @@ export function refreshDesktopNotificationPrefs(): Promise<void> {
     return loading
 }
 
-export function useDesktopNotificationPrefs() {
+export function useDesktopNotificationPrefs(load = true) {
     const { t } = useDesktopLocale()
     const confirmed = useDesktopPrefsStore(state => state.confirmed)
     const pending = useDesktopPrefsStore(state => state.pending)
     const readError = useDesktopPrefsStore(state => state.readError)
     const saveError = useDesktopPrefsStore(state => state.saveError)
     const busy = useDesktopPrefsStore(state => state.loading)
-    useEffect(() => { void refreshDesktopNotificationPrefs() }, [])
+    useEffect(() => { if (load) void refreshDesktopNotificationPrefs() }, [load])
     const prefs = useMemo(() => pending ?? confirmed ?? normalizeNotificationPrefs(undefined), [pending, confirmed])
     const update = useCallback((patch: NotificationPrefsPatch) => {
         const state = useDesktopPrefsStore.getState()
@@ -86,15 +97,8 @@ export function useDesktopNotificationPrefs() {
         useDesktopPrefsStore.setState({ saveError: null })
         const release = holdDraftAdmission()
         saving = saving.then(async () => {
-            const signal = AbortSignal.timeout(10_000)
             try {
-                const response = await bounded(fetch(DESKTOP_NOTIFICATION_PREFS_URL, {
-                    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(entry.patch), cache: 'no-store', signal,
-                }), signal)
-                if (!response.ok) throw new Error(SAVE_ERROR)
-                const saved = readSavedPrefs(await bounded(response.json(), signal))
-                revision++
-                useDesktopPrefsStore.setState({ confirmed: saved })
+                await persistPrefs('PUT', entry.patch)
             } catch {
                 useDesktopPrefsStore.setState({ saveError: SAVE_ERROR })
                 toast.error(t('notificationUI.saveFailed'))
@@ -106,9 +110,33 @@ export function useDesktopNotificationPrefs() {
             }
         })
     }, [t])
+    const changeCoworkerRule = useCallback((input: DesktopNotificationRuleChange): Promise<boolean> => {
+        const state = useDesktopPrefsStore.getState()
+        const parsed = desktopNotificationRuleChangeSchema.safeParse(input)
+        if (isDesktopQuitting() || !state.confirmed || state.readError || !parsed.success) return Promise.resolve(false)
+        reading?.abort()
+        revision++
+        const release = holdDraftAdmission()
+        const result = saving.then(async () => {
+            try {
+                await persistPrefs('PATCH', parsed.data)
+                return true
+            } catch {
+                useDesktopPrefsStore.setState({ saveError: SAVE_ERROR })
+                toast.error(t('notificationUI.saveFailed'))
+                return false
+            } finally {
+                publishPending()
+                release()
+            }
+        })
+        saving = result.then(() => {})
+        void result.then(saved => { if (!saved && !isDesktopQuitting()) void refreshDesktopNotificationPrefs() })
+        return result
+    }, [t])
     const setCoworkerRule = useCallback((agentId: string, rule: CoworkerRule) => update({ coworkers: { [agentId]: rule } }), [update])
     const ruleOf = useCallback((agentId: string | null | undefined) => coworkerRuleOf(prefs, agentId), [prefs])
-    return { prefs, update, setCoworkerRule, ruleOf, ready: confirmed !== null && !readError, loading: busy,
+    return { prefs, update, setCoworkerRule, changeCoworkerRule, ruleOf, ready: confirmed !== null && !readError, loading: busy,
         readError: readError ? t('notificationUI.loadFailed') : null,
         saveError: saveError ? t(saveError === SAVE_ERROR ? 'notificationUI.saveFailed' : 'notificationUI.invalid') : null,
         refresh: refreshDesktopNotificationPrefs }

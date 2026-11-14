@@ -12,11 +12,14 @@ import { Button } from '@/components/ui/button'
 import type { DesktopCompletionItem } from '@/lib/desktop/completed-actions'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import type { DesktopPendingInboxItem } from '@/lib/desktop/pending-inbox'
+import { desktopInboxBadge } from '@/lib/desktop/notification-bridge'
 import { AlertCircleIcon, BellIcon, CheckCheckIcon, InboxIcon, Loader2Icon, RefreshCcwIcon, TriangleAlertIcon, XIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import type { DesktopAgentView } from './DesktopApp'
-import { useDesktopCompletions } from './useDesktopCompletions'
+import { useDesktopCompletions, type DesktopCompletionsController } from './useDesktopCompletions'
+import { useDesktopNotificationPrefs } from '@/lib/desktop/use-notification-prefs'
+import { DesktopInboxRowMenu } from './DesktopInboxRowMenu'
 import { useDesktopPendingInbox, type DesktopPendingInboxRead } from './useDesktopPendingInbox'
 
 // The original inbox folds question and approval under one « Needs you » heading, keyed on the
@@ -40,6 +43,10 @@ export type DesktopActionsInboxProps = {
      * as it lands, matching the original read-on-visible-conversation semantics.
      */
     visibleSessionId?: string | null
+    workspaceId?: number | null
+    launchNonce?: string
+    hidden?: boolean
+    onOpenNotificationSettings?: (agentId: string) => void
     /** Controlled open state. Without it the inbox manages its own fold. */
     open?: boolean
     onOpenChange?: (open: boolean) => void
@@ -49,7 +56,7 @@ export type DesktopActionsInboxProps = {
 
 // The row mirrors @rerun/ui/inbox InboxRow with its hover-revealed Mark-as-read button:
 // marking read is an explicit, per-request acknowledgment that never answers, approves or opens.
-function ActionRow({ item, onOpen, onMarkRead }: { item: DesktopPendingInboxItem; onOpen: (item: DesktopPendingInboxItem) => void; onMarkRead: (item: DesktopPendingInboxItem) => void }) {
+function ActionRow({ item, onOpen, onMarkRead, menu }: { menu?: ReactNode; item: DesktopPendingInboxItem; onOpen: (item: DesktopPendingInboxItem) => void; onMarkRead: (item: DesktopPendingInboxItem) => void }) {
     const { language, t } = useDesktopLocale()
     const status = KIND_STATUS[item.kind]
     const meta = ATTENTION_STATUS_META[status]
@@ -90,6 +97,7 @@ function ActionRow({ item, onOpen, onMarkRead }: { item: DesktopPendingInboxItem
                     <CheckCheckIcon className="size-3.5" />
                 </Button>
             </span>
+            {menu}
         </div>
     )
 }
@@ -97,7 +105,7 @@ function ActionRow({ item, onOpen, onMarkRead }: { item: DesktopPendingInboxItem
 // A finished-run row mirrors the original inbox's Done row: emerald dot and buddy, the final-answer
 // summary (or the scheduled task's name), « finished its run », a ×count when several runs are
 // folded, and an explicit Mark-as-read button. Marking covers exactly the displayed completion IDs.
-function DoneRow({ item, onOpen, onMarkRead }: { item: DesktopCompletionItem; onOpen: (item: DesktopCompletionItem) => void; onMarkRead: (item: DesktopCompletionItem) => void }) {
+function DoneRow({ item, onOpen, onMarkRead, menu }: { menu?: ReactNode; item: DesktopCompletionItem; onOpen: (item: DesktopCompletionItem) => void; onMarkRead: (item: DesktopCompletionItem) => void }) {
     const { language, t } = useDesktopLocale()
     const meta = ATTENTION_STATUS_META.done
     const activate = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -138,6 +146,7 @@ function DoneRow({ item, onOpen, onMarkRead }: { item: DesktopCompletionItem; on
                     <CheckCheckIcon className="size-3.5" />
                 </Button>
             </span>
+            {menu}
         </div>
     )
 }
@@ -149,7 +158,7 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
         return (
             <>
                 {open ? <Loader2Icon className="size-4 animate-spin" /> : <BellIcon className="size-4" />}
-                <span className="text-muted-foreground">{open ? t('actions.checking') : t('actions.pending')}</span>
+                <span className="text-muted-foreground @max-4xl/board:hidden">{open ? t('actions.checking') : t('actions.pending')}</span>
             </>
         )
     }
@@ -159,7 +168,7 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
         return (
             <>
                 <TriangleAlertIcon className="size-4 text-red-400" />
-                <span className="text-red-400">{failed ? t('actions.unavailable') : t('actions.partial')}</span>
+                <span className="text-red-400 @max-4xl/board:hidden">{failed ? t('actions.unavailable') : t('actions.partial')}</span>
             </>
         )
     }
@@ -171,13 +180,13 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
                     <BellIcon className="size-4" />
                     <span aria-hidden className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-red-500 ring-2 ring-card" />
                 </span>
-                <span className="tabular-nums">{t('actions.pendingCount', { count })}</span>
+                <span className="tabular-nums @max-4xl/board:hidden">{t('actions.pendingCount', { count })}</span>
             </span>
         )
     }
     if (doneCount > 0) {
         parts.push(
-            <span key="done" className="flex items-center gap-1 text-emerald-500">
+            <span key="done" className="flex items-center gap-1 text-emerald-500 @max-4xl/board:hidden">
                 <span className="tabular-nums">{t('actions.doneCount', { count: doneCount })}</span>
             </span>
         )
@@ -185,9 +194,10 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
     if (parts.length > 0) {
         return (
             <>
+                {count === 0 && <BellIcon className="hidden size-4 text-emerald-500 @max-4xl/board:block" />}
                 {parts.map((part, index) => (
                     <Fragment key={index}>
-                        {index > 0 && <span aria-hidden className="text-muted-foreground">·</span>}
+                        {index > 0 && <span aria-hidden className="text-muted-foreground @max-4xl/board:hidden">·</span>}
                         {part}
                     </Fragment>
                 ))}
@@ -197,7 +207,7 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
     return (
         <>
             <BellIcon className="size-4" />
-            <span className="text-muted-foreground">{hasMore ? t('actions.more') : t('actions.empty')}</span>
+            <span className="text-muted-foreground @max-4xl/board:hidden">{hasMore ? t('actions.more') : t('actions.empty')}</span>
         </>
     )
 }
@@ -211,20 +221,37 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
  * decline; marking pending read is explicit and never answers; a Done row is additionally
  * acknowledged with the exact completion IDs it displayed.
  */
-export function DesktopActionsInbox({ agents, onOpenConversation, visibleSessionId, open: openProp, onOpenChange, className }: DesktopActionsInboxProps) {
-    const { language, t } = useDesktopLocale()
+export function DesktopActionsInbox(props: DesktopActionsInboxProps & { completions?: DesktopCompletionsController }) {
+    return props.completions
+        ? <DesktopActionsInboxView {...props} completions={props.completions} />
+        : <StandaloneActionsInbox {...props} />
+}
+
+function StandaloneActionsInbox(props: DesktopActionsInboxProps) {
     const [internalOpen, setInternalOpen] = useState(false)
-    const open = openProp ?? internalOpen
-    const change = useCallback(
-        (next: boolean) => {
-            if (onOpenChange) onOpenChange(next)
-            else setInternalOpen(next)
-        },
-        [onOpenChange]
-    )
+    if (props.hidden && internalOpen) setInternalOpen(false)
+    const open = !props.hidden && (props.open ?? internalOpen)
+    const whileHidden = !!(props.workspaceId && props.launchNonce && desktopInboxBadge())
+    const completions = useDesktopCompletions(open, props.agents?.map(agent => agent.id), props.visibleSessionId, true, whileHidden)
+    return <DesktopActionsInboxView {...props} open={open} onOpenChange={props.onOpenChange ?? setInternalOpen} completions={completions} />
+}
+
+function DesktopActionsInboxView({ agents, onOpenConversation, visibleSessionId, workspaceId, launchNonce, hidden = false, onOpenNotificationSettings, open: openProp, onOpenChange, className, completions }: DesktopActionsInboxProps & { completions: DesktopCompletionsController }) {
+    const { language, t } = useDesktopLocale()
+    const open = !hidden && !!openProp
+    const setInboxBadge = workspaceId && launchNonce ? desktopInboxBadge() : undefined
+    const whileHidden = typeof setInboxBadge === 'function'
+    const [rowMenuOpen, setRowMenuOpen] = useState(false)
+    const { ruleOf, ready: prefsReady, loading: prefsLoading, changeCoworkerRule } = useDesktopNotificationPrefs(open && !!workspaceId && !!onOpenNotificationSettings)
+    const change = useCallback((next: boolean) => { onOpenChange?.(next) }, [onOpenChange])
     // Original WorkspaceInbox keeps its collapsed pill current. Observe while visible even when
     // folded; each hook still requires an open panel for an explicit mark-read action.
-    const pendingInbox = useDesktopPendingInbox(open, agents?.map(agent => agent.id), true)
+    const rowMenu = (item: { agentId: string; agentName: string }) => workspaceId && onOpenNotificationSettings
+        ? <DesktopInboxRowMenu workspaceId={workspaceId} agentId={item.agentId} agentName={item.agentName}
+            rule={ruleOf(item.agentId)} ready={prefsReady && !prefsLoading} changeRule={changeCoworkerRule} onOpenChange={setRowMenuOpen}
+            onOpenSettings={() => { change(false); onOpenNotificationSettings(item.agentId) }} />
+        : undefined
+    const pendingInbox = useDesktopPendingInbox(open, agents?.map(agent => agent.id), true, whileHidden)
     const { status, items: received, unavailableAgentIds: unavailable, retry, readError: pendingReadError, markRead, markAllRead: markPendingAllRead } = pendingInbox
     const roster = useMemo(() => agents ? new Map(agents.map(agent => [agent.id, agent])) : null, [agents])
     const items = useMemo(() => received.flatMap(item => {
@@ -233,9 +260,6 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
         return agent ? [{ ...item, agentName: agent.name, agentEnabled: agent.enabled !== false }] : []
     }), [received, roster])
     const unavailableAgentIds = unavailable.filter(id => !roster || roster.has(id))
-    // Finished runs: a separate bounded read that marks itself read through the explicit mutation.
-    // Root's visible conversation applies the original read-on-visible semantics.
-    const completions = useDesktopCompletions(open, agents?.map(agent => agent.id), visibleSessionId, true)
     const doneItems = useMemo(() => completions.items.flatMap(item => {
         if (!roster) return [item]
         const agent = roster.get(item.agentId)
@@ -326,7 +350,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
 
     // An outside press or Escape folds the card; the card's own clicks stay its own.
     useEffect(() => {
-        if (!open || confirmAllOpen) return
+        if (!open || confirmAllOpen || rowMenuOpen) return
         const onPointerDown = (event: globalThis.PointerEvent) => {
             if (rootRef.current?.contains(event.target as Node)) return
             change(false)
@@ -343,7 +367,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
             document.removeEventListener('pointerdown', onPointerDown)
             document.removeEventListener('keydown', onKeyDown)
         }
-    }, [open, confirmAllOpen, change, closeToPill])
+    }, [open, confirmAllOpen, rowMenuOpen, change, closeToPill])
 
     const failed = status === 'failed'
     const doneCount = doneItems.reduce((sum, item) => sum + item.count, 0)
@@ -351,6 +375,12 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
     const anyFailed = failed || doneFailed || completions.readError
     const anyPartial = partial || doneUnavailable.length > 0
     const hasMore = !!completions.nextCursor || completions.windowFull
+    const badgeCount = items.length + doneCount
+    useEffect(() => {
+        // An unavailable read is not evidence that the last unread item went away.
+        if (!setInboxBadge || !workspaceId || !launchNonce || checking || (badgeCount === 0 && (anyFailed || anyPartial))) return
+        setInboxBadge({ workspaceId, launchNonce, count: badgeCount })
+    }, [setInboxBadge, workspaceId, launchNonce, checking, badgeCount, anyFailed, anyPartial])
     const pendingLabel = t('actions.pendingCount', { count: items.length })
     const doneLabel = t('actions.doneCount', { count: doneCount })
     const lower = (label: string) => label.toLocaleLowerCase(desktopLocaleTag(language.locale))
@@ -363,10 +393,11 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
         : lower(hasMore ? t('actions.more') : t('actions.empty'))
     const pillLabel = t('actions.pill', { title: t('actions.title'), summary })
 
+    if (hidden) return null
     return (
         <div ref={rootRef} className={cn('relative flex flex-col items-start', className)}>
             {open && (
-                <div id={cardId} role="region" aria-label={t('actions.region')} className="mb-2 flex w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+                <div id={cardId} role="region" aria-label={t('actions.region')} className="absolute bottom-full z-10 mb-2 flex w-[min(24rem,100cqw)] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
                     <div className="flex items-center justify-between gap-3 border-b border-border px-4 pt-3 pb-2">
                         <div className="flex items-baseline gap-2">
                             <h2 className="text-base font-semibold text-foreground">{t('actions.title')}</h2>
@@ -472,7 +503,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
                                     <section aria-label={t('actions.needsYou')}>
                                         <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{t('actions.needsYou')}</h3>
                                         {sorted.map(item => (
-                                            <ActionRow key={item.id} item={item} onOpen={openItem} onMarkRead={markRead} />
+                                            <ActionRow key={item.id} item={item} onOpen={openItem} onMarkRead={markRead} menu={rowMenu(item)} />
                                         ))}
                                     </section>
                                 )}
@@ -480,7 +511,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
                                     <section aria-label={t('actions.done')} className={cn(items.length > 0 && 'mt-1 border-t border-border pt-1')}>
                                         <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{t('actions.done')}</h3>
                                         {doneItems.map(item => (
-                                            <DoneRow key={item.id} item={item} onOpen={openDone} onMarkRead={completions.markRead} />
+                                            <DoneRow key={item.id} item={item} onOpen={openDone} onMarkRead={completions.markRead} menu={rowMenu(item)} />
                                         ))}
                                     </section>
                                 )}

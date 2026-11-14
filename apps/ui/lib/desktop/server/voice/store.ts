@@ -84,7 +84,7 @@ export function desktopVoiceStore(db: Client): DesktopVoiceStore {
         },
         async reserveDiscard(scope, attemptId, expectedRevision) {
             const result = await db.execute({
-                sql: "UPDATE desktop_voice_attempts SET phase='discarding' WHERE attempt_id=? AND agent_id=? AND tab_uid=? AND session_id IS ? AND revision=? AND phase IN ('review','ready','failed','unavailable','discarding')",
+                sql: "UPDATE desktop_voice_attempts SET phase='discarding' WHERE attempt_id=? AND agent_id=? AND tab_uid=? AND session_id IS ? AND revision=? AND phase IN ('review','transcribing','ready','failed','unavailable','discarding')",
                 args: [attemptId, scope.agentId, scope.tabUid, scope.sessionId ?? null, expectedRevision],
             })
             if (result.rowsAffected !== 1) throw new Error('Voice attempt revision conflict')

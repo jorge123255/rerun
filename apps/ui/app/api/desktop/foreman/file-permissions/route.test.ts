@@ -44,7 +44,7 @@ test('Foreman permission endpoint preserves cookie/origin/owner and launch fence
 })
 
 test('only the dedicated Foreman UI exposes these grants; proxy response contains no private bearer', async () => {
-    expect(coworkerToolCatalogs.rerun.some(row => row.id === 'foremanAgentFilesRead' || row.id === 'foremanAgentFilesWrite')).toBe(false)
+    expect(coworkerToolCatalogs.rerun.some(row => ['foremanAgentFilesRead', 'foremanAgentFilesWrite', 'foremanWorkspaceRead'].includes(row.id))).toBe(false)
     const response = await GET(request())
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual(snapshot)
@@ -63,4 +63,15 @@ test('the managed Foreman route forwards a revision-checked delegation opt-in wi
     expect(await response.json()).toMatchObject({ grants: { ...off, delegate: true } })
     const init = vi.mocked(fetch).mock.calls[0]?.[1]
     expect(JSON.parse(String(init?.body))).toMatchObject({ workspaceId: chat.workspaceId, id: 'delegate', enabled: true, expectedGrants })
+})
+
+test('the managed Foreman route forwards the workspace metadata opt-in with the prior value', async () => {
+    const expectedGrants = { ...off, foremanWorkspaceRead: false }
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ ...snapshot, grants: { ...off, foremanWorkspaceRead: true } }))
+    const response = await PATCH(request('PATCH', { ...body, id: 'foremanWorkspaceRead', expectedGrants }))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ grants: { ...off, foremanWorkspaceRead: true } })
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body))).toMatchObject({
+        workspaceId: chat.workspaceId, id: 'foremanWorkspaceRead', enabled: true, expectedGrants,
+    })
 })

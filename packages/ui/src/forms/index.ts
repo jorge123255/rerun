@@ -13,3 +13,5 @@ export { FileDropzone } from './file-dropzone'
 export { Select } from './select'
 export { MultiSelect } from './multi-select'
 export { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator, CommandShortcut } from './command'
+
+export { useRenameField } from './use-rename-field'

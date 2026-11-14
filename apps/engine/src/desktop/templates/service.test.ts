@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, afterEach, expect, test } from 'vitest'
 import { DESKTOP_TEMPLATE_LIMITS, DESKTOP_TEMPLATE_PROSE_WARNING } from '@rerun/contracts'
 import { bindDesktopSkillOwnerReader } from '../service-skills/authority.js'
+import { UNUSED_SCREEN_MARKER } from '../isolated-screen/ownership.js'
 import { prepareSkillHelperFixture } from '../skill-publication.test-support.js'
 import { desktopTemplateRouteAllowed } from './allow.js'
 import { installManifest, readForemanTemplateImport, sealManifest } from './install.js'
@@ -151,6 +152,9 @@ test('capture and install copy a fresh coworker and leave the source and a forei
     expect(installed.coworkers).toEqual([expect.objectContaining({ engineAgentId: importId, phase: 'indexed' })])
     expect(names.get(importId)).toBe('Ada')
     const destination = join(agentsRoot, importId)
+    const folderIdentity = await lstat(destination, { bigint: true })
+    expect(JSON.parse(await readFile(join(destination, UNUSED_SCREEN_MARKER), 'utf8')))
+        .toEqual([importId, String(folderIdentity.dev), String(folderIdentity.ino)])
     const config = JSON.parse(await readFile(join(destination, 'config.json'), 'utf8')) as {
         tools: Record<string, unknown>
         mcpServers: unknown[]

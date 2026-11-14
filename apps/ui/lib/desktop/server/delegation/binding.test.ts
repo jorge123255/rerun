@@ -16,6 +16,7 @@ import { authorizeDelegationSource, handleDesktopDelegationBridge, handleDesktop
 import { delegationReceipts, delegationStore } from './store'
 import { ensureForemanChat } from '../foreman/chat-store'
 import { setDesktopWorkspaceFrozen } from '../workspace-admission'
+import { GET as readForemanDelegation, POST as stopForemanTask } from '@/app/api/desktop/foreman/[chatId]/delegation/route'
 
 let root: string
 let runtime: DesktopRuntime
@@ -75,6 +76,50 @@ function bridgeRequest(operation: string, data: unknown, launchNonce = runtime.l
     })
 }
 const bridge = (operation: string, data: unknown) => handleDesktopDelegationBridge(bridgeRequest(operation, data))
+
+test('the Chief of Staff route reads and stops only an owned chat in the active workspace', async () => {
+    const { chat, sessionId } = await ensureForemanChat(db, '1')
+    const foreign = (await ensureForemanChat(db, '2')).chat
+    const saved = record(chat.chatId)
+    saved.snapshot.parentAgentId = 'foreman'
+    const wrongAgent = record(chat.chatId)
+    await delegationStore(db).reserve(saved)
+    await delegationStore(db).reserve(wrongAgent)
+    const requestFor = (chatId: string, stop?: object, authenticated = true) =>
+        new Request(`${runtime.app.origin}/api/desktop/foreman/${chatId}/delegation`, {
+            method: stop ? 'POST' : 'GET',
+            headers: { host: new URL(runtime.app.origin).host, origin: runtime.app.origin,
+                cookie: authenticated ? `rerun-desktop-session=${runtime.app.sessionToken}` : '' },
+            body: stop ? JSON.stringify(stop) : undefined,
+        })
+    const context = (chatId: string) => ({ params: Promise.resolve({ chatId }) })
+    const read = await readForemanDelegation(requestFor(chat.chatId), context(chat.chatId))
+    expect(read.status).toBe(200)
+    expect(await read.json()).toEqual({ delegations: [saved.snapshot] })
+    expect((await readForemanDelegation(requestFor(chat.chatId, undefined, false), context(chat.chatId))).status).toBe(401)
+    for (const other of [foreign.chatId, sessionId, session.id]) {
+        expect((await readForemanDelegation(requestFor(other), context(other))).status).toBe(409)
+    }
+
+    const stop = { operation: 'stop-task', requestId: crypto.randomUUID(), delegationId: saved.snapshot.delegationId,
+        taskId: saved.snapshot.tasks[0]!.taskId, expectedRevision: saved.snapshot.revision }
+    expect((await stopForemanTask(requestFor(foreign.chatId, stop), context(foreign.chatId))).status).toBe(409)
+    setDesktopWorkspaceFrozen(runtime, true)
+    try {
+        expect((await stopForemanTask(requestFor(chat.chatId, stop), context(chat.chatId))).status).toBe(409)
+    } finally { setDesktopWorkspaceFrozen(runtime, false) }
+    expect(mocks.request).not.toHaveBeenCalled()
+
+    mocks.request.mockImplementationOnce(async (_connection, path, options, parse) => {
+        expect(path).toBe('/desktop/delegation/stop')
+        expect(JSON.parse(options.body)).toEqual({ launchNonce: runtime.launchNonce,
+            source: { parentAgentId: 'foreman', parentSessionId: chat.chatId }, request: stop })
+        return parse({ delegation: saved.snapshot })
+    })
+    const stopped = await stopForemanTask(requestFor(chat.chatId, stop), context(chat.chatId))
+    expect(stopped.status).toBe(200)
+    expect(await stopped.json()).toEqual({ delegation: saved.snapshot })
+})
 
 test('source authority binds the exact local chat to the current engine run and inherited read-only grant', async () => {
     expect(await authorizeDelegationSource(runtime, db, input, new AbortController().signal)).toEqual({

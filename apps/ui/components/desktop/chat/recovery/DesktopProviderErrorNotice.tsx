@@ -7,9 +7,7 @@ import { BorderBeam } from '@rerun/ui'
 import { AlertTriangleIcon, GaugeIcon, MessageSquareIcon, PlugIcon, RotateCwIcon, ScrollTextIcon, ServerIcon, SquareIcon, UnplugIcon } from '@/lib/icons'
 import { MessageSquarePlus } from 'lucide-react'
 import { chatErrorTitle, describeSubscriptionLimit, friendlyError, type ChatErrorKind } from '@/lib/chat-error'
-import type { DesktopModelPick } from '@/lib/desktop/chat-model'
 import type { ComponentType } from 'react'
-import { DesktopRecoveryModelPicker } from './DesktopRecoveryModelPicker'
 
 type NoticeKind = ChatErrorKind
 
@@ -39,20 +37,15 @@ function header(kind: NoticeKind, message: string): { title: string; icon: Compo
     return { title, icon: plan === 'claude' ? ClaudeGlyph : plan === 'opencode' ? OpencodeGlyph : OpenAIGlyph }
 }
 
-export function DesktopProviderErrorNotice({ kind, message, agentId, sessionId, onRetry, onContinue, onStopRun, onNewConversation, onReconnect, onSwitchModel, onConversationChoice, onOpenModelSettings, onModelSaved }: {
+export function DesktopProviderErrorNotice({ kind, message, onRetry, onContinue, onStopRun, onNewConversation, onReconnect, onSwitchModel }: {
     kind: NoticeKind
     message: string
-    agentId: string
-    sessionId: string | null
     onRetry?: () => void
     onContinue?: () => void
     onStopRun?: () => void
     onNewConversation?: () => void
     onReconnect?: () => void
     onSwitchModel?: () => void
-    onConversationChoice?: (choice: DesktopModelPick | undefined) => void
-    onOpenModelSettings?: () => void
-    onModelSaved?: () => void
 }) {
     const { title, icon } = header(kind, message)
 
@@ -97,13 +90,12 @@ export function DesktopProviderErrorNotice({ kind, message, agentId, sessionId, 
             onClick: onRetry,
         })
     }
-    const wantsSwitch = (kind === 'usage_limit' || kind === 'provider_error' || kind === 'context_window' || kind === 'overloaded' || kind === 'generic') && (onSwitchModel || !!onConversationChoice || !!onOpenModelSettings || !!agentId)
-    if (wantsSwitch && onSwitchModel) {
+    if (onSwitchModel && (kind === 'usage_limit' || kind === 'provider_error' || kind === 'context_window' || kind === 'overloaded' || kind === 'generic')) {
         actions.push({
             key: 'switch',
             leading: <Icon icon={GaugeIcon} size="sm" />,
             title: 'Switch to another model',
-            cta: 'Switch',
+            cta: 'Switch model',
             description: 'Pick another model for this conversation.',
             onClick: onSwitchModel,
         })
@@ -127,18 +119,7 @@ export function DesktopProviderErrorNotice({ kind, message, agentId, sessionId, 
                 <span className="font-medium">{title}</span>
             </div>
             <p className="text-sm">{kind === 'run_in_flight' ? 'A run started earlier is still holding this conversation. Stop it to send your message.' : friendlyError(message)}</p>
-            <div className="flex flex-wrap items-start gap-2">
-                <NoticeActions actions={actions} />
-                {wantsSwitch && !onSwitchModel && (
-                    <DesktopRecoveryModelPicker
-                        agentId={agentId}
-                        sessionId={sessionId}
-                        onPicked={onConversationChoice}
-                        onSaved={onModelSaved}
-                        onOpenSettings={onOpenModelSettings}
-                    />
-                )}
-            </div>
+            <NoticeActions actions={actions} />
         </div>
     )
 }

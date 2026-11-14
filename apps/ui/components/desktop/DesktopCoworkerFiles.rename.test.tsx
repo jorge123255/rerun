@@ -46,8 +46,8 @@ async function rename(name: string) {
     return field!
 }
 
-type RenameRequest = { agent: string; path: string; name: string }
-function disk(files: Record<string, Record<string, string>>, intercept?: (request: RenameRequest) => Response | Promise<Response> | undefined) {
+type RenameRequest = { agent: string; path: string; name: string; identity?: string }
+function disk(files: Record<string, Record<string, string>>, intercept?: (request: RenameRequest) => Response | Promise<Response> | undefined, identities?: Record<string, string>) {
     const renames: RenameRequest[] = []
     const reads: { agent: string; path: string }[] = []
     const puts: { agent: string; path: string; content: string; baseHash: string }[] = []
@@ -57,7 +57,7 @@ function disk(files: Record<string, Record<string, string>>, intercept?: (reques
         const owned = files[agent]
         if (!owned) return Response.json({ error: 'Unknown coworker' }, { status: 404 })
         if (url.pathname.endsWith('/rename') && init?.method === 'POST') {
-            const body = JSON.parse(String(init.body)) as { path: string; name: string }
+            const body = JSON.parse(String(init.body)) as Omit<RenameRequest, 'agent'>
             const request = { agent, ...body }
             renames.push(request)
             const response = await intercept?.(request)
@@ -85,13 +85,13 @@ function disk(files: Record<string, Record<string, string>>, intercept?: (reques
                 : Response.json({ path, content, hash: hashText(content), truncated: false })
         }
         const prefix = path ? `${path}/` : ''
-        const entries = new Map<string, { name: string; type: 'dir' | 'file'; size: number; modifiedAt: string }>()
+        const entries = new Map<string, { name: string; type: 'dir' | 'file'; size: number; modifiedAt: string; identity?: string }>()
         for (const candidate of Object.keys(owned)) {
             if (!candidate.startsWith(prefix)) continue
             const relative = candidate.slice(prefix.length)
             const name = relative.split('/')[0]
             if (!name || (name.startsWith('.') && !url.searchParams.has('hidden'))) continue
-            entries.set(name, { name, type: relative.includes('/') ? 'dir' : 'file', size: 1, modifiedAt: '2026-11-03T12:00:00Z' })
+            entries.set(name, { name, type: relative.includes('/') ? 'dir' : 'file', size: 1, modifiedAt: '2026-11-03T12:00:00Z', identity: identities?.[prefix + name] })
         }
         return Response.json({ path, entries: [...entries.values()] })
     })
@@ -113,6 +113,42 @@ afterEach(() => {
     act(() => { for (const root of roots.splice(0)) root.unmount() })
     vi.unstubAllGlobals()
     document.body.innerHTML = ''
+})
+
+test('opens a folder by keyboard context menu and previews its exact child by pointer menu', async () => {
+    const fixture = disk({ alice: { 'docs/notes.md': 'Nested note', 'notes.md': 'Different note' } })
+    vi.stubGlobal('fetch', fixture.fetcher)
+    await mount()
+    const folder = button('docs')!
+    await act(async () => {
+        folder.focus()
+        folder.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+    })
+    const menuItem = (label: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent?.trim() === label)
+    expect(menuItem('Open folder')).toBeDefined()
+    await act(async () => menuItem('Open folder')!.click())
+    await flush()
+    const file = button('notes.md')!
+    await act(async () => file.dispatchEvent(new MouseEvent('contextmenu', { button: 2, bubbles: true, cancelable: true })))
+    expect(menuItem('Open')).toBeDefined()
+    await act(async () => menuItem('Open')!.click())
+    await flush()
+    expect(document.querySelector('[data-testid="file-preview"]')?.textContent).toBe('Nested note')
+    expect(fixture.reads).toEqual([{ agent: 'alice', path: 'docs/notes.md' }])
+    expect(fixture.renames).toEqual([])
+})
+
+test('commits the identity from the file selected for rename', async () => {
+    const fixture = disk({ alice: { 'docs/notes.md': 'Nested note' } }, undefined, { 'docs/notes.md': '7:11' })
+    vi.stubGlobal('fetch', fixture.fetcher)
+    await mount()
+    await click('docs')
+    await flush()
+    const field = await rename('notes.md')
+    await change(field, 'brief.md')
+    await key(field, 'Enter')
+    await flush()
+    expect(fixture.renames).toEqual([{ agent: 'alice', path: 'docs/notes.md', name: 'brief.md', identity: '7:11' }])
 })
 
 test('Rename selects the stem and Enter followed by blur posts the nested path only once', async () => {

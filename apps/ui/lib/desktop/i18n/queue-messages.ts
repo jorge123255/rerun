@@ -1,0 +1,61 @@
+import type { Locale } from '@rerun/i18n'
+
+const english = {
+    loadFailed: 'Could not load the queued message.',
+    saveFailed: 'Could not save the queued message. Try again.',
+    confirmFailed: 'Could not confirm this queued message. It is still saved. Use Send now to check again.',
+    receiptPending: 'The message was sent, but its queue receipt could not be cleared. Send now will check the same message safely.',
+    sendFailed: 'Could not send the queued message. It is still saved.',
+    review: 'Your saved queued message is ready to review before sending.',
+    checkFailed: 'Could not check the saved queued message. Use Send now to retry safely.',
+    restoreFailed: 'Could not restore the queued message.',
+    previousFailed: 'The previous reply failed. Your queued message is kept. Use Send now when you are ready.',
+}
+
+export const desktopQueueCopy = {
+    en: english,
+    fr: {
+        loadFailed: 'Impossible de charger le message en attente.',
+        saveFailed: 'Impossible d’enregistrer le message en attente. Réessayez.',
+        confirmFailed: 'Impossible de confirmer ce message en attente. Il est toujours enregistré. Utilisez « Envoyer maintenant » pour vérifier à nouveau.',
+        receiptPending: 'Le message a été envoyé, mais son reçu n’a pas pu être effacé de la file. « Envoyer maintenant » vérifiera le même message sans le dupliquer.',
+        sendFailed: 'Impossible d’envoyer le message en attente. Il est toujours enregistré.',
+        review: 'Vérifiez le message en attente enregistré avant de l’envoyer.',
+        checkFailed: 'Impossible de vérifier le message en attente enregistré. Utilisez « Envoyer maintenant » pour réessayer sans le dupliquer.',
+        restoreFailed: 'Impossible de restaurer le message en attente.',
+        previousFailed: 'La réponse précédente a échoué. Le message en attente est conservé. Utilisez « Envoyer maintenant » lorsque vous êtes prêt.',
+    },
+    es: {
+        loadFailed: 'No se pudo cargar el mensaje en espera.',
+        saveFailed: 'No se pudo guardar el mensaje en espera. Inténtalo de nuevo.',
+        confirmFailed: 'No se pudo confirmar este mensaje en espera. Sigue guardado. Usa «Enviar ahora» para volver a comprobarlo.',
+        receiptPending: 'El mensaje se envió, pero no se pudo borrar su recibo de la cola. «Enviar ahora» comprobará el mismo mensaje sin duplicarlo.',
+        sendFailed: 'No se pudo enviar el mensaje en espera. Sigue guardado.',
+        review: 'Revisa el mensaje en espera guardado antes de enviarlo.',
+        checkFailed: 'No se pudo comprobar el mensaje en espera guardado. Usa «Enviar ahora» para volver a intentarlo sin duplicarlo.',
+        restoreFailed: 'No se pudo recuperar el mensaje en espera.',
+        previousFailed: 'La respuesta anterior falló. Se conserva el mensaje en espera. Usa «Enviar ahora» cuando quieras enviarlo.',
+    },
+    pt: {
+        loadFailed: 'Não foi possível carregar a mensagem na fila.',
+        saveFailed: 'Não foi possível salvar a mensagem na fila. Tente novamente.',
+        confirmFailed: 'Não foi possível confirmar esta mensagem na fila. Ela continua salva. Use “Enviar agora” para verificar novamente.',
+        receiptPending: 'A mensagem foi enviada, mas não foi possível limpar seu comprovante da fila. “Enviar agora” verificará a mesma mensagem sem duplicá-la.',
+        sendFailed: 'Não foi possível enviar a mensagem na fila. Ela continua salva.',
+        review: 'Revise a mensagem salva na fila antes de enviá-la.',
+        checkFailed: 'Não foi possível verificar a mensagem salva na fila. Use “Enviar agora” para tentar novamente sem duplicá-la.',
+        restoreFailed: 'Não foi possível restaurar a mensagem na fila.',
+        previousFailed: 'A resposta anterior falhou. Sua mensagem foi mantida na fila. Use “Enviar agora” quando quiser enviá-la.',
+    },
+    de: {
+        loadFailed: 'Die Nachricht in der Warteschlange konnte nicht geladen werden.',
+        saveFailed: 'Die Nachricht in der Warteschlange konnte nicht gespeichert werden. Versuche es erneut.',
+        confirmFailed: 'Diese Nachricht konnte nicht bestätigt werden. Sie bleibt gespeichert. Mit „Jetzt senden“ kannst du sie erneut prüfen.',
+        receiptPending: 'Die Nachricht wurde gesendet, aber ihr Beleg konnte nicht aus der Warteschlange entfernt werden. „Jetzt senden“ prüft dieselbe Nachricht ohne Duplikat.',
+        sendFailed: 'Die Nachricht in der Warteschlange konnte nicht gesendet werden. Sie bleibt gespeichert.',
+        review: 'Prüfe die gespeicherte Nachricht in der Warteschlange, bevor du sie sendest.',
+        checkFailed: 'Die gespeicherte Nachricht konnte nicht geprüft werden. Versuche es mit „Jetzt senden“ erneut, ohne sie zu duplizieren.',
+        restoreFailed: 'Die Nachricht in der Warteschlange konnte nicht wiederhergestellt werden.',
+        previousFailed: 'Die vorige Antwort ist fehlgeschlagen. Deine Nachricht bleibt in der Warteschlange. Wähle „Jetzt senden“, wenn du bereit bist.',
+    },
+} satisfies Record<Locale, typeof english>

@@ -8,6 +8,8 @@ import { readDesktopWorkspaceIconSelection } from './workspace-icon'
 import { insertDesktopAgentWithPlacement, readDesktopBoardState } from './spaces'
 import { withRosterWrite } from './roster-writes'
 import { FIRST_MESSAGE_MAX_CHARS, GENERAL_SESSION_TITLE, kindOfStoredSession, openingMessage, type DesktopSessionKind } from '../general-threads'
+import { conversationSearchKey } from '../chat-search'
+import { readDesktopProfile } from './local-profile'
 
 export type DesktopAgent = {
     id: string
@@ -27,6 +29,7 @@ export type DesktopSession = {
     agentId: string
     engineSessionId: string
     title: string
+    titleEdited?: boolean
     createdAt: string
     updatedAt: string
     modelConnectionId: string | null
@@ -68,6 +71,7 @@ export function sessionOf(row: Row): DesktopSession {
         agentId: String(row.agent_id),
         engineSessionId: String(row.engine_session_id),
         title: String(row.title),
+        ...(Number(row.title_edited) === 1 && { titleEdited: true }),
         createdAt: String(row.created_at),
         updatedAt: String(row.updated_at),
         modelConnectionId: choice?.modelConnectionId ?? null,
@@ -77,9 +81,9 @@ export function sessionOf(row: Row): DesktopSession {
     }
 }
 
-export async function readDesktopBootstrap(db: Client) {
+export async function readDesktopBootstrap(db: Client, profileDb = db) {
     const [profile, workspace, roster, appearance, recentCoworkers, savedIcon] = await Promise.all([
-        db.execute('SELECT id, display_name FROM desktop_profile WHERE id = 1'),
+        readDesktopProfile(profileDb),
         db.execute('SELECT id, name FROM desktop_workspace WHERE id = 1'),
         readDesktopRosterSnapshot(db),
         db.execute('SELECT theme FROM desktop_appearance WHERE workspace_id = 1'),
@@ -87,7 +91,7 @@ export async function readDesktopBootstrap(db: Client) {
         readDesktopWorkspaceIconSelection(db),
     ])
     return {
-        profile: { id: 1, displayName: String(profile.rows[0].display_name) },
+        profile,
         workspace: { id: 1, name: String(workspace.rows[0].name) },
         agents: roster.agents,
         theme: desktopTheme.parse(appearance.rows[0]?.theme ?? 'system'),
@@ -97,7 +101,7 @@ export async function readDesktopBootstrap(db: Client) {
     }
 }
 
-async function readDesktopRosterSnapshot(db: Client) {
+export async function readDesktopRosterSnapshot(db: Client) {
     const tx = await db.transaction('read')
     try {
         // One SQLite snapshot is essential: creating, deleting, or reconciling a
@@ -181,19 +185,19 @@ export async function findDesktopGeneralSession(db: Client, agentId: string): Pr
     return result.rows[0] ? sessionOf(result.rows[0]) : null
 }
 
-export async function createDesktopSession(db: Client, input: { agentId: string; engineSessionId: string; title: string; regenerationRequestId?: string; model?: { connectionId: string; model: string } | null; kind?: DesktopSessionKind; firstMessage?: string | null }): Promise<DesktopSession> {
+export async function createDesktopSession(db: Client, input: { id?: string; agentId: string; engineSessionId: string; title: string; regenerationRequestId?: string; model?: { connectionId: string; model: string } | null; kind?: DesktopSessionKind; firstMessage?: string | null }): Promise<DesktopSession> {
     const now = new Date().toISOString()
-    const id = crypto.randomUUID()
+    const id = input.id ?? crypto.randomUUID()
     const kind = input.kind ?? 'thread'
     const title = (kind === 'general' ? GENERAL_SESSION_TITLE : input.title).slice(0, 80) || 'New conversation'
     const firstMessage = kind === 'general' ? null : openingMessage(input.firstMessage)?.slice(0, FIRST_MESSAGE_MAX_CHARS) ?? null
     const statements: InStatement[] = [{
-        sql: `INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, created_at, updated_at, model_connection_id, model, kind, first_message)
-              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM desktop_agents WHERE id = ? AND workspace_id = 1)
+        sql: `INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, title_search, created_at, updated_at, model_connection_id, model, kind, first_message)
+              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM desktop_agents WHERE id = ? AND workspace_id = 1)
                 AND NOT EXISTS (SELECT 1 FROM desktop_deletions WHERE agent_id = ?)
                 AND (? = 'thread' OR NOT EXISTS (SELECT 1 FROM desktop_sessions WHERE agent_id = ? AND kind = 'general' AND engine_session_id <> ?))
               ON CONFLICT(engine_session_id) DO NOTHING`,
-        args: [id, input.agentId, input.engineSessionId, title, now, now, input.model?.connectionId ?? null, input.model?.model ?? null, kind, firstMessage, input.agentId, input.agentId, kind, input.agentId, input.engineSessionId],
+        args: [id, input.agentId, input.engineSessionId, title, conversationSearchKey(title), now, now, input.model?.connectionId ?? null, input.model?.model ?? null, kind, firstMessage, input.agentId, input.agentId, kind, input.agentId, input.engineSessionId],
     }]
     if (input.regenerationRequestId) statements.push({
         sql: `UPDATE desktop_regeneration_requests SET alternate_session_id =

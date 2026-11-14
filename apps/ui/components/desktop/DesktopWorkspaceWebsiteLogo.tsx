@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { GlobeIcon } from '@/lib/icons'
+import { useDesktopLocale } from './DesktopLocale'
 import { LOGO_MAX_BYTES, NO_LOGO_FOUND, readLogoLink, type LogoLink } from '@/lib/desktop/workspace-logo-link'
 
 // The original "Logo from a website or link" field, desktop-side. Preview bytes come from the
@@ -19,6 +20,7 @@ export function DesktopWorkspaceWebsiteLogo({ disabled, onSelection }: {
     // cannot submit yesterday's reviewed bytes for the newly typed address.
     onSelection: (selection: DesktopWorkspaceLinkSelection | null, pending: boolean) => void
 }) {
+    const { t } = useDesktopLocale()
     const [linkInput, setLinkInput] = useState('')
     const [error, setError] = useState('')
     const [previewSrc, setPreviewSrc] = useState<string | null>(null)
@@ -104,7 +106,7 @@ export function DesktopWorkspaceWebsiteLogo({ disabled, onSelection }: {
     }
 
     return (
-        <Field label="Logo from a website or link" error={error || undefined}>
+        <Field label={t('workspaceForm.logoLink')} error={error === NO_LOGO_FOUND ? t('workspaceForm.noLogoFound') : error || undefined}>
             <div className="relative">
                 <span className="pointer-events-none absolute top-1/2 left-2.5 flex size-5 -translate-y-1/2 items-center justify-center overflow-hidden rounded">
                     {/* The validated local blob has no remote Next Image source. */}

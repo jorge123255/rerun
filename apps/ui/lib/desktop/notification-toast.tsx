@@ -8,6 +8,7 @@ import { CalendarClock, MonitorIcon } from '@/lib/icons'
 import { KIND_BEAM, KIND_ICONS, KIND_ICON_COLORS } from '@/lib/notifications/kind-visuals'
 import type { DesktopNotificationTarget } from './notification-bridge'
 import type { DesktopNotificationAdmission } from './notifications'
+import { desktopTranslator, englishDesktopLanguage } from './locale'
 
 export function desktopNotificationToastTarget(event: DesktopNotificationAdmission): DesktopNotificationTarget {
     return {
@@ -20,7 +21,8 @@ export function desktopNotificationToastTarget(event: DesktopNotificationAdmissi
 // beam, copy rules and « Open conversation », which revalidates the exact chat before it
 // navigates, through the same lifetime-bound callback as a native click. The toast id is the event key, so a remount cannot
 // announce the same admission twice.
-export function showDesktopNotificationToast(event: DesktopNotificationAdmission, onOpenTarget?: (target: DesktopNotificationTarget) => void): void {
+export function showDesktopNotificationToast(event: DesktopNotificationAdmission, onOpenTarget?: (target: DesktopNotificationTarget) => void,
+    t = desktopTranslator(englishDesktopLanguage)): void {
     const id = `desktop-notification:${event.key}`
     const scheduled = isScheduledSource(event.source)
     const kind: NotificationKind = event.kind === 'takeover' ? 'question' : event.kind === 'tool-install' ? 'approval' : event.kind === 'service' || event.kind === 'secret' || event.kind === 'mcp' ? 'connector' : event.kind
@@ -30,7 +32,9 @@ export function showDesktopNotificationToast(event: DesktopNotificationAdmission
     const target = desktopNotificationToastTarget(event)
     toast.custom(toastId => (
         <NotificationToast
-            title={scheduled ? `${event.title} · Scheduled task` : event.title}
+            title={scheduled ? t('notificationToast.scheduledTask', { name: event.title }) : event.title}
+            closeLabel={t('notificationToast.close')}
+            openLabel={t('notificationToast.openConversation')}
             message={event.body ?? event.subtitle}
             agentId={event.agentId}
             Icon={Icon}

@@ -152,6 +152,11 @@
             "setup": "Install"
         }
     },
+    "sessionRename": {
+        "rename": "Rename",
+        "label": "Conversation name",
+        "failed": "Couldn't rename. Try again."
+    },
     "openChatsTabs": {
         "closeTab": "Close {title}",
         "newThread": "New thread",

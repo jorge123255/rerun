@@ -5,7 +5,10 @@ import { BOARD_ACTIVITY_POLL_MS, BOARD_ACTIVITY_URL, boardActivitySchema, boardA
 // The app shares this snapshot between the board and Control Center. Standalone boards
 // can still own a poll; a board with a supplied snapshot disables its local reader.
 // A failed read marks every coworker unreachable instead of leaving a stale or idle state.
-export function useBoardActivity(agentIds: string[], enabled = true): BoardActivitySnapshot & { refresh: () => Promise<BoardActivitySnapshot | null> } {
+/** `onOutsiders` is told when the engine reports activity for a coworker that is not in `agentIds`. */
+export function useBoardActivity(agentIds: string[], enabled = true, onOutsiders?: (ids: string[]) => void): BoardActivitySnapshot & { refresh: () => Promise<BoardActivitySnapshot | null> } {
+    const outsiders = useRef(onOutsiders)
+    outsiders.current = onOutsiders
     const scope = JSON.stringify([...new Set(agentIds)].sort())
     const currentScope = useRef(scope)
     currentScope.current = scope
@@ -26,8 +29,11 @@ export function useBoardActivity(agentIds: string[], enabled = true): BoardActiv
             try {
                 const response = await fetch(BOARD_ACTIVITY_URL, { signal: controller.signal, cache: 'no-store' })
                 if (!response.ok) throw new Error('Board activity read failed')
-                const next = boardActivityForAgents(boardActivitySchema.parse(await response.json()), ids)
+                const activity = boardActivitySchema.parse(await response.json())
+                const next = boardActivityForAgents(activity, ids)
                 if (!current()) return null
+                const unknown = Object.keys(activity.agents).filter(id => !ids.includes(id))
+                if (unknown.length) outsiders.current?.(unknown)
                 setSnapshot({ scope, ...next })
                 return next
             } catch {

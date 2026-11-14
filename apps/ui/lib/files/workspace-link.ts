@@ -26,12 +26,13 @@ export function agentImageSrc(agentId: string, src: string | undefined): string 
 }
 
 /** Rewrites agent workspace links to a custom HAST element, and the agent's own images to the file proxy. */
-export function remarkAgentWorkspaceLinks(options?: { agentId?: string }) {
+export function remarkAgentWorkspaceLinks(options?: { agentId?: string; linkPath?: typeof agentWorkspacePathFromHref }) {
     const agentId = options?.agentId
+    const linkPath = options?.linkPath ?? agentWorkspacePathFromHref
     return (tree: MarkdownNode) => {
         const visit = (node: MarkdownNode) => {
             if (node.type === 'link') {
-                const path = agentWorkspacePathFromHref(node.url)
+                const path = linkPath(node.url)
                 if (path) {
                     node.data = {
                         ...node.data,

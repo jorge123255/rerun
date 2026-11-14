@@ -1,7 +1,7 @@
 'use client'
 
-import { Badge, PANEL_CARD, type BadgeTone } from '@rerun/ui/primitives'
-import { useEffect, useState, type ComponentType, type ReactNode } from 'react'
+import { Badge, type BadgeTone } from '@rerun/ui/primitives'
+import { useEffect, useState } from 'react'
 
 import { getServiceAlternativesAction } from '@/app/api/_actions/services.actions'
 import type { ReadChatFile } from '@/components/chat/AttachmentLightbox'
@@ -17,7 +17,7 @@ import { CheckIcon, KeyIcon, LinkIcon, MessageCircleQuestionIcon, MonitorIcon, P
 import { serviceIconProps } from '@/lib/services/icons'
 import { cn } from '@/lib/utils'
 
-const USER_SIDE = 'ml-auto w-full max-w-[85%]'
+import { ReceiptCard } from './ReceiptCard'
 
 type HitlReceiptProps = {
     reply: HitlReply
@@ -48,19 +48,6 @@ export function HitlReceipt({ reply, call, agentId, rawUrlFor, readFile }: HitlR
         case 'cancelled':
             return <DismissedLine of={reply.of} />
     }
-}
-
-function ReceiptCard({ icon: Glyph, title, meta, children }: { icon: ComponentType<{ className?: string }>; title: string; meta?: string; children: ReactNode }) {
-    return (
-        <div className={cn(PANEL_CARD, USER_SIDE, 'overflow-hidden')}>
-            <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs">
-                <Glyph className="size-3.5 text-muted-foreground" />
-                <span className="font-medium text-foreground">{title}</span>
-                {meta && <span className="ml-auto text-muted-foreground">{meta}</span>}
-            </div>
-            <div className="divide-y divide-border">{children}</div>
-        </div>
-    )
 }
 
 const SERVICE_STATUS: Record<ServiceSetupOutcome, { label: string; tone: BadgeTone }> = {

@@ -16,7 +16,7 @@ test('drain, close and publication refuse without calling the supervisor or a ho
         () => ports.bindRemote(),
         () => ports.verifyTarget(),
         () => ports.publishTarget(),
-    ]) await assert.rejects(call(), error => error.code === 'authority_missing')
+    ]) await assert.rejects(async () => call(), error => error.code === 'authority_missing')
     assert.equal(drains, 0)
     assert.equal(stops, 0)
 })

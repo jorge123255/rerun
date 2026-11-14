@@ -1,12 +1,13 @@
 'use client'
 
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { Input } from '@/components/ui/input'
 import { DESKTOP_WORKSPACE_UI_COPY } from '@/lib/desktop/workspaces'
 import type { DesktopWorkspaceClient } from '@/lib/desktop/workspaces'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
-import { Loader2Icon } from '@/lib/icons'
+import { Loader2Icon, PencilIcon } from '@/lib/icons'
 import { useEffect, useState } from 'react'
 import type { DesktopWorkspaceRecord } from '@rerun/contracts'
 
@@ -73,11 +74,8 @@ export function RenameDesktopWorkspaceDialog({
                     className="flex min-h-0 flex-1 flex-col"
                     onSubmit={event => { event.preventDefault(); void save() }}
                 >
-                    <div className="space-y-4 p-6">
-                        <DialogHeader>
-                            <DialogTitle>{DESKTOP_WORKSPACE_UI_COPY.renameTitle}</DialogTitle>
-                            <DialogDescription>{DESKTOP_WORKSPACE_UI_COPY.renameHelp}</DialogDescription>
-                        </DialogHeader>
+                    <DialogHeaderBar icon={PencilIcon} title={DESKTOP_WORKSPACE_UI_COPY.renameTitle} description={DESKTOP_WORKSPACE_UI_COPY.renameHelp} />
+                    <div className="space-y-4 p-4">
                         <Input
                             id="desktop-workspace-rename-name"
                             label="Name"
@@ -90,7 +88,7 @@ export function RenameDesktopWorkspaceDialog({
                         />
                         {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
                     </div>
-                    <DialogFooter className="flex flex-wrap gap-2 border-t bg-muted/50 px-6 py-4">
+                    <DialogFooter className="m-0 flex flex-wrap gap-2">
                         <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
                             {DESKTOP_WORKSPACE_UI_COPY.cancel}
                         </Button>

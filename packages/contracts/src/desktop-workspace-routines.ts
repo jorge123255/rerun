@@ -1,7 +1,10 @@
 import { z } from 'zod'
+import { providerSchema } from './agent.js'
 
 const id = z.string().min(1).max(160)
 const revision = z.string().min(1).max(256)
+const modelId = z.string().trim().min(1).max(256)
+const modelOverride = z.object({ connectionId: modelId, provider: providerSchema, model: modelId }).strict()
 
 export const desktopWorkspaceRoutineChatSchema = z.object({
     agentId: id,
@@ -23,6 +26,9 @@ export const desktopScheduleRecordSchema = z.object({
     runAt: z.string().nullable(),
     timezone: z.string().min(1).max(100),
     enabled: z.boolean(),
+    connectionId: z.string().nullable().optional(),
+    provider: providerSchema.nullable().optional(),
+    model: z.string().nullable().optional(),
     revision: revision,
     lastRunAt: z.string().nullable().optional(),
 }).strict()
@@ -60,12 +66,20 @@ export const desktopWorkspaceRoutinesViewSchema = z.object({
 }).strict()
 export type DesktopWorkspaceRoutinesView = z.infer<typeof desktopWorkspaceRoutinesViewSchema>
 
+export const desktopUpcomingRoutinesSchema = z.array(z.strictObject({
+    agentId: id,
+    name: z.string().min(1).max(120),
+    at: z.number().int().positive().max(8_640_000_000_000_000),
+}))
+export type DesktopUpcomingRoutine = z.infer<typeof desktopUpcomingRoutinesSchema>[number]
+
 export const desktopWorkspaceRoutineOwnerSchema = z.object({
     agentId: id,
     engineAgentId: id,
     name: z.string().min(1).max(200),
     enabled: z.boolean(),
     setupPending: z.boolean(),
+    scheduleGranted: z.boolean(),
 }).strict()
 export type DesktopWorkspaceRoutineOwner = z.infer<typeof desktopWorkspaceRoutineOwnerSchema>
 
@@ -77,6 +91,7 @@ export const desktopScheduleEditInputSchema = z.object({
     runAt: z.string().datetime({ offset: true }).nullable(),
     timezone: z.string().min(1).max(100),
     enabled: z.boolean(),
+    modelOverride: modelOverride.nullable().optional(),
 }).strict().superRefine((value, context) => {
     if (Boolean(value.cron) === Boolean(value.runAt)) context.addIssue({ code: 'custom', message: 'Choose either a recurring cron or a one-shot time.' })
 })

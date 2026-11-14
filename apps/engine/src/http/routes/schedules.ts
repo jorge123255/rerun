@@ -1,19 +1,28 @@
 import { desktopApp } from '../../desktop/policy.js'
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { providerSchema } from '@rerun/contracts'
+import { desktopScheduleRevisionSchema, providerSchema } from '@rerun/contracts'
 import { deleteSchedule, listSchedules, readSchedule, scheduleExists, updateScheduleAt, writeSchedule } from '../../schedules/loader.js'
 import { ScheduleTimingError } from '../../schedules/next-run.js'
 import { isValidCron } from '../../schedules/cron.js'
 import { fireSchedule } from '../../runtime/scheduler.js'
 import { getAgent } from '../../agents/registry.js'
 import { hasPendingSetup } from '../../agents/setup.js'
-import { setupPending } from '../../lib/errors.js'
+import { HttpError, setupPending } from '../../lib/errors.js'
 import { authorizeDesktopSchedule } from '../../desktop/schedule-binding.js'
 import { describeDesktopSchedule, desktopScheduleDescriptionInputSchema } from '../../desktop/schedule-description.js'
+import { DesktopScheduleFileConflict, desktopScheduleFiles } from '../../desktop/schedule-tools/files.js'
+import { desktopScheduleDefinitionRevision } from '../../desktop/schedule-tools/revision.js'
+import { assertDesktopRunAdmission } from '../../desktop/workspace-admission.js'
 
 export const scheduleRoutes = new Hono()
 const authorize = async (agentId: string) => { if (desktopApp()) await authorizeDesktopSchedule(agentId) }
+const reviewedRevision = (header: string | undefined) => {
+    if (!desktopApp() || header === undefined) return undefined
+    const revision = desktopScheduleRevisionSchema.safeParse(header)
+    if (!revision.success) throw new HttpError(400, 'Invalid routine revision')
+    return revision.data
+}
 
 const createSchema = z
     .object({
@@ -37,7 +46,10 @@ const createSchema = z
 scheduleRoutes.get('/', async c => {
     const agentId = c.req.param('id')!
     await authorize(agentId)
-    return c.json({ schedules: await listSchedules(agentId) })
+    const schedules = await listSchedules(agentId)
+    return c.json({
+        schedules: desktopApp() ? schedules.map(schedule => ({ ...schedule, revision: desktopScheduleDefinitionRevision(schedule) })) : schedules,
+    })
 })
 
 scheduleRoutes.post('/', async c => {
@@ -123,6 +135,32 @@ scheduleRoutes.delete('/:slug', async c => {
     const agentId = c.req.param('id')!
     const slug = c.req.param('slug')
     await authorize(agentId)
+    const expected = reviewedRevision(c.req.header('x-desktop-schedule-revision'))
+    if (expected !== undefined) {
+        const signal = c.req.raw.signal
+        const admission = assertDesktopRunAdmission()
+        signal.throwIfAborted()
+        const files = desktopScheduleFiles()
+        const current = await files.read(agentId, slug)
+        signal.throwIfAborted()
+        if (current && expected !== desktopScheduleDefinitionRevision(current)) {
+            throw new HttpError(412, 'This routine changed. Refresh it before deleting.')
+        }
+        if (current) {
+            try {
+                await files.replace(agentId, slug, current, null, async () => {
+                    signal.throwIfAborted()
+                    await authorize(agentId)
+                    assertDesktopRunAdmission(admission)
+                    signal.throwIfAborted()
+                })
+            } catch (error) {
+                if (error instanceof DesktopScheduleFileConflict) throw new HttpError(412, 'This routine changed. Refresh it before deleting.')
+                throw error
+            }
+        }
+        return c.json({ deleted: slug })
+    }
     if (!scheduleExists(agentId, slug)) return c.json({ error: 'schedule not found' }, 404)
     await deleteSchedule(agentId, slug)
     return c.json({ deleted: slug })

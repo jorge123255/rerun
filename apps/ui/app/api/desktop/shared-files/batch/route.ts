@@ -1,20 +1,12 @@
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { desktopRoute } from '@/lib/desktop/server/http'
-import { importDesktopSharedOrdinaryFile } from '@/lib/desktop/server/shared-workspace-files'
+import { importDesktopSharedOrdinaryFile, sharedFileImportLimit } from '@/lib/desktop/server/shared-workspace-files'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 const MAX_FILES = 16
 const MAX_TOTAL_BYTES = 32 * 1024 * 1024
-const MAX_FILE_BYTES = 16 * 1024 * 1024
-const SUPPORTED = /\.(txt|md|png|jpe?g|gif|webp|wav|mp3|m4a|ogg|flac|mp4|webm|mov|m4v|pdf)$/i
-
-function capFor(name: string): number {
-    if (/\.(txt|md)$/i.test(name)) return 1024 * 1024
-    if (/\.(png|jpe?g|gif|webp)$/i.test(name)) return 8 * 1024 * 1024
-    return MAX_FILE_BYTES
-}
 
 async function importForm(request: Request, signal: AbortSignal): Promise<FormData> {
     const limit = MAX_TOTAL_BYTES + 64 * 1024
@@ -68,8 +60,8 @@ export function POST(request: Request) {
         const destination = typeof folder === 'string' ? folder : ''
         const results: { name: string; folder: string; status: 'created' | 'refused' | 'uncertain'; path?: string; message?: string }[] = []
         for (const file of files) {
-            const cap = capFor(file.name)
-            if (!SUPPORTED.test(file.name)) { results.push({ name: file.name, folder: destination, status: 'refused', message: 'Choose a supported shared file type.' }); continue }
+            const cap = sharedFileImportLimit(file.name)
+            if (cap === null) { results.push({ name: file.name, folder: destination, status: 'refused', message: 'Choose a supported shared file type.' }); continue }
             if (file.size > cap) { results.push({ name: file.name, folder: destination, status: 'refused', message: `Files of this type can be up to ${cap} bytes.` }); continue }
             try {
                 const result = await importDesktopSharedOrdinaryFile(runtime, destination, file.name, new Uint8Array(await file.arrayBuffer()), { signal, maxBytes: cap })

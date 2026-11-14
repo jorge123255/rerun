@@ -334,7 +334,12 @@ export async function cancelSessionRuns(sessionId: string): Promise<void> {
     await Promise.all(running.map(r => cancelRun(ctx.conn, ctx.engineAgentId, r.id).catch(() => {})))
 }
 
-export async function finalizeSession(sessionId: string, status: 'idle' | 'error'): Promise<void> {
+export async function finalizeSession(sessionId: string, status: 'idle' | 'error', options?: { onlyWhileWorking?: boolean }): Promise<void> {
     await assertSessionInWorkspace(sessionId)
-    await updateSessionStatus(sessionId, status)
+    if (options?.onlyWhileWorking) {
+        // A reconnect may only settle a session that the engine has left working.
+        await createServiceRoleClient().from('sessions').update<Database['public']['Tables']['sessions']['Update']>({ status }).eq('id', sessionId).eq('status', 'working')
+    } else {
+        await updateSessionStatus(sessionId, status)
+    }
 }

@@ -6,13 +6,9 @@ import { Field } from '@/components/ui/field'
 import { MarkdownTextarea } from '@/components/ui/markdown-textarea'
 import { Segmented } from '@/components/ui/segmented'
 import { Wand2 } from '@/lib/icons'
+import { useDesktopLocale } from '../DesktopLocale'
 
 export type DesktopSetupDraft = { required: boolean | null; prompt: string }
-
-const CHOICES = [
-    { value: 'yes', label: 'Yes' },
-    { value: 'no', label: 'No' },
-]
 
 export function DesktopSetupFields({ value, defaultPrompt, onChange, disabled }: {
     value: DesktopSetupDraft
@@ -20,6 +16,11 @@ export function DesktopSetupFields({ value, defaultPrompt, onChange, disabled }:
     onChange: (next: DesktopSetupDraft) => void
     disabled?: boolean
 }) {
+    const { t } = useDesktopLocale()
+    const choices = [
+        { value: 'yes', label: t('coworkerSetup.fields.yes') },
+        { value: 'no', label: t('coworkerSetup.fields.no') },
+    ]
     const prompt = value.prompt.trim()
     const isDefault = prompt === defaultPrompt.trim()
     const useDefaultTemplate = () => onChange({ ...value, prompt: defaultPrompt })
@@ -27,15 +28,15 @@ export function DesktopSetupFields({ value, defaultPrompt, onChange, disabled }:
     const resetButton = (
         <Button type="button" size="sm" variant="ghost" disabled={disabled} onClick={prompt ? undefined : useDefaultTemplate} className="self-start">
             <Wand2 className="mr-1.5 size-3.5" />
-            {prompt ? 'Reset to the default template' : 'Use the default template'}
+            {prompt ? t('coworkerSetup.fields.resetToDefault') : t('coworkerSetup.fields.useDefault')}
         </Button>
     )
 
     return (
         <div className="flex flex-col gap-3">
-            <Field label="Does this coworker need to be configured after install?" helperText="Answer before including this coworker in a private template.">
+            <Field label={t('coworkerSetup.fields.needsSetup.label')} helperText={t('coworkerSetup.author.answerHint')}>
                 <Segmented
-                    options={CHOICES}
+                    options={choices}
                     value={value.required === null ? '' : value.required ? 'yes' : 'no'}
                     onChange={next => {
                         const required = next === 'yes'
@@ -46,32 +47,34 @@ export function DesktopSetupFields({ value, defaultPrompt, onChange, disabled }:
             </Field>
 
             {value.required === true && (
-                <Field label="Install instructions" helperText="Written to the coworker, not to the user: it reads this and walks them through it in the chat.">
-                    <div className="flex flex-col gap-1.5">
-                        <MarkdownTextarea
-                            dialogTitle="Edit the install instructions"
-                            disabled={disabled}
-                            value={value.prompt}
-                            onChange={prompt => onChange({ ...value, prompt })}
-                            placeholder={defaultPrompt}
-                            className="min-h-40 font-mono text-xs"
-                        />
-                        {!isDefault &&
-                            (prompt ? (
-                                <ConfirmDialog
-                                    title="Reset to the default template?"
-                                    description="What is written here is replaced by the default instructions. This cannot be undone."
-                                    confirmLabel="Reset"
-                                    confirmVariant="default"
-                                    onConfirm={useDefaultTemplate}
-                                >
-                                    {resetButton}
-                                </ConfirmDialog>
-                            ) : (
-                                resetButton
-                            ))}
-                    </div>
-                </Field>
+                <div className="flex flex-col gap-1.5">
+                    <MarkdownTextarea
+                        label={t('coworkerSetup.fields.instructions.label')}
+                        helperText={t('coworkerSetup.fields.instructions.helper')}
+                        dialogTitle={t('coworkerSetup.fields.instructions.dialogTitle')}
+                        editorLabels={{ open: t('coworkerSetup.editor.openEditor'), done: t('coworkerSetup.editor.done') }}
+                        disabled={disabled}
+                        value={value.prompt}
+                        onChange={prompt => onChange({ ...value, prompt })}
+                        placeholder={defaultPrompt}
+                        className="min-h-40 font-mono text-xs"
+                    />
+                    {!isDefault &&
+                        (prompt ? (
+                            <ConfirmDialog
+                                title={t('coworkerSetup.fields.resetConfirm.title')}
+                                description={t('coworkerSetup.fields.resetConfirm.description')}
+                                confirmLabel={t('coworkerSetup.fields.resetConfirm.confirm')}
+                                cancelLabel={t('cancel')}
+                                confirmVariant="default"
+                                onConfirm={useDefaultTemplate}
+                            >
+                                {resetButton}
+                            </ConfirmDialog>
+                        ) : (
+                            resetButton
+                        ))}
+                </div>
             )}
         </div>
     )

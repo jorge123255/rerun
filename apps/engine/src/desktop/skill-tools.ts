@@ -11,6 +11,7 @@ import type { RunContext } from '../runtime/context.js'
 import { assertDesktopAgentNotDeleted, beginDesktopAgentWork } from './agent-lifecycle.js'
 import { requireDesktopToolGrant } from './tool-grants.js'
 import { desktopSkillProposeAllowed, desktopSkillToolsAllowed } from './skill-grant.js'
+import { syncDesktopVaultSkillVisibility } from './service-skills/authority.js'
 import {
     SkillBoundaryError,
     deleteConfinedFile,
@@ -128,7 +129,9 @@ export function desktopSkillTools(ctx: RunContext): ToolSet {
             description: 'List your skills with their descriptions.',
             inputSchema: z.object({}),
             execute: () => runSkillTool(ctx, false, async () => {
-                const skills = await listPublishedSkills(skillsDir(id), { signal: ctx.abortSignal, beforeCommit: () => requireDesktopToolGrant(ctx, 'skills') })
+                const hidden = await syncDesktopVaultSkillVisibility(workspaceDir(id), ctx.abortSignal)
+                const allSkills = await listPublishedSkills(skillsDir(id), { signal: ctx.abortSignal, beforeCommit: () => requireDesktopToolGrant(ctx, 'skills') })
+                const skills = allSkills.filter(skill => !hidden.has(skill.slug))
                 if (skills.length === 0) return 'No skills yet.'
                 const owners = await ownersInWorkspace(workspaceDir(id))
                 return skills.map(skill => {
@@ -142,6 +145,8 @@ export function desktopSkillTools(ctx: RunContext): ToolSet {
             description: 'Read the full procedure of a skill before using it.',
             inputSchema: z.object({ slug: z.string() }),
             execute: ({ slug }) => runSkillTool(ctx, false, async () => {
+                const hidden = await syncDesktopVaultSkillVisibility(workspaceDir(id), ctx.abortSignal)
+                if (hidden.has(slug)) return `Skill not found: ${slug}`
                 const skill = await readPublishedSkill(skillsDir(id), slug, { signal: ctx.abortSignal, beforeCommit: () => requireDesktopToolGrant(ctx, 'skills') })
                 if (!skill) return `Skill not found: ${slug}`
                 const service = (await ownersInWorkspace(workspaceDir(id))).get(slug)
@@ -160,6 +165,8 @@ export function desktopSkillTools(ctx: RunContext): ToolSet {
                 offset: z.number().int().nonnegative().default(0).describe('Character offset to start at. Use the offset named in the previous page to continue.'),
             }),
             execute: ({ slug, path, offset = 0 }) => runSkillTool(ctx, false, async () => {
+                const hidden = await syncDesktopVaultSkillVisibility(workspaceDir(id), ctx.abortSignal)
+                if (hidden.has(slug)) return `Skill not found: ${slug}`
                 if (!await skillManifestExists(skillsDir(id), slug, { signal: ctx.abortSignal, beforeCommit: () => requireDesktopToolGrant(ctx, 'skills') })) return `Skill not found: ${slug}`
                 if (!Number.isInteger(offset) || offset < 0) return 'offset must be a non-negative integer.'
                 try {

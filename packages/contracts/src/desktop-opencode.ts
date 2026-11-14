@@ -3,7 +3,7 @@ import { desktopWorkspaceIdSchema } from './desktop-workspaces.js'
 
 // OpenCode Go and Console for the desktop. Version 1. The barrel export is a root fragment.
 // This is not an OpenRouter endpoint and it does not accept a ChatGPT credential.
-// Console models stay out of the default set until the connection explicitly enables Console.
+// Console and free Go models start off. Free models require an explicit enable on the connection.
 
 export const DESKTOP_OPENCODE_CONTRACT_VERSION = 1 as const
 export const DESKTOP_OPENCODE_PROVIDER = 'opencode' as const
@@ -85,10 +85,18 @@ export function desktopOpencodeUpstreamId(id: string): string {
     return plan ? id.slice(plan.length + 1) : id
 }
 
+export function isFreeDesktopOpencodeModel(price: Pick<DesktopOpencodeModel['price'], 'input' | 'output'>): boolean {
+    return price.input === 0 && price.output === 0
+}
+
+export function desktopOpencodeModelEnabled(model: DesktopOpencodeModel, enabledModelIds?: readonly string[]): boolean {
+    return enabledModelIds?.includes(model.id) ?? !isFreeDesktopOpencodeModel(model.price)
+}
+
 function entryToModel(entry: z.infer<typeof catalogEntrySchema>, plan: DesktopOpencodePlan): DesktopOpencodeModel | null {
     if (entry.type !== 'chat' || !entry.capabilities.tools.supported) return null
     const { input, output } = entry.cost.text
-    if (input.price === 0 && output.price === 0) return null
+    if (plan === 'console' && isFreeDesktopOpencodeModel({ input: input.price, output: output.price })) return null
     const styles = Object.entries(entry.api).filter(([style]) => WIRE_OF_STYLE[style])
     if (styles.length !== 1) return null
     const [style, { base_url: baseUrl }] = styles[0]!
@@ -127,9 +135,10 @@ export function parseDesktopOpencodeCatalog(json: unknown, plan: DesktopOpencode
 
 // Shipped public catalogs parsed by the original snapshot generator. Not a live provider response.
 export const DESKTOP_OPENCODE_SNAPSHOT: DesktopOpencodeModel[] = [
+    {"id":"go/beam-free","upstreamId":"beam-free","plan":"go","label":"Beam Free","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":1048576,"outputLimit":131072,"images":false,"reasoning":true,"price":{"input":0,"output":0,"cacheRead":0}},
     {"id":"go/claude-haiku-5-5","upstreamId":"claude-haiku-5-5","plan":"go","label":"Claude Haiku 5.5","wire":"anthropic","baseUrl":"https://opencode.ai/inference/go/anthropic/v1","contextWindow":1000000,"outputLimit":128000,"images":true,"reasoning":true,"price":{"input":0.1,"output":0.5,"cacheRead":0.01}},
     {"id":"go/deepseek-v4-pro","upstreamId":"deepseek-v4-pro","plan":"go","label":"DeepSeek V4 Pro","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":1000000,"outputLimit":384000,"images":false,"reasoning":true,"price":{"input":0.66,"output":1.98,"cacheRead":0.022}},
-    {"id":"go/deepseek-v4.1-flash","upstreamId":"deepseek-v4.1-flash","plan":"go","label":"DeepSeek V4.1 Flash","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":1000000,"outputLimit":384000,"images":true,"reasoning":true,"price":{"input":0.15,"output":0.6,"cacheRead":0.003}},
+    {"id":"go/deepseek-v4.1-flash","upstreamId":"deepseek-v4.1-flash","plan":"go","label":"DeepSeek V4.1 Flash 1017","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":1000000,"outputLimit":384000,"images":true,"reasoning":true,"price":{"input":0.15,"output":0.6,"cacheRead":0.003}},
     {"id":"go/gemini-4-argon","upstreamId":"gemini-4-argon","plan":"go","label":"Gemini 4 Argon","wire":"google","baseUrl":"https://opencode.ai/inference/go/google/v1beta","contextWindow":1048576,"outputLimit":65536,"images":true,"reasoning":true,"price":{"input":2,"output":10,"cacheRead":0.1}},
     {"id":"go/glm-5.2","upstreamId":"glm-5.2","plan":"go","label":"GLM-5.2","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":1000000,"outputLimit":131072,"images":false,"reasoning":true,"price":{"input":1.4,"output":4.4,"cacheRead":0.26}},
     {"id":"go/glm-5.3","upstreamId":"glm-5.3","plan":"go","label":"GLM-5.3","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":1000000,"outputLimit":131072,"images":false,"reasoning":true,"price":{"input":1.4,"output":4.4,"cacheRead":0.26}},
@@ -138,11 +147,14 @@ export const DESKTOP_OPENCODE_SNAPSHOT: DesktopOpencodeModel[] = [
     {"id":"go/gpt-6-luna","upstreamId":"gpt-6-luna","plan":"go","label":"GPT-6 Luna","wire":"responses","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":922000,"outputLimit":128000,"images":true,"reasoning":true,"price":{"input":0.1,"output":0.5,"cacheRead":0.01}},
     {"id":"go/grok-4.7","upstreamId":"grok-4.7","plan":"go","label":"Grok 4.7","wire":"responses","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":500000,"outputLimit":500000,"images":true,"reasoning":true,"price":{"input":2,"output":6,"cacheRead":0.5}},
     {"id":"go/hy3","upstreamId":"hy3","plan":"go","label":"Hy3","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":192000,"outputLimit":128000,"images":false,"reasoning":true,"price":{"input":0.14,"output":0.58,"cacheRead":0.035}},
+    {"id":"go/hy4","upstreamId":"hy4","plan":"go","label":"Hy4","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":983010,"outputLimit":65536,"images":true,"reasoning":true,"price":{"input":0.834,"output":2.501,"cacheRead":0.042}},
     {"id":"go/hy4-preview","upstreamId":"hy4-preview","plan":"go","label":"Hy4 preview","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":1024000,"outputLimit":64000,"images":false,"reasoning":true,"price":{"input":0.834,"output":2.501,"cacheRead":0.042}},
+    {"id":"go/iceman-contributor-free","upstreamId":"iceman-contributor-free","plan":"go","label":"Iceman Contributor Free","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":262144,"outputLimit":131072,"images":false,"reasoning":true,"price":{"input":0,"output":0,"cacheRead":0}},
     {"id":"go/kimi-k2.7-code","upstreamId":"kimi-k2.7-code","plan":"go","label":"Kimi K2.7 Code","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":262144,"outputLimit":262144,"images":true,"reasoning":true,"price":{"input":0.95,"output":4,"cacheRead":0.19}},
     {"id":"go/kimi-k3","upstreamId":"kimi-k3","plan":"go","label":"Kimi K3","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":1048576,"outputLimit":131072,"images":true,"reasoning":true,"price":{"input":3,"output":15,"cacheRead":0.3}},
     {"id":"go/kimi-k3.1-pro","upstreamId":"kimi-k3.1-pro","plan":"go","label":"Kimi K3.1 Pro","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":1048576,"outputLimit":131072,"images":true,"reasoning":true,"price":{"input":2,"output":10,"cacheRead":0.2}},
     {"id":"go/longcat-2.0","upstreamId":"longcat-2.0","plan":"go","label":"LongCat-2.0","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":1000000,"outputLimit":131072,"images":false,"reasoning":true,"price":{"input":0.3,"output":1.2,"cacheRead":0.006}},
+    {"id":"go/longcat-2.5-free","upstreamId":"longcat-2.5-free","plan":"go","label":"LongCat 2.5 Free","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":1000000,"outputLimit":262144,"images":true,"reasoning":true,"price":{"input":0,"output":0,"cacheRead":0}},
     {"id":"go/mimo-v2.6-flash","upstreamId":"mimo-v2.6-flash","plan":"go","label":"MiMo-V2.6-Flash","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":1048576,"outputLimit":131072,"images":true,"reasoning":true,"price":{"input":0.14,"output":0.28,"cacheRead":0.0028}},
     {"id":"go/mimo-v2.6-pro","upstreamId":"mimo-v2.6-pro","plan":"go","label":"MiMo-V2.6-Pro","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":1048576,"outputLimit":131072,"images":true,"reasoning":true,"price":{"input":0.435,"output":0.87,"cacheRead":0.003625}},
     {"id":"go/minimax-m3","upstreamId":"minimax-m3","plan":"go","label":"MiniMax-M3","wire":"anthropic","baseUrl":"https://opencode.ai/inference/go/anthropic/v1","contextWindow":1000000,"outputLimit":131072,"images":true,"reasoning":true,"price":{"input":0.3,"output":1.2,"cacheRead":0.06}},
@@ -155,6 +167,7 @@ export const DESKTOP_OPENCODE_SNAPSHOT: DesktopOpencodeModel[] = [
     {"id":"go/step-5-preview","upstreamId":"step-5-preview","plan":"go","label":"Step 5 Preview","wire":"chat","baseUrl":"https://opencode.ai/inference/go/openai/v1","contextWindow":1000000,"outputLimit":65536,"images":true,"reasoning":true,"price":{"input":1,"output":2.7,"cacheRead":0.1}},
     {"id":"console/claude-fable-5","upstreamId":"claude-fable-5","plan":"console","label":"Claude Fable 5","wire":"anthropic","baseUrl":"https://opencode.ai/inference/anthropic/v1","contextWindow":1000000,"outputLimit":128000,"images":true,"reasoning":true,"price":{"input":10,"output":50,"cacheRead":1}},
     {"id":"console/claude-fable-5-1","upstreamId":"claude-fable-5-1","plan":"console","label":"Claude Fable 5.1","wire":"anthropic","baseUrl":"https://opencode.ai/inference/anthropic/v1","contextWindow":1000000,"outputLimit":128000,"images":true,"reasoning":true,"price":{"input":10,"output":50,"cacheRead":0.25}},
+    {"id":"console/claude-fable-5-2","upstreamId":"claude-fable-5-2","plan":"console","label":"Claude Fable 5.2","wire":"anthropic","baseUrl":"https://opencode.ai/inference/anthropic/v1","contextWindow":1000000,"outputLimit":128000,"images":true,"reasoning":true,"price":{"input":8,"output":40,"cacheRead":0.2}},
     {"id":"console/claude-haiku-4-5","upstreamId":"claude-haiku-4-5","plan":"console","label":"Claude Haiku 4.5","wire":"anthropic","baseUrl":"https://opencode.ai/inference/anthropic/v1","contextWindow":200000,"outputLimit":64000,"images":true,"reasoning":true,"price":{"input":1,"output":5,"cacheRead":0.1}},
     {"id":"console/claude-haiku-5-5","upstreamId":"claude-haiku-5-5","plan":"console","label":"Claude Haiku 5.5","wire":"anthropic","baseUrl":"https://opencode.ai/inference/anthropic/v1","contextWindow":1000000,"outputLimit":128000,"images":true,"reasoning":true,"price":{"input":0.1,"output":0.5,"cacheRead":0.01}},
     {"id":"console/claude-opus-4-5","upstreamId":"claude-opus-4-5","plan":"console","label":"Claude Opus 4.5","wire":"anthropic","baseUrl":"https://opencode.ai/inference/anthropic/v1","contextWindow":200000,"outputLimit":64000,"images":true,"reasoning":true,"price":{"input":5,"output":25,"cacheRead":0.5}},
@@ -166,15 +179,16 @@ export const DESKTOP_OPENCODE_SNAPSHOT: DesktopOpencodeModel[] = [
     {"id":"console/claude-sonnet-4-5","upstreamId":"claude-sonnet-4-5","plan":"console","label":"Claude Sonnet 4.5","wire":"anthropic","baseUrl":"https://opencode.ai/inference/anthropic/v1","contextWindow":1000000,"outputLimit":64000,"images":true,"reasoning":true,"price":{"input":3,"output":15,"cacheRead":0.3}},
     {"id":"console/claude-sonnet-4-6","upstreamId":"claude-sonnet-4-6","plan":"console","label":"Claude Sonnet 4.6","wire":"anthropic","baseUrl":"https://opencode.ai/inference/anthropic/v1","contextWindow":1000000,"outputLimit":64000,"images":true,"reasoning":true,"price":{"input":3,"output":15,"cacheRead":0.3}},
     {"id":"console/claude-sonnet-5","upstreamId":"claude-sonnet-5","plan":"console","label":"Claude Sonnet 5","wire":"anthropic","baseUrl":"https://opencode.ai/inference/anthropic/v1","contextWindow":1000000,"outputLimit":128000,"images":true,"reasoning":true,"price":{"input":2,"output":10,"cacheRead":0.2}},
-    {"id":"console/claude-sonnet-5-5","upstreamId":"claude-sonnet-5-5","plan":"console","label":"Claude Sonnet 5.5","wire":"anthropic","baseUrl":"https://opencode.ai/inference/anthropic/v1","contextWindow":1000000,"outputLimit":128000,"images":true,"reasoning":true,"price":{"input":2,"output":10,"cacheRead":0.2}},
+    {"id":"console/claude-sonnet-5-5","upstreamId":"claude-sonnet-5-5","plan":"console","label":"Claude Sonnet 5.5","wire":"anthropic","baseUrl":"https://opencode.ai/inference/anthropic/v1","contextWindow":1000000,"outputLimit":128000,"images":true,"reasoning":true,"price":{"input":2,"output":10,"cacheRead":0.1}},
     {"id":"console/deepseek-v4-pro","upstreamId":"deepseek-v4-pro","plan":"console","label":"DeepSeek V4 Pro","wire":"chat","baseUrl":"https://opencode.ai/inference/openai/v1","contextWindow":1000000,"outputLimit":384000,"images":false,"reasoning":true,"price":{"input":1.74,"output":3.48,"cacheRead":0.145}},
-    {"id":"console/deepseek-v4.1-flash","upstreamId":"deepseek-v4.1-flash","plan":"console","label":"DeepSeek V4.1 Flash","wire":"chat","baseUrl":"https://opencode.ai/inference/openai/v1","contextWindow":1000000,"outputLimit":384000,"images":true,"reasoning":true,"price":{"input":0.3,"output":1.2,"cacheRead":0.006}},
+    {"id":"console/deepseek-v4.1-flash","upstreamId":"deepseek-v4.1-flash","plan":"console","label":"DeepSeek V4.1 Flash 1017","wire":"chat","baseUrl":"https://opencode.ai/inference/openai/v1","contextWindow":1000000,"outputLimit":384000,"images":true,"reasoning":true,"price":{"input":0.3,"output":1.2,"cacheRead":0.006}},
     {"id":"console/gemini-3.5-flash","upstreamId":"gemini-3.5-flash","plan":"console","label":"Gemini 3.5 Flash","wire":"google","baseUrl":"https://opencode.ai/inference/google/v1beta","contextWindow":1048576,"outputLimit":65536,"images":true,"reasoning":true,"price":{"input":1.5,"output":9,"cacheRead":0.15}},
     {"id":"console/gemini-3.5-flash-lite","upstreamId":"gemini-3.5-flash-lite","plan":"console","label":"Gemini 3.5 Flash Lite","wire":"google","baseUrl":"https://opencode.ai/inference/google/v1beta","contextWindow":1048576,"outputLimit":65536,"images":true,"reasoning":true,"price":{"input":0.3,"output":2.5,"cacheRead":0.03}},
-    {"id":"console/gemini-3.6-flash","upstreamId":"gemini-3.6-flash","plan":"console","label":"Gemini 3.6 Flash","wire":"google","baseUrl":"https://opencode.ai/inference/google/v1beta","contextWindow":1048576,"outputLimit":65536,"images":true,"reasoning":true,"price":{"input":1.5,"output":7.5,"cacheRead":0.15}},
-    {"id":"console/gemini-3.7-flash","upstreamId":"gemini-3.7-flash","plan":"console","label":"Gemini 3.7 Flash","wire":"google","baseUrl":"https://opencode.ai/inference/google/v1beta","contextWindow":1048576,"outputLimit":65536,"images":true,"reasoning":true,"price":{"input":1.5,"output":7.5,"cacheRead":0.15}},
-    {"id":"console/gemini-3.8-flash","upstreamId":"gemini-3.8-flash","plan":"console","label":"Gemini 3.8 Flash","wire":"google","baseUrl":"https://opencode.ai/inference/google/v1beta","contextWindow":1048576,"outputLimit":65536,"images":true,"reasoning":true,"price":{"input":1.5,"output":7.5,"cacheRead":0.15}},
+    {"id":"console/gemini-3.6-flash","upstreamId":"gemini-3.6-flash","plan":"console","label":"Gemini 3.6 Flash","wire":"google","baseUrl":"https://opencode.ai/inference/google/v1beta","contextWindow":1048576,"outputLimit":65536,"images":true,"reasoning":true,"price":{"input":0.75,"output":3.75,"cacheRead":0.075}},
+    {"id":"console/gemini-3.7-flash","upstreamId":"gemini-3.7-flash","plan":"console","label":"Gemini 3.7 Flash","wire":"google","baseUrl":"https://opencode.ai/inference/google/v1beta","contextWindow":1048576,"outputLimit":65536,"images":true,"reasoning":true,"price":{"input":0.75,"output":3.75,"cacheRead":0.075}},
+    {"id":"console/gemini-3.8-flash","upstreamId":"gemini-3.8-flash","plan":"console","label":"Gemini 3.8 Flash","wire":"google","baseUrl":"https://opencode.ai/inference/google/v1beta","contextWindow":1048576,"outputLimit":65536,"images":true,"reasoning":true,"price":{"input":0.75,"output":3.75,"cacheRead":0.075}},
     {"id":"console/gemini-4-argon","upstreamId":"gemini-4-argon","plan":"console","label":"Gemini 4 Argon","wire":"google","baseUrl":"https://opencode.ai/inference/google/v1beta","contextWindow":1048576,"outputLimit":65536,"images":true,"reasoning":true,"price":{"input":2,"output":10,"cacheRead":0.1}},
+    {"id":"console/gemini-4-carbon","upstreamId":"gemini-4-carbon","plan":"console","label":"Gemini 4 Carbon","wire":"google","baseUrl":"https://opencode.ai/inference/google/v1beta","contextWindow":1048576,"outputLimit":65536,"images":true,"reasoning":true,"price":{"input":2,"output":10,"cacheRead":0.1}},
     {"id":"console/glm-5","upstreamId":"glm-5","plan":"console","label":"GLM-5","wire":"chat","baseUrl":"https://opencode.ai/inference/openai/v1","contextWindow":204800,"outputLimit":131072,"images":false,"reasoning":true,"price":{"input":1,"output":3.2,"cacheRead":0.2}},
     {"id":"console/glm-5.1","upstreamId":"glm-5.1","plan":"console","label":"GLM-5.1","wire":"chat","baseUrl":"https://opencode.ai/inference/openai/v1","contextWindow":204800,"outputLimit":131072,"images":false,"reasoning":true,"price":{"input":1.4,"output":4.4,"cacheRead":0.26}},
     {"id":"console/glm-5.2","upstreamId":"glm-5.2","plan":"console","label":"GLM-5.2","wire":"chat","baseUrl":"https://opencode.ai/inference/openai/v1","contextWindow":1000000,"outputLimit":131072,"images":false,"reasoning":true,"price":{"input":1.4,"output":4.4,"cacheRead":0.26}},
@@ -216,6 +230,7 @@ export const DESKTOP_OPENCODE_SNAPSHOT: DesktopOpencodeModel[] = [
     {"id":"console/minimax-m2.7","upstreamId":"minimax-m2.7","plan":"console","label":"MiniMax-M2.7","wire":"chat","baseUrl":"https://opencode.ai/inference/openai/v1","contextWindow":204800,"outputLimit":131072,"images":false,"reasoning":true,"price":{"input":0.3,"output":1.2,"cacheRead":0.06}},
     {"id":"console/minimax-m3","upstreamId":"minimax-m3","plan":"console","label":"MiniMax-M3","wire":"chat","baseUrl":"https://opencode.ai/inference/openai/v1","contextWindow":512000,"outputLimit":128000,"images":true,"reasoning":true,"price":{"input":0.3,"output":1.2,"cacheRead":0.06}},
     {"id":"console/mistral-large-4","upstreamId":"mistral-large-4","plan":"console","label":"Mistral Large 4","wire":"chat","baseUrl":"https://opencode.ai/inference/openai/v1","contextWindow":524288,"outputLimit":262144,"images":true,"reasoning":true,"price":{"input":0.68,"output":2.09,"cacheRead":0.07}},
+    {"id":"console/muse-ember-1.0","upstreamId":"muse-ember-1.0","plan":"console","label":"Muse Ember 1.0","wire":"responses","baseUrl":"https://opencode.ai/inference/openai/v1","contextWindow":1048576,"outputLimit":270000,"images":true,"reasoning":true,"price":{"input":0.1,"output":0.5,"cacheRead":0.004}},
     {"id":"console/muse-spark-1.2","upstreamId":"muse-spark-1.2","plan":"console","label":"Muse Spark 1.2","wire":"responses","baseUrl":"https://opencode.ai/inference/openai/v1","contextWindow":1048576,"outputLimit":131072,"images":true,"reasoning":true,"price":{"input":1.25,"output":4.25,"cacheRead":0.15}},
     {"id":"console/muse-spark-1.3","upstreamId":"muse-spark-1.3","plan":"console","label":"Muse Spark 1.3","wire":"responses","baseUrl":"https://opencode.ai/inference/openai/v1","contextWindow":1048576,"outputLimit":131072,"images":true,"reasoning":true,"price":{"input":1.25,"output":4.25,"cacheRead":0.15}},
     {"id":"console/muse-wonder-1.0","upstreamId":"muse-wonder-1.0","plan":"console","label":"Muse Wonder","wire":"responses","baseUrl":"https://opencode.ai/inference/openai/v1","contextWindow":1048576,"outputLimit":131072,"images":true,"reasoning":true,"price":{"input":4,"output":20,"cacheRead":0.2}},
@@ -228,7 +243,7 @@ export const DESKTOP_OPENCODE_SNAPSHOT: DesktopOpencodeModel[] = [
 const SNAPSHOT_IDS = new Set(DESKTOP_OPENCODE_SNAPSHOT.map(model => model.id))
 
 export function desktopOpencodeDefaultModelIds(): string[] {
-    const go = DESKTOP_OPENCODE_SNAPSHOT.filter(model => model.plan === 'go').map(model => model.id)
+    const go = DESKTOP_OPENCODE_SNAPSHOT.filter(model => model.plan === 'go' && !isFreeDesktopOpencodeModel(model.price)).map(model => model.id)
     return [DESKTOP_OPENCODE_DEFAULT_MODEL, ...go.filter(id => id !== DESKTOP_OPENCODE_DEFAULT_MODEL)]
 }
 
@@ -243,6 +258,32 @@ export function desktopOpencodeKeyProblem(value: string): string | null {
     if (!token.startsWith('oc_sk_') || /\s/.test(token)) return 'OpenCode keys start with oc_sk_.'
     return null
 }
+
+export const DESKTOP_OPENCODE_CONNECTION_ID = 'opencode-desktop'
+
+const connectionModels = {
+    enabledModelIds: z.array(z.string().min(1).max(256)).max(256),
+    defaultModelId: z.string().min(1).max(256),
+    consoleEnabled: z.boolean(),
+}
+
+export const desktopOpencodeConnectionView = z.object({
+    workspaceId: desktopWorkspaceIdSchema,
+    connectionId: z.literal(DESKTOP_OPENCODE_CONNECTION_ID),
+    revision: z.uuid(),
+    name: z.string().trim().min(1).max(100),
+    ...connectionModels,
+})
+
+const changeScope = { workspaceId: desktopWorkspaceIdSchema, expectedRevision: z.uuid() }
+
+export const desktopOpencodeConnectionChange = z.discriminatedUnion('action', [
+    z.strictObject({ ...changeScope, action: z.literal('key'), expectedRevision: z.uuid().nullable(), apiKey: z.string().trim().min(1).max(4096) }),
+    z.strictObject({ ...changeScope, action: z.literal('models'), ...connectionModels }),
+    z.strictObject({ ...changeScope, action: z.literal('rename'), name: desktopOpencodeConnectionView.shape.name }),
+    z.strictObject({ ...changeScope, action: z.literal('disconnect') }),
+])
+export type DesktopOpencodeConnectionChange = z.infer<typeof desktopOpencodeConnectionChange>
 
 export const desktopOpencodeWindowSchema = z.strictObject({
     kind: z.enum(['session', 'weekly', 'monthly']),
@@ -292,7 +333,7 @@ export const desktopOpencodeModelRowSchema = z.strictObject({
     id: z.string(),
     label: z.string(),
     plan: z.enum(DESKTOP_OPENCODE_PLANS),
-    description: z.enum(['Included in Go', 'Console credits']),
+    description: z.enum(['Included in Go', 'Console credits', 'Free']),
     enabled: z.boolean(),
     locked: z.boolean(),
     lockReason: z.string().optional(),
@@ -324,7 +365,8 @@ export function desktopOpencodeModelRows(input: {
                 id,
                 label: row.model?.label ?? id,
                 plan,
-                description: DESKTOP_OPENCODE_PLAN_DESCRIPTION[plan],
+                description: row.model && isFreeDesktopOpencodeModel(row.model.price)
+                    ? 'Free' as const : DESKTOP_OPENCODE_PLAN_DESCRIPTION[plan],
                 enabled: enabled.has(id),
                 locked: consoleLocked,
                 lockReason: consoleLocked ? 'Off until you switch Console on.' : undefined,
@@ -391,9 +433,22 @@ export function desktopOpencodeBehaviour(model: DesktopOpencodeModel | undefined
     return model ? BEHAVIOUR_OF_WIRE[model.wire] : undefined
 }
 
-// Go models that can see, cheapest first. Console is never the vision fallback.
+// Automatic vision only considers enabled paid Go models. The selected-model path is separate.
 export function desktopOpencodeVisionModel(enabled: readonly DesktopOpencodeModel[]): string | null {
-    const seeing = enabled.filter(model => model.images && model.plan === 'go')
+    const seeing = enabled.filter(model => model.images && model.plan === 'go' && !isFreeDesktopOpencodeModel(model.price))
         .sort((a, b) => a.price.input + a.price.output - (b.price.input + b.price.output))
     return seeing[0]?.id ?? null
 }
+
+const catalogScope = { workspaceId: desktopWorkspaceIdSchema, requestId: z.string().min(1).max(200), selectedModelId: z.string().min(1).max(256) }
+export const desktopOpencodeSettingsRequest = z.union([
+    desktopOpencodeConnectionChange,
+    z.strictObject({ ...catalogScope, action: z.literal('catalog') }),
+    z.strictObject({ ...catalogScope, action: z.literal('refresh') }),
+    z.strictObject({ workspaceId: desktopWorkspaceIdSchema, action: z.literal('usage'), refresh: z.boolean().optional() }),
+])
+export const desktopOpencodeUsageView = z.object({
+    windows: z.array(desktopOpencodeWindowSchema),
+    capturedAt: z.string().nullable(),
+    fresh: z.boolean(),
+})

@@ -1,0 +1,20 @@
+{
+    "name": "@rerun/mac-pairing-client",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "sideEffects": false,
+    "main": "./src/index.mjs",
+    "exports": {
+        ".": "./src/index.mjs"
+    },
+    "files": [
+        "src",
+        "README.md"
+    ],
+    "scripts": {
+        "test": "node --test test/*.test.mjs"
+    },
+    "license": "AGPL-3.0-only",
+    "description": "Phone-side client for Rerun's Connect to This Mac pairing flow. Keeps Mac-paired sessions separate from cloud and self-hosted Supabase sessions."
+}

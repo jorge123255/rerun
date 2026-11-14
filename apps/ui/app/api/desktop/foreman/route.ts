@@ -1,8 +1,9 @@
+import { desktopApprovalAnswerSchema } from '@/lib/desktop/approvals'
 import { desktopQuestionAnswerSchema } from '@/lib/desktop/questions'
 import { desktopForemanSavedUiSchema } from '@/lib/desktop/foreman-client/ui-schema'
 import { ForemanRefusal } from '@/lib/desktop/server/foreman/authority'
 import { z } from 'zod'
-import { foremanBuildActionSchema, foremanChatRefSchema, foremanDecisionInputSchema, foremanModelRefSchema } from '@rerun/contracts'
+import { DESKTOP_FOREMAN_TURN_MAX_BYTES, desktopCoworkerMentionsSchema, desktopDocumentSendSelectionSchema, foremanBuildActionSchema, foremanChatRefSchema, foremanDecisionInputSchema, foremanModelRefSchema, validDesktopCoworkerMentionFields } from '@rerun/contracts'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { readDesktopJson } from '@/lib/desktop/server/request-json'
@@ -12,10 +13,16 @@ import { ForemanError } from '@/lib/desktop/server/foreman/runtime'
 import { cancelCompanyBriefChat } from '@/lib/desktop/server/company-brief/client'
 import { desktopForemanVoice } from '@/lib/desktop/server/foreman-voice/binding'
 import { assertDesktopWorkspaceAdmission } from '@/lib/desktop/server/workspace-admission'
+import { localStarterDecisionSchema } from '@/lib/desktop/server/foreman-starter/local-decision'
 export const runtime = 'nodejs'
 const inputSchema = z.discriminatedUnion('action', [
-    z.strictObject({ action: z.literal('send'), chat: foremanChatRefSchema, requestId: z.uuid(), text: z.string().trim().min(1).max(20_000), modelChoice: foremanModelRefSchema.optional() }),
+    z.strictObject({ action: z.literal('send'), chat: foremanChatRefSchema, requestId: z.uuid(), text: z.string().trim().max(20_000),
+        modelChoice: foremanModelRefSchema.optional(), documents: desktopDocumentSendSelectionSchema.optional(), coworkerMentions: desktopCoworkerMentionsSchema.optional(),
+    }).refine(input => Boolean(input.text || input.documents)).refine(validDesktopCoworkerMentionFields),
+    z.strictObject({ action: z.literal('model'), chat: foremanChatRefSchema, expected: foremanModelRefSchema.nullable(), model: foremanModelRefSchema.nullable() }),
     z.strictObject({ action: z.literal('answer'), chat: foremanChatRefSchema, input: desktopQuestionAnswerSchema }),
+    z.strictObject({ action: z.literal('approval'), chat: foremanChatRefSchema, input: desktopApprovalAnswerSchema }),
+    z.strictObject({ action: z.literal('starter'), chat: foremanChatRefSchema, input: localStarterDecisionSchema }),
     z.strictObject({ action: z.literal('stop'), chat: foremanChatRefSchema }),
     z.strictObject({ action: z.literal('decision'), input: foremanDecisionInputSchema }),
     z.strictObject({ action: z.literal('recover'), chat: foremanChatRefSchema, requestId: z.uuid() }),
@@ -24,23 +31,35 @@ const inputSchema = z.discriminatedUnion('action', [
 ])
 export async function GET(request: Request) {
     return desktopRoute(request, async runtime => {
-        const app = await desktopForeman(runtime), state = await app.state()
+        const params = new URL(request.url).searchParams
+        const scope = params.has('workspaceId') || params.has('chatId')
+            ? foremanChatRefSchema.safeParse({ workspaceId: params.get('workspaceId'), chatId: params.get('chatId') })
+            : undefined
+        if (scope && !scope.success) throw new DesktopHttpError(400, 'Invalid Chief of Staff conversation.')
+        const app = await desktopForeman(runtime), state = await app.state(scope?.data)
         const row = (await app.db.execute({ sql: 'SELECT ui,ui_revision FROM desktop_foreman_chats WHERE chat_id=?', args: [state.chat.chatId] })).rows[0]!
         return Response.json({ ...state, ui: { snapshot: row.ui ? JSON.parse(String(row.ui)) : null, revision: Number(row.ui_revision) } }, { headers: { 'cache-control': 'no-store' } })
     })
 }
 export async function POST(request: Request) {
     return desktopRoute(request, async runtime => {
-        const parsed = inputSchema.safeParse(await readDesktopJson(request, 128 * 1024))
-        if (!parsed.success) throw new DesktopHttpError(400, 'This Foreman action was not understood.')
+        const parsed = inputSchema.safeParse(await readDesktopJson(request, DESKTOP_FOREMAN_TURN_MAX_BYTES))
+        if (!parsed.success) throw new DesktopHttpError(400, 'This Chief of Staff action was not understood.')
         const input = parsed.data, app = await desktopForeman(runtime)
         const chat = 'chat' in input ? input.chat : input.input.chat
         if (chat.workspaceId !== String(runtime.workspaceId)) throw new DesktopHttpError(404, 'Conversation not found.')
         await ownedForemanChat(app.db, chat)
         if (input.action !== 'ui' && input.action !== 'stop') await assertDesktopWorkspaceAdmission(runtime)
         try {
-            if (input.action === 'send') return Response.json(await app.send(input.chat, input.requestId, input.text, input.modelChoice))
+            if (input.action === 'send') return Response.json(await app.send(input.chat, input.requestId, input.text, input.modelChoice,
+                { documents: input.documents, coworkerMentions: input.coworkerMentions }))
+            if (input.action === 'model') return Response.json(await app.setModel(input.chat, input.expected, input.model))
+            if (input.action === 'approval') return Response.json(await app.decideApproval(input.chat, input.input))
             if (input.action === 'answer') return Response.json(await app.answerQuestion(input.chat, input.input))
+            if (input.action === 'starter') {
+                return Response.json(await app.answerStarter(input.chat, input.input, AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])),
+                    { headers: { 'cache-control': 'no-store' } })
+            }
             if (input.action === 'stop') { await cancelCompanyBriefChat(runtime, input.chat); await (await desktopForemanVoice(runtime, app.voiceShutdownSignal)).cancelChat(input.chat); await app.stop(input.chat); return Response.json({ ok: true }) }
             if (input.action === 'decision') return Response.json(await app.core.decide(input.input))
             if (input.action === 'recover') return Response.json(await app.core.recoverDecision(input.chat, input.requestId))
@@ -50,7 +69,7 @@ export async function POST(request: Request) {
                 const row = (await app.db.execute({ sql: 'SELECT ui_revision,ui FROM desktop_foreman_chats WHERE chat_id=?', args: [chat.chatId] })).rows[0]!
                 const value = JSON.stringify(input.snapshot), revision = Number(row.ui_revision)
                 if (row.ui === value) return Response.json({ revision })
-                if (revision !== input.expectedRevision) throw new DesktopHttpError(409, 'The saved Foreman view changed. Reopen the panel before editing it.')
+                if (revision !== input.expectedRevision) throw new DesktopHttpError(409, 'The saved Chief of Staff view changed. Reopen the panel before editing it.')
                 await app.db.execute({ sql: 'UPDATE desktop_foreman_chats SET ui=?,ui_revision=ui_revision+1 WHERE chat_id=? AND ui_revision=?', args: [value, chat.chatId, revision] })
                 return Response.json({ revision: revision + 1 })
             })

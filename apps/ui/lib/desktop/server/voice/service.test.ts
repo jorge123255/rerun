@@ -31,7 +31,7 @@ function fixture(overrides: { transcribe?: (input: { bytes: Uint8Array; format: 
         },
         async reserveDiscard(_scope, attemptId, expectedRevision) {
             const record = records.get(attemptId)
-            if (!record || record.draft.revision !== expectedRevision || record.deletion === 'complete' || ['uploading', 'transcribing', 'sending', 'sent'].includes(record.draft.phase)) throw new Error('revision conflict')
+            if (!record || record.draft.revision !== expectedRevision || record.deletion === 'complete' || ['uploading', 'sending', 'sent'].includes(record.draft.phase)) throw new Error('revision conflict')
             records.set(attemptId, { ...record, deletion: 'pending' })
         },
         async discard(_scope, attemptId, expectedRevision) {
@@ -128,6 +128,43 @@ describe('desktop voice durable lifecycle', () => {
         expect(missing).toMatchObject({ phase: 'failed', transcript: null })
         expect(missing!.error).toContain('unacknowledged microphone chunks')
         expect(uploaded.recording.byteLength).toBe(bytes.byteLength)
+    })
+
+    it.each([false, true])('allows discarding an interrupted transcription only when its recording is unreferenced (referenced=%s)', async referenced => {
+        let entered!: () => void
+        const started = new Promise<void>(resolve => { entered = resolve })
+        const transcribe = vi.fn(async ({ signal }: { signal: AbortSignal }) => {
+            entered()
+            await new Promise<void>((_resolve, reject) => {
+                signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+            })
+            return 'unreachable'
+        })
+        const f = fixture({ transcribe, referenced })
+        const signal = new AbortController().signal
+        const uploaded = await f.service.upload(scope, upload, bytes, signal)
+        const controller = new AbortController()
+        const inFlight = f.service.transcribe(scope, { ...scope, attemptId, expectedRevision: uploaded.revision }, controller.signal)
+        await started
+        const stopped = expect(inFlight).rejects.toHaveProperty('name', 'AbortError')
+        controller.abort()
+        await stopped
+
+        const restarted = createDesktopVoiceService(f.authorities)
+        const [draft] = await restarted.list(scope, signal)
+        expect(draft).toMatchObject({ phase: 'transcribing', transcript: null })
+        await expect(restarted.discard(scope, { ...scope, attemptId, expectedRevision: uploaded.revision }, signal)).rejects.toThrow('voice attempt changed')
+        const discard = restarted.discard(scope, { ...scope, attemptId, expectedRevision: draft!.revision }, signal)
+        if (referenced) {
+            await expect(discard).rejects.toThrow('referenced')
+            expect(f.audio.get(attemptId)).toEqual(bytes)
+        } else {
+            await discard
+            expect(f.audio.has(attemptId)).toBe(false)
+            expect(await restarted.list(scope, signal)).toEqual([])
+        }
+        expect(transcribe).toHaveBeenCalledOnce()
+        expect(f.send).not.toHaveBeenCalled()
     })
 
     it('refuses referenced cleanup and deletes only exact unreferenced audio', async () => {

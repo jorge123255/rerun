@@ -13,8 +13,8 @@ import { desktopOpencodeModelRows, desktopOpencodePlanOf, type DesktopOpencodeMo
 import { Badge } from '@rerun/ui/primitives'
 
 const SECTIONS: { plan: DesktopOpencodePlan; title: string; hint: string }[] = [
-    { plan: 'go', title: 'Included in OpenCode Go', hint: 'Paid by your Go plan, within its 5-hour, weekly and monthly limits.' },
-    { plan: 'console', title: 'Console, paid with your credits', hint: 'Billed per token from your OpenCode credits. Off until you switch one on.' },
+    { plan: 'go', title: 'Included in OpenCode Go', hint: 'Paid by your Go plan. The free ones are off until you switch them on.' },
+    { plan: 'console', title: 'Console, paid with your credits', hint: 'Billed per token, off until you switch one on.' },
 ]
 
 export type DesktopOpencodeModelsChange = { enabledModelIds: string[]; consoleEnabled: boolean }
@@ -32,7 +32,7 @@ function ModelRow({ row, model, isDefault, lockReason, disabled, onToggle }: { r
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                     <span className={cn('truncate text-xs font-medium', row.enabled && 'text-foreground')}>{row.label}</span>
                     {isDefault && <StarIcon aria-label="Default model" className="size-3 shrink-0 text-yellow-400 [&_polygon]:fill-current" />}
-                    <Badge size="xs" tone={row.plan === 'go' ? 'green' : 'cyan'} className="shrink-0">{row.plan === 'go' ? 'Included' : 'Credits'}</Badge>
+                    <Badge size="xs" tone={row.description === 'Free' ? 'yellow' : row.plan === 'go' ? 'green' : 'cyan'} className="shrink-0">{row.description === 'Free' ? 'Free' : row.plan === 'go' ? 'Included' : 'Credits'}</Badge>
                     {row.isNew && <Badge size="xs" tone="brand" className="shrink-0">New</Badge>}
                     {model && !model.images && <Badge size="xs" tone="neutral" className="shrink-0">No vision</Badge>}
                 </div>
@@ -110,10 +110,9 @@ export function DesktopOpencodeModels({ catalog, enabledModelIds, defaultModelId
                     <DetailBlock
                         key={section.plan}
                         title={section.title}
-                        aside={<span className="flex items-center gap-2 text-[11px] text-muted-foreground tabular-nums">
-                            {section.plan === 'console' && <Switch checked={consoleEnabled} disabled={disabled || !firstConsole} onCheckedChange={toggleConsole} aria-label="Use OpenCode Console credits" />}
-                            {inPlan.filter(row => row.enabled).length} of {inPlan.length} on
-                        </span>}
+                        aside={section.plan === 'console'
+                            ? <Switch checked={consoleEnabled} disabled={disabled || !firstConsole} onCheckedChange={toggleConsole} aria-label="Use OpenCode Console credits" />
+                            : undefined}
                     >
                         <p className="text-[11px] text-muted-foreground">{section.hint}</p>
                         {shown.length === 0 ? (

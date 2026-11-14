@@ -8,9 +8,12 @@ import { collapseLinks, type ComposerLinks, type ComposerMention, type ComposerS
 function replaceRange(el: HTMLTextAreaElement, { start, end }: TextRange, text: string) {
     el.focus()
     el.setSelectionRange(start, end)
-    const done = text ? document.execCommand('insertText', false, text) : document.execCommand('delete')
+    const done = text ? document.execCommand?.('insertText', false, text) : document.execCommand?.('delete')
     if (!done) {
-        el.setRangeText(text, start, end, 'end')
+        // The native setter leaves React's value tracker at the previous value until input.
+        const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        setValue?.call(el, el.value.slice(0, start) + text + el.value.slice(end))
+        el.setSelectionRange(start + text.length, start + text.length)
         el.dispatchEvent(new Event('input', { bubbles: true }))
     }
 }
@@ -37,7 +40,7 @@ const NO_LINKS: ComposerLinks = new Map()
  * or a selection that touches one takes it whole. `expand` puts the full URLs back, for anything
  * that leaves the composer; a mention leaves as it was typed.
  */
-export function useComposerLinks(mentions: ComposerMention[] = NO_MENTIONS) {
+export function useComposerLinks(mentions: ComposerMention[] = NO_MENTIONS, allowLink?: (url: string) => boolean) {
     const linksRef = useRef<ComposerLinks>(new Map())
     const mentionsRef = useRef(mentions)
     const mirrorElRef = useRef<HTMLDivElement | null>(null)
@@ -55,7 +58,7 @@ export function useComposerLinks(mentions: ComposerMention[] = NO_MENTIONS) {
     const ranges = useCallback((text: string) => tokenRanges(text, linksRef.current, mentionsRef.current), [])
 
     const expand = useCallback((text: string) => expandLinks(text, linksRef.current), [])
-    const collapse = useCallback((text: string) => collapseLinks(text, linksRef.current), [])
+    const collapse = useCallback((text: string) => collapseLinks(text, linksRef.current, allowLink), [allowLink])
     const clear = useCallback(() => {
         linksRef.current.clear()
         setLinkSegments([])
@@ -64,14 +67,16 @@ export function useComposerLinks(mentions: ComposerMention[] = NO_MENTIONS) {
     const onKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.nativeEvent.isComposing) return
         const el = e.currentTarget
+        if (el.disabled || el.readOnly) return
         const current = selection(el)
         const collapsed = current.start === current.end
 
         if (e.key === ' ' && collapsed && !e.metaKey && !e.ctrlKey && !e.altKey) {
             const typed = urlBeforeCaret(el.value, current.start)
             if (!typed) return
+            const label = collapse(typed.url)
+            if (label === typed.url) return
             e.preventDefault()
-            const label = collapseLinks(typed.url, linksRef.current)
             replaceRange(el, { start: typed.start, end: current.start }, `${label}${el.value.slice(typed.end, current.start)} `)
             return
         }
@@ -94,21 +99,24 @@ export function useComposerLinks(mentions: ComposerMention[] = NO_MENTIONS) {
         if (!target) return
         e.preventDefault()
         replaceRange(el, target, deleting ? '' : e.key)
-    }, [ranges])
+    }, [collapse, ranges])
 
     const onPaste = useCallback((e: ClipboardEvent<HTMLTextAreaElement>) => {
-        if (e.defaultPrevented) return
+        if (e.defaultPrevented || e.currentTarget.disabled || e.currentTarget.readOnly) return
         const pasted = e.clipboardData.getData('text/plain')
         if (!pasted) return
-        const collapsed = collapseLinks(pasted, linksRef.current)
-        if (collapsed === pasted) return
-        e.preventDefault()
         const el = e.currentTarget
-        replaceRange(el, widen(selection(el), ranges(el.value)), collapsed)
-    }, [ranges])
+        const current = selection(el)
+        const range = widen(current, ranges(el.value))
+        const collapsed = collapse(pasted)
+        if (collapsed === pasted && range.start === current.start && range.end === current.end) return
+        e.preventDefault()
+        replaceRange(el, range, collapsed)
+    }, [collapse, ranges])
 
     const copySelection = useCallback((e: ClipboardEvent<HTMLTextAreaElement>, cut: boolean) => {
         const el = e.currentTarget
+        if (cut && (el.disabled || el.readOnly)) return
         const range = widen(selection(el), ranges(el.value))
         if (range.start === range.end) return
         const selected = el.value.slice(range.start, range.end)
@@ -148,7 +156,7 @@ export function useComposerLinks(mentions: ComposerMention[] = NO_MENTIONS) {
 
     /** Puts the full URL back as plain text, the way it was typed: one undo brings the chip back. */
     const unlink = useCallback((el: HTMLTextAreaElement | null, range: TextRange, url: string) => {
-        if (el) replaceRange(el, range, url)
+        if (el && !el.disabled && !el.readOnly) replaceRange(el, range, url)
     }, [])
 
     const placeCaret = useCallback((el: HTMLTextAreaElement | null, offset: number) => {
@@ -163,6 +171,7 @@ export function useComposerLinks(mentions: ComposerMention[] = NO_MENTIONS) {
         hasTokens: segments.some(segment => segment.kind !== 'text'),
         attachMirror,
         refresh,
+        ranges,
         expand,
         collapse,
         clear,

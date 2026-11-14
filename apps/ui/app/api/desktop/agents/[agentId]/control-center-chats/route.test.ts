@@ -105,6 +105,31 @@ test('lists a pinned unsent General and a separate unsent thread', async () => {
     ])
 })
 
+test('shows owned automation result titles for open and recent chats after reopening the database', async () => {
+    Object.assign(remote[0], { source: 'schedule', automationResult: { title: 'No new leads', outcome: 'nothing' } })
+    Object.assign(remote[2], { source: 'trigger', automationResult: { title: 'Launch note updated', outcome: 'done' } })
+    remote[1].automationResult = { title: 'Unrelated dashboard metadata', outcome: 'done' }
+    remote.push({ ...remote[0], agentId: bob.engineAgentId, automationResult: { title: 'Foreign result', outcome: 'done' } })
+    const result = await read()
+    expect(result.openChats[1]).toMatchObject({ sessionId: openChat.id, tabUid: 'saved-open', title: 'No new leads' })
+    expect(result.recentChats.map(({ id, title }) => ({ id, title }))).toEqual([
+        { id: newer.id, title: 'Launch note updated' }, { id: older.id, title: older.title },
+    ])
+    expect(calls).toEqual(['GET /agents/engine-alice/sessions'])
+    await closeDesktopDatabase(root)
+    expect(await read()).toEqual(result)
+    mode = 'failed'
+    expect((await read()).openChats[1].title).toBe(openChat.title)
+})
+
+test('keeps local chat titles when duplicate engine rows disagree about the automation result', async () => {
+    Object.assign(remote[0], { source: 'schedule', automationResult: { title: 'No new leads', outcome: 'nothing' } })
+    remote.push({ ...remote[0], automationResult: { title: 'Found new leads', outcome: 'done' } })
+    const result = await read()
+    expect(result.openChats[1].title).toBe(openChat.title)
+    expect(result.recentStatus).toBe('ok')
+})
+
 test('does not manufacture a blank when no layout exists, and preserves disabled owners through store restart', async () => {
     const db = await openDesktopDatabase(root)
     await db.execute({ sql: 'DELETE FROM desktop_agent_tabs WHERE agent_id = ?', args: [alice.id] })

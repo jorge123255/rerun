@@ -32,24 +32,24 @@ export function useDesktopBoardState(initial: DesktopBoardState | undefined) {
         }
     }, [])
 
-    const refresh = useCallback(async () => {
-        if (!enabled.current || !alive.current || isDesktopQuitting()) return false
+    const refresh = useCallback(async (lifetime?: AbortSignal) => {
+        if (!enabled.current || !alive.current || lifetime?.aborted || isDesktopQuitting()) return false
         reading.current?.abort()
         const controller = new AbortController()
         const generation = ++readGeneration.current
         reading.current = controller
         const timeout = setTimeout(() => controller.abort(), 15_000)
         try {
-            const response = await fetch('/api/desktop/spaces', { cache: 'no-store', signal: controller.signal })
+            const signal = lifetime ? AbortSignal.any([lifetime, controller.signal]) : controller.signal
+            const response = await fetch('/api/desktop/spaces', { cache: 'no-store', signal })
             const body = await response.json()
             if (!response.ok) throw new Error(body.error || 'Could not refresh the board. Try again.')
-            if (alive.current && generation === readGeneration.current && !controller.signal.aborted) {
-                accept(body.board)
-                if (!attempt.current) setError(undefined)
-            }
+            if (!alive.current || generation !== readGeneration.current || signal.aborted) return false
+            accept(body.board)
+            if (!attempt.current) setError(undefined)
             return true
         } catch (cause) {
-            if (alive.current && generation === readGeneration.current) setError(cause instanceof Error && cause.name !== 'AbortError'
+            if (!lifetime?.aborted && alive.current && generation === readGeneration.current) setError(cause instanceof Error && cause.name !== 'AbortError'
                 ? cause.message : 'Could not refresh the board. Try again.')
             return false
         } finally {

@@ -2,6 +2,8 @@ import { renderToString } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { UIMessage } from 'ai'
 import { generalTabUid } from '@/lib/desktop/general-threads'
+import { englishDesktopLanguage } from '@/lib/desktop/locale'
+import { DesktopLocale } from './DesktopLocale'
 import { DesktopConversation } from './DesktopConversation'
 
 const agent = { id: 'local-agent-1', name: 'Researcher', description: 'Finds answers', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }
@@ -24,7 +26,8 @@ describe('DesktopConversation', () => {
         expect(html).toContain('aria-label="Close panel"')
         expect(html).toContain('Conversation history')
         expect(html).toContain('First conversation')
-        expect(html).toContain('Default · test-model')
+        expect(html).toContain('data-slot="desktop-composer"')
+        expect(html).toMatch(/role="status"[^>]*>.*?Loading<\/span>/)
         expect(html).toContain('desktop-message')
         expect(html).toContain('Reply in First conversation...')
     })
@@ -65,24 +68,44 @@ describe('DesktopConversation', () => {
         } finally { chat.messages = [] }
     })
 
+    it('marks saved chat breaks with localized timestamps and leaves legacy times blank', () => {
+        const first = new Date(2024, 0, 2, 9, 0).toISOString()
+        const near = new Date(2024, 0, 2, 9, 5).toISOString()
+        const resumed = new Date(2024, 0, 2, 10, 5).toISOString()
+        chat.messages = [
+            { id: 'engine-legacy', role: 'user', metadata: { createdAt: 'unknown' }, parts: [{ type: 'text', text: 'Legacy note.' }] },
+            { id: 'engine-first', role: 'user', metadata: { createdAt: first }, parts: [{ type: 'text', text: 'First dated note.' }] },
+            { id: 'engine-near', role: 'assistant', metadata: { createdAt: near }, parts: [{ type: 'text', text: 'A quick answer.' }] },
+            { id: 'engine-resumed', role: 'user', metadata: { createdAt: resumed }, parts: [{ type: 'text', text: 'Back again.' }] },
+        ]
+        try {
+            const html = renderToString(<DesktopLocale initial={{ ...englishDesktopLanguage, locale: 'fr' }}>
+                <DesktopConversation agent={agent} sessionId={null} sessions={[]} onSelectSession={vi.fn()} onChatSession={vi.fn()} />
+            </DesktopLocale>)
+            expect([...html.matchAll(/<time dateTime="([^"]+)"/g)].map(match => match[1])).toEqual([first, resumed])
+            expect(html).toContain('2 janv. 2024')
+            expect(html.indexOf('Legacy note.')).toBeLessThan(html.indexOf(first))
+            expect(html.indexOf('A quick answer.')).toBeLessThan(html.indexOf(resumed))
+        } finally { chat.messages = [] }
+    })
+
     it('renders only marked Codex summaries as upstream running and settled reasoning steps', () => {
         const render = () => renderToString(<DesktopConversation agent={agent} sessionId={null} sessions={[]} onChatSession={vi.fn()} onSelectSession={vi.fn()} />)
         chat.messages = [{ id: 'answer', role: 'assistant', parts: [
             { type: 'reasoning', text: 'Private trace' },
             { type: 'reasoning', text: 'Legacy mixed block', providerMetadata: { 'codex-app-server': { isSummary: true } } },
-            { type: 'reasoning', text: 'Comparing the options.', providerMetadata: { 'codex-app-server': { isPublicSummary: true, encrypted: 'Opaque bytes' } } },
+            { type: 'reasoning', text: 'Comparing the options.', state: 'streaming', providerMetadata: { 'codex-app-server': { isPublicSummary: true, encrypted: 'Opaque bytes' } } },
         ] }]
         try {
             chat.status = 'streaming'
             const live = render()
-            expect(live).toContain('Thinking...')
-            expect(live).toContain('Comparing the options.')
+            expect(live).toContain('>Thinking<')
             chat.status = 'ready'
             const saved = render()
-            expect(saved).toContain('Thought')
-            expect(saved).toContain('Comparing the options.')
+            expect(saved).not.toContain('>Thinking<')
             for (const html of [live, saved]) {
-                expect(html).not.toMatch(/Private trace|Legacy mixed block|Opaque bytes/)
+                expect(html).toContain('aria-label="1 step"')
+                expect(html).not.toMatch(/Comparing the options|Private trace|Legacy mixed block|Opaque bytes/)
             }
         } finally { chat.messages = []; chat.status = 'ready' }
     })

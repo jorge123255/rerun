@@ -106,11 +106,11 @@ beforeEach(async () => {
             res.writeHead(200, { 'content-type': 'text/event-stream', 'x-session-id': engineSessionId, 'x-run-id': 'run-1' })
             return res.end('data: {"type":"text-delta","delta":"Hello back"}\n\n')
         }
-        if (req.method === 'GET' && req.url === '/agents/engine-agent-1/sessions/engine-session-1/messages') {
+        if (req.method === 'GET' && req.url === '/agents/engine-agent-1/sessions/engine-session-1/messages?view=desktop-decisions') {
             res.writeHead(200, { 'content-type': 'application/json' })
             return res.end(JSON.stringify({ messages: [{ id: 'message-1', sessionId: 'engine-session-1', role: 'user', contentJson: JSON.stringify({ text: 'Hello' }), toolCallsJson: null, createdAt: '2026-01-01T00:00:00.000Z' }] }))
         }
-        if (req.method === 'GET' && /^\/agents\/engine-agent-1\/sessions\/alternate-[\da-f-]+\/messages$/.test(req.url ?? '')) {
+        if (req.method === 'GET' && /^\/agents\/engine-agent-1\/sessions\/alternate-[\da-f-]+\/messages\?view=desktop-decisions$/.test(req.url ?? '')) {
             return res.end(JSON.stringify({ messages: [] }))
         }
         res.writeHead(404, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'not found' }))
@@ -407,6 +407,7 @@ describe('desktop API routes', () => {
         expect(bootstrapBody.agents).toHaveLength(1)
         expect(bootstrapBody.connections).toHaveLength(1)
         expect(JSON.stringify(bootstrapBody)).not.toContain('provider-secret')
+        expect(JSON.stringify(bootstrapBody)).not.toContain('engine-agent-1')
 
         const chat = await postChat(request('/api/desktop/chat', { method: 'POST', body: { agentId, text: 'Hello' } }))
         expect(chat.status).toBe(200)

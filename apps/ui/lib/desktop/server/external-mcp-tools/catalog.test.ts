@@ -18,6 +18,10 @@ it('pairs every bound tool with a B scope and effect flag that match', () => {
             for (const field of ['tools', 'selfImprovement', 'mcpServers', 'desktopToolGrants', 'desktopCodexGrants', 'desktopWorkspaceRead']) expect(schema.properties).not.toHaveProperty(field)
         } else if (tool.name === 'read_skill_file') {
             expect(tool.description).toBe(original!.description + ' Local adapter accepts offset 0 only.')
+        } else if (tool.name === 'upload_workspace_file') {
+            // The Mac's import is narrower than the hosted upload: text only, no replacing, no new folders.
+            expect(tool.description).toMatch(/^Write one text or Markdown file \(\.txt or \.md, up to 1 MB\)/)
+            expect(tool.description.length).toBeLessThanOrEqual(1024)
         } else {
             expect(tool.description).toBe(original!.description)
         }

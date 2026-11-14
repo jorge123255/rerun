@@ -89,6 +89,7 @@ test.runIf(process.env.RERUN_QUESTION_ACCEPTANCE === '1')('a real ask_user turn 
         const session = await findDesktopSession(db, sessionId)
         await expect.poll(async () => (await listRuns(conn(), engineAgent.id, { sessionId: session!.engineSessionId })).find(run => run.id === requestId)?.status).toBe('done')
         await db.execute('DROP TRIGGER lose_question_acceptance')
+        expect((await readDesktopHistory(engine.runtime, sessionId)).some(row => row.metadata?.savedDecision)).toBe(false)
         const later = await pending(sessionId)
         expect(later?.id).not.toBe(original!.id)
         expect(later?.questions[0].question).toBe('Which output format?')
@@ -103,6 +104,11 @@ test.runIf(process.env.RERUN_QUESTION_ACCEPTANCE === '1')('a real ask_user turn 
         const replay = await answer(sessionId, { ...payload, requestId: crypto.randomUUID() })
         expect(replay.status).toBe(200); expect(replay.headers.get('x-run-id')).toBe(requestId); expect(replay.headers.get('x-question-id')).toBe(original!.id); await replay.text()
         expect(engine.providerMessages).toHaveLength(3)
+        expect((await readDesktopHistory(engine.runtime, sessionId)).flatMap(row =>
+            row.metadata?.savedDecision ? [row.metadata.savedDecision] : [])).toEqual([expect.objectContaining({
+            sourceMessageId: 'engine-' + original!.messageId, sourceToolCallId: original!.toolCallId,
+            decision: expect.objectContaining({ kind: 'answers' }),
+        })])
         expect((await pending(sessionId))?.id).toBe(later!.id)
         expect(await readDesktopHistory(engine.runtime, otherSession)).toEqual(otherHistory)
         expect((await answer(otherSession, payload)).status).toBe(409)

@@ -1,0 +1,26 @@
+(version 1)
+; Offline qualification policy for signed-out account checks.
+(deny default)
+(allow process-exec (literal (param "RUNNER")))
+(allow sysctl-read)
+; Grok distinguishes missing managed files from inaccessible files at startup.
+(allow file-read-metadata
+  (literal "/etc")
+  (literal "/private")
+  (literal "/private/etc")
+  (literal "/private/etc/grok")
+  (literal "/private/etc/grok/requirements.toml")
+  (literal "/private/etc/grok/managed_config.toml"))
+(allow file-read*
+  (literal "/")
+  (subpath "/System")
+  (subpath "/usr/lib")
+  (subpath "/usr/share/icu")
+  (literal "/dev/null")
+  (literal "/dev/urandom")
+  (literal (param "RUNNER_DIR"))
+  (literal (param "RUNNER"))
+  (subpath (param "PROFILE")))
+(allow file-write*
+  (literal "/dev/null")
+  (subpath (param "PROFILE")))

@@ -1,9 +1,9 @@
 'use client'
 
 import { MessageResponse, type MessageResponseProps } from '@/components/ai-elements/message'
-import { LINK_TOKEN_CLASS, MENTION_TOKEN_CLASSES } from '@/components/chat/composer-token-styles'
+import { ComposerLinkToken } from '@/components/chat/ComposerLinkToken'
+import { MENTION_TOKEN_CLASSES } from '@/components/chat/composer-token-styles'
 import { COMPOSER_LINK_TAG, COMPOSER_MENTION_KIND_ATTRIBUTE, COMPOSER_MENTION_TAG, type ComposerMention, remarkMentions, remarkShortLinks } from '@/lib/chat/composer-links'
-import { LinkIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { AGENT_WORKSPACE_FILE_PATH_ATTRIBUTE, AGENT_WORKSPACE_FILE_TAG, remarkAgentWorkspaceLinks } from '@/lib/files/workspace-link'
 import { useBoardStore } from '@/stores/board.store'
@@ -48,24 +48,9 @@ function MentionToken({ children, kind }: MentionTokenProps) {
     return <span className={cn('font-medium', kind === 'agent' || kind === 'skill' ? MENTION_TOKEN_CLASSES[kind] : undefined)}>{children}</span>
 }
 
-type LinkTokenProps = {
-    children?: ReactNode
-    node?: unknown
-    title?: string
-}
-
-function LinkToken({ children, title }: LinkTokenProps) {
-    return (
-        <span title={title} className={cn('inline-flex items-baseline gap-[0.3em] font-medium underline-offset-2 [[data-streamdown=link]:hover>&]:underline', LINK_TOKEN_CLASS)}>
-            <LinkIcon className="size-[0.85em] shrink-0 self-center" />
-            {children}
-        </span>
-    )
-}
-
 const composerTokenComponents: Components = {
     [COMPOSER_MENTION_TAG]: MentionToken,
-    [COMPOSER_LINK_TAG]: LinkToken,
+    [COMPOSER_LINK_TAG]: ComposerLinkToken,
 }
 
 const composerTokenAllowedTags = {

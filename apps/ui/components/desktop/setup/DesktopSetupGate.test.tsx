@@ -3,6 +3,9 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { DesktopSetupView } from '@rerun/contracts'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages } from '@/lib/desktop/locale'
+import { DesktopLocale } from '../DesktopLocale'
 
 const local = vi.hoisted(() => ({
     view: null as DesktopSetupView | null,
@@ -127,6 +130,26 @@ it('always continues an existing claim instead of repeating Start', async () => 
     expect(local.continueSetup).toHaveBeenCalledOnce()
     expect(local.start).not.toHaveBeenCalled()
     expect(onOpenSetupChat).toHaveBeenCalledWith({ agentId: 'owner', sessionId: 'claimed', action: 'continue' })
+})
+
+it('uses the workspace language for setup, resume, and a previously skipped setup', async () => {
+    const messages = await loadMessages('fr')
+    const language = { locale: 'fr' as const, preference: 'fr' as const, messages: desktopMessages('fr', messages) }
+    const props = { agentId: 'owner', agentName: 'Ada', apps: [], onOpenSetupChat: vi.fn() }
+    local.view = view()
+    const host = render(<DesktopLocale initial={language}><DesktopSetupGate {...props} /></DesktopLocale>)
+    expect(host.textContent).toContain('Installer Ada')
+    expect(host.textContent).toContain(messages.chat.installGate.skip)
+
+    local.view = view({ sessionId: 'claimed' })
+    act(() => roots.at(-1)!.root.render(<DesktopLocale initial={language}><DesktopSetupGate {...props} /></DesktopLocale>))
+    expect(host.textContent).toContain(messages.chat.installGate.continue)
+    expect(host.textContent).toContain(messages.chat.installGate.inProgressHint)
+
+    local.view = view({ skipped: true, pending: false })
+    act(() => roots.at(-1)!.root.render(<DesktopLocale initial={language}><DesktopSetupSkippedBanner {...props} /></DesktopLocale>))
+    expect(host.textContent).toContain(messages.agent.agentPanelChat.notSetUp)
+    expect(host.textContent).toContain(messages.agent.agentPanelChat.setUp)
 })
 
 it('persists Skip without navigation or activation callbacks', async () => {

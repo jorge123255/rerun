@@ -1,11 +1,12 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { FOREMAN_AGENT_ID } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, foremanChatIdSchema, type DesktopDelegationSnapshot } from '@rerun/contracts'
 import type { Client } from '@libsql/client'
 import { request } from '@/lib/engine/client'
 import { authenticateDesktopEngineRequest, authenticateDesktopRequest, DesktopHttpError } from '../auth'
 import { openDesktopDatabase } from '../database'
+import { desktopRoute } from '../http'
 import { readDesktopRuntime, type DesktopRuntime } from '../runtime'
 import { engineOf } from '../settings'
 import { assertCoworkerNotDeleting } from '../coworker-delete'
@@ -16,7 +17,6 @@ import { delegationReceipts, delegationStore } from './store'
 import { delegationApi } from './api'
 import { delegationIpcSchema, engineSourceSchema, sourceSchema, type Allocation, type EngineSource } from '../../../../../engine/src/desktop/delegation/protocol'
 import type { Record as DelegationRecord, StopReceipt, Source } from '../../../../../engine/src/desktop/delegation/types'
-import type { DelegationRuntime } from '../../../../../engine/src/desktop/delegation/runtime'
 
 const id = z.string().min(1).max(200)
 const sourceKey = (source: Source) => JSON.stringify([source.parentAgentId, source.parentSessionId, source.parentRunId, source.toolCallId])
@@ -156,18 +156,34 @@ export async function handleDesktopDelegationBridge(incoming: Request): Promise<
     } catch (error) { return Response.json({ error: 'Delegation changed or is unavailable. Retry the same operation.' }, { status: error instanceof DesktopHttpError ? error.status : 409, headers }) }
 }
 
-export async function handleDesktopDelegationManagement(incoming: Request, sessionId: string) {
-    const runtime = await authenticateDesktopRequest(incoming), db = await openDesktopDatabase(runtime.dataRoot), store = delegationStore(db)
-    const authorize = async (request: Request, session: string) => {
-        const now = await authenticateDesktopRequest(request); if (now.launchNonce !== runtime.launchNonce) throw changed()
-        const row = (await db.execute({ sql: 'SELECT a.id,a.enabled FROM desktop_sessions s JOIN desktop_agents a ON a.id=s.agent_id WHERE s.id=? AND a.workspace_id=1', args: [session] })).rows[0]
-        if (!row) throw changed()
-        await assertCoworkerNotDeleting(db, String(row.id))
-        return { parentAgentId: String(row.id), parentSessionId: session }
-    }
-    const proxy = {
-        list: async (session: string) => (await store.list(session)).map(row => row.snapshot),
-        stop: async (source: Pick<Source, 'parentAgentId' | 'parentSessionId'>, stop: unknown) => request(engineOf(runtime), '/desktop/delegation/stop', { method: 'POST', signal: incoming.signal, body: JSON.stringify({ launchNonce: runtime.launchNonce, source, request: stop }) }, value => (value as { delegation: unknown }).delegation),
-    } as DelegationRuntime
-    return delegationApi(proxy, authorize)(incoming, sessionId)
+export function handleDesktopDelegationManagement(incoming: Request, sessionId: string, scope: 'coworker' | 'foreman' = 'coworker') {
+    return desktopRoute(incoming, async runtime => {
+        const db = await openDesktopDatabase(runtime.dataRoot)
+        const store = delegationStore(db)
+        return delegationApi({
+            list: async session => (await store.list(session)).map(row => row.snapshot),
+            stop: (source, stop) => request(engineOf(runtime), '/desktop/delegation/stop', {
+                method: 'POST',
+                signal: incoming.signal,
+                body: JSON.stringify({ launchNonce: runtime.launchNonce, source, request: stop }),
+            }, value => (value as { delegation: DesktopDelegationSnapshot }).delegation),
+        }, async (request, session) => {
+            const now = await authenticateDesktopRequest(request)
+            if (now.launchNonce !== runtime.launchNonce || now.workspaceId !== runtime.workspaceId || now.dataRoot !== runtime.dataRoot) throw changed()
+            if (scope === 'foreman') {
+                const { chat } = await ownedForemanChat(db, {
+                    workspaceId: String(now.workspaceId),
+                    chatId: foremanChatIdSchema.parse(session),
+                })
+                return { parentAgentId: FOREMAN_AGENT_ID, parentSessionId: chat.chatId }
+            }
+            const row = (await db.execute({
+                sql: 'SELECT a.id FROM desktop_sessions s JOIN desktop_agents a ON a.id=s.agent_id WHERE s.id=? AND a.workspace_id=1',
+                args: [session],
+            })).rows[0]
+            if (!row) throw changed()
+            await assertCoworkerNotDeleting(db, String(row.id))
+            return { parentAgentId: String(row.id), parentSessionId: session }
+        })(incoming, sessionId)
+    })
 }

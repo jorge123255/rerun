@@ -3,18 +3,28 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
   <link rel="stylesheet" href="startup.css">
   <title>Rerun Desktop Preview</title>
 </head>
-<body>
+<body class="auth-surface welcome">
+  <div id="mac-titlebar" aria-hidden="true" hidden></div>
+  <div class="welcome-board" aria-hidden="true"></div>
   <main>
-    <div class="mark" aria-hidden="true">↗</div>
-    <p class="eyebrow">DESKTOP PREVIEW</p>
-    <h1>Your coworkers.<br>Your Mac.</h1>
-    <p id="message" role="status">Preparing your local workspace…</p>
-    <div class="actions"><button id="retry" hidden>Try again</button><button id="quit" class="secondary">Quit</button></div>
-    <p class="footnote">Your workspace and history stay on this Mac. AI providers use the network when you chat.</p>
+    <img class="foreman" src="startup-assets/foreman.webp" alt="" width="72" height="74">
+    <div class="welcome-content">
+      <h1 id="welcome-title">Welcome to Rerun</h1>
+      <p id="message" role="status">Preparing your local workspace…</p>
+      <div class="actions">
+        <button id="run-locally" hidden></button>
+        <button id="sign-in-cloud" class="secondary" hidden></button>
+        <p id="cloud-error" class="connection-error" role="alert" hidden></p>
+        <button id="connect-server" class="text-action" hidden></button>
+        <button id="retry" hidden>Try again</button>
+      </div>
+      <p id="local-footnote" class="footnote">Your workspace and history stay on this Mac. AI providers use the network when you chat.</p>
+      <button id="quit" class="text-action">Quit</button>
+    </div>
   </main>
   <script src="startup.js"></script>
 </body>

@@ -5,13 +5,14 @@ import { z } from 'zod'
 import { create } from 'tar'
 import { MAX_SKILL_FILE_BYTES, MAX_SKILL_FOLDER_BYTES, MAX_SKILL_REFERENCE_FILES, skillFilePayloadSchema } from '@rerun/contracts'
 import { deleteSkill, listSkillSummaries, listSkills, parseSkillMarkdown, readSkill, skillExists, writeSkill, writeSkillFolder } from '../../skills/loader.js'
-import { skillDir, skillsDir } from '../../config/paths.js'
+import { skillDir, skillsDir, workspaceDir } from '../../config/paths.js'
 import { createFilesRouter } from './files.js'
 import { agentExists } from '../../agents/loader.js'
 import { badRequest, notFound } from '../../lib/errors.js'
 import { slugify } from '../../lib/ids.js'
 import { desktopApp } from '../../desktop/policy.js'
 import { archiveSkillFolder, listPublishedSkills, readPublishedSkill } from '../../desktop/skill-publication.js'
+import { syncDesktopVaultSkillVisibility } from '../../desktop/service-skills/authority.js'
 
 export const skillRoutes = new Hono()
 // Desktop management publishes through the local authenticated boundary. Keeping the hosted
@@ -60,7 +61,8 @@ export function createSkillFilesRouter(): Hono {
 skillRoutes.get('/', async c => {
     const agentId = requireAgent(c)
     if (desktopApp()) {
-        const skills = await listPublishedSkills(skillsDir(agentId))
+        const hidden = await syncDesktopVaultSkillVisibility(workspaceDir(agentId), c.req.raw.signal)
+        const skills = (await listPublishedSkills(skillsDir(agentId))).filter(skill => !hidden.has(skill.slug))
         return c.json({ skills: c.req.query('summary') === '1' ? skills.map(({ slug, name, description }) => ({ slug, name, description })) : skills })
     }
     // The summary leaves out each body and file list: a listing that only shows names reads one
@@ -119,6 +121,8 @@ skillRoutes.get('/:slug', async c => {
     const agentId = requireAgent(c)
     const slug = c.req.param('slug')
     if (desktopApp()) {
+        const hidden = await syncDesktopVaultSkillVisibility(workspaceDir(agentId), c.req.raw.signal)
+        if (hidden.has(slug)) return c.json({ error: 'skill not found' }, 404)
         const skill = await readPublishedSkill(skillsDir(agentId), slug)
         return skill ? c.json(skill) : c.json({ error: 'skill not found' }, 404)
     }

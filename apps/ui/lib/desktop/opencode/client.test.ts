@@ -1,33 +1,39 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { createDesktopOpencodeDriver } from './client'
+import { DESKTOP_OPENCODE_CONNECTION_ID } from '@rerun/contracts'
+import { changeDesktopOpencode, createDesktopOpencodeDriver } from './client'
 
 afterEach(() => vi.unstubAllGlobals())
 
-it('uses the authenticated desktop route with exact C actions and no credential headers', async () => {
+const scope = { workspaceId: 1, connectionId: DESKTOP_OPENCODE_CONNECTION_ID }
+const connection = { ...scope, name: 'OpenCode', revision: '5a0ea2a3-d2f4-412a-abd8-b111d771c75f',
+    defaultModelId: 'go/deepseek-v4-pro', enabledModelIds: ['go/deepseek-v4-pro'], consoleEnabled: false }
+const signal = new AbortController().signal
+
+it('reads the public connection and sends key changes only to the authenticated same-origin route', async () => {
     const calls: { url: string; init?: RequestInit }[] = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
         calls.push({ url, init })
-        const action = JSON.parse(String(init?.body)).action
-        if (action === 'prepare') return Response.json({ ok: true })
-        if (action === 'usage') return Response.json({ windows: [], capturedAt: null, fresh: false })
-        return Response.json({ ok: true })
+        return Response.json({ connection })
     }))
     const driver = createDesktopOpencodeDriver()
-    const signal = new AbortController().signal
-    expect(await driver.prepare('oc_sk_test', signal)).toEqual({ ok: true })
-    expect(await driver.usage({ workspaceId: 1, connectionId: 'oc-1', requestId: 'usage-1', refresh: false }, signal)).toEqual({ windows: [], capturedAt: null, fresh: false })
-    expect(await driver.enable({ workspaceId: 1, connectionId: 'oc-1', enabledModelIds: ['go/deepseek-v4-pro'], defaultModelId: 'go/deepseek-v4-pro', consoleEnabled: false }, signal)).toEqual({ ok: true })
-    expect(calls.map(call => call.url)).toEqual(['/api/desktop/opencode', '/api/desktop/opencode', '/api/desktop/opencode'])
-    for (const call of calls) {
-        expect(call.init).toMatchObject({ method: 'POST', cache: 'no-store', credentials: 'same-origin', redirect: 'error' })
-        expect(call.init?.headers).toEqual({ 'content-type': 'application/json' })
-    }
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ action: 'prepare', apiKey: 'oc_sk_test' })
-    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ action: 'usage', workspaceId: 1, connectionId: 'oc-1', requestId: 'usage-1', refresh: false })
+    expect(await driver.prepare('oc_sk_synthetic', signal)).toEqual({ ok: true })
+    expect(await driver.prepare('sk-not-opencode', signal)).toMatchObject({ ok: false })
+    expect(calls).toHaveLength(0)
+    const saved = await driver.snapshot(scope, signal)
+    expect(saved).toMatchObject({ connectionRevision: connection.revision, credentialStored: true })
+    expect(saved).not.toHaveProperty('apiKey')
+    const input = { action: 'key' as const, workspaceId: 1, expectedRevision: connection.revision, apiKey: 'oc_sk_synthetic' }
+    expect(await changeDesktopOpencode(input, signal)).toEqual(connection)
+    expect(calls.map(call => call.url)).toEqual(['/api/desktop/opencode/settings?workspaceId=1', '/api/desktop/opencode/settings'])
+    expect(calls[1]?.init).toMatchObject({ method: 'POST', cache: 'no-store', credentials: 'same-origin', redirect: 'error', headers: { 'content-type': 'application/json' } })
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual(input)
 })
 
-it('surfaces a refused result instead of presenting success', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ status: 'refused', code: 'credential', message: 'Key rejected', sent: false }, { status: 409 })))
+it('refuses an unexpected workspace or a stale connection change', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url, init) => init?.method === 'POST'
+        ? Response.json({ error: 'OpenCode connection changed.' }, { status: 409 })
+        : Response.json({ connection: { ...connection, workspaceId: 2 } })))
     const driver = createDesktopOpencodeDriver()
-    await expect(driver.enable({ workspaceId: 1, connectionId: 'oc-1', enabledModelIds: [], defaultModelId: 'go/deepseek-v4-pro', consoleEnabled: false }, new AbortController().signal)).rejects.toThrow('Key rejected')
+    await expect(driver.snapshot(scope, signal)).rejects.toThrow('connection changed')
+    await expect(changeDesktopOpencode({ action: 'rename', workspaceId: 1, expectedRevision: connection.revision, name: 'New name' }, signal)).rejects.toThrow('connection changed')
 })

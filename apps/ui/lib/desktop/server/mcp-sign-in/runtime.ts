@@ -2,7 +2,7 @@ import 'server-only'
 import type { DesktopMcpSignInDecision, DesktopMcpSignInOAuthView, DesktopMcpSignInRequestInput, DesktopMcpSignInResponse, DesktopMcpSignInSource, DesktopMcpSignInView } from '../../../../../../packages/contracts/src/desktop-mcp-sign-in'
 import { DesktopHttpError } from '../auth'
 import { createDesktopMcpSignInContinuation, type DesktopMcpSignInContinuationPorts } from './service'
-import type { DesktopMcpSignInAuthority, DesktopMcpSignInStore } from './store'
+import type { DesktopMcpSignInAuthority, DesktopMcpSignInBrowserCapture, DesktopMcpSignInStore } from './store'
 
 export type DesktopMcpSignInOAuthTarget = { requestId: string; attemptId?: string; source: DesktopMcpSignInSource }
 export type DesktopMcpSignInOAuthPorts = {
@@ -13,6 +13,7 @@ export type DesktopMcpSignInOAuthPorts = {
 }
 export type DesktopMcpSignInRuntimePorts = {
     store: DesktopMcpSignInStore
+    captureBrowserApproval?: DesktopMcpSignInBrowserCapture
     source: (sessionId: string, signal: AbortSignal) => Promise<(DesktopMcpSignInRequestInput & { source: DesktopMcpSignInSource }) | null>
     authority: (source: DesktopMcpSignInSource, signal: AbortSignal, mode?: 'decision' | 'replay' | 'read' | 'dismiss') => Promise<DesktopMcpSignInAuthority>
     oauth: DesktopMcpSignInOAuthPorts
@@ -40,7 +41,7 @@ export function createDesktopMcpSignInRuntimePorts(ports: DesktopMcpSignInRuntim
         },
         async connect(input: DesktopMcpSignInDecision, signal: AbortSignal): Promise<DesktopMcpSignInResponse> {
             const authority = await ports.authority(input.source, signal)
-            const begun = await ports.store.beginAttempt(input, authority), request = begun.request
+            const begun = await ports.store.beginAttempt(input, authority, ports.captureBrowserApproval), request = begun.request
             authority.check(); signal.throwIfAborted()
             if (request.receipt) return { request }
             const activeInput = { ...input, source: request.source, expectedRevision: request.revision }
@@ -63,15 +64,14 @@ export function createDesktopMcpSignInRuntimePorts(ports: DesktopMcpSignInRuntim
         },
         async complete(input: DesktopMcpSignInDecision, signal: AbortSignal): Promise<Response> {
             let current = await validate(input, signal)
-            if (!current.request.activeAttemptId && !current.request.receipt) {
-                const begun = await ports.store.beginAttempt(input, current.authority)
-                input = { ...input, expectedRevision: begun.request.revision }
-                current = { ...current, request: begun.request }
-            }
-            current = await validate(input, signal, true)
+            if (current.request.activeAttemptId || current.request.receipt) current = await validate(input, signal, true)
             const oauth = await ports.oauth.status(target(current.request), signal)
             if (oauth.state !== 'connected') throw new DesktopHttpError(409, 'Finish authorization before continuing.')
             await ports.oauth.ready(target(current.request), signal)
+            if (!current.request.activeAttemptId) {
+                const begun = await ports.store.beginAttempt(input, current.authority)
+                input = { ...input, expectedRevision: begun.request.revision }
+            }
             const final = await validate(input, signal, true)
             return continuation.complete(input, final.authority)
         },
@@ -87,8 +87,11 @@ export function createDesktopMcpSignInRuntimePorts(ports: DesktopMcpSignInRuntim
             const current = await validate(input, signal, true)
             const request = await ports.store.cancel(input, current.authority)
             await ports.oauth.cancel(target(current.request), signal)
+            // The browser attempt is retired. Read the remaining methods for the same
+            // request. A failed status read cannot undo the cancellation.
+            const oauth = await ports.oauth.status(target(request), signal).catch((): DesktopMcpSignInOAuthView => ({ state: 'idle' }))
             current.authority.check(); signal.throwIfAborted()
-            return { request, oauth: { state: 'idle' } }
+            return { request, oauth }
         },
         async recover(input: DesktopMcpSignInDecision, signal: AbortSignal): Promise<Response> {
             const authority = await ports.authority(input.source, signal, 'replay')

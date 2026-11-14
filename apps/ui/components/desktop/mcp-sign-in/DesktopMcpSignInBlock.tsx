@@ -12,22 +12,24 @@ import { cn } from '@/lib/utils'
 import type { DesktopMcpSignInDecision, DesktopMcpSignInOAuthView, DesktopMcpSignInView } from '../../../../../packages/contracts/src/desktop-mcp-sign-in'
 import { DesktopMcpSignInReceipt } from './DesktopMcpSignInReceipt'
 import { DesktopMcpSignInStatusBadge } from './DesktopMcpSignInStatusBadge'
-import { DesktopMcpDeviceMethodReview } from './DesktopMcpDeviceMethodReview'
-import type { McpDeviceMethodReview, McpDeviceReviewDecision } from '@/lib/desktop/mcp-device-review'
+import { DesktopMcpDeviceSignIn } from './DesktopMcpDeviceSignIn'
+import { useDesktopLocale } from '../DesktopLocale'
 
-export function DesktopMcpSignInBlock({ sessionId, request, active = true, inline, onAccepted, initialOAuth, deviceMethodReview }: {
+export function DesktopMcpSignInBlock({ sessionId, request, active = true, inline, onAccepted, initialOAuth }: {
     sessionId: string
     request: DesktopMcpSignInView
     active?: boolean
     inline?: boolean
     initialOAuth?: DesktopMcpSignInOAuthView
-    deviceMethodReview?: { review: McpDeviceMethodReview; onDecide(input: McpDeviceReviewDecision, signal: AbortSignal): Promise<McpDeviceMethodReview> }
     onAccepted?: (response: Response, stream: { signal: AbortSignal; cancelStream: () => void }) => void | Promise<void>
 }) {
+    const { t } = useDesktopLocale()
     const [view, setView] = useState(request)
     const [oauth, setOauth] = useState<DesktopMcpSignInOAuthView | undefined>(initialOAuth)
     const [pendingAction, setPendingAction] = useState<DesktopMcpSignInAction | null>(null)
     const [answered, setAnswered] = useState(false)
+    const [deviceOpen, setDeviceOpen] = useState(false)
+    const [localError, setLocalError] = useState<'verifyFailed' | 'authorizationFailed' | null>(null)
     const attempts = useRef(new Map<string, string>())
     const controller = useRef<AbortController | null>(null)
     const epoch = useRef(0)
@@ -51,6 +53,8 @@ export function DesktopMcpSignInBlock({ sessionId, request, active = true, inlin
         setOauth(initialOAuth)
         setPendingAction(null)
         setAnswered(false)
+        setDeviceOpen(false)
+        setLocalError(null)
     }, [owner, active, request.revision, request.receipt?.accepted])
 
     const run = async (action: DesktopMcpSignInAction) => {
@@ -65,6 +69,7 @@ export function DesktopMcpSignInBlock({ sessionId, request, active = true, inlin
         controller.current?.abort()
         const pending = new AbortController()
         controller.current = pending
+        setLocalError(null)
         if (action !== 'status') setPendingAction(action)
         try {
             const result = await desktopMcpSignInAction(sessionId, action, {
@@ -81,8 +86,13 @@ export function DesktopMcpSignInBlock({ sessionId, request, active = true, inlin
             }
         } catch {
             if (generation === epoch.current && !pending.signal.aborted && mounted.current) {
-                setOauth({ state: 'error', message: 'Authorization failed. Retry.' })
-                setView(current => current.receipt ? current : { ...current, status: 'error', error: 'Authorization failed. Retry.' })
+                if (action === 'complete' && oauth?.state === 'connected') {
+                    setLocalError('verifyFailed')
+                    return
+                }
+                setOauth({ state: 'error' })
+                setView(current => current.receipt ? current : { ...current, status: 'error' })
+                setLocalError('authorizationFailed')
             }
         } finally {
             if (generation === epoch.current) {
@@ -102,47 +112,47 @@ export function DesktopMcpSignInBlock({ sessionId, request, active = true, inlin
     if (view.receipt) return <div className="flex flex-wrap items-center gap-2">
         <DesktopMcpSignInReceipt request={view} />
         {!view.receipt.accepted && <Button type="button" size="sm" variant="outline" disabled={!active || pendingAction !== null || answered} onClick={() => { void run('recover') }}>
-            {pendingAction === 'recover' ? 'Retrying…' : 'Retry continuation'}
+            {t(pendingAction === 'recover' ? 'mcpSignIn.retrying' : 'mcpSignIn.retryContinuation')}
         </Button>}
     </div>
     const server = view.source.server
     const displayName = server.displayName || humanizeToolSegment(server.name)
-    const subtitle = view.reason ?? (server.host ? `Custom MCP server · ${server.host}` : 'Custom MCP server')
+    const subtitle = view.reason ?? (server.host ? t('mcpSignIn.customWithHost', { host: server.host }) : t('mcpSignIn.custom'))
     const busy = !active || pendingAction !== null || answered
     const connected = oauth?.state === 'connected'
-    const waiting = oauth?.state === 'waiting' || !!view.activeAttemptId && !connected
-    const error = oauth?.message ?? view.error
+    const waiting = oauth?.state === 'waiting'
+    const canCancel = waiting || !!view.activeAttemptId
+    const error = localError ? t(`mcpSignIn.${localError}`) : oauth?.message ?? view.error
+    const deviceAvailable = oauth?.deviceAvailable && !canCancel && !connected
 
-    const deviceReview = deviceMethodReview?.review
-    const deviceAligned = deviceReview && deviceReview.owner === request.source.agentId && deviceReview.localSessionId === sessionId
-        && deviceReview.serverName === request.source.server.name && deviceReview.registrationRevision === request.source.server.revision
-        && deviceReview.method.resource === request.source.server.url
     return <div className={cn('relative space-y-3 overflow-hidden rounded-lg border border-border bg-muted/30 p-3', !inline && 'mb-2')}>
         <BorderBeam animated pattern="arcs" tone="brand" glow width={1} duration={7} />
         <div className="relative flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
             <Icon {...serviceIconProps(server.icon ?? null, 'custom')} size="sm" />
             <div className="min-w-32 flex-1">
-                <span className="block truncate font-medium leading-snug">Sign in to {displayName}</span>
+                <span className="block truncate font-medium leading-snug">{t('mcpSignIn.title', { name: displayName })}</span>
                 <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
             </div>
             <DesktopMcpSignInStatusBadge request={view} oauth={oauth} />
-            <div className="flex items-center gap-1">
-                <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => { void run('decline') }}>Not now</Button>
-                {connected ? <Button type="button" size="sm" disabled={busy} onClick={() => { void run('complete') }}>Continue</Button>
-                    : waiting ? <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => { void run('cancel') }} className="text-muted-foreground">Cancel</Button>
-                        : deviceMethodReview && deviceAligned ? null : <Button type="button" size="sm" disabled={busy} onClick={() => { void run('connect') }}>Connect</Button>}
-            </div>
+            {(!deviceOpen || !active) && <div className="flex items-center gap-1">
+                <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => { void run('decline') }}>{t('mcpSignIn.notNow')}</Button>
+                {connected ? <Button type="button" size="sm" disabled={busy} onClick={() => { void run('complete') }}>{t('mcpSignIn.continue')}</Button>
+                    : canCancel ? <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => { void run('cancel') }} className="text-muted-foreground">{t('mcpSignIn.cancel')}</Button>
+                        : <Button type="button" size="sm" disabled={busy} onClick={() => { void run('connect') }}>{t('mcpSignIn.connect')}</Button>}
+                {deviceAvailable && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setDeviceOpen(true)}>{t('mcpSignIn.useDeviceCode')}</Button>}
+            </div>}
         </div>
         {(waiting || error) && <>
             <Separator className="-mx-3 border-t border-dashed bg-transparent data-horizontal:h-0 data-horizontal:w-auto" />
             <div className="space-y-2 py-1">
                 {waiting && <>
-                    <Button type="button" variant="outline" size="sm" className="w-full" disabled>Waiting for authorization…</Button>
-                    {oauth?.authorizationUrl && <a className="inline-flex break-words text-sm text-muted-foreground underline underline-offset-2" href={oauth.authorizationUrl} target="_blank" rel="noreferrer">Open authorization in browser</a>}
+                    <Button type="button" variant="outline" size="sm" className="w-full" disabled>{t('mcpSignIn.waiting')}</Button>
+                    {oauth?.authorizationUrl && <a className="inline-flex break-words text-sm text-muted-foreground underline underline-offset-2" href={oauth.authorizationUrl} target="_blank" rel="noreferrer">{t('mcpSignIn.openAuthorization')}</a>}
                 </>}
                 {error && <p role="alert" className="break-words text-sm text-destructive">{error}</p>}
             </div>
         </>}
-        {deviceMethodReview && deviceAligned && <DesktopMcpDeviceMethodReview review={deviceMethodReview.review} active={active && !busy && !waiting && !connected && !view.activeAttemptId} onDecide={deviceMethodReview.onDecide} />}
+        {deviceOpen && active && deviceAvailable && <DesktopMcpDeviceSignIn key={owner} source={view.source} onBack={() => setDeviceOpen(false)}
+            onConnected={() => { setDeviceOpen(false); setOauth({ state: 'connected' }) }} />}
     </div>
 }

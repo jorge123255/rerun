@@ -4,6 +4,7 @@ import {
     industryHint,
     intakeSteps,
     looksLikeSite,
+    platformHost,
     stepAnswered,
     toIntake,
     type DesktopForemanIntakeDraft,
@@ -125,7 +126,7 @@ export function hydrateDesktopIntakeMachine(input: {
     return {
         index: Math.min(Math.max(input.stepIndex, 0), reachable),
         draft,
-        decided: input.decidedIndustry,
+        decided: platformHost(draft.companyUrl) ? null : input.decidedIndustry,
         knownFirstName: input.knownFirstName,
         revision: input.revision,
         submitting: false,

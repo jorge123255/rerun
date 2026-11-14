@@ -1,6 +1,6 @@
 'use server'
 
-import type { TemplateCategory } from '@rerun/contracts'
+import { platformHost, type TemplateCategory } from '@rerun/contracts'
 
 import { requireWorkspaceContext } from '@/app/api/_auth/ownership'
 import { decideIndustry } from '@/lib/company/decide-industry'
@@ -26,6 +26,7 @@ import type { ForemanIntake } from '@/lib/onboarding/intake'
  */
 export async function decideIndustryAction(input: string): Promise<TemplateCategory | null> {
     const ctx = await requireWorkspaceContext()
+    if (platformHost(input)) return null
     if (!takeIntakeCall(ctx.workspace.id, 'decide')) return null
     const decision = await decideIndustry(input)
     return decision?.industry ?? null
@@ -40,7 +41,8 @@ export async function saveForemanIntakeAction(intake: ForemanIntake): Promise<{ 
     const ctx = await requireWorkspaceContext()
     if (ctx.authUser.is_anonymous) throw new Error('Create your account first.')
 
-    const url = intake.companyUrl ? companySiteUrl(intake.companyUrl) : null
+    const platform = intake.companyUrl && platformHost(intake.companyUrl)
+    const url = intake.companyUrl && !platform ? companySiteUrl(intake.companyUrl) : null
     // Free by now in the common case: the board's discoveries started this read three questions ago
     // and the module caches it for fifteen minutes.
     const analysis = url ? await analyzeCompanyProfile(url) : null
@@ -49,7 +51,7 @@ export async function saveForemanIntakeAction(intake: ForemanIntake): Promise<{ 
     // An industry they picked themselves always wins: it is the only one of the three that is not a
     // guess. Then the full read, which saw the page, then the fast decision, which only saw the
     // address but is what the board has been drawing for the last two questions.
-    const industry = intake.industry ?? profile?.industry ?? intake.decidedIndustry ?? null
+    const industry = intake.industry ?? profile?.industry ?? (platform ? null : intake.decidedIndustry) ?? null
 
     await saveForemanProfile(ctx, {
         company_url: analysis?.ok ? analysis.analysis.url : (url ?? undefined),

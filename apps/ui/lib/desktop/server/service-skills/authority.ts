@@ -9,6 +9,8 @@ import type { DesktopRuntime } from '../runtime'
 import { serviceStore } from '../services/store'
 import { serviceSkillJournal } from '../services/skill-journal'
 import { connectorSkillAuthority } from '../services/skill-ownership'
+import { reconcileVaultCatalogSkills, vaultCatalogSkillOwners } from '../vault/catalog-skills'
+import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 
 async function resolveScope(runtime: DesktopRuntime, engineId: string, signal: AbortSignal) {
     signal.throwIfAborted()
@@ -43,8 +45,27 @@ export async function readDesktopServiceSkillOwners(runtime: DesktopRuntime, eng
     const store = serviceStore(db, () => { throw new Error('Credential access is not part of skill ownership') })
     const authority = connectorSkillAuthority(store, serviceSkillJournal(db), current)
     const projected = await abortable(authority.projection(scope.owner, signal), signal)
+    const vaultOwners = await abortable(vaultCatalogSkillOwners(db, scope.owner), signal)
+    await current()
     signal.throwIfAborted()
-    return new Map(projected.map(skill => [skill.slug, skill.serviceName || 'App']))
+    return new Map([...projected.map(skill => [skill.slug, skill.serviceName || 'App'] as const), ...vaultOwners])
+}
+
+export async function syncDesktopVaultSkills(runtime: DesktopRuntime, engineId: string, signal: AbortSignal) {
+    assertDesktopWorkspaceAdmission(runtime)
+    const scope = await resolveScope(runtime, engineId, signal)
+    const db = await abortable(openDesktopDatabase(runtime.dataRoot), signal)
+    return reconcileVaultCatalogSkills(db, scope, async () => {
+        signal.throwIfAborted()
+        assertDesktopWorkspaceAdmission(runtime)
+        if ((await resolveScope(runtime, engineId, signal)).owner !== scope.owner) throw new Error('Coworker changed')
+        assertDesktopWorkspaceAdmission(runtime)
+    })
+}
+
+export async function syncDesktopVaultSkillsForOwner(runtime: DesktopRuntime, owner: string, signal: AbortSignal) {
+    const scope = await desktopServiceSkillRestartScope(runtime, owner, signal)
+    return syncDesktopVaultSkills(runtime, scope.engineId, signal)
 }
 
 export function bindDesktopServiceSkillOwners(runtime: DesktopRuntime): void {

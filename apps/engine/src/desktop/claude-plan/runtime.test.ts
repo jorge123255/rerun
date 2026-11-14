@@ -12,6 +12,8 @@ describe('Claude process isolation', () => {
         expect(spec.command).toBe('/usr/bin/sandbox-exec')
         expect(spec.args).toEqual(['-D', `PROFILE=${profile}`, '-D', `BINARY=${binary}`, '-f', sandbox, binary, ...options().args])
         expect(spec.env).toMatchObject({ NODE_ENV: 'production', HOME: profile, CLAUDE_CONFIG_DIR: profile, CLAUDE_CODE_OAUTH_TOKEN: 'account-access' })
+        // Claude's own scratch folder must sit inside the profile: the sandbox refuses /tmp and the process would exit 1.
+        expect(spec.env).toMatchObject({ TMPDIR: `${profile}/tmp`, CLAUDE_CODE_TMPDIR: `${profile}/tmp` })
         for (const forbidden of ['NODE_OPTIONS', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'HTTPS_PROXY']) expect(spec.env).not.toHaveProperty(forbidden)
     })
     it('reports missing bundled files without exposing their paths or creating a profile', () => {

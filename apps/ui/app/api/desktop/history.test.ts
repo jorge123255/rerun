@@ -62,7 +62,7 @@ test('authenticated local history preserves two chats across service restart and
                     return { id, source: 'agent', originAgentId: owner === metadata[1] ? 'engine-bob' : 'foreign-engine', automationName: null, runStatus: 'done' }
                 }) })
             }
-            const history = req.url?.match(/^\/agents\/([^/]+)\/sessions\/([^/]+)\/messages$/)
+            const history = req.url?.match(/^\/agents\/([^/]+)\/sessions\/([^/]+)\/messages\?view=desktop-decisions$/)
             if (req.method === 'GET' && history) {
                 const messages = transcripts[`${history[1]}/${history[2]}`]
                 return messages ? json({ messages }) : json({ error: 'Not found' }, 404)

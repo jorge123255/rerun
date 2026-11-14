@@ -23,6 +23,8 @@ export type DesktopServiceSuggestionCardProps = {
     skipped: boolean
     unavailableReason?: string
     connectionMessage?: string
+    newAccount?: boolean
+    vaultSetup?: boolean
     canConnect: boolean
     canUseConnection: boolean
     canAdvance: boolean
@@ -39,7 +41,7 @@ export type DesktopServiceSuggestionCardProps = {
 
 export function DesktopServiceSuggestionCard(props: DesktopServiceSuggestionCardProps) {
     const { name, slug, reason, icon, category, current, count, selected, skipped, unavailableReason,
-        connectionMessage, canConnect, canUseConnection, canAdvance, configuring, busy, disabled, inline,
+        connectionMessage, newAccount, vaultSetup, canConnect, canUseConnection, canAdvance, configuring, busy, disabled, inline,
         onConnect, onCancel, onSkip, onAdvance, onSelect } = props
     const locked = !!disabled || busy || configuring
     const multiple = count > 1
@@ -57,13 +59,13 @@ export function DesktopServiceSuggestionCard(props: DesktopServiceSuggestionCard
                     <div className="flex flex-wrap items-center gap-1">
                         {configuring ? <Button size="sm" variant="ghost" disabled={!!disabled} onClick={onCancel}>Cancel</Button> : <>
                             {!multiple && <Button size="sm" variant="ghost" disabled={locked} onClick={onSkip}>Not now</Button>}
-                            {canConnect && <Button size="sm" disabled={locked} onClick={onConnect}>Connect</Button>}
+                            {canConnect && <Button size="sm" disabled={locked} onClick={onConnect} variant={newAccount ? 'outline' : 'default'}>{newAccount ? 'New account' : 'Connect'}</Button>}
                         </>}
                     </div>
                 </div>
                 {(unavailableReason || connectionMessage || skipped || configuring || selected[current]) && <>
                     <Separator className="-mx-3 border-t border-dashed bg-transparent data-horizontal:h-0 data-horizontal:w-auto" />
-                    {configuring ? <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2Icon className="size-4 shrink-0 animate-spin" />Complete setup in Apps, then return here.</p>
+                    {configuring ? <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2Icon className="size-4 shrink-0 animate-spin" />{vaultSetup ? 'Complete setup in Vault, then return here.' : 'Complete setup in Apps, then return here.'}</p>
                         : selected[current] ? <div className="flex min-w-0 items-center gap-2 text-sm"><IconBadge tone="green" icon={CheckIcon} glow={false} /><span className="wrap-anywhere font-medium">{name} connection selected</span></div>
                             : skipped ? <p className="text-sm text-muted-foreground">Skipped.</p> : null}
                     {!configuring && unavailableReason && <p className="whitespace-pre-wrap wrap-anywhere text-sm text-muted-foreground">{unavailableReason}</p>}

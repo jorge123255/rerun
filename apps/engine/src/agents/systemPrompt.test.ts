@@ -5,6 +5,8 @@ import { resolve } from 'node:path'
 process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-system-prompt-'))
 
 const { afterEach, describe, expect, it, vi } = await import('vitest')
+const { desktopInternalJson } = await import('../desktop/internal-client.js')
+vi.mock('../desktop/internal-client.js', () => ({ desktopInternalJson: vi.fn() }))
 const { agentConfigSchema } = await import('@rerun/contracts')
 const { buildSystemPrompt: buildSystemPromptBlocks, systemPromptText, currentTimeNote, nowBlock, userLanguageBlock } = await import('./systemPrompt.js')
 
@@ -262,6 +264,30 @@ describe('current time', () => {
         expect(nowBlock(new Date('2026-08-16T14:32:07Z'))).toBe('<now>\n2026-08-16T14:32:07Z (Sunday, 16 August 2026, 14:32 UTC)\n</now>')
     })
 
+    it('falls back to the configured workspace language only when there is no earlier human message', async () => {
+        const routine = { source: 'schedule', slug: 'digest', name: 'Daily digest' } as const
+        const french = { ...agent, config: agentConfigSchema.parse({ ...agent.config, language: 'fr' }) }
+        const { stable } = await buildSystemPromptBlocks(french, routine)
+        expect(stable).toContain('keep the language of the last messages a person wrote in this session, and failing that French, the language of this workspace')
+        expect(await buildSystemPrompt(agent, routine)).toContain('and failing that the language its instruction is written in.')
+        const invalid = { ...agent, config: { ...agent.config, language: 'not a locale' } }
+        expect(await buildSystemPrompt(invalid, routine)).toContain('and failing that the language its instruction is written in.')
+    })
+
+    it('reads the current Mac language for routines and triggers without overriding normal chat', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const getLanguage = vi.mocked(desktopInternalJson)
+        getLanguage.mockResolvedValueOnce({ locale: 'fr' }).mockResolvedValueOnce({ locale: 'de' }).mockRejectedValueOnce(new Error('offline'))
+        try {
+            expect(await buildSystemPrompt(agent, { source: 'schedule', slug: 'digest', name: 'Daily digest' })).toContain('failing that French')
+            expect(await buildSystemPrompt(agent, { source: 'trigger', slug: 'intake', name: 'Intake' })).toContain('failing that German')
+            expect(await buildSystemPrompt(agent, { source: 'chat' })).not.toContain('the language of this workspace')
+            expect(await buildSystemPrompt(agent, { source: 'schedule', slug: 'digest', name: 'Daily digest' })).toContain('failing that the language its instruction is written in')
+            expect(getLanguage).toHaveBeenCalledTimes(3)
+            expect(getLanguage).toHaveBeenCalledWith('/api/desktop/internal/language', {}, expect.any(AbortSignal), 256)
+        } finally { getLanguage.mockReset(); vi.unstubAllEnvs() }
+    })
+
     it('names the language of the user in the turn block of an install, and adds nothing without one', () => {
         expect(userLanguageBlock('French')).toMatch(/^<user_language>\nFrench: /)
         expect(userLanguageBlock(undefined)).toBe('')
@@ -289,7 +315,7 @@ describe('buildSystemPrompt provider notes', () => {
     it('tells codex to make the closing calls before writing its message', async () => {
         const prompt = await buildSystemPrompt(agent, { source: 'chat' }, 'codex')
         expect(prompt).toContain('<turn_order>')
-        expect(prompt).toContain('the first message you write to the user ends your turn')
+        expect(prompt).toContain('a message written before a call does not reach the user as your message')
         expect(prompt).not.toContain('A turn ends in this order, your message first')
     })
 
@@ -305,7 +331,7 @@ describe('buildSystemPrompt provider notes', () => {
         const provider = 'rerun'
         const prompt = await buildSystemPrompt(agent, { source: 'chat' }, provider)
         expect(prompt).toContain('A turn ends in this order, your message first')
-        expect(prompt).not.toContain('the first message you write to the user ends your turn')
+        expect(prompt).not.toContain('a message written before a call does not reach the user as your message')
     })
 
     it('leaves the turn order out for an agent with nothing that closes a turn', async () => {
@@ -428,6 +454,41 @@ describe('quick replies section', () => {
             expect(section).toContain('a tag like <ask_user> shows to the user as raw text')
             expect(prompt.split('a tag like <ask_user>').length).toBe(2)
         }
+    })
+})
+
+describe('desktop data and setup guidance', () => {
+    afterEach(() => vi.unstubAllEnvs())
+
+    it('keeps legacy hosted tools and credit instructions out of Mac chat and automation prompts', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const local = { ...agent, config: agentConfigSchema.parse({ name: 'Mac analyst', tools: {
+            hub: true, paidData: true, web: true, desktopToolGrants: { webFetch: true },
+        } }) }
+        for (const trigger of [{ source: 'chat' }, { source: 'schedule', slug: 'digest', name: 'Daily digest' }] as const) {
+            const prompt = await buildSystemPrompt(local, trigger)
+            expect(prompt).toContain('web_fetch reads public HTTP(S) text')
+            expect(prompt).not.toMatch(/paid_data|request_spend|200 credits|rerun_hub_service_|publish_file|<service_catalog>/)
+            expect(prompt).not.toContain('web_search')
+        }
+    })
+
+    it('asks a Mac coworker for a checked first result and preserves required setup when an optional app is skipped', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const local = { ...agent, install: 'Prepare a public preview before connecting any apps.',
+            config: agentConfigSchema.parse({ name: 'Mac setup', setup: { required: true }, tools: {
+                paidData: true, hub: true, desktopToolGrants: { suggestService: true },
+            } }) }
+        const prompt = await buildSystemPrompt(local)
+        const setup = prompt.slice(prompt.indexOf('<setup>'), prompt.indexOf('</setup>'))
+        expect(setup).toContain('Show a checked first result')
+        expect(setup).toContain('Label sample data')
+        expect(setup).toContain('keep setup pending')
+        expect(setup).toContain('When install_complete is available')
+        expect(prompt).toContain('call suggest_service')
+        expect(prompt).not.toMatch(/paid_data|request_spend|rerun_hub_service_|publish_file/)
+        expect(setup).not.toContain('with request_secret')
+        expect(setup).not.toContain('with memory_write')
     })
 })
 

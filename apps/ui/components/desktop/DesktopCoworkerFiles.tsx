@@ -1,15 +1,18 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { FileTextEditor } from '@/components/files/FileTextEditor'
+import { useFileUnloadGuard } from '@/components/files/useFileUnloadGuard'
 import { useFileNavigation } from '@/components/files/useFileNavigation'
 import { useSiblingFiles } from '@/components/files/useSiblingFiles'
 import { Button } from '@/components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogClose, DialogContent, DialogFooter, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { Input } from '@/components/ui/input'
-import { ArrowLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, PencilIcon, RefreshCwIcon, Trash2Icon, XIcon } from '@/lib/icons'
+import { PanelDeleteButton } from '@/components/ui/panel-editor'
+import { ArrowLeftIcon, ChevronRightIcon, DownloadIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, PencilIcon, RefreshCwIcon, Trash2Icon, XIcon } from '@/lib/icons'
 import { DesktopFileAudioPreview, isDesktopAudioName } from './DesktopFileAudioPreview'
 import { DesktopFileImagePreview, isDesktopRasterName } from './DesktopFileImagePreview'
 import { DesktopFilePdfPreview, isDesktopPdfName } from './DesktopFilePdfPreview'
@@ -22,10 +25,16 @@ import { DesktopFileVideoPreview, isDesktopVideoName } from './DesktopFileVideoP
 import { applyEol, splitEol } from '@/lib/files/editable'
 import { Badge } from '@rerun/ui/primitives'
 import type { DesktopAgentView } from './DesktopApp'
-import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
+import { desktopFileDraftHost, holdDraftAdmission } from '@/lib/desktop/draft-writes'
+import { useDesktopDialogControl, useDesktopPanelCloseGuard, type DesktopDialogControl, type RegisterDesktopPanelCloseGuard } from '@/lib/desktop/use-dialog-control'
+import { useDesktopLocale } from './DesktopLocale'
 
-type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string }
-type Preview = { path: string; content: string; truncated: boolean; hash?: string; identity?: string } | { path: string; error: string } | { path: string; loading: true } | { path: string; conflict: FileConflict }
+type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string; exportVersion?: string }
+type ListedSelection = { folder: string; entry: Entry }
+type OpenFile = { path: string; name: string; identity?: string; exportVersion?: string }
+type DeleteTarget = Pick<Entry, 'name' | 'type' | 'identity'> & { path: string }
+type SaveCoworkerFile = (file: { agentId: string; path: string; version: string }) => Promise<boolean>
+type Preview = { path: string; content: string; truncated: boolean; hash?: string; identity?: string; exportVersion?: string } | { path: string; error: string } | { path: string; loading: true } | { path: string; conflict: FileConflict }
 
 /** FileList’s name field: the stem is selected, Enter saves, and Escape cancels. */
 function RenameField({ name, onSubmit, onCancel }: { name: string; onSubmit: (next: string) => void; onCancel: () => void }) {
@@ -55,8 +64,6 @@ function RenameField({ name, onSubmit, onCancel }: { name: string; onSubmit: (ne
         }}
         className="h-7 px-2 text-sm" />
 }
-type CloseGuard = (close: () => void) => void
-
 function folderOf(path: string) {
     return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
 }
@@ -72,31 +79,39 @@ async function errorOf(response: Response, fallback: string) {
 }
 
 /** Port of AgentPanelFiles: breadcrumb navigation, sibling files, text/media/PDF previews, and a single .txt/.md import, scoped to one coworker. */
-function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; registerCloseGuard: (guard: CloseGuard | null) => void }) {
+export function DesktopCoworkerFilesBody({ agent, initialFilePath, registerCloseGuard }: {
+    agent: DesktopAgentView
+    initialFilePath?: string | null
+    registerCloseGuard: RegisterDesktopPanelCloseGuard
+}) {
+    const { t } = useDesktopLocale()
+    const focusFile = useRef(initialFilePath)
     const base = `/api/desktop/agents/${encodeURIComponent(agent.id)}/files`
     const [error, setError] = useState('')
     const [preview, setPreview] = useState<Preview | null>(null)
-    const [image, setImage] = useState<{ path: string; name: string; identity?: string } | null>(null)
-    const [audio, setAudio] = useState<{ path: string; name: string; identity?: string } | null>(null)
-    const [video, setVideo] = useState<{ path: string; name: string; identity?: string } | null>(null)
-    const [pdf, setPdf] = useState<{ path: string; name: string; identity?: string } | null>(null)
-    const [renaming, setRenaming] = useState<string | null>(null)
-    const [menuName, setMenuName] = useState<string | null>(null)
-    const renameAfterMenu = useRef<string | null>(null)
+    const [image, setImage] = useState<OpenFile | null>(null)
+    const [audio, setAudio] = useState<OpenFile | null>(null)
+    const [video, setVideo] = useState<OpenFile | null>(null)
+    const [pdf, setPdf] = useState<OpenFile | null>(null)
+    const [renaming, setRenaming] = useState<ListedSelection | null>(null)
+    const [menuTarget, setMenuTarget] = useState<ListedSelection | null>(null)
+    const renameAfterMenu = useRef<ListedSelection | null>(null)
     const [selected, setSelected] = useState<string | null>(null)
     const [renamePending, setRenamePending] = useState(false)
-    const [deleting, setDeleting] = useState<{ name: string; type: 'file' | 'dir'; identity?: string } | null>(null)
+    const [deleting, setDeleting] = useState<DeleteTarget | null>(null)
     const [deletePending, setDeletePending] = useState(false)
     const renamingNow = useRef(false)
     const deletingNow = useRef(false)
     const viewerRef = useRef<HTMLDivElement>(null)
+    const gridRef = useRef<HTMLDivElement>(null)
+    const homeRef = useRef<HTMLButtonElement>(null)
+    const gridFocus = useRef<{ folder: string; name: string | null; from: Element | null } | null>(null)
     const previewNow = useRef<Preview | null>(null)
     const blockSiblingNav = useRef(false)
     const pending = renamePending || deletePending
     useEffect(() => {
         if (!pending) return
-        registerCloseGuard(() => {})
-        return () => registerCloseGuard(null)
+        return registerCloseGuard(() => {})
     }, [pending, registerCloseGuard])
 
     const list = useCallback(async (path: string, showHidden: boolean) => {
@@ -109,7 +124,10 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         return ((await response.json()) as { entries: Entry[] }).entries
     }, [base])
 
-    const { currentPath, entries, loading, busy, showHidden, navigate, enter, goUp, goHome, setShowHidden, reload, refreshCurrent } = useFileNavigation<Entry>({ list })
+    const { currentPath, entries, loading, busy, showHidden, navigate, enter, setShowHidden, reload, refreshCurrent } = useFileNavigation<Entry>({
+        list, initialPath: initialFilePath ? folderOf(initialFilePath) : '',
+        initialShowHidden: initialFilePath?.split('/').some(part => part.startsWith('.')),
+    })
     const [editingPath, setEditingPath] = useState<string | null>(null)
 
     useEffect(() => {
@@ -127,20 +145,16 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
 
     useEffect(() => {
         // A replaced listing identity must not keep the previous bytes. A missing name stays put.
-        const adopt = (current: { path: string; name: string; identity?: string } | null, apply: (identity: string | undefined) => void) => {
+        const adopt = (current: OpenFile | null, set: (next: OpenFile) => void) => {
             if (!current || folderOf(current.path) !== currentPath) return
-            const entry = entries.find(item => item.type !== 'dir' && item.name === current.name)
+            const entry = entries.find(item => item.type === 'file' && item.name === current.name)
             if (!entry || entry.identity === current.identity) return
-            apply(entry.identity)
+            set({ ...current, identity: entry.identity, exportVersion: entry.exportVersion })
         }
-        const applyMedia = (identity: string | undefined, current: { path: string; name: string; identity?: string }, set: (next: { path: string; name: string; identity?: string } | null) => void) => {
-            if (current.identity === identity) return
-            set(identity ? { ...current, identity } : { path: current.path, name: current.name })
-        }
-        adopt(image, identity => { if (image) applyMedia(identity, image, setImage) })
-        adopt(audio, identity => { if (audio) applyMedia(identity, audio, setAudio) })
-        adopt(video, identity => { if (video) applyMedia(identity, video, setVideo) })
-        adopt(pdf, identity => { if (pdf) applyMedia(identity, pdf, setPdf) })
+        adopt(image, setImage)
+        adopt(audio, setAudio)
+        adopt(video, setVideo)
+        adopt(pdf, setPdf)
     }, [currentPath, entries, image, audio, video, pdf])
 
     previewNow.current = preview
@@ -178,6 +192,29 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         return () => controller.abort()
     }, [base, openPath, textIdentity, editingPath])
 
+    const [saveNotice, setSaveNotice] = useState<{ path: string; message: string; ok: boolean } | null>(null)
+    const [savingFile, setSavingFile] = useState(false)
+    const savingNow = useRef(false)
+    const nativeSave = typeof window === 'undefined' ? undefined : (window as Window & { desktopApp?: { saveCoworkerFile?: SaveCoworkerFile } }).desktopApp?.saveCoworkerFile
+    const saveAs = async (path: string, version: string) => {
+        if (!nativeSave || savingNow.current) return
+        savingNow.current = true
+        setSavingFile(true)
+        setSaveNotice(null)
+        try {
+            if (await nativeSave({ agentId: agent.id, path, version })) {
+                setSaveNotice({ path, message: `Saved ${nameOf(path)}`, ok: true })
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not save this file.'
+            setSaveNotice({ path, message, ok: false })
+        } finally {
+            savingNow.current = false
+            setSavingFile(false)
+        }
+    }
+    const showSaveNotice = (visible: boolean) => visible && saveNotice && <p role={saveNotice.ok ? 'status' : 'alert'} className={`text-xs ${saveNotice.ok ? 'text-muted-foreground' : 'text-destructive'}`}>{saveNotice.message}</p>
+
     const [notice, setNotice] = useState<{ ok: boolean; text: string; folder: string } | null>(null)
 
     const openListed = useCallback((name: string) => {
@@ -185,8 +222,9 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         const entry = entries.find(item => item.type !== 'dir' && item.name === name)
         if (!entry) return
         const path = currentPath ? `${currentPath}/${name}` : name
+        gridFocus.current = null
         setSelected(path)
-        const file = { path, name: entry.name, ...(entry.identity && { identity: entry.identity }) }
+        const file: OpenFile = { path, name: entry.name, identity: entry.identity, exportVersion: entry.exportVersion }
         setEditingPath(null)
         if (isDesktopRasterName(entry.name)) {
             setAudio(null); setVideo(null); setPdf(null); setPreview(null); setImage(file)
@@ -200,11 +238,34 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
             setImage(null); setAudio(null); setVideo(null); setPdf(null); setPreview({ path, loading: true })
         }
     }, [currentPath, entries])
+    useEffect(() => {
+        const path = focusFile.current
+        if (!path || loading || busy || folderOf(path) !== currentPath) return
+        focusFile.current = null
+        if (error) return
+        const name = nameOf(path)
+        if (entries.some(entry => entry.name === name && entry.type === 'file')) openListed(name)
+        else setNotice({ ok: false, folder: currentPath, text: `${t('linkedFileNotFound')}. ${path}` })
+    }, [busy, currentPath, entries, error, loading, openListed, t])
     const openPathname = image?.path ?? audio?.path ?? video?.path ?? pdf?.path ?? preview?.path
     const openEntry = openPathname && folderOf(openPathname) === currentPath
         ? entries.find(entry => entry.type !== 'dir' && entry.name === nameOf(openPathname))
         : undefined
-    const navigationLocked = renamePending || deletePending || renaming !== null || deleting !== null || editingPath !== null || (!!preview && 'conflict' in preview)
+    const previewSaveAction = (path: string, version?: string) => nativeSave && openEntry?.exportVersion && version
+        ? <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={savingFile} onClick={() => void saveAs(path, version)}>Save As</Button>
+        : null
+    const previewDeleteAction = (path: string, identity?: string) => {
+        if (!identity || openEntry?.identity !== identity) return null
+        return <PanelDeleteButton type="button" label="Delete file" confirm={false} disabled={pending || savingFile}
+            onClick={() => setDeleting({ path, name: openEntry.name, type: 'file', identity })} />
+    }
+    const mediaActions = (file: OpenFile) => <>
+        {previewSaveAction(file.path, file.exportVersion)}
+        {previewDeleteAction(file.path, file.identity)}
+        {showSaveNotice(saveNotice?.path === file.path)}
+    </>
+    const renameTarget = renaming?.folder === currentPath ? renaming : null
+    const navigationLocked = renamePending || deletePending || renameTarget !== null || deleting !== null || editingPath !== null || (!!preview && 'conflict' in preview)
     blockSiblingNav.current = navigationLocked
     const openSibling = useCallback((name: string) => {
         if (blockSiblingNav.current) return
@@ -214,18 +275,66 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     const shownSiblings = navigationLocked ? null : siblings
     useFileSiblingKeys(shownSiblings, viewerRef)
     const childPath = (name: string) => currentPath ? `${currentPath}/${name}` : name
-    const parentOf = (path: string) => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
-    const selectedHere = selected && parentOf(selected) === currentPath ? selected.slice(selected.lastIndexOf('/') + 1) : null
+    const currentEntry = (target: ListedSelection | null) => target?.folder === currentPath
+        ? entries.find(entry => entry.name === target.entry.name && entry.type === target.entry.type && entry.identity === target.entry.identity)
+        : undefined
+    const focusGrid = (folder: string, name: string | null) => {
+        gridFocus.current = { folder, name, from: document.activeElement }
+    }
+    const openDirectory = (name: string) => {
+        const path = childPath(name)
+        focusGrid(path, null)
+        setSelected(path)
+        enter(name)
+    }
+    const openAncestor = (folder: string) => {
+        if (folder !== currentPath) {
+            const child = currentPath.slice(folder ? folder.length + 1 : 0).split('/')[0]
+            focusGrid(folder, child)
+        } else gridFocus.current = null
+        navigate(folder)
+    }
+    const selectedHere = selected && folderOf(selected) === currentPath ? nameOf(selected) : null
+
+    useLayoutEffect(() => {
+        const viewer = viewerRef.current
+        const active = document.activeElement
+        if (openPathname) {
+            if (active === document.body || gridRef.current?.contains(active)) {
+                viewer?.querySelector<HTMLButtonElement>('[data-slot="panel-editor-back"]')?.focus()
+            }
+            return
+        }
+        const target = gridFocus.current
+        if (!target || target.folder !== currentPath || loading || busy || pending) return
+        gridFocus.current = null
+        if (active !== document.body && active !== target.from) return
+        const tiles = gridRef.current?.querySelectorAll<HTMLButtonElement>('button[data-files-name]:not([disabled])')
+        const entry = target.name && tiles && [...tiles].find(tile => tile.dataset.filesName === target.name)
+        const parent = !target.name && gridRef.current?.querySelector<HTMLButtonElement>('button[data-files-parent]:not([disabled])')
+        const next = entry || parent || homeRef.current
+        next?.focus()
+    }, [openPathname, currentPath, loading, busy, pending])
+
+    const backToFolder = (path: string) => focusGrid(folderOf(path), nameOf(path))
     const retarget = (value: string, from: string, to: string, directory: boolean) => value === from || (directory && value.startsWith(`${from}/`)) ? `${to}${value.slice(from.length)}` : value
-    const renameEntry = async (name: string, next: string) => {
+    const renameEntry = async (target: ListedSelection, next: string) => {
         if (renamingNow.current) return
+        const { name, type, identity } = target.entry
+        if (!currentEntry(target)) {
+            setNotice({ ok: false, folder: target.folder, text: 'This entry changed. Refresh Files and choose it again.' })
+            return
+        }
         renamingNow.current = true
         setRenamePending(true)
         const from = childPath(name)
-        const directory = entries.some(entry => entry.name === name && entry.type === 'dir')
+        const directory = type === 'dir'
         setNotice(null)
         try {
-            const response = await fetch(`${base}/rename`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: from, name: next }) })
+            const response = await fetch(`${base}/rename`, {
+                method: 'POST', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ path: from, name: next, identity }),
+            })
             const body = await response.json().catch(() => null) as { path?: string; name?: string; error?: string } | null
             if (!response.ok || !body?.path) {
                 setNotice({ ok: false, folder: currentPath, text: body?.error ?? `Could not rename “${name}”.` })
@@ -243,18 +352,18 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         }
     }
     // Clear only the deleted path. Do not select a sibling, and do not retarget a chat attachment.
-    const commitDelete = async (target: { name: string; type: 'file' | 'dir'; identity?: string }) => {
+    const commitDelete = async (target: DeleteTarget) => {
         if (deletingNow.current) return
         deletingNow.current = true
         setDeletePending(true)
-        const path = childPath(target.name)
+        const { path } = target
         setNotice(null)
         let removed = false
         try {
             const response = await fetch(`${base}/delete`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path, ...(target.identity && { identity: target.identity }) }) })
             const body = await response.json().catch(() => null) as { path?: string; error?: string } | null
             if (!response.ok || body?.path !== path) {
-                setNotice({ ok: false, folder: currentPath, text: body?.error ?? `Could not delete “${target.name}”.` })
+                setNotice({ ok: false, folder: folderOf(path), text: body?.error ?? `Could not delete “${target.name}”.` })
                 return
             }
             removed = true
@@ -266,9 +375,9 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
             setVideo(previous => previous && covered(previous.path) ? null : previous)
             setPdf(previous => previous && covered(previous.path) ? null : previous)
             setEditingPath(previous => covered(previous) ? null : previous)
-            setRenaming(previous => previous === target.name ? null : previous)
+            setRenaming(previous => previous?.folder === folderOf(path) && previous.entry.name === target.name ? null : previous)
         } catch {
-            setNotice({ ok: false, folder: currentPath, text: `Could not delete “${target.name}”.` })
+            setNotice({ ok: false, folder: folderOf(path), text: `Could not delete “${target.name}”.` })
         } finally {
             deletingNow.current = false
             setDeletePending(false)
@@ -276,9 +385,17 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         }
         if (removed) reload()
     }
+    const deleteConfirmation = deleting && <ConfirmDialog open pending={deletePending} onOpenChange={open => { if (!open && !deletingNow.current) setDeleting(null) }}
+        title={`Delete ${deleting.name}?`}
+        description={deleting.type === 'dir' ? 'The folder and everything inside it are deleted from the box. This cannot be undone.' : 'The file is deleted from the box. This cannot be undone.'}
+        onConfirm={event => { event.preventDefault(); void commitDelete(deleting) }} />
+    const folderNotice = notice?.folder === currentPath && <p role={notice.ok ? 'status' : 'alert'} data-testid="import-notice" className={`pt-2 text-xs ${notice.ok ? 'text-muted-foreground' : 'text-destructive'}`}>{notice.text}</p>
+    const withPreviewFeedback = (view: ReactNode) => <>{view}{folderNotice}{deleteConfirmation}</>
 
     const breadcrumbs = currentPath.split('/').filter(Boolean)
-    const menuEntry = menuName ? entries.find(entry => entry.name === menuName) : undefined
+    const menuEntry = busy ? undefined : currentEntry(menuTarget)
+    const menuVersion = menuEntry?.type === 'file' && menuEntry.exportVersion === menuTarget?.entry.exportVersion
+        ? menuEntry.exportVersion : undefined
 
     // Keyed on the path (as FileDetail does), so opening another file leaves the editor by itself.
     const editing = !!preview && editingPath === preview.path
@@ -328,65 +445,68 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     if (preview && 'conflict' in preview) {
         return <FileEditor base={base} path={preview.path} content={preview.conflict.content} hash={preview.conflict.hash} identity={preview.conflict.identity} initialConflict={preview.conflict} registerCloseGuard={registerCloseGuard}
             onClose={() => setPreview(null)}
-            onSaved={(content, hash, identity) => { setPreview({ path: preview.path, content, truncated: false, hash, identity }); setEditingPath(null) }} />
+            onSaved={(content, hash, identity, exportVersion) => { setPreview({ path: preview.path, content, truncated: false, hash, identity, exportVersion }); setEditingPath(null) }} />
     }
 
     if (preview && editing && 'hash' in preview && preview.hash) {
         return <FileEditor base={base} path={preview.path} content={preview.content} hash={preview.hash} identity={preview.identity} registerCloseGuard={registerCloseGuard}
             onClose={() => setEditingPath(null)}
-            onSaved={(content, hash, identity) => { setPreview({ path: preview.path, content, truncated: false, hash, identity }); setEditingPath(null) }} />
+            onSaved={(content, hash, identity, exportVersion) => { setPreview({ path: preview.path, content, truncated: false, hash, identity, exportVersion }); setEditingPath(null) }} />
     }
 
     if (image) {
         const params = new URLSearchParams({ path: image.path })
         if (image.identity) params.set('identity', image.identity)
-        return <DesktopFileImagePreview name={image.name} path={image.path} identity={image.identity} srcUrl={`${base}/image?${params.toString()}`} onBack={() => setImage(null)} siblings={shownSiblings} viewerRef={viewerRef} />
+        return withPreviewFeedback(<DesktopFileImagePreview name={image.name} path={image.path} identity={image.identity} srcUrl={`${base}/image?${params.toString()}`} onBack={() => { backToFolder(image.path); setImage(null) }} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(image)} />)
     }
 
     if (audio) {
         const params = new URLSearchParams({ path: audio.path })
         if (audio.identity) params.set('identity', audio.identity)
-        return <DesktopFileAudioPreview name={audio.name} path={audio.path} identity={audio.identity} srcUrl={`${base}/audio?${params.toString()}`} onBack={() => setAudio(null)} siblings={shownSiblings} viewerRef={viewerRef} />
+        return withPreviewFeedback(<DesktopFileAudioPreview name={audio.name} path={audio.path} identity={audio.identity} srcUrl={`${base}/audio?${params.toString()}`} onBack={() => { backToFolder(audio.path); setAudio(null) }} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(audio)} />)
     }
 
     if (video) {
         const params = new URLSearchParams({ path: video.path })
         if (video.identity) params.set('identity', video.identity)
-        return <DesktopFileVideoPreview name={video.name} path={video.path} identity={video.identity} srcUrl={`${base}/video?${params.toString()}`} onBack={() => setVideo(null)} siblings={shownSiblings} viewerRef={viewerRef} />
+        return withPreviewFeedback(<DesktopFileVideoPreview name={video.name} path={video.path} identity={video.identity} srcUrl={`${base}/video?${params.toString()}`} onBack={() => { backToFolder(video.path); setVideo(null) }} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(video)} />)
     }
 
     if (pdf) {
         const params = new URLSearchParams({ path: pdf.path })
         if (pdf.identity) params.set('identity', pdf.identity)
-        return <DesktopFilePdfPreview name={pdf.name} path={pdf.path} identity={pdf.identity} srcUrl={`${base}/pdf?${params.toString()}`} onBack={() => setPdf(null)} siblings={shownSiblings} viewerRef={viewerRef} />
+        return withPreviewFeedback(<DesktopFilePdfPreview name={pdf.name} path={pdf.path} identity={pdf.identity} srcUrl={`${base}/pdf?${params.toString()}`} onBack={() => { backToFolder(pdf.path); setPdf(null) }} siblings={shownSiblings} viewerRef={viewerRef} headerActions={mediaActions(pdf)} />)
     }
 
     if (preview) {
         const name = preview.path.split('/').pop()
         const editable = 'hash' in preview && !!preview.hash
-        return <div ref={viewerRef} className="flex min-h-0 flex-1 flex-col gap-2">
+        return withPreviewFeedback(<div ref={viewerRef} className="flex min-h-0 flex-1 flex-col gap-2">
             <div className="flex items-center gap-2 text-sm">
-                <Button type="button" variant="ghost" size="sm" aria-label="Back to folder" onClick={() => setPreview(null)}><ArrowLeftIcon className="size-4" /></Button>
+                <Button type="button" variant="ghost" size="sm" aria-label="Back to folder" data-slot="panel-editor-back" onClick={() => { backToFolder(preview.path); setPreview(null) }}><ArrowLeftIcon className="size-4" /></Button>
                 <span className="min-w-0 flex-1 truncate font-medium" title={preview.path}>{name}</span>
                 {shownSiblings && <div className="flex shrink-0 items-center gap-1"><FileSiblingControls siblings={shownSiblings} /></div>}
+                {previewSaveAction(preview.path, 'content' in preview ? preview.exportVersion : 'error' in preview ? openEntry?.exportVersion : undefined)}
                 {'content' in preview && <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={!editable}
-                    title={editable ? undefined : 'Only UTF-8 .txt and .md files up to 256 KB can be edited here.'} onClick={() => setEditingPath(preview.path)}>Edit</Button>}
+                    title={editable ? undefined : 'Only complete UTF-8 text files up to 256 KiB can be edited here.'} onClick={() => setEditingPath(preview.path)}>Edit</Button>}
+                {previewDeleteAction(preview.path, 'content' in preview ? preview.identity : 'error' in preview ? openEntry?.identity : undefined)}
             </div>
+            {showSaveNotice(saveNotice?.path === preview.path)}
             {'loading' in preview ? <p role="status" className="text-sm text-muted-foreground">Loading preview…</p>
                 : 'error' in preview ? <p role="alert" className="text-sm text-destructive">{preview.error}</p>
                 : <>
                     <pre data-testid="file-preview" className="min-h-0 flex-1 overflow-auto rounded-md border bg-muted/30 p-3 font-mono text-xs whitespace-pre-wrap break-words">{preview.content}</pre>
                     {preview.truncated && <p className="text-xs text-muted-foreground">Preview shows the first 256 KB.</p>}
                 </>}
-        </div>
+        </div>)
     }
 
     return <div className="flex min-h-0 flex-1 flex-col">
         <nav aria-label="Folder" className="flex items-center gap-1 overflow-x-auto border-b pb-2 text-xs">
-            <button type="button" aria-label="Workspace home" disabled={pending} onClick={goHome} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground"><HomeIcon className="size-3.5" /></button>
+            <button type="button" ref={homeRef} aria-label="Workspace home" disabled={pending} onClick={() => openAncestor('')} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground"><HomeIcon className="size-3.5" /></button>
             {breadcrumbs.map((crumb, i) => <span key={i} className="flex shrink-0 items-center gap-1">
                 <ChevronRightIcon className="size-3 text-muted-foreground" />
-                <button type="button" disabled={pending} onClick={() => navigate(breadcrumbs.slice(0, i + 1).join('/'))} className="text-muted-foreground hover:text-foreground">{crumb}</button>
+                <button type="button" disabled={pending} onClick={() => openAncestor(breadcrumbs.slice(0, i + 1).join('/'))} className="text-muted-foreground hover:text-foreground">{crumb}</button>
             </span>)}
             <div className="flex-1" />
             <button type="button" disabled={pending} onClick={() => setShowHidden(v => !v)} title={showHidden ? 'Hide hidden files' : 'Show hidden files'} aria-label={showHidden ? 'Hide hidden files' : 'Show hidden files'}
@@ -396,72 +516,85 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
             <FilesImportMenu onPick={imports.enqueueEntries} disabled={pending || loading || busy || !!error} />
             <button type="button" aria-label="Refresh files" disabled={pending} onClick={reload} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground"><RefreshCwIcon className="size-3.5" /></button>
         </nav>
+        {showSaveNotice(!!saveNotice && folderOf(saveNotice.path) === currentPath)}
         {renamePending && <p role="status" className="pt-2 text-xs text-muted-foreground">Renaming…</p>}
         {deletePending && <p role="status" className="pt-2 text-xs text-muted-foreground">Deleting…</p>}
-        {notice?.folder === currentPath && <p role={notice.ok ? 'status' : 'alert'} data-testid="import-notice" className={`pt-2 text-xs ${notice.ok ? 'text-muted-foreground' : 'text-destructive'}`}>{notice.text}</p>}
+        {folderNotice}
         <div className={`relative min-h-0 flex-1 overflow-y-auto py-2 ${busy || pending ? 'pointer-events-none opacity-60' : ''}`}
             onDragOver={imports.onDragOver} onDragLeave={imports.onDragLeave} onDrop={imports.onDrop}>
             {imports.dragOver && <p role="status" className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-md border border-dashed bg-background/80 text-sm">Drop files or folders to import</p>}
             {loading && !error ? <FxFilesLoading />
                 : error ? <p role="alert" className="text-sm text-destructive">{error}</p>
-                : <ContextMenu onOpenChange={open => { if (!open) setMenuName(null) }}>
+                : <ContextMenu onOpenChange={open => { if (!open) setMenuTarget(null) }}>
                     <ContextMenuTrigger asChild>
-                        <DesktopFilesGrid
-                            entries={entries}
-                            currentPath={currentPath}
-                            filesBase={base}
-                            selectedName={selectedHere}
-                            renamingName={renaming}
-                            pending={pending}
-                            textHeads={heads}
-                            onRequestText={request}
-                            onOpenFile={name => openListed(name)}
-                            onOpenDir={name => { setSelected(childPath(name)); enter(name) }}
-                            onGoUp={currentPath ? goUp : undefined}
-                            onContextMenu={name => setMenuName(name)}
-                            onClearMenu={() => setMenuName(null)}
-                            renderRename={name => <RenameField name={name} onSubmit={next => { setRenaming(null); void renameEntry(name, next) }} onCancel={() => setRenaming(null)} />}
-                        />
+                        <div ref={gridRef}>
+                            <DesktopFilesGrid
+                                entries={entries}
+                                currentPath={currentPath}
+                                filesBase={base}
+                                selectedName={selectedHere}
+                                renamingName={renameTarget?.entry.name}
+                                pending={busy || pending}
+                                textHeads={heads}
+                                onRequestText={request}
+                                onOpenFile={name => openListed(name)}
+                                onOpenDir={openDirectory}
+                                onGoUp={currentPath ? () => openAncestor(folderOf(currentPath)) : undefined}
+                                onContextMenu={name => {
+                                    const entry = entries.find(item => item.name === name)
+                                    setMenuTarget(entry ? { folder: currentPath, entry } : null)
+                                }}
+                                onClearMenu={() => setMenuTarget(null)}
+                                renderRename={name => renameTarget && <RenameField name={name} onSubmit={next => { setRenaming(null); void renameEntry(renameTarget, next) }} onCancel={() => setRenaming(null)} />}
+                            />
+                        </div>
                     </ContextMenuTrigger>
                     {menuEntry && <ContextMenuContent onCloseAutoFocus={event => {
-                        const name = renameAfterMenu.current
-                        if (!name) return
+                        const target = renameAfterMenu.current
+                        renameAfterMenu.current = null
+                        if (!target || !currentEntry(target)) return
                         // Mount the inline editor after the menu releases its focus trap. Mounting
                         // in onSelect lets that trap blur and immediately cancel the new field.
                         event.preventDefault()
-                        renameAfterMenu.current = null
-                        setRenaming(name)
+                        setRenaming(target)
                     }}>
-                        <ContextMenuLabel className="max-w-56 truncate">{menuEntry.name}</ContextMenuLabel>
-                        <ContextMenuItem disabled={pending} onSelect={() => { renameAfterMenu.current = menuEntry.name }}>
+                        <ContextMenuLabel className="max-w-56 truncate pl-7">{menuEntry.name}</ContextMenuLabel>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem className="pl-7" disabled={pending}
+                            onSelect={() => menuEntry.type === 'dir' ? openDirectory(menuEntry.name) : openListed(menuEntry.name)}>
+                            {t(menuEntry.type === 'dir' ? 'files.grid.openFolder' : 'files.grid.open')}
+                        </ContextMenuItem>
+                        {nativeSave && menuVersion && <ContextMenuItem disabled={pending || savingFile}
+                            onSelect={() => void saveAs(childPath(menuEntry.name), menuVersion)}>
+                            <DownloadIcon className="size-4" />
+                            Save As
+                        </ContextMenuItem>}
+                        <ContextMenuItem disabled={pending} onSelect={() => { renameAfterMenu.current = { folder: currentPath, entry: menuEntry } }}>
                             <PencilIcon className="size-4" />
-                            Rename
+                            {t('files.grid.rename')}
                         </ContextMenuItem>
                         <ContextMenuSeparator />
-                        <ContextMenuItem variant="destructive" disabled={pending} onSelect={() => setDeleting({ name: menuEntry.name, type: menuEntry.type, ...(menuEntry.identity && { identity: menuEntry.identity }) })}>
+                        <ContextMenuItem variant="destructive" disabled={pending} onSelect={() => setDeleting({ path: childPath(menuEntry.name), name: menuEntry.name, type: menuEntry.type, identity: menuEntry.identity })}>
                             <Trash2Icon className="size-4" />
-                            Delete
+                            {t('files.grid.delete')}
                         </ContextMenuItem>
                     </ContextMenuContent>}
                 </ContextMenu>}
             <FilesImportTray items={imports.items} onCancel={imports.cancel} onRetry={imports.retry} onDismiss={imports.dismiss} />
         </div>
-        {deleting && <ConfirmDialog open pending={deletePending} onOpenChange={open => { if (!open && !deletingNow.current) setDeleting(null) }}
-            title={`Delete ${deleting.name}?`}
-            description={deleting.type === 'dir' ? 'The folder and everything inside it are deleted from the box. This cannot be undone.' : 'The file is deleted from the box. This cannot be undone.'}
-            onConfirm={event => { event.preventDefault(); if (deleting) void commitDelete(deleting) }} />}
+        {deleteConfirmation}
     </div>
 }
 
 type FileConflict = { content: string; hash: string; identity?: string; stale?: boolean; recovery?: { draft: string; external: string } }
-type SaveResponse = { path: string; hash: string; identity?: string } | { error: string; conflict?: true; stale?: boolean; current?: { content: string; hash: string; identity?: string } | null; recovery?: { draft: string; external: string } }
+type SaveResponse = { path: string; hash: string; identity?: string; exportVersion?: string } | { error: string; conflict?: true; stale?: boolean; current?: { content: string; hash: string; identity?: string } | null; recovery?: { draft: string; external: string } }
 
 /**
  * Original FileEditorDialog layout and editor, with desktop conflict details. Every close path
  * guards the draft, including the Files dialog behind this modal. Overwrite retries against the
  * version shown, so another change still produces a conflict.
  */
-function FileEditor({ base, path, content, hash, identity, initialConflict = null, registerCloseGuard, onClose, onSaved }: { base: string; path: string; content: string; hash: string; identity?: string; initialConflict?: FileConflict | null; registerCloseGuard: (guard: CloseGuard | null) => void; onClose: () => void; onSaved: (content: string, hash: string, identity?: string) => void }) {
+function FileEditor({ base, path, content, hash, identity, initialConflict = null, registerCloseGuard, onClose, onSaved }: { base: string; path: string; content: string; hash: string; identity?: string; initialConflict?: FileConflict | null; registerCloseGuard: RegisterDesktopPanelCloseGuard; onClose: () => void; onSaved: (content: string, hash: string, identity?: string, exportVersion?: string) => void }) {
     const [opened, setOpened] = useState(() => ({ ...splitEol(content), hash, identity }))
     const [draft, setDraft] = useState(opened.text)
     const [saving, setSaving] = useState(false)
@@ -478,31 +611,29 @@ function FileEditor({ base, path, content, hash, identity, initialConflict = nul
     }, [dirty, saving, onClose])
 
     useEffect(() => {
-        registerCloseGuard(requestClose)
-        return () => registerCloseGuard(null)
+        return registerCloseGuard(requestClose)
     }, [registerCloseGuard, requestClose])
 
-    useEffect(() => {
-        if (!dirty) return
-        const warn = (event: BeforeUnloadEvent) => event.preventDefault()
-        window.addEventListener('beforeunload', warn)
-        return () => window.removeEventListener('beforeunload', warn)
-    }, [dirty])
+    const draftHost = desktopFileDraftHost()
+    useFileUnloadGuard(dirty || setAside !== null, draftHost)
 
     const save = async (baseHash: string, fileIdentity = opened.identity) => {
+        if (draftHost?.isClosing()) return
+        const release = holdDraftAdmission()
         setSaving(true)
         setError('')
         const next = applyEol(draft, opened.eol)
         try {
             const response = await fetch(`${base}/content`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path, content: next, baseHash, ...(fileIdentity && { identity: fileIdentity }) }) })
             const body = await response.json().catch(() => ({ error: 'Could not save this file.' })) as SaveResponse
-            if (response.ok && 'hash' in body) { onSaved(next, body.hash, body.identity); return }
+            if (response.ok && 'hash' in body) { onSaved(next, body.hash, body.identity, body.exportVersion); return }
             if ('conflict' in body && body.conflict && body.current) setConflict({ ...body.current, ...(body.recovery && { recovery: body.recovery }), ...(body.stale ? { stale: true } : {}) })
             else setError('error' in body && body.error ? `${body.error} Your edits are still here; try again.` : 'Could not save this file. Your edits are still here; try again.')
         } catch {
             setError('Could not save this file. Your edits are still here; try again.')
         } finally {
             setSaving(false)
+            release()
         }
     }
 
@@ -527,7 +658,7 @@ function FileEditor({ base, path, content, hash, identity, initialConflict = nul
                 <Button size="icon-sm" variant="ghost" onClick={() => requestClose()} disabled={saving} title="Close editor" aria-label="Close editor"><XIcon className="size-4" /></Button>
             </div>
             <div className="min-h-0 flex-1 overflow-hidden">
-                <FileTextEditor value={draft} onChange={setDraft} fileName={name ?? path} readOnly={saving} autoFocus onSave={saveDraft} />
+                <FileTextEditor value={draft} onChange={text => { if (!draftHost?.isClosing()) setDraft(text) }} fileName={name ?? path} readOnly={saving} autoFocus onSave={saveDraft} />
             </div>
             {setAside !== null && <div className="shrink-0 space-y-1 border-t border-border p-3 text-xs" data-testid="set-aside">
                 <p className="text-muted-foreground">Reloaded the newer version. Your previous edits, not saved:</p>
@@ -563,26 +694,27 @@ function FileEditor({ base, path, content, hash, identity, initialConflict = nul
     </Dialog>
 }
 
-export function DesktopCoworkerFiles({ agent, dialogControl }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl }) {
+export function DesktopCoworkerFiles({ agent, dialogControl, initialFilePath, onCloseAutoFocus }: {
+    agent: DesktopAgentView
+    dialogControl?: DesktopDialogControl
+    initialFilePath?: string | null
+    onCloseAutoFocus?: (event: Event) => void
+}) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
-    const closeGuard = useRef<CloseGuard | null>(null)
-    const registerCloseGuard = useCallback((guard: CloseGuard | null) => { closeGuard.current = guard }, [])
+    const { register, requestClose } = useDesktopPanelCloseGuard()
     const changeOpen = (next: boolean) => {
-        if (!next && closeGuard.current) closeGuard.current(() => setOpen(false))
-        else setOpen(next)
+        if (next) setOpen(true)
+        else requestClose(() => setOpen(false))
     }
     return <Dialog open={open} onOpenChange={changeOpen} asSheet={false}>
         <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Files</Button></DialogTrigger>
-        {open && <DialogContent className="flex h-[75dvh] flex-col sm:max-w-2xl" onEscapeKeyDown={event => {
+        {open && <DialogContent className="flex h-[75dvh] flex-col sm:max-w-2xl" onCloseAutoFocus={onCloseAutoFocus} onEscapeKeyDown={event => {
             // Radix handles Escape at document capture before the field can stop propagation.
             // Let the inline field cancel its name edit without dismissing the Files dialog.
             if (event.target instanceof HTMLElement && event.target.hasAttribute('data-desktop-file-rename')) event.preventDefault()
         }}>
-            <DialogHeader>
-                <DialogTitle>Files</DialogTitle>
-                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import a .txt or .md file. Preview supported images and PDFs, or play audio and video already in the folder.</DialogDescription>
-            </DialogHeader>
-            <FilesPanel key={agent.id} agent={agent} registerCloseGuard={registerCloseGuard} />
+            <DialogHeaderBar icon={FolderIcon} title="Files" description={<>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import files and folders. Preview supported images and PDFs, or play audio and video already in the folder.</>} />
+            <DesktopCoworkerFilesBody key={agent.id} agent={agent} initialFilePath={initialFilePath} registerCloseGuard={register} />
             <DialogFooter><DialogClose asChild><Button type="button">Done</Button></DialogClose></DialogFooter>
         </DialogContent>}
     </Dialog>

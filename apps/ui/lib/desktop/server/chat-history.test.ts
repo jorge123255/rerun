@@ -43,6 +43,32 @@ test('engine and individual pending-request failures retain saved chats and know
     expect(filterDesktopChats(history.conversations, 'needs', '').map(row => row.id)).toEqual(['known'])
 })
 
+test('missing General metadata does not make the Threads filters incomplete', async () => {
+    const history = await readDesktopChatHistory({
+        listLocalSessions: async () => [{ ...local('general'), kind: 'general' }, local('routine')],
+        listEngineSessions: async () => [remote('routine', 'schedule')],
+        pendingQuestionFor: async () => null,
+    }, agent)
+    expect(history.enrichment).toBe('ok')
+    expect(filterDesktopChats(history.conversations, 'automations', '').map(row => row.id)).toEqual(['routine'])
+})
+
+test('uses a published result title for the owned automation without replacing its local chat id', async () => {
+    const result = { title: 'No new leads', outcome: 'nothing' } as const
+    const history = await readDesktopChatHistory({
+        listLocalSessions: async () => [local('routine'), local('ordinary'), local('foreign')],
+        listEngineSessions: async () => [
+            { ...remote('routine', 'schedule'), automationResult: result },
+            { ...remote('ordinary'), automationResult: result },
+            { ...remote('foreign', 'trigger', 'engine-bob'), automationResult: result },
+        ],
+    }, agent)
+    expect(history.conversations.find(row => row.id === 'routine')).toMatchObject({ title: result.title, automationOutcome: result.outcome })
+    expect(history.conversations.find(row => row.id === 'ordinary')).toMatchObject({ title: 'Chat ordinary' })
+    expect(history.conversations.find(row => row.id === 'foreign')).toMatchObject({ title: 'Chat foreign' })
+    expect(filterDesktopChats(history.conversations, 'automations', 'new leads').map(row => row.id)).toEqual(['routine'])
+})
+
 test('bounds pending-request reads while processing the full saved list beyond one screen', async () => {
     const sessions = Array.from({ length: 75 }, (_, index) => local(String(index)))
     let active = 0, maximum = 0
@@ -72,4 +98,5 @@ test('the thread list leaves General out and can match an opening line', () => {
     })
     expect(filterDesktopChats([row('General', 'general', null), row('Notes', 'thread', 'Check the funnel')], 'all', '').map(item => item.id)).toEqual(['Notes'])
     expect(filterDesktopChats([row('Notes', 'thread', 'Check the funnel')], 'all', 'funnel').map(item => item.id)).toEqual(['Notes'])
+    expect(filterDesktopChats([row('Notes', 'thread', 'E\u0301VALUATION')], 'all', 'évaluation').map(item => item.id)).toEqual(['Notes'])
 })

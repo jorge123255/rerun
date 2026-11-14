@@ -32,6 +32,24 @@ test('masked add input and Cancel preserve the private draft without creating a 
     expect(JSON.stringify(session.snapshot())).not.toContain('offline-fixture-only')
     session.close()
 })
+test('recovery opens only the exact named connection and offers no editor for a missing target', async () => {
+    const { host, root } = createHost()
+    const catalog = catalogFixture()
+    catalog.connections[1].credentialRejected = true
+    const api = apiFixture(catalog)
+    const save = vi.spyOn(api, 'credential')
+    const open = (initialConnectionId: string) => act(async () => root.render(<ApiConnectionsPanel
+        workspaceId={1} currentWorkspace={() => 1} active api={api} selectionContext={null} initialConnectionId={initialConnectionId} />))
+    await open(catalog.connections[1].connectionId)
+    expect(host.textContent).toContain('OpenAI two')
+    expect(host.textContent).not.toContain('OpenAI one')
+    expect(host.querySelector<HTMLInputElement>('input[type="password"]')?.value).toBe('')
+    await open('cnx_missing-fixture')
+    expect(host.textContent).toContain('This connection is unavailable.')
+    expect(host.querySelector('input[type="password"]')).toBeNull()
+    expect(host.textContent).not.toContain('OpenAI one')
+    expect(save).not.toHaveBeenCalled()
+})
 test('detail shows no stored secret, describes exact removal effects and Cancel performs no remove', async () => {
     const { root } = createHost(), catalog = catalogFixture(), api = apiFixture(catalog), remove = vi.spyOn(api, 'remove'), session = new ApiConnectionsSession(1, api, () => 1)
     await session.refresh(); session.navigate({ kind: 'detail', connectionId: catalog.connections[0].connectionId })

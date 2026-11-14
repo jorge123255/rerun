@@ -4,7 +4,7 @@ import {connectorSkillAuthority} from './skill-ownership'
 import type {ServiceStore,ServiceInstall} from './store'
 import type {ServiceSkillJournal} from './skill-journal'
 function fixture(records:ServiceInstall[]=[]){
- const store={list:async()=>records} as unknown as ServiceStore
+ const store={forSkillOwnership:async()=>records} as unknown as ServiceStore
  const journal={list:async()=>[]} as unknown as ServiceSkillJournal
  return connectorSkillAuthority(store,journal,async()=>({engineId:'current',skillsRoot:'/unused'}))
 }

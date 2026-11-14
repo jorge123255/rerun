@@ -144,3 +144,14 @@ test('routine management and reviewed installation remain separate opt-ins with 
     expect((await patchTools(coworker, { group: 'rerun', id: 'toolInstall', enabled: true })).status).toBe(400)
     expect(agents.get('engine-self')!.tools.desktopToolGrants?.scheduleManage).toBe(true)
 })
+
+test('AI provider status is a separate, revocable coworker grant', async () => {
+    expect(rerunRows((await readTools(coworker)).body).find(row => row.id === 'aiProviders')).toMatchObject({ enabled: false, available: true })
+    const granted = await patchTools(coworker, { group: 'rerun', id: 'aiProviders', enabled: true })
+    expect(granted.status).toBe(200)
+    expect(rerunRows(granted.body).find(row => row.id === 'aiProviders')).toMatchObject({ enabled: true, tools: ['ai_status'] })
+    expect(agents.get('engine-self')!.tools.desktopToolGrants).toEqual({ aiProviders: true })
+    const revoked = await patchTools(coworker, { group: 'rerun', id: 'aiProviders', enabled: false })
+    expect(revoked.status).toBe(200)
+    expect(rerunRows(revoked.body).find(row => row.id === 'aiProviders')).toMatchObject({ enabled: false })
+})

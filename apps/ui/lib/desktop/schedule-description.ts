@@ -1,5 +1,7 @@
 import { Cron } from 'croner'
 import { z } from 'zod'
+import { scheduleSummary } from '@/lib/schedules/cron'
+import type { desktopTranslator } from './locale'
 import { desktopProvider } from './settings'
 
 export type DesktopScheduleSelection =
@@ -24,11 +26,33 @@ const candidateSchema = z.object({
     label: z.string().trim().max(200).optional(),
 }).strict()
 
+const scheduleInstant = z.string().datetime({ offset: true })
+
+export function desktopScheduleInstant(value: string): string | null {
+    const input = value.trim()
+    if (!scheduleInstant.safeParse(input).success) return null
+    const time = Date.parse(input)
+    return Number.isFinite(time) ? new Date(time).toISOString() : null
+}
+
+export function desktopScheduleSummary(
+    { cron, runAt, timezone }: { cron?: string | null; runAt?: string | null; timezone?: string | null },
+    t: ReturnType<typeof desktopTranslator>,
+    locale: string,
+): string {
+    const schedule = { cron: cron ?? null, runAt: runAt ? desktopScheduleInstant(runAt) : null, timezone: timezone ?? null }
+    try {
+        return scheduleSummary(schedule, (key, values) => t(`routines.${key}`, values), locale, timezone ?? 'UTC')
+    } catch {
+        return '—'
+    }
+}
+
 function validTimezone(value: string): boolean {
     try { new Intl.DateTimeFormat('en', { timeZone: value }); return true } catch { return false }
 }
 
-export function validateDesktopSchedulePreview(value: unknown, currentTimezone: string): DesktopSchedulePreview | null {
+export function validateDesktopSchedulePreview(value: unknown, currentTimezone: string, now = Date.now()): DesktopSchedulePreview | null {
     const candidate = candidateSchema.safeParse(value)
     if (!candidate.success) return null
     const data = candidate.data
@@ -39,7 +63,8 @@ export function validateDesktopSchedulePreview(value: unknown, currentTimezone: 
         try { new Cron(data.cron, { timezone }).nextRun() } catch { return null }
         return { selection: { mode: 'cron', cron: data.cron, runAt: null, timezone }, label: data.label || data.cron }
     }
-    if (!data.runAt || data.cron || !z.string().datetime({ offset: true }).safeParse(data.runAt).success) return null
+    const instant = data.runAt && desktopScheduleInstant(data.runAt)
+    if (!data.runAt || data.cron || !instant || Date.parse(instant) <= now) return null
     return { selection: { mode: 'runAt', cron: null, runAt: data.runAt, timezone }, label: data.label || data.runAt }
 }
 

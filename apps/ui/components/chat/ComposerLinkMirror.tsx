@@ -50,16 +50,18 @@ type LinkChipProps = {
     onUnlink: () => void
     /** Where the textarea's caret goes back once the menu closes: right after the chip. */
     onDone: () => void
+    labels: { open: string; unlink: string }
+    editable: boolean
 }
 
-function LinkChip({ text, url, onUnlink, onDone }: LinkChipProps) {
+function LinkChip({ text, url, onUnlink, onDone, labels, editable }: LinkChipProps) {
     const [open, setOpen] = useState(false)
     const unlinkingRef = useRef(false)
 
     return (
-        <Popover open={open} onOpenChange={setOpen}>
+        <Popover open={open} onOpenChange={next => { if (next) unlinkingRef.current = false; setOpen(next) }}>
             <PopoverTrigger asChild>
-                <span role="button" aria-label={url} className="group pointer-events-auto relative cursor-pointer">
+                <button type="button" aria-label={url} className="group pointer-events-auto relative cursor-pointer">
                     <Token
                         text={text}
                         className={cn(LINK_TOKEN_CLASS, 'underline-offset-2 group-hover:underline group-data-[state=open]:underline')}
@@ -67,12 +69,11 @@ function LinkChip({ text, url, onUnlink, onDone }: LinkChipProps) {
                         <LinkIcon className="size-[0.85em] shrink-0" />
                         {text.trim()}
                     </Token>
-                </span>
+                </button>
             </PopoverTrigger>
             <PopoverContent
                 align="start"
                 className="w-auto flex-row gap-0 rounded-md p-0.5"
-                onOpenAutoFocus={e => e.preventDefault()}
                 onCloseAutoFocus={e => {
                     e.preventDefault()
                     if (!unlinkingRef.current) onDone()
@@ -87,19 +88,20 @@ function LinkChip({ text, url, onUnlink, onDone }: LinkChipProps) {
                     }}
                 >
                     <ExternalLinkIcon />
-                    Open
+                    {labels.open}
                 </Button>
-                <Button
+                {editable && <Button
                     variant="ghost"
                     size="xs"
                     onClick={() => {
                         unlinkingRef.current = true
                         onUnlink()
+                        setOpen(false)
                     }}
                 >
                     <Link2OffIcon />
-                    Unlink
-                </Button>
+                    {labels.unlink}
+                </Button>}
             </PopoverContent>
         </Popover>
     )
@@ -111,9 +113,11 @@ type ComposerLinkMirrorProps = {
     ref: Ref<HTMLDivElement>
     onPlaceCaret: (offset: number) => void
     onUnlink: (range: TextRange, url: string) => void
+    labels?: { open: string; unlink: string }
+    editable?: boolean
 }
 
-export function ComposerLinkMirror({ segments, className, ref, onPlaceCaret, onUnlink }: ComposerLinkMirrorProps) {
+export function ComposerLinkMirror({ segments, className, ref, onPlaceCaret, onUnlink, labels = { open: 'Open', unlink: 'Unlink' }, editable = true }: ComposerLinkMirrorProps) {
     const ends = segments.reduce<number[]>((acc, segment) => [...acc, (acc.at(-1) ?? 0) + segment.text.length], [])
     return (
         <TextareaMirror ref={ref} className={className}>
@@ -130,7 +134,8 @@ export function ComposerLinkMirror({ segments, className, ref, onPlaceCaret, onU
                     )
                 }
                 if (segment.kind === 'mention') return <MentionChip key={key} text={segment.text} kind={segment.mention} />
-                return <LinkChip key={key} text={segment.text} url={segment.url} onUnlink={() => onUnlink({ start, end }, segment.url)} onDone={() => onPlaceCaret(end)} />
+                return <LinkChip key={`${key}:${segment.url}`} text={segment.text} url={segment.url}
+                    labels={labels} editable={editable} onUnlink={() => onUnlink({ start, end }, segment.url)} onDone={() => onPlaceCaret(end)} />
             })}
         </TextareaMirror>
     )

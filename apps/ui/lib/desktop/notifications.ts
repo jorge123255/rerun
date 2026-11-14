@@ -1,4 +1,4 @@
-import { notificationPrefsPatchSchema } from '@rerun/contracts'
+import { COWORKER_MODES, notificationPrefsPatchSchema } from '@rerun/contracts'
 import { z } from 'zod'
 
 // The desktop notification contract: the original scope/channel/coworker preferences stored on
@@ -14,6 +14,17 @@ export const DESKTOP_NOTIFICATION_TERMIALS_URL = '/api/desktop/notifications/ter
 // The original patch shape the settings surface sends; the stored value merges it exactly like
 // the hosted write did.
 export const desktopNotificationPrefsPatchSchema = notificationPrefsPatchSchema
+
+const coworkerRuleSelection = z.strictObject({
+    workspaceId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    agentId: z.string().min(1).max(128),
+})
+const coworkerMode = z.enum(COWORKER_MODES)
+export const desktopNotificationRuleChangeSchema = z.discriminatedUnion('field', [
+    coworkerRuleSelection.extend({ field: z.literal('mode'), expected: coworkerMode, value: coworkerMode }),
+    coworkerRuleSelection.extend({ field: z.literal('follow'), expected: z.boolean(), value: z.boolean() }),
+])
+export type DesktopNotificationRuleChange = z.infer<typeof desktopNotificationRuleChangeSchema>
 
 export const desktopNotificationEventSchema = z.object({
     key: z.string().min(1),

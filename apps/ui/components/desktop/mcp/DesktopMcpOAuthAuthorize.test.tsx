@@ -7,7 +7,7 @@ import {DesktopMcpOAuthAuthorize} from './DesktopMcpOAuthAuthorize'
 ;(globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true
 let root:Root|undefined,host:HTMLDivElement|undefined
 const props={agentId:'a',name:'server',revision:'f7444d01-185f-4bfc-b97e-49b906257c56'}
-function render(next=props){host=document.createElement('div');document.body.append(host);root=createRoot(host);act(()=>root!.render(<DesktopMcpOAuthAuthorize {...next}/>))}
+function render(next: Parameters<typeof DesktopMcpOAuthAuthorize>[0] = props){host=document.createElement('div');document.body.append(host);root=createRoot(host);act(()=>root!.render(<DesktopMcpOAuthAuthorize {...next}/>))}
 function button(name:string){const value=[...host!.querySelectorAll('button')].find(node=>node.textContent?.trim()===name);if(!value)throw new Error(`Missing ${name}`);return value}
 async function settle(){await act(async()=>{for(let i=0;i<20;i++)await Promise.resolve()})}
 afterEach(()=>{if(root)act(()=>root!.unmount());host?.remove();root=undefined;host=undefined;vi.useRealTimers();vi.unstubAllGlobals();vi.restoreAllMocks()})
@@ -75,4 +75,25 @@ it('rejects malformed provider state and non-HTTPS links without presenting succ
  expect(host!.querySelector('a')).toBeNull()
  expect(host!.querySelector('[role="alert"]')).toBeTruthy()
  expect(button('Retry sign-in').disabled).toBe(false)
+})
+
+
+it('offers an explicit reconnect for a signed-in Vault entry and uses the exact entry revision', async () => {
+ const requests = vi.fn(async (_url: string, init: RequestInit) => {
+  const { action } = JSON.parse(String(init.body))
+  return Response.json(action === 'start'
+   ? { status: { state: 'waiting' }, authorizationUrl: 'https://auth.example/authorize?state=opaque' }
+   : { state: action === 'cancel' ? 'idle' : 'connected' })
+ })
+ vi.stubGlobal('fetch', requests)
+ const vaultId = '7d45fef4-5f63-4ba3-8d2c-4398af2b8bc0'
+ render({ vaultId, name: props.name, revision: props.revision })
+ await settle()
+ expect(host!.textContent).toContain('Connected')
+ act(() => button('Reconnect').click())
+ await settle()
+ expect(host!.querySelector('a')?.href).toBe('https://auth.example/authorize?state=opaque')
+ expect(requests.mock.calls.map(([url, init]) => [url, JSON.parse(String(init.body))])).toEqual(
+  ['status', 'start'].map(action => ['/api/desktop/vault/oauth', { id: vaultId, name: props.name, revision: props.revision, action }]),
+ )
 })

@@ -290,7 +290,7 @@ test('the synchronous request claim blocks duplicate suggestions, ordinary Send 
     let release!: (response: Response) => void
     send = () => new Promise<Response>(resolve => { release = resolve })
     await render({ draft: { text: 'Do not send this draft' } })
-    const chip = button(suggestion)!, regenerate = button('Regenerate reply')!
+    const chip = button(suggestion)!, regenerate = button('Regenerate')!
     await act(async () => {
         chip.click(); chip.click()
         composer().form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))

@@ -2,14 +2,16 @@
 
 import { useRef, useSyncExternalStore } from 'react'
 
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { BookOpenIcon, HandshakeIcon, KeyboardIcon, ListChecksIcon, UsersIcon } from '@/lib/icons'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { BookOpenIcon, HandshakeIcon, KeyboardIcon, ListChecksIcon, MegaphoneIcon, UsersIcon, HelpCircleIcon } from '@/lib/icons'
 import { desktopGettingStartedAvailable, subscribeDesktopGettingStartedAvailability } from '@/lib/desktop/help/availability'
 import { desktopHelpEntries, desktopHelpKeepsFocus, type DesktopHelpEntry } from '@/lib/desktop/help/entries'
 import { useDesktopLocale } from '../DesktopLocale'
 
 const ICONS = {
     getting_started: ListChecksIcon,
+    whats_new: MegaphoneIcon,
     docs: BookOpenIcon,
     community: UsersIcon,
     shortcuts: KeyboardIcon,
@@ -22,11 +24,11 @@ type DesktopHelpDialogProps = {
     workspaceId: number | null
     onGettingStarted?: () => void
     onShortcuts?: () => void
+    onChangelog?: () => void
     onCloseAutoFocus?: (event: Event) => void
 }
 
-/** Local help. Docs use the approved docs origin. Shortcuts opens the Mac dialog. No hosted feed or support chat. */
-export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingStarted, onShortcuts, onCloseAutoFocus }: DesktopHelpDialogProps) {
+export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingStarted, onShortcuts, onChangelog, onCloseAutoFocus }: DesktopHelpDialogProps) {
     const { t } = useDesktopLocale()
     const gettingStarted = useSyncExternalStore(
         subscribeDesktopGettingStartedAvailability,
@@ -34,7 +36,7 @@ export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingSt
         () => false,
     )
     const intent = useRef<DesktopHelpEntry['kind'] | 'close'>('close')
-    const entries = desktopHelpEntries({ gettingStarted: gettingStarted && !!onGettingStarted, shortcuts: !!onShortcuts })
+    const entries = desktopHelpEntries({ gettingStarted: gettingStarted && !!onGettingStarted, shortcuts: !!onShortcuts, changelog: !!onChangelog })
     const rowClass = 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground'
 
     return (
@@ -52,10 +54,7 @@ export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingSt
                     onCloseAutoFocus?.(event)
                 }}
             >
-                <DialogHeader>
-                    <DialogTitle>{t('help')}</DialogTitle>
-                    <DialogDescription>{t('helpDescription')}</DialogDescription>
-                </DialogHeader>
+                <DialogHeaderBar icon={HelpCircleIcon} title={t('help')} description={t('helpDescription')} />
                 <ul className="flex flex-col py-1">
                     {entries.map(entry => {
                         const Icon = ICONS[entry.id]
@@ -78,6 +77,7 @@ export function DesktopHelpDialog({ open, onOpenChange, workspaceId, onGettingSt
                                         intent.current = entry.kind
                                         onOpenChange(false)
                                         if (entry.kind === 'getting_started') onGettingStarted?.()
+                                        else if (entry.kind === 'whats_new') onChangelog?.()
                                         else onShortcuts?.()
                                     }}
                                 >

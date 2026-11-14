@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { providerSchema } from './agent.js'
 
+export const desktopScheduleRevisionSchema = z.string().regex(/^[a-f0-9]{64}$/)
+
 export const scheduleSchema = z.object({
     slug: z.string(),
     name: z.string(),
@@ -15,6 +17,7 @@ export const scheduleSchema = z.object({
     model: z.string().nullable(),
     body: z.string().default(''),
     createdAt: z.string(),
+    revision: desktopScheduleRevisionSchema.optional(),
 })
 export type Schedule = z.infer<typeof scheduleSchema>
 

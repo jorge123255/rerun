@@ -15,11 +15,13 @@ export const desktopMcpBridgeRequest = z.discriminatedUnion('action', [
     z.object({ action: z.literal('shutdown') }).strict(),
 ])
 type RequestBody = z.infer<typeof desktopMcpBridgeRequest>
-type Definition = { name: string; description: string; inputSchema: Record<string, unknown>; execute(args: Record<string, unknown>, signal: AbortSignal, toolCallId: string): Promise<unknown> }
+type Definition = { name: string; description: string; inputSchema: Record<string, unknown>; destructive?: boolean; execute(args: Record<string, unknown>, signal: AbortSignal, toolCallId: string): Promise<unknown> }
 export type DesktopMcpBridgeExtension = {
     tools(owner: string, run: McpRunIdentity, signal: AbortSignal): Promise<Definition[]>
     releaseRun(owner: string, run: McpRunIdentity): Promise<void>
 }
+/** Holds a call that asks the person first. `null` lets it run; a string is told to the coworker instead. */
+export type DesktopMcpCallAdmission = (call: { owner: string; sessionId: string; tool: string; destructive: boolean; arguments: Record<string, unknown> }, signal: AbortSignal) => Promise<string | null>
 type PublicTool = { capabilityId: string; name: string; description: string; inputSchema: Record<string, unknown> }
 type Catalog = {
     id: string; owner: string; identity: McpRunIdentity; controller: AbortController;
@@ -28,7 +30,7 @@ type Catalog = {
 
 /** HTTP only transports opaque capabilities. Configuration, credentials and the authoritative
  * lifecycle stay in the same UI service used by the management panel. */
-export function desktopMcpBridge(store: RemoteMcpStore, runtime: ReturnType<typeof remoteMcpRuntime>, authorize: (identity: McpRunIdentity, signal: AbortSignal) => Promise<string>, extension?: DesktopMcpBridgeExtension) {
+export function desktopMcpBridge(store: RemoteMcpStore, runtime: ReturnType<typeof remoteMcpRuntime>, authorize: (identity: McpRunIdentity, signal: AbortSignal) => Promise<string>, extension?: DesktopMcpBridgeExtension, admit?: DesktopMcpCallAdmission) {
     const catalogs = new Map<string, Catalog>()
     const runs = new Map<string, AbortController>()
     const releasedRuns = new Set<string>()
@@ -119,6 +121,10 @@ export function desktopMcpBridge(store: RemoteMcpStore, runtime: ReturnType<type
         if (Buffer.byteLength(JSON.stringify(body.arguments)) > 65_536) throw new Error('MCP arguments exceed limit')
         // Never repeat a remote side effect after a lost response, even if the caller retries.
         catalog.calls.add(body.toolCallId)
+        // An action that asks first is answered here, before anything reaches the connector.
+        const held = await admit?.({ owner: catalog.owner, sessionId: catalog.identity.sessionId, tool: definition.name, destructive: definition.destructive === true, arguments: body.arguments }, combined)
+        current(catalog); combined.throwIfAborted()
+        if (typeof held === 'string') return { toolCallId: body.toolCallId, result: { source: 'remote_mcp', untrusted: true, result: { isError: true, content: [{ type: 'text', text: held }] } } }
         const result = await definition.execute(body.arguments, combined, body.toolCallId)
         if (await authorize(body, combined) !== catalog.owner) throw new Error('MCP owner changed')
         current(catalog); combined.throwIfAborted()

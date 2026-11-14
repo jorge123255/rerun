@@ -55,6 +55,7 @@ function catalogDetails(status: 'available' | 'unsupported-auth') {
         authentication: z.enum(['supported', 'unsupported']),
         unsupportedReason: z.string().max(300).optional(),
         methods: z.array(methodSchema).max(20),
+        vaultSetup: z.literal(true).optional(),
     })
 }
 export const desktopServiceRequestCatalogSchema = z.discriminatedUnion('status', [
@@ -71,15 +72,23 @@ export const desktopServiceConnectionSchema = z.strictObject({
     slug: z.string().min(1).max(200),
     state: z.enum(['preparing', 'ready', 'error', 'disconnected', 'removing']),
     usable: z.boolean(),
+    label: z.string().min(1).max(200).optional(),
     healthState: z.enum(['unchecked', 'healthy', 'error', 'disconnected']),
 })
 export type DesktopServiceConnection = z.infer<typeof desktopServiceConnectionSchema>
+
+export const desktopServiceVaultAccountSchema = installationRefSchema.extend({
+    slug: z.string().min(1).max(200),
+    label: z.string().min(1).max(200),
+})
+export type DesktopServiceVaultAccount = z.infer<typeof desktopServiceVaultAccountSchema>
 
 const serviceRowSchema = z.strictObject({
     slug: z.string().min(1).max(200),
     reason: z.string().max(300).optional(),
     catalog: desktopServiceRequestCatalogSchema,
     connections: z.array(desktopServiceConnectionSchema).max(64).nullable(),
+    vaultAccounts: z.array(desktopServiceVaultAccountSchema).max(64).optional(),
     connectionsStatus: z.enum(['ready', 'unavailable']),
 })
 const receiptSchema = z.strictObject({

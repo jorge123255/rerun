@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import type { DesktopOpencodeRefresh } from '@rerun/contracts'
+import { isFreeDesktopOpencodeModel, type DesktopOpencodeRefresh } from '@rerun/contracts'
 import type { DesktopOpencodeConnectionSnapshot, DesktopOpencodeDefaultPurpose } from '@/lib/desktop/opencode/driver'
 
 export function DesktopOpencodeDefaultSelect({ connection, catalog, modelId, purpose, disabled = false, onChange }: {
@@ -16,7 +16,15 @@ export function DesktopOpencodeDefaultSelect({ connection, catalog, modelId, pur
     const [error, setError] = useState<string | null>(null)
     const enabled = connection?.enabledModelIds ?? []
     const selected = modelId && enabled.includes(modelId) ? modelId : ''
-    const options = enabled.map(id => ({ id, label: catalog?.models.find(model => model.id === id)?.label ?? id, retired: !!catalog && catalog.source === 'live' && !catalog.models.some(model => model.id === id) }))
+    const models = new Map(catalog?.models.map(model => [model.id, model]))
+    const options = enabled.map(id => {
+        const model = models.get(id)
+        const label = model?.label ?? id
+        return {
+            id, label: model && isFreeDesktopOpencodeModel(model.price) ? `${label} · Free` : label,
+            retired: catalog?.source === 'live' && !model,
+        }
+    })
     const unavailable = modelId && (!selected || options.find(option => option.id === modelId)?.retired)
     return (
         <div className="space-y-1.5">

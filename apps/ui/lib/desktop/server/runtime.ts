@@ -29,6 +29,8 @@ const desktopRuntimeSchema = z.object({
 
 export type DesktopRuntime = z.infer<typeof desktopRuntimeSchema>
 
+export const desktopAppStoreBuild = () => process.env.RERUN_DESKTOP_APP_STORE === '1'
+
 export async function readDesktopRuntime(): Promise<DesktopRuntime> {
     if (process.env.RERUN_DESKTOP_APP !== '1') throw new Error('Desktop mode is not enabled')
     const dataDir = process.env.RERUN_DESKTOP_DATA_DIR

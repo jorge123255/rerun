@@ -46,14 +46,14 @@ type OrbAnchor = { vertical: 'top' | 'bottom'; horizontal: 'left' | 'right'; orb
 // Below this the panel stays centred: a phone has no room beside the orb, and the keyboard covers the bottom corners.
 const ANCHOR_QUERY = '(min-width: 640px)'
 
-const CENTERED = 'top-1/3 translate-y-0 overflow-hidden rounded-xl! p-0 sm:max-w-xl'
+const CENTERED = 'overflow-hidden rounded-xl! p-0 sm:max-w-xl'
 const ANCHORED = 'flex translate-x-0 translate-y-0 gap-3 rounded-none bg-transparent p-0 ring-0 sm:max-w-[28rem]'
 
 // The panel hangs off the parked orb, whichever corner it sits in, and grows away from it.
 function measureOrbAnchor(): OrbAnchor | null {
     if (!window.matchMedia(ANCHOR_QUERY).matches) return null
     const orb = document.querySelector('[data-foreman-orb]')?.getBoundingClientRect()
-    if (!orb) return null
+    if (!orb?.width || !orb.height) return null
     const { clientWidth, clientHeight } = document.documentElement
     const horizontal = orb.left + orb.width / 2 > clientWidth / 2 ? 'right' : 'left'
     const vertical = orb.top + orb.height / 2 > clientHeight / 2 ? 'bottom' : 'top'

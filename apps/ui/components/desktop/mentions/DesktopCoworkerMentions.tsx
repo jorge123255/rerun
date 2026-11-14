@@ -13,7 +13,9 @@ import {
 import type { DesktopCoworkerCallTarget } from '@rerun/contracts'
 import { useDesktopMentionAutocomplete } from './useDesktopMentionAutocomplete'
 
-export type DesktopCoworkerMentionsApi = DesktopSkillMentionsApi & {
+export type DesktopCoworkerMentionsApi = Omit<DesktopSkillMentionsApi, 'textareaProps'> & {
+    textareaProps: ReturnType<typeof useDesktopMentionAutocomplete>['textareaProps']
+    linkMirror: ReturnType<typeof useDesktopMentionAutocomplete>['linkMirror']
     coworkerMentions: DesktopCoworkerMention[]
     targets: DesktopCoworkerCallTarget[]
     targetStatus: DesktopCoworkerMentionTargetStatus
@@ -22,7 +24,7 @@ export type DesktopCoworkerMentionsApi = DesktopSkillMentionsApi & {
     revalidateSend: () => Promise<DesktopCoworkerMentionRevalidation>
 }
 
-export function DesktopCoworkerMentions({ agentId, preferredBoxName, text, mentions, onTextChange, onMentionsChange, enabled = true, refreshKey, children }: {
+export function DesktopCoworkerMentions({ agentId, preferredBoxName, text, mentions, onTextChange, onMentionsChange, scope, enabled = true, refreshKey, children }: {
     agentId: string | null
     preferredBoxName?: string | null
     text: string
@@ -31,6 +33,7 @@ export function DesktopCoworkerMentions({ agentId, preferredBoxName, text, menti
     onMentionsChange: (mentions: DesktopCoworkerMention[]) => void
     enabled?: boolean
     refreshKey?: string
+    scope?: string
     children: (api: DesktopCoworkerMentionsApi) => ReactNode
 }) {
     const suggestions = useDesktopSkillSuggestions(agentId, { enabled, refreshKey })
@@ -41,8 +44,8 @@ export function DesktopCoworkerMentions({ agentId, preferredBoxName, text, menti
         preferredBoxName,
         text,
         mentions,
-        onTextChange,
-        onMentionsChange,
+        scope,
+        onDraftChange: (value, selected) => { onMentionsChange(selected); onTextChange(value) },
     })
 
     const handleKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -64,6 +67,7 @@ export function DesktopCoworkerMentions({ agentId, preferredBoxName, text, menti
         inputRef: mention.inputRef,
         menu: mention.menu,
         tokens: mention.tokens,
+        linkMirror: mention.linkMirror,
         textareaProps: {
             ...mention.textareaProps,
             onKeyDown: handleKeyDown,

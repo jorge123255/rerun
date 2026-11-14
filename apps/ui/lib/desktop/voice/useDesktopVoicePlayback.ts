@@ -40,6 +40,7 @@ export function useDesktopVoicePlayback({ srcUrl, blob, ownerKey }: {
     const controllerRef = useRef<AbortController | null>(null)
     const generation = useRef(0)
     const [loading, setLoading] = useState(false)
+    const [loaded, setLoaded] = useState(false)
     const [playing, setPlaying] = useState(false)
     const [elapsedMs, setElapsedMs] = useState(0)
     const [error, setError] = useState<string | null>(null)
@@ -58,6 +59,7 @@ export function useDesktopVoicePlayback({ srcUrl, blob, ownerKey }: {
         objectUrlRef.current = null
         setPlaying(false)
         setLoading(false)
+        setLoaded(false)
         setElapsedMs(0)
     }, [])
 
@@ -103,26 +105,29 @@ export function useDesktopVoicePlayback({ srcUrl, blob, ownerKey }: {
             audio.pause()
             return
         }
+        const token = generation.current
         if (!audio.src) {
             const url = await load()
-            if (!url) return
+            if (!url || generation.current !== token || audioRef.current !== audio) return
             audio.src = url
         }
-        await audio.play().catch(() => setError('This audio can’t be played.'))
+        await audio.play().catch(() => {
+            if (generation.current === token) setError('This audio can’t be played.')
+        })
     }, [load, playing])
 
-    const seek = useCallback((event: React.MouseEvent<HTMLButtonElement>, durationMs: number) => {
+    const seek = useCallback((positionMs: number) => {
         const audio = audioRef.current
-        if (!audio?.src || durationMs <= 0) return
-        const bounds = event.currentTarget.getBoundingClientRect()
-        const ratio = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width))
-        audio.currentTime = (ratio * durationMs) / 1000
-        setElapsedMs(ratio * durationMs)
-    }, [])
+        if (!loaded || !audio?.src || !Number.isFinite(positionMs) || positionMs < 0) return
+        const seconds = positionMs / 1000
+        audio.currentTime = Number.isFinite(audio.duration) ? Math.min(seconds, audio.duration) : seconds
+        setElapsedMs(audio.currentTime * 1000)
+    }, [loaded])
 
     return {
         audioRef,
         loading,
+        loaded,
         playing,
         elapsedMs,
         error,
@@ -130,11 +135,15 @@ export function useDesktopVoicePlayback({ srcUrl, blob, ownerKey }: {
         seek,
         stopAudio,
         audioProps: {
+            onLoadedMetadata: () => setLoaded(true),
             onPlay: () => setPlaying(true),
             onPause: () => setPlaying(false),
             onEnded: () => { setPlaying(false); setElapsedMs(0) },
             onTimeUpdate: (event: React.SyntheticEvent<HTMLAudioElement>) => setElapsedMs(event.currentTarget.currentTime * 1000),
-            onError: () => setError('This audio can’t be played.'),
+            onError: () => {
+                setLoaded(false)
+                setError('This audio can’t be played.')
+            },
         },
     }
 }

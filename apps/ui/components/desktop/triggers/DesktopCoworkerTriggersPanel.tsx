@@ -2,7 +2,9 @@
 
 import { useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { WebhookIcon } from '@/lib/icons'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import { DesktopCoworkerTriggers } from './DesktopCoworkerTriggers'
 import {
@@ -46,12 +48,7 @@ export function DesktopCoworkerTriggersPanel({
             <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Triggers</Button></DialogTrigger>
             {open && (
                 <DialogContent className="flex h-[80dvh] max-h-[700px] w-full flex-col sm:max-w-3xl">
-                    <DialogHeader>
-                        <DialogTitle>Triggers</DialogTitle>
-                        <DialogDescription>
-                            {agent.name}&apos;s webhook URLs. These URLs work only on this Mac. Copying or previewing a URL never starts a run.
-                        </DialogDescription>
-                    </DialogHeader>
+                    <DialogHeaderBar icon={WebhookIcon} title="Triggers" description={<>{agent.name}&apos;s webhook URLs. These URLs work only on this Mac. Copying or previewing a URL never starts a run.</>} />
                     <DesktopCoworkerTriggers
                         key={agent.id}
                         agentId={agent.id}

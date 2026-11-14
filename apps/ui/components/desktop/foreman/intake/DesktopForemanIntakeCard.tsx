@@ -1,5 +1,6 @@
 'use client'
 
+import { platformHost } from '@rerun/contracts'
 import { StepDots } from '@rerun/ui/chat'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 
@@ -66,7 +67,8 @@ export function DesktopForemanIntakeCard({
     const still = useReducedMotion()
     const busy = submitting || finished || quitting
     const fieldsDisabled = busy || locked
-    const skippable = step === 'company' && !draft.companyUrl.trim()
+    const platform = platformHost(draft.companyUrl)
+    const skippable = step === 'company' && (!draft.companyUrl.trim() || !!platform)
     const motionProps = still
         ? { initial: false, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: 0 } }
         : STEP_MOTION
@@ -86,7 +88,7 @@ export function DesktopForemanIntakeCard({
                 <AnimatePresence mode="popLayout" initial={false}>
                     <motion.div key={step} {...motionProps}>
                         {step === 'company' && (
-                            <DesktopIntakeCompanyStep draft={draft} siteRead={siteRead} disabled={fieldsDisabled} autoFocus={autoFocus} onChange={set} onEnter={next} />
+                            <DesktopIntakeCompanyStep draft={draft} siteRead={siteRead} platform={platform} disabled={fieldsDisabled} autoFocus={autoFocus} onChange={set} onEnter={next} />
                         )}
                         {step === 'industry' && (
                             <DesktopIntakeIndustryStep draft={draft} disabled={fieldsDisabled} autoFocus={autoFocus} onChange={set} onChoose={chooseIndustry} onEnter={next} />

@@ -16,29 +16,32 @@ import { SseFailure } from './errors'
 import type { SseAuthority, SseNetwork } from './types'
 import { toToolInputSchema } from './tool-schema'
 
-export type DesktopSseBindingDeps = {
+export type DesktopSseRuntimeDeps = {
     db: Client
     store: RemoteMcpStore
     key(): Buffer
     shutdownSignal: AbortSignal
     access(owner: string): Promise<{ enabled: boolean; granted: boolean }>
     authorizeRun(run: McpRunIdentity, signal: AbortSignal): Promise<string>
-    manage(owner: string, signal: AbortSignal): Promise<() => void>
-    refreshCredential(owner: string, name: string, revision: string, signal: AbortSignal): Promise<string | null>
-    validateToolNames(owner: string, names: string[], signal: AbortSignal): Promise<void>
     account?: (ref: DesktopMcpSseRef, action: 'read' | 'use' | 'call' | 'close', run: McpRunIdentity | undefined, signal: AbortSignal) => Promise<{ server: RemoteServer & { id: string; transport: 'sse' }; bearer: string; credentialGeneration: string; check(): void } | null>
     network?: SseNetwork
     materials?: DesktopMcpMaterialSource
 }
 
-function invocationId(owner: string, ref: DesktopMcpSseRef, run: McpRunIdentity, callId: string) {
+export type DesktopSseBindingDeps = DesktopSseRuntimeDeps & {
+    manage(owner: string, signal: AbortSignal): Promise<() => void>
+    refreshCredential(owner: string, name: string, revision: string, signal: AbortSignal): Promise<string | null>
+    validateToolNames(owner: string, names: string[], signal: AbortSignal): Promise<void>
+}
+
+export function sseInvocationId(owner: string, ref: DesktopMcpSseRef, run: McpRunIdentity, callId: string) {
     const bytes = createHash('sha256').update(JSON.stringify(['desktop-sse-call-v1', owner, ref.serverId, run, callId])).digest().subarray(0, 16)
     bytes[6] = (bytes[6] & 15) | 80; bytes[8] = (bytes[8] & 63) | 128
     const hex = bytes.toString('hex')
     return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`
 }
 
-export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
+export function bindDesktopSseRuntime(deps: DesktopSseRuntimeDeps) {
     const credentials = new WeakMap<object, { ref: DesktopMcpSseRef; bearer: string; material?: DesktopMcpMaterialLease }>()
     const materials = new Map<string, Promise<DesktopMcpMaterialLease>>()
     const materialKey = (ref: DesktopMcpSseRef) => JSON.stringify([ref.agentId, ref.name, ref.expectedRevision, ref.serverId])
@@ -67,21 +70,6 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
         signal.throwIfAborted()
         return { server, bearer: oauth?.accessToken ?? server.bearer }
     }
-    async function preflight(ref: DesktopMcpSseRef, signal: AbortSignal) {
-        if (await deps.account?.(ref, 'use', undefined, signal)) return
-        const permission = await deps.access(ref.agentId)
-        if (!permission.enabled || !permission.granted) throw new SseFailure('changed')
-        const current = await credential(ref, signal).catch(async error => {
-            if (!(error instanceof SseFailure) || error.code !== 'auth-needed') throw error
-            return { server: await deps.store.read(ref.agentId, ref.name), bearer: '' }
-        })
-        if (current.server.id !== ref.serverId || current.server.transport !== 'sse' || current.server.revision !== ref.expectedRevision) throw new SseFailure('changed')
-        // Refresh before any SSE lifecycle admission, so a credential mutation cannot wait on its own stream.
-        const token = await deps.store.readOAuth(ref.agentId, ref.name)
-        if (token && token.expiresAt <= Date.now() + 60_000) { await runtime.dispose(ref.agentId, ref.serverId); await releaseMaterials(ref.agentId, ref.serverId) }
-        await deps.refreshCredential(ref.agentId, ref.name, ref.expectedRevision, signal)
-        await credential(ref, signal)
-    }
     const network = deps.network ?? createPinnedSseNetwork({
         resolvePublic: publicOAuthAddress,
         async credential(authority, signal) {
@@ -91,7 +79,7 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
             const current = await credential(saved.ref, signal)
             authority.check()
             if (('credentialGeneration' in current ? current.credentialGeneration : fingerprint(saved.ref, current.bearer)) !== authority.credentialGeneration || current.server.url !== authority.server.url) throw new SseFailure('changed')
-            const material = await secretMaterial(saved.ref, signal)
+            const material = 'credentialGeneration' in current ? undefined : await secretMaterial(saved.ref, signal)
             authority.check()
             if (material) saved.material = material
             return { ...(current.bearer ? { bearer: current.bearer } : {}), ...(material ? { headers: material.material.headers } : {}) }
@@ -151,8 +139,28 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
             return { name: tool.name, inputSchema: schema, ...(description !== undefined ? { description } : {}) }
         },
     }, createSsePoolState())
-    const control = sseControlAdapter(runtime)
     const dispose = async (owner?: string, serverId?: string) => { await runtime.dispose(owner, serverId); await releaseMaterials(owner, serverId) }
+    return { runtime, dispose, credential, releaseMaterials, async shutdown() { await runtime.shutdown(); await releaseMaterials() } }
+}
+
+export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
+    const { runtime, dispose, credential, releaseMaterials, shutdown } = bindDesktopSseRuntime(deps)
+    async function preflight(ref: DesktopMcpSseRef, signal: AbortSignal) {
+        if (await deps.account?.(ref, 'use', undefined, signal)) return
+        const permission = await deps.access(ref.agentId)
+        if (!permission.enabled || !permission.granted) throw new SseFailure('changed')
+        const current = await credential(ref, signal).catch(async error => {
+            if (!(error instanceof SseFailure) || error.code !== 'auth-needed') throw error
+            return { server: await deps.store.read(ref.agentId, ref.name), bearer: '' }
+        })
+        if (current.server.id !== ref.serverId || current.server.transport !== 'sse' || current.server.revision !== ref.expectedRevision) throw new SseFailure('changed')
+        // Refresh before any SSE lifecycle admission, so a credential mutation cannot wait on its own stream.
+        const token = await deps.store.readOAuth(ref.agentId, ref.name)
+        if (token && token.expiresAt <= Date.now() + 60_000) await dispose(ref.agentId, ref.serverId)
+        await deps.refreshCredential(ref.agentId, ref.name, ref.expectedRevision, signal)
+        await credential(ref, signal)
+    }
+    const control = sseControlAdapter(runtime)
     const settings = createSseSettings(deps.db, deps.store, deps.manage, dispose)
     return {
         runtime, settings,
@@ -171,7 +179,7 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
                 await preflight(ref, signal)
                 for (const tool of await sseToolDefinitions(runtime, ref, run, signal)) definitions.push({
                     name: tool.name, description: tool.description, inputSchema: tool.inputSchema,
-                    execute: (args: Record<string, unknown>, stop: AbortSignal, toolCallId: string) => tool.execute(args, { requestId: invocationId(owner, ref, run, toolCallId), toolCallId }, stop),
+                    execute: (args: Record<string, unknown>, stop: AbortSignal, toolCallId: string) => tool.execute(args, { requestId: sseInvocationId(owner, ref, run, toolCallId), toolCallId }, stop),
                 })
             }
             await deps.validateToolNames(owner, definitions.map(tool => tool.name), signal)
@@ -180,6 +188,6 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
         releaseRun: runtime.releaseRun,
         releaseServerRun: runtime.releaseServerRun,
         dispose,
-        async shutdown() { await runtime.shutdown(); await releaseMaterials() },
+        shutdown,
     }
 }

@@ -1,0 +1,12 @@
+:root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+:root[data-appearance="light"] { color-scheme: light; }
+:root[data-appearance="dark"] { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; height: 100dvh; padding: 8px; }
+form { display: flex; flex-direction: column; height: 100%; gap: 8px; padding: 12px; border: 1px solid light-dark(#e4e4e7, #333338); border-radius: 16px; background: light-dark(#fff, #18181b); }
+textarea { min-height: 0; flex: 1; resize: none; padding: 2px; background: transparent; border: 0; color: CanvasText; font: inherit; outline: none; }
+footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#status { color: light-dark(#52525b, #a1a1aa); font-size: 12px; }
+button { padding: 6px 12px; border: 0; border-radius: 8px; font: inherit; font-size: 13px; background: light-dark(#18181b, #fafafa); color: light-dark(#fff, #18181b); }
+button:disabled { opacity: .45; }
+button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }

@@ -10,6 +10,13 @@ const MIME: Record<DesktopVoiceFormat['transcriptionFormat'], readonly string[]>
     ogg: ['audio/ogg;codecs=opus'],
 }
 
+export function decodeDesktopVoiceAudio(value: string): Uint8Array {
+    if (!value || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) throw new DesktopHttpError(400, 'Voice audio encoding is invalid.')
+    const bytes = Buffer.from(value, 'base64')
+    if (bytes.byteLength < 1 || bytes.byteLength > DESKTOP_VOICE_MAX_BYTES || bytes.toString('base64') !== value) throw new DesktopHttpError(400, 'Voice audio encoding is invalid.')
+    return new Uint8Array(bytes)
+}
+
 export function inspectDesktopVoiceBytes(format: DesktopVoiceFormat, bytes: Uint8Array, metadata: { durationMs: number; levels: number[] }) {
     if (!MIME[format.transcriptionFormat]?.includes(format.mimeType) || format.extension !== format.transcriptionFormat) throw new DesktopHttpError(400, 'Unsupported voice format.')
     if (bytes.byteLength < 1 || bytes.byteLength > DESKTOP_VOICE_MAX_BYTES) throw new DesktopHttpError(413, 'Voice recordings can be up to 2 MB.')

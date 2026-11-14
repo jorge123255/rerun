@@ -27,6 +27,24 @@ export async function renameSkillEntry(directory: string, parent: Identity, sour
         'The skill changed during this operation. Existing and recovery files were preserved; reopen Skills before trying again.')
 }
 
+export async function replaceSharedEntry(directory: string, parent: Identity, stage: string, staged: Identity,
+    target: string, original: Identity & { size: bigint; ctimeNs: bigint }, recovery: string, editorText = false): Promise<'published' | 'conflict' | 'refused' | 'unknown'> {
+    const executable = helper()
+    const nanosecondsPerSecond = BigInt(1_000_000_000)
+    let output: string
+    try {
+        output = (await exec(executable, [editorText ? '--replace-shared-editor-text' : '--replace-shared-text', directory, String(parent.dev), String(parent.ino),
+            stage, String(staged.dev), String(staged.ino), target, String(original.dev), String(original.ino),
+            String(original.size), String(original.ctimeNs / nanosecondsPerSecond), String(original.ctimeNs % nanosecondsPerSecond), recovery],
+        { encoding: 'utf8', timeout: 10_000, maxBuffer: 4096, env })).stdout
+    } catch (error) { output = (error as { stdout?: string }).stdout ?? '' }
+    let result: { ok?: boolean; code?: string; beforeSwap?: boolean }
+    try { result = JSON.parse(output) } catch { return 'unknown' }
+    if (result?.ok === true) return 'published'
+    if (result?.beforeSwap !== true) return 'unknown'
+    return ['ESTALE', 'ENOENT', 'EEXIST', 'ELOOP'].includes(result.code ?? '') ? 'conflict' : 'refused'
+}
+
 /** The kernel lease spans both processes and survives no process death; its file is never unlinked. */
 export async function acquireSkillLease(directory: string, parent: Identity, signal?: AbortSignal): Promise<{ assertCurrent(): void; release(): Promise<void> }> {
     signal?.throwIfAborted()

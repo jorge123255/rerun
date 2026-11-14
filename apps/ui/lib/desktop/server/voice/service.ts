@@ -255,7 +255,9 @@ export function createDesktopVoiceService(authorities: DesktopVoiceAuthorities) 
                 if (!record || !scopeMatches(scope, record.draft.scope) || record.draft.revision !== input.expectedRevision) throw changed()
                 if (record.deletion === 'complete') return
                 const referenced = () => references(scope, input.attemptId)
-                if (['uploading', 'transcribing', 'sending', 'sent'].includes(record.draft.phase) || await referenced()) throw new DesktopHttpError(409, 'This audio is referenced by a saved message, queue or another tab and cannot be removed.')
+                // This attempt is serialized with transcription. A persisted transcribing
+                // phase can be left by an interruption before the result was saved.
+                if (['uploading', 'sending', 'sent'].includes(record.draft.phase) || await referenced()) throw new DesktopHttpError(409, 'This audio is referenced by a saved message, queue or another tab and cannot be removed.')
                 await check(scope, signal)
                 await store.reserveDiscard(scope, input.attemptId, input.expectedRevision)
                 if (await referenced()) throw new DesktopHttpError(409, 'This audio is referenced by a saved message, queue or another tab and cannot be removed.')

@@ -54,13 +54,14 @@ export function AgentView({ agent, tab, onTabChange, onBack, onClose, onOpenSess
                     <XIcon className="size-4" />
                 </Button>
             </div>
-            <SidePanelTabSwitcher tabs={switcherTabs} value={shown} onChange={onTabChange} />
-            <div className="relative min-h-0 flex-1 overflow-hidden">
-                <div className="absolute inset-0 flex flex-col">
-                    <AgentViewBody agent={agent} tab={shown} onOpenSession={onOpenSession} />
+            <SidePanelTabSwitcher tabs={switcherTabs} value={shown} label={AGENT_SHEET_VIEW_LABELS[view]} onChange={onTabChange}>
+                <div className="relative min-h-0 flex-1 overflow-hidden">
+                    <div className="absolute inset-0 flex flex-col">
+                        <AgentViewBody agent={agent} tab={shown} onOpenSession={onOpenSession} />
+                    </div>
+                    {overlay && <div className="absolute inset-0 z-10 flex flex-col bg-background">{overlay}</div>}
                 </div>
-                {overlay && <div className="absolute inset-0 z-10 flex flex-col bg-background">{overlay}</div>}
-            </div>
+            </SidePanelTabSwitcher>
         </div>
     )
 }

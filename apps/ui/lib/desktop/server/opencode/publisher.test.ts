@@ -40,6 +40,21 @@ describe('desktop OpenCode publisher', () => {
         expect(bound.execute).not.toHaveBeenCalled()
     })
 
+    it('uses the persisted model and Console choices when handing off to the executor', async () => {
+        const free = { ...dispatch, modelId: 'go/beam-free' }
+        const off = await publishDesktopOpencode(bound, { action: 'execute', dispatch: free }, undefined, 'launch-1')
+        expect(off).toMatchObject({ code: 'grant', sent: false })
+        expect(bound.execute).not.toHaveBeenCalled()
+
+        const console = { ...dispatch, modelId: 'console/claude-haiku-5-5', consoleEnabled: true, requestId: 'console-claim' }
+        const on = ports({ authority: { current: async () => snapshot({ enabledModelIds: [free.modelId, console.modelId] }) } })
+        expect(await publishDesktopOpencode(on, { action: 'execute', dispatch: console }, undefined, 'launch-1')).toMatchObject({ code: 'console', sent: false })
+        expect(on.execute).not.toHaveBeenCalled()
+        expect(await publishDesktopOpencode(on, { action: 'execute', dispatch: free }, undefined, 'launch-1')).toEqual(saved)
+        expect(on.execute).toHaveBeenCalledOnce()
+        expect(on.execute).toHaveBeenCalledWith(expect.objectContaining({ dispatch: free, enabledModelIds: [free.modelId, console.modelId] }))
+    })
+
     it('stores Stop before send and does not send that request again', async () => {
         const controller = new AbortController()
         let checks = 0

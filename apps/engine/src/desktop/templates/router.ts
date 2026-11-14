@@ -33,6 +33,7 @@ const captureBody = z.strictObject({
 })
 const installBody = z.strictObject({
     foremanDisabled: z.literal(true).optional(),
+    shareDisabled: z.literal(true).optional(),
     importReceiptId: z.uuid(),
     templateId: desktopTemplateIdSchema,
     revision: desktopTemplateRevisionSchema,

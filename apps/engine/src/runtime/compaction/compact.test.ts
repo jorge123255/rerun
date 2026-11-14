@@ -2,11 +2,13 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { vi } from 'vitest'
+import type { RunContext } from '../context.js'
+import type { CustomProviderSnapshot } from '@rerun/contracts'
 
 process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-compact-'))
 process.env.RERUN_API_KEY = ''
 
-type Row = { id: string; role: string; contentJson: string; createdAt: string }
+type Row = { id: string; role: string; contentJson: string; createdAt: string; copiedForRegeneration?: boolean }
 
 const state = vi.hoisted(() => ({
     rows: [] as Row[],
@@ -59,6 +61,7 @@ vi.mock('../../db/repos/checkpoints.js', () => ({
 
 const { afterEach, describe, expect, it } = await import('vitest')
 const { prepareRunHistory } = await import('./compact.js')
+const { kimiReasoningScope } = await import('../../desktop/custom-providers/kimi-reasoning.js')
 
 const CHUNK = 40_000
 
@@ -89,11 +92,12 @@ function longHistory(): Row[] {
 function context(model = 'gpt-4o', extra: Record<string, unknown> = {}) {
     const writes: Array<{ type: string; id: string; data: Record<string, unknown> }> = []
     const logger = { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
-    const ctx = { agent: { id: 'compact-agent', resolved: { provider: 'openai', model, connection: null } }, sessionId: 'sess', provider: 'openai', model, logger, writer: { write: (chunk: never) => writes.push(chunk) }, ...extra } as never
+    const ctx = { agent: { id: 'compact-agent', resolved: { provider: 'openai', model, connection: null } }, sessionId: 'sess', provider: 'openai', model, logger, writer: { write: (chunk: never) => writes.push(chunk) }, ...extra } as unknown as RunContext
     return { ctx, writes, logger }
 }
 
 afterEach(() => {
+    vi.unstubAllEnvs()
     state.rows = []
     state.checkpoint = null
     state.afterArgs = []
@@ -125,6 +129,35 @@ describe('prepareRunHistory', () => {
 
     // The old tool's calls fill stored turns; a model that reads them imitates a call that no
     // longer exists. A call-first turn held nothing but the call, and goes with it.
+    it('reopens only owned Kimi reasoning and excludes old revisions, copied forks and unscoped reasoning', async () => {
+        const model = 'kimi-k3.1-pro'
+        const snapshot: CustomProviderSnapshot = { state: 'configured', workspaceId: 1, connectionId: 'sample-connection', revision: 1,
+            configuredSecret: true, config: { name: 'Kimi', preset: 'kimi-platform', baseUrl: 'https://api.moonshot.ai/v1',
+                vision: false, contextWindow: 16384, models: [],
+                policy: { reviewedOrigin: 'https://api.moonshot.ai', allowHttp: false, allowPrivate: false } },
+            catalog: { status: 'never', models: [], observedAt: null, attemptedAt: null } }
+        const chat = { agentId: 'compact-agent', sessionId: 'sess' }
+        const scope = kimiReasoningScope(snapshot, model, chat)
+        expect(scope).toBeTruthy()
+        const scoped = { type: 'reasoning', text: 'A provider-authored step.', providerOptions: { kimiPlatform: { scope } } }
+        const answer = { type: 'text', text: 'A saved answer.' }
+        state.rows = [
+            row(0, 'assistant', [scoped, { type: 'reasoning', text: 'Foreign.' }, answer]),
+            { ...row(1, 'assistant', [scoped, answer]), copiedForRegeneration: true },
+        ]
+        const makeContext = (revision: number, sessionId = chat.sessionId) => context(model, {
+            sessionId, provider: 'custom', agent: { id: chat.agentId, resolved: { provider: 'custom', model, connection: { custom: { ...snapshot, revision } } } },
+        }).ctx
+        expect(await prepareRunHistory(makeContext(1), 'system')).toEqual([
+            { role: 'assistant', content: [scoped, answer] }, { role: 'assistant', content: [answer] },
+        ])
+        for (const ctx of [makeContext(2), makeContext(1, 'other-chat'), context().ctx]) {
+            expect(await prepareRunHistory(ctx, 'system')).toEqual([
+                { role: 'assistant', content: [answer] }, { role: 'assistant', content: [answer] },
+            ])
+        }
+    })
+
     it('drops the calls of the old quick replies tool, and the turn that only held one', async () => {
         state.rows = [
             row(0, 'assistant', [{ type: 'tool-call', toolCallId: 'q1', toolName: 'mcp__rerun__suggest_replies', input: { replies: ['Go on'] } }]),
@@ -283,4 +316,24 @@ describe('prepareRunHistory', () => {
         expect(await prepareRunHistory(ctx, 'system')).toHaveLength(3)
         expect(state.saved).toHaveLength(1)
     })
+})
+
+it('sets only the terminal Mac compaction receipt and keeps aborted attempts unconfirmed', async () => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    state.rows = longHistory()
+    const completed = context()
+    await prepareRunHistory(completed.ctx, 'system')
+    expect(completed.ctx.compactionReceipt).toEqual({ id: completed.writes[1].id, ...completed.writes[1].data })
+
+    state.summary = new Error('Fixture summary failed')
+    const failed = context()
+    await prepareRunHistory(failed.ctx, 'system')
+    expect(failed.ctx.compactionReceipt).toEqual({ id: failed.writes[0].id, status: 'error' })
+
+    const stop = new AbortController()
+    stop.abort()
+    const aborted = context('gpt-4o', { abortSignal: stop.signal })
+    await prepareRunHistory(aborted.ctx, 'system')
+    expect(aborted.ctx.compactionReceipt).toBeUndefined()
+    expect(aborted.writes.map(event => event.data.status)).toEqual(['running'])
 })

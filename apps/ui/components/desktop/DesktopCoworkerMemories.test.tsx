@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
+import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -52,7 +53,7 @@ test('semantic search uses the same editable MemoryRow and shows honest indexing
         await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
         await click('Memories')
         expect(dialog()?.textContent).toContain('Some notes are still indexing')
-        await enter('desktop-memory-search', 'office equipment')
+        await enter('memory-search', 'office equipment')
         await click('Search')
         expect(requests).toContainEqual({ url: base, body: { query: 'office equipment' } })
         expect(dialog()?.textContent).toContain('The printer is by the cabinet')
@@ -123,8 +124,12 @@ test('late responses from another coworker or a closed dialog never populate a n
     } finally { await act(async () => { root.unmount() }) }
 })
 
-async function enter(id: string, value: string) {
-    const field = document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement
+function memoryField(name: string) {
+    return document.querySelector<HTMLInputElement | HTMLTextAreaElement>('[name="' + name + '"]')
+}
+
+async function enter(name: string, value: string) {
+    const field = memoryField(name)!
     expect(field).toBeTruthy()
     await act(async () => {
         const prototype = field.tagName === 'INPUT' ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype
@@ -165,15 +170,15 @@ test('recalls by submitted query, retries an error, and updates matching results
         await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
         await click('Memories')
         await click('Add memory')
-        await enter('desktop-memory-content', 'indigo test card')
-        await enter('desktop-memory-search', '  indigo  ')
+        await enter('memory-content', 'indigo test card')
+        await enter('memory-search', '  indigo  ')
         await act(async () => { dialog()!.querySelector<HTMLFormElement>('form[role="search"]')!.requestSubmit() })
         expect(dialog()?.textContent).toContain('Could not search memories.')
         expect(dialog()?.textContent).not.toContain('No matches')
         await click('Retry')
         expect(dialog()?.textContent).toContain('No matches')
         expect(dialog()?.textContent).toContain('0 recalled for “indigo”')
-        expect((document.getElementById('desktop-memory-content') as HTMLTextAreaElement).value).toBe('indigo test card')
+        expect((memoryField('memory-content') as HTMLTextAreaElement).value).toBe('indigo test card')
         await click('Save memory')
         expect(dialog()?.textContent).toContain('1 recalled for “indigo”')
         expect(dialog()?.textContent).toContain('indigo test card')
@@ -197,10 +202,10 @@ test('late search results cannot replace a new query or the full list after clea
     try {
         await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
         await click('Memories')
-        await enter('desktop-memory-search', 'old')
+        await enter('memory-search', 'old')
         await click('Search')
         expect(dialog()?.textContent).toContain('Searching memories…')
-        await enter('desktop-memory-search', 'current')
+        await enter('memory-search', 'current')
         await click('Search')
         expect(reads[0].signal.aborted).toBe(true)
         await act(async () => { reads[1].finish(Response.json({ memories: [note('current', 'Current ranked match')] })) })
@@ -235,22 +240,22 @@ test('saves trimmed content and metadata, retaining drafts and request IDs acros
         await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
         await click('Memories')
         await click('Add memory')
-        await enter('desktop-memory-content', '  Project colors  ')
-        await enter('desktop-memory-kind', '  preference ')
-        await enter('desktop-memory-tags', ' blue, , navy ')
+        await enter('memory-content', '  Project colors  ')
+        await enter('memory-kind', '  preference ')
+        await enter('memory-tags', ' blue, , navy ')
         await click('Save memory')
         expect(dialog()?.querySelector('[role="alert"]')?.textContent).toBe('Save failed. Try again.')
-        expect((document.getElementById('desktop-memory-content') as HTMLTextAreaElement).value).toBe('  Project colors  ')
+        expect((memoryField('memory-content') as HTMLTextAreaElement).value).toBe('  Project colors  ')
         await click('Save memory')
         expect(writes[1]).toEqual(writes[0])
         expect(writes[1]).toEqual({ content: 'Project colors', kind: 'preference', tags: ['blue', 'navy'], requestId: expect.stringMatching(/^[a-f\d-]{36}$/i) })
         expect(dialog()?.textContent).toContain('Project colors')
         expect(dialog()?.textContent).toContain('#navy')
-        expect(document.getElementById('desktop-memory-content')).toBeNull()
+        expect(memoryField('memory-content')).toBeNull()
         await click('Add memory')
-        await enter('desktop-memory-content', 'Original draft')
+        await enter('memory-content', 'Original draft')
         await click('Save memory')
-        await enter('desktop-memory-content', 'Changed draft')
+        await enter('memory-content', 'Changed draft')
         await click('Save memory')
         expect(writes[3].requestId).not.toBe(writes[2].requestId)
         expect(writes[3]).toEqual({ content: 'Changed draft', requestId: expect.any(String) })
@@ -315,14 +320,14 @@ test('a save finishing after a coworker switch cannot replace the new coworker�
         await show('first')
         await click('Memories')
         await click('Add memory')
-        await enter('desktop-memory-content', 'First coworker draft')
+        await enter('memory-content', 'First coworker draft')
         await click('Save memory')
         await show('second')
         expect(dialog()?.textContent).toContain('Second coworker note')
         await click('Add memory')
-        await enter('desktop-memory-content', 'Second coworker draft')
+        await enter('memory-content', 'Second coworker draft')
         await act(async () => { finish(Response.json({ id: 'saved' }, { status: 201 })) })
-        expect((document.getElementById('desktop-memory-content') as HTMLTextAreaElement).value).toBe('Second coworker draft')
+        expect((memoryField('memory-content') as HTMLTextAreaElement).value).toBe('Second coworker draft')
         expect(dialog()?.textContent).not.toContain('First coworker draft')
         expect(calls).toEqual(['GET /api/desktop/agents/first/memories', 'POST /api/desktop/agents/first/memories', 'GET /api/desktop/agents/second/memories'])
     } finally { await act(async () => { root.unmount() }) }
@@ -346,14 +351,14 @@ test('an already-deleted note is reconciled from the coworker list without disca
         await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('writer')} />) })
         await click('Memories')
         await click('Add memory')
-        await enter('desktop-memory-content', 'Draft in progress')
+        await enter('memory-content', 'Draft in progress')
         await act(async () => { dialog()!.querySelector<HTMLButtonElement>('[aria-label="Delete memory"]')!.click() })
         await click('Delete')
         expect(reads).toBe(2)
         expect(dialog()?.textContent).not.toContain('Already removed elsewhere')
         expect(dialog()?.textContent).toContain('Existing second note')
         expect(dialog()?.querySelector('[role="alert"]')).toBeNull()
-        expect((document.getElementById('desktop-memory-content') as HTMLTextAreaElement).value).toBe('Draft in progress')
+        expect((memoryField('memory-content') as HTMLTextAreaElement).value).toBe('Draft in progress')
     } finally { await act(async () => { root.unmount() }) }
 })
 
@@ -383,7 +388,7 @@ test('cancel keeps every note and the search, and confirming clears all notes be
         await click('Memories')
         for (const label of ['Vacation dates in July', 'Buys apples weekly', 'Presses cider from apples']) expect(dialog()?.textContent).toContain(label)
         expect(trash()).not.toBeNull()
-        await enter('desktop-memory-search', 'apples')
+        await enter('memory-search', 'apples')
         await act(async () => { dialog()!.querySelector<HTMLFormElement>('form[role="search"]')!.requestSubmit() })
         expect(dialog()?.textContent).toContain('2 recalled for “apples”')
         expect(dialog()?.textContent).not.toContain('Vacation dates in July')
@@ -397,7 +402,7 @@ test('cancel keeps every note and the search, and confirming clears all notes be
         expect(stored).toHaveLength(3)
         expect(dialog()?.textContent).toContain('2 recalled for “apples”')
         expect(dialog()?.textContent).toContain('Buys apples weekly')
-        expect((document.getElementById('desktop-memory-search') as HTMLInputElement).value).toBe('apples')
+        expect((memoryField('memory-search') as HTMLInputElement).value).toBe('apples')
         await act(async () => { trash()!.click() })
         await click('Clear all')
         expect(calls).toContain('DELETE /api/desktop/agents/reviewer/memories')
@@ -405,7 +410,7 @@ test('cancel keeps every note and the search, and confirming clears all notes be
         expect(stored).toEqual([])
         expect(dialog()?.textContent).toContain('No memories yet')
         expect(dialog()?.textContent).not.toContain('recalled for')
-        expect((document.getElementById('desktop-memory-search') as HTMLInputElement).value).toBe('')
+        expect((memoryField('memory-search') as HTMLInputElement).value).toBe('')
         expect(document.querySelector('[aria-label="Clear all memories"]')).toBeNull()
     } finally { await act(async () => { root.unmount() }) }
 })
@@ -427,7 +432,7 @@ test('clear-all stays available for zero recall results and removes notes outsid
     try {
         await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
         await click('Memories')
-        await enter('desktop-memory-search', 'unmatched')
+        await enter('memory-search', 'unmatched')
         await act(async () => { dialog()!.querySelector<HTMLFormElement>('form[role="search"]')!.requestSubmit() })
         expect(dialog()?.textContent).toContain('No matches')
         const trash = document.querySelector<HTMLButtonElement>('[aria-label="Clear all memories"]')
@@ -466,7 +471,7 @@ test('a failed clear keeps every note and the search intact, and retrying the co
     try {
         await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
         await click('Memories')
-        await enter('desktop-memory-search', 'apples')
+        await enter('memory-search', 'apples')
         await act(async () => { dialog()!.querySelector<HTMLFormElement>('form[role="search"]')!.requestSubmit() })
         await act(async () => { trash()!.click() })
         await click('Clear all')
@@ -474,7 +479,7 @@ test('a failed clear keeps every note and the search intact, and retrying the co
         expect(stored.map(n => n.id)).toEqual(['outside', 'apples'])
         expect(dialog()?.textContent).toContain('Buys apples weekly')
         expect(dialog()?.textContent).toContain('1 recalled for “apples”')
-        expect((document.getElementById('desktop-memory-search') as HTMLInputElement).value).toBe('apples')
+        expect((memoryField('memory-search') as HTMLInputElement).value).toBe('apples')
         expect(trash()).not.toBeNull()
         await act(async () => { trash()!.click() })
         await click('Clear all')
@@ -501,14 +506,14 @@ test('a partial clear failure refreshes the remaining notes and retains its erro
     try {
         await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
         await click('Memories')
-        await enter('desktop-memory-search', 'apples')
+        await enter('memory-search', 'apples')
         await act(async () => { dialog()!.querySelector<HTMLFormElement>('form[role="search"]')!.requestSubmit() })
         await act(async () => { trash()!.click() })
         await click('Clear all')
         expect(dialog()?.querySelector('[role="alert"]')?.textContent).toBe('Could not finish clearing memories')
         expect(dialog()?.textContent).not.toContain('Buys apples weekly')
         expect(dialog()?.textContent).toContain('0 recalled for “apples”')
-        expect((document.getElementById('desktop-memory-search') as HTMLInputElement).value).toBe('apples')
+        expect((memoryField('memory-search') as HTMLInputElement).value).toBe('apples')
         expect(trash()).not.toBeNull()
         await act(async () => { trash()!.click() })
         await click('Clear all')
@@ -544,7 +549,136 @@ test('a clear finishing after a coworker switch cannot empty the newly selected 
         await act(async () => { finish(new Response(null, { status: 204 })) })
         expect(dialog()?.textContent).toContain('Second coworker note')
         expect(dialog()?.textContent).not.toContain('First coworker note')
-        expect((document.getElementById('desktop-memory-search') as HTMLInputElement)?.value ?? '').toBe('')
+        expect((memoryField('memory-search') as HTMLInputElement)?.value ?? '').toBe('')
         expect(calls).toEqual(['GET /api/desktop/agents/first/memories', 'DELETE /api/desktop/agents/first/memories', 'GET /api/desktop/agents/second/memories'])
     } finally { await act(async () => { root.unmount() }) }
+})
+
+test('keeps the saved-list read alive while the first recall returns no matches', async () => {
+    const root = mount()
+    const saved = note('saved', 'Working hours for the office')
+    let listSignal!: AbortSignal
+    let complete!: (response: Response) => void
+    let lists = 0
+    stubMemoryFetch((url, init) => {
+        if (url.endsWith('/recall')) return Response.json({ memories: [] })
+        lists++
+        listSignal = init.signal!
+        return new Promise<Response>(resolve => { complete = resolve })
+    })
+    try {
+        await act(async () => root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />))
+        await click('Memories')
+        await enter('memory-search', 'meeting')
+        await click('Search')
+        expect(dialog()?.textContent).toContain('No matches')
+        expect(listSignal.aborted).toBe(false)
+        await act(async () => complete(Response.json({ memories: [saved] })))
+        expect(dialog()?.querySelector('[aria-label="Clear all memories"]')).not.toBeNull()
+        expect(dialog()?.textContent).not.toContain(saved.content)
+        await click('Clear search')
+        expect(dialog()?.textContent).toContain(saved.content)
+        expect(lists).toBe(1)
+    } finally { await act(async () => root.unmount()) }
+})
+
+test('deleting the last note from recall removes Clear all when the saved list is empty', async () => {
+    const root = mount()
+    let notes = [note('last', 'Printer locations')]
+    const url = '/api/desktop/agents/reviewer/memories'
+    stubMemoryFetch((target, init) => {
+        if (target === url + '/last' && init.method === 'DELETE') {
+            notes = []
+            return new Response(null, { status: 204 })
+        }
+        expect([url, url + '/recall']).toContain(target)
+        return Response.json({ memories: notes })
+    })
+    try {
+        await act(async () => root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />))
+        await click('Memories')
+        await enter('memory-search', 'Printer')
+        await click('Search')
+        expect(dialog()?.querySelector('[aria-label="Clear all memories"]')).not.toBeNull()
+        await act(async () => { dialog()!.querySelector<HTMLButtonElement>('[aria-label="Delete memory"]')!.click() })
+        await click('Delete')
+        expect(dialog()?.textContent).toContain('No matches')
+        expect(dialog()?.querySelector('[aria-label="Clear all memories"]')).toBeNull()
+        await click('Clear search')
+        expect(dialog()?.textContent).toContain('No memories yet')
+    } finally { await act(async () => root.unmount()) }
+})
+
+test('a new recall does not report the previous query’s backend outcome while it is pending', async () => {
+    const root = mount()
+    const semantic = '/api/desktop/coworkers/reviewer/semantic-memory'
+    let finish!: (response: Response) => void
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit = {}) => {
+        if (url !== semantic) return Response.json({ memories: [] })
+        if (init.method !== 'POST') return Response.json(keywordIndex)
+        const { query } = JSON.parse(String(init.body))
+        if (query === 'earlier') return Response.json({ memories: [], mode: 'keyword-only', detail: 'Earlier lookup fell back to keywords.', index: keywordIndex })
+        return new Promise<Response>(resolve => { finish = resolve })
+    })
+    try {
+        await act(async () => root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />))
+        await click('Memories')
+        await enter('memory-search', 'earlier')
+        await click('Search')
+        expect(dialog()?.textContent).toContain('Earlier lookup fell back to keywords.')
+        await enter('memory-search', 'current')
+        await click('Search')
+        expect(dialog()?.textContent).toContain('Searching memories…')
+        expect(dialog()?.textContent).not.toContain('Earlier lookup fell back to keywords.')
+        await act(async () => finish(Response.json({}, { status: 502 })))
+        expect(dialog()?.textContent).toContain('Could not search memories.')
+        expect(dialog()?.textContent).not.toContain('Earlier lookup fell back to keywords.')
+    } finally { await act(async () => root.unmount()) }
+})
+
+test('quit waits for an admitted memory write and an Escape cannot close its dialog', async () => {
+    const root = mount()
+    const write = Promise.withResolvers<Response>()
+    let rows: ReturnType<typeof note>[] = []
+    let writes = 0
+    stubMemoryFetch(async (_url, init) => {
+        if (init.method !== 'POST') return Response.json({ memories: rows })
+        writes++
+        return write.promise
+    })
+    let drain: Promise<boolean> | undefined
+    try {
+        await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
+        await click('Memories')
+        await click('Add memory')
+        await enter('memory-content', 'Memory being saved')
+        await click('Save memory')
+        expect(writes).toBe(1)
+        const current = dialog()
+        await act(async () => {
+            current!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+        })
+        expect(dialog()).toBe(current)
+        expect((memoryField('memory-content') as HTMLTextAreaElement).value).toBe('Memory being saved')
+
+        let settled = false
+        await act(async () => {
+            drain = flushDesktopDrafts()
+            void drain.then(() => { settled = true })
+        })
+        expect(settled).toBe(false)
+        rows = [note('saved', 'Memory being saved')]
+        await act(async () => {
+            write.resolve(Response.json({ id: 'saved' }, { status: 201 }))
+            await drain
+        })
+        expect(settled).toBe(true)
+        expect(dialog()?.textContent).toContain('Memory being saved')
+        expect(memoryField('memory-content')).toBeNull()
+    } finally {
+        write.resolve(Response.json({ id: 'saved' }, { status: 201 }))
+        await drain
+        cancelDraftShutdown()
+        await act(async () => { root.unmount() })
+    }
 })

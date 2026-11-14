@@ -179,17 +179,47 @@ test('a folder swapped for a sibling link after validation cannot redirect the s
     expect((await lstat(docs)).isSymbolicLink()).toBe(true)
 })
 
-test('only existing text or Markdown files can be saved', async () => {
-    await writeFile(join(workspace('engine-alice'), 'docs', 'run.sh'), 'echo hi')
-    await writeFile(join(workspace('engine-alice'), 'docs', 'bin.md'), Buffer.from([0xff, 0xfe, 0x00, 0x41]))
-    expect((await put(alice, { path: 'docs/run.sh', content: 'x', baseHash: 'opened' })).status).toBe(415)
+macTest('opens and saves complete UTF-8 data and source files through their existing versions', async () => {
+    const files = [
+        ['docs/records.csv', 'city,count\r\nQuébec,1\r\n', 'city,count\r\nQuébec,2\r\n'],
+        ['docs/settings.json', '{"enabled":false}\n', '{"enabled":true}\n'],
+        ['docs/Makefile', 'all:\n\t@echo old\n', 'all:\n\t@echo new\n'],
+        ['docs/run.sh', '#!/bin/sh\necho old\n', '#!/bin/sh\necho new\n'],
+    ]
+    for (const [path, original, edited] of files) {
+        const full = join(workspace('engine-alice'), path)
+        await writeFile(full, original, { mode: 0o750 })
+        const opened = await preview(alice, path)
+        expect(opened).toMatchObject({ content: original, hash: hashText(original), identity: expect.any(String), truncated: false })
+        const response = await put(alice, { path, content: edited, baseHash: opened.hash, identity: opened.identity })
+        expect(response.status).toBe(200)
+        expect(await response.json()).toMatchObject({ path, hash: hashText(edited) })
+        expect(await readFile(full, 'utf8')).toBe(edited)
+        expect((await stat(full)).mode & 0o777).toBe(0o750)
+    }
+})
+
+test('edits refuse binary, media, hidden and incomplete files', async () => {
+    const owned = workspace('engine-alice')
+    await writeFile(join(owned, 'docs', 'image.png'), 'looks like text')
+    await writeFile(join(owned, 'docs', 'bin.md'), Buffer.from([0xff, 0xfe, 0x00, 0x41]))
+    await writeFile(join(owned, 'docs', 'unknown'), Buffer.from([0xff, 0x41]))
+    await writeFile(join(owned, 'docs', '.private'), 'hidden')
+    await symlink('.private', join(owned, 'docs', 'alias.txt'))
+    await writeFile(join(owned, 'docs', 'long.csv'), 'a'.repeat(256 * 1024 + 1))
+    for (const name of ['image.png', 'bin.md', 'unknown', '.private', 'alias.txt']) {
+        const path = `docs/${name}`
+        expect((await preview(alice, path)).hash).toBeUndefined()
+        expect((await put(alice, { path, content: 'x', baseHash: 'opened' })).status).toBe(415)
+    }
+    expect((await preview(alice, 'docs/long.csv'))).toMatchObject({ truncated: true })
+    expect((await preview(alice, 'docs/long.csv')).hash).toBeUndefined()
+    expect((await put(alice, { path: 'docs/long.csv', content: 'x', baseHash: 'opened' })).status).toBe(413)
     expect((await put(alice, { path: 'docs/missing.md', content: 'x', baseHash: 'opened' })).status).toBe(404)
-    expect((await put(alice, { path: 'docs/bin.md', content: 'x', baseHash: 'opened' })).status).toBe(415)
-    expect((await preview(alice, 'docs/bin.md')).hash).toBeUndefined()
     expect((await put(alice, { path: 'docs/notes.md', content: 'a\u0000b', baseHash: 'opened' })).status).toBe(415)
     expect((await put(alice, { path: 'docs/notes.md', content: 'x'.repeat(256 * 1024 + 1), baseHash: 'opened' })).status).toBe(413)
     expect((await put(alice, { path: 'docs/notes.md' })).status).toBe(400)
-    expect(await readFile(join(workspace('engine-alice'), 'docs/notes.md'), 'utf8')).toBe('# Alice notes')
+    expect(await readFile(join(owned, 'docs/notes.md'), 'utf8')).toBe('# Alice notes')
 })
 
 test('a save needs the desktop session and same-origin request', async () => {

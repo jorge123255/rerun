@@ -1,0 +1,84 @@
+import { z } from 'zod'
+
+// Connector actions a coworker asks the person about before it runs them on the Mac: deleting,
+// sending to other people, sharing, posting, paying, and changing credentials. They are recognized
+// by what the tool is called, never by what a call carries. The kinds and the recognition rules
+// follow CopilotKit/OpenBot's docs/approvals.md (MIT).
+export const DESKTOP_CONNECTOR_ACTION_KINDS = ['delete', 'send', 'share', 'post', 'pay', 'credential'] as const
+export type DesktopConnectorActionKind = (typeof DESKTOP_CONNECTOR_ACTION_KINDS)[number]
+
+const VERBS: Record<string, DesktopConnectorActionKind> = {
+    delete: 'delete', trash: 'delete', destroy: 'delete', erase: 'delete', purge: 'delete', wipe: 'delete', discard: 'delete', remove: 'delete', archive: 'delete',
+    send: 'send', reply: 'send', forward: 'send', respond: 'send', notify: 'send', broadcast: 'send', invite: 'send', comment: 'send',
+    share: 'share', grant: 'share',
+    publish: 'post', tweet: 'post', repost: 'post', post: 'post',
+    pay: 'pay', charge: 'pay', refund: 'pay', transfer: 'pay', payout: 'pay', withdraw: 'pay', purchase: 'pay', buy: 'pay', checkout: 'pay', subscribe: 'pay', upgrade: 'pay', downgrade: 'pay',
+}
+// What a making verb makes decides its kind: a new message is sent, a new post is posted.
+const MADE: Record<string, DesktopConnectorActionKind> = {
+    message: 'send', reply: 'send', comment: 'send', email: 'send', invitation: 'send', invite: 'send',
+    post: 'post', tweet: 'post', release: 'post',
+    share: 'share', permission: 'share', permissions: 'share', collaborator: 'share', collaborators: 'share',
+    payment: 'pay', charge: 'pay', refund: 'pay', transfer: 'pay', payout: 'pay', order: 'pay', subscription: 'pay', checkout: 'pay',
+}
+const MAKING = new Set(['create', 'add', 'new', 'insert', 'schedule', 'place', 'make'])
+const CHANGING = new Set(['set', 'change', 'update', 'reset', 'rotate', 'regenerate', 'revoke', 'enable', 'disable', ...MAKING])
+const CREDENTIAL = new Set(['password', 'passcode', 'passkey', 'credential', 'credentials', 'mfa', '2fa', 'totp', 'apikey', 'secret'])
+// The first verb is the action. These end the search: what follows them only names what they act on.
+const ORDINARY = new Set([
+    'get', 'list', 'read', 'search', 'find', 'fetch', 'query', 'lookup', 'view', 'show', 'check', 'count', 'describe', 'retrieve', 'export', 'download',
+    'edit', 'mark', 'cancel', 'unarchive', 'restore', 'draft', 'save', 'label', 'move', 'copy', 'rename', 'upload', 'open', 'close', 'start', 'stop', 'run',
+    'like', 'unlike', 'bookmark', 'star', 'follow', 'unfollow', 'pin', 'unpin', 'mute', 'watch', 'unsend', 'unshare', 'unpublish', 'unsubscribe',
+])
+
+function wordsOf(name: string): string[] {
+    return name
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean)
+}
+
+/**
+ * The kind of action a connector tool performs, or null for an ordinary read or change.
+ * `destructive` is the tool's own MCP `destructiveHint`: such a tool asks as deleting does,
+ * whatever it is called.
+ */
+export function desktopConnectorActionKind(toolName: string, destructive = false): DesktopConnectorActionKind | null {
+    const words = wordsOf(toolName)
+    for (let index = 0; index < words.length; index++) {
+        const word = words[index]!
+        const rest = words.slice(index + 1)
+        if (CHANGING.has(word) && rest.some(next => CREDENTIAL.has(next))) return 'credential'
+        if (CHANGING.has(word) && rest.join('').includes('apikey')) return 'credential'
+        if (MAKING.has(word)) {
+            const made = rest.map(next => MADE[next]).find(Boolean)
+            if (made) return made
+            break
+        }
+        if (ORDINARY.has(word) || CHANGING.has(word)) break
+        // The web's POST method is not posting: STRIPE_POST_V1_PLANS reads a request path.
+        if (word === 'post' && /^(v\d+|api|request)$/.test(rest[0] ?? '')) break
+        const kind = VERBS[word]
+        if (kind) return kind
+    }
+    return destructive ? 'delete' : null
+}
+
+export const desktopConnectorApprovalDecisionSchema = z.enum(['once', 'conversation', 'always', 'deny'])
+export type DesktopConnectorApprovalDecision = z.infer<typeof desktopConnectorApprovalDecisionSchema>
+
+const kind = z.enum(DESKTOP_CONNECTOR_ACTION_KINDS)
+export const desktopConnectorApprovalViewSchema = z.object({
+    pending: z.array(z.object({ id: z.string().uuid(), tool: z.string().max(200), kind, preview: z.string().max(700), createdAt: z.string() }).strict()).max(20),
+    rules: z.array(z.object({ id: z.string().uuid(), tool: z.string().max(200), scope: z.enum(['conversation', 'always']) }).strict()).max(200),
+}).strict()
+export type DesktopConnectorApprovalView = z.infer<typeof desktopConnectorApprovalViewSchema>
+
+export const desktopConnectorApprovalActionSchema = z.discriminatedUnion('action', [
+    z.object({ action: z.literal('decide'), id: z.string().uuid(), decision: desktopConnectorApprovalDecisionSchema }).strict(),
+    z.object({ action: z.literal('forget'), ruleId: z.string().uuid() }).strict(),
+])
+export type DesktopConnectorApprovalAction = z.infer<typeof desktopConnectorApprovalActionSchema>
+export const desktopConnectorApprovalResultSchema = z.object({ tool: z.string().max(200), kind, decision: desktopConnectorApprovalDecisionSchema }).strict()

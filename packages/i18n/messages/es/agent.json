@@ -73,6 +73,11 @@
             "setup": "Instalación"
         }
     },
+    "sessionRename": {
+        "rename": "Renombrar",
+        "label": "Nombre de la conversación",
+        "failed": "No se pudo renombrar. Inténtalo de nuevo."
+    },
     "openChatsTabs": {
         "closeTab": "Cerrar {title}",
         "newThread": "Nuevo hilo",

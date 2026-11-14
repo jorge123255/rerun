@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises'
-import { join } from 'node:path'
+import { lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { DESKTOP_SEMANTIC_STORE_BYTES_MAX, type DesktopSemanticIndexStore, type DesktopSemanticOwnerIndex, type DesktopSemanticPendingWork, type DesktopSemanticIndexRecord } from '@rerun/contracts'
 import { desktopSemanticLocalId } from './identity.js'
 import { desktopSemanticVector } from './vectors.js'
@@ -132,6 +132,15 @@ function documentOf(value: unknown): FileDocument | null {
     return { version: 1, invalid: document.invalid, owners }
 }
 
+// The store refuses a symbolic link at its own directory and file, and on macOS at any step of the
+// path it opens. The folders above it are not the store's: a data root reached through a link (the
+// system's temporary folder, a home on another volume) is resolved once, so only the two names the
+// store owns are held to that rule.
+async function ownDirectory(directory: string): Promise<string> {
+    const parent = await realpath(dirname(directory)).catch(() => dirname(directory))
+    return join(parent, basename(directory))
+}
+
 async function assertDirectory(directory: string) {
     const info = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
         if (error.code === 'ENOENT') return null
@@ -181,7 +190,8 @@ async function writeAtomic(directory: string, document: FileDocument) {
     catch (error) { await unlink(temporary).catch(() => undefined); throw error }
 }
 
-export async function initializeDesktopSemanticIndex(directory: string): Promise<void> {
+export async function initializeDesktopSemanticIndex(requested: string): Promise<void> {
+    const directory = await ownDirectory(requested)
     await assertDirectory(directory)
     const target = join(directory, FILE_NAME)
     const existing = await lstat(target).catch((error: NodeJS.ErrnoException) => {
@@ -195,11 +205,13 @@ export async function initializeDesktopSemanticIndex(directory: string): Promise
     if (!existing.isFile() || existing.isSymbolicLink()) throw new Error('Semantic index file is not a regular file')
 }
 
-export function createFileSemanticIndexStore(directory: string): DesktopSemanticIndexStore {
+export function createFileSemanticIndexStore(requested: string): DesktopSemanticIndexStore {
     const chain = { current: Promise.resolve() }
     let loaded: FileDocument | null = null
+    let directory = requested
     const load = async (): Promise<FileDocument> => {
         if (loaded) return loaded
+        directory = await ownDirectory(requested)
         await assertDirectory(directory)
         const target = join(directory, FILE_NAME)
         try {

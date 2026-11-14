@@ -86,3 +86,12 @@ const local = {
 export function desktopNotificationMessages(locale: Locale): Record<keyof typeof local.en, string> {
     return local[locale]
 }
+
+// These request kinds only exist in the local notification path.
+export const desktopAttentionNotificationLabels = {
+    en: { takeover: 'Browser help', secret: 'Credentials', mcp: 'Tool sign-in', 'tool-install': 'Package installation' },
+    fr: { takeover: 'Aide dans le navigateur', secret: 'Identifiants', mcp: 'Connexion à un outil', 'tool-install': 'Installation de paquet' },
+    es: { takeover: 'Ayuda en el navegador', secret: 'Credenciales', mcp: 'Inicio de sesión en una herramienta', 'tool-install': 'Instalación de paquetes' },
+    pt: { takeover: 'Ajuda no navegador', secret: 'Credenciais', mcp: 'Login em ferramenta', 'tool-install': 'Instalação de pacotes' },
+    de: { takeover: 'Hilfe im Browser', secret: 'Zugangsdaten', mcp: 'Tool-Anmeldung', 'tool-install': 'Paketinstallation' },
+} satisfies Record<Locale, Record<'takeover' | 'secret' | 'mcp' | 'tool-install', string>>

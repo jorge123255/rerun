@@ -6,6 +6,7 @@ import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@
 import { discardDesktopVoice, listDesktopVoiceDrafts, readDesktopVoiceDraft, sendDesktopVoice, transcribeDesktopVoice } from './client'
 import { canRetainVoiceRecording, retainVoiceRecording, retainedVoiceRecording, saveRetainedVoice, subscribeRetainedVoice, voiceScopeKey, type RetainedVoiceRecording } from './retained-recordings'
 import { useDesktopVoiceRecorder, type DesktopVoiceRecordingTake } from './useDesktopVoiceRecorder'
+import { buildDesktopVoiceMessage } from './voice'
 
 type View = {
     status: DesktopVoiceLifecycle
@@ -122,7 +123,10 @@ export function useDesktopVoiceMessage({ agentId, tabUid, sessionId, enabled = t
     const reconcile = useCallback(async (attemptId: string, key = scopeKey, token = generation.current) => {
         try {
             const draft = await readDesktopVoiceDraft(scope, attemptId, operation.current?.signal)
-            if (current(key, token) && draft) publish(fromDraft(draft))
+            if (current(key, token) && draft) {
+                publish(fromDraft(draft))
+                return draft
+            }
         } catch {}
     }, [current, publish, scope, scopeKey])
 
@@ -161,6 +165,7 @@ export function useDesktopVoiceMessage({ agentId, tabUid, sessionId, enabled = t
         operation.current = controller
         const release = holdDraftAdmission()
         publish({ ...snapshot, status: 'sending', error: null })
+        let accepted: (DesktopVoiceSendReceipt & { text: string }) | undefined
         try {
             if (!sendAttempt.current || sendAttempt.current.key !== key || sendAttempt.current.attemptId !== draft.attemptId) {
                 const savedChoice = draft.sendModelChoice
@@ -174,12 +179,21 @@ export function useDesktopVoiceMessage({ agentId, tabUid, sessionId, enabled = t
             if (!result.text) { publish(fromDraft(result.draft)); return }
             raw.current = null
             publish(fromDraft(result.draft))
-            onSentRef.current?.({ ...result, text: result.text })
+            accepted = { ...result, text: result.text }
         } catch (error) {
             if (!current(key, token)) return
             publish({ ...snapshot, status: 'failed', error: error instanceof Error ? error.message : 'Voice message acknowledgement is unknown. Retry the same attempt.' })
-            await reconcile(draft.attemptId, key, token)
+            const recovered = await reconcile(draft.attemptId, key, token)
+            if (current(key, token) && recovered?.phase === 'sent' && recovered.dispatch && recovered.transcript?.trim()) {
+                raw.current = null
+                accepted = {
+                    draft: recovered,
+                    dispatch: recovered.dispatch,
+                    text: buildDesktopVoiceMessage(recovered.scope, recovered.recording, recovered.transcript),
+                }
+            }
         } finally { if (generation.current === token) operation.current = null; release() }
+        if (accepted && current(key, token)) onSentRef.current?.(accepted)
     }, [cancelOperation, current, publish, reconcile, scope, scopeKey])
 
     const retry = useCallback(async () => {

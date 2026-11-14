@@ -3,10 +3,22 @@ import { buildCustomProviderConfig, desktopPresets, endpointReady, keyRequiredFo
 
 describe('desktop custom provider copy', () => {
     it('keeps local servers on the desktop and hosted ones behind a key', () => {
-        expect(desktopPresets().map(preset => preset.id)).toEqual(['ollama', 'lmstudio', 'vllm', 'litellm', 'groq', 'together', 'mistral', 'deepseek'])
+        expect(desktopPresets().map(preset => preset.id)).toEqual(['ollama', 'lmstudio', 'vllm', 'litellm', 'groq', 'together', 'mistral', 'deepseek', 'xai', 'kimi-platform'])
         expect(keyRequiredFor(desktopPresets().find(preset => preset.id === 'ollama') ?? null)).toBe(false)
         expect(keyRequiredFor(desktopPresets().find(preset => preset.id === 'groq') ?? null)).toBe(true)
         expect(uniqueName('Ollama', ['Ollama'])).toBe('Ollama 2')
+    })
+
+    it.each([
+        ['Grok (xAI API)', 'xai', 'https://api.x.ai/v1'],
+        ['Kimi Platform API', 'kimi-platform', 'https://api.moonshot.ai/v1'],
+    ])('uses an authenticated public HTTPS preset for %s', (label, id, baseUrl) => {
+        const preset = desktopPresets().find(candidate => candidate.id === id)
+        expect(preset).toMatchObject({ label, baseUrl, local: false, keyRequired: true })
+        expect(buildCustomProviderConfig({
+            name: label, baseUrl, contextText: '', vision: false,
+            models: [{ id: 'catalog-model', contextWindow: null, vision: false, source: 'discovered' }],
+        })).toMatchObject({ preset: id, policy: { reviewedOrigin: new URL(baseUrl).origin, allowHttp: false, allowPrivate: false } })
     })
 
     it('uses the local unreachable sentence and refuses a key hidden in the address', () => {

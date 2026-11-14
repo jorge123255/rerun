@@ -16,7 +16,7 @@ export function normalizeTemplateRequirements(raw: DesktopTemplateRequirement[])
     const result = new Map<string, DesktopTemplateRequirement>()
     for (const r of raw) {
         // Requirement names are identifiers, never endpoint URLs, account IDs or resolved values.
-        const pattern = r.kind === 'environment-key' || r.kind === 'credential-name' ? /^[A-Z_][A-Z0-9_]{0,127}$/ : /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/
+        const pattern = r.kind === 'environment-key' || r.kind === 'credential-name' ? /^[A-Za-z_][A-Za-z0-9_]{0,127}$/ : /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/
         if (!pattern.test(r.name)) throw new TemplateRequestError(400, 'Template requirement name is not supported')
         const detail = r.kind === 'environment-key' || r.kind === 'credential-name' ? 'Provide this value locally after installation.'
             : r.kind === 'service-reconnect' || r.kind === 'mcp-reconnect' ? 'Connect this app locally after installation.'

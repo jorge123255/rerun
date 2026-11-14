@@ -23,11 +23,14 @@ it('gates unproven history, recovers only exact alternate receipts across reopen
         }
         expect(engine.fork).not.toHaveBeenCalled()
         proof = target
+        await expect(repository.request(input, 'recover')).rejects.toThrow(/cannot be forked/)
+        expect(engine.fork).not.toHaveBeenCalled()
+        expect(engine.lookup).not.toHaveBeenCalled()
         expect((await repository.request(input)).state).toBe('uncertain')
         expect(engine.fork).toHaveBeenCalledTimes(1)
         db.close(); db = createClient({ url: `file:${join(directory, 'fixture.db')}` })
         repository = createForemanAlternateRepository(db, authority, engine)
-        const receipt = await repository.request(input)
+        const receipt = await repository.request(input, 'recover')
         expect(receipt).toMatchObject({ state: 'ready', alternate: saved, proof: target })
         expect(engine.lookup).toHaveBeenCalledTimes(1)
         expect(await repository.request(input)).toEqual(receipt)

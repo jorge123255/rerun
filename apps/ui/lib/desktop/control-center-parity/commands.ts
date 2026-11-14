@@ -1,4 +1,5 @@
 import { buildDesktopControlCommands } from '../control-center'
+import englishLayout from '@rerun/i18n/messages/en/layout.json'
 import type {ControlSection,ControlRow} from '@/components/control-center/types'
 import {isDesktopCoworkerPanel} from '@/lib/desktop/coworker-panel'
 import {AGENT_TABS} from '@/components/agent/agent-tabs'
@@ -19,7 +20,11 @@ export function buildParityCommands(snapshot:ParitySnapshot,page:ParityPage,quer
   for(const command of buildControlCommands({isSandbox:false,apiEntitled:false,needsMachineReason:null,assistantReady:!!snapshot.foreman,hasChangelog:!!options.hasChangelog,darkTheme:!!options.darkTheme})){
    if(HOSTED_CONTROL_COMMANDS.has(command.id))continue
    if(command.id==='ask_assistant'){
-    if(snapshot.foreman)add({key:'ask_assistant',label:text?'Ask Rerun':command.label,description:text?`“${query.trim()}”`:undefined,icon:text?{kind:'assistant'}:{kind:'icon',icon:icons.ask_assistant},group:'actions',intent:{kind:'assistant',target:workspace(snapshot),chat:snapshot.foreman,draft:text?query.trim():''}})
+    if(snapshot.foreman){
+     const fallback=englishLayout.controlCenter.askRerun
+     const label=options.localizeCommand?.(command.id,fallback)??fallback
+     add({key:'ask_assistant',label,description:text?`“${query.trim()}”`:undefined,icon:text?{kind:'assistant'}:{kind:'icon',icon:icons.ask_assistant},group:'actions',intent:{kind:'assistant',target:workspace(snapshot),chat:snapshot.foreman,draft:text?query.trim():''}})
+    }
    }else add({key:command.id,label:command.label,keywords:command.keywords,icon:{kind:'icon',icon:command.id==='toggle_theme'&&!options.darkTheme?MoonIcon:icons[command.id]},group:command.group,intent:{kind:'global',command:command.id,target:workspace(snapshot)}})
   }
  }else if(page.kind==='coworker'){

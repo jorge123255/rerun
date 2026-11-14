@@ -42,10 +42,10 @@ beforeEach(() => {
         if (url.endsWith('/questions')) return Response.json({ question: null })
         requests.push(`${init?.method ?? 'GET'} ${url}`)
         if (url.includes('/queue?')) return Response.json({ queued: null })
-        if (url.startsWith('/reply/')) return new Response(null, { headers: { 'x-session-id': url.slice('/reply/'.length) } })
+        if (url.startsWith('/reply/')) return new Response(null, { headers: { 'x-session-id': url.slice('/reply/'.length), 'x-run-id': 'first-run' } })
         if (url.endsWith('/messages')) return Response.json({ ...await saved.clone().json(), activeRunId })
-        if (url.endsWith('/stop') && init?.method === 'POST') { running = false; return stopResponse() }
-        if (url.endsWith('/stop')) return statusUnavailable ? new Response(null, { status: 503 }) : Response.json({ running })
+        if (new URL(url, 'http://local').pathname.endsWith('/stop') && init?.method === 'POST') { running = false; return stopResponse() }
+        if (url.endsWith('/stop')) return statusUnavailable ? new Response(null, { status: 503 }) : Response.json({ running, runId: running ? activeRunId ?? 'first-run' : null })
         if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
         throw new Error('Unexpected request: ' + url)
     }))
@@ -74,7 +74,7 @@ test('Stop while streaming aborts the stream and cancels the engine run, keeping
     await type('Unsent follow-up')
     await act(async () => { button('Stop')!.click() })
     expect(chat.stop).toHaveBeenCalledTimes(1)
-    expect(requests).toContain('POST /api/desktop/sessions/session-1/stop')
+    expect(requests).toContain('POST /api/desktop/sessions/session-1/stop?runId=first-run')
     expect(container.querySelector('textarea')!.value).toBe('Unsent follow-up')
     chat.status = 'ready'
     await render()
@@ -89,7 +89,7 @@ test('a reopened conversation with a run still in flight offers Stop and cancels
     expect(button('Stop')).toBeDefined()
     expect(button('Send')!.disabled).toBe(true)
     await act(async () => { button('Stop')!.click() })
-    expect(requests).toContain('POST /api/desktop/sessions/session-1/stop')
+    expect(requests).toContain('POST /api/desktop/sessions/session-1/stop?runId=first-run')
     expect(button('Stop')).toBeUndefined()
     expect(container.textContent).toContain('Saved question')
 })
@@ -106,7 +106,7 @@ test('Stop stays enabled after reconnecting to a scheduled reply', async () => {
     await act(async () => { button('Stop')!.click() })
 
     expect(chat.stop).toHaveBeenCalledTimes(1)
-    expect(requests.filter(request => request.startsWith('POST '))).toEqual(['POST /api/desktop/sessions/session-1/stop'])
+    expect(requests.filter(request => request.startsWith('POST '))).toEqual(['POST /api/desktop/sessions/session-1/stop?runId=scheduled-run'])
 })
 
 test('disabling a coworker keeps the running reply and Stop while blocking new sends', async () => {
@@ -122,7 +122,7 @@ test('disabling a coworker keeps the running reply and Stop while blocking new s
     expect(container.querySelector('textarea')!.disabled).toBe(true)
     await act(async () => { button('Stop')!.click() })
     expect(chat.stop).toHaveBeenCalledTimes(1)
-    expect(requests).toContain('POST /api/desktop/sessions/session-1/stop')
+    expect(requests).toContain('POST /api/desktop/sessions/session-1/stop?runId=first-run')
     chat.status = 'ready'
     await render('session-1', false)
     expect(container.textContent).toContain('Saved question')
@@ -163,14 +163,14 @@ test('Stop waits for the current send to get a session ID before enabling, inclu
     chat.status = 'submitted'
     await render(null)
     await act(async () => { button('Stop')!.click() })
-    expect(requests).not.toContain('POST /api/desktop/sessions/session-1/stop')
+    expect(requests).not.toContain('POST /api/desktop/sessions/session-1/stop?runId=first-run')
     expect(chat.stop).not.toHaveBeenCalled()
     expect(button('Stop')!.disabled).toBe(true)
     await act(async () => { await acceptResponse('/reply/session-2') })
     await render('session-2')
     expect(button('Stop')!.disabled).toBe(false)
     await act(async () => { button('Stop')!.click() })
-    expect(requests).toContain('POST /api/desktop/sessions/session-2/stop')
+    expect(requests).toContain('POST /api/desktop/sessions/session-2/stop?runId=first-run')
 })
 
 
@@ -190,6 +190,50 @@ test('a transient engine status error is retried for a reopened running conversa
         await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
         expect(button('Stop')).toBeUndefined()
     } finally { vi.useRealTimers() }
+})
+
+test('an idle conversation catches a run started elsewhere and a reply completed while hidden', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+        const originalFetch = globalThis.fetch
+        let runVersion = 'first-done'
+        let reply = 'First saved reply'
+        let visibility: DocumentVisibilityState = 'visible'
+        vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input)
+            if (url.endsWith('/messages')) return Response.json({
+                messages: [{ id: reply, role: 'assistant', parts: [{ type: 'text', text: reply }] }], activeRunId, runVersion,
+            })
+            if (url.endsWith('/stop') && init?.method !== 'POST') return Response.json({ running, runId: activeRunId, runVersion })
+            return originalFetch(input, init)
+        }))
+        await render()
+        expect(container.textContent).toContain(reply)
+
+        running = true; activeRunId = 'second-run'; runVersion = 'second-running'
+        await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+        expect(button('Stop')).toBeDefined()
+        expect(chat.resumeStream).toHaveBeenCalledTimes(1)
+
+        running = false; activeRunId = null; runVersion = 'second-done'; reply = 'Second saved reply'
+        await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+        expect(container.textContent).toContain(reply)
+        expect(button('Stop')).toBeUndefined()
+
+        visibility = 'hidden'
+        runVersion = 'third-done'; reply = 'Finished while the window was hidden'
+        await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+        expect(container.textContent).not.toContain(reply)
+        visibility = 'visible'
+        await act(async () => { document.dispatchEvent(new Event('visibilitychange')); window.dispatchEvent(new Event('focus')) })
+        expect(container.textContent).toContain(reply)
+        expect(chat.resumeStream).toHaveBeenCalledTimes(1)
+        expect(chat.sendMessage).not.toHaveBeenCalled()
+    } finally {
+        vi.restoreAllMocks()
+        vi.useRealTimers()
+    }
 })
 
 test('a reopened run is not readable until its final history and both pending-request reads finish', async () => {

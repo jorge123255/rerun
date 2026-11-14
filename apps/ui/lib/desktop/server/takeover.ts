@@ -1,9 +1,8 @@
-import { withoutStoppedWebhookForms } from './trigger-requests/stopped'
 import 'server-only'
 import { createHash } from 'node:crypto'
 import type { Client, Row } from '@libsql/client'
 import { desktopTakeoverGuardSchema, findDesktopTakeover, serializeTakeoverResult, HITL_CANCELLED, type DesktopTakeoverGuard } from '@rerun/contracts'
-import { chat, EngineRequestError, getSessionMessages } from '@/lib/engine/client'
+import { chat, EngineRequestError } from '@/lib/engine/client'
 import { z } from 'zod'
 import type { DesktopTakeoverAction, DesktopTakeoverTerminal, DesktopTakeoverView } from '../takeover'
 import { desktopScreenTakeover, desktopScreenFinishTakeover } from './screen/service'
@@ -13,15 +12,16 @@ type DesktopTakeoverAnswer = DesktopTakeoverTerminal
 import { DesktopHttpError } from './auth'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { disabledCoworkerMessage } from './coworker-enabled'
-import { openDesktopDatabase } from './database'
 import { startDesktopChat } from './engine'
 import { withRosterWrite } from './roster-writes'
 import type { DesktopRuntime } from './runtime'
 import { engineOf } from './settings'
-import { findDesktopAgent, findDesktopSession, type DesktopAgent, type DesktopSession } from './store'
+import {
+    readDesktopHumanRequestMessages, readDesktopHumanRequestTarget, type DesktopHumanRequestTarget, type DesktopHumanRequestReadOptions,
+} from './human-request-history'
 
 type Takeover = NonNullable<ReturnType<typeof findDesktopTakeover>>
-type Target = { db: Client; agent: DesktopAgent; session: DesktopSession }
+type Target = DesktopHumanRequestTarget
 type Receipt = { requestId: string; agentId: string; sessionId: string; takeoverId: string; guard: DesktopTakeoverGuard; payload: DesktopTakeoverPayload; text: string; accepted: boolean }
 const answerLocks = globalThis as typeof globalThis & { desktopTakeoverWrites?: Map<string, Promise<void>> }
 
@@ -34,25 +34,13 @@ function withAnswerWrite<T>(key: string, action: () => Promise<T>): Promise<T> {
     return result
 }
 
-async function targetOf(runtime: DesktopRuntime, sessionId: string): Promise<Target> {
-    const db = await openDesktopDatabase(runtime.dataRoot)
-    const session = await findDesktopSession(db, sessionId)
-    if (!session) throw new DesktopHttpError(404, 'Conversation not found')
-    await assertCoworkerNotDeleting(db, session.agentId)
-    const agent = await findDesktopAgent(db, session.agentId)
-    if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
-    return { db, agent, session }
-}
-
 function identity(target: Target, takeover: Takeover): string {
     return createHash('sha256').update(JSON.stringify(['takeover', target.agent.id, target.session.id, takeover.sourceMessageId, takeover.toolCallId, takeover.fingerprint])).digest('hex')
 }
 
-async function pendingTakeover(runtime: DesktopRuntime, target: Target, options: { signal?: AbortSignal } = {}): Promise<Takeover | null> {
+async function pendingTakeover(runtime: DesktopRuntime, target: Target, options: DesktopHumanRequestReadOptions = {}): Promise<Takeover | null> {
     try {
-        const messages = await getSessionMessages(engineOf(runtime), target.agent.engineAgentId, target.session.engineSessionId, { requireSuccess: true, ...(options.signal && { signal: options.signal }) })
-        if (messages.some(message => message.sessionId !== target.session.engineSessionId)) throw new Error('Foreign conversation history')
-        return findDesktopTakeover(await withoutStoppedWebhookForms(target.db,target.agent.id,target.session.id,messages))
+        return findDesktopTakeover(await readDesktopHumanRequestMessages(runtime, target, options))
     } catch (cause) {
         if (cause instanceof EngineRequestError && cause.status === 404) throw new DesktopHttpError(404, 'Conversation not found')
         throw new DesktopHttpError(502, 'Could not read this coworker’s takeover request. Try again.')
@@ -97,8 +85,8 @@ async function answerText(runtime: DesktopRuntime, target: Target, input: Deskto
 
 // History filters use the same read-only saved-history resolver. An takeover completes its
 // original turn; its decision starts a later user turn, without changing any execution grant.
-export async function readDesktopTakeover(runtime: DesktopRuntime, sessionId: string, options: { signal?: AbortSignal } = {}): Promise<DesktopTakeoverView> {
-    const target = await targetOf(runtime, sessionId)
+export async function readDesktopTakeover(runtime: DesktopRuntime, sessionId: string, options: DesktopHumanRequestReadOptions = {}): Promise<DesktopTakeoverView> {
+    const target = await readDesktopHumanRequestTarget(runtime, sessionId)
     const pending = await pendingTakeover(runtime, target, options)
     if (!pending) return { takeover: null }
     const id = identity(target, pending)
@@ -168,7 +156,7 @@ async function reserve(target: Target, input: DesktopTakeoverAnswer, payload: De
 
 async function answerTerminal(runtime: DesktopRuntime, sessionId: string, input: DesktopTakeoverAnswer): Promise<Response> {
     return withAnswerWrite(runtime.dataRoot + '\0' + sessionId, async () => {
-        const target = await targetOf(runtime, sessionId)
+        const target = await readDesktopHumanRequestTarget(runtime, sessionId)
         const payload = payloadOf(input)
         const known = await byRequest(target.db, input.requestId) ?? await byTakeover(target.db, sessionId, input.takeoverId)
         let receipt: Receipt
@@ -192,7 +180,7 @@ async function answerTerminal(runtime: DesktopRuntime, sessionId: string, input:
 }
 
 export async function answerDesktopTakeover(runtime: DesktopRuntime, sessionId: string, input: DesktopTakeoverAction): Promise<Response> {
-    const target = await targetOf(runtime, sessionId)
+    const target = await readDesktopHumanRequestTarget(runtime, sessionId)
     // A coworker's sibling chats share its browser. Serialize ownership changes by coworker.
     return withAnswerWrite(runtime.dataRoot + '\0screen:' + target.agent.id, async () => {
         if (input.action === 'done' || input.action === 'skip') return answerTerminal(runtime, sessionId, input)

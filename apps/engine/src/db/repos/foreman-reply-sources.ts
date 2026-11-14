@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto'
-import type { InStatement } from '@libsql/client'
+import type { Client, InStatement } from '@libsql/client'
 import { FOREMAN_AGENT_ID, type DesktopForemanChatRef } from '@rerun/contracts'
 import type { MessageRow } from '../schema.js'
 import { getSystemDb } from '../systemDb.js'
+import { foremanTranscriptRevision } from '../../desktop/foreman/transcript-revision.js'
 
 export type ForemanReplyTurn = { runId: string; userMessageId: string }
-type ForemanReplyTarget = DesktopForemanChatRef & { sessionId: string; assistantMessageId: string }
+export type ForemanReplyTarget = DesktopForemanChatRef & { sessionId: string; assistantMessageId: string }
 
 const digest = (contentJson: string) => createHash('sha256').update(contentJson).digest('hex')
 
@@ -31,23 +32,45 @@ export function foremanReplySourceUpdate(agentId: string, message: MessageRow, t
 
 export async function readForemanReplySource(target: ForemanReplyTarget) {
     const { client } = await getSystemDb(FOREMAN_AGENT_ID)
-    const { rows } = await client.execute({
-        sql: `SELECT source.run_id,source.user_message_id,source.reply_digest,assistant.content_json
+    return (await readForemanReplySnapshot(client, target))?.proof ?? null
+}
+
+export async function readForemanReplySnapshot(reader: Pick<Client, 'execute'>, target: ForemanReplyTarget) {
+    // Read the provenance and transcript in one SQLite snapshot. Match listMessages' order
+    // so messages written in the same millisecond have a stable order after a restart.
+    const { rows } = await reader.execute({
+        sql: `SELECT source.run_id, source.user_message_id, source.reply_digest,
+                     history.id, history.role, history.content_json, history.tool_calls_json,
+                     history.sources_json, history.created_at, history.author_id, history.author_name
               FROM desktop_foreman_reply_sources AS source
               JOIN runs AS run ON run.id = source.run_id
               JOIN desktop_queued_turns AS receipt ON receipt.run_id = run.id AND receipt.message_id = source.user_message_id
               JOIN sessions AS session ON session.id = run.session_id AND session.agent_id = run.agent_id
               JOIN messages AS assistant ON assistant.id = source.assistant_message_id AND assistant.session_id = session.id
               JOIN messages AS user_message ON user_message.id = source.user_message_id AND user_message.session_id = session.id
+              JOIN messages AS history ON history.session_id = session.id
               WHERE source.workspace_id = ? AND source.chat_id = ? AND session.id = ? AND assistant.id = ?
                 AND run.agent_id = ? AND run.status = 'done' AND run.finished_at IS NOT NULL
                 AND session.source = 'dashboard' AND session.status = 'open'
                 AND session.origin_agent_id IS NULL AND session.origin_session_id IS NULL
-                AND assistant.role = 'assistant' AND user_message.role = 'user'`,
+                AND assistant.role = 'assistant' AND user_message.role = 'user'
+              ORDER BY history.created_at, history.rowid`,
         args: [target.workspaceId, target.chatId, target.sessionId, target.assistantMessageId, FOREMAN_AGENT_ID],
     })
     const saved = rows[0]
+    const reply = rows.find(row => row.id === target.assistantMessageId)
     if (!saved || typeof saved.run_id !== 'string' || typeof saved.user_message_id !== 'string' ||
-        typeof saved.content_json !== 'string' || saved.reply_digest !== digest(saved.content_json)) return null
-    return { ...target, sourceRunId: saved.run_id, precedingUserMessageId: saved.user_message_id, replyDigest: saved.reply_digest }
+        typeof reply?.content_json !== 'string' || saved.reply_digest !== digest(reply.content_json)) return null
+
+    // Return only an internal comparison token, never the raw message or tool content.
+    const transcriptRevision = foremanTranscriptRevision(target, target.sessionId, rows.map(row => ({
+        id: String(row.id), role: String(row.role), contentJson: String(row.content_json), createdAt: String(row.created_at),
+        toolCallsJson: typeof row.tool_calls_json === 'string' ? row.tool_calls_json : null,
+        sourcesJson: typeof row.sources_json === 'string' ? row.sources_json : null,
+        authorId: typeof row.author_id === 'string' ? row.author_id : null,
+        authorName: typeof row.author_name === 'string' ? row.author_name : null,
+    })))
+    const proof = { ...target, sourceRunId: saved.run_id, precedingUserMessageId: saved.user_message_id,
+        replyDigest: saved.reply_digest, transcriptRevision }
+    return { proof, rows }
 }

@@ -6,16 +6,17 @@ import { ChevronLeftIcon, ChevronRightIcon } from '@/lib/icons'
 import type { DesktopDocumentReference } from '@rerun/contracts'
 import { DesktopDocumentAttachmentView, DesktopDocumentDownload } from './DesktopDocumentAttachmentView'
 
-export function DesktopDocumentLightbox({ attachments, index, onIndexChange, onClose }: {
+export function DesktopDocumentLightbox({ attachments, index, onIndexChange, onClose, returnFocus }: {
     attachments: readonly DesktopDocumentReference[]
     index: number
     onIndexChange: (index: number) => void
     onClose: () => void
+    returnFocus?: () => void
 }) {
     const attachment = attachments[index]
     if (!attachment) return null
     return <Dialog open onOpenChange={open => !open && onClose()}>
-        <DialogContent aria-describedby={undefined} className="flex h-[80vh] flex-col gap-0 p-0 sm:max-w-4xl">
+        <DialogContent aria-describedby={undefined} onCloseAutoFocus={returnFocus && (event => { event.preventDefault(); returnFocus() })} className="flex h-[80vh] flex-col gap-0 p-0 sm:max-w-4xl">
             <div className="flex shrink-0 items-center gap-2 border-b border-border py-2 pl-4 pr-12">
                 <DialogTitle className="min-w-0 flex-1 truncate text-left font-mono text-xs font-normal text-muted-foreground">{attachment.name}</DialogTitle>
                 {attachments.length > 1 && <>

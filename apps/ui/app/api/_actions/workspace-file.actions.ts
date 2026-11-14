@@ -13,6 +13,7 @@ export type FileEntry = {
     type: 'file' | 'dir' | 'symlink'
     size: number
     modified: string
+    deleteRevision?: string
 }
 
 export async function listWorkspaceFilesAction(relativePath = '', showHidden = false): Promise<{ entries: FileEntry[]; path: string }> {

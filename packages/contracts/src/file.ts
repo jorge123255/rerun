@@ -1,5 +1,25 @@
 import { z } from 'zod'
 
+export type FilePreviewKind = 'image' | 'pdf' | 'audio' | 'video' | 'text' | 'binary'
+
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'ico', 'bmp'])
+const AUDIO_EXTS = new Set(['mp3', 'wav', 'ogg', 'm4a', 'flac'])
+const VIDEO_EXTS = new Set(['mp4', 'webm', 'mov', 'm4v'])
+const BINARY_EXTS = new Set(['zip', 'gz', 'tar', 'rar', '7z', 'exe', 'bin', 'dmg', 'iso', 'woff', 'woff2', 'ttf', 'otf', 'eot', 'parquet', 'sqlite', 'db', 'wasm', 'so', 'dylib', 'class', 'jar'])
+export function fileExtension(name: string): string {
+    return name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
+}
+
+export function filePreviewKind(name: string): FilePreviewKind {
+    const ext = fileExtension(name)
+    if (IMAGE_EXTS.has(ext)) return 'image'
+    if (ext === 'pdf') return 'pdf'
+    if (AUDIO_EXTS.has(ext)) return 'audio'
+    if (VIDEO_EXTS.has(ext)) return 'video'
+    if (BINARY_EXTS.has(ext)) return 'binary'
+    return 'text'
+}
+
 export const TEXT_FILE_PAGE_CHARS = 100_000
 
 export const MAX_UPLOAD_FILE_BYTES = 100 * 1024 * 1024

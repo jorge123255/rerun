@@ -1,14 +1,30 @@
 import { createClient } from '@libsql/client'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { afterEach, expect, it, vi } from 'vitest'
 import { desktopAuxiliarySchema, desktopAuxiliaryStore } from './store'
 import { desktopAuxiliaryBackends } from './backends'
 import { desktopSearchOutcomes } from './search'
+import { initializeDesktopRound44 } from '../round44-schema'
 
 const dbs: ReturnType<typeof createClient>[] = []
-afterEach(() => { for (const db of dbs.splice(0)) db.close() })
-async function fixture() {
-    const db = createClient({ url: ':memory:' }); dbs.push(db)
-    await db.executeMultiple("CREATE TABLE desktop_agents(id TEXT PRIMARY KEY); INSERT INTO desktop_agents VALUES('owner');" + desktopAuxiliarySchema)
+const roots: string[] = []
+afterEach(async () => {
+    for (const db of dbs.splice(0)) db.close()
+    for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
+})
+async function fixture({ durable = false } = {}) {
+    let url = ':memory:'
+    if (durable) {
+        const root = await mkdtemp(join(tmpdir(), 'rerun-auxiliary-'))
+        roots.push(root)
+        url = pathToFileURL(join(root, 'app.db')).href
+    }
+    const db = createClient({ url }); dbs.push(db)
+    await db.executeMultiple("CREATE TABLE desktop_schema_migrations(version INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE);"
+        + "CREATE TABLE desktop_agents(id TEXT PRIMARY KEY); INSERT INTO desktop_agents VALUES('owner');" + desktopAuxiliarySchema)
     const store = desktopAuxiliaryStore(db, () => Buffer.alloc(32, 8))
     return { db, store }
 }
@@ -94,4 +110,85 @@ it('search pre-flight revision mismatch is capability-changed without calling th
     const backends = desktopAuxiliaryBackends(f.store, fetcher)
     await expect(backends.search({ query: 'stale', maxResults: 1 }, 'not-this-revision', new AbortController().signal)).rejects.toThrow('Search capability changed.')
     expect(fetcher).not.toHaveBeenCalled()
+})
+
+it('upgrades saved tool keys without changing their encrypted bytes or Brave revision', async () => {
+    const { db, store } = await fixture({ durable: true })
+    await store.change({ purpose: 'search', expectedRevision: 'unconfigured', key: 'prior-brave-key' })
+    await store.change({ purpose: 'embedding', expectedRevision: 'unconfigured', key: 'prior-embedding-key' })
+    const rows = (await db.execute('SELECT * FROM desktop_auxiliary_credentials ORDER BY purpose')).rows
+    const original = await store.readSearch()
+    await initializeDesktopRound44(db)
+    await initializeDesktopRound44(db)
+    expect((await db.execute('SELECT * FROM desktop_auxiliary_credentials ORDER BY purpose')).rows).toEqual(rows)
+    expect(await store.readSearch()).toEqual(original)
+    expect((await store.read('embedding')).key).toBe('prior-embedding-key')
+    await store.change({ purpose: 'keirolabs-search', expectedRevision: 'unconfigured', key: 'fixture-keiro-key' })
+    expect((await store.read('keirolabs-search')).key).toBe('fixture-keiro-key')
+    expect(JSON.stringify(await store.list())).not.toContain('fixture-keiro-key')
+})
+
+it('uses the Keirolabs lite endpoint with a purpose-bound key and preserves ranked results', async () => {
+    const { db, store } = await fixture({ durable: true })
+    await initializeDesktopRound44(db)
+    await store.change({ purpose: 'keirolabs-search', expectedRevision: 'unconfigured', key: 'fixture-keiro-key' })
+    const { generation } = await store.readSearch()
+    const fetcher = vi.fn<typeof fetch>(async (url, request) => {
+        expect(String(url)).toBe('https://api.keirolabs.cloud/api/v2/search/lite')
+        expect(request).toMatchObject({ method: 'POST', redirect: 'error', body: '{"query":"board fixture","maxResults":2}' })
+        expect(new Headers(request?.headers).get('Authorization')).toBe('Bearer fixture-keiro-key')
+        expect(new Headers(request?.headers).has('X-Subscription-Token')).toBe(false)
+        return Response.json({ results: [
+            { title: 'First source', url: 'https://example.com/first', snippet: 'fixture excerpt' },
+            { url: null },
+            { title: null, url: 'https://example.com/second', snippet: null },
+        ] })
+    })
+    await expect(desktopAuxiliaryBackends(store, fetcher).search(
+        { query: 'board fixture', maxResults: 2 }, generation, new AbortController().signal,
+    )).resolves.toEqual({
+        provenance: { provider: 'keirolabs' },
+        results: [
+            { title: 'First source', url: 'https://example.com/first', snippet: 'fixture excerpt' },
+            { title: 'https://example.com/second', url: 'https://example.com/second', snippet: '' },
+        ],
+    })
+    expect(fetcher).toHaveBeenCalledOnce()
+})
+
+it('uses Brave when both are configured and makes no second request after a provider failure', async () => {
+    const { db, store } = await fixture({ durable: true })
+    await initializeDesktopRound44(db)
+    await store.change({ purpose: 'keirolabs-search', expectedRevision: 'unconfigured', key: 'fixture-keiro-key' })
+    const earlier = await store.readSearch()
+    await store.change({ purpose: 'search', expectedRevision: 'unconfigured', key: 'fixture-brave-key' })
+    const { generation } = await store.readSearch()
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 429 }))
+    const backend = desktopAuxiliaryBackends(store, fetcher)
+    const input = { query: 'fixture', maxResults: 1 }, signal = new AbortController().signal
+    await expect(backend.search(input, generation, signal)).rejects.toThrow('did not accept')
+    expect(fetcher).toHaveBeenCalledOnce()
+    expect(String(fetcher.mock.calls[0][0])).toContain('https://api.search.brave.com/')
+    const { revision } = await store.read('search')
+    await store.change({ purpose: 'search', expectedRevision: revision, key: '' })
+    expect((await store.readSearch()).credential?.provider).toBe('keirolabs')
+    await expect(backend.search(input, earlier.generation, signal)).rejects.toThrow('Search capability changed.')
+    expect(fetcher).toHaveBeenCalledOnce()
+})
+
+it('discards a Keirolabs result when the key is removed during the request', async () => {
+    const { db, store } = await fixture({ durable: true })
+    await initializeDesktopRound44(db)
+    await store.change({ purpose: 'keirolabs-search', expectedRevision: 'unconfigured', key: 'fixture-keiro-key' })
+    const { generation } = await store.readSearch()
+    const { revision } = await store.read('keirolabs-search')
+    const fetcher = vi.fn<typeof fetch>(async () => {
+        await store.change({ purpose: 'keirolabs-search', expectedRevision: revision, key: '' })
+        return Response.json({ results: [{ title: 'Stale', url: 'https://example.com' }] })
+    })
+    await expect(desktopAuxiliaryBackends(store, fetcher).search(
+        { query: 'fixture', maxResults: 1 }, generation, new AbortController().signal,
+    )).rejects.toThrow('Search capability changed after the provider request.')
+    expect(fetcher).toHaveBeenCalledOnce()
+    expect((await store.readSearch()).credential).toBeNull()
 })

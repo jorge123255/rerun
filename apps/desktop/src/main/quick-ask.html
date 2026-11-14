@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+  <link rel="stylesheet" href="quick-ask.css">
+  <title>Quick Ask</title>
+</head>
+<body>
+  <form>
+    <textarea id="prompt" aria-label="Ask your Chief of Staff" placeholder="Ask your Chief of Staff…" maxlength="4000" autofocus></textarea>
+    <footer>
+      <span id="status" role="status">Enter to send · Esc to close</span>
+      <button type="submit" disabled>Send</button>
+    </footer>
+  </form>
+  <script src="quick-ask.js"></script>
+</body>
+</html>

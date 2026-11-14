@@ -22,6 +22,7 @@ type ConfirmDialogBaseProps = {
     cancelLabel?: string
     confirmVariant?: ComponentProps<typeof Button>['variant']
     pending?: boolean
+    onCloseAutoFocus?: ComponentProps<typeof AlertDialogContent>['onCloseAutoFocus']
     onConfirm: (event: MouseEvent<HTMLButtonElement>) => void
 }
 
@@ -40,6 +41,7 @@ export function ConfirmDialog({
     cancelLabel = 'Cancel',
     confirmVariant = 'destructive',
     pending = false,
+    onCloseAutoFocus,
     onConfirm,
     children,
     open,
@@ -51,7 +53,7 @@ export function ConfirmDialog({
     return (
         <AlertDialog open={controlled ? open : selfOpen} onOpenChange={controlled ? onOpenChange : setSelfOpen}>
             {children && <AlertDialogTrigger asChild>{children}</AlertDialogTrigger>}
-            <AlertDialogContent size="sm">
+            <AlertDialogContent size="sm" onCloseAutoFocus={onCloseAutoFocus}>
                 <AlertDialogHeader>
                     <AlertDialogTitle>{title}</AlertDialogTitle>
                     {description && <AlertDialogDescription>{description}</AlertDialogDescription>}

@@ -1,9 +1,12 @@
 'use client'
 
+import { cn } from '@/lib/utils'
+import { ProviderErrorNotice } from '@/components/chat/ProviderErrorNotice'
+
 import { useDesktopLocale } from '../DesktopLocale'
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import type { DesktopForemanChatRef, DesktopForemanModelRef } from '@rerun/contracts'
+import type { ConnectionsList, DesktopCoworkerCallTarget, DesktopForemanChatRef, DesktopForemanModelRef, TeamAgent } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 import { isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 import { flushDesktopForemanUiSaves } from '@/lib/desktop/foreman-client'
@@ -19,23 +22,41 @@ import { DesktopForemanColumn } from './DesktopForemanColumn'
 import { useDesktopForemanIntake } from '@/lib/desktop/foreman-intake'
 import { createDesktopForemanIntakeClient } from '@/lib/desktop/foreman-intake/client'
 import { DesktopForemanFilePermissions } from './DesktopForemanFilePermissions'
+import { buildDesktopModelView } from '@/lib/desktop/chat-model'
+import { saveDesktopModelEffort } from '../DesktopModelEffort'
+import { DesktopForemanModelPill, type DesktopForemanModelPillHandle } from './DesktopForemanModelPill'
+import { DesktopForemanContext } from './DesktopForemanContext'
+import { DesktopForemanConversations } from './DesktopForemanConversations'
 
-export type DesktopForemanCommand = { id: string; chat: DesktopForemanChatRef; text: string; signal: AbortSignal; settle: (error?: Error) => void }
+export type DesktopForemanCommand = { id: string; chat: DesktopForemanChatRef; text: string; requestId?: string; signal: AbortSignal; settle: (error?: Error) => void }
 export type DesktopForemanPanelProps = {
+    target?: DesktopForemanChatRef | null
+    onSelectConversation?: (chat: DesktopForemanChatRef | null) => Promise<void>
+    mentionTargets?: DesktopCoworkerCallTarget[]
+    team?: TeamAgent[]
+    firstName?: string
+    nextRoutine?: { name: string; at: number }
+    routineNow?: number
     command?: DesktopForemanCommand | null
     onOpenCoworker: (target: { agentId: string; sessionId?: string }) => void | Promise<void>
+    onOpenCalledChat: (target: { agentId: string; sessionId: string }) => Promise<void>
     onOpenBox: (spaceId: string) => void | Promise<void>
+    onBuildCompleted?: (workspaceId: string, signal: AbortSignal) => Promise<boolean>
     onClose: () => void
     agentNameOf: (agentId: string) => string
     /** Opens the template library on one local template's review. Nothing is installed from it. */
     onReviewTemplate?: (template: { templateId: string; revision: string }) => void
-    workspaceModel?: string
+    providers?: ConnectionsList
     modelChoice?: DesktopForemanModelRef
-    workspaceModelChoice?: DesktopForemanModelRef
+    onOpenModelSettings?: () => void
+    onReconnectConnection?: (connectionId: string) => void
     composerTrailing?: ReactNode
     controlledOpen?: boolean
     hidden?: boolean
+    // Take the whole space given, as in the middle of the Simple view.
+    fill?: boolean
     centerOpen?: boolean
+    findEnabled?: boolean
     onOpenChange?: (open: boolean) => void
     onOpenTranscriptionSettings?: () => void
     onLayout?: (layout: { scope: string; open: boolean; placement: ForemanPlacement; dragging: boolean; mobile: boolean }) => void
@@ -52,37 +73,63 @@ export function DesktopForemanPanel(props: DesktopForemanPanelProps) {
         void (async () => {
             await flushDesktopForemanUiSaves() // Wait for admitted writes; opening also allows a failed save to recover.
             if (controller.signal.aborted) return
-            const next = await readDesktopForemanState(AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]))
+            const next = await readDesktopForemanState(AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]), props.target ?? undefined)
             if (!controller.signal.aborted) { setInitial(next); setError(null) }
-        })().catch(error => { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'Could not open Foreman.') })
+        })().catch(error => { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'Could not open the Chief of Staff chat.') })
         return () => controller.abort()
-    }, [retry])
+    }, [retry, props.target])
     useEffect(() => { if (error && props.command) props.command.settle(new Error(error)) }, [error, props.command])
     if (initial) return <ConnectedForeman key={`${initial.chat.workspaceId}:${initial.chat.chatId}`} {...props} initial={initial} />
-    return <section className={props.className} aria-label="Foreman"><div className="flex min-h-40 flex-col items-start gap-3 rounded-3xl border bg-background p-5"><p role={error ? 'alert' : 'status'}>{error ?? t('foreman.opening')}</p>{error && <Button size="sm" onClick={() => setRetry(value => value + 1)}>{t('creation.tryAgain')}</Button>}<Button size="sm" variant="ghost" onClick={props.onClose}>{t('foreman.close')}</Button></div></section>
+    return <section className={cn(props.className, 'pointer-events-none col-span-full flex items-center justify-center')} aria-label={t('foreman.name')}><div className="pointer-events-auto flex min-h-40 flex-col items-start gap-3 rounded-3xl border bg-background p-5"><p role={error ? 'alert' : 'status'}>{error ?? t('foreman.opening')}</p>{error && <Button size="sm" onClick={() => setRetry(value => value + 1)}>{t('creation.tryAgain')}</Button>}<Button size="sm" variant="ghost" onClick={props.onClose}>{t('foreman.close')}</Button></div></section>
 }
 function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { initial: DesktopForemanClientState }) {
     const { t } = useDesktopLocale()
     const [state, setState] = useState(initial)
     const intakePorts = useMemo(() => createDesktopForemanIntakeClient(), [])
-    const intake = useDesktopForemanIntake({ chat: initial.chat, ports: intakePorts, active: !!props.controlledOpen && !props.hidden })
-    const intakeEligible = initial.messages.length === 0 || intake.hasSavedProgress
+    const intake = useDesktopForemanIntake({ chat: initial.chat, ports: intakePorts, active: !!props.controlledOpen && !props.hidden && !initial.separateConversation })
+    const intakeEligible = !initial.separateConversation && (initial.messages.length === 0 || intake.hasSavedProgress)
     const intakeOpen = intakeEligible && !intake.finished
+    const pendingStarter = !!state.starter && !state.starter.decision?.settled
     const projectFeed = useMemo(() => createClientDockFeed(initial.chat), [initial.chat.workspaceId, initial.chat.chatId])
     const [dockFeed, setDockFeed] = useState(() => projectFeed(initial))
-    const [voiceSlot, setVoiceSlot] = useState<ReactNode>(null)
+    const [voice, setVoice] = useState<{ slot: ReactNode; busy: boolean } | null>(null)
+    const [modelSaving, setModelSaving] = useState(false)
+    const modelPicker = useRef<DesktopForemanModelPillHandle>(null)
+    // What this panel saved, shown at once; the workspace's next read brings the same map.
+    const [efforts, setEfforts] = useState<Record<string, string>>()
     const [error, setError] = useState<string | null>(null)
     const current = useRef(props)
     current.current = props
     const active = useRef(false)
     const [client, setClient] = useState<ReturnType<typeof createDesktopForemanClient> | null>(null)
     useEffect(() => {
+        let refreshedBuildId: string | undefined
+        let boardRefresh: AbortController | undefined
         const client = createDesktopForemanClient(initial, {
-            onState: next => { if (active.current) { setState(next); setDockFeed(projectFeed(next)); setError(null) } },
+            onState: next => {
+                if (!active.current) return
+                setState(next)
+                setDockFeed(projectFeed(next))
+                setError(null)
+                const build = next.view.build
+                const refreshBoard = current.current.onBuildCompleted
+                if (!refreshBoard || build?.state !== 'completed' || refreshedBuildId === build.buildId || boardRefresh || isDesktopQuitting()) return
+                const controller = new AbortController()
+                boardRefresh = controller
+                void refreshBoard(next.chat.workspaceId, controller.signal).then(refreshed => {
+                    if (refreshed && !controller.signal.aborted) refreshedBuildId = build.buildId
+                }).catch(() => { /* The next authenticated state read can retry the board refresh. */ }).finally(() => {
+                    if (boardRefresh === controller) boardRefresh = undefined
+                })
+            },
             onError: message => { if (active.current) setError(message) },
             onOpenCoworker: target => { if (active.current && !isDesktopQuitting()) return current.current.onOpenCoworker(target) },
             onOpenBox: spaceId => { if (active.current && !isDesktopQuitting()) return current.current.onOpenBox(spaceId) },
             modelChoice: () => current.current.modelChoice,
+            workspaceModel: () => {
+                const selected = current.current.providers?.default
+                return selected ? { connectionId: selected.connectionId, model: selected.model } : undefined
+            },
         })
         setClient(client)
         active.current = true
@@ -92,11 +139,13 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         const currentFeed = (value: number) => !cancelled && value === generation && !isDesktopQuitting()
         const poll = async (value: number) => {
             if (!currentFeed(value)) return
-            try { await client.refresh() } catch (error) { if (currentFeed(value)) setError(error instanceof Error ? error.message : 'Could not refresh Foreman.') }
+            try { await client.refresh() } catch (error) { if (currentFeed(value)) setError(error instanceof Error ? error.message : 'Could not refresh the Chief of Staff chat.') }
             if (currentFeed(value)) timer = setTimeout(() => void poll(value), 1500)
         }
         const pauseFeed = () => {
             ++generation
+            boardRefresh?.abort()
+            boardRefresh = undefined
             if (timer) clearTimeout(timer)
             timer = undefined
             if (events) { events.onmessage = null; events.close(); events = undefined }
@@ -127,38 +176,94 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         const signal = command.signal
         void (async () => {
             signal.throwIfAborted()
-            if (command.chat.chatId !== initial.chat.chatId || command.chat.workspaceId !== initial.chat.workspaceId) throw new Error('Foreman conversation changed.')
-            if (intakeOpen && command.text.trim()) throw new Error('Finish the company questions before asking the Foreman to plan your team.')
-            if (command.text.trim() && !await client.ports.conversation.sendMessage(command.text.trim(), signal)) throw new Error('Foreman did not accept this message.')
+            if (command.chat.chatId !== initial.chat.chatId || command.chat.workspaceId !== initial.chat.workspaceId) throw new Error('The Chief of Staff conversation changed.')
+            if (intakeOpen && (command.text.trim() || command.requestId)) throw new Error('Finish the company questions before asking your Chief of Staff to plan your team.')
+            if (command.requestId) {
+                // Quick Ask already reserved this exact send on disk. A repeated handoff
+                // may open its conversation again and can never mint another run.
+                if (initial.ui.snapshot?.pendingSend?.requestId === command.requestId && !await client.retryPendingMessage(command.requestId, signal)) {
+                    throw new Error('Your Chief of Staff did not accept this message.')
+                }
+            } else if (command.text.trim() && !await client.ports.conversation.sendMessage(command.text.trim(), signal)) {
+                throw new Error('Your Chief of Staff did not accept this message.')
+            }
             if (!command.text.trim()) signal.throwIfAborted()
             setFocusRequest(command.id)
             command.settle()
-        })().catch(error => command.settle(error instanceof Error ? error : new Error('Could not ask Foreman.')))
-    }, [client, props.command, initial.chat.chatId, initial.chat.workspaceId, intakeOpen, intakeEligible, intake.restored])
+        })().catch(error => command.settle(error instanceof Error ? error : new Error('Could not ask your Chief of Staff.')))
+    }, [client, props.command, initial, intakeOpen, intakeEligible, intake.restored])
     const close = useCallback(() => { if (active.current) current.current.onClose() }, [])
-    if (!client) return <div role="status" className={props.className}>{t('foreman.opening')}</div>
+    // The panel sits in a grid whose side tracks are empty until the column reports its place: the
+    // notice spans it all rather than being squeezed into the first track.
+    if (!client) return <div role="status" className={cn(props.className, 'pointer-events-none col-span-full flex items-center justify-center px-6 text-center text-sm text-muted-foreground')}>{t('foreman.opening')}</div>
+    const providers = props.providers
+    const view = providers && buildDesktopModelView({
+        connections: providers.connections.filter(connection => !connection.credentialRejected),
+        workspace: providers.default,
+        conversation: state.model,
+        coworker: null,
+        efforts: efforts ?? providers.efforts,
+    })
+    const effective = view?.effective
+    const voiceModel = props.modelChoice ?? state.model ?? (effective?.available && effective.connectionId && effective.model
+        ? { connectionId: effective.connectionId, model: effective.model } : undefined)
+    const pendingSend = state.ui.snapshot?.pendingSend
+    const liveReply = state.view.live && state.liveReply?.runId === state.view.live.runId ? state.liveReply : undefined
+    const failedConnection = state.runFailure?.connectionId
+    const modelPickerView = !props.hidden && props.controlledOpen !== false && props.composerTrailing == null && !intakeOpen && !pendingStarter ? view : undefined
+    const modelDisabled = !!(state.view.live || state.question || state.approval || pendingSend || voice?.busy)
+    const canSwitchModel = !modelDisabled && !modelSaving && modelPickerView?.catalog.some(group =>
+        group.models.some(model => group.connectionId !== effective?.connectionId || model.id !== effective?.model))
     return <>
-    {(props.modelChoice ?? state.model ?? props.workspaceModelChoice) && <ForemanVoiceOwner target={{ chat: state.chat, model: (props.modelChoice ?? state.model ?? props.workspaceModelChoice)! }}
-        active={!props.hidden && !state.view.live && !state.question && !intakeOpen} engage={() => {}}
-        accepted={() => { void client.refresh() }} onSlot={setVoiceSlot} onSettings={props.onOpenTranscriptionSettings} />}
+    {voiceModel && <ForemanVoiceOwner target={{ chat: state.chat, model: voiceModel }}
+        active={!props.hidden && !state.view.live && !state.question && !state.approval && !intakeOpen && !pendingStarter && !pendingSend && !modelSaving} engage={() => {}}
+        accepted={() => { void client.refresh() }} onSlot={setVoice} onSettings={props.onOpenTranscriptionSettings} />}
     {!intakeOpen && <DesktopCompanyResearch chat={state.chat} active={!!props.controlledOpen && !props.hidden} refreshKey={JSON.stringify(state.view)} />}
-    <DesktopForemanColumn
-        controlledOpen={props.controlledOpen} hidden={props.hidden} centerOpen={props.centerOpen} onOpenChange={props.onOpenChange} onLayout={props.onLayout}
-        dockFeed={dockFeed} voiceSlot={voiceSlot} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)}
+    <DesktopForemanColumn fill={props.fill}
+        mentionTargets={props.mentionTargets} team={props.team} firstName={props.firstName} nextRoutine={props.nextRoutine} routineNow={props.routineNow}
+        onOpenCalledChat={props.onOpenCalledChat}
+        callSources={state.callSources}
+        sessionId={state.sessionId} pendingSend={pendingSend} onRetryPendingSend={client.retryPendingMessage}
+        imageModel={providers?.connections.some(connection => connection.id === voiceModel?.connectionId && connection.provider === 'codex')}
+        controlledOpen={props.controlledOpen} hidden={props.hidden} centerOpen={props.centerOpen} findEnabled={props.findEnabled} onOpenChange={props.onOpenChange} onLayout={props.onLayout}
+        dockFeed={dockFeed} voiceSlot={voiceModel ? voice?.slot : undefined} sendDisabled={modelSaving} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)} retrySnapshot={state.retrySnapshot}
         question={state.question} onAnswerQuestion={client.answerQuestion}
-        streaming={!!state.view.live} orbState={state.view.live ? 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
+        approval={state.approval} onDecideApproval={client.decideApproval}
+        starter={state.starter} onStarterAnswer={client.answerStarter} intakeFinished={intake.finished} separateConversation={state.separateConversation}
+        runNotice={state.runFailure && !pendingSend ? <ProviderErrorNotice kind={state.runFailure.kind}
+            onSwitchModel={canSwitchModel ? () => modelPicker.current?.open() : undefined}
+            onReconnect={failedConnection && props.onReconnectConnection ? () => props.onReconnectConnection?.(failedConnection) : props.onOpenModelSettings}
+            onOpenConnections={props.onOpenModelSettings} /> : null}
+        streaming={!!state.view.live} liveReply={liveReply} orbState={state.view.live ? state.writing ? 'speaking' : 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
-        headerActions={<><DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} />{error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}</>}
-        composerTrailing={props.composerTrailing ?? <span className="truncate text-xs text-muted-foreground">{state.model?.model ?? props.workspaceModel ?? 'Workspace default'}</span>}
+        headerActions={<>
+            {props.onSelectConversation && <DesktopForemanConversations chat={state.chat} thread={!!props.target} disabled={!!props.hidden} onSelect={props.onSelectConversation} />}
+            <DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} onApprovalPermissionChanged={() => { void client.refresh().catch(() => {}) }} />
+            {error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}
+        </>}
+        composerTrailing={props.composerTrailing ?? (modelPickerView && <div className="flex min-w-0 items-center">
+            <DesktopForemanModelPill ref={modelPicker} view={modelPickerView} connections={providers?.connections} saving={modelSaving}
+                onSettings={props.onOpenModelSettings} disabled={modelDisabled}
+                onEffort={async (connectionId, model, effort) => { setEfforts(await saveDesktopModelEffort(connectionId, model, effort)) }}
+                onPick={async model => {
+                    setModelSaving(true)
+                    try { await client.setModel(state.model, model) } finally { setModelSaving(false) }
+                }} />
+            <DesktopForemanContext context={state.context} effective={modelPickerView.effective} />
+        </div>)}
     /></>
 }
 
 function ForemanVoiceOwner({ target, active, engage, accepted, onSlot, onSettings }: {
     target: import('@rerun/contracts').ForemanVoiceTarget; active: boolean; engage(): void; accepted(): void
-    onSlot(slot: ReactNode): void; onSettings?: () => void
+    onSlot(controls: { slot: ReactNode; busy: boolean } | null): void; onSettings?: () => void
 }) {
     const voice = useForemanVoiceSlot({ target, active, onEngage: engage, onAccepted: accepted, releasePolicy: 'send' })
     useEffect(() => registerForemanVoiceQuit(() => voice.controller.prepareForQuit()), [voice.controller])
-    useEffect(() => { onSlot(<ForemanVoiceSlot voice={voice} onOpenTranscriptionSettings={onSettings ?? (() => {})} />); return () => onSlot(null) }, [voice.view, voice.stream, voice.active, voice.controller, onSettings, onSlot])
+    useEffect(() => {
+        onSlot({ slot: <ForemanVoiceSlot voice={voice} onOpenTranscriptionSettings={onSettings ?? (() => {})} />,
+            busy: voice.view.phase !== 'sent' && (!!voice.view.pending || ['restoring', 'starting', 'listening', 'saving', 'transcribing', 'sending'].includes(voice.view.phase)) })
+        return () => onSlot(null)
+    }, [voice.view, voice.stream, voice.active, voice.controller, onSettings, onSlot])
     return null
 }

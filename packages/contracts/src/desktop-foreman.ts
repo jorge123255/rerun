@@ -1,10 +1,16 @@
 import { z } from 'zod'
+import { desktopTemplateRevisionSchema } from './desktop-templates.js'
+import { desktopDocumentSendSelectionSchema, type DesktopDocumentScope } from './desktop-document-attachments.js'
+import { FOREMAN_AGENT_ID, foremanBriefSchema } from './foreman.js'
+import { desktopCoworkerMentionsSchema, validDesktopCoworkerMentionFields } from './desktop-coworker-calls.js'
 
 // Local Foreman (E11). Renderer DTOs carry opaque local identities only: no engine ids, provider
 // credentials, connection secrets or host paths. Compatibility: version 1. Additive fields only;
 // a breaking change bumps DESKTOP_FOREMAN_CONTRACT_VERSION and is recorded in the round33 I handoff.
 
 export const DESKTOP_FOREMAN_CONTRACT_VERSION = 1 as const
+export const DESKTOP_FOREMAN_TURN_MAX_BYTES = 384 * 1024
+export const DESKTOP_FOREMAN_TURN_TEXT_LIMIT = 20_000
 
 export const DESKTOP_FOREMAN_LIMITS = {
     maxBoxes: 5,
@@ -55,6 +61,80 @@ export const foremanBindingSchema = z.strictObject({
 export type DesktopForemanBinding = z.infer<typeof foremanBindingSchema>
 export const foremanChatRefSchema = z.strictObject({ workspaceId: foremanWorkspaceIdSchema, chatId: foremanChatIdSchema })
 export type DesktopForemanChatRef = z.infer<typeof foremanChatRefSchema>
+
+export function foremanDocumentScope(chat: DesktopForemanChatRef, sessionId: string, questionId?: string): DesktopDocumentScope {
+    return { agentId: FOREMAN_AGENT_ID, tabUid: chat.chatId, sessionId, ...(questionId && { questionId }) }
+}
+
+/** Canonical input for the server's existing opaque request id. */
+export function foremanRequestIdentityInput(chat: DesktopForemanChatRef, sessionId: string, guard: DesktopForemanQuestionGuard, kind?: 'approval'): string {
+    return JSON.stringify([chat.workspaceId, chat.chatId, sessionId, guard.runId, guard.sourceMessageId, guard.toolCallId, guard.digest, ...(kind ? [kind] : [])])
+}
+
+export const desktopForemanTurnSchema = z.strictObject({
+    binding: foremanBindingSchema.extend({ runId: z.uuid() }), sessionId: z.uuid(),
+    text: z.string().max(DESKTOP_FOREMAN_TURN_TEXT_LIMIT),
+    brief: foremanBriefSchema.extend({ instructions: z.string().min(1).max(12_000), tools: z.array(z.never()).max(0), hubToken: z.never().optional() }).strict(),
+    question: foremanQuestionGuardSchema.optional(),
+    approval: foremanQuestionGuardSchema.optional(),
+    documents: desktopDocumentSendSelectionSchema.optional(),
+    coworkerMentions: desktopCoworkerMentionsSchema.optional(),
+}).refine(turn => Boolean(turn.text.trim() || turn.documents) && !(turn.question && turn.approval)
+    && !(turn.approval && turn.documents) && !((turn.question || turn.approval) && turn.coworkerMentions?.length))
+    .refine(validDesktopCoworkerMentionFields, 'Selected coworker mentions do not match the message.')
+
+// Engine and app server only. Renderer requests continue to use their saved message ID.
+export const foremanReplyTargetSchema = foremanChatRefSchema.extend({
+    sessionId: z.uuid(),
+    assistantMessageId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+})
+export const foremanReplySourceSchema = foremanReplyTargetSchema.extend({
+    sourceRunId: z.uuid(),
+    precedingUserMessageId: foremanReplyTargetSchema.shape.assistantMessageId,
+    replyDigest: foremanDigestSchema,
+    transcriptRevision: foremanDigestSchema,
+})
+export const foremanAlternateRequestSchema = foremanReplyTargetSchema.extend({
+    requestId: z.uuid(),
+    transcriptRevision: foremanDigestSchema,
+})
+export type ForemanAlternateRequest = z.infer<typeof foremanAlternateRequestSchema>
+export const foremanAlternateReservationSchema = z.strictObject({
+    requestId: z.uuid(),
+    sessionId: z.uuid(),
+    runId: z.uuid(),
+    userMessageId: foremanReplyTargetSchema.shape.assistantMessageId,
+    source: foremanReplySourceSchema,
+})
+export const foremanAlternateRunActionSchema = z.enum(['start', 'stop', 'status'])
+export const foremanAlternateRunRequestSchema = z.strictObject({
+    action: foremanAlternateRunActionSchema,
+    chat: foremanChatRefSchema,
+    requestId: z.uuid(),
+})
+export type ForemanAlternateRunRequest = z.infer<typeof foremanAlternateRunRequestSchema>
+export const foremanAlternateMessageIdSchema = z.string().regex(/^engine-[A-Za-z0-9_-]{1,128}$/)
+export const foremanAlternateReviewSchema = z.strictObject({
+    chat: foremanChatRefSchema,
+    messageId: foremanAlternateMessageIdSchema,
+    snapshot: foremanDigestSchema,
+})
+export const foremanAlternateBrowserRequestSchema = z.discriminatedUnion('action', [
+    foremanAlternateReviewSchema.extend({ action: z.literal('review') }),
+    foremanAlternateReviewSchema.extend({ action: z.literal('prepare'), requestId: z.uuid() }),
+    z.strictObject({ action: z.literal('recover'), chat: foremanChatRefSchema, requestId: z.uuid() }),
+])
+export const foremanAlternateListEntrySchema = z.strictObject({ requestId: z.uuid(), messageId: foremanAlternateMessageIdSchema })
+export const foremanAlternateViewSchema = z.strictObject({
+    requestId: z.uuid(),
+    status: z.enum(['prepared', 'uncertain', 'running', 'done', 'error', 'cancelled']),
+    messages: z.array(z.strictObject({ id: z.string(), role: z.enum(['user', 'assistant']), text: z.string() })),
+})
+export const foremanAlternateRunSchema = z.strictObject({
+    sessionId: z.uuid(),
+    runId: z.uuid(),
+    status: z.enum(['prepared', 'running', 'done', 'error', 'cancelled']),
+})
 
 const line = (max: number) => z.string().trim().min(1).max(max)
 
@@ -110,24 +190,34 @@ export const foremanBoxKeySchema = z.string().regex(/^box-[0-9]{1,2}$/)
 export const foremanSealedPlanSchema = z.strictObject({
     title: z.string(),
     boxes: z.array(foremanPlanBoxSchema.extend({ key: foremanBoxKeySchema })),
-    items: z.array(z.intersection(foremanPlanItemSchema, z.object({ key: foremanItemKeySchema, boxKey: foremanBoxKeySchema }))),
+    items: z.array(z.intersection(z.discriminatedUnion('kind', [
+        foremanAgentItemSchema,
+        foremanTemplateItemSchema.extend({ templateRevision: desktopTemplateRevisionSchema.optional() }),
+    ]), z.object({ key: foremanItemKeySchema, boxKey: foremanBoxKeySchema }))),
 })
 export type DesktopForemanSealedPlan = z.infer<typeof foremanSealedPlanSchema>
 
 export const FOREMAN_REVISION_STATES = ['shown', 'confirmed', 'changes_requested', 'superseded'] as const
+const foremanStarterPlanSourceSchema = z.strictObject({ offerId: z.uuid(), digest: foremanDigestSchema })
 export const foremanRevisionSchema = z.strictObject({
     planId: foremanPlanIdSchema,
     revisionId: foremanRevisionIdSchema,
     revision: z.number().int().min(1),
     digest: foremanDigestSchema,
     chat: foremanChatRefSchema,
-    runId: foremanRunIdSchema,
-    toolCallId: z.string().min(1).max(256),
-    model: foremanModelRefSchema,
+    runId: foremanRunIdSchema.nullable(),
+    toolCallId: z.string().min(1).max(256).nullable(),
+    model: foremanModelRefSchema.nullable(),
+    starter: foremanStarterPlanSourceSchema.optional(),
     plan: foremanSealedPlanSchema,
     state: z.enum(FOREMAN_REVISION_STATES),
     shownAt: z.string(),
-})
+}).refine(value => value.starter
+    ? value.runId === null && value.toolCallId === null && value.model === null
+        && value.plan.items.length > 0 && value.plan.items.every(item => item.kind === 'template' && !!item.templateRevision)
+    : value.runId !== null && value.toolCallId !== null && value.model !== null
+        && value.plan.items.every(item => item.kind !== 'template' || !item.templateRevision),
+{ message: 'The plan must name its engine call or its saved starter offer.' })
 export type DesktopForemanRevision = z.infer<typeof foremanRevisionSchema>
 
 // Decisions only come from the user's explicit click on the exact displayed revision.

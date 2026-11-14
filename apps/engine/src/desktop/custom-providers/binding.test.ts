@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { generateText, streamText } from 'ai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { Hono } from 'hono'
 import { agentConfigSchema } from '../../agents/types.js'
 import { modelFor, resolveModel } from '../../agents/providers.js'
 import { findConnection, listConnections } from '../../connections/registry.js'
@@ -13,13 +14,19 @@ import { isConnected, toSummary } from '../../connections/loader.js'
 import { connectionRoutes } from '../../http/routes/connections.js'
 import { bindDesktopCustomProviders } from './binding.js'
 import { DESKTOP_CUSTOM_CONNECTIONS_SCHEMA_SQL } from './store.js'
-import type { CustomProviderChange, CustomProviderConfig } from '@rerun/contracts'
+import type { BoxDefaultModel, CustomProviderChange, CustomProviderConfig, CustomProviderSnapshot } from '@rerun/contracts'
+import { desktopCustomEffort } from '../../agents/reasoning.js'
+import { HttpError } from '../../lib/errors.js'
 
-const state = vi.hoisted(() => ({ db: null as Client | null, defaultModel: null as { connectionId: string; model: string } | null }))
+const state = vi.hoisted(() => ({ db: null as Client | null, defaultModel: null as BoxDefaultModel | null }))
 vi.mock('../../db/client.js', () => ({ raw: () => state.db }))
 vi.mock('../../connections/default.js', () => ({
     readBoxDefault: async () => state.defaultModel,
     writeBoxDefault: async (pick: typeof state.defaultModel) => { state.defaultModel = pick; return pick },
+    updateBoxDefault: async (update: (current: BoxDefaultModel | null) => BoxDefaultModel) => {
+        state.defaultModel = update(state.defaultModel)
+        return state.defaultModel
+    },
 }))
 
 const launch = '11111111-1111-4111-8111-111111111111'
@@ -166,4 +173,36 @@ test('a material revision change revokes a streaming lease and disconnect never 
     expect((await listConnections()).some(item => item.id === connectionId)).toBe(false)
     expect(() => modelFor({ ...agent, resolved: { ...agent.resolved, connection: old } })).toThrow('current custom connection')
     expect((await state.db!.execute('SELECT ciphertext FROM desktop_custom_connections')).rows[0]?.ciphertext).toBeNull()
+})
+
+test('persists an advertised effort only for the current custom default and exact credential revision', async () => {
+    const hosted = { ...config(), preset: 'xai' as const, baseUrl: 'https://api.x.ai/v1',
+        policy: { reviewedOrigin: 'https://api.x.ai', allowHttp: false, allowPrivate: false } }
+    const receipt = await (await change({ ...create(), config: hosted })).json()
+    const snapshot: CustomProviderSnapshot = await (await settings({ action: 'read', identity: receipt.identity })).json()
+    const published = { ...snapshot, catalog: { status: 'fresh', observedAt: 1, attemptedAt: 1,
+        models: [{ ...hosted.models[0], source: 'discovered', reasoning: { supported: ['low', 'xhigh'], default: 'low' } }] } }
+    await state.db!.execute({ sql: 'UPDATE desktop_custom_connections SET snapshot=? WHERE connection_id=?',
+        args: [JSON.stringify(published), connectionId] })
+    const app = new Hono().onError((error, ctx) => error instanceof HttpError
+        ? ctx.json({ error: error.message }, error.status as 409) : ctx.text('Internal error', 500)).route('/', connectionRoutes)
+    const choose = (reasoningEffort?: string | null, revision = 1) => app.request('/default', {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ connectionId, model: modelId,
+            ...(reasoningEffort !== undefined && { reasoningEffort, customReasoningRevision: revision }) }),
+    })
+    expect((await choose('xhigh')).status).toBe(409)
+    expect((await choose()).status).toBe(200)
+    expect((await choose('medium')).status).toBe(400)
+    expect((await choose('xhigh', 2)).status).toBe(409)
+    expect((await choose('xhigh')).status).toBe(200)
+    expect(state.defaultModel).toMatchObject({ reasoningEffort: 'xhigh', customReasoningRevision: 1 })
+    expect(await desktopCustomEffort((await selectedAgent()).resolved)).toBe('xhigh')
+    expect((await change({ action: 'update', requestId: crypto.randomUUID(), identity: receipt.identity, config: hosted, apiKey: 'replacement-fixture' })).status).toBe(200)
+    await expect(desktopCustomEffort((await selectedAgent()).resolved)).rejects.toThrow('provider connection changed')
+    expect((await choose(null, 1)).status).toBe(409)
+    expect((await choose(null, 2)).status).toBe(200)
+    expect(state.defaultModel).toEqual({ connectionId, model: modelId })
+    expect(await desktopCustomEffort((await selectedAgent()).resolved)).toBeUndefined()
+    expect(requests).toHaveLength(0)
 })

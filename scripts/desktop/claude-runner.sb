@@ -1,7 +1,8 @@
 (version 1)
 ; Claude is a subscription transport. The engine brokers every admitted coworker tool.
 (allow default)
+; Time zone data lives under /private/var/db/timezone; without it the runner spins at startup and never answers.
 (deny file-read-data file-write* process-exec)
-(allow file-read-data (literal "/") (subpath "/System") (subpath "/usr") (subpath "/Library/Apple") (subpath "/private/etc") (subpath "/dev") (literal (param "BINARY")))
+(allow file-read-data (literal "/") (subpath "/System") (subpath "/usr") (subpath "/Library/Apple") (subpath "/private/etc") (subpath "/private/var/db/timezone") (subpath "/dev") (literal (param "BINARY")))
 (allow file-read-data file-write* (subpath (param "PROFILE")) (literal "/dev/null"))
 (allow process-exec (literal (param "BINARY")))

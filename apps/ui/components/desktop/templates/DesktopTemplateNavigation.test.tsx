@@ -23,6 +23,9 @@ vi.mock('motion/react', async original => {
         return typeof key === 'string' && key !== 'then' ? element(key) : Reflect.get(target, key, receiver)
     } }) }
 })
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages } from '@/lib/desktop/locale'
+import { DesktopLocale } from '../DesktopLocale'
 import { DesktopTemplateNavigation } from './DesktopTemplateNavigation'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -35,6 +38,7 @@ afterEach(() => {
     for (const mock of Object.values(local)) mock.mockReset()
     factory.create.mockReset()
     for (const mock of Object.values(portable)) mock.mockReset()
+    vi.restoreAllMocks()
     delete (window as Window & { desktopApp?: unknown }).desktopApp
 })
 const button = (label: string) => [...document.querySelectorAll('button')].find(item => item.textContent?.trim() === label)!
@@ -85,6 +89,43 @@ it('does no library or capture reads while closed, then loads only the explicitl
     await act(async () => button('Continue').click())
     expect(local.createDraft).toHaveBeenCalledExactlyOnceWith('Local template')
     expect(local.sources).toHaveBeenCalledOnce()
+})
+
+it('searches every private category with canonical Unicode and follows the workspace language', async () => {
+    const research = { templateId: 'research', revision: 'r1', title: 'E\u0301quipe de recherche', tagline: '', category: 'productivity', agents: [] }
+    const sales = { templateId: 'sales', revision: 'r2', title: 'Suivi commercial', tagline: '', category: 'sales', agents: [] }
+    local.list.mockResolvedValue([research, sales])
+    const language = { locale: 'fr' as const, preference: 'fr' as const, messages: desktopMessages('fr', await loadMessages('fr')) }
+    const copy = language.messages.templateLibrary
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopLocale initial={language}>
+        <DesktopTemplateNavigation open onOpenChange={() => {}} onCreateFromScratch={() => {}} onInstalled={() => {}} />
+    </DesktopLocale>))
+    const salesCategory = [...document.querySelectorAll<HTMLButtonElement>('nav button')].find(item => item.textContent?.startsWith(copy.categories.sales))!
+    await act(async () => salesCategory.click())
+    expect(document.body.textContent).not.toContain(research.title)
+    const searches = document.querySelectorAll<HTMLInputElement>(`input[aria-label="${copy.search.placeholder}"]`)
+    expect(searches).toHaveLength(2)
+    const [hidden, field] = [...searches]
+    vi.spyOn(hidden, 'getClientRects').mockReturnValue({ length: 0 } as DOMRectList)
+    vi.spyOn(field, 'getClientRects').mockReturnValue({ length: 1 } as DOMRectList)
+    const focusHidden = vi.spyOn(hidden, 'focus')
+    const slash = new KeyboardEvent('keydown', { key: '/', bubbles: true, cancelable: true })
+    await act(async () => { salesCategory.dispatchEvent(slash) })
+    expect(slash.defaultPrevented).toBe(true)
+    expect(focusHidden).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(field)
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, 'Équipe')
+        field.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(document.body.textContent).toContain(research.title)
+    expect(document.body.textContent).not.toContain(sales.title)
+    const clear = field.parentElement!.querySelector<HTMLButtonElement>(`button[aria-label="${copy.search.clear}"]`)!
+    await act(async () => clear.click())
+    expect(document.activeElement).toBe(field)
+    expect(document.body.textContent).toContain(sales.title)
+    expect(document.body.textContent).not.toContain(research.title)
 })
 
 it('creates a fresh live client after StrictMode effect cleanup', async () => {

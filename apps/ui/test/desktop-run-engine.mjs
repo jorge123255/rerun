@@ -12,10 +12,10 @@ const noToolCalls = () => []
 /**
  * @param {string} dataRoot
  * @param {string} [appOrigin]
- * @param {{replyForRequest?: typeof defaultReply, toolCallsForRequest?: typeof noToolCalls, triggerCallback?: (request: Request) => Promise<Response>, emptyDocker?: boolean}} [options]
+ * @param {{replyForRequest?: typeof defaultReply, initialReplyForRequest?: typeof defaultReply, toolCallsForRequest?: typeof noToolCalls, triggerCallback?: (request: Request) => Promise<Response>, emptyDocker?: boolean}} [options]
  */
 export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.1:3189', options = {}) {
-    const { replyForRequest = defaultReply, toolCallsForRequest = noToolCalls, triggerCallback, emptyDocker } = options
+    const { replyForRequest = defaultReply, initialReplyForRequest, toolCallsForRequest = noToolCalls, triggerCallback, emptyDocker } = options
     const apiKey = randomBytes(32).toString('hex')
     const encryptionKey = randomBytes(32).toString('hex')
     const runtimeFile = resolve(dataRoot, 'runtime.json')
@@ -101,6 +101,8 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
         res.writeHead(200, { 'content-type': 'text/event-stream' })
         const chunk = (delta, finishReason = null, usage) => res.write(`data: ${JSON.stringify({ id: 'local-completion', object: 'chat.completion.chunk', created: 1, model: 'qa-local', choices: [{ index: 0, delta, finish_reason: finishReason }], ...(usage && { usage }) })}\n\n`)
         chunk({ role: 'assistant', content: '' })
+        const initial = initialReplyForRequest?.(requestNumber)
+        if (initial) chunk({ content: initial })
         releaseReply = () => {
             releaseReply = undefined
             if (res.destroyed || res.writableEnded) return

@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, expect, test } from 'vitest'
+import { afterAll, beforeAll, expect, test, vi } from 'vitest'
 import { prepareSkillHelperFixture } from '../skill-publication.test-support.js'
 import { createSharedDocument, editSharedDocument, searchSharedDocuments } from './fs.js'
 import { sharedReadGranted, sharedWriteGranted } from './grants.js'
+import { acquireSkillLease } from '../skill-publication-native.js'
+import * as workspaceFiles from '../shared-workspace-files.js'
 
 const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 let root = ''
@@ -110,4 +112,66 @@ test('concurrent distinct edits with the same fingerprint serialize the full sho
     const saved = outcomes.find(outcome => outcome.status === 'saved')!
     expect(saved.bytes).toBe(final.length)
     expect(saved.sha256).toBe(hash(final))
+})
+
+test('holds the shared native publication lease after recovery and before the edit writes', async () => {
+    const original = Buffer.from('keep the original\n')
+    const path = 'publication-lease.txt'
+    await writeFile(join(shared, path), original)
+    let recoveryPublished = false
+    let entered!: () => void, resume!: () => void
+    const ready = new Promise<void>(resolve => { entered = resolve })
+    const proceed = new Promise<void>(resolve => { resume = resolve })
+    const importText = workspaceFiles.importSharedText
+    const recovery = vi.spyOn(workspaceFiles, 'importSharedText').mockImplementationOnce(async (...args) => {
+        const result = await importText(...args)
+        recoveryPublished = true
+        return result
+    })
+    const edit = editSharedDocument(shared, {
+        path, oldString: 'original', newString: 'updated file', expectedBytes: original.length, expectedSha256: hash(original),
+    }, { async beforeCommit() {
+        if (recoveryPublished) { entered(); await proceed }
+    } })
+    try {
+        await Promise.race([ready, edit.then(() => { throw new Error('Edit completed before its final authority check') })])
+        const stop = AbortSignal.timeout(450)
+        const directory = await lstat(shared, { bigint: true })
+        const competing = await acquireSkillLease(shared, directory, stop).then(async lease => {
+            await lease.release()
+            return 'acquired'
+        }, error => {
+            expect(error).toBe(stop.reason)
+            return 'blocked'
+        })
+        expect(competing).toBe('blocked')
+        expect(await readFile(join(shared, path))).toEqual(original)
+    } finally {
+        resume()
+        recovery.mockRestore()
+        await edit
+    }
+    expect(await edit).toMatchObject({ status: 'saved', committed: true })
+    expect(await workspaceFiles.renameSharedEntry(shared, path, 'publication-renamed.txt')).toMatchObject({ name: 'publication-renamed.txt' })
+    expect(await readFile(join(shared, 'publication-renamed.txt'), 'utf8')).toBe('keep the updated file\n')
+})
+
+test('refuses to edit an inode renamed between the recovery import and final publication', async () => {
+    const original = Buffer.from('before edit\n')
+    const path = 'before-lock.txt', renamed = 'renamed-before-lock.txt'
+    await writeFile(join(shared, path), original)
+    const importText = workspaceFiles.importSharedText
+    const recovery = vi.spyOn(workspaceFiles, 'importSharedText').mockImplementationOnce(async (...args) => {
+        const result = await importText(...args)
+        await workspaceFiles.renameSharedEntry(shared, path, renamed)
+        return result
+    })
+    try {
+        const result = await editSharedDocument(shared, {
+            path, oldString: 'before', newString: 'after', expectedBytes: original.length, expectedSha256: hash(original),
+        })
+        expect(result).toMatchObject({ status: 'refused', code: 'conflict', committed: false })
+        await expect(lstat(join(shared, path))).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(await readFile(join(shared, renamed))).toEqual(original)
+    } finally { recovery.mockRestore() }
 })

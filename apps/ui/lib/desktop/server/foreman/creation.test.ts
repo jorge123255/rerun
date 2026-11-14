@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { DESKTOP_TEMPLATE_LIMITS, DESKTOP_TEMPLATE_PROSE_WARNING } from '@rerun/contracts'
+import { foremanImportedSetupPrompt, DESKTOP_TEMPLATE_LIMITS, DESKTOP_TEMPLATE_PROSE_WARNING } from '@rerun/contracts'
 import type { DesktopRuntime } from '../runtime'
 import { initializeDesktopTemplates } from '../templates/schema'
 import { initializeDesktopCreation } from '../new-agent-schema'
@@ -14,7 +14,7 @@ import { createForemanRuntime } from './runtime'
 import { createForemanSqliteStore, DESKTOP_FOREMAN_SCHEMA_STATEMENTS } from './store'
 import { createDesktopForemanCreationAuthority, DESKTOP_FOREMAN_CREATION_SCHEMA_SQL } from './creation'
 
-type EngineAgent = {id:string;config:{name:string;displayName?:string;description?:string;enabled:boolean;connectionId:string|null;provider?:string;model:string|null;setup:{required:boolean|null;completedAt:null;sessionId:string|null}};soul:string;install:string;revision:number}
+type EngineAgent = {id:string;config:{name:string;displayName?:string;description?:string;enabled:boolean;connectionId:string|null;provider?:string;model:string|null;setup:{required:boolean|null;completedAt:string|null;sessionId:string|null}};soul:string;install:string;revision:number}
 const state = vi.hoisted(() => ({db:null as unknown as Client,runtime:null as unknown as DesktopRuntime,agents:new Map<string,EngineAgent>(),creations:new Map<string,{config:EngineAgent['config'];instructions:{soulMd:string;installMd:string}}>(),mutations:new Map<string,{fingerprint:string;result:unknown}>(),runs:new Map<string,unknown>(),posts:[] as {path:string;body:Record<string,unknown>}[],loseCreateAck:false,templateReceipts:new Map<string,Record<string,unknown>>() }))
 vi.mock('../runtime', () => ({readDesktopRuntime:async()=>state.runtime}))
 vi.mock('../database', () => ({openDesktopDatabase:async()=>state.db}))
@@ -65,10 +65,16 @@ async function dispatch(path:string,init:RequestInit):Promise<unknown>{
         if(!action)return setupOf(agent)
         const key=`${path}:${String(body.requestId??body.importReceiptId)}`,fingerprint=JSON.stringify(body),prior=state.mutations.get(key)
         if(prior){if(prior.fingerprint!==fingerprint)throw new Error('changed setup mutation');return prior.result}
-        if(action==='import'){agent.install=String(body.prompt);agent.config.setup.required=body.required===true;agent.revision++}
+        if(action==='import'){
+            const foreman = body.foreman as { focus?: string } | undefined
+            if (foreman && agent.config.enabled) throw new Error('Foreman import was enabled')
+            agent.install = foreman ? foremanImportedSetupPrompt(String(body.prompt), foreman.focus) : String(body.prompt)
+            agent.config.setup.required = !!foreman || body.required===true
+            agent.revision++
+        }
         else {
             if(String(body.expectedRevision)!==String(agent.revision))throw new Error('stale setup revision')
-            if(action==='save'){agent.install=String(body.prompt);agent.config.setup.required=body.required===true}
+            if(action==='save'){agent.install=String(body.prompt);agent.config.setup.required=body.required===true;agent.config.setup.completedAt=new Date().toISOString()}
             if(action==='claim'){if(!agent.config.enabled)throw new Error('disabled');agent.config.setup.sessionId??=randomUUID()}
             agent.revision++
         }
@@ -87,7 +93,7 @@ beforeEach(async()=>{
       CREATE TABLE desktop_agents(id TEXT PRIMARY KEY,workspace_id INTEGER,engine_agent_id TEXT UNIQUE,name TEXT,description TEXT,enabled INTEGER DEFAULT 1,created_at TEXT,updated_at TEXT);
       CREATE TABLE desktop_duplicates(request_id TEXT PRIMARY KEY,source_id TEXT,agent_id TEXT,name TEXT,handle TEXT,board_col INTEGER,board_row INTEGER,completed INTEGER DEFAULT 0,space_id TEXT);
       CREATE TABLE desktop_deletions(agent_id TEXT PRIMARY KEY,engine_agent_id TEXT,name TEXT,completed INTEGER DEFAULT 0);
-      CREATE TABLE desktop_sessions(id TEXT PRIMARY KEY,agent_id TEXT,engine_session_id TEXT UNIQUE,title TEXT,created_at TEXT,updated_at TEXT,model_connection_id TEXT,model TEXT,kind TEXT NOT NULL DEFAULT 'thread' CHECK (kind IN ('general', 'thread')),first_message TEXT);
+      CREATE TABLE desktop_sessions(id TEXT PRIMARY KEY,agent_id TEXT,engine_session_id TEXT UNIQUE,title TEXT,title_search TEXT,created_at TEXT,updated_at TEXT,model_connection_id TEXT,model TEXT,kind TEXT NOT NULL DEFAULT 'thread' CHECK (kind IN ('general', 'thread')),first_message TEXT);
     `)
     await initializeDesktopCreation(db);await initializeDesktopSpaces(db);await initializeDesktopTemplates(db);await ensureDesktopSetupSchema(db);await db.executeMultiple(DESKTOP_FOREMAN_CREATION_SCHEMA_SQL + DESKTOP_FOREMAN_SCHEMA_STATEMENTS.map(sql=>`${sql};`).join('\n'))
 })
@@ -163,12 +169,32 @@ test('Foreman template reservations are separate from UI attempts and install di
     const one=await a.creation.installTemplate(input)
     expect(one.agentIds).toHaveLength(1);expect(state.runs.size).toBe(0)
     const engine=[...state.agents.values()][0]!
-    expect(engine.config.enabled).toBe(false);expect(engine.config.setup.required).toBe(true)
+    expect(engine.config.enabled).toBe(false)
+    expect(engine.config.setup).toEqual({required:true,completedAt:null,sessionId:null})
+    expect(state.posts.filter(item => item.path.endsWith('/setup/save'))).toHaveLength(0)
     expect(engine.install).toContain('Get the real notes organized');expect(engine.install).toContain('Connect your notes.')
     const restarted=await reopen();expect(await restarted.creation.installTemplate(input)).toEqual(one)
     expect((await db.execute('SELECT state FROM desktop_foreman_creation_receipts')).rows).toEqual([{state:'complete'}])
     await expect(restarted.creation.installTemplate({...input,focus:'Different'})).rejects.toMatchObject({status:409})
     expect(state.posts.filter(item=>item.path==='/desktop/templates/install')).toHaveLength(1)
+})
+
+test('an exact starter template revision is required before the import can run', async () => {
+    const { creation } = await bind()
+    const spaceId = (await readDesktopBoardState(db)).spaces[0]!.id
+    const input = { requestId: randomUUID(), templateId, spaceId, templateRevision: 'f'.repeat(64) }
+    await expect(creation.assertTemplateRevision!(templateId, input.templateRevision)).rejects.toMatchObject({ failure: 'template_failed' })
+    await expect(creation.installTemplate(input)).rejects.toMatchObject({ failure: 'template_failed' })
+    expect(state.posts.filter(item => item.path === '/desktop/templates/install')).toHaveLength(0)
+    expect(state.agents.size).toBe(0)
+    await creation.assertTemplateRevision!(templateId, revision)
+    const correct = { ...input, requestId: randomUUID(), templateRevision: revision }
+    const result = await creation.installTemplate(correct)
+    expect(state.posts.filter(item => item.path === '/desktop/templates/install')).toEqual([
+        expect.objectContaining({ body: expect.objectContaining({ templateId, revision, foremanDisabled: true }) }),
+    ])
+    const reopened = await reopen()
+    expect(await reopened.creation.installTemplate(correct)).toEqual(result)
 })
 
 test('deleted coworker receipts never create another coworker and a replaced workspace has no effects',async()=>{

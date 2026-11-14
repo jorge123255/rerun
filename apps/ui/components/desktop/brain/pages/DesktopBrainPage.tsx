@@ -2,6 +2,7 @@
 
 import { BrainEditor, type BrainEditorHandle } from '@/components/brain/editor/BrainEditor'
 import { PageColumn, PageProperty, PageTitle, PageTypeIcon, PageTypeSelect, UnconfirmedSections } from '@/components/brain/BrainPageParts'
+import { useBrainTranslations } from '@/components/brain/brain-translations'
 import { BrainTopBar } from '@/components/brain/BrainTopBar'
 import type { SharedFileRef } from '@/components/brain/useSharedFilesTree'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
@@ -11,13 +12,15 @@ import { brainAuthorLabel, brainSourceLabels, isCardType } from '@/lib/brain/lab
 import { BRAIN_PAGE_ICONS } from '@/lib/brain/page-icons'
 import { brainDraftFor, brainDraftHash, flushDesktopBrainDrafts, useBrainPageDraft, type BrainDraftStatus, type BrainPageDetail } from '@/lib/desktop/use-brain-page-draft'
 import { ChevronRightIcon, CopyIcon, EllipsisIcon, HistoryIcon, Trash2Icon } from '@/lib/icons'
-import { shortRelativeTime } from '@/lib/time'
+import { shortRelativeTime } from '@rerun/i18n/format'
+import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { cn } from '@/lib/utils'
 import type { BrainPageSummary, BrainPageType, BrainPage as BrainPageData } from '@rerun/contracts'
 import { Badge } from '@rerun/ui/primitives'
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { DesktopBrainActions } from './types'
+import { useDesktopLocale } from '../../DesktopLocale'
 import { brainMutationIntent, reserveBrainMutation, settleBrainMutation } from './mutation-intents'
 
 type DesktopBrainPageProps = {
@@ -34,22 +37,23 @@ type DesktopBrainPageProps = {
     onDeleted: (slug: string) => Promise<void> | void
 }
 
-function saveLabel(status: BrainDraftStatus, page: BrainPageData): string | null {
-    if (status === 'pending' || status === 'saving') return 'Saving…'
-    if (status === 'saved') return 'Saved'
-    if (status === 'error') return 'Not saved'
+function saveLabel(status: BrainDraftStatus, page: BrainPageData, t: ReturnType<typeof useBrainTranslations>, locale: string): string | null {
+    if (status === 'pending' || status === 'saving') return t('page.saving')
+    if (status === 'saved') return t('page.saved')
+    if (status === 'error') return t('page.notSaved')
     if (status === 'conflict') return null
-    return page.updatedAt ? `Edited ${shortRelativeTime(page.updatedAt)}` : null
+    return page.updatedAt ? t('page.edited', { time: shortRelativeTime(page.updatedAt, locale) }) : null
 }
 
 function Backlinks({ links, onOpenPage }: { links: BrainPageData['backlinks']; onOpenPage: (slug: string) => void }) {
+    const t = useBrainTranslations()
     const [open, setOpen] = useState(false)
     if (links.length === 0) return null
     return (
         <div className="mt-12 border-t border-border pt-4">
             <button type="button" onClick={() => setOpen(value => !value)} className="flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground" aria-expanded={open}>
                 <ChevronRightIcon className={cn('size-3.5 transition-transform duration-150', open && 'rotate-90')} />
-                {links.length} {links.length === 1 ? 'page links here' : 'pages link here'}
+                {t('page.backlinks', { count: links.length })}
             </button>
             {open && (
                 <div className="mt-2 space-y-0.5">
@@ -71,6 +75,9 @@ function Backlinks({ links, onOpenPage }: { links: BrainPageData['backlinks']; o
  *
  */
 export function DesktopBrainPage({ detail, pages, titles, actions, files = [], onOpenPage, onOpenFile, onAcceptFileDrop, onSaved, onHistory, onDeleted }: DesktopBrainPageProps) {
+    const t = useBrainTranslations()
+    const { language, t: desktop } = useDesktopLocale()
+    const locale = desktopLocaleTag(language.locale)
     const page = detail.page
     const initial = brainDraftFor(page)
     const autosave = useBrainPageDraft({ page, actions, onSaved })
@@ -114,21 +121,21 @@ export function DesktopBrainPage({ detail, pages, titles, actions, files = [], o
         try { await onDeleted(page.slug) } finally { setDeleting(false); setConfirmingDelete(false) }
     }
 
-    const section = isCardType(type) ? 'Company' : 'Pages'
-    const status = saveLabel(autosave.status, page)
+    const section = t(isCardType(type) ? 'crumbs.company' : 'crumbs.pages')
+    const status = saveLabel(autosave.status, page, t, locale)
 
     return (
         <div className="flex min-h-0 flex-1 flex-col">
             <BrainTopBar
-                crumbs={[{ label: section }, { label: title.trim() || 'Untitled', icon: BRAIN_PAGE_ICONS[type] }]}
+                crumbs={[{ label: section }, { label: title.trim() || t('crumbs.untitled'), icon: BRAIN_PAGE_ICONS[type] }]}
                 status={status && <span className={cn(autosave.status === 'error' && 'text-destructive')} title={autosave.error ?? undefined}>{status}</span>}
             >
-                <Button size="icon-sm" variant="ghost" onClick={onHistory} aria-label="Version history" title="Version history">
+                <Button size="icon-sm" variant="ghost" onClick={onHistory} aria-label={t('page.versionHistory')} title={t('page.versionHistory')}>
                     <HistoryIcon />
                 </Button>
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                        <Button size="icon-sm" variant="ghost" aria-label="More" title="More">
+                        <Button size="icon-sm" variant="ghost" aria-label={t('page.more')} title={t('page.more')}>
                             <EllipsisIcon />
                         </Button>
                     </DropdownMenuTrigger>
@@ -136,17 +143,17 @@ export function DesktopBrainPage({ detail, pages, titles, actions, files = [], o
                         <DropdownMenuItem
                             onSelect={() => {
                                 void navigator.clipboard.writeText(`[[${page.slug}]]`)
-                                toast.success('Link copied', { description: `Paste [[${page.slug}]] in another page.` })
+                                toast.success(t('page.linkCopied'), { description: t('page.linkCopiedHint', { link: `[[${page.slug}]]` }) })
                             }}
                         >
-                            <CopyIcon /> Copy link
+                            <CopyIcon /> {t('page.copyLink')}
                         </DropdownMenuItem>
                         <DropdownMenuItem onSelect={onHistory}>
-                            <HistoryIcon /> Version history
+                            <HistoryIcon /> {t('page.versionHistory')}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem variant="destructive" onSelect={() => setConfirmingDelete(true)}>
-                            <Trash2Icon /> Delete
+                            <Trash2Icon /> {t('page.delete')}
                         </DropdownMenuItem>
                     </DropdownMenuContent>
                 </DropdownMenu>
@@ -155,13 +162,16 @@ export function DesktopBrainPage({ detail, pages, titles, actions, files = [], o
             {autosave.status === 'conflict' && (
                 <div className="flex flex-wrap items-center gap-2 border-y border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm">
                     <span className="min-w-0 flex-1">
-                        <span className="font-medium">{autosave.conflictWith ? brainAuthorLabel(autosave.conflictWith.updatedBy) : 'Someone'}</span> changed this page while you were editing.
+                        {t.rich('page.conflict', {
+                            name: autosave.conflictWith ? brainAuthorLabel(autosave.conflictWith.updatedBy) : t('page.someone'),
+                            b: text => <span className="font-medium">{text}</span>,
+                        })}
                     </span>
                     <Button size="xs" variant="outline" onClick={() => void loadTheirs()}>
-                        Load their version
+                        {t('page.loadTheirs')}
                     </Button>
                     <Button size="xs" onClick={() => void autosave.keepMine()}>
-                        Keep mine
+                        {t('page.keepMine')}
                     </Button>
                 </div>
             )}
@@ -189,10 +199,10 @@ export function DesktopBrainPage({ detail, pages, titles, actions, files = [], o
                         }}
                         onEnter={() => editorHandle.current?.focus('start')}
                     />
-                    {!title.trim() && <p className="mt-1 text-xs text-muted-foreground">A page needs a title to be saved.</p>}
+                    {!title.trim() && <p className="mt-1 text-xs text-muted-foreground">{t('page.titleRequired')}</p>}
 
                     <div className="mt-4 space-y-0.5 border-b border-border pb-4">
-                        <PageProperty label="Type">
+                        <PageProperty label={t('page.type')}>
                             <PageTypeSelect
                                 value={type}
                                 disabled={deleting || pendingDelete}
@@ -203,7 +213,7 @@ export function DesktopBrainPage({ detail, pages, titles, actions, files = [], o
                             />
                         </PageProperty>
                         {page.sources.length > 0 && (
-                            <PageProperty label="Sources">
+                            <PageProperty label={t('page.sources')}>
                                 {brainSourceLabels(page.sources).map(source => (
                                     <Badge key={source} size="xs" tone="neutral" glow={false} fill="outline">
                                         {source}
@@ -215,9 +225,9 @@ export function DesktopBrainPage({ detail, pages, titles, actions, files = [], o
                             onConfirm={() => void confirmSections()} />}
                         {confirmError && <p role="alert" className="text-xs text-destructive">{confirmError}<Button size="xs" variant="outline" disabled={confirming} onClick={() => void confirmSections()}>Try again</Button></p>}
                         {page.updatedAt && (
-                            <PageProperty label="Last edited">
+                            <PageProperty label={t('page.lastEdited')}>
                                 <span className="text-foreground/80">
-                                    {shortRelativeTime(page.updatedAt)} by {brainAuthorLabel(page.updatedBy)}
+                                    {t('page.lastEditedValue', { time: shortRelativeTime(page.updatedAt, locale), author: brainAuthorLabel(page.updatedBy) })}
                                 </span>
                             </PageProperty>
                         )}
@@ -251,8 +261,10 @@ export function DesktopBrainPage({ detail, pages, titles, actions, files = [], o
                 open={confirmingDelete}
                 onOpenChange={setConfirmingDelete}
                 pending={deleting}
-                title={`Delete "${page.title}"?`}
-                description="Coworkers stop reading it and other pages linking to it lose the link."
+                title={t('page.deleteTitle', { title: page.title })}
+                description={t('page.deleteDescription')}
+                confirmLabel={t('page.delete')}
+                cancelLabel={desktop('cancel')}
                 onConfirm={() => void remove()}
             />
         </div>

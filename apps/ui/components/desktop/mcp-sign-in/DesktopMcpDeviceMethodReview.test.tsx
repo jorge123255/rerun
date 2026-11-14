@@ -4,6 +4,9 @@ import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import type { McpDeviceMethodReview, McpDeviceReviewDecision } from '@/lib/desktop/mcp-device-review'
 import { DesktopMcpDeviceMethodReview } from './DesktopMcpDeviceMethodReview'
+import { DesktopLocale } from '../DesktopLocale'
+import { desktopMessages } from '@/lib/desktop/locale'
+import { loadMessages } from '@rerun/i18n/messages'
 vi.mock('@/components/ui/button', () => ({ Button: ({ size: _size, variant: _variant, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { size?: string; variant?: string }) => <button {...props} /> }))
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const review = (): McpDeviceMethodReview => ({ reviewId: crypto.randomUUID(), revision: crypto.randomUUID(), workspaceId: 'workspace', owner: 'coworker', localSessionId: 'local-chat', serverName: 'docs', registrationRevision: 'r1', state: 'pending', expiresAt: Date.now() + 300_000,
@@ -44,7 +47,7 @@ it('keeps the same decision ID after a lost acknowledgement and ignores a reply 
         expect(onDecide.mock.calls[1]![0].decisionId).toBe(onDecide.mock.calls[0]![0].decisionId)
         await act(async () => root.render(<DesktopMcpDeviceMethodReview review={foreign} active onDecide={onDecide} />))
         await act(async () => finish({ ...view, state: 'approved' }))
-        expect(host.querySelector('[role="status"]')?.textContent).toBe('pending')
+        expect(host.querySelector('[role="status"]')?.textContent).toBe('Awaiting approval')
     } finally { await act(async () => root.unmount()); host.remove() }
 })
 
@@ -57,5 +60,30 @@ it('disables approval for expired or inactive reviews', async () => {
         await act(async () => root.render(<DesktopMcpDeviceMethodReview review={view} active={false} onDecide={onDecide} />))
         expect([...host.querySelectorAll('button')].every(item => item.disabled)).toBe(true)
         expect(onDecide).not.toHaveBeenCalled()
+    } finally { await act(async () => root.unmount()); host.remove() }
+})
+
+it('shows the review and its saved approval in French while retaining the exact provider details', async () => {
+    const host = document.createElement('div'); document.body.append(host)
+    const root = createRoot(host), view = review()
+    const language = { locale: 'fr', preference: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) } as const
+    const onDecide = vi.fn(async (input: McpDeviceReviewDecision) => ({
+        ...view, state: 'approved' as const, receipt: { decisionId: input.decisionId, outcome: 'approved' as const, recordedAt: Date.now() },
+    }))
+    try {
+        await act(async () => root.render(<DesktopLocale initial={language}>
+            <DesktopMcpDeviceMethodReview review={view} active onDecide={onDecide} />
+        </DesktopLocale>))
+        expect(host.querySelector('[role="status"]')?.textContent).toBe('En attente d’approbation')
+        expect(host.textContent).toContain('Autorisations demandées')
+        expect(host.textContent).toContain(view.method.scope)
+        expect(host.textContent).toContain(view.method.verificationUri)
+        expect(onDecide).not.toHaveBeenCalled()
+        const approve = [...host.querySelectorAll('button')].find(item => item.textContent === 'Approuver le mode de connexion')!
+        await act(async () => approve.click())
+        expect(onDecide).toHaveBeenCalledOnce()
+        expect(onDecide.mock.calls[0]?.[0]).toMatchObject({ reviewId: view.reviewId, revision: view.revision, operation: 'approve-device-method' })
+        expect(host.textContent).toContain('Décision enregistrée : approuvé')
+        expect(host.textContent).toContain('La connexion reste à vérifier.')
     } finally { await act(async () => root.unmount()); host.remove() }
 })

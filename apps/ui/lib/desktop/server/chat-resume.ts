@@ -29,13 +29,13 @@ async function ownedRuns(runtime: DesktopRuntime, sessionId: string): Promise<{ 
     return { engineAgentId: agent.engineAgentId, engineSessionId: session.engineSessionId, runs: runs.map(ownedRun) }
 }
 
-export async function readDesktopRunRecovery(runtime: DesktopRuntime, sessionId: string): Promise<DesktopRunRecovery & { runsUnavailable: boolean }> {
+export async function readDesktopRunRecovery(runtime: DesktopRuntime, sessionId: string): Promise<Omit<DesktopRunRecovery, 'runVersion'> & { runVersion: string | null; runsUnavailable: boolean }> {
     try {
         const { engineAgentId, engineSessionId, runs } = await ownedRuns(runtime, sessionId)
         return { ...desktopRunRecovery(runs, engineAgentId, engineSessionId), runsUnavailable: false }
     } catch (error) {
         if (error instanceof DesktopHttpError && error.status === 404) throw error
-        return { activeRunId: null, lastError: null, runsUnavailable: true }
+        return { activeRunId: null, lastError: null, failedRunId: null, runVersion: null, runsUnavailable: true }
     }
 }
 

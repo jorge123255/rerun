@@ -23,6 +23,7 @@ export function useDesktopCoworkerCalls(agentId: string, sessionId: string, acti
     const client = useMemo(() => createDesktopCoworkerCallsClient(agentId, sessionId), [agentId, sessionId])
     const [state, setState] = useState<ReadState>({ scope, status: 'loading', calls: [], error: null })
     const inFlight = useRef<AbortController | null>(null)
+    const wasObserving = useRef(observing)
     const mounted = useRef(true)
     const current = useCallback(() => mounted.current && identity.current.generation === generation, [generation])
 
@@ -83,6 +84,12 @@ export function useDesktopCoworkerCalls(agentId: string, sessionId: string, acti
             document.removeEventListener('visibilitychange', onVisibility)
         }
     }, [active, read, updatesNeeded])
+
+    useEffect(() => {
+        const justSettled = wasObserving.current && !observing
+        wasObserving.current = observing
+        if (justSettled) void read(true)
+    }, [observing, read])
 
     const retry = useCallback(() => {
         if (active && current() && !isDesktopQuitting()) void read(true)

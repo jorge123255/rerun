@@ -26,8 +26,9 @@ export type DesktopOpenApps = (input: {
     slug: string
     serviceRequestId: string
     sourceFingerprint: string
+    destination?: 'vault'
     signal: AbortSignal
-}) => Promise<{ status: 'closed' }>
+}) => Promise<{ status: 'closed'; account?: { key: string; revision: string } }>
 
 export function serviceRequestScopeKey(scope: DesktopServiceRequestScope): string {
     return JSON.stringify([scope.agentId, scope.sessionId, scope.serviceRequestId, scope.source.sourceMessageId, scope.source.toolCallId, scope.source.fingerprint])

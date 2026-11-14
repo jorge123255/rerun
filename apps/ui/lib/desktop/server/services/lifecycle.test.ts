@@ -1,6 +1,12 @@
 import {createClient} from '@libsql/client'
 import {afterEach,expect,it,vi} from 'vitest'
 vi.mock('server-only',()=>({}))
+vi.mock('../auth', async original => ({
+    ...await original<typeof import('../auth')>(),
+    authenticateDesktopEngineRequest: vi.fn(async (request: Request) => {
+        if (request.headers.get('Authorization') !== 'Bearer fixture-engine') throw new Error('Unauthorized')
+    }),
+}))
 const catalog=vi.hoisted(()=>({manifest:undefined as unknown}))
 vi.mock('./catalog/index',()=>({getDesktopServiceManifest:async()=>({manifest:catalog.manifest}),getDesktopServiceMethodAvailability:async(_slug:string,id:string)=>({id,supported:true})}))
 vi.mock('./skill-resources',async importOriginal=>({...await importOriginal<typeof import('./skill-resources')>(),createServiceSkill:vi.fn(),removeServiceSkill:vi.fn(),verifyServiceSkill:vi.fn(async()=>{})}))
@@ -10,6 +16,7 @@ import {serviceStore} from './store'
 import {createServiceSkill,serviceSkillHash} from './skill-resources'
 import {serviceSkillMigrationSql} from './skill-journal'
 import {localServiceLifecycle} from './lifecycle'
+import {serviceEngineBridge} from './bridge'
 import type {DesktopRuntime} from '../runtime'
 const entries:{db:ReturnType<typeof createClient>;service:ReturnType<typeof localServiceLifecycle>}[]=[]
 afterEach(async()=>{for(const {db,service} of entries.splice(0)){service.shutdown();await service.drain();db.close()}vi.clearAllMocks()})
@@ -76,4 +83,32 @@ it('reconciles an interrupted partial install before allowing tool use',async()=
  saved.state='error';saved.revision=crypto.randomUUID();await store.update(saved,first.revision)
  const retry=await service.mutate('owner',{...request,requestId:crypto.randomUUID()},signal) as {installed:boolean}
  expect(retry.installed).toBe(true);expect(createServiceSkill).toHaveBeenCalledTimes(2)
+})
+
+
+it('publishes a Vault app through the Services bridge with the engine result shape and durable call admission', async () => {
+    const {store, service, revoke} = await setup()
+    const execute = vi.fn(async () => ({ source: 'remote_mcp', untrusted: true, result: { content: [] } }))
+    const ownerForRun = vi.fn(async () => 'owner')
+    const bridge = serviceEngineBridge(store, service, ownerForRun, undefined, async () => [
+        { name: 'vault_example_read', description: 'Read fixture', inputSchema: { type: 'object' }, execute },
+    ])
+    const identity = { engineAgentId: 'engine', sessionId: 'chat', runId: 'run' }
+    const post = (body: object, authorization = 'Bearer fixture-engine') => bridge.api(new Request('http://127.0.0.1/api/desktop/internal/services', {
+        method: 'POST', headers: { authorization }, body: JSON.stringify({ ...identity, ...body }),
+    }))
+    try {
+        expect((await post({ action: 'catalog' }, '')).status).toBe(400)
+        const catalogResponse = await post({ action: 'catalog' })
+        expect(catalogResponse.status).toBe(200)
+        const catalog = await catalogResponse.json()
+        expect(catalog.tools[0].name).toBe('vault_example_read')
+        const call = { action: 'call', catalogId: catalog.catalogId, capabilityId: catalog.tools[0].capabilityId, toolCallId: 'call-1', arguments: {} }
+        expect((await post({ ...call, runId: 'foreign-run' })).status).toBe(400)
+        expect(await (await post(call)).json()).toEqual({ toolCallId: 'call-1', result: { source: 'local_service', untrusted: true, result: { content: [] } } })
+        expect((await post(call)).status).toBe(400)
+        revoke()
+        expect((await post({ ...call, toolCallId: 'call-2' })).status).toBe(400)
+        expect(execute).toHaveBeenCalledTimes(1)
+    } finally { await bridge.shutdown() }
 })

@@ -48,6 +48,13 @@ test('rejects an oversized Content-Length before reading or publishing', async (
     await expect(readFile(join(workspace, 'note.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
+test('refuses a body shorter than its declared size before publishing', async () => {
+    const response = await send('ok', '4')
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({ error: 'The upload size did not match the file size.' })
+    await expect(readFile(join(workspace, 'note.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
 test('cancels a chunked body at the limit without reading its tail', async () => {
     const cancel = vi.fn()
     let reads = 0

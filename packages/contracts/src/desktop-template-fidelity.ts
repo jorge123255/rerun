@@ -21,7 +21,7 @@ export function desktopTemplateGuidedSetup(setup: { required: boolean | null; pr
     const requirements = desktopTemplateRequirementsSchema.parse(rawRequirements ?? [])
     for (const requirement of requirements) {
         const pattern = requirement.kind === 'environment-key' || requirement.kind === 'credential-name'
-            ? /^[A-Z_][A-Z0-9_]{0,127}$/ : /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/
+            ? /^[A-Za-z_][A-Za-z0-9_]{0,127}$/ : /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/
         if (!pattern.test(requirement.name)) throw new Error('Template requirement names are not supported')
     }
     if (!requirements.length) return { prompt: setup.prompt, required: setup.required === true }

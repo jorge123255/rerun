@@ -66,6 +66,9 @@ if [ "${RERUN_DESKTOP_CODEX_CODE_MODE:-0}" = 1 ] && [ "${RERUN_CODEX_ACCOUNT_OP:
     code_host=1
     code_host_flag=--enable
 fi
+# Image generation is a per-coworker grant; the engine keeps each result in that coworker's Files.
+image_feature=--disable
+if [ "${RERUN_DESKTOP_CODEX_IMAGES:-0}" = 1 ] && [ "${RERUN_CODEX_ACCOUNT_OP:-0}" != 1 ]; then image_feature=--enable; fi
 web=disabled
 if [ "${RERUN_DESKTOP_CODEX_WEB:-0}" = 1 ] && [ "${RERUN_CODEX_ACCOUNT_OP:-0}" != 1 ]; then web=live; fi
 # Native commands must use the engine's credential-free worker. Without this env
@@ -97,6 +100,6 @@ exec /usr/bin/env -i HOME="$mac_home" CODEX_HOME="$profile/state" TMPDIR="$profi
     "$bin_dir/codex" -c 'cli_auth_credentials_store="keyring"' -c 'sandbox_mode="read-only"' -c 'approval_policy="never"' \
     -c "web_search=\"$web\"" -c 'project_doc_max_bytes=0' -c 'mcp_servers={}' -c 'skills.bundled.enabled=false' \
     "$shell_feature" shell_tool "$shell_feature" unified_exec --disable hooks --disable plugins --disable apps \
-    --disable image_generation --disable in_app_browser --disable multi_agent --disable multi_agent_v2 \
+    "$image_feature" image_generation --disable in_app_browser --disable multi_agent --disable multi_agent_v2 \
     --disable browser_use --disable computer_use --disable in_app_local_automation --disable in_app_voice \
     "$code_host_flag" code_mode_host --disable remote_plugin --disable daemon_auto_start "$@"

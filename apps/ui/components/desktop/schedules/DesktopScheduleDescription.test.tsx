@@ -12,6 +12,8 @@ let onChange: Mock<(next: DesktopScheduleSelection) => void>
 let parser: Mock<DesktopScheduleParser>
 
 beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-09T18:00:00Z'))
     container = document.createElement('div')
     document.body.append(container)
     root = createRoot(container)
@@ -25,6 +27,7 @@ afterEach(async () => {
     container.remove()
     document.body.innerHTML = ''
     vi.unstubAllGlobals()
+    vi.useRealTimers()
 })
 
 async function render(options: { parser?: DesktopScheduleParser; timezone?: string } = {}) {
@@ -81,6 +84,33 @@ describe('DesktopScheduleDescription', () => {
         await click('Use schedule')
 
         expect(onChange).toHaveBeenCalledWith({ mode: 'runAt', cron: null, runAt: '2026-11-10T08:00:00-06:00', timezone: 'America/Chicago' })
+    })
+
+    it('requires a fresh preview after editing the schedule description', async () => {
+        await render({ parser })
+        await preview()
+        await enterDescription('every day at 10')
+        expect(document.body.textContent).not.toContain('Use schedule')
+        expect(document.body.textContent).not.toContain('Weekdays at 8')
+        expect(onChange).not.toHaveBeenCalled()
+
+        parser.mockResolvedValue({ status: 'ok', value: { mode: 'cron', cron: '0 10 * * *', label: 'Daily at 10' } })
+        await click('Preview schedule')
+        expect(parser.mock.lastCall?.[0].description).toBe('every day at 10')
+        await click('Use schedule')
+        expect(onChange).toHaveBeenCalledExactlyOnceWith({ mode: 'cron', cron: '0 10 * * *', runAt: null, timezone: 'America/Chicago' })
+    })
+
+    it('requires a new preview when a one-shot time passes before confirmation', async () => {
+        parser.mockResolvedValue({ status: 'ok', value: { mode: 'runAt', runAt: '2026-11-10T08:00:00-06:00' } })
+        await render({ parser })
+        await preview('tomorrow at 8')
+        vi.setSystemTime(new Date('2026-11-10T14:00:00Z'))
+        await click('Use schedule')
+
+        expect(onChange).not.toHaveBeenCalled()
+        expect(document.body.textContent).not.toContain('Use schedule')
+        expect(document.body.textContent).toContain('This time has passed. Preview another time.')
     })
 
     it('shows explicit parse failure without changing the schedule', async () => {

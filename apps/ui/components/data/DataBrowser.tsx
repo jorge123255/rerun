@@ -102,6 +102,7 @@ export function DataBrowser({ source, initial, requireInitialView = false, onIni
     // column does not change looks from one page to the next.
     const [kindSample, setKindSample] = useState<{ key: string; rows: DbRow[] } | null>(null)
     const [openDetail, setOpenDetail] = useState<OpenDetail | null>(null)
+    const detailTrigger = useRef<{ scope: BrowserScope; element: HTMLElement } | null>(null)
 
     // Kept out of loadTables' deps: callers pass this callback inline, and a fresh identity on every
     // render would make the effect below refetch forever.
@@ -258,9 +259,10 @@ export function DataBrowser({ source, initial, requireInitialView = false, onIni
     const viewOrder = activeView?.layout === 'table' && activeView.columns?.length ? activeView.columns : undefined
     const sheetColumns = useMemo(() => gridColumns(friendly, viewOrder), [friendly, viewOrder])
     const visibleDetail = openDetail && openDetail.source === source && openDetail.table === selected && rowKey(openDetail.row) === openDetail.key ? openDetail : null
-    const openRow = (row: DbRow) => {
+    const openRow = (row: DbRow, element: HTMLElement) => {
         const current = scopeRef.current
         if (!current.table || current.source !== source || current.table !== selected) return
+        detailTrigger.current = { scope: current, element }
         setOpenDetail({ source: current.source, table: current.table, key: rowKey(row), row })
     }
     const returned = data?.columns
@@ -637,6 +639,14 @@ export function DataBrowser({ source, initial, requireInitialView = false, onIni
                 onOpenChange={open => {
                     if (open || !visibleDetail) return
                     setOpenDetail(current => current && current.source === visibleDetail.source && current.table === visibleDetail.table && current.key === visibleDetail.key ? null : current)
+                }}
+                onCloseAutoFocus={event => {
+                    if (visibleDetail) return
+                    const trigger = detailTrigger.current
+                    detailTrigger.current = null
+                    if (!trigger || !mounted.current || trigger.scope !== scopeRef.current || !trigger.element.isConnected) return
+                    event.preventDefault()
+                    trigger.element.focus({ preventScroll: true })
                 }}
                 columns={sheetColumns}
                 sources={null}

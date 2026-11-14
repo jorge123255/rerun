@@ -9,12 +9,13 @@ export type DesktopNotificationDeliveryProps = {
     onOpenConversation?: (target: DesktopNotificationOpenTarget) => void
     /** The conversation currently on screen (root-supplied), so its own events stay in-app. */
     visibleSessionId?: string | null
+    navigationBlocked?: boolean
 }
 
 // Renders nothing. Mount once in the shell's app root: it polls the local notification events,
 // announces them through the root-reviewed native bridge and routes clicks that revalidate the
 // exact owner/chat/request before navigating.
-export function DesktopNotificationDelivery({ onOpenConversation, visibleSessionId }: DesktopNotificationDeliveryProps) {
-    useDesktopNotificationDelivery({ onOpenConversation: onOpenConversation ? target => onOpenConversation({ agentId: target.agentId, sessionId: target.sessionId, title: '' }) : undefined, visibleSessionId })
+export function DesktopNotificationDelivery({ onOpenConversation, visibleSessionId, navigationBlocked }: DesktopNotificationDeliveryProps) {
+    useDesktopNotificationDelivery({ onOpenConversation: onOpenConversation ? target => onOpenConversation({ agentId: target.agentId, sessionId: target.sessionId, title: '' }) : undefined, visibleSessionId, navigationBlocked })
     return null
 }

@@ -48,6 +48,7 @@ const TOOL_LABELS: Record<string, string> = {
 
     delegate_tasks: 'Delegate Tasks',
     call_agent: 'Call Coworker',
+    ai_status: 'Check AI Providers',
 
     schedule_list: 'List Schedules',
     schedule_create: 'Create Schedule',
@@ -167,6 +168,7 @@ const TOOL_LABELS: Record<string, string> = {
 // What a step reads as while it runs, beside the coworker at work. A tool missing here falls back
 // on its label on each client.
 const TOOL_ACTIVITIES: Record<string, string> = {
+    ai_status: 'Checking AI providers',
     shell_exec: 'Running a command',
 
     fs_read: 'Reading a file',
@@ -238,11 +240,19 @@ export function isKnownTool(toolName: string): boolean {
     return toolName in TOOL_LABELS
 }
 
+// A name the app has no words for is still put in words, never shown as the identifier: a runner's
+// own `WebSearch` or `todo-write` reads "Web Search" and "Todo Write", a name cut for a provider's
+// 64-character limit loses the hash it was ended with, and a name with no words in it reads "Tool".
+// (After CopilotKit/OpenBot's shared/tool-name.ts, MIT.)
 export function formatToolName(name: string): string {
-    return name
-        .replace(/_/g, ' ')
+    const words = (name.length >= 56 ? name.replace(/_[0-9a-f]{8}$/, '') : name)
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+        .replace(/[_\-.]+/g, ' ')
+        .replace(/\s+/g, ' ')
         .trim()
-        .replace(/\b\w/g, c => c.toUpperCase())
+    if (!/[A-Za-z]/.test(words)) return 'Tool'
+    return words.replace(/(^|\s)[a-z]/g, c => c.toUpperCase())
 }
 
 // A paid_data call is named after the capability it bought: "Reading TikTok", not "Paid data".

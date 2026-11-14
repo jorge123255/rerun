@@ -1,8 +1,9 @@
+import { desktopNotificationRuleChangeSchema } from '@/lib/desktop/notifications'
 import { notificationPrefsPatchSchema } from '@rerun/contracts'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
-import { readDesktopNotificationPrefs, writeDesktopNotificationPrefs } from '@/lib/desktop/server/notifications'
+import { changeDesktopNotificationRule, readDesktopNotificationPrefs, writeDesktopNotificationPrefs } from '@/lib/desktop/server/notifications'
 import { readNotificationBody } from '@/lib/desktop/server/notification-body'
 
 export const dynamic = 'force-dynamic'
@@ -22,6 +23,15 @@ export function PUT(request: Request) {
         const parsed = notificationPrefsPatchSchema.safeParse(await readNotificationBody(request))
         if (!parsed.success) throw new DesktopHttpError(400, 'Choose a valid notification scope, channel or coworker rule.')
         const prefs = await writeDesktopNotificationPrefs(await openDesktopDatabase(runtime.dataRoot), parsed.data)
+        return Response.json(prefs, { headers: { 'cache-control': 'no-store' } })
+    })
+}
+
+export function PATCH(request: Request) {
+    return desktopRoute(request, async runtime => {
+        const parsed = desktopNotificationRuleChangeSchema.safeParse(await readNotificationBody(request))
+        if (!parsed.success) throw new DesktopHttpError(400, 'Choose a valid coworker notification change.')
+        const prefs = await changeDesktopNotificationRule(runtime, parsed.data, request.signal)
         return Response.json(prefs, { headers: { 'cache-control': 'no-store' } })
     })
 }

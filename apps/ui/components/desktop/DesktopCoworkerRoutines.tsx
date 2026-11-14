@@ -1,13 +1,17 @@
 'use client'
 
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { CalendarIcon } from '@/lib/icons'
 import { useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { DesktopAgentView } from './DesktopApp'
 import { DesktopCoworkerSchedules } from './schedules/DesktopCoworkerSchedules'
+import { useDesktopLocale } from './DesktopLocale'
 
 export function DesktopCoworkerRoutines({ agent, dialogControl, onOpenChat }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl; onOpenChat: (id: string, title?: string) => void }) {
+    const { t } = useDesktopLocale()
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     const scope = `${agent.id}:${open}`
     const latest = useRef({ scope, setOpen, onOpenChat })
@@ -17,9 +21,9 @@ export function DesktopCoworkerRoutines({ agent, dialogControl, onOpenChat }: { 
     latest.current = { scope, setOpen, onOpenChat }
     useEffect(() => { cycle.current = captured; return () => { if (cycle.current === captured) cycle.current = { scope: '' } } }, [captured])
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
-        <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Routines</Button></DialogTrigger>
+        <DialogTrigger asChild><Button type="button" variant="outline" size="sm">{t('coworker.destinations.scheduled')}</Button></DialogTrigger>
         {open && <DialogContent className="flex h-[80dvh] flex-col sm:max-w-3xl">
-            <DialogHeader><DialogTitle>Routines</DialogTitle><DialogDescription>{agent.name}’s recurring and scheduled tasks. Rerun must remain open for a routine to run.</DialogDescription></DialogHeader>
+            <DialogHeaderBar icon={CalendarIcon} title={t('coworker.destinations.scheduled')} description={t('routines.coworker.dialogDescription', { name: agent.name })} />
             <DesktopCoworkerSchedules key={agent.id} agentId={agent.id} onOpenSession={chat => {
                 if (cycle.current !== captured || !open || chat.agentId !== agent.id || !chat.sessionId) return
                 cycle.current = { scope: '' }

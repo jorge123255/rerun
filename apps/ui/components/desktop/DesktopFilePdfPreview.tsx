@@ -4,11 +4,13 @@ import type { SiblingFiles } from '@/components/files/useSiblingFiles'
 import { Button } from '@/components/ui/button'
 import { PanelEditorHeader } from '@/components/ui/panel-editor'
 import { Skeleton } from '@/components/ui/skeleton'
+import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { desktopPdfFindMessage, desktopPdfSamePointSize, desktopPdfTextOf, desktopPdfTextSearchable, findDesktopPdfText, DESKTOP_PDF_TEXT_MAX_RESPONSE, type DesktopPdfTextDocument, type DesktopPdfTextMatch } from '@/lib/desktop/pdf-text'
 import { ChevronLeftIcon, ChevronRightIcon, MinusIcon, PlusIcon } from '@/lib/icons'
-import { useEffect, useRef, useState, type Ref } from 'react'
+import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react'
 import { DesktopFilePdfFind } from './DesktopFilePdfFind'
 import { DesktopFilePdfTextLayer } from './DesktopFilePdfTextLayer'
+import { useDesktopLocale } from './DesktopLocale'
 import { FileSiblingControls } from './DesktopFileSiblingNav'
 
 const PNG_MAX_BYTES = 8 * 1024 * 1024
@@ -31,6 +33,7 @@ type Props = {
     source?: DesktopPdfPageSource
     onBack: () => void
     siblings?: SiblingFiles | null
+    headerActions?: ReactNode
     viewerRef?: Ref<HTMLDivElement>
     onPreviewIdentity?: (hash: string | null) => void
     /** `files` keeps the Files header and sibling arrows. `body` is the page frame for a lightbox that already has a title. */
@@ -46,7 +49,10 @@ export function DesktopFilePdfPreview(props: Props) {
 }
 
 /** Rerun's FileDetail header and white PDF frame. The page is a PNG; selection and Find sit on top of it. */
-function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = null, viewerRef, onPreviewIdentity, chrome = 'files' }: Props) {
+function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = null, viewerRef, headerActions, onPreviewIdentity, chrome = 'files' }: Props) {
+    const { language, t } = useDesktopLocale()
+    const copy = language.messages.pdf
+    const locale = desktopLocaleTag(language.locale)
     const [page, setPage] = useState(1)
     const [scale, setScale] = useState(1)
     const [pages, setPages] = useState<number | null>(null)
@@ -62,9 +68,12 @@ function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = 
     const textRef = useRef(text)
     const [query, setQuery] = useState('')
     const [activeMatch, setActiveMatch] = useState(0)
-    const [found, setFound] = useState<{ query: string; matches: DesktopPdfTextMatch[]; limited: boolean }>({ query: '', matches: [], limited: false })
+    const [found, setFound] = useState<{ document: DesktopPdfTextDocument | null; query: string; matches: DesktopPdfTextMatch[]; limited: boolean }>({ document: null, query: '', matches: [], limited: false })
     const findGeneration = useRef(0)
     const canReadText = !source && 'src' in visible && visible.meta.pageWidth !== null && visible.meta.pageHeight !== null && visible.meta.sha256 !== null
+
+    // Preserve the focused search field across page raster requests for this same document.
+    const showFind = canReadText || ('loading' in visible && documentHash !== null)
 
     useEffect(() => { textRef.current = text }, [text])
 
@@ -104,7 +113,7 @@ function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = 
                 objectUrl = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }))
                 if (cancelled) { release(); return }
                 setPages(meta.pages)
-                setDocumentHash(meta.sha256)
+                setDocumentHash(meta.pageWidth !== null && meta.pageHeight !== null ? meta.sha256 : null)
                 onPreviewIdentity?.(meta.sha256)
                 setView({ key: requestKey, src: objectUrl, meta, release })
             } catch (error) {
@@ -152,7 +161,7 @@ function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = 
             await Promise.resolve()
             if (cancelled || generation !== findGeneration.current) return
             const result = document ? findDesktopPdfText(document.pages, query) : { matches: [], limited: false }
-            setFound({ query, matches: result.matches, limited: result.limited })
+            setFound({ document, query, matches: result.matches, limited: result.limited })
             setActiveMatch(0)
             if (result.matches[0]) setPage(result.matches[0].page)
         })()
@@ -164,15 +173,15 @@ function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = 
     const rasterWidth = 'src' in visible ? visible.meta.pageWidth : null
     const rasterHeight = 'src' in visible ? visible.meta.pageHeight : null
     const aligned = !!pageText && rasterWidth !== null && rasterHeight !== null && desktopPdfSamePointSize(pageText.pageWidth, rasterWidth) && desktopPdfSamePointSize(pageText.pageHeight, rasterHeight)
-    const settled = found.query === query ? found : { query, matches: [] as DesktopPdfTextMatch[], limited: false }
+    const settled = document && found.document === document && found.query === query ? found : { query, matches: [] as DesktopPdfTextMatch[], limited: false }
     const matchIndex = settled.matches.length === 0 ? 0 : activeMatch % settled.matches.length
-    const copy = desktopPdfFindMessage({
-        phase: !canReadText ? 'hidden' : text.status === 'ready' ? 'ready' : text.status === 'error' ? 'error' : 'loading',
-        error: text.status === 'error' ? text.message : '',
+    const result = desktopPdfFindMessage({
+        phase: !showFind ? 'hidden' : text.key !== textKey ? 'loading' : text.status === 'ready' ? 'ready' : text.status === 'error' ? 'error' : 'loading',
+        error: text.key === textKey && text.status === 'error' ? text.message : '',
         searchable: document ? desktopPdfTextSearchable(document.pages) : false,
         truncated: document?.truncated ?? false,
-        aligned, pagePresent: !!pageText, query, matchCount: settled.matches.length, matchIndex, limited: settled.limited,
-    })
+        aligned: aligned || 'loading' in visible, pagePresent: !!pageText, query, matchCount: settled.matches.length, matchIndex, limited: settled.limited,
+    }, copy, (current, total) => t('conversationFind.count', { current, total }))
     const marks = pageText && aligned ? settled.matches.flatMap((match, index) => match.page === pageText.page ? [{ start: match.start, end: match.end, active: index === matchIndex }] : []) : []
     const step = (delta: number) => {
         if (settled.matches.length === 0) return
@@ -183,33 +192,33 @@ function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = 
     }
 
     return <div ref={viewerRef} className="flex min-h-0 flex-1 flex-col">
-        {chrome === 'files' && <PanelEditorHeader title={name} onBack={onBack} mono><FileSiblingControls siblings={siblings} /></PanelEditorHeader>}
+        {chrome === 'files' && <PanelEditorHeader title={name} onBack={onBack} mono><FileSiblingControls siblings={siblings} />{headerActions}</PanelEditorHeader>}
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2 text-xs">
             <div className="flex items-center gap-1">
-                <Button type="button" variant="ghost" size="icon-xs" aria-label="Previous page" disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}><ChevronLeftIcon className="size-3.5" /></Button>
-                <span aria-live="polite" className="min-w-24 text-center tabular-nums">Page {page} of {pages ?? '…'}</span>
-                <Button type="button" variant="ghost" size="icon-xs" aria-label="Next page" disabled={pages === null || page >= pages} onClick={() => setPage(value => Math.min(pages ?? value, value + 1))}><ChevronRightIcon className="size-3.5" /></Button>
+                <Button type="button" variant="ghost" size="icon-xs" aria-label={copy.previousPage} disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}><ChevronLeftIcon className="size-3.5" /></Button>
+                <span aria-live="polite" className="min-w-24 text-center tabular-nums">{t('pdf.page', { page, total: pages === null ? '…' : new Intl.NumberFormat(locale).format(pages) })}</span>
+                <Button type="button" variant="ghost" size="icon-xs" aria-label={copy.nextPage} disabled={pages === null || page >= pages} onClick={() => setPage(value => Math.min(pages ?? value, value + 1))}><ChevronRightIcon className="size-3.5" /></Button>
             </div>
             <div className="flex items-center gap-1">
-                <Button type="button" variant="ghost" size="icon-xs" aria-label="Zoom out" disabled={scale <= MIN_SCALE} onClick={() => setScale(value => Math.max(MIN_SCALE, value - SCALE_STEP))}><MinusIcon className="size-3.5" /></Button>
-                <span aria-label="PDF zoom" className="min-w-10 text-center tabular-nums">{Math.round(scale * 100)}%</span>
-                <Button type="button" variant="ghost" size="icon-xs" aria-label="Zoom in" disabled={scale >= MAX_SCALE} onClick={() => setScale(value => Math.min(MAX_SCALE, value + SCALE_STEP))}><PlusIcon className="size-3.5" /></Button>
-                <Button type="button" variant="ghost" size="xs" disabled={scale === 1} onClick={() => setScale(1)}>Fit width</Button>
+                <Button type="button" variant="ghost" size="icon-xs" aria-label={copy.zoomOut} disabled={scale <= MIN_SCALE} onClick={() => setScale(value => Math.max(MIN_SCALE, value - SCALE_STEP))}><MinusIcon className="size-3.5" /></Button>
+                <span aria-label={copy.zoom} className="min-w-10 text-center tabular-nums">{new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 0 }).format(scale)}</span>
+                <Button type="button" variant="ghost" size="icon-xs" aria-label={copy.zoomIn} disabled={scale >= MAX_SCALE} onClick={() => setScale(value => Math.min(MAX_SCALE, value + SCALE_STEP))}><PlusIcon className="size-3.5" /></Button>
+                <Button type="button" variant="ghost" size="xs" disabled={scale === 1} onClick={() => setScale(1)}>{copy.fit}</Button>
             </div>
         </div>
-        {canReadText && <DesktopFilePdfFind query={query} onQuery={setQuery} count={copy.count} message={copy.message} canStep={settled.matches.length > 0} onPrevious={() => step(-1)} onNext={() => step(1)} />}
+        {showFind && <DesktopFilePdfFind query={query} onQuery={setQuery} count={result.count} message={result.message} canStep={canReadText && settled.matches.length > 0} onPrevious={() => step(-1)} onNext={() => step(1)} />}
         <div className="min-h-0 flex-1 overflow-auto bg-muted p-3" data-testid="file-pdf-frame">
             {'src' in visible ? <div className="relative bg-white shadow-sm" style={{ width: `${scale * 100}%`, marginInline: scale <= 1 ? 'auto' : 0 }}>
                 {/* eslint-disable-next-line @next/next/no-img-element -- bounded generated PNG object URLs are not Next Image sources */}
-                <img src={visible.src} alt={`${name}, page ${page} of ${visible.meta.pages}`} width={visible.meta.width} height={visible.meta.height} draggable={false}
+                <img src={visible.src} alt={t('pdf.description', { name, page, total: visible.meta.pages })} width={visible.meta.width} height={visible.meta.height} draggable={false}
                     data-testid="file-pdf-preview" className="block h-auto w-full select-none bg-white" onError={() => {
                         if (currentKey.current !== visible.key) return
                         visible.release()
                         setView(current => 'src' in current && current.src === visible.src ? { key: visible.key, error: 'This PDF page could not be displayed.' } : current)
                     }} />
                 {aligned && pageText && pageText.runs.length > 0 && <DesktopFilePdfTextLayer text={pageText.text} rotation={pageText.rotation} pageWidth={pageText.pageWidth} pageHeight={pageText.pageHeight} crop={pageText.crop} runs={pageText.runs} marks={marks} />}
-            </div> : 'error' in visible ? <div className="space-y-2 p-3"><p role="alert" className="text-xs text-destructive">{visible.error}</p><Button type="button" variant="outline" size="sm" onClick={() => setAttempt(value => value + 1)}>Retry</Button></div>
-                : <div role="status" aria-label="Loading PDF page" className="mx-auto min-h-80 space-y-3 bg-white p-6"><Skeleton className="h-5 w-1/2" /><Skeleton className="h-3 w-full" /><Skeleton className="h-3 w-4/5" /></div>}
+            </div> : 'error' in visible ? <div className="space-y-2 p-3"><p role="alert" className="text-xs text-destructive">{visible.error}</p><Button type="button" variant="outline" size="sm" onClick={() => setAttempt(value => value + 1)}>{copy.retry}</Button></div>
+                : <div role="status" aria-label={copy.loadingPage} className="mx-auto min-h-80 space-y-3 bg-white p-6"><Skeleton className="h-5 w-1/2" /><Skeleton className="h-3 w-full" /><Skeleton className="h-3 w-4/5" /></div>}
         </div>
     </div>
 }

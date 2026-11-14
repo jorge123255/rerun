@@ -26,6 +26,12 @@ import {
     revokeDesktopExternalMcpKey,
 } from '../server/external-mcp-authority/client'
 import { desktopExternalMcpAttemptSchema, type DesktopExternalMcpAttempt } from './attempts'
+import { buildImportPrompt } from '@/lib/agent-import/prompt'
+import { importSource } from '@/lib/agent-import/sources'
+import { IMPORT_KEY_TTL_MS } from '@/lib/mcp/import-scope'
+import { DESKTOP_IMPORT_KEY_SCOPES, listDesktopImportKeyIds, markDesktopImportKey } from '../server/external-mcp-tools/import-keys'
+import { desktopImportKeyRequestSchema, type DesktopImportKeyResult } from './import'
+import { externalMcpEndpoint } from './snippets'
 import { desktopExternalMcpAttemptStore } from './attempt-store'
 
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'cache-control': 'no-store' } })
@@ -131,6 +137,48 @@ async function attempts(request: Request): Promise<Response> {
     }
 }
 
+/**
+ * Makes a key for one import: 24 hours, the import tools only, and bound to the first coworker it
+ * creates. The prompt carrying the key is returned once, with the key's one-time secret.
+ */
+async function importKey(request: Request): Promise<Response> {
+    try {
+        const runtime = await authenticateDesktopRequest(request)
+        const db = await openDesktopDatabase(runtime.dataRoot)
+        if (request.method === 'GET') {
+            workspace(runtime, requestedWorkspace(request))
+            return json({ keyIds: await listDesktopImportKeyIds(db) })
+        }
+        if (request.method !== 'POST') throw new DesktopHttpError(405, 'Method not allowed.')
+        const input = desktopImportKeyRequestSchema.parse(await readDesktopJson(request, 16 * 1024))
+        workspace(runtime, input.workspaceId)
+        const endpoint = externalMcpEndpoint(externalMcpListenerViewSchema.parse(await readDesktopExternalMcpListener(runtime)))
+        if (!endpoint) throw new DesktopHttpError(409, 'Turn on connections from outside clients first.')
+        const created = externalMcpCreateResultSchema.parse(await createDesktopExternalMcpKey(runtime, {
+            requestId: input.requestId, workspaceId: input.workspaceId, name: `Import · ${importSource(input.source).label}`,
+            scopes: [...DESKTOP_IMPORT_KEY_SCOPES], expiresAt: new Date(Date.now() + IMPORT_KEY_TTL_MS).toISOString(),
+        }))
+        if (!created.ok) return json(created, 409)
+        if (created.key.workspaceId !== input.workspaceId || created.receipt.requestId !== input.requestId) throw new DesktopHttpError(409, EXTERNAL_MCP_COPY.changed)
+        try {
+            await markDesktopImportKey(db, created.key.keyId, input.source)
+        } catch {
+            // A key that could not be recorded as an import key would be an ordinary key with these
+            // scopes: it is revoked before its secret is ever shown.
+            await revokeDesktopExternalMcpKey(runtime, { requestId: crypto.randomUUID(), workspaceId: input.workspaceId, keyId: created.key.keyId }).catch(() => {})
+            throw new DesktopHttpError(503, EXTERNAL_MCP_COPY.uncertain)
+        }
+        const result: DesktopImportKeyResult = {
+            ok: true, key: created.key,
+            prompt: created.secret ? buildImportPrompt(input.source, endpoint, null, { header: `Authorization: Bearer ${created.secret}` }) : null,
+        }
+        return json(result)
+    } catch (error) {
+        return failure(error)
+    }
+}
+
+export const handleDesktopExternalMcpImport = importKey
 export const handleDesktopExternalMcpKeys = keys
 export const handleDesktopExternalMcpRevoke = revoke
 export const handleDesktopExternalMcpListener = listener

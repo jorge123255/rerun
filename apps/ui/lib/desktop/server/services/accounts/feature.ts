@@ -25,6 +25,8 @@ export type AccountCatalogRow = {
 
 export type AccountFeatureDeps = AccountLifecycleDeps & {
     catalog: AccountCatalogPort & { page(query: { text?: string; category?: string; offset: number; limit: number }): Promise<{ total: number; services: AccountCatalogRow[] }> }
+    adoptedApp?(owner: string, engineId: string, slug: string): Promise<boolean>
+    vaultMethods?(slug: string): readonly string[]
     agent(coworkerId: string): Promise<{ id: string; engineAgentId: string } | null>
 }
 
@@ -83,6 +85,10 @@ export function accountFeature(deps: AccountFeatureDeps) {
             const manifest = await deps.catalog.manifest(slug)
             if (!manifest || manifest.slug !== slug) throw new Error(M.unknownService)
             const accounts = (await lifecycle.list(binding, signal)).filter(account => account.slug === slug)
+            const vaultManaged = !accounts.length && (
+                !!deps.vaultMethods?.(manifest.slug).length
+                || await deps.adoptedApp?.(binding.coworkerId, binding.engineOwnerId, manifest.slug)
+            )
             const availability = manifest.authMethods.map(method => accountMethodAvailability(manifest, method.id))
             return {
                 slug: manifest.slug,
@@ -95,6 +101,7 @@ export function accountFeature(deps: AccountFeatureDeps) {
                 authMethods: manifest.authMethods.map(method => ({ ...summarize(method), availability: availability.find(item => item.id === method.id) ?? { id: method.id, supported: false, reason: M.method } })),
                 methodAvailability: availability,
                 accounts,
+                ...(vaultManaged && { vaultManaged: true as const }),
                 localLimitations: 'Local HTTP accounts support anonymous, header credentials, and public OAuth sign-in. SSE supports anonymous or Bearer credentials. Hosted methods and local catalog programs are unavailable. Saving configuration does not enable Apps.',
             }
         },
@@ -106,6 +113,18 @@ export function accountFeature(deps: AccountFeatureDeps) {
         async mutate(coworkerId: string, body: unknown, signal: AbortSignal) {
             const binding = await bindingFor(coworkerId, signal)
             const input = desktopServiceAccountMutationSchema.parse(body)
+            if (input.action === 'install') {
+                const { slug } = input.intent
+                const supportedInVault = deps.vaultMethods?.(slug).includes(input.authMethodId)
+                const adopted = input.intent.kind === 'new' && await deps.adoptedApp?.(binding.coworkerId, binding.engineOwnerId, slug)
+                if (supportedInVault || adopted) {
+                    const accounts = await lifecycle.list(binding, signal)
+                    if (adopted && !accounts.some(account => account.key === slug)
+                        || supportedInVault && !accounts.some(account => account.slug === slug)) {
+                        throw new Error(M.vaultManaged)
+                    }
+                }
+            }
             return lifecycle.mutate(binding, input, signal)
         },
         async handle(request: Request, coworkerId: string): Promise<Response> {

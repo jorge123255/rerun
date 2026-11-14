@@ -3,8 +3,8 @@ import { desktopRoute } from '@/lib/desktop/server/http'
 
 export const dynamic = 'force-dynamic'
 
-// Bounded read-only: the finished-run cards, never a full history scan. `limit` clamps server-side
-// and `before` is the stable (completed_at, id) cursor the projection returns as `nextCursor`.
+// Reads a bounded window of unread results. The cursor advances through raw terminal rows so
+// older unread results can be reached even when newer results have been acknowledged.
 export async function GET(request: Request): Promise<Response> {
     return desktopRoute(request, async runtime => {
         const url = new URL(request.url)

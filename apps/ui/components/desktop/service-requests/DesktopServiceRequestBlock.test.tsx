@@ -149,3 +149,77 @@ test('owner/source replacement aborts the matching Apps flow and ignores its lat
     expect(fetcher.mock.calls).toHaveLength(reads)
     expect(first.onAccepted).not.toHaveBeenCalled()
 })
+
+test('selects the exact named Vault account and waits for the canonical Finish response', async () => {
+    let detail = serviceRequestFixture()
+    const selected = { key: 'vault:person-2', slug: 'fixture', label: 'Support', revision: installationRevision }
+    detail.services[0].vaultAccounts = [{ ...selected, key: 'vault:person-1', label: 'Sales' }, selected]
+    const sent: DesktopServiceRequestMutation[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+        if (init.method === 'GET') return Response.json({ request: detail })
+        const input = JSON.parse(String(init.body)) as DesktopServiceRequestMutation
+        sent.push(input)
+        if (input.action === 'progress') {
+            detail = { ...detail, choices: input.choices, revision: nextCardRevision }
+            return Response.json({ serviceRequestId: scope.serviceRequestId, revision: nextCardRevision, currentIndex: 0, choices: input.choices })
+        }
+        return finishFixtureResponse(input.requestId)
+    }))
+    const { onAccepted } = await mount()
+    expect(button('New account')).toBeTruthy()
+    expect(button('Use Sales')).toBeTruthy()
+    await act(async () => { button('Use Support').click(); button('Use Support').click() })
+    await flush()
+    expect(sent.map(item => item.action)).toEqual(['progress', 'finish'])
+    for (const item of sent) expect(item.choices).toEqual([{ slug: 'fixture', choice: 'use-connection',
+        installation: { key: selected.key, revision: selected.revision } }])
+    expect(onAccepted).toHaveBeenCalledTimes(1)
+})
+
+test('a Vault-supported suggestion opens the scoped setup and uses only the checked account it returns', async () => {
+    let detail = serviceRequestFixture()
+    detail.services[0].vaultAccounts = [{ key: 'vault:old', slug: 'fixture', label: 'Existing', revision: installationRevision }]
+    const catalog = detail.services[0].catalog
+    if (catalog.status !== 'available') throw new Error('Expected a catalog app')
+    catalog.vaultSetup = true
+    const newAccount = { key: 'vault:new', slug: 'fixture', label: 'Fresh', revision: installationRevision }
+    const sent: DesktopServiceRequestMutation[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+        if (init.method === 'GET') return Response.json({ request: detail })
+        const input = JSON.parse(String(init.body)) as DesktopServiceRequestMutation
+        sent.push(input)
+        if (input.action === 'progress') {
+            detail = { ...detail, choices: input.choices, revision: nextCardRevision }
+            return Response.json({ serviceRequestId: scope.serviceRequestId, revision: nextCardRevision, currentIndex: 0, choices: input.choices })
+        }
+        return finishFixtureResponse(input.requestId)
+    }))
+    const onOpenApps = vi.fn<DesktopOpenApps>(async () => {
+        detail.services[0].vaultAccounts?.push(newAccount)
+        return { status: 'closed', account: { key: newAccount.key, revision: newAccount.revision } }
+    })
+    const { onAccepted } = await mount({ onOpenApps })
+    await act(async () => button('New account').click())
+    await flush()
+    expect(onOpenApps).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ destination: 'vault', slug: 'fixture' }))
+    expect(sent.map(item => item.action)).toEqual(['progress', 'finish'])
+    for (const item of sent) expect(item.choices).toEqual([{ slug: 'fixture', choice: 'use-connection',
+        installation: { key: newAccount.key, revision: newAccount.revision } }])
+    expect(onAccepted).toHaveBeenCalledOnce()
+})
+
+test('an unchecked account returned from Vault never sends a decision', async () => {
+    const detail = serviceRequestFixture()
+    const catalog = detail.services[0].catalog
+    if (catalog.status !== 'available') throw new Error('Expected a catalog app')
+    catalog.vaultSetup = true
+    const request = vi.fn(async () => Response.json({ request: detail }))
+    vi.stubGlobal('fetch', request)
+    const onOpenApps: DesktopOpenApps = async () => ({ status: 'closed', account: { key: 'vault:unchecked', revision: installationRevision } })
+    const { onAccepted } = await mount({ onOpenApps })
+    await act(async () => button('Connect').click())
+    await flush()
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(onAccepted).not.toHaveBeenCalled()
+    expect(document.querySelector('[role=alert]')?.textContent).toContain('This account is unavailable')
+})

@@ -5,6 +5,7 @@ import { desktopApp } from '../desktop/policy.js'
 import { canonicalHitlName, isHitlToolName } from '../tools/builtin/hitl.js'
 import type { QuickRepliesCapture } from '../agents/quick-replies-stream.js'
 import type { AgentRun, RunOutcome } from './loop.js'
+import { apiCreditsMessage } from './provider-errors.js'
 
 // A settled run whose provider stream never closes would otherwise keep the SSE response and the
 // replay buffer alive: the dashboard reconnects to a stream that will never emit again, and the
@@ -127,6 +128,8 @@ export function mergeRunStream(writer: UIMessageStreamWriter, run: AgentRun, met
                         // registerRun already starts desktop turns before history preparation.
                         sendStart: !desktopApp(),
                         sendSources: desktopApp(),
+                        onError: error => apiCreditsMessage(meta.provider, error)
+                            ?? (error instanceof Error ? error.message : typeof error === 'string' ? error : JSON.stringify(error) ?? 'unknown error'),
                         messageMetadata: ({ part }) => {
                             if (part.type === 'finish-step') {
                                 const usage = addUsage(undefined, part.usage)

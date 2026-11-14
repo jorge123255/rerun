@@ -1,5 +1,5 @@
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
-import { readCoworkerImage } from '@/lib/desktop/server/coworker-files'
+import { assertWorkspaceLinkOwner, readCoworkerImage } from '@/lib/desktop/server/coworker-files'
 import { readCoworkerPreviewImage } from '@/lib/desktop/server/preview-image'
 import { desktopRoute } from '@/lib/desktop/server/http'
 
@@ -15,6 +15,9 @@ export function GET(request: Request, { params }: Context) {
         const url = new URL(request.url)
         const animation = url.searchParams.getAll('animation')
         if (animation.length > 1 || (animation.length === 1 && animation[0] !== '1')) throw new DesktopHttpError(400, 'Send the image to preview.')
+        const owners = url.searchParams.getAll('workspaceOwner')
+        if (owners.length > 1) throw new DesktopHttpError(400, 'Send the image to preview.')
+        if (owners.length === 1) await assertWorkspaceLinkOwner(runtime, agentId, owners[0])
         const identity = url.searchParams.get('identity')
         const path = url.searchParams.get('path') ?? ''
         const image = animation.length === 1

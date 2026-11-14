@@ -92,6 +92,10 @@ const inFlight = new Map<string, Promise<void>>()
 const attemptedAt = new Map<string, number>()
 const desktopAttemptedAt = new WeakMap<LoadedConnection, number>()
 
+export function pendingCodexPlanLimits(connectionId: string): Promise<void> | undefined {
+    return inFlight.get(connectionId)
+}
+
 export function refreshCodexPlanLimits(connection: LoadedConnection | null): Promise<void> {
     if (!connection || connection.config.provider !== 'codex') return Promise.resolve()
     const desktop = desktopApp()

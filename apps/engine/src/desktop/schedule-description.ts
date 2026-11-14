@@ -1,5 +1,4 @@
 import { generateText, NoObjectGeneratedError, Output } from 'ai'
-import { Cron } from 'croner'
 import { z } from 'zod'
 import { providerSchema } from '@rerun/contracts'
 import { isUsable, resolveConfiguredModel, resolveRunModel } from '../agents/availability.js'
@@ -8,8 +7,10 @@ import { modelFor } from '../agents/providers.js'
 import type { LoadedAgent } from '../agents/types.js'
 import { ensureCliAuth } from '../connections/cli-auth.js'
 import { findConnection } from '../connections/registry.js'
+import { sameConnectionSnapshot } from '../connections/snapshot.js'
+import type { LoadedConnection } from '../connections/types.js'
 import { HttpError } from '../lib/errors.js'
-import { isValidTimezone } from '../schedules/next-run.js'
+import { computeNextRun, isValidTimezone } from '../schedules/next-run.js'
 import { readSchedule } from '../schedules/loader.js'
 import { beginDesktopApiConnectionWork } from './api-connections/admission.js'
 import { assertDesktopProvider } from './policy.js'
@@ -64,15 +65,17 @@ function extractJson(text: string): unknown {
     try { return JSON.parse(match[0]) } catch { return null }
 }
 
-function parseModelSchedule(text: string): DesktopScheduleDescriptionResult {
+function parseModelSchedule(text: string, input: DesktopScheduleDescriptionInput): DesktopScheduleDescriptionResult {
     const parsed = modelOutputSchema.safeParse(extractJson(text))
     if (!parsed.success) return invalid()
     const value = parsed.data
     if (value.timezone && !isValidTimezone(value.timezone)) return invalid()
+    const now = Math.max(Date.now(), Date.parse(input.nowIso))
     if (value.mode === 'cron') {
         if (!value.cron || value.runAt) return invalid()
-        try { new Cron(value.cron, value.timezone ? { timezone: value.timezone } : undefined).nextRun() } catch { return invalid() }
-    } else if (!value.runAt || value.cron || !z.string().datetime({ offset: true }).safeParse(value.runAt).success) return invalid()
+        if (!computeNextRun({ cron: value.cron, timezone: value.timezone ?? input.timezone }, new Date(now)).ok) return invalid()
+    } else if (!value.runAt || value.cron || !z.string().datetime({ offset: true }).safeParse(value.runAt).success
+        || Date.parse(value.runAt) <= now) return invalid()
     return { status: 'ok', value }
 }
 
@@ -98,6 +101,15 @@ Respond with ONLY a JSON object, no prose, no code fences:
 { "mode": "cron" | "runAt", "cron": "...", "runAt": "...", "timezone": "...", "label": "..." }`
 }
 
+async function assertCurrentScheduleConnection(expected: LoadedConnection, model: string, signal: AbortSignal) {
+    signal.throwIfAborted()
+    const current = await findConnection(expected.id)
+    signal.throwIfAborted()
+    if (!current || !sameConnectionSnapshot(expected, current) || !isUsable(current, model)) {
+        throw new HttpError(409, 'The selected connection changed. Preview was not accepted.')
+    }
+}
+
 async function completeDesktopScheduleDescription(agent: LoadedAgent, input: DesktopScheduleDescriptionInput, signal: AbortSignal): Promise<string> {
     const releaseWork = beginDesktopApiConnectionWork()
     if (!releaseWork) throw new HttpError(409, 'A provider connection is being removed. Nothing new was started.')
@@ -111,6 +123,7 @@ async function completeDesktopScheduleDescription(agent: LoadedAgent, input: Des
         signal.throwIfAborted()
         const releaseAuth = await ensureCliAuth(resolved.provider, connection)
         try {
+            await assertCurrentScheduleConnection(connection, resolved.model, signal)
             let text: string
             try {
                 const result = await generateText({
@@ -122,11 +135,7 @@ async function completeDesktopScheduleDescription(agent: LoadedAgent, input: Des
                 if (NoObjectGeneratedError.isInstance(error) && error.text) text = error.text
                 else throw error
             }
-            signal.throwIfAborted()
-            const current = await findConnection(connection.id)
-            if (current !== connection && (!connection.custom || current?.custom?.revision !== connection.custom.revision)) {
-                throw new HttpError(409, 'The selected connection changed. Preview was not accepted.')
-            }
+            await assertCurrentScheduleConnection(connection, resolved.model, signal)
             return text
         } finally { releaseAuth() }
     } finally { releaseWork() }
@@ -153,7 +162,7 @@ export async function describeDesktopSchedule(agentId: string, input: DesktopSch
             signal.throwIfAborted()
             if (desktopScheduleDefinitionRevision(latest) !== parsed.expectedRevision) return changed()
         }
-        return parseModelSchedule(text)
+        return parseModelSchedule(text, parsed)
     } catch (error) {
         if (signal.aborted) throw error
         return unavailable()

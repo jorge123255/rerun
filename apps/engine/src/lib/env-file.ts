@@ -1,4 +1,4 @@
-import { readFile, writeFile, chmod, rename } from 'node:fs/promises'
+import { readFile, writeFile, chmod, rename, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { badRequest } from './errors.js'
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
@@ -65,10 +65,12 @@ export async function readEnvFile(path: string): Promise<Record<string, string>>
     return parseEnvFile(unseal(await readFile(path, 'utf8')))
 }
 
-export async function writeEnvFile(path: string, env: Record<string, string>): Promise<void> {
+export async function writeEnvFile(path: string, env: Record<string, string>, beforeReplace?: () => void): Promise<void> {
     const tmp = `${path}.tmp`
     const text = serializeEnv(env)
     await writeFile(tmp, desktopApp() ? seal(text) : text, { encoding: 'utf8', mode: 0o600 })
     await chmod(tmp, 0o600)
+    try { beforeReplace?.() }
+    catch (error) { await rm(tmp, { force: true }); throw error }
     await rename(tmp, path)
 }

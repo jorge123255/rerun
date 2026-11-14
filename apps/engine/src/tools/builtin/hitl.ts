@@ -89,13 +89,27 @@ export function hitlTurnIsOver(steps: ReadonlyArray<StepLike>, cli: boolean): bo
     return lastStepHasHitlCall(steps) && (cli || !hitlStepLacksMessage(steps))
 }
 
+// A model that writes its message first is left to judge whether it did: the card may have come
+// after a message, or after nothing.
 export const HITL_ACK = {
     status: 'delivered',
     instruction: 'Delivered to the user. Call no other tool. If you wrote nothing to the user before this call, they are looking at a bare card: write now, as your normal message, what you found, why you ask, and in full what the question is about, then end your turn. If you already did, end your turn now. The user will reply in the chat and you will continue from their reply.',
 } as const
 
+// A model that calls first is told, not asked: a Claude's note before a call comes back as a
+// thinking block the chat folds away, so a model that wrote one believes the user has read it and
+// ends its turn on a line pointing at the card. The message is expected now, whatever came before.
+export const HITL_ACK_CALL_FIRST = {
+    status: 'delivered',
+    instruction: 'Delivered to the user. Whatever you wrote before this call was at most a note, and a note written before a call is not shown to them: they are looking at the card. Write your message now, as your normal reply: what you found, why you ask, and in full what the card asks about, then end your turn. The card shows below that message, so point to it as the card below, never above. Call no other tool. The user will reply in the chat and you will continue from their reply.',
+} as const
+
+export function hitlAck(order: TurnOrder): typeof HITL_ACK | typeof HITL_ACK_CALL_FIRST {
+    return order === 'call-first' ? HITL_ACK_CALL_FIRST : HITL_ACK
+}
+
 function hitlTool<S extends z.ZodTypeAny>(order: TurnOrder, description: string, inputSchema: S) {
-    return tool({ description: `${description} ${cardCallTiming(order)}`, inputSchema, execute: async () => HITL_ACK })
+    return tool({ description: `${description} ${cardCallTiming(order)}`, inputSchema, execute: async () => hitlAck(order) })
 }
 
 export function jsonTolerantArray<S extends z.ZodTypeAny>(schema: S) {

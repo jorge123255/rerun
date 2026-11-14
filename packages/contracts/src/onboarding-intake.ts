@@ -47,7 +47,7 @@ export function intakeSteps(knownFirstName: string | null | undefined, websiteSk
 
 /** Whether a step has something in it, which is what the stepper's dots read. */
 export function stepAnswered(step: IntakeStep, draft: IntakeDraft): boolean {
-    if (step === 'company') return !!draft.companyUrl.trim() || draft.websiteSkipped
+    if (step === 'company') return draft.websiteSkipped || (!!draft.companyUrl.trim() && !platformHost(draft.companyUrl))
     if (step === 'industry') return !!draft.industry || !!draft.industryLabel.trim()
     if (step === 'role') return !!draft.position.trim()
     return !!draft.firstName.trim()
@@ -61,10 +61,11 @@ export function furthestReachable(steps: IntakeStep[], draft: IntakeDraft): numb
 
 export function toIntake(draft: IntakeDraft, knownFirstName: string | null | undefined, decided: TemplateCategory | null = null): ForemanIntakeRequest {
     const trim = (value: string) => value.trim() || null
+    const platform = platformHost(draft.companyUrl)
     return {
-        companyUrl: trim(draft.companyUrl),
+        companyUrl: platform ? null : trim(draft.companyUrl),
         industry: draft.industry,
-        decidedIndustry: decided,
+        decidedIndustry: platform ? null : decided,
         industryLabel: trim(draft.industryLabel),
         position: trim(draft.position),
         firstName: trim(draft.firstName) ?? (knownFirstName?.trim() || null),
@@ -73,7 +74,8 @@ export function toIntake(draft: IntakeDraft, knownFirstName: string | null | und
 
 /** What the fast decision should be asked about: the site if there is one, else their own words. */
 export function industryHint(draft: IntakeDraft): string | null {
-    return draft.companyUrl.trim() || draft.industryLabel.trim() || null
+    const site = platformHost(draft.companyUrl) ? '' : draft.companyUrl.trim()
+    return site || draft.industryLabel.trim() || null
 }
 
 export function isTemplateCategory(value: string): value is TemplateCategory {
@@ -117,7 +119,26 @@ export function rolesForIndustry(industry: string | null | undefined): string[] 
 const SITE = /^(https?:\/\/)?[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/.*)?$/i
 
 export function looksLikeSite(input: string): boolean {
-    return SITE.test(input.trim())
+    return SITE.test(input.trim()) && !platformHost(input)
+}
+
+// Social links describe the platform. Page hosts can still serve an individual company's site.
+const PLATFORM_DOMAINS = ['linkedin.com', 'lnkd.in', 'facebook.com', 'fb.com', 'fb.me', 'instagram.com', 'x.com', 'twitter.com', 'tiktok.com', 'youtube.com', 'youtu.be', 'pinterest.com', 'threads.net', 'reddit.com', 'snapchat.com', 'whatsapp.com', 'wa.me', 'messenger.com', 't.me', 'telegram.org', 'discord.com', 'discord.gg', 'google.com', 'g.page', 'goo.gl']
+const PAGE_HOSTS = new Set(['linktr.ee', 'wix.com', 'wixsite.com', 'squarespace.com', 'wordpress.com', 'blogspot.com', 'medium.com', 'substack.com', 'notion.site', 'carrd.co', 'github.io', 'shopify.com', 'myshopify.com'])
+
+export function platformHost(input: string): string | null {
+    const address = input.trim()
+    if (!address) return null
+    let host: string
+    try {
+        const url = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(address) ? address : 'https://' + address)
+        if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+        host = url.hostname.replace(/\.$/, '').replace(/^www\./, '')
+    } catch {
+        return null
+    }
+    if (PAGE_HOSTS.has(host)) return host
+    return PLATFORM_DOMAINS.find(domain => host === domain || host.endsWith('.' + domain)) ?? null
 }
 
 // How many coworkers the starter pack lets them pick: the ones a trial runs at once.

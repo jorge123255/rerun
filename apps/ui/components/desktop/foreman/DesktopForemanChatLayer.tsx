@@ -1,15 +1,24 @@
 'use client'
 
+import { CompactionStep } from '@/components/chat/CompactionBlock'
+import { ChatActivityPresentation } from '@/components/chat/ChatActivityPresentation'
+import { LOADER_ORB_SIZE, Orb } from '@rerun/ui/foreman'
+import type { DesktopCompactionReceipt } from '@rerun/contracts'
 import { useDesktopLocale } from '../DesktopLocale'
 
-import type { DesktopAnsweredQuestionRecap } from '@/lib/desktop/foreman/answered-question-recap'
-import { DesktopForemanAnsweredQuestion } from './transcript/DesktopForemanAnsweredQuestion'
+import type { DesktopSavedChatDecision } from '@/lib/desktop/saved-chat-decision'
+import { DesktopSavedDecisionReceipt } from '../DesktopSavedDecisionReceipt'
 import type { ForemanHistoryPart } from './transcript/parts'
 import { DesktopForemanHistoryMessage } from './transcript/DesktopForemanHistoryMessage'
+import { DesktopForemanLiveReply } from './DesktopForemanLiveReply'
+import type { DesktopForemanLiveReply as LiveReply } from '@/lib/desktop/foreman/live-reply'
 import { DesktopForemanAnswerActions } from './DesktopForemanAnswerActions'
 
 import { AnimatePresence, motion } from 'motion/react'
-import type { ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { Button } from '@/components/ui/button'
+import { DesktopConversationFind } from '../DesktopConversationFind'
+import { DesktopDocumentLightbox } from '../document-attachments/DesktopDocumentLightbox'
 import { Conversation, ConversationContent, ConversationScrollButton } from '@/components/ai-elements/conversation'
 import { cn } from '@/lib/utils'
 import { DesktopForemanDocsTool } from './docs/DesktopForemanDocsTool'
@@ -26,29 +35,65 @@ import { DesktopForemanWelcome } from './DesktopForemanWelcome'
 import { DesktopPlanCard } from './plan/DesktopPlanCard'
 import { DesktopForemanBuildProgress } from './DesktopForemanBuildProgress'
 import { DesktopForemanNextSteps } from './DesktopForemanNextSteps'
-import type { MessageFeedbackRating } from '@rerun/contracts'
+import type { DesktopCoworkerMention, DesktopDocumentReference, MessageFeedbackRating } from '@rerun/contracts'
+import { DesktopSelectedMentionText } from '../mentions/DesktopSelectedMentionText'
 
 export type DesktopForemanMessage = {
     id: string
     role: 'user' | 'assistant' | 'system'
     text: string
+    sourceRunId?: string
     docs?: UIMessage['parts']
     history?: readonly ForemanHistoryPart[]
-    answeredQuestions?: readonly DesktopAnsweredQuestionRecap[]
+    savedDecision?: DesktopSavedChatDecision
+    compaction?: DesktopCompactionReceipt
+    documents?: readonly DesktopDocumentReference[]
+    coworkerMentions?: readonly DesktopCoworkerMention[]
+}
+
+function RunCardsSlot({ runId, register }: { runId: string; register: (runId: string, node: HTMLDivElement | null) => void }) {
+    const ref = useCallback((node: HTMLDivElement | null) => register(runId, node), [register, runId])
+    return <div className="flex min-w-0 flex-col gap-3 empty:hidden" ref={ref} />
+}
+
+function ForemanTranscriptFind({ transcript, hidden, onClose }: {
+    transcript: RefObject<HTMLDivElement | null>
+    hidden?: boolean
+    onClose?: () => void
+}) {
+    const [open, setOpen] = useState(false)
+    useEffect(() => {
+        const find = (event: Event) => {
+            if (event.defaultPrevented) return
+            event.preventDefault()
+            setOpen(true)
+        }
+        window.addEventListener('rerun-desktop-conversation-find', find)
+        return () => window.removeEventListener('rerun-desktop-conversation-find', find)
+    }, [])
+    return <DesktopConversationFind open={open && !hidden} transcript={transcript} onOpenChange={next => {
+        setOpen(next)
+        if (!next) onClose?.()
+    }} />
 }
 
 export function DesktopForemanChatLayer({
     messages,
+    active = true,
+    findScope, findHidden, onCloseFind,
     streaming,
+    liveReply,
+    writing,
     restored,
     question,
-    emptyWelcome,
+    emptyWelcome, emptyContent,
     planSnapshot,
     decisionStatus,
     build,
     nextSteps,
     leadState,
     error,
+    runNotice,
     onConfirmPlan,
     onAskChanges,
     onRetryDecision,
@@ -60,21 +105,30 @@ export function DesktopForemanChatLayer({
     onOpenCoworker,
     onOpenBox,
     answerFeedback,
+    replyRetry,
+    renderChildWork,
     children,
     className,
 }: {
     messages: DesktopForemanMessage[]
+    active?: boolean
+    findScope?: string
+    findHidden?: boolean
+    onCloseFind?: () => void
     streaming?: boolean
+    liveReply?: LiveReply
+    writing?: boolean
     restored: boolean
     question?: ReactNode
     emptyWelcome?: boolean
+    emptyContent?: ReactNode
     planSnapshot: DesktopTrustedPlanSnapshot | null
     decisionStatus: DesktopPlanDecisionStatus
     build: DesktopForemanBuildProgressView | null
     nextSteps: DesktopForemanNextStep[]
     leadState: DesktopLeadSetupState
-    live: boolean
     error?: string | null
+    runNotice?: ReactNode
     onConfirmPlan: () => void
     onAskChanges: () => void
     onRetryDecision?: () => void
@@ -87,21 +141,40 @@ export function DesktopForemanChatLayer({
     onOpenBox?: (spaceId: string) => void
     /** Local thumbs for a restored saved answer; absent on read-only or still-live transcripts. */
     answerFeedback?: { ratingOf: (messageId: string) => MessageFeedbackRating | null; onRate: (messageId: string, rating: MessageFeedbackRating) => void; disabled?: boolean } | null
+    replyRetry?: { review: (messageId: string) => void; disabled: boolean }
+    renderChildWork?: (slots: ReadonlyMap<string, HTMLDivElement>) => ReactNode
     children?: ReactNode
     className?: string
 }) {
     const { t } = useDesktopLocale()
+    const transcript = useRef<HTMLDivElement>(null)
+    const [preview, setPreview] = useState<{ messageId: string; index: number; trigger: HTMLButtonElement } | null>(null)
+    const [runSlots, setRunSlots] = useState<ReadonlyMap<string, HTMLDivElement>>(() => new Map())
+    const register = useCallback((runId: string, node: HTMLDivElement | null) => {
+        setRunSlots(previous => {
+            if ((previous.get(runId) ?? null) === node) return previous
+            const next = new Map(previous)
+            if (node) next.set(runId, node)
+            else next.delete(runId)
+            return next
+        })
+    }, [])
+    const previewDocuments = preview && messages.find(message => message.id === preview.messageId)?.documents
     const plan = projectPlanCard(planSnapshot)
-    const empty = messages.length === 0 && !error && !plan.view && !build && !question
+    const previewReply = active && restored && streaming ? liveReply : undefined
+    const hasRunningStep = previewReply?.steps?.some(step => step.status === 'running')
+    const empty = messages.length === 0 && !previewReply && !error && !runNotice && !plan.view && !build && !question
 
     return (
         <div className={cn('pointer-events-auto relative flex min-h-0 w-full flex-1 flex-col', className)}>
             <AnimatePresence>
-                {emptyWelcome && empty && restored && <DesktopForemanWelcome key="welcome" thinking={streaming} />}
+                {emptyWelcome && !emptyContent && empty && restored && <DesktopForemanWelcome key="welcome" thinking={streaming} />}
             </AnimatePresence>
             {/* Match ForemanChatLayer: resize follows the latest message until the reader scrolls up. */}
             <Conversation className="min-h-0" aria-label={t('foreman.conversation')}>
-                <ConversationContent scrollClassName="overflow-y-auto" className="mx-auto w-full max-w-xl justify-end gap-4 px-3 pb-5 pt-24 md:min-h-full">
+                <ConversationContent scrollClassName="overflow-y-auto md:[container-type:size]" className="mx-auto w-full max-w-xl justify-end gap-4 px-3 pb-5 pt-24 md:min-h-full">
+                    {empty && restored && !streaming && emptyContent}
+                    {findScope && <ForemanTranscriptFind key={findScope} transcript={transcript} hidden={findHidden} onClose={onCloseFind} />}
                     {!restored && empty && (
                         <div aria-hidden className="flex flex-col gap-4">
                             <div className="h-3.5 w-1/2 animate-pulse rounded bg-muted" />
@@ -109,30 +182,50 @@ export function DesktopForemanChatLayer({
                             <div className="h-3.5 w-2/3 animate-pulse rounded bg-muted" />
                         </div>
                     )}
-                    {messages.map(message => (
-                        <div
-                            key={message.id}
+                    <div ref={transcript} className="contents">{messages.map(message => (
+                        <Fragment key={message.id}>
+                        {restored && message.role === 'user' && message.savedDecision ? (
+                            <div data-chat-find-message className="contents">
+                                <DesktopSavedDecisionReceipt decision={message.savedDecision} documents={message.documents ?? []}
+                                    onOpenDocument={active ? (index, trigger) => setPreview({ messageId: message.id, index, trigger }) : undefined} />
+                            </div>
+                        ) : <div
                             className={cn(
                                 'max-w-[95%] rounded-lg px-4 py-3 text-sm',
                                 message.role === 'user' ? 'ml-auto bg-secondary' : 'bg-transparent text-foreground',
                             )}
                         >
+                            {restored && message.role === 'user' && !!message.documents?.length && <div className="mb-1 flex flex-wrap gap-1">
+                                {message.documents.map((document, index) => <Button key={document.attachmentId} type="button" variant="secondary" size="sm"
+                                    onClick={event => setPreview({ messageId: message.id, index, trigger: event.currentTarget })}>{document.name}</Button>)}
+                            </div>}
                             {restored && message.history ? <>
-                                <DesktopForemanHistoryMessage history={message.history} />
-                                <DesktopForemanAnsweredQuestion recaps={message.answeredQuestions ?? []} />
-                                {message.role === 'assistant' && message.text.trim() && answerFeedback && (
+                                {message.role === 'user' && message.coworkerMentions?.length
+                                    ? <div data-chat-find-message className="whitespace-pre-wrap wrap-anywhere"><DesktopSelectedMentionText text={message.text} metadata={message} /></div>
+                                    : <DesktopForemanHistoryMessage history={message.history} userLinks={message.role === 'user'}
+                                        draftActions={active && !streaming && message.role === 'assistant'} />}
+                                {message.role === 'assistant' && message.text.trim() && (
                                     <DesktopForemanAnswerActions
-                                        rating={answerFeedback.ratingOf(message.id)}
-                                        disabled={!!streaming || answerFeedback.disabled}
-                                        onRate={rating => answerFeedback.onRate(message.id, rating)}
+                                        copyText={active && !streaming ? message.text : undefined}
+                                        rating={answerFeedback?.ratingOf(message.id)}
+                                        disabled={!!streaming || answerFeedback?.disabled}
+                                        onRate={answerFeedback ? rating => answerFeedback.onRate(message.id, rating) : undefined}
+                                        onReviewRetry={replyRetry && /^engine-[A-Za-z0-9_-]{1,128}$/.test(message.id) ? () => replyRetry.review(message.id) : undefined}
+                                        retryDisabled={replyRetry?.disabled}
                                     />
                                 )}
                             </> : <>
-                                {message.text}
+                                <div data-chat-find-message className="contents">{message.role === 'user'
+                                    ? <DesktopSelectedMentionText text={message.text} metadata={message} /> : message.text}</div>
                                 {message.docs?.map((part, index) => <DesktopForemanDocsTool key={index} part={part as import('ai').ToolUIPart} restored={restored} />)}
                             </>}
-                        </div>
-                    ))}
+                        </div>}
+                        {restored && message.role === 'user' && message.compaction && <CompactionStep data={message.compaction} />}
+                        {renderChildWork && restored && message.role === 'user' && message.sourceRunId &&
+                            <RunCardsSlot runId={message.sourceRunId} register={register} />}
+                        </Fragment>
+                    ))}</div>
+                    {previewReply && <DesktopForemanLiveReply key={previewReply.runId} reply={previewReply} />}
                     {question}
                     {plan.view && plan.revisionId && (
                         <DesktopPlanCard
@@ -159,16 +252,25 @@ export function DesktopForemanChatLayer({
                             />
                         </motion.div>
                     )}
-                    {streaming && <p className="text-xs text-muted-foreground">{t('foreman.working')}</p>}
+                    {active && restored && streaming && (writing || !hasRunningStep) && (
+                        <ChatActivityPresentation activity={writing ? t('chatActivity.writing') : null}
+                            labels={[t('chatActivity.thinking'), t('chatActivity.processing'), t('chatActivity.crafting')]}
+                            indicator={<Orb size={LOADER_ORB_SIZE} state={writing ? 'speaking' : 'thinking'} facing="right" className="shrink-0" />}
+                            announce />
+                    )}
                     {error && (
                         <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
                             {error}
                         </div>
                     )}
+                    {renderChildWork?.(runSlots)}
+                    {runNotice}
                     {children}
                 </ConversationContent>
                 <ConversationScrollButton />
             </Conversation>
+            {active && preview && previewDocuments && <DesktopDocumentLightbox attachments={previewDocuments} index={preview.index}
+                onIndexChange={index => setPreview({ ...preview, index })} onClose={() => setPreview(null)} returnFocus={() => preview.trigger.focus()} />}
         </div>
     )
 }

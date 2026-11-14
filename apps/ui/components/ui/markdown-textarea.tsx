@@ -16,6 +16,7 @@ type MarkdownTextareaProps = Omit<ComponentProps<'textarea'>, 'value' | 'onChang
     helperText?: string
     dialogTitle: string
     dialogDescription?: string
+    editorLabels?: { open: string; done: string }
 }
 
 /**
@@ -32,6 +33,7 @@ export function MarkdownTextarea({
     helperText,
     dialogTitle,
     dialogDescription,
+    editorLabels = { open: 'Open the full editor', done: 'Done' },
     className,
     id,
     disabled,
@@ -58,8 +60,8 @@ export function MarkdownTextarea({
                     <button
                         type="button"
                         onClick={handleExpand}
-                        aria-label="Open the full editor"
-                        title="Open the full editor"
+                        aria-label={editorLabels.open}
+                        title={editorLabels.open}
                         className="absolute top-1.5 right-1.5 z-10 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
                     >
                         <Maximize2Icon className="size-3.5" />
@@ -73,6 +75,7 @@ export function MarkdownTextarea({
                 initialValue={initial}
                 title={dialogTitle}
                 description={dialogDescription}
+                closeLabel={editorLabels.done}
                 onClose={onChange}
             />
         </Field>

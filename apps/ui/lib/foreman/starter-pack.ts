@@ -73,14 +73,4 @@ export function starterPackPlan(input: unknown, chosen: string[]): { items: { ki
     return { items: picked.map(card => ({ kind: 'template', slug: card.slug, title: card.agent, ...(card.focus ? { focus: card.focus } : {}), box })), boxes }
 }
 
-const FOCUS_HEADING = '## Start with:'
-
-/**
- * The template's own install, opened on the skill the card sold. They hired it for that one use case,
- * so that is what it gets working first; the rest of its install follows as its author wrote it.
- * Written once: an install that already opens on a focus is left as it is.
- */
-export function installWithFocus(install: string, focus: string): string {
-    if (install.trimStart().startsWith(FOCUS_HEADING)) return install
-    return `${FOCUS_HEADING} ${focus}\n\nThey hired you from a card that promised this, so get it working first, on their real company, before anything else this guide sets up.\n\n${install.trimStart()}`
-}
+export { installWithFocus } from '@rerun/contracts'

@@ -1,11 +1,19 @@
 # Internal/development packaging for the Rerun desktop preview.
 # The packaging script requires a stable local signing identity for Keychain continuity.
 # Public distribution still needs Developer ID, hardened runtime and notarization.
+# macOS updates are Squirrel.Mac through Electron autoUpdater (serverType json).
+# A production release, documented in the handoff, adds a zip target and a generic
+# publish URL. This preview config does not set publish, a feed URL, or notarization.
 appId: build.rerun.desktop.preview
 productName: Rerun Desktop Preview
+protocols:
+    - name: Rerun Development Links
+      schemes:
+          - rerun-desktop-dev
 copyright: Rerun contributors
 directories:
     app: .
+    buildResources: build-resources
     output: release
 files:
     - "dist/main/**/*"
@@ -14,9 +22,18 @@ extraResources:
     - from: "resources/"
       to: "."
 asar: true
+electronFuses:
+    runAsNode: false
+    enableCookieEncryption: true
+    enableNodeOptionsEnvironmentVariable: false
+    enableNodeCliInspectArguments: false
+    enableEmbeddedAsarIntegrityValidation: true
+    onlyLoadAppFromAsar: true
+    grantFileProtocolExtraPrivileges: false
 npmRebuild: false
 buildDependenciesFromSource: false
 mac:
+    icon: build-resources/icon.icns
     category: public.app-category.productivity
     artifactName: "${productName}-${version}-mac-${arch}.${ext}"
     target:
@@ -25,3 +42,19 @@ mac:
     extendInfo:
         NSMicrophoneUsageDescription: "Record a voice message for your coworker. Recordings are transcribed only when you choose Transcribe."
         NSLocalNetworkUsageDescription: "Rerun runs its AI coworkers on your Mac; they reach services on localhost and your local network that you connect."
+dmg:
+    title: "${productName}"
+    icon: null
+    # The 660 × 400 pt background and its Retina image are drawn around these slots.
+    iconSize: 128
+    contents:
+        - x: 180
+          y: 200
+          type: file
+        - x: 480
+          y: 200
+          type: link
+          path: /Applications
+masDev:
+    entitlements: entitlements/mas.plist
+    entitlementsInherit: entitlements/mas.inherit.plist

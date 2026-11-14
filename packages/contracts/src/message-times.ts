@@ -27,8 +27,11 @@ function opensStretch(previous: string, time: string): boolean {
 /** The messages that open a stretch of the conversation: the first one, a new day, or a word after an hour of silence. */
 export function timeBreaksOf(times: readonly string[]): Set<number> {
     const breaks = new Set<number>()
+    let previous: string | undefined
     times.forEach((time, index) => {
-        if (index === 0 || opensStretch(times[index - 1], time)) breaks.add(index)
+        if (!Number.isFinite(Date.parse(time))) return
+        if (previous === undefined || opensStretch(previous, time)) breaks.add(index)
+        previous = time
     })
     return breaks
 }

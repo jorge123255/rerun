@@ -77,3 +77,28 @@ test('voice controls inside the actual composer preserve its typed draft and dis
     expect(onSend).toHaveBeenCalledExactlyOnceWith(draft)
     expect(host.querySelector('textarea')?.value).toBe('')
 })
+
+test('the Chief of Staff composer accepts file drops and sends a prepared attachment without typed text', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const host = document.body.appendChild(document.createElement('div'))
+    root = createRoot(host)
+    const onSend = vi.fn(), onFiles = vi.fn()
+    const render = async (hasAttachments: boolean, sendDisabled = false) => {
+        await act(async () => root!.render(<DesktopForemanComposer draft="" onDraftChange={vi.fn()} onSend={onSend}
+            onFiles={onFiles} hasAttachments={hasAttachments} sendDisabled={sendDisabled} />))
+    }
+    await render(false)
+    const submit = host.querySelector<HTMLButtonElement>('button[type="submit"]')!
+    expect(submit.disabled).toBe(true)
+    const file = new File(['Brief for the Chief of Staff'], 'brief.txt', { type: 'text/plain' })
+    const drop = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperty(drop, 'dataTransfer', { value: { files: [file] } })
+    await act(async () => { host.querySelector('textarea')!.dispatchEvent(drop) })
+    expect(onFiles).toHaveBeenCalledExactlyOnceWith([file])
+    expect(drop.defaultPrevented).toBe(true)
+    await render(true, true)
+    expect(submit.disabled).toBe(true)
+    await render(true)
+    await act(async () => submit.click())
+    expect(onSend).toHaveBeenCalledExactlyOnceWith('')
+})

@@ -90,6 +90,8 @@ export const config = {
          *   it at 10MB doing so, which silently corrupted every upload past that. The tee also buffers
          *   the whole body in memory, so streaming a file through is only possible from outside the
          *   matcher. These routes authenticate themselves through requireWorkspaceId().)
+         * - api/desktop/agents/:agentId/files/import (desktop uploads also authenticate in the
+         *   handler and need to receive the full body without the proxy’s 10 MB truncation)
          * - api/llm (the boxes' model proxy, for the same 10MB truncation: an image a box hands its
          *   model travels inline in base64, and a cut body reached the route as "Invalid JSON". The
          *   caller is an engine with its key, never a browser with a session to refresh.)
@@ -108,7 +110,7 @@ export const config = {
          *   fragment is the only key, there is no session to refresh nor one to provision)
          * Feel free to modify this pattern to include more paths.
          */
-        '/((?!_next/static|_next/image|favicon.ico|api/version|api/t/|api/files|api/llm/|api/v1/|api/host-metrics|api/public/|og/|render/|email/|r/|p/|desktop-view|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+        '/((?!_next/static|_next/image|favicon.ico|api/version|api/t/|api/files|api/desktop/agents/[^/]+/files/import(?:/|$)|api/llm/|api/v1/|api/host-metrics|api/public/|og/|render/|email/|r/|p/|desktop-view|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
         // The two trees under /render put back in, for the gate alone: proxy() returns before it
         // ever reaches updateSession(). The OG renders next to them, /render/brand and
         // /render/templates, stay out: the screenshot service captures those on every card.

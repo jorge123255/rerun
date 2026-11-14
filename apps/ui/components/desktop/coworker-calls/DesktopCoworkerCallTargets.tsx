@@ -11,7 +11,7 @@ type View = z.infer<typeof viewSchema>
 
 type TargetScope = { agentId: string } | { foreman: { workspaceId: string; chatId: string; launchNonce: string } }
 
-export function DesktopCoworkerCallTargets(scope: TargetScope) {
+export function DesktopCoworkerCallTargets(scope: TargetScope & { disabled?: boolean }) {
     const [view, setView] = useState<View | null>(null)
     const [error, setError] = useState('')
     const [saving, setSaving] = useState(false)
@@ -29,7 +29,7 @@ export function DesktopCoworkerCallTargets(scope: TargetScope) {
         return () => controller.abort()
     }, [url, attempt])
     async function toggle(id: string, enabled: boolean) {
-        if (!view || saving) return
+        if (!view || saving || scope.disabled) return
         setSaving(true); setError('')
         try {
             const targetAgentIds = enabled ? [...view.allowedTargetIds, id] : view.allowedTargetIds.filter(target => target !== id)
@@ -43,7 +43,7 @@ export function DesktopCoworkerCallTargets(scope: TargetScope) {
         <p className="text-xs font-medium">Allowed coworkers</p>
         {!view && !error && <p role="status" className="text-xs text-muted-foreground">Loading coworkers…</p>}
         {view?.targets.map(target => <label key={target.agentId} className="flex min-w-0 items-center gap-2 py-1 text-sm">
-            <Checkbox checked={view.allowedTargetIds.includes(target.agentId)} disabled={saving || !target.enabled && !view.allowedTargetIds.includes(target.agentId)} onCheckedChange={checked => { void toggle(target.agentId, checked === true) }} />
+            <Checkbox checked={view.allowedTargetIds.includes(target.agentId)} disabled={scope.disabled || saving || !target.enabled && !view.allowedTargetIds.includes(target.agentId)} onCheckedChange={checked => { void toggle(target.agentId, checked === true) }} />
             <span className="min-w-0 break-words">{target.name}{target.boxName && <span className="text-xs text-muted-foreground"> · {target.boxName}</span>}{!target.enabled && <span className="text-xs text-muted-foreground"> · Disabled</span>}</span>
         </label>)}
         {view?.targets.length === 0 && <p className="text-xs text-muted-foreground">Add another coworker to allow calls.</p>}

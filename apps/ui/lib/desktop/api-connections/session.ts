@@ -25,7 +25,10 @@ export class ApiConnectionsSession {
     private generation = 0
     private writeGeneration = 0
     private closed = false
-    constructor(readonly workspaceId: DesktopWorkspaceId, private api: ApiConnectionsApi, private currentWorkspace: () => DesktopWorkspaceId | null) {}
+    constructor(readonly workspaceId: DesktopWorkspaceId, private api: ApiConnectionsApi, private currentWorkspace: () => DesktopWorkspaceId | null,
+        initialPage: ApiConnectionsPage = { kind: 'list' }) {
+        this.state.page = initialPage
+    }
     snapshot = () => this.state
     subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
     current = () => !this.closed && this.currentWorkspace() === this.workspaceId

@@ -68,19 +68,26 @@ function withGeneralChat(agentId: string, openChats: DesktopOpenChat[], sessions
     return [pinned, ...threads.slice(0, MAX_REMEMBERED_TABS)]
 }
 
-function recentChatsOf(sessions: DesktopSession[], remote: Session[] | null, engineAgentId: string, openChats: DesktopOpenChat[], name: string) {
-    if (!remote) return { recentChats: [], recentStatus: 'unavailable' as const, hasMore: false }
-    const remoteById = new Map<string, number>(), ambiguous = new Set<string>()
+function indexEngineChats(remote: Session[], engineAgentId: string) {
+    const remoteById = new Map<string, { updatedAt: number | null; automationTitle: string | null }>()
     for (const session of remote) {
         if (session.agentId !== engineAgentId) continue
         const updated = Date.parse(session.updatedAt)
         if (!Number.isFinite(updated)) continue
-        if (remoteById.has(session.id) && remoteById.get(session.id) !== updated) ambiguous.add(session.id)
-        remoteById.set(session.id, updated)
+        const result = session.source === 'schedule' || session.source === 'trigger' ? session.automationResult : undefined
+        const previous = remoteById.get(session.id)
+        const updatedAt = previous && previous.updatedAt !== updated ? null : updated
+        const title = result?.title ?? null
+        const automationTitle = updatedAt === null || (previous && previous.automationTitle !== title) ? null : title
+        remoteById.set(session.id, { updatedAt, automationTitle })
     }
+    return remoteById
+}
+
+function recentChatsOf(sessions: DesktopSession[], remoteById: ReturnType<typeof indexEngineChats> | null, openChats: DesktopOpenChat[], name: string) {
     // A partial listing cannot establish which conversation was most recently active. Do not
     // quietly substitute local created_at/updated_at, which are not refreshed on every reply.
-    if (sessions.some(session => !remoteById.has(session.engineSessionId) || ambiguous.has(session.engineSessionId))) {
+    if (!remoteById || sessions.some(session => remoteById.get(session.engineSessionId)?.updatedAt == null)) {
         return { recentChats: [], recentStatus: 'unavailable' as const, hasMore: false }
     }
     const openIds = new Set(openChats.flatMap(tab => tab.sessionId === null ? [] : [tab.sessionId]))
@@ -89,7 +96,7 @@ function recentChatsOf(sessions: DesktopSession[], remote: Session[] | null, eng
         if (openIds.has(session.id) || seen.has(session.id)) return false
         seen.add(session.id)
         return true
-    }).sort((a, b) => remoteById.get(b.engineSessionId)! - remoteById.get(a.engineSessionId)!
+    }).sort((a, b) => remoteById.get(b.engineSessionId)!.updatedAt! - remoteById.get(a.engineSessionId)!.updatedAt!
         || b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id))
     return {
         recentChats: recent.slice(0, DESKTOP_RECENT_CHAT_LIMIT).map(session => ({ id: session.id, agentId: session.agentId, agentName: name, title: session.title, kind: session.kind ?? 'thread', firstMessage: session.firstMessage ?? null })),
@@ -115,9 +122,20 @@ export async function readDesktopControlCenterChats(runtime: DesktopRuntime, age
     ], 'read')
     const current = requireOwner(owners.rows)
     if (current.engineAgentId !== owner.engineAgentId) throw new DesktopHttpError(409, 'This coworker changed. Refresh the chats and try again.')
+    const remoteById = remote ? indexEngineChats(remote, current.engineAgentId) : null
     const sessions = chats.rows.map(sessionOf).filter(session => session.agentId === agentId)
-    const openChats = withGeneralChat(agentId, layouts.rows[0] ? openChatsOf(agentId, layouts.rows[0], chats.rows) : [], chats.rows)
-    // General stays pinned. Threads beyond the tab ceiling stay out of Recent as well.
+    const resultTitles = new Map<string, string>()
+    for (const session of sessions) {
+        const title = remoteById?.get(session.engineSessionId)?.automationTitle
+        if (title && session.kind !== 'general') resultTitles.set(session.id, title)
+    }
+    const applyTitle = <T extends { title: string }>(chat: T, id: string | null): T => {
+        const title = id === null ? undefined : resultTitles.get(id)
+        return title ? { ...chat, title } : chat
+    }
     const openForRecent = layouts.rows[0] ? openChatsOf(agentId, layouts.rows[0], chats.rows) : []
-    return { agentId, openChats, ...recentChatsOf(sessions, remote, current.engineAgentId, [...openForRecent, ...openChats], current.name) }
+    const openChats = withGeneralChat(agentId, openForRecent, chats.rows)
+        .map(chat => applyTitle(chat, chat.sessionId))
+    // General stays pinned. Threads beyond the tab ceiling stay out of Recent as well.
+    return { agentId, openChats, ...recentChatsOf(sessions.map(chat => applyTitle(chat, chat.id)), remoteById, [...openForRecent, ...openChats], current.name) }
 }

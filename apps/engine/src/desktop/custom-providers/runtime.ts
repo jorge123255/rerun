@@ -1,25 +1,16 @@
+import { randomUUID } from 'node:crypto'
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { createOpenAI } from '@ai-sdk/openai'
 import { generateText, streamText, wrapLanguageModel, type Prompt } from 'ai'
 import { CUSTOM_DEFAULT_CONTEXT_WINDOW, type CustomProviderAuthority, type CustomProviderIdentity, type CustomProviderModel, type CustomProviderProbe } from '@rerun/contracts'
 import { openrouterReasoningMiddleware } from '../../agents/openrouter-reasoning.js'
 import { createPinnedProviderFetch, endpointBase } from './network.js'
+import { customCatalogReasoning, customModelCatalog } from './catalog.js'
+import { isKimiPlatform, kimiReasoningMiddleware, kimiReasoningScope, type KimiConversation } from './kimi-reasoning.js'
 
 type CustomGenerateInput = Omit<Parameters<typeof generateText>[0], 'model' | 'prompt' | 'messages'> & Prompt
 type CustomStreamInput = Omit<Parameters<typeof streamText>[0], 'model' | 'prompt' | 'messages'> & Prompt
 
-export function parseCustomModels(body: unknown): CustomProviderModel[] {
-    const rows = Array.isArray(body) ? body : body && typeof body === 'object' && 'data' in body && Array.isArray(body.data) ? body.data : null
-    if (!rows || rows.length > 256) throw new Error('Custom catalog unavailable.')
-    const models = new Map<string, CustomProviderModel>()
-    for (const value of rows) {
-        if (!value || typeof value !== 'object') continue
-        const row = value as Record<string,unknown>, id = typeof row.id === 'string' ? row.id.trim() : ''
-        if (!id || id.length > 256 || models.has(id)) continue
-        const context = [row.context_length,row.max_model_len,row.context_window,row.max_context_length].find(n => typeof n === 'number' && Number.isInteger(n) && n >= 256 && n <= 10_000_000)
-        models.set(id, { id, contextWindow: typeof context === 'number' ? context : null, vision: false, source: 'discovered' })
-    }
-    return [...models.values()]
-}
 export function createCustomProviderRuntime(authority: CustomProviderAuthority) {
     const work = new Set<{ identity: CustomProviderIdentity; abort: AbortController }>()
     let closed = false
@@ -40,18 +31,44 @@ export function createCustomProviderRuntime(authority: CustomProviderAuthority) 
             return { snapshot, key, network, check, close, signal }
         } catch { close(); throw new Error('Custom connection unavailable or stale.') }
     }
-    async function resolveModel(identity: CustomProviderIdentity, modelId: string, stop: AbortSignal) {
+    async function resolveModel(identity: CustomProviderIdentity, modelId: string, stop: AbortSignal, effort?: string, conversation?: KimiConversation) {
             const bound = await lease(identity, stop)
             const selected = bound.snapshot.config.models.find(row => row.id === modelId)
             if (!selected) { bound.close(); throw new Error('Choose a model offered by this exact connection.') }
+            const verifyEffort = (snapshot: typeof bound.snapshot) => {
+                if (effort && !customCatalogReasoning(snapshot, modelId)?.supported.some(level => level === effort))
+                    throw new Error('The saved reasoning effort is unavailable. Refresh the provider catalog or choose Model default in Settings.')
+            }
+            try { verifyEffort(bound.snapshot) }
+            catch (error) { bound.close(); throw error }
             const discovered = bound.snapshot.catalog.models.find(row => row.id === modelId)
             const window = discovered?.contextWindow ?? selected.contextWindow ?? bound.snapshot.config.contextWindow ?? CUSTOM_DEFAULT_CONTEXT_WINDOW
-            const provider = createOpenAI({ baseURL: endpointBase(bound.snapshot.config), apiKey: bound.key ?? 'none', fetch: async (url, init) => {
+            const baseURL = endpointBase(bound.snapshot.config)
+            const options: NonNullable<Parameters<typeof createOpenAI>[0]> = { baseURL, apiKey: bound.key ?? 'none', fetch: async (url, init) => {
                 const headers = new Headers(init?.headers)
                 if (!bound.key) headers.delete('authorization')
+                if (effort) {
+                    await bound.check()
+                    verifyEffort(await authority.read(identity, bound.signal))
+                }
                 return bound.network(url, { ...init, headers })
-            } })
-            return { model: wrapLanguageModel({ model: provider.chat(modelId), middleware: [openrouterReasoningMiddleware, { specificationVersion: 'v3', transformParams: async ({ params }) => { if (params.maxOutputTokens && params.maxOutputTokens >= window) throw new Error('Requested output exceeds custom model context window.'); return params } }] }), contextWindow: window, vision: selected.vision || bound.snapshot.config.vision, close: bound.close, signal: bound.signal }
+            } }
+            const kimi = isKimiPlatform(bound.snapshot.config)
+            const scope = kimi ? (conversation && kimiReasoningScope(bound.snapshot, modelId, conversation)) ?? randomUUID() : undefined
+            const providerModel = kimi
+                ? createOpenAICompatible({ ...options, baseURL, name: 'kimi-platform', includeUsage: true,
+                    transformRequestBody: body => ({ ...body, reasoning_effort: effort }),
+                    supportsStructuredOutputs: true, supportedUrls: () => ({ 'image/*': [/^https?:\/\//] }) }).chatModel(modelId)
+                : createOpenAI(options).chat(modelId)
+            const model = wrapLanguageModel({ model: providerModel, middleware: [scope ? kimiReasoningMiddleware(scope) : openrouterReasoningMiddleware, {
+                specificationVersion: 'v3',
+                transformParams: async ({ params }) => {
+                    if (params.maxOutputTokens && params.maxOutputTokens >= window) throw new Error('Requested output exceeds custom model context window.')
+                    if (!effort || kimi) return params
+                    return { ...params, providerOptions: { ...params.providerOptions, openai: { ...params.providerOptions?.openai, reasoningEffort: effort } } }
+                },
+            }] })
+            return { model, contextWindow: window, vision: selected.vision || bound.snapshot.config.vision, close: bound.close, signal: bound.signal }
         }
     return {
         model: resolveModel,
@@ -71,9 +88,10 @@ export function createCustomProviderRuntime(authority: CustomProviderAuthority) 
             try {
                 const headers: Record<string, string> = bound.key ? { Authorization: `Bearer ${bound.key}` } : {}
                 try {
-                    const response = await bound.network(`${endpointBase(bound.snapshot.config)}/models`, { headers, signal: bound.signal })
+                    const catalog = customModelCatalog(endpointBase(bound.snapshot.config))
+                    const response = await bound.network(catalog.url, { headers, signal: bound.signal })
                     if (response.status === 401 || response.status === 403) problem = 'unauthorized'
-                    else if (response.ok) { models = parseCustomModels(await response.json()); status = models.length ? 'fresh' : 'empty'; problem = null }
+                    else if (response.ok) { models = catalog.parse(await response.json()); status = models.length ? 'fresh' : 'empty'; problem = null }
                     else await response.body?.cancel()
                 } catch { bound.signal.throwIfAborted(); problem = 'unreachable' }
                 if (manualModel && problem !== 'unauthorized') {

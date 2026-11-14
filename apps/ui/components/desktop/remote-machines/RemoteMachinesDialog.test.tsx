@@ -57,6 +57,7 @@ vi.mock('@/components/ui/dialog', () => ({
     DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
     DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
     DialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+    DialogDescription: ({ children }: { children: React.ReactNode }) => <p>{children}</p>,
 }))
 
 import { remoteActor as seed, remoteConnection as connection, remoteReceipt as receipt, emptyRemoteSnapshot as empty, connectedRemoteSnapshot as connected } from '@/lib/desktop/remote-machines/remote-machines.test-support'

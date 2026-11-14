@@ -4,6 +4,9 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { DesktopPendingInboxItem } from '@/lib/desktop/pending-inbox'
 import { DesktopNeedsChats } from './DesktopNeedsChats'
+import { DesktopLocale } from './DesktopLocale'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages } from '@/lib/desktop/locale'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const now = '2026-11-04T12:00:00Z'
@@ -85,4 +88,22 @@ test('opening a confirmation cancels an earlier row check instead of letting it 
     await act(async () => { finish(Response.json({ items: [item('a')], unavailableAgentIds: [], checkedAt: now })) })
     expect(select).not.toHaveBeenCalled()
     expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('Mark everything as read?')
+})
+
+test('uses shared French inbox controls and does not clear anything when the confirmation is cancelled', async () => {
+    const api = fixture([item('a')])
+    const shared = await loadMessages('fr')
+    const markAll = shared.agent.agentChatsList.markAllRead
+    const root = createRoot(document.body.appendChild(document.createElement('div'))); roots.add(root)
+    await act(async () => { root.render(<DesktopLocale initial={{ preference: 'fr', locale: 'fr', messages: desktopMessages('fr', shared) }}>
+        <DesktopNeedsChats agentId="alice" query="" onSelect={() => {}} />
+    </DesktopLocale>) })
+    await settle()
+    expect([...document.querySelectorAll('button')].map(button => button.getAttribute('aria-label'))).toContain(shared.kit.inbox.markRead)
+    await click(markAll.confirm)
+    const dialog = document.querySelector('[role="alertdialog"]')!
+    expect(dialog.textContent).toContain(markAll.title)
+    await click(shared.common.cancel, 'button', dialog)
+    expect(api.writes).toEqual([])
+    expect(document.body.textContent).toContain('Review a')
 })

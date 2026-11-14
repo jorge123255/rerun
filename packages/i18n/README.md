@@ -16,7 +16,7 @@ glossary.json       words kept as they are, imposed translations, tone per langu
 ## Writing a string
 
 Every string a person sees goes through `t()` (`useTranslations` in a client component,
-`getTranslations` on the server). The source is English, in `messages/en/<namespace>.json`.
+`getTranslations` on the server). The shared source is English, in `messages/en/<namespace>.json`. Mac-only labels live in the desktop UI locale catalog.
 
 - A key says what the string is, not what it reads: `chat.composer.placeholder`.
 - One sentence is one key. Never glue translated pieces together: variables and plurals go inside
@@ -24,7 +24,11 @@ Every string a person sees goes through `t()` (`useTranslations` in a client com
 - A string whose meaning is not obvious from its key gets a note under `_context` at the root of its
   namespace, keyed by its dotted path. The translator reads it; the app never ships it.
 
-Then:
+On the Mac branch, bring reviewed changes to the shared catalogs together with their
+`messages/.i18n-lock.json` changes from upstream. Run `pnpm i18n:index` when the namespace files
+change, then `pnpm i18n:check`.
+
+In the upstream translation workflow:
 
 ```bash
 pnpm i18n:translate   # translates what is new or changed into every pack (Claude, ~cents)

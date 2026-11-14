@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { APICallError, LoadAPIKeyError, RetryError } from 'ai'
-import { classifyFinishReason, classifyProviderError, isFailedFinish, ProviderRefusedError, refusalReason, RUN_ERROR_CODES, STREAM_CUT_RAW_REASON, upstreamReason } from './provider-errors.js'
+import { apiCreditsMessage, classifyFinishReason, classifyProviderError, isFailedFinish, ProviderRefusedError, refusalReason, RUN_ERROR_CODES, STREAM_CUT_RAW_REASON, upstreamReason } from './provider-errors.js'
 import { RERUN_BUDGET_ERROR_CODE } from './budget-latch.js'
 
 const apiError = (init: { statusCode?: number; message?: string; data?: unknown; isRetryable?: boolean; responseBody?: string }) =>
@@ -15,6 +15,20 @@ const apiError = (init: { statusCode?: number; message?: string; data?: unknown;
     })
 
 const SCHEMA_REFUSAL = 'tools.0.custom.input_schema: input_schema does not support oneOf, allOf, or anyOf at the top level'
+
+it('distinguishes exhausted OpenAI credits from a transient 429', () => {
+    const message = 'You exceeded your current quota, please check your plan and billing details.'
+    const body = { error: { code: 'insufficient_quota', message } }
+    const refused = apiError({ statusCode: 429, message, data: {}, responseBody: JSON.stringify(body) })
+    const retried = new RetryError({ message: 'Failed after retries', reason: 'maxRetriesExceeded', errors: [refused] })
+    for (const error of [refused, retried, { type: 'error', ...body }, new Error('You have no credits remaining.')]) {
+        expect(classifyProviderError('openai', error)).toBe(RUN_ERROR_CODES.usageLimit)
+    }
+    expect(classifyProviderError('openai', apiError({ statusCode: 429, message }))).toBe(RUN_ERROR_CODES.overloaded)
+    expect(classifyProviderError('google', apiError({ statusCode: 429, message }))).toBe(RUN_ERROR_CODES.overloaded)
+    expect(apiCreditsMessage('custom', refused)).toBe('Provider API credits used up')
+    expect(apiCreditsMessage('openai', retried)).toBe('OpenAI API credits used up')
+})
 
 // What OpenRouter answers when the model provider turns a request down.
 const openRouterRefusal = (raw: unknown) =>

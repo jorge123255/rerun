@@ -1,6 +1,29 @@
 import { describe, expect, it } from 'vitest'
+import { looksLikeSite, platformHost } from '@rerun/contracts'
 
 import { EMPTY_DRAFT, furthestReachable, industryHint, intakeSteps, stepAnswered, toIntake } from './steps'
+
+it('rejects social profiles without rejecting an independently hosted company site', () => {
+    for (const [url, platform] of [
+        ['  https://www.LinkedIn.com/company/acme ', 'linkedin.com'],
+        ['fr.linkedin.com/company/acme', 'linkedin.com'],
+        ['m.facebook.com./acme', 'facebook.com'],
+        ['https://linkedin.com@facebook.com/acme', 'facebook.com'],
+        ['linktr.ee/acme', 'linktr.ee'],
+    ]) {
+        const draft = { ...EMPTY_DRAFT, companyUrl: url }
+        expect(platformHost(url)).toBe(platform)
+        expect(looksLikeSite(url)).toBe(false)
+        expect(stepAnswered('company', draft)).toBe(false)
+        expect(industryHint(draft)).toBeNull()
+        expect(toIntake(draft, null, 'saas')).toMatchObject({ companyUrl: null, decidedIndustry: null })
+    }
+    for (const url of ['notlinkedin.com', 'acme.wixsite.com/shop', 'acme.myshopify.com', 'acme.substack.com']) {
+        expect(platformHost(url)).toBeNull()
+        expect(looksLikeSite(url)).toBe(true)
+        expect(stepAnswered('company', { ...EMPTY_DRAFT, companyUrl: url })).toBe(true)
+    }
+})
 
 describe('intakeSteps', () => {
     it('asks for a name only when nothing holds one', () => {

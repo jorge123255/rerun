@@ -16,6 +16,8 @@ export const EXTERNAL_MCP_TOOL_SCOPES = {
     get_skill: 'mcp:read',
     read_skill_file: 'mcp:read',
     upsert_skill: 'coworkers:write',
+    write_memory: 'coworkers:write',
+    upload_workspace_file: 'coworkers:write',
     delete_skill: 'coworkers:write',
     list_schedules: 'mcp:read',
     upsert_schedule: 'schedules:write',
@@ -78,6 +80,7 @@ export function externalMcpToolRegistrations(options?: { servicesBound?: boolean
         const effect = scope !== 'mcp:read'
         const description = def.name === 'read_skill_file' ? def.description + READ_ONLY_OFFSET_NOTE
             : def.name === 'create_agent' ? 'Create a coworker from its name and soul. Local creation uses workspace defaults and also requires runs:send. Tool grants and self-improvement are not accepted on this call; they stay on the Mac Tools panel.'
+            : def.name === 'upload_workspace_file' ? 'Write one text or Markdown file (.txt or .md, up to 1 MB) into the coworker’s own Files. `path` is relative to its workspace, e.g. "notes/clients.md". A file already at that path is never replaced, and a folder that does not exist yet is not created: the file is then written at the top level with the folders folded into its name.'
             : def.name === 'update_agent' ? 'Update a coworker’s name, description, soul, handle, Box, verbosity, or model. Tool grants and self-improvement are not accepted on this call.'
             : def.description
         const inputSchema = def.name === 'attach_connector'

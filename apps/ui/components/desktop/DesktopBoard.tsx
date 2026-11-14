@@ -1,7 +1,8 @@
 import { useDesktopLocale } from './DesktopLocale'
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { ChromeBar, ChromeButton, ChromeDivider } from '@rerun/ui/chrome'
-import type { ContainerCellRect, GridPosition, IsoCamera, ResizePatch, TileStyle } from '@rerun/ui/iso-grid'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { CHROME_SIZE, ChromeBar, ChromeButton, ChromeDivider } from '@rerun/ui/chrome'
+import type { ContainerCellRect, GridPosition, IsoCamera, ResizePatch, TileCountdown, TileResults, TileStyle } from '@rerun/ui/iso-grid'
 import { IsoGrid, SPACE_COLOR, agentTileStyle, disabledAgentTileStyle, DISABLED_AGENT_LABEL, type Container, type Tile } from '@rerun/ui/iso-grid'
 import { Plus } from 'lucide-react'
 import type { DesktopAgentView } from './DesktopApp'
@@ -13,6 +14,9 @@ import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { DesktopBoardMenu } from './DesktopBoardMenu'
 import { DesktopFindChat } from './DesktopFindChat'
 import { DesktopActionsInbox } from './DesktopActionsInbox'
+import { useDesktopCompletions } from './useDesktopCompletions'
+import { desktopInboxBadge } from '@/lib/desktop/notification-bridge'
+import type { DesktopCompletionItem } from '@/lib/desktop/completed-actions'
 import { Shimmer } from '@/components/ai-elements/shimmer'
 import { duplicateAgentName } from '@/lib/copy-name'
 import { canPlaceDesktopCopy, desktopBoardLayout } from '@/lib/desktop/board-layout'
@@ -21,6 +25,7 @@ import type { DesktopBoardState, DesktopSpaceCommand } from '@/lib/desktop/space
 import { isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 import { useBoardCoverStore } from '@/stores/board-cover.store'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { DesktopSpaceDialogs, type DesktopSpaceDialogTarget } from './DesktopSpaceDialogs'
 import { desktopSpaceAt, desktopSpaceLabel, desktopSpaceRectAllowed, firstDesktopSpacePosition, previewDesktopSpace } from './desktop-space-layout'
 
@@ -36,13 +41,18 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
+export function DesktopBoard({ inboxSlot, onUnseenAgents, tileAction, activitySnapshot, routineCountdowns, agents, workspaceName, workspaceMenu, gettingStarted, selectedAgentId, visibleSessionId, workspaceId, launchNonce, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onOpenSettings, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
     activitySnapshot?: BoardActivitySnapshot
+    routineCountdowns?: ReadonlyMap<string, TileCountdown>
     agents: DesktopAgentView[]
     workspaceName: string
     workspaceMenu?: ReactNode
+    gettingStarted?: ReactNode
     selectedAgentId?: string | null
     visibleSessionId?: string | null
+    workspaceId?: number | null
+    launchNonce?: string
+    onOpenNotificationSettings?: (agentId: string) => void
     panelInsetRight?: number
     panelInsetLeft?: number
     recenterSignal?: number
@@ -50,6 +60,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     focusRequest?: { tileId: string; nonce: number; insetRight: number } | null
     boxFocusRequest?: { spaceId: string; nonce: number } | null
     onOpen: (id: string) => void
+    onOpenSettings?: (id: string) => void
     onRename?: (id: string, name: string) => Promise<void>
     onShare?: (agent: DesktopAgentView) => void
     onDuplicate?: (sourceId: string, requestId: string, position: GridPosition, spaceId?: string) => Promise<'created' | 'occupied'>
@@ -58,6 +69,12 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     onCreate: (spaceId?: string) => void
     onDismiss?: () => void
     onOpenConversation?: (hit: DesktopConversationHit) => void
+    // Where the Actions inbox shows while the board is hidden behind the Simple view's list.
+    inboxSlot?: HTMLElement | null
+    // The coworkers with a finished run nobody has opened yet, for the Simple view's list.
+    onUnseenAgents?: (agentIds: string[]) => void
+    // What the Simple view's list asks of the grid: place a copy of a coworker, or move one to another Box.
+    tileAction?: { kind: 'copy'; agentId: string; nonce: number } | { kind: 'move'; agentId: string; spaceId: string; nonce: number } | null
     onPlacementChange?: (placing: boolean) => void
     board?: DesktopBoardState
     onBoardCommand?: (command: DesktopSpaceCommand) => Promise<void>
@@ -82,8 +99,6 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
 }) {
     const localActivity = useBoardActivity(useMemo(() => agents.map(agent => agent.id), [agents]), !activitySnapshot)
     const { statuses: activity, attention } = activitySnapshot ?? localActivity
-    const openState = useRef({ agents, activity, attention, onOpen, onOpenConversation })
-    openState.current = { agents, activity, attention, onOpen, onOpenConversation }
     const attentionCounts = useMemo(() => {
         const counts = new Map<string, number>()
         for (const item of attention.items) counts.set(item.agentId, (counts.get(item.agentId) ?? 0) + 1)
@@ -151,20 +166,52 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     const gestureGeneration = gestureIdentity.current.generation
     const placing = !!placement
     useEffect(() => { onPlacementChange?.(placing) }, [placing, onPlacementChange])
+    const [inboxOpen, setInboxOpen] = useState(false)
+    if (placing && inboxOpen) setInboxOpen(false)
+    const completions = useDesktopCompletions(inboxOpen && !placing, agents.map(agent => agent.id),
+        placing ? null : visibleSessionId, !!onOpenConversation, !!(workspaceId && launchNonce && desktopInboxBadge()))
+    const unseenAgents = JSON.stringify([...new Set(completions.items.map(item => item.agentId))].sort())
+    useEffect(() => { onUnseenAgents?.(JSON.parse(unseenAgents) as string[]) }, [unseenAgents, onUnseenAgents])
+    const resultsByAgent = useMemo(() => {
+        const groups = new Map<string, { latest: DesktopCompletionItem; results: TileResults }>()
+        if (completions.status !== 'ready') return groups
+        const unavailable = new Set(completions.unavailableAgentIds)
+        for (const item of completions.items) {
+            const at = Date.parse(item.completedAt)
+            if (!item.agentEnabled || unavailable.has(item.agentId) || !Number.isFinite(at)) continue
+            const group = groups.get(item.agentId) ?? { latest: item, results: { count: 0, items: [] } }
+            group.results.count += item.count
+            group.results.items.push({ label: item.title, count: item.count, at })
+            groups.set(item.agentId, group)
+        }
+        return groups
+    }, [completions.status, completions.items, completions.unavailableAgentIds])
+    const openState = useRef({ agents, activity, attention, resultsByAgent, onOpen, onOpenConversation, completions })
+    openState.current = { agents, activity, attention, resultsByAgent, onOpen, onOpenConversation, completions }
     const submitting = useRef(false)
     const section = useRef<HTMLElement>(null)
     const placeButton = useRef<HTMLButtonElement>(null)
     const layout = useMemo(() => desktopBoardLayout(agents), [agents])
     const renderedBoard = useMemo(() => board && preview?.revision === board.revision ? previewDesktopSpace(board, preview.spaceId, preview.rect, preview.moving) : board, [board, preview])
     const { tiles, containers } = useMemo(() => {
+        const tilePresentation = (agent: DesktopAgentView) => {
+            const status = activity[agent.id] ?? 'unknown'
+            const results = status === 'idle' ? resultsByAgent.get(agent.id)?.results : undefined
+            const style = agent.enabled === false ? disabledAgentTileStyle(agent.name)
+                : tileStyle(status, agent.name, attentionCounts.get(agent.id) ?? 0, routineCountdowns?.get(agent.id), results)
+            return {
+                style,
+                ariaLabel: t('openCoworker', { name: agent.name }) + (attentionCounts.has(agent.id) ? ', ' + t('needs') : '')
+                    + (style.results ? ', ' + t('actions.doneCount', { count: style.results.count }) : ''),
+            }
+        }
         if (renderedBoard) {
             const memberships = new Map(renderedBoard.placements.map(placed => [placed.agentId, placed]))
             const tiles: Tile[] = agents.flatMap(agent => {
                 const placed = memberships.get(agent.id)
                 if (!placed || !renderedBoard.spaces.some(space => space.id === placed.spaceId)) return []
                 return [{ id: agent.id, position: { col: placed.col, row: placed.row }, span: 2, containerId: placed.spaceId,
-                    style: agent.enabled === false ? disabledAgentTileStyle(agent.name) : tileStyle(activity[agent.id] ?? 'unknown', agent.name, attentionCounts.get(agent.id) ?? 0),
-                    ariaLabel: t('openCoworker', { name: agent.name }) + (attentionCounts.has(agent.id) ? ', ' + t('needs') : '') }]
+                    ...tilePresentation(agent) }]
             })
             const containers: Container[] = renderedBoard.spaces.length ? renderedBoard.spaces.map((space, index) => ({
                 ...space, label: space.name, color: preview?.spaceId === space.id && board && !desktopSpaceRectAllowed(board, space.id, preview.rect, preview.moving) ? '#ef4444' : SPACE_COLOR,
@@ -178,8 +225,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
             position: layout.positions.get(agent.id)!,
             span: 2,
             containerId: 'team',
-            style: agent.enabled === false ? disabledAgentTileStyle(agent.name) : tileStyle(activity[agent.id] ?? 'unknown', agent.name, attentionCounts.get(agent.id) ?? 0),
-            ariaLabel: t('openCoworker', { name: agent.name }) + (attentionCounts.has(agent.id) ? ', ' + t('needs') : ''),
+            ...tilePresentation(agent),
         }))
         const box: Container = {
             id: 'team', label: agents.length ? workspaceName : null, color: SPACE_COLOR,
@@ -188,18 +234,22 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
             placeholderLabel: t('creation.first'),
         }
         return { tiles, containers: [box] }
-    }, [agents, workspaceName, activity, attentionCounts, layout, renderedBoard, preview, board, t])
+    }, [agents, workspaceName, activity, attentionCounts, routineCountdowns, resultsByAgent, layout, renderedBoard, preview, board, t])
 
     useEffect(() => { if (placement?.requestId) placeButton.current?.focus({ preventScroll: true }) }, [placement?.requestId])
 
     function openCoworker(id: string) {
-        const { agents, activity, attention, onOpen, onOpenConversation } = openState.current
+        const { agents, activity, attention, resultsByAgent, onOpen, onOpenConversation, completions } = openState.current
         const agent = agents.find(agent => agent.id === id)
-        if (!agent) return
+        if (!agent || isDesktopQuitting()) return
         const status = activity[id]
-        const target = status && status !== 'unknown' && status !== 'unreachable' ? latestBoardAttention(attention, id) : undefined
-        if (target && onOpenConversation) onOpenConversation({ id: target.sessionId, agentId: agent.id, agentName: agent.name, title: target.title })
-        else onOpen(id)
+        const pending = status && status !== 'unknown' && status !== 'unreachable' ? latestBoardAttention(attention, id) : undefined
+        const result = !pending && status === 'idle' && agent.enabled !== false ? resultsByAgent.get(id)?.latest : undefined
+        const target = pending ?? result
+        completions.readResultWhenVisible(onOpenConversation ? result ?? null : null)
+        if (target && onOpenConversation) {
+            onOpenConversation({ id: target.sessionId, agentId: agent.id, agentName: agent.name, title: target.title })
+        } else onOpen(id)
     }
 
     function beginCopy(agent: DesktopAgentView) {
@@ -207,6 +257,17 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
         onDismiss?.()
         setPlacement({ sourceId: agent.id, requestId: crypto.randomUUID(), name: duplicateAgentName(agent.name) })
     }
+
+    // Each request is acted on once, when it arrives.
+    const handledTileAction = useRef(0)
+    useEffect(() => {
+        if (!tileAction || handledTileAction.current === tileAction.nonce) return
+        handledTileAction.current = tileAction.nonce
+        if (tileAction.kind === 'copy') {
+            const source = agents.find(agent => agent.id === tileAction.agentId)
+            if (source && onDuplicate) beginCopy(source)
+        } else if (onBoardCommand) void moveAgent(tileAction.agentId, tileAction.spaceId).catch(() => {})
+    })
 
     function cancelCopy() {
         if (!placement || submitting.current) return
@@ -351,12 +412,32 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
         ;(box ?? add)?.focus({ preventScroll: true })
     }
 
+    const cornerActions = useRef<HTMLDivElement>(null)
+    useLayoutEffect(() => {
+        const row = cornerActions.current
+        const frame = row?.closest<HTMLElement>('[data-desktop-board-frame]')
+        if (!row || !frame) return
+        const measure = () => frame.style.setProperty('--board-corner-width', `${row.offsetWidth}px`)
+        const observer = new ResizeObserver(measure)
+        observer.observe(row)
+        measure()
+        return () => {
+            observer.disconnect()
+            frame.style.removeProperty('--board-corner-width')
+        }
+    }, [])
+
+    const canCreateCoworker = !baseBlocked && !spaceDialog && !covered && !creationChecking && !creationError
+    const canAddBox = !!board && !!onBoardCommand
+    const showViewControls = tiles.length > 0 || !!board?.spaces.length
+    const zoomBesideHeader = showViewControls && !selectedAgentId
     return (
         <section ref={section} data-testid="desktop-team-board" aria-label={t('board')} className="relative isolate min-h-0 min-w-0 flex-1"
+            style={{ '--desktop-panel-right': `${panelInsetRight}px` } as CSSProperties}
             onPointerDownCapture={() => { resizeCanceled.current = false }} onPointerCancelCapture={() => { resizeCanceled.current = true }}
             onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented && placement) { event.preventDefault(); cancelCopy() } }}>
             <h1 className="sr-only">{t('board')}</h1>
-            <DesktopBoardMenu agents={agents} onOpen={openCoworker} onRename={onRename} onShare={onShare} onDuplicate={onDuplicate ? beginCopy : undefined}
+            <DesktopBoardMenu agents={agents} onOpen={openCoworker} onOpenSettings={onOpenSettings} onRename={onRename} onShare={onShare} onDuplicate={onDuplicate ? beginCopy : undefined}
                 onSetEnabled={onSetEnabled} onDelete={onDelete} disabled={!!placement || gridBlocked}
                 spaces={board} onRenameSpace={onBoardCommand ? spaceId => openBoxDialog({ kind: 'rename', spaceId }) : undefined}
                 onDeleteSpace={onBoardCommand ? spaceId => openBoxDialog({ kind: 'delete', spaceId }) : undefined}
@@ -391,9 +472,11 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                     focusRequest={focusRequest}
                     fitToContent
                     canDraw={false}
-                    showViewControls={tiles.length > 0 || !!board?.spaces.length}
+                    showViewControls={showViewControls}
                     viewControlsPlacement="top-right"
-                    viewControlsClassName={selectedAgentId ? 'md:top-auto md:right-auto md:bottom-16 md:left-4' : undefined}
+                    viewControlsClassName={selectedAgentId
+                        ? 'md:top-auto md:right-auto md:bottom-16 md:left-4'
+                        : 'right-[calc(1rem+var(--desktop-panel-right))]'}
                     onTileSelect={placement || gridBlocked ? undefined : id => {
                         if (board && !gridCurrent()) return
                         if (id) openCoworker(id)
@@ -407,31 +490,66 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                     } : tiles.length ? undefined : id => { if (id) onCreate() }}
                 />
             }</DesktopBoardMenu>
-            <div className="absolute top-4 left-4 z-40 flex items-start gap-2">{workspaceMenu}</div>
-            <div className="absolute bottom-4 left-4 z-40 flex max-w-[calc(100%-2rem)] flex-wrap items-end gap-2">
-            {!placement && onOpenConversation && <DesktopActionsInbox agents={agents} onOpenConversation={onOpenConversation} visibleSessionId={visibleSessionId} />}
-            <ChromeBar aria-label={t('boardActions')} role="group">
-                {placement ? <div className="flex min-w-0 items-center gap-2 pl-3">
-                    <div className="min-w-0" role="status">
-                        <Shimmer as="span" duration={1.6} className="block truncate text-sm font-medium">
-                            {placement.saving ? t('creation.placing', { name: placement.name }) : t('creation.chooseTile', { name: placement.name })}
-                        </Shimmer>
-                        {templatePlacement && !templatePlacement.submitted && <p className="text-xs text-muted-foreground">{templatePlacement.positions.length + 1} of {templatePlacement.template.agents.length} coworkers{templatePlacement.spaceId ? ' · Keep this team in the same Box' : ' · Choose a Box on the board'}</p>}
-                        {placement.error && <p className="text-xs text-destructive" role="alert">{placement.error}</p>}
+            {/* The header and zoom controls share the space left by the side panels. */}
+            <div className="@container/board-header pointer-events-none absolute top-4 z-40"
+                style={{ left: panelInsetLeft + 16, right: panelInsetRight + 16 + (zoomBesideHeader ? CHROME_SIZE + 8 : 0) }}>
+                {workspaceMenu}
+            </div>
+            {/* Measure compact mode inside the board space left by either side panel. */}
+            <div className="@container/board pointer-events-none absolute bottom-4 z-40"
+                style={{ left: panelInsetLeft + 16, right: panelInsetRight + 16 }}>
+                <div className="grid items-end gap-2 grid-cols-[minmax(max-content,1fr)_minmax(0,max-content)_minmax(var(--desktop-right-orb-width,var(--desktop-idle-orb-width,0px)),1fr)]">
+                    <div className="flex items-end gap-2 pr-[var(--desktop-left-orb-width,0px)]">
+                        <div ref={cornerActions} className="flex w-max items-end gap-2 empty:hidden">
+                            {onOpenConversation && (() => {
+                                const inbox = <DesktopActionsInbox className="pointer-events-auto" agents={agents} onOpenConversation={onOpenConversation} visibleSessionId={placement ? null : visibleSessionId}
+                                    workspaceId={workspaceId} launchNonce={launchNonce} completions={completions} open={inboxOpen} onOpenChange={setInboxOpen} hidden={placing} onOpenNotificationSettings={onOpenNotificationSettings} />
+                                // One inbox, wherever it shows: its reads and what was already seen stay with it.
+                                return inboxSlot ? createPortal(inbox, inboxSlot) : inbox
+                            })()}
+                            {gettingStarted}
+                        </div>
                     </div>
-                    {!suggestion && !placement.position && <p className="text-xs text-muted-foreground">{t('creation.noRoom')}</p>}
-                    <ChromeButton ref={placeButton} label={placement.position && !placement.saving ? 'Retry' : newCoworker || templatePlacement ? t('creation.place') : 'Place copy'} disabled={placement.saving || (!suggestion && !placement.position) || gridBlocked}
-                        onClick={() => { const position = placement.position ?? suggestion; if (position) void placeCopy(position) }} />
-                    {templatePlacement?.submitted ? <ChromeButton label="Review installation" disabled={placement.saving || gridBlocked} onClick={onReviewTemplate} />
-                        : <ChromeButton label={t('cancel')} disabled={placement.saving || newCoworker?.submitted} onClick={cancelCopy} />}
-                </div> : <>
-                    {onOpenConversation && <><DesktopFindChat onSelect={onOpenConversation} /><ChromeDivider /></>}
-                    <ChromeButton icon={Plus} label={t('addCoworker')} disabled={baseBlocked || !!spaceDialog || covered || creationChecking || !!creationError} onClick={() => onCreate()} />
-                    {board && onBoardCommand && <><ChromeDivider /><ChromeButton icon={Plus} label={t('addBox')} disabled={gridBlocked} onClick={() => openBoxDialog({ kind: 'create' })} /></>}
-                </>}
-            </ChromeBar>
-            {!placement && creationChecking && <p className="rounded-xl border bg-background px-3 py-2 text-xs text-muted-foreground" role="status">{t('creation.checkingBoard')}</p>}
-            {!placement && creationError && <div role="alert" className="flex max-w-sm items-center gap-2 rounded-xl border bg-background px-3 py-2 text-xs"><p>{creationError}</p><Button size="sm" variant="outline" disabled={creationChecking || gridBlocked} onClick={()=>void onRetryCreation?.()}>{t('creation.retryCheck')}</Button></div>}
+                    <ChromeBar aria-label={t('boardActions')} role="group" className="pointer-events-auto col-start-2 min-w-0">
+                        {placement ? <div className="flex min-w-0 max-w-full items-center gap-2 overflow-x-auto pl-3 [scrollbar-width:none]">
+                            <div className="min-w-0" role="status">
+                                <Shimmer as="span" duration={1.6} className="block truncate text-sm font-medium">
+                                    {placement.saving ? t('creation.placing', { name: placement.name }) : t('creation.chooseTile', { name: placement.name })}
+                                </Shimmer>
+                                {templatePlacement && !templatePlacement.submitted && <p className="text-xs text-muted-foreground">{templatePlacement.positions.length + 1} of {templatePlacement.template.agents.length} coworkers{templatePlacement.spaceId ? ' · Keep this team in the same Box' : ' · Choose a Box on the board'}</p>}
+                                {placement.error && <p className="text-xs text-destructive" role="alert">{placement.error}</p>}
+                            </div>
+                            {!suggestion && !placement.position && <p className="text-xs text-muted-foreground">{t('creation.noRoom')}</p>}
+                            <ChromeButton ref={placeButton} label={placement.position && !placement.saving ? 'Retry' : newCoworker || templatePlacement ? t('creation.place') : 'Place copy'} disabled={placement.saving || (!suggestion && !placement.position) || gridBlocked}
+                                onClick={() => { const position = placement.position ?? suggestion; if (position) void placeCopy(position) }} />
+                            {templatePlacement?.submitted ? <ChromeButton label="Review installation" disabled={placement.saving || gridBlocked} onClick={onReviewTemplate} />
+                                : <ChromeButton label={t('cancel')} disabled={placement.saving || newCoworker?.submitted} onClick={cancelCopy} />}
+                        </div> : <>
+                            {onOpenConversation && <><DesktopFindChat onSelect={onOpenConversation} compactOnBoard /><ChromeDivider /></>}
+                            <div className="contents @max-4xl/board:hidden">
+                                <ChromeButton icon={Plus} label={t('addCoworker')} disabled={!canCreateCoworker} onClick={() => onCreate()} />
+                                {canAddBox && <><ChromeDivider /><ChromeButton icon={Plus} label={t('addBox')} disabled={gridBlocked} onClick={() => openBoxDialog({ kind: 'create' })} /></>}
+                            </div>
+                            <div className="hidden shrink-0 @max-4xl/board:flex">
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <ChromeButton aria-label={t('boardUI.create')} icon={Plus} disabled={!canCreateCoworker && (!canAddBox || gridBlocked)} />
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent side="top" align="center" sideOffset={12} className="w-auto">
+                                        <DropdownMenuItem disabled={!canCreateCoworker} onSelect={() => onCreate()} className="gap-2 whitespace-nowrap">
+                                            <Plus className="size-4" />{t('addCoworker')}
+                                        </DropdownMenuItem>
+                                        {canAddBox && <DropdownMenuItem disabled={gridBlocked} onSelect={() => openBoxDialog({ kind: 'create' })} className="gap-2 whitespace-nowrap">
+                                            <Plus className="size-4" />{t('addBox')}
+                                        </DropdownMenuItem>}
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
+                            </div>
+                        </>}
+                    </ChromeBar>
+                </div>
+                {!placement && creationChecking && <p className="absolute bottom-full mb-2 rounded-xl border bg-background px-3 py-2 text-xs text-muted-foreground" role="status">{t('creation.checkingBoard')}</p>}
+                {!placement && creationError && <div role="alert" className="pointer-events-auto absolute bottom-full mb-2 flex max-w-sm items-center gap-2 rounded-xl border bg-background px-3 py-2 text-xs"><p>{creationError}</p><Button size="sm" variant="outline" disabled={creationChecking || gridBlocked} onClick={()=>void onRetryCreation?.()}>{t('creation.retryCheck')}</Button></div>}
             </div>
             {!spaceDialog && (commandError || boardError) && <div role="alert" className="absolute bottom-20 left-4 z-40 flex max-w-[calc(100%-2rem)] items-center gap-2 rounded-xl border bg-background px-3 py-2 text-sm shadow-sm">
                 <p>{commandError || boardError}</p>{(onRetryBoard || retryCommand.current) && <Button variant="outline" size="sm" disabled={baseBlocked} onClick={() => void retryBoard()}>Retry</Button>}
@@ -451,11 +569,11 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
 }
 
 // Rerun's agentTileStyle: working shimmers amber, a failed read uses the offline tile with an honest label.
-function tileStyle(status: BoardActivityStatus, name: string, attentionCount: number): TileStyle {
-    if (status === 'working' || status === 'waiting_human') return agentTileStyle(status, name, attentionCount)
+function tileStyle(status: BoardActivityStatus, name: string, attentionCount: number, countdown?: TileCountdown, results?: TileResults): TileStyle {
+    if (status === 'working' || status === 'waiting_human') return { ...agentTileStyle(status, name, attentionCount), countdown }
     if (status === 'unreachable' || status === 'unknown') {
         const style = agentTileStyle('offline', name)
         return { ...style, status: { label: ACTIVITY_LABEL[status], tone: style.status?.tone ?? 'neutral' } }
     }
-    return agentTileStyle('idle', name)
+    return { ...agentTileStyle('idle', name), countdown, results }
 }

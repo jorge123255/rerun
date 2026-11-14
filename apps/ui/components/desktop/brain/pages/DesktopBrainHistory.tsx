@@ -2,6 +2,7 @@
 
 import { BrainEditor } from '@/components/brain/editor/BrainEditor'
 import { PageColumn } from '@/components/brain/BrainPageParts'
+import { useBrainTranslations } from '@/components/brain/brain-translations'
 import { BrainTopBar } from '@/components/brain/BrainTopBar'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
@@ -10,10 +11,12 @@ import { brainAuthorLabel, isCardType } from '@/lib/brain/labels'
 import { BRAIN_PAGE_ICONS } from '@/lib/brain/page-icons'
 import { flushDesktopBrainDrafts, brainDraftHash, type BrainPageDetail } from '@/lib/desktop/use-brain-page-draft'
 import { ArrowLeftIcon } from '@/lib/icons'
-import { fullDateTime, shortRelativeTime } from '@/lib/time'
+import { fullDateTime, shortRelativeTime } from '@rerun/i18n/format'
+import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { cn } from '@/lib/utils'
 import type { BrainPage, BrainRevision } from '@rerun/contracts'
 import { useEffect, useState } from 'react'
+import { useDesktopLocale } from '../../DesktopLocale'
 import { brainMutationIntent, reserveBrainMutation, settleBrainMutation } from './mutation-intents'
 import type { DesktopBrainActions } from './types'
 
@@ -47,6 +50,9 @@ function PreviewSkeleton() {
  * on a version that was not written.
  */
 export function DesktopBrainHistory({ page, revisions, titles, actions, onBack, onOpenPage, onOpenFile, onRestored }: DesktopBrainHistoryProps) {
+    const t = useBrainTranslations()
+    const { language, t: desktop } = useDesktopLocale()
+    const locale = desktopLocaleTag(language.locale)
     const [selectedId, setSelectedId] = useState<string | null>(() => { try { const pending = brainMutationIntent('revert:' + page.slug); return pending?.input.kind === 'revert' ? pending.input.revisionId : revisions[0]?.id ?? null } catch { return revisions[0]?.id ?? null } })
     const [preview, setPreview] = useState<{ id: string; content: string } | null>(null)
     const [previewError, setPreviewError] = useState<string | null>(null)
@@ -108,9 +114,9 @@ export function DesktopBrainHistory({ page, revisions, titles, actions, onBack, 
 
     return (
         <div className="flex min-h-0 flex-1 flex-col">
-            <BrainTopBar crumbs={[{ label: isCardType(page.type) ? 'Company' : 'Pages' }, { label: page.title, icon: BRAIN_PAGE_ICONS[page.type], onClick: onBack }, { label: 'Version history' }]}>
+            <BrainTopBar crumbs={[{ label: t(isCardType(page.type) ? 'crumbs.company' : 'crumbs.pages') }, { label: page.title, icon: BRAIN_PAGE_ICONS[page.type], onClick: onBack }, { label: t('crumbs.versionHistory') }]}>
                 <Button size="sm" variant="ghost" onClick={onBack}>
-                    <ArrowLeftIcon /> Back to page
+                    <ArrowLeftIcon /> {t('history.backToPage')}
                 </Button>
             </BrainTopBar>
 
@@ -119,18 +125,19 @@ export function DesktopBrainHistory({ page, revisions, titles, actions, onBack, 
                     {selected && (
                         <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-sm">
                             <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                                {isCurrent ? 'Current version' : `Version from ${fullDateTime(selected.createdAt)}`}
+                                {isCurrent ? t('history.current') : t('history.versionFrom', { date: fullDateTime(selected.createdAt, locale) })}
                             </span>
                             {(!isCurrent || pendingRestore) && (
                                 <ConfirmDialog
-                                    title="Restore this version?"
-                                    description="The page goes back to what it said then. The current version stays in the history."
-                                    confirmLabel="Restore"
+                                    title={t('history.restoreTitle')}
+                                    description={t('history.restoreDescription')}
+                                    confirmLabel={t('history.restore')}
+                                    cancelLabel={desktop('cancel')}
                                     confirmVariant="default"
                                     pending={restoring}
                                     onConfirm={() => void restore()}
                                 >
-                                    <Button size="xs">{pendingRestore ? 'Retry restore' : 'Restore this version'}</Button>
+                                    <Button size="xs">{pendingRestore ? 'Retry restore' : t('history.restoreThis')}</Button>
                                 </ConfirmDialog>
                             )}
                         </div>
@@ -139,7 +146,7 @@ export function DesktopBrainHistory({ page, revisions, titles, actions, onBack, 
                     {previewError && <p role="alert" className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{previewError}</p>}
                     <div className="min-h-0 flex-1 overflow-y-auto">
                         {!selected ? (
-                            <p className="p-6 text-sm text-muted-foreground">No version recorded for this page yet.</p>
+                            <p className="p-6 text-sm text-muted-foreground">{t('history.empty')}</p>
                         ) : preview?.id !== selected.id ? (
                             <PreviewSkeleton />
                         ) : (
@@ -152,7 +159,7 @@ export function DesktopBrainHistory({ page, revisions, titles, actions, onBack, 
                 </div>
 
                 <aside className="flex min-h-0 shrink-0 flex-col border-border sm:w-64 sm:border-l max-sm:max-h-48 max-sm:border-b">
-                    <p className="px-4 pb-1 pt-3 text-[11px] font-medium text-muted-foreground/80">Versions</p>
+                    <p className="px-4 pb-1 pt-3 text-[11px] font-medium text-muted-foreground/80">{t('history.versions')}</p>
                     <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
                         {revisions.map((revision, index) => (
                             <button
@@ -162,12 +169,13 @@ export function DesktopBrainHistory({ page, revisions, titles, actions, onBack, 
                                 onClick={() => setSelectedId(revision.id)}
                                 className={cn('block w-full rounded-md px-2 py-1.5 text-left transition-colors', revision.id === selectedId ? 'bg-accent' : 'hover:bg-accent/60')}
                             >
-                                <span className="block text-sm font-medium" title={fullDateTime(revision.createdAt)}>
-                                    {index === 0 && revision.hash === page.hash ? 'Current' : shortRelativeTime(revision.createdAt)}
+                                <span className="block text-sm font-medium" title={fullDateTime(revision.createdAt, locale)}>
+                                    {index === 0 && revision.hash === page.hash ? t('history.currentShort') : shortRelativeTime(revision.createdAt, locale)}
                                 </span>
                                 <span className="block truncate text-xs text-muted-foreground">
-                                    {brainAuthorLabel(revision.author)}
-                                    {revision.proposalId ? ' · From a proposal' : ''}
+                                    {revision.proposalId
+                                        ? t('history.authorFromProposal', { author: brainAuthorLabel(revision.author) })
+                                        : brainAuthorLabel(revision.author)}
                                 </span>
                             </button>
                         ))}

@@ -11,14 +11,6 @@ export const desktopDir = join(repoRoot, 'apps', 'desktop')
 export const resourcesDir = join(desktopDir, 'resources')
 export const cacheDir = join(desktopDir, '.cache')
 
-export const NODE_RUNTIME = {
-    version: 'v22.23.4',
-    arch: 'darwin-arm64',
-    sha256: 'c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66428',
-}
-export const nodeTarball = `node-${NODE_RUNTIME.version}-${NODE_RUNTIME.arch}`
-export const nodeTarballUrl = `https://nodejs.org/dist/${NODE_RUNTIME.version}/${nodeTarball}.tar.gz`
-
 export async function run(command, args, options = {}) {
     const child = spawn(command, args, { stdio: ['ignore', 'inherit', 'inherit'], ...options })
     const code = await new Promise((done, fail) => { child.once('error', fail); child.once('exit', done) })

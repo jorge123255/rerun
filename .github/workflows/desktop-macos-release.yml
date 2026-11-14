@@ -1,0 +1,153 @@
+name: Desktop macOS release build
+
+# Builds, signs, notarizes and staples the Mac app, and keeps the files as a workflow artifact.
+# It is started by hand and uploads nothing to a release or a feed: publishing the zip, the disk
+# image and the feed is a separate step taken after someone has opened the build.
+#
+# Secrets: APPLE_CERTIFICATE (base64 .p12 of the Developer ID Application certificate),
+# APPLE_CERTIFICATE_PASSWORD, APPLE_API_KEY_P8, APPLE_API_KEY_ID, APPLE_API_ISSUER.
+# Variables: RERUN_RELEASE_BUNDLE_ID, RERUN_RELEASE_TEAM_ID, RERUN_RELEASE_IDENTITY,
+# RERUN_RELEASE_FEED_URL, RERUN_RELEASE_DOWNLOAD_URL, and optionally RERUN_RELEASE_PRODUCT_NAME.
+# Both addresses must contain {arch}: the Apple silicon and Intel builds each need their own feed.
+#
+# The temporary keychain steps follow CopilotKit/OpenBot's Desktop macOS signing workflow (MIT).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build, such as 1.2.3
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-macos-release
+  cancel-in-progress: false
+
+jobs:
+  regressions:
+    name: Release script regressions (no Apple access)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test scripts/desktop/release.test.mjs
+
+  build:
+    name: Sign and notarize (${{ matrix.arch }})
+    needs: regressions
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    environment: desktop-release
+    timeout-minutes: 90
+    env:
+      RERUN_RELEASE_VERSION: ${{ inputs.version }}
+      RERUN_RELEASE_BUNDLE_ID: ${{ vars.RERUN_RELEASE_BUNDLE_ID }}
+      RERUN_RELEASE_TEAM_ID: ${{ vars.RERUN_RELEASE_TEAM_ID }}
+      RERUN_RELEASE_IDENTITY: ${{ vars.RERUN_RELEASE_IDENTITY }}
+      RERUN_RELEASE_FEED_URL: ${{ vars.RERUN_RELEASE_FEED_URL }}
+      RERUN_RELEASE_DOWNLOAD_URL: ${{ vars.RERUN_RELEASE_DOWNLOAD_URL }}
+      RERUN_RELEASE_PRODUCT_NAME: ${{ vars.RERUN_RELEASE_PRODUCT_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the signing configuration
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER \
+            RERUN_RELEASE_BUNDLE_ID RERUN_RELEASE_TEAM_ID RERUN_RELEASE_IDENTITY RERUN_RELEASE_FEED_URL RERUN_RELEASE_DOWNLOAD_URL; do
+            if [ -z "${!name:-}" ]; then missing+=("$name"); fi
+          done
+          case "$RERUN_RELEASE_FEED_URL$RERUN_RELEASE_DOWNLOAD_URL" in
+            *'{arch}'*'{arch}'*) ;;
+            *) echo "::error::RERUN_RELEASE_FEED_URL and RERUN_RELEASE_DOWNLOAD_URL must each contain {arch}."; exit 1 ;;
+          esac
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Not set: ${missing[*]}"
+            exit 1
+          fi
+      - name: Import the Developer ID certificate into a temporary keychain
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/rerun-signing.keychain-db"
+          password="$(openssl rand -base64 24)"
+          echo "::add-mask::$password"
+          echo "SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          security create-keychain -p "$password" "$keychain"
+          # The runner's login keychain relocks on a timer and takes codesign's key access with it.
+          security set-keychain-settings -lut 7200 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          certificate="$RUNNER_TEMP/developer-id.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate"
+          security import "$certificate" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security -f pkcs12
+          rm -f "$certificate"
+          # Without this codesign stops for a prompt that a runner has nobody to answer.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          existing=()
+          while IFS= read -r line; do
+            existing+=("$(echo "$line" | tr -d '" ')")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$keychain" "${existing[@]}"
+          security find-identity -v -p codesigning "$keychain"
+      - name: Write the App Store Connect key
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/AuthKey.p8"
+          umask 077
+          printf '%s' "$APPLE_API_KEY_P8" > "$key"
+          echo "RERUN_NOTARY_KEY_PATH=$key" >> "$GITHUB_ENV"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # No dependency cache: this job signs what people install.
+      - run: pnpm install --frozen-lockfile
+      - name: Build, sign, notarize and staple
+        env:
+          RERUN_NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          RERUN_NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          NEXT_TELEMETRY_DISABLED: 1
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release"
+          pnpm desktop:release --output-dir "$RUNNER_TEMP/release"
+      - name: Keep the signed files
+        uses: actions/upload-artifact@v4
+        with:
+          name: rerun-macos-${{ matrix.arch }}-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/release/*.zip
+            ${{ runner.temp }}/release/*.dmg
+            ${{ runner.temp }}/release/*.json
+            ${{ runner.temp }}/release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove the temporary keychain and key
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
+          if [ -n "${SIGNING_KEYCHAIN:-}" ]; then security delete-keychain "$SIGNING_KEYCHAIN" || true; fi

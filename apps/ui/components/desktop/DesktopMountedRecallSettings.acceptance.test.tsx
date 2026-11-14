@@ -227,7 +227,7 @@ it('mounts Tool services and the board, recalls a paraphrase, keeps it across a 
         await act(async () => { root!.render(<MountedBoard />) })
     }
     async function recall(query: string) {
-        await typeInto(document.getElementById('desktop-memory-search') as HTMLInputElement, query)
+        await typeInto(document.querySelector('input[name="memory-search"]') as HTMLInputElement, query)
         await click('Search')
         await vi.waitFor(() => expect(dialog()?.textContent ?? '').toContain(`recalled for “${query}”`))
     }
@@ -275,7 +275,7 @@ it('mounts Tool services and the board, recalls a paraphrase, keeps it across a 
         expect(JSON.stringify(await fixture.db.execute('SELECT * FROM desktop_auxiliary_credentials'))).not.toContain(PROVIDER_KEY)
         phase = 'configured'
         await click('Memories')
-        await vi.waitFor(() => expect(document.getElementById('desktop-memory-search')).toBeTruthy())
+        await vi.waitFor(() => expect(document.querySelector('input[name="memory-search"]')).toBeTruthy())
         await recall(PARAPHRASE)
         await vi.waitFor(async () => expect((await (await fetch(`/api/desktop/coworkers/${LOCAL}/semantic-memory`)).json()).indexed).toBe(1), { timeout: 10_000 })
         await recall(PARAPHRASE)

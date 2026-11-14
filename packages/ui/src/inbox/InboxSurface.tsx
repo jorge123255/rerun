@@ -559,12 +559,18 @@ export type RowMenuProps<T extends InboxEntry> = { item: T; onOpenChange: (open:
 
 const noop = () => {}
 
-type InboxRowProps<T extends InboxEntry> = { item: T; onOpen: (item: T) => void; onMarkRead: (item: T) => void; reason?: ReactNode; Menu?: ComponentType<RowMenuProps<T>>; onMenuOpenChange?: (open: boolean) => void }
+type InboxRowProps<T extends InboxEntry> = {
+    item: T; onOpen: (item: T) => void; onMarkRead: (item: T) => void; reason?: ReactNode
+    Menu?: ComponentType<RowMenuProps<T>>; onMenuOpenChange?: (open: boolean) => void
+    display?: { time: string; status: string; markRead: string }
+}
 
 // `memo` drops the type parameter: the cast gives it back, so a row hands its caller the item type it was given.
-export const InboxRow = memo(function InboxRow({ item, onOpen, onMarkRead, reason, Menu, onMenuOpenChange = noop }: InboxRowProps<InboxEntry>) {
+export const InboxRow = memo(function InboxRow({ item, onOpen, onMarkRead, reason, Menu, display, onMenuOpenChange = noop }: InboxRowProps<InboxEntry>) {
     const meta = ATTENTION_STATUS_META[item.status] ?? ATTENTION_STATUS_META.waiting_human
     const sentence = STATUS_SENTENCE[item.status] ?? STATUS_SENTENCE.waiting_human
+    const time = display?.time ?? (item.updatedAt ? shortRelativeTime(item.updatedAt) : '')
+    const markRead = display?.markRead ?? 'Mark as read'
     // A Radix tooltip per row made opening the card slow. The button only shows on hover or focus
     // anyway, so its tooltip is mounted the first time the row gets either.
     // Arming swaps the button for a new one: if it held the keyboard focus, the new one takes it back.
@@ -606,21 +612,21 @@ export const InboxRow = memo(function InboxRow({ item, onOpen, onMarkRead, reaso
                     <span title={item.message ?? undefined} className="truncate text-sm font-medium text-foreground">
                         {item.message ?? item.title}
                     </span>
-                    {item.updatedAt && <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{shortRelativeTime(item.updatedAt)}</span>}
+                    {time && <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{time}</span>}
                 </div>
                 <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                    <span className="truncate">{item.message ? `${item.agentName} · ${item.title}` : `${item.agentName} ${sentence}`}</span>
+                    <span className="truncate">{item.message ? `${item.agentName} · ${item.title}` : display?.status ?? `${item.agentName} ${sentence}`}</span>
                     {(item.count ?? 1) > 1 && <span className="shrink-0 tabular-nums">×{item.count}</span>}
                 </span>
                 {reason && <span className="truncate text-[11px] text-muted-foreground/80">{reason}</span>}
             </div>
             <RevealOnHover>
                 {tooltipArmed ? (
-                    <TooltipLabeled label="Mark as read">
-                        <MarkReadButton ref={markReadRef} onMarkRead={() => onMarkRead(item)} />
+                    <TooltipLabeled label={markRead}>
+                        <MarkReadButton ref={markReadRef} aria-label={markRead} onMarkRead={() => onMarkRead(item)} />
                     </TooltipLabeled>
                 ) : (
-                    <MarkReadButton ref={markReadRef} onMarkRead={() => onMarkRead(item)} />
+                    <MarkReadButton ref={markReadRef} aria-label={markRead} onMarkRead={() => onMarkRead(item)} />
                 )}
             </RevealOnHover>
             {/* React bubbles through portals: the menu's own clicks would open the row. */}
@@ -640,7 +646,7 @@ function MarkReadButton({ onMarkRead, onClick, onKeyDown, ...props }: { onMarkRe
             {...props}
             size="icon-sm"
             variant="outline"
-            aria-label="Mark as read"
+            aria-label={props['aria-label'] ?? 'Mark as read'}
             onClick={event => {
                 event.stopPropagation()
                 onClick?.(event)

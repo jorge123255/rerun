@@ -121,17 +121,18 @@ test('Stay or a failed native dialog preserves the running workspace and permits
 test('successful flush precedes stopping, and stopping completes before final quit', async () => {
     const events = []
     let finishSave
-    let finishStop
+    let finishStop, markStopStarted
+    const stopStarted = new Promise(resolve => { markStopStarted = resolve })
     const result = completeDesktopQuit({
         flush: () => new Promise(resolve => { events.push('flush'); finishSave = resolve }),
         confirmDiscard: () => assert.fail('No warning for an accepted save'),
-        stop: () => new Promise(resolve => { events.push('stop'); finishStop = resolve }),
+        stop: () => new Promise(resolve => { events.push('stop'); finishStop = resolve; markStopStarted() }),
         quit: () => { events.push('quit') },
         cancelled: () => assert.fail('Successful save must remain frozen through stop'),
     })
     assert.deepEqual(events, ['flush'])
     finishSave(true)
-    await Promise.resolve()
+    await stopStarted
     assert.deepEqual(events, ['flush', 'stop'])
     finishStop()
     assert.equal(await result, true)

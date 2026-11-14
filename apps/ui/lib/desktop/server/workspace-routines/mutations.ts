@@ -1,7 +1,7 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
-import { desktopWorkspaceRoutineMutationSchema } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
-import type { DesktopScheduleRecord, DesktopWorkspaceRoutineMutation, DesktopWorkspaceRoutineMutationResult } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
+import { desktopWorkspaceRoutineMutationSchema } from '@rerun/contracts'
+import type { DesktopScheduleRecord, DesktopWorkspaceRoutineMutation, DesktopWorkspaceRoutineMutationResult } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 
 export type DesktopWorkspaceRoutinesMutationAuthority = {

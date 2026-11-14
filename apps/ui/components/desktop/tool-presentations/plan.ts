@@ -63,7 +63,7 @@ function genericDetail(part: DesktopHistoricalToolSource, toolName: string, stat
     return null
 }
 
-function genericItem(part: DesktopHistoricalToolSource, index: number, context: DesktopHistoricalContext | undefined): DesktopHistoricalGenericItem {
+export function projectDesktopGenericTool(part: DesktopHistoricalToolSource, index: number, context: DesktopHistoricalContext | undefined): DesktopHistoricalGenericItem {
     const identity = resolveDesktopHistoricalIdentity(part, context)
     const status = projectDesktopToolStatus(part, context)
     const toolName = desktopHistoricalToolName(part)
@@ -106,7 +106,7 @@ export function planDesktopToolPresentation(parts: readonly DesktopHistoricalToo
             blocks.push({ kind: 'card', key: card.toolCallId, card })
             return
         }
-        const item = genericItem(part, index, context)
+        const item = projectDesktopGenericTool(part, index, context)
         const identityOk = resolveDesktopHistoricalIdentity(part, context).ok
         const previous = group.at(-1)
         if (!identityOk || (previous && !sameIdentity(previous.identity, item.identity))) flush()

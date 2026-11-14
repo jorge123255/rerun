@@ -2,6 +2,7 @@
 
 import type { FileEntry } from '@/app/api/_actions/workspace-file.actions'
 import { SHARED_FILE_DRAG_TYPE, sharedFileDragData } from '@/components/brain/editor/file-link'
+import { useBrainTranslations } from '@/components/brain/brain-translations'
 import type { BrainSelection } from '@/components/brain/selection'
 import { joinPath, type SharedFileRef, type SharedFilesTree } from '@/components/brain/useSharedFilesTree'
 import { Button } from '@/components/ui/button'
@@ -112,6 +113,7 @@ function SectionHeader({ label, action, active, onClick }: { label: string; acti
 }
 
 function FolderRows({ dir, depth, files, selection, onSelect, fileDrag, fileDropWorkspace }: { dir: string; depth: number; files: SharedFilesTree; selection: BrainSelection | null; onSelect: (selection: BrainSelection) => void; fileDrag: boolean; fileDropWorkspace?: string }) {
+    const t = useBrainTranslations()
     const entries = files.entriesOf(dir)
     const indent = `${(dir ? 1.5 : 0.5) + depth * 0.875}rem`
     if (!entries) return (
@@ -119,12 +121,13 @@ function FolderRows({ dir, depth, files, selection, onSelect, fileDrag, fileDrop
                 <Skeleton className="h-3 w-24" />
             </div>
         )
-    if (entries.length === 0) return <p style={{ paddingLeft: indent }} className="py-1 text-xs text-muted-foreground/70">{dir ? 'Empty folder' : 'No files yet'}</p>
+    if (entries.length === 0) return <p style={{ paddingLeft: indent }} className="py-1 text-xs text-muted-foreground/70">{t(dir ? 'sidebar.emptyFolder' : 'sidebar.noFiles')}</p>
 
     return entries.map(entry => <FileTreeRow key={entry.name} dir={dir} entry={entry} depth={depth} files={files} selection={selection} onSelect={onSelect} fileDrag={fileDrag} fileDropWorkspace={fileDropWorkspace} />)
 }
 
 function FileTreeRow({ dir, entry, depth, files, selection, onSelect, fileDrag, fileDropWorkspace }: { dir: string; entry: FileEntry; depth: number; files: SharedFilesTree; selection: BrainSelection | null; onSelect: (selection: BrainSelection) => void; fileDrag: boolean; fileDropWorkspace?: string }) {
+    const t = useBrainTranslations()
     const path = joinPath(dir, entry.name)
 
     if (entry.type !== 'dir') {
@@ -142,7 +145,7 @@ function FileTreeRow({ dir, entry, depth, files, selection, onSelect, fileDrag, 
                 leading={
                     <button
                         type="button"
-                        aria-label={open ? `Collapse ${entry.name}` : `Expand ${entry.name}`}
+                        aria-label={open ? t('sidebar.collapse', { name: entry.name }) : t('sidebar.expand', { name: entry.name })}
                         onClick={event => {
                             event.stopPropagation()
                             files.toggle(path)
@@ -165,6 +168,7 @@ function FileTreeRow({ dir, entry, depth, files, selection, onSelect, fileDrag, 
 // One tree for everything the workspace shares, as Notion keeps its pages and databases side by
 // side: what agents proposed, the company pages, the shared folder and the shared database.
 export function BrainSidebar({ pages, pagesAvailable, selection, openProposals, files, tables, searchRef, onSelect, onUpload, fileDrag = true, fileDropWorkspace }: BrainSidebarProps) {
+    const t = useBrainTranslations()
     const [query, setQuery] = useState('')
     const card = pages.filter(page => isCardType(page.type))
     const products = pages.filter(page => page.type === 'product')
@@ -214,7 +218,7 @@ export function BrainSidebar({ pages, pagesAvailable, selection, openProposals, 
             <div className="space-y-2 px-2 pb-1 pt-3">
                 <div className="flex items-center gap-2 px-2">
                     <BrainIcon className="size-4 shrink-0" />
-                    <span className="text-sm font-semibold">Brain</span>
+                    <span className="text-sm font-semibold">{t('sidebar.title')}</span>
                 </div>
                 <div className="relative">
                     <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -223,8 +227,8 @@ export function BrainSidebar({ pages, pagesAvailable, selection, openProposals, 
                         value={query}
                         onChange={event => setQuery(event.target.value)}
                         onKeyDown={event => event.key === 'Escape' && query && (event.stopPropagation(), setQuery(''))}
-                        placeholder="Search"
-                        aria-label="Search pages and files"
+                        placeholder={t('sidebar.search')}
+                        aria-label={t('sidebar.searchLabel')}
                         className="h-7 pl-8 text-sm"
                     />
                     <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground/70 max-sm:hidden">⌘K</kbd>
@@ -234,40 +238,40 @@ export function BrainSidebar({ pages, pagesAvailable, selection, openProposals, 
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
                 {results ? (
                     <>
-                        <SectionHeader label="Pages" />
-                        {results.pages.length ? results.pages.map(page => pageRow(page)) : <p className="px-2 py-1 text-xs text-muted-foreground/70">No page matches</p>}
-                        <SectionHeader label="Files" />
+                        <SectionHeader label={t('sidebar.pages')} />
+                        {results.pages.length ? results.pages.map(page => pageRow(page)) : <p className="px-2 py-1 text-xs text-muted-foreground/70">{t('sidebar.noPageMatches')}</p>}
+                        <SectionHeader label={t('sidebar.files')} />
                         {results.files.length ? (
                             results.files.map(file => (
                                 <SidebarRow key={file.path} icon={FileIcon} label={file.path} active={selection?.kind === 'file' && selection.path === file.path} draggableFile={fileDrag ? file : undefined} dragWorkspace={fileDropWorkspace} onClick={() => onSelect({ kind: 'file', path: file.path })} />
                             ))
                         ) : (
-                            <p className="px-2 py-1 text-xs text-muted-foreground/70">No file opened so far matches</p>
+                            <p className="px-2 py-1 text-xs text-muted-foreground/70">{t('sidebar.noFileMatches')}</p>
                         )}
-                        <SectionHeader label="Tables" />
-                        {results.tables.length ? results.tables.map(tableRow) : <p className="px-2 py-1 text-xs text-muted-foreground/70">No table matches</p>}
+                        <SectionHeader label={t('sidebar.tables')} />
+                        {results.tables.length ? results.tables.map(tableRow) : <p className="px-2 py-1 text-xs text-muted-foreground/70">{t('sidebar.noTableMatches')}</p>}
                     </>
                 ) : (
                     <>
                         <div className="pt-1">
                             <SidebarRow
                                 icon={InboxIcon}
-                                label="Proposals"
+                                label={t('sidebar.proposals')}
                                 active={selection?.kind === 'proposals'}
                                 onClick={() => onSelect({ kind: 'proposals' })}
                                 trailing={openProposals > 0 && <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium text-white tabular-nums">{openProposals}</span>}
                             />
                         </div>
 
-                        <SectionHeader label="Company" />
-                        {pagesAvailable ? card.map(page => pageRow(page)) : <p className="px-2 py-1 text-xs text-muted-foreground/70">Not on this box yet</p>}
+                        <SectionHeader label={t('sidebar.company')} />
+                        {pagesAvailable ? card.map(page => pageRow(page)) : <p className="px-2 py-1 text-xs text-muted-foreground/70">{t('sidebar.notOnBox')}</p>}
 
                         {pagesAvailable && (
                             <>
                                 <SectionHeader
-                                    label="Pages"
+                                    label={t('sidebar.pages')}
                                     action={
-                                        <Button size="icon-xs" variant="ghost" onClick={() => onSelect({ kind: 'new-page' })} aria-label="New page" title="New page">
+                                        <Button size="icon-xs" variant="ghost" onClick={() => onSelect({ kind: 'new-page' })} aria-label={t('sidebar.newPage')} title={t('sidebar.newPage')}>
                                             <PlusIcon />
                                         </Button>
                                     }
@@ -276,7 +280,7 @@ export function BrainSidebar({ pages, pagesAvailable, selection, openProposals, 
                                     <>
                                         <SidebarRow
                                             icon={BRAIN_PAGE_ICONS.product}
-                                            label="Products"
+                                            label={t('sidebar.products')}
                                             active={false}
                                             expanded={productsOpen}
                                             leading={<ChevronRightIcon className={cn('-ml-0.5 size-3 shrink-0 transition-transform duration-150', productsOpen && 'rotate-90')} />}
@@ -287,19 +291,19 @@ export function BrainSidebar({ pages, pagesAvailable, selection, openProposals, 
                                     </>
                                 )}
                                 {others.map(page => pageRow(page))}
-                                <SidebarRow icon={PlusIcon} label="New page" active={selection?.kind === 'new-page'} onClick={() => onSelect({ kind: 'new-page' })} />
+                                <SidebarRow icon={PlusIcon} label={t('sidebar.newPage')} active={selection?.kind === 'new-page'} onClick={() => onSelect({ kind: 'new-page' })} />
                             </>
                         )}
 
                         <SectionHeader
-                            label="Files"
+                            label={t('sidebar.files')}
                             active={selection?.kind === 'folder' && selection.path === ''}
                             onClick={() => onSelect({ kind: 'folder', path: '' })}
                             action={<FileUploadMenu onPick={entries => onUpload(entries, '')} />}
                         />
                         <FolderRows dir="" depth={0} files={files} selection={selection} onSelect={onSelect} fileDrag={fileDrag} fileDropWorkspace={fileDropWorkspace} />
 
-                        <SectionHeader label="Database" active={selection?.kind === 'database'} onClick={() => onSelect({ kind: 'database' })} />
+                        <SectionHeader label={t('sidebar.database')} active={selection?.kind === 'database'} onClick={() => onSelect({ kind: 'database' })} />
                         {tables === null ? (
                             <div className="flex h-7 items-center px-2">
                                 <Skeleton className="h-3 w-24" />
@@ -307,7 +311,7 @@ export function BrainSidebar({ pages, pagesAvailable, selection, openProposals, 
                         ) : tables.length ? (
                             tables.map(tableRow)
                         ) : (
-                            <p className="px-2 py-1 text-xs text-muted-foreground/70">No tables yet</p>
+                            <p className="px-2 py-1 text-xs text-muted-foreground/70">{t('sidebar.noTables')}</p>
                         )}
                     </>
                 )}

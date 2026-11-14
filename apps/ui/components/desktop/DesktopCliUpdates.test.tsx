@@ -1,0 +1,77 @@
+// @vitest-environment happy-dom
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, expect, test, vi } from 'vitest'
+import type { DesktopCliToolStatus } from '@rerun/contracts'
+import { DesktopCliToolVersion } from './DesktopCliUpdates'
+import { DesktopLocale } from './DesktopLocale'
+import { desktopMessages } from '@/lib/desktop/locale'
+import { loadMessages } from '@rerun/i18n/messages'
+
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const roots: Root[] = []
+afterEach(() => { for (const root of roots.splice(0)) act(() => { root.unmount() }); document.body.innerHTML = '' })
+const base: DesktopCliToolStatus = { tool: 'kimi-code', current: '2.5.2', source: 'built-in', latest: '2.5.3', checkedAt: '2026-11-14T12:00:00.000Z', state: 'available', pending: null, error: null, step: null, progress: null }
+function mount(status: Partial<DesktopCliToolStatus>, onAct = vi.fn()) {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    roots.push(root)
+    act(() => { root.render(<DesktopCliToolVersion name="Kimi Code" status={{ ...base, ...status }} acting={false} onAct={onAct} />) })
+    return { host, onAct }
+}
+
+test('offers a newer vendor version with one button', () => {
+    const { host, onAct } = mount({})
+    expect(host.textContent).toContain('Version 2.5.2')
+    expect(host.textContent).toContain('Version 2.5.3 is available.')
+    act(() => { host.querySelector<HTMLButtonElement>('button[aria-label="Update: Kimi Code"]')!.click() })
+    expect(onAct).toHaveBeenCalledWith({ action: 'update', tool: 'kimi-code' })
+})
+
+test('says a ready version waits for the running coworkers, with nothing to press', () => {
+    const { host } = mount({ state: 'waiting', pending: '2.5.3' })
+    expect(host.textContent).toContain('Version 2.5.3 is ready. It takes over when the running coworkers finish.')
+    expect(host.querySelector('button')).toBeNull()
+})
+
+test('an updated tool can go back to the built-in copy', () => {
+    const { host, onAct } = mount({ state: 'current', current: '2.5.3', source: 'updated' })
+    expect(host.textContent).toContain('Version 2.5.3 · up to date')
+    act(() => { host.querySelector<HTMLButtonElement>('button[aria-label="Undo update: Kimi Code"]')!.click() })
+    expect(onAct).toHaveBeenCalledWith({ action: 'revert', tool: 'kimi-code' })
+})
+
+test('a failed update says why and can be tried again; an untested version has no button', () => {
+    const failed = mount({ state: 'failed', error: 'verification' })
+    expect(failed.host.querySelector('[role=alert]')!.textContent).toBe('The download did not pass its checks, so it was not installed.')
+    expect(failed.host.querySelector('button')!.textContent).toBe('Try again')
+    const untested = mount({ tool: 'claude', state: 'untested', latest: '2.2.0' })
+    expect(untested.host.textContent).toContain('Version 2.2.0 is out but not yet tested with this app.')
+    expect(untested.host.querySelector('button')).toBeNull()
+})
+
+test('shows a bar with the step while an update is under way', () => {
+    const downloading = mount({ state: 'downloading', pending: '2.5.3', step: 'download', progress: 0.5 })
+    expect(downloading.host.textContent).toContain('Downloading version 2.5.3… 50%')
+    expect(downloading.host.querySelector('[role=progressbar]')!.getAttribute('aria-valuenow')).toBe('50')
+    expect(downloading.host.querySelector('button')).toBeNull()
+    const checking = mount({ state: 'downloading', pending: '2.5.3', step: 'verify', progress: null })
+    expect(checking.host.textContent).toContain('Checking the download…')
+    expect(checking.host.querySelector('[role=progressbar]')!.hasAttribute('aria-valuenow')).toBe(false)
+    expect(mount({ state: 'downloading', pending: '2.5.3', step: 'install', progress: null }).host.textContent).toContain('Installing version 2.5.3…')
+    expect(mount({ state: 'waiting', pending: '2.5.3' }).host.querySelector('[role=progressbar]')!.getAttribute('aria-valuenow')).toBe('100')
+})
+
+test('reads in the app language', async () => {
+    const language = { locale: 'fr' as const, preference: 'fr' as const, messages: desktopMessages('fr', await loadMessages('fr')) }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    roots.push(root)
+    act(() => { root.render(<DesktopLocale initial={language}>
+        <DesktopCliToolVersion name="Kimi Code" status={base} acting={false} onAct={vi.fn()} /></DesktopLocale>) })
+    expect(host.textContent).toContain('La version 2.5.3 est disponible.')
+    expect(host.querySelector('button')!.textContent).toBe('Mettre à jour')
+})

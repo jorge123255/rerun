@@ -204,6 +204,9 @@ test('a follow-up attachment can be removed while streaming without changing the
 
 test('three ordered files travel as one immutable set, persist per tab, and render from history', async () => {
     const files = [entry('a.md'), entry('b.md'), entry('c.md')]
+    const previews: string[] = []
+    const savedContent = 'Original <svg>literal</svg>'
+    const textResponse = (content: string) => new Response(content, { headers: { 'content-type': 'text/plain; charset=utf-8' } })
     const posts: Record<string, unknown>[] = []
     const draftWrites: Record<string, unknown>[] = []
     const draftFixture = createDesktopDraftFixture()
@@ -220,13 +223,17 @@ test('three ordered files travel as one immutable set, persist per tab, and rend
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
+        if (url.pathname.endsWith('/files/read') || url.pathname.endsWith('/attachment')) {
+            previews.push(url.pathname + url.search)
+            return textResponse(url.pathname.endsWith('/files/read') ? 'Current workspace draft' : savedContent)
+        }
         if (url.pathname.endsWith('/files')) return Response.json({ entries: url.searchParams.get('path') === 'docs' ? files : [entry('docs', 'dir')] })
         if (url.pathname.endsWith('/chat')) {
             posts.push(JSON.parse(String(init?.body)))
             return new Response('data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream', 'x-session-id': 'saved' } })
         }
         if (url.pathname.endsWith('/messages')) return Response.json({ messages: posts.length ? [{
-            id: 'multi-user', role: 'user', parts: [{ type: 'text', text: 'Compare the three files' }],
+            id: 'engine-multi-user', role: 'user', parts: [{ type: 'text', text: 'Compare the three files' }],
             metadata: { attachmentPaths: ['docs/a.md', 'docs/b.md', 'docs/c.md'] },
         }] : [] })
         return Response.json({ running: false })
@@ -258,10 +265,27 @@ test('three ordered files travel as one immutable set, persist per tab, and rend
     expect([...container.querySelectorAll<HTMLElement>('span[title^="docs/"]')].map(node => node.title))
         .toEqual(['docs/a.md', 'docs/b.md', 'docs/c.md'])
 
+    await click('Preview a.md')
+    expect(document.querySelector('[role="dialog"] pre')?.textContent).toBe('Current workspace draft')
+    expect(previews).toEqual(['/api/desktop/agents/alice/files/read?view=attachment&path=docs%2Fa.md'])
+    await click('Close')
+    expect(posts).toHaveLength(0)
+
     await writeDraft('Compare the three files')
     await click('Send')
     expect(posts).toEqual([{ agentId: 'alice', sessionId: 'saved', text: 'Compare the three files', attachmentPaths: ['docs/a.md', 'docs/b.md', 'docs/c.md'] }])
     expect(posts[0]).not.toHaveProperty('attachmentPath')
+    await act(async () => root.unmount())
+    forgetCoworkerDrafts('alice')
+    root = createRoot(container)
+    await renderTab()
+    await click('Preview a.md')
+    expect(document.querySelector('[role="dialog"] pre')?.textContent).toBe(savedContent)
+    expect(document.querySelector('[role="dialog"] pre svg')).toBeNull()
+    expect(previews.at(-1)).toBe('/api/desktop/sessions/saved/messages/multi-user/attachment?path=docs%2Fa.md')
+    await click('Next attachment')
+    expect(previews.at(-1)).toBe('/api/desktop/sessions/saved/messages/multi-user/attachment?path=docs%2Fb.md')
+    await click('Close')
     expect([...container.querySelectorAll<HTMLElement>('span[title^="docs/"]')].map(node => node.title))
         .toEqual(['docs/a.md', 'docs/b.md', 'docs/c.md'])
 })

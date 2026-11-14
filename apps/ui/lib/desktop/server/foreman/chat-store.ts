@@ -1,17 +1,16 @@
 import 'server-only'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
-import type { DesktopForemanChatRef, DesktopForemanModelRef, DesktopForemanQuestionGuard, ForemanBrief } from '@rerun/contracts'
+import type { DesktopDocumentSendSelection, DesktopForemanChatRef, DesktopForemanModelRef, DesktopForemanQuestionGuard, ForemanBrief } from '@rerun/contracts'
+import { desktopCoworkerMentionFieldsOf, type DesktopCoworkerMentionFields } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
+import type { DesktopApprovalAnswer } from '../../approvals'
 import type { DesktopQuestionAnswer } from '../../questions'
 import type { DesktopRuntime } from '../runtime'
 import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
+import { emptyForemanUi } from '../../foreman-client/persistence'
 
-export const DESKTOP_FOREMAN_CHAT_SCHEMA = `
-CREATE TABLE IF NOT EXISTS desktop_foreman_chats(
- chat_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL UNIQUE,
- engine_session_id TEXT NOT NULL UNIQUE, model TEXT, ui TEXT, ui_revision INTEGER NOT NULL DEFAULT 0
-);
+const FOREMAN_TURNS_SCHEMA = `
 CREATE TABLE IF NOT EXISTS desktop_foreman_turns(
  request_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL REFERENCES desktop_foreman_chats(chat_id),
  fingerprint TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL,
@@ -19,17 +18,43 @@ CREATE TABLE IF NOT EXISTS desktop_foreman_turns(
 );
 CREATE INDEX IF NOT EXISTS desktop_foreman_turns_chat ON desktop_foreman_turns(chat_id,created_at);
 `
+export const LEGACY_DESKTOP_FOREMAN_CHAT_SCHEMA = `
+CREATE TABLE IF NOT EXISTS desktop_foreman_chats(
+ chat_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL UNIQUE,
+ engine_session_id TEXT NOT NULL UNIQUE, model TEXT, ui TEXT, ui_revision INTEGER NOT NULL DEFAULT 0
+);
+${FOREMAN_TURNS_SCHEMA}`
+export const foremanConversationColumns = `
+ chat_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL,
+ engine_session_id TEXT NOT NULL UNIQUE, model TEXT, ui TEXT, ui_revision INTEGER NOT NULL DEFAULT 0,
+ home INTEGER NOT NULL DEFAULT 1 CHECK (home IN (0, 1)), title TEXT, initial_prompt_hash TEXT
+`
+export const foremanHomeIndex = `
+CREATE UNIQUE INDEX IF NOT EXISTS desktop_foreman_home ON desktop_foreman_chats(workspace_id) WHERE home = 1
+`
+export const DESKTOP_FOREMAN_CHAT_SCHEMA = `
+CREATE TABLE IF NOT EXISTS desktop_foreman_chats(
+ ${foremanConversationColumns}
+);
+${foremanHomeIndex};
+${FOREMAN_TURNS_SCHEMA}
+`
 export type ForemanChat = { chat: DesktopForemanChatRef; sessionId: string; model: DesktopForemanModelRef | null }
-export type ForemanTurn = {
+type OwnedForemanChat = ForemanChat & { home: boolean }
+export type ForemanSendFields = DesktopCoworkerMentionFields & { documents?: DesktopDocumentSendSelection }
+export type ForemanTurn = ForemanSendFields & {
     binding: DesktopForemanChatRef & { runId: string; model: DesktopForemanModelRef }
     sessionId: string
     text: string
     brief: ForemanBrief
     question?: DesktopForemanQuestionGuard
     answerIntent?: DesktopQuestionAnswer
+    approval?: DesktopForemanQuestionGuard
+    approvalIntent?: DesktopApprovalAnswer
+    starterOfferId?: string
 }
-export function foremanTurnWire({ answerIntent: _answerIntent, ...body }: ForemanTurn) {
-    return body
+export function foremanTurnWire({ binding, sessionId, text, brief, question, approval, documents, coworkerMentions }: ForemanTurn) {
+    return { binding, sessionId, text, brief, ...(question && { question }), ...(approval && { approval }), ...(documents && { documents }), ...desktopCoworkerMentionFieldsOf(coworkerMentions) }
 }
 const LOCKS = Symbol.for('rerun.desktop.foreman.chat-locks.v1')
 const locks = () => ((globalThis as unknown as Record<symbol, WeakMap<Client, Promise<unknown>>>)[LOCKS] ??= new WeakMap())
@@ -39,16 +64,48 @@ export function withForemanChatWrite<T>(db: Client, work: () => Promise<T>): Pro
     void result.then(() => { if (locks().get(db) === result) locks().delete(db) }, () => { if (locks().get(db) === result) locks().delete(db) })
     return result
 }
-export async function ensureForemanChat(db: Client, workspaceId: string): Promise<ForemanChat> {
-    await db.execute({ sql: 'INSERT INTO desktop_foreman_chats(chat_id,workspace_id,engine_session_id) VALUES(?,?,?) ON CONFLICT(workspace_id) DO NOTHING', args: [`fmc_${randomUUID()}`, workspaceId, randomUUID()] })
-    const row = (await db.execute({ sql: 'SELECT * FROM desktop_foreman_chats WHERE workspace_id=?', args: [workspaceId] })).rows[0]!
-    return { chat: { workspaceId, chatId: String(row.chat_id) }, sessionId: String(row.engine_session_id), model: row.model ? JSON.parse(String(row.model)) : null }
+export async function ensureForemanChat(db: Client, workspaceId: string): Promise<OwnedForemanChat> {
+    await db.execute({ sql: 'INSERT INTO desktop_foreman_chats(chat_id,workspace_id,engine_session_id) VALUES(?,?,?) ON CONFLICT(workspace_id) WHERE home=1 DO NOTHING',
+        args: [`fmc_${randomUUID()}`, workspaceId, randomUUID()] })
+    const row = (await db.execute({ sql: 'SELECT * FROM desktop_foreman_chats WHERE workspace_id=? AND home=1', args: [workspaceId] })).rows[0]!
+    return { chat: { workspaceId, chatId: String(row.chat_id) }, sessionId: String(row.engine_session_id), model: row.model ? JSON.parse(String(row.model)) : null, home: true }
 }
-export async function ownedForemanChat(db: Client, chat: DesktopForemanChatRef): Promise<ForemanChat> {
+export function foremanConversationTitle(text: string) { return text.trim().replace(/\s+/g, ' ').slice(0, 80) }
+export async function createForemanConversation(db: Client, runtime: DesktopRuntime, requestId: string, prompt?: string) {
+    return withForemanChatWrite(db, async () => {
+        assertDesktopWorkspaceAdmission(runtime)
+        const chat = { workspaceId: String(runtime.workspaceId), chatId: `fmc_${requestId}` }
+        const promptHash = prompt ? createHash('sha256').update(prompt).digest('hex') : null
+        const ui = prompt ? JSON.stringify({ ...emptyForemanUi(chat), pendingSend: { requestId, text: prompt, modelChoice: null } }) : null
+        await db.execute({
+            sql: `INSERT INTO desktop_foreman_chats(chat_id,workspace_id,engine_session_id,home,ui,title,initial_prompt_hash)
+                  VALUES(?,?,?,0,?,?,?) ON CONFLICT(chat_id) DO NOTHING`,
+            args: [chat.chatId, chat.workspaceId, randomUUID(), ui, prompt ? foremanConversationTitle(prompt) : null, promptHash],
+        })
+        const { rows: [row] } = await db.execute({ sql: 'SELECT home,initial_prompt_hash FROM desktop_foreman_chats WHERE workspace_id=? AND chat_id=?',
+            args: [chat.workspaceId, chat.chatId] })
+        if (!row || row.home !== 0 || row.initial_prompt_hash !== promptHash) throw new DesktopHttpError(409, 'This request already belongs to a different conversation.')
+        return chat
+    })
+}
+export async function listForemanConversations(db: Client, workspaceId: string) {
+    const { rows } = await db.execute({
+        sql: 'SELECT chat_id, title, home FROM desktop_foreman_chats WHERE workspace_id=? ORDER BY home DESC, rowid DESC',
+        args: [workspaceId],
+    })
+    return rows.map(row => ({ chat: { workspaceId, chatId: String(row.chat_id) }, title: row.title === null ? null : String(row.title), home: row.home === 1 }))
+}
+export async function ownedForemanChat(db: Pick<Client, 'execute'>, chat: DesktopForemanChatRef): Promise<OwnedForemanChat> {
     const row = (await db.execute({ sql: 'SELECT * FROM desktop_foreman_chats WHERE workspace_id=? AND chat_id=?', args: [chat.workspaceId, chat.chatId] })).rows[0]
     if (!row) throw new DesktopHttpError(404, 'Foreman conversation not found.')
-    return { chat, sessionId: String(row.engine_session_id), model: row.model ? JSON.parse(String(row.model)) : null }
+    return { chat, sessionId: String(row.engine_session_id), model: row.model ? JSON.parse(String(row.model)) : null, home: row.home === 1 }
 }
+export async function lastSavedForemanTurn(db: Client, chat: DesktopForemanChatRef) {
+    const row = (await db.execute({ sql: 'SELECT body FROM desktop_foreman_turns WHERE chat_id=? ORDER BY rowid DESC LIMIT 1',
+        args: [chat.chatId] })).rows[0]
+    return row ? JSON.parse(String(row.body)) as ForemanTurn : undefined
+}
+
 export async function foremanTurn(db: Client, id: string) {
     const row = (await db.execute({ sql: 'SELECT * FROM desktop_foreman_turns WHERE request_id=?', args: [id] })).rows[0]
     return row ? { body: JSON.parse(String(row.body)) as ForemanTurn, fingerprint: String(row.fingerprint), status: String(row.status), error: row.error ? String(row.error) : null } : null

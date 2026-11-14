@@ -42,6 +42,7 @@ export type ServiceAccountDetail = {
     authMethods: ServiceAccountMethod[]
     methodAvailability: Array<{ id: string; supported: boolean; reason?: string }>
     accounts: DesktopServiceAccountView[]
+    vaultManaged?: true
     localLimitations: string
 }
 

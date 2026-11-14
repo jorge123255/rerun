@@ -56,8 +56,11 @@ export type DesktopDelegationClient = {
     dispose(): void
 }
 
-export function delegationUrl(sessionId: string): string {
-    return `/api/desktop/sessions/${encodeURIComponent(sessionId)}/delegation`
+export type DesktopDelegationScope = 'coworker' | 'foreman'
+
+export function delegationUrl(sessionId: string, scope: DesktopDelegationScope = 'coworker'): string {
+    const resource = scope === 'foreman' ? 'foreman' : 'sessions'
+    return `/api/desktop/${resource}/${encodeURIComponent(sessionId)}/delegation`
 }
 
 export function visibleDelegations(delegations: readonly DesktopDelegationSnapshot[], filter: DesktopDelegationFilter): DesktopDelegationSnapshot[] {
@@ -216,7 +219,7 @@ function wrapRead(error: unknown, kind: DesktopDelegationReadKind, fallback: str
     return new DesktopDelegationReadError(kind, message)
 }
 
-export function createDesktopDelegationClient(requestIds = stopRequestIds): DesktopDelegationClient {
+export function createDesktopDelegationClient(requestIds = stopRequestIds, scope: DesktopDelegationScope = 'coworker'): DesktopDelegationClient {
     const controllers = new Set<AbortController>()
     let closed = false
 
@@ -235,7 +238,7 @@ export function createDesktopDelegationClient(requestIds = stopRequestIds): Desk
         if (closed) throw abortError()
         const linked = link(timeoutMs, signal)
         try {
-            const response = await fetch(delegationUrl(sessionIdOf(sessionId, unavailable)), {
+            const response = await fetch(delegationUrl(sessionIdOf(sessionId, unavailable), scope), {
                 ...init,
                 cache: 'no-store',
                 credentials: 'same-origin',
@@ -284,7 +287,7 @@ export function createDesktopDelegationClient(requestIds = stopRequestIds): Desk
                 taskId = text(input.taskId, ID_MAX, DELEGATION_STOP_UNAVAILABLE)
                 expectedRevision = text(input.expectedRevision, ID_MAX, DELEGATION_STOP_UNAVAILABLE)
                 if (!UUID.test(delegationId) || !UUID.test(taskId) || !UUID.test(expectedRevision)) fail(DELEGATION_STOP_UNAVAILABLE)
-                const key = JSON.stringify([delegationId, taskId, expectedRevision])
+                const key = JSON.stringify([scope, session, delegationId, taskId, expectedRevision])
                 requestId = requestIds.get(key) ?? ''
                 if (!requestId) {
                     requestId = crypto.randomUUID()

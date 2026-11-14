@@ -11,7 +11,9 @@ describe('desktop run recovery', () => {
             run({ id: 'old', status: 'error', error: 'missing key', startedAt: '2026-11-06T00:00:00.000Z' }),
             run({ id: 'new', status: 'done', startedAt: '2026-11-06T00:01:00.000Z' }),
         ]
-        expect(desktopRunRecovery(runs, 'engine-a', 'engine-session')).toEqual({ activeRunId: null, lastError: null })
+        expect(desktopRunRecovery(runs, 'engine-a', 'engine-session')).toEqual({
+            activeRunId: null, lastError: null, failedRunId: null, runVersion: JSON.stringify(['new', 'done', null]),
+        })
     })
 
     it('names the current running run and does not announce a failure while it is still going', () => {
@@ -19,7 +21,9 @@ describe('desktop run recovery', () => {
             run({ id: 'failed', status: 'error', error: 'old', startedAt: '2026-11-06T00:00:00.000Z' }),
             run({ id: 'live', status: 'running', startedAt: '2026-11-06T00:02:00.000Z' }),
         ]
-        expect(desktopRunRecovery(runs, 'engine-a', 'engine-session')).toEqual({ activeRunId: 'live', lastError: null })
+        expect(desktopRunRecovery(runs, 'engine-a', 'engine-session')).toEqual({
+            activeRunId: 'live', lastError: null, failedRunId: null, runVersion: JSON.stringify(['live', 'running', 'live']),
+        })
     })
 
     it('keeps a failed run that never wrote the same text into the transcript', () => {

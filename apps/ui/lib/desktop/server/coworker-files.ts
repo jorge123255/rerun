@@ -1,13 +1,13 @@
 import { canonicalDesktopEngineRoot } from './runtime'
 import 'server-only'
-import { DESKTOP_ATTACHMENT_MAX_BYTES, isDesktopAttachmentPath } from '@rerun/contracts'
-import { constants } from 'node:fs'
+import { DESKTOP_ATTACHMENT_MAX_BYTES, MAX_UPLOAD_FILE_BYTES, isDesktopAttachmentPath } from '@rerun/contracts'
+import { constants, type BigIntStats } from 'node:fs'
 import { execFile } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
 import { link, lstat, mkdir, open, readdir, realpath, rename, rmdir, unlink, type FileHandle } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { hashText, looksBinary } from '@/lib/files/editable'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { fileEditBlockReason, hashText, looksBinary } from '@/lib/files/editable'
 import { DesktopHttpError } from './auth'
 import { DESKTOP_AUDIO_MAX_BYTES, DesktopAudioBytesError, desktopAudioKind, inspectDesktopAudioBytes, type DesktopAudioContentType } from './audio-bytes'
 import { DESKTOP_VIDEO_MAX_BYTES, DesktopVideoBytesError, desktopVideoKind, inspectDesktopVideoBytes, type DesktopVideoContentType } from './video-bytes'
@@ -21,9 +21,9 @@ import { withRosterWrite } from './roster-writes'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { assertPrivateBackupBudget, assertPrivateDirectories, assertPrivateSnapshot, privateFileLocation, readPrivateSnapshot, readPrivateTextAt, type PrivateFileSnapshot } from './private-file-tools/snapshot'
 
-export type CoworkerFileEntry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string }
-/** `hash` is set only when the whole file was read as valid UTF-8 .txt/.md, i.e. when it can be edited. */
-export type CoworkerFilePreview = { path: string; content: string; size: number; truncated: boolean; hash?: string; identity?: string }
+export type CoworkerFileEntry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string; exportVersion?: string }
+/** `hash` is set only when the whole file can be edited as UTF-8 text. */
+export type CoworkerFilePreview = { path: string; content: string; size: number; truncated: boolean; hash?: string; identity?: string; exportVersion?: string }
 
 const PREVIEW_BYTES = 256 * 1024
 const SAFE_ENGINE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -34,6 +34,11 @@ const inside = (root: string, target: string) => {
 }
 
 const missing = (error: unknown) => ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException)?.code ?? '')
+
+export async function assertWorkspaceLinkOwner(runtime: DesktopRuntime, agentId: string, owner: string): Promise<void> {
+    const agent = await findDesktopAgent(await openDesktopDatabase(runtime.dataRoot), agentId)
+    if (agent?.engineAgentId !== owner) throw new DesktopHttpError(404, 'File not found')
+}
 
 /** The engine stores each agent's workspace under `<engine data>/agents/<id>/workspace` (apps/engine/src/config/paths.ts). */
 export async function coworkerWorkspace(runtime: DesktopRuntime, agentId: string): Promise<string> {
@@ -131,6 +136,7 @@ async function listFiles(runtime: DesktopRuntime, agentId: string, path: string,
             entries.push({
                 name, type: info.isDirectory() ? 'dir' : 'file', size: Number(info.size), modifiedAt: info.mtime.toISOString(),
                 ...(entryIdentity && { identity: `${entryIdentity.dev}:${entryIdentity.ino}` }),
+                ...(entryIdentity?.isFile() && canExportFile(name, entryIdentity) && { exportVersion: exportFileVersion(entryIdentity) }),
             })
         }
     } finally {
@@ -172,10 +178,11 @@ async function readFileInWorkspace(runtime: DesktopRuntime, agentId: string, pat
 async function readResolvedFile(target: string, rel: string, mode: 'preview' | 'attach'): Promise<CoworkerFilePreview> {
     const handle = await openResolved(target)
     try {
-        const info = await handle.stat()
-        if (!info.isFile()) throw new DesktopHttpError(400, 'That path is not a file.')
-        if (mode === 'attach' && info.size > DESKTOP_ATTACHMENT_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments must be 32 KiB or smaller.')
-        const buffer = Buffer.alloc(Math.min(info.size, PREVIEW_BYTES))
+        const opened = await handle.stat({ bigint: true })
+        if (!opened.isFile()) throw new DesktopHttpError(400, 'That path is not a file.')
+        const size = Number(opened.size)
+        if (mode === 'attach' && size > DESKTOP_ATTACHMENT_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments must be 32 KiB or smaller.')
+        const buffer = Buffer.alloc(Math.min(size, PREVIEW_BYTES))
         let bytesRead = 0
         while (bytesRead < buffer.length) {
             const read = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead)
@@ -186,19 +193,80 @@ async function readResolvedFile(target: string, rel: string, mode: 'preview' | '
         if (bytes.includes(0)) throw new DesktopHttpError(415, mode === 'attach' ? 'Attachments must contain UTF-8 text.' : 'Only text files can be previewed.')
         let content: string
         if (mode === 'attach') {
-            const after = await handle.stat()
-            if (bytesRead !== info.size || info.size !== after.size || info.ctimeMs !== after.ctimeMs) throw new DesktopHttpError(409, 'This file changed while it was being read. Try sending again.')
+            const after = await handle.stat({ bigint: true })
+            if (bytesRead !== size || opened.size !== after.size || opened.ctimeNs !== after.ctimeNs) throw new DesktopHttpError(409, 'This file changed while it was being read. Try sending again.')
             try { content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }
             catch { throw new DesktopHttpError(415, 'Attachments must contain UTF-8 text.') }
             if (bytes.some(byte => (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) || byte === 127)) throw new DesktopHttpError(415, 'Attachments must contain UTF-8 text.')
         } else content = bytes.toString('utf8')
-        const truncated = info.size > bytesRead
+        const truncated = size > bytesRead
         const identified = await handle.stat({ bigint: true })
-        const hash = mode === 'preview' && !truncated && EDITABLE.test(rel) ? editableText(bytes) : null
-        return { path: rel, content, size: info.size, truncated, identity: `${identified.dev}:${identified.ino}`, ...(hash !== null ? { hash: hashText(hash) } : {}) }
+        const text = mode === 'preview' && !truncated && identified.size === BigInt(bytesRead)
+            && canEditCoworkerFileName(basename(rel)) && canEditCoworkerFileName(basename(target)) ? editableText(bytes) : null
+        const exportVersion = mode === 'preview' && canExportFile(basename(rel), identified)
+            && exportFileVersion(opened) === exportFileVersion(identified) ? exportFileVersion(identified) : undefined
+        return { path: rel, content, size, truncated, identity: `${identified.dev}:${identified.ino}`,
+            ...(text !== null && { hash: hashText(text) }), ...(exportVersion && { exportVersion }) }
     } finally {
         await handle.close()
     }
+}
+
+function canExportFile(name: string, file: BigIntStats): boolean {
+    return simpleName(name) && name.length <= 255 && !name.startsWith('.') && !/\p{Cc}/u.test(name)
+        && file.isFile() && file.nlink === BigInt(1) && typeof process.getuid === 'function' && file.uid === BigInt(process.getuid())
+}
+
+function exportFileVersion(file: BigIntStats): string {
+    return createHash('sha256').update([file.dev, file.ino, file.size, file.mtimeNs, file.ctimeNs].join(':')).digest('hex')
+}
+
+/** Save the original file at the version selected in Files, including binary and rendered formats. */
+export function readCoworkerFileDownload(runtime: DesktopRuntime, agentId: string, path: string, version: string, signal: AbortSignal) {
+    return withCoworkerFiles(runtime, agentId, async () => {
+        const parts = path.split('/')
+        const name = parts.at(-1)!
+        if (path.length > 4096 || parts.length > 64 || parts.some(part => !simpleName(part) || reservedName(part.normalize('NFKC').toLowerCase()) || /\p{Cc}/u.test(part))
+            || name.startsWith('.') || !/^[a-f0-9]{64}$/.test(version)) {
+            throw new DesktopHttpError(400, 'Choose a file in this coworker’s workspace.')
+        }
+        const checkOpen = () => {
+            if (signal.aborted) throw new DesktopHttpError(499, 'Save As was cancelled.')
+        }
+        checkOpen()
+        const root = await coworkerWorkspace(runtime, agentId)
+        const uid = currentUid('File export is only available on this Mac.')
+        const parents = await assertCoworkerDirectories(root, parts.slice(0, -1), uid, name, 'file')
+        const target = join(/* turbopackIgnore: true */ root, ...parts)
+        const file = await openResolved(target).catch(error => {
+            if (missing(error)) throw new DesktopHttpError(404, 'This file was not found.')
+            throw error
+        })
+        const changed = () => new DesktopHttpError(409, 'This file changed. Reopen it in Files before saving.')
+        try {
+            const before = await file.stat({ bigint: true })
+            if (!canExportFile(name, before)) throw new DesktopHttpError(400, 'Choose a regular file without other links.')
+            if (before.size > BigInt(MAX_UPLOAD_FILE_BYTES)) throw new DesktopHttpError(413, 'Files can be up to 100 MiB.')
+            if (exportFileVersion(before) !== version) throw changed()
+            const bytes = new Uint8Array(Number(before.size))
+            let offset = 0
+            while (offset < bytes.length) {
+                checkOpen()
+                const read = await file.read(bytes, offset, bytes.length - offset, offset)
+                if (!read.bytesRead) break
+                offset += read.bytesRead
+            }
+            const [after, named] = await Promise.all([file.stat({ bigint: true }), fileStat(target)])
+            if (offset !== bytes.length || !canExportFile(name, after) || !named || !canExportFile(name, named)
+                || exportFileVersion(after) !== version || exportFileVersion(named) !== version) throw changed()
+            for (const parent of parents) {
+                const current = await fileStat(parent.path)
+                if (!current?.isDirectory() || current.uid !== uid || !sameFile(current, parent)) throw changed()
+            }
+            checkOpen()
+            return { name, bytes }
+        } finally { await file.close() }
+    })
 }
 
 export type CoworkerImagePreview = { path: string; name: string; bytes: Uint8Array; contentType: DesktopImageContentType; identity: string; width: number; height: number }
@@ -230,9 +298,9 @@ async function readImage(runtime: DesktopRuntime, agentId: string, path: string,
     const uid = currentUid()
     const parentRel = parts.slice(0, -1).join('/')
     const parentPath = join(/* turbopackIgnore: true */ root.root, parentRel)
-    await assertImageDirectories(root.root, parts.slice(0, -1), uid, name)
+    await assertCoworkerDirectories(root.root, parts.slice(0, -1), uid, name)
     await recoverInterruptedCoworkerEdits(parentPath, root.root)
-    const parents = await assertImageDirectories(root.root, parts.slice(0, -1), uid, name)
+    const parents = await assertCoworkerDirectories(root.root, parts.slice(0, -1), uid, name)
     const located = join(/* turbopackIgnore: true */ parentPath, name)
     const listed = await fileStat(located)
     if (!listed) throw new DesktopHttpError(404, `“${name}” was not found.`)
@@ -506,7 +574,7 @@ function currentUid(unavailable = 'Image preview is only available on this Mac.'
     return BigInt(process.getuid())
 }
 
-async function assertImageDirectories(root: string, directories: string[], uid: bigint, fileName: string): Promise<Array<FileIdentity & { path: string }>> {
+async function assertCoworkerDirectories(root: string, directories: string[], uid: bigint, fileName: string, kind: 'file' | 'image' = 'image'): Promise<Array<FileIdentity & { path: string }>> {
     const parents: Array<FileIdentity & { path: string }> = []
     let directory = root
     const rootInfo = await fileStat(directory)
@@ -517,7 +585,7 @@ async function assertImageDirectories(root: string, directories: string[], uid: 
         directory = join(/* turbopackIgnore: true */ directory, part)
         const info = await fileStat(directory)
         if (!info) throw new DesktopHttpError(404, `“${fileName}” was not found.`)
-        if (info.isSymbolicLink()) throw new DesktopHttpError(400, 'Choose an image file, not a symlink.')
+        if (info.isSymbolicLink()) throw new DesktopHttpError(400, kind === 'image' ? 'Choose an image file, not a symlink.' : 'Choose a file in a regular folder.')
         if (!info.isDirectory()) throw new DesktopHttpError(400, 'That path is not a folder.')
         if (info.uid !== uid) throw new DesktopHttpError(403, 'This file belongs to another user. It was left unopened.')
         parents.push({ path: directory, dev: info.dev, ino: info.ino })
@@ -638,7 +706,7 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
     const privateLocation = publication ? await privateFileLocation(workspace, path) : null
     if (!publication) await recoverInterruptedCoworkerEdits(target, resolved.root!)
     const rasterUid = currentUid()
-    const rasterParents = await assertImageDirectories(resolved.root!, relative(resolved.root!, target).split(sep).filter(Boolean), rasterUid, name)
+    const rasterParents = await assertCoworkerDirectories(resolved.root!, relative(resolved.root!, target).split(sep).filter(Boolean), rasterUid, name)
     const assertRasterParents = async () => {
         for (const parent of rasterParents) {
             const current = await fileStat(parent.path)
@@ -772,8 +840,12 @@ async function createWorkspace(runtime: DesktopRuntime, workspace: string): Prom
     }
 }
 
-const EDITABLE = /\.(txt|md)$/i
+const PRIVATE_TOOL_EDITABLE = /\.(txt|md)$/i
 export const EDIT_BYTES = PREVIEW_BYTES
+
+function canEditCoworkerFileName(name: string): boolean {
+    return simpleName(name) && !name.startsWith('.') && fileEditBlockReason({ name, truncated: false, content: null }) === null
+}
 
 /** The strict UTF-8 text of `bytes`, or null when saving it back as text would change it. */
 function editableText(bytes: Uint8Array): string | null {
@@ -784,7 +856,7 @@ function editableText(bytes: Uint8Array): string | null {
     } catch { return null }
 }
 
-export type SaveCoworkerFileResult = { path: string; hash: string; size: number; identity?: string }
+export type SaveCoworkerFileResult = { path: string; hash: string; size: number; identity?: string; exportVersion?: string }
 export type CoworkerFileRecovery = { draft: string; external: string }
 /** Thrown when the file on disk is not what the editor opened; carries the newer text so neither version is lost. */
 export class CoworkerFileConflict extends Error {
@@ -888,11 +960,15 @@ async function inodeMayBeHeld(path: string): Promise<boolean> {
 }
 
 async function recoveryLinks(directory: string, finalName: string, tempPath: string, backupPath: string): Promise<CoworkerFileRecovery> {
-    const extension = finalName.toLowerCase().endsWith('.md') ? '.md' : '.txt'
-    const stem = finalName.slice(0, -extension.length)
+    const extension = extname(finalName)
+    const stem = basename(finalName, extension)
     const token = randomBytes(6).toString('hex')
-    const draftName = `${stem}.draft-${token}${extension}`
-    const externalName = `${stem}.external-${token}${extension}`
+    const recoveryName = (kind: 'draft' | 'external') => {
+        const name = `${stem}.${kind}-${token}${extension}`
+        return Buffer.byteLength(name) <= 255 ? name : `file.${kind}-${token}.txt`
+    }
+    const draftName = recoveryName('draft')
+    const externalName = recoveryName('external')
     const externalPath = join(directory, externalName)
     await link(backupPath, externalPath)
     try { await link(tempPath, join(directory, draftName)) } catch (error) {
@@ -1152,13 +1228,16 @@ export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string,
 async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string, identity?: string, publication?: PrivateToolPublication): Promise<SaveCoworkerFileResult> {
     const bytes = Buffer.from(content, 'utf8')
     if (bytes.byteLength > EDIT_BYTES) throw new DesktopHttpError(413, 'Files over 256 KB can’t be edited here.')
-    if (content.includes('\0') || looksBinary(content)) throw new DesktopHttpError(415, 'Only text can be saved here.')
+    if (editableText(bytes) !== content) throw new DesktopHttpError(415, 'Only UTF-8 text can be saved here.')
     const workspace=await coworkerWorkspace(runtime,agentId)
     if(publication)await assertPrivateToolLocation(workspace,path,true)
     const { root, target, rel } = await containedPath(workspace, path)
     if(publication && target!==join(/* turbopackIgnore: true */ root ?? '',path))throw new DesktopHttpError(400,'Private file tools cannot follow symlinks.')
-    const name = rel.split('/').pop() ?? ''
-    if (!rel || name.startsWith('.') || !EDITABLE.test(name)) throw new DesktopHttpError(415, 'Only .txt and .md files can be edited here.')
+    const name = basename(rel)
+    if (publication && !PRIVATE_TOOL_EDITABLE.test(name)) throw new DesktopHttpError(415, 'Only .txt and .md files can be edited here.')
+    if (!canEditCoworkerFileName(name) || target && !canEditCoworkerFileName(basename(target))) {
+        throw new DesktopHttpError(415, 'Only visible UTF-8 text files can be edited here.')
+    }
     if (!root || !target) throw new DesktopHttpError(404, 'File not found')
     if (!baseHash) throw new DesktopHttpError(400, 'The opened file version is required for every save.')
     const outside = () => new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
@@ -1174,6 +1253,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
             await assertPrivateBackupBudget(publication.snapshot)
         }
         let savedIdentity: string | undefined
+        let savedVersion: string | undefined
         const interrupted = publication ? undefined : (await recoverInterruptedCoworkerEdits(folder, root!)).find(item => item.final === finalName)
         claim(folder, finalName)
         try {
@@ -1427,6 +1507,12 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
                 committed = true
                 await removeName(tempPath)
                 await removeName(journalPath)
+                // Removing the draft link changes ctime. Capture the final single-link version.
+                const saved = !publication ? await fileStat(finalPath).catch(() => null) : null
+                if (saved && canExportFile(finalName, saved) && sameFile(saved, linked)
+                    && saved.mtimeNs === linked.mtimeNs && saved.size === BigInt(bytes.byteLength)) {
+                    savedVersion = exportFileVersion(saved)
+                }
             } catch (error) {
                 if (!committed) {
                     await restoreBackup()
@@ -1444,7 +1530,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
         } finally {
             await dir.close()
         }
-        return { path: rel, hash: hashText(content), size: bytes.byteLength, identity: savedIdentity }
+        return { path: rel, hash: hashText(content), size: bytes.byteLength, identity: savedIdentity, ...(savedVersion && { exportVersion: savedVersion }) }
         } finally {
             unclaim(folder, finalName)
         }
@@ -1453,11 +1539,12 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
 
 /** Rename through an identity-bound journal and exclusive native moves. The staged entry is
  * recoverable after a restart, including the case-only rename of a directory on APFS. */
-export async function renameCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, nextName: string): Promise<{ path: string; name: string }> {
-    return withCoworkerFiles(runtime, agentId, () => renameEntry(runtime, agentId, path, nextName))
+export async function renameCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, nextName: string, selectedIdentity?: string): Promise<{ path: string; name: string }> {
+    return withCoworkerFiles(runtime, agentId, () => renameEntry(runtime, agentId, path, nextName, selectedIdentity))
 }
 
-async function renameEntry(runtime: DesktopRuntime, agentId: string, path: string, nextName: string): Promise<{ path: string; name: string }> {
+async function renameEntry(runtime: DesktopRuntime, agentId: string, path: string, nextName: string, selectedIdentity?: string): Promise<{ path: string; name: string }> {
+    if (selectedIdentity !== undefined && !/^\d{1,24}:\d{1,24}$/.test(selectedIdentity)) throw new DesktopHttpError(400, 'Choose the file or folder to rename.')
     if (!simpleName(nextName) || /[\r\n]/.test(nextName) || nextName.length > 255 || Buffer.byteLength(nextName) > 255) throw new DesktopHttpError(400, 'Choose a new name in this folder. A rename can’t include a path.')
     if (reservedName(nextName)) throw new DesktopHttpError(400, 'That name can’t be changed.')
     const workspace = await coworkerWorkspace(runtime, agentId)
@@ -1491,6 +1578,9 @@ async function renameEntry(runtime: DesktopRuntime, agentId: string, path: strin
         const source = await fileStat(join(pinned, sourceName))
         if (!source) throw new DesktopHttpError(404, `“${sourceName}” was not found.`)
         if (source.isSymbolicLink() || (!source.isFile() && !source.isDirectory())) throw new DesktopHttpError(400, 'Choose a file or folder, not a symlink.')
+        if (selectedIdentity !== undefined && selectedIdentity !== `${source.dev}:${source.ino}`) {
+            throw new DesktopHttpError(409, 'This entry changed. Refresh Files and choose it again.')
+        }
         if (claimed(folder, sourceName) || claimed(folder, nextName)) throw new DesktopHttpError(409, 'This file is being saved. Try the rename again once that finishes.')
         if (sourceName === nextName) return { path: located.rel, name: sourceName }
         const names = await readdir(pinned)
@@ -1564,7 +1654,7 @@ const MAX_DELETE_DEPTH = 64
 const DIRECTORY_OPEN = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_NONBLOCK
 type DeleteNode = { name: string; dev: string; ino: string; type: 'file' | 'dir'; children?: DeleteNode[] }
 type DeleteJournal = { v: 1; name: string; dev: string; ino: string; parentDev: string; parentIno: string; workspaceDev: string; workspaceIno: string; nodes?: DeleteNode[] }
-type DeleteWorkspace = FileIdentity & { path: string }
+type DeleteWorkspace = FileIdentity & { path: string; validateEntry?: (entry: BigIntStats) => void }
 type DeleteStage = Omit<DeleteJournal, 'v' | 'nodes'> & { v: 2; kind: 'stage'; type: 'file' | 'dir'; temp: string; recovery: string }
 
 function idText(value: bigint): string {
@@ -1636,6 +1726,7 @@ function deleteDirectoryGuard(canonical: string, identity: FileIdentity, root: D
             !workspace?.isDirectory() || workspace.isSymbolicLink() || !sameFile(workspace, root) || workspaceActual !== root.path) {
             throw new DesktopHttpError(400, 'That folder moved outside this coworker’s workspace. Its remaining files were left unchanged.')
         }
+        root.validateEntry?.(listed)
     }
 }
 
@@ -1700,6 +1791,7 @@ async function finishDeleteStage(canonicalDir: string, pinned: string, stage: De
     if (!staged) { await removeJournal(pinned, journalName, journalIdentity, assertUnmoved); return 'removed' }
     if (staged.isSymbolicLink() || (!staged.isFile() && !staged.isDirectory())) throw new DesktopHttpError(409, 'A staged entry changed type during delete. Its recovery journal was kept; review the folder before trying again.')
     if (!sameFile(staged, expected) || staged.isDirectory() !== (stage.type === 'dir')) return preserve(staged)
+    try { root.validateEntry?.(staged) } catch { return preserve(staged) }
     if (stage.type === 'dir') {
         const child = await open(tempPath, DIRECTORY_OPEN)
         try {
@@ -1719,6 +1811,9 @@ async function finishDeleteStage(canonicalDir: string, pinned: string, stage: De
         await assertUnmoved()
         const current = await fileStat(tempPath)
         if (current && !sameFile(current, expected)) return preserve(current)
+        if (current) {
+            try { root.validateEntry?.(current) } catch { return preserve(current) }
+        }
         await assertUnmoved()
         await unlink(tempPath).catch(error => { if (!missing(error)) throw error })
     }
@@ -1746,12 +1841,13 @@ async function recoverDeleteStages(canonicalDir: string, parent: FileIdentity, p
     }
 }
 
-async function stageAndRemove(canonicalDir: string, parent: FileIdentity, pinned: string, name: string, identity: FileIdentity, type: 'file' | 'dir', root: DeleteWorkspace, assertUnmoved: () => Promise<void>): Promise<'removed' | 'missing' | 'kept'> {
+async function stageAndRemove(canonicalDir: string, parent: FileIdentity, pinned: string, name: string, identity: FileIdentity, type: 'file' | 'dir', root: DeleteWorkspace, assertUnmoved: () => Promise<void>, matches?: (source: BigIntStats) => boolean): Promise<'removed' | 'missing' | 'kept'> {
     await recoverDeleteStages(canonicalDir, parent, pinned, root, assertUnmoved)
     await assertUnmoved()
     const source = await fileStat(join(pinned, name))
     if (!source) return 'missing'
-    if (!sameFile(source, identity) || source.isSymbolicLink() || (type === 'dir' ? !source.isDirectory() : !source.isFile())) return 'kept'
+    if (!sameFile(source, identity) || source.isSymbolicLink() || (type === 'dir' ? !source.isDirectory() : !source.isFile()) || (matches && !matches(source))) return 'kept'
+    root.validateEntry?.(source)
     const token = randomBytes(12).toString('hex'), temp = DELETE_PREFIX + token
     const stage: DeleteStage = { v: 2, kind: 'stage', type, name, temp, recovery: `delete-recovery-${token}${type === 'file' ? name.match(/\.[^.]+$/)?.[0] ?? '' : ''}`,
         dev: idText(identity.dev), ino: idText(identity.ino), parentDev: idText(parent.dev), parentIno: idText(parent.ino), workspaceDev: idText(root.dev), workspaceIno: idText(root.ino) }
@@ -1760,6 +1856,13 @@ async function stageAndRemove(canonicalDir: string, parent: FileIdentity, pinned
     try {
         const receipt = await writeDeleteJournal(pinned, journalName, stage, assertUnmoved)
         await assertUnmoved()
+        if (matches) {
+            const exact = await fileStat(join(pinned, name))
+            if (!exact || !sameFile(exact, identity) || !matches(exact)) {
+                await removeJournal(pinned, journalName, receipt, assertUnmoved)
+                return exact ? 'kept' : 'missing'
+            }
+        }
         try { await renameWithoutReplace(canonicalDir, parent, name, identity, temp) }
         catch (error) {
             // ESTALE can mean a different source inode actually moved. Inspect the exact
@@ -1777,8 +1880,8 @@ async function stageAndRemove(canonicalDir: string, parent: FileIdentity, pinned
     } finally { for (const entry of [temp, journalName]) unclaim(canonicalDir, entry) }
 }
 
-async function stageAndUnlinkFile(canonicalDir: string, parent: FileIdentity, pinned: string, name: string, identity: FileIdentity, root: DeleteWorkspace, assertUnmoved: () => Promise<void>) {
-    return stageAndRemove(canonicalDir, parent, pinned, name, identity, 'file', root, assertUnmoved)
+async function stageAndUnlinkFile(canonicalDir: string, parent: FileIdentity, pinned: string, name: string, identity: FileIdentity, root: DeleteWorkspace, assertUnmoved: () => Promise<void>, matches?: (source: BigIntStats) => boolean) {
+    return stageAndRemove(canonicalDir, parent, pinned, name, identity, 'file', root, assertUnmoved, matches)
 }
 
 async function removeEmptyDirectory(canonicalDir: string, parent: FileIdentity, pinned: string, name: string, identity: FileIdentity, root: DeleteWorkspace, assertUnmoved: () => Promise<void>) {
@@ -1848,6 +1951,7 @@ async function inspectTree(pinned: string, canonicalDir: string, depth: number, 
         const info = await fileStat(join(pinned, name))
         if (!info) continue
         if (info.isSymbolicLink()) throw new DesktopHttpError(409, 'This folder contains a symlink. It was left unchanged.')
+        root.validateEntry?.(info)
         if (info.isDirectory()) {
             let child: FileHandle
             try { child = await open(join(pinned, name), DIRECTORY_OPEN) }
@@ -1966,27 +2070,69 @@ async function deleteEntry(runtime: DesktopRuntime, agentId: string, path: strin
     const folder = parentPath.target
     const root = parentPath.root
     const outside = () => new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
-    const replaced = () => new DesktopHttpError(409, `“${sourceName}” was renamed or replaced. It was left unchanged.`)
     const workspaceInfo = await fileStat(root)
     if (!workspaceInfo?.isDirectory()) throw outside()
     const workspaceIdentity: DeleteWorkspace = { path: root, dev: workspaceInfo.dev, ino: workspaceInfo.ino }
     await recoverInterruptedCoworkerEdits(folder, root)
     const dir = await openResolved(folder, true)
     try {
-        const pinned = await pinnedDirectory(dir)
-        const parent = await dir.stat({ bigint: true })
-        const assertUnmoved = deleteDirectoryGuard(folder, parent, workspaceIdentity, async () => {})
+        return await deleteFromPinnedFolder(folder, await pinnedDirectory(dir), await dir.stat({ bigint: true }), workspaceIdentity,
+            located.rel, async () => {}, source => !identity || `${source.dev}:${source.ino}` === identity)
+    } finally { await dir.close() }
+}
+
+export async function recoverPinnedFileDeletes(folder: string, pinned: string, workspace: DeleteWorkspace, assertCurrent: () => Promise<void>) {
+    await recoverDeleteJournals(folder, pinned, assertCurrent, workspace)
+}
+
+/** Shared and private callers supply an already verified folder, its identity and the authority guard. */
+export async function deleteFromPinnedFolder(folder: string, pinned: string, parent: FileIdentity, workspaceIdentity: DeleteWorkspace,
+    path: string, assertCurrent: () => Promise<void>, matches: (source: BigIntStats) => boolean): Promise<{ path: string }> {
+    const sourceName = basename(path)
+    if (!simpleName(sourceName) || reservedName(sourceName)) throw new DesktopHttpError(400, 'That name can’t be deleted.')
+    const replaced = () => new DesktopHttpError(409, `“${sourceName}” changed since it was selected. It was left unchanged.`)
+    const assertUnmoved = deleteDirectoryGuard(folder, parent, workspaceIdentity, assertCurrent)
+    await assertUnmoved()
+    const source = await fileStat(join(pinned, sourceName))
+    if (!source) throw new DesktopHttpError(404, `“${sourceName}” was not found.`)
+    if (source.isSymbolicLink() || (!source.isFile() && !source.isDirectory())) throw new DesktopHttpError(400, 'Choose a file or folder, not a symlink.')
+    workspaceIdentity.validateEntry?.(source)
+    if (!matches(source)) throw replaced()
+    if (claimed(folder, sourceName)) throw new DesktopHttpError(409, 'This file is being saved. Try the delete again once that finishes.')
+    let nodes: DeleteNode[] | undefined
+    if (source.isDirectory()) {
+        const child = await open(join(pinned, sourceName), DIRECTORY_OPEN).catch(error => {
+            const code = (error as NodeJS.ErrnoException).code
+            if (code === 'ELOOP' || code === 'ENOTDIR') throw new DesktopHttpError(400, 'Choose a file or folder, not a symlink.')
+            throw error
+        })
+        try {
+            const opened = await child.stat({ bigint: true })
+            if (!sameFile(opened, source)) throw replaced()
+            const canonical = join(folder, sourceName)
+            const guard = deleteDirectoryGuard(canonical, opened, workspaceIdentity, assertUnmoved)
+            await guard()
+            nodes = await inspectTree(await pinnedDirectory(child), canonical, 1, { n: 0 }, workspaceIdentity, guard)
+        } finally { await child.close() }
+    }
+    assertDeleteHelper()
+    const journalName = `${DELETE_PREFIX}${randomBytes(12).toString('hex')}.json`
+    const journal: DeleteJournal = {
+        v: 1, name: sourceName, dev: idText(source.dev), ino: idText(source.ino),
+        parentDev: idText(parent.dev), parentIno: idText(parent.ino),
+        workspaceDev: idText(workspaceIdentity.dev), workspaceIno: idText(workspaceIdentity.ino),
+        ...(nodes && { nodes }),
+    }
+    claim(folder, sourceName)
+    claim(folder, journalName)
+    let journalIdentity: FileIdentity | null = null
+    try {
         await assertUnmoved()
-        const source = await fileStat(join(pinned, sourceName))
-        if (!source) throw new DesktopHttpError(404, `“${sourceName}” was not found.`)
-        if (source.isSymbolicLink() || (!source.isFile() && !source.isDirectory())) throw new DesktopHttpError(400, 'Choose a file or folder, not a symlink.')
-        if (identity && `${source.dev}:${source.ino}` !== identity) throw replaced()
-        if (claimed(folder, sourceName)) throw new DesktopHttpError(409, 'This file is being saved. Try the delete again once that finishes.')
-        let nodes: DeleteNode[] | undefined
-        if (source.isDirectory()) {
+        journalIdentity = await writeDeleteJournal(pinned, journalName, journal, assertUnmoved)
+        if (nodes) {
             const child = await open(join(pinned, sourceName), DIRECTORY_OPEN).catch(error => {
                 const code = (error as NodeJS.ErrnoException).code
-                if (code === 'ELOOP' || code === 'ENOTDIR') throw new DesktopHttpError(400, 'Choose a file or folder, not a symlink.')
+                if (code === 'ELOOP' || code === 'ENOTDIR' || code === 'ENOENT') throw replaced()
                 throw error
             })
             try {
@@ -1995,63 +2141,33 @@ async function deleteEntry(runtime: DesktopRuntime, agentId: string, path: strin
                 const canonical = join(folder, sourceName)
                 const guard = deleteDirectoryGuard(canonical, opened, workspaceIdentity, assertUnmoved)
                 await guard()
-                nodes = await inspectTree(await pinnedDirectory(child), canonical, 1, { n: 0 }, workspaceIdentity, guard)
+                await deleteNodes(canonical, { dev: opened.dev, ino: opened.ino }, await pinnedDirectory(child), nodes, workspaceIdentity, guard)
             } finally { await child.close() }
+            await removeEmptyDirectory(folder, parent, pinned, sourceName, source, workspaceIdentity, assertUnmoved)
+        } else await stageAndUnlinkFile(folder, parent, pinned, sourceName, source, workspaceIdentity, assertUnmoved, matches)
+        await assertUnmoved()
+        const after = await fileStat(join(pinned, sourceName))
+        const stuck = await stagedFileRemains(folder, pinned, workspaceIdentity, assertUnmoved)
+        if (after && !sameFile(after, source)) {
+            if (!stuck) await removeJournal(pinned, journalName, journalIdentity, assertUnmoved)
+            throw new DesktopHttpError(409, `“${sourceName}” was replaced during delete. The newer entry was left in place.`)
         }
-        assertDeleteHelper()
-        const journalName = `${DELETE_PREFIX}${randomBytes(12).toString('hex')}.json`
-        const journal: DeleteJournal = {
-            v: 1, name: sourceName, dev: idText(source.dev), ino: idText(source.ino),
-            parentDev: idText(parent.dev), parentIno: idText(parent.ino),
-            workspaceDev: idText(workspaceInfo.dev), workspaceIno: idText(workspaceInfo.ino),
-            ...(nodes && { nodes }),
+        if (after && sameFile(after, source)) {
+            if (!stuck) await removeJournal(pinned, journalName, journalIdentity, assertUnmoved)
+            throw new DesktopHttpError(409, nodes
+                ? 'This folder changed during delete. Matching entries were removed. Newer files were left in place.'
+                : `“${sourceName}” changed during delete. It was left unchanged.`)
         }
-        claim(folder, sourceName)
-        claim(folder, journalName)
-        let journalIdentity: FileIdentity | null = null
-        try {
-            await assertUnmoved()
-            journalIdentity = await writeDeleteJournal(pinned, journalName, journal, assertUnmoved)
-            if (nodes) {
-                const child = await open(join(pinned, sourceName), DIRECTORY_OPEN).catch(error => {
-                    const code = (error as NodeJS.ErrnoException).code
-                    if (code === 'ELOOP' || code === 'ENOTDIR' || code === 'ENOENT') throw replaced()
-                    throw error
-                })
-                try {
-                    const opened = await child.stat({ bigint: true })
-                    if (!sameFile(opened, source)) throw replaced()
-                    const canonical = join(folder, sourceName)
-                    const guard = deleteDirectoryGuard(canonical, opened, workspaceIdentity, assertUnmoved)
-                    await guard()
-                    await deleteNodes(canonical, { dev: opened.dev, ino: opened.ino }, await pinnedDirectory(child), nodes, workspaceIdentity, guard)
-                } finally { await child.close() }
-                await removeEmptyDirectory(folder, parent, pinned, sourceName, source, workspaceIdentity, assertUnmoved)
-            } else await stageAndUnlinkFile(folder, parent, pinned, sourceName, source, workspaceIdentity, assertUnmoved)
-            await assertUnmoved()
-            const after = await fileStat(join(pinned, sourceName))
-            const stuck = await stagedFileRemains(folder, pinned, workspaceIdentity, assertUnmoved)
-            if (after && !sameFile(after, source)) {
-                if (!stuck) await removeJournal(pinned, journalName, journalIdentity, assertUnmoved)
-                throw new DesktopHttpError(409, `“${sourceName}” was replaced during delete. The newer entry was left in place.`)
-            }
-            if (after && sameFile(after, source)) {
-                if (!stuck) await removeJournal(pinned, journalName, journalIdentity, assertUnmoved)
-                throw new DesktopHttpError(409, nodes
-                    ? 'This folder changed during delete. Matching entries were removed. Newer files were left in place.'
-                    : `“${sourceName}” changed during delete. It was left unchanged.`)
-            }
-            if (stuck) throw new DesktopHttpError(409, 'Delete recovery is incomplete. The staged entries and their journals were kept; refresh Files before trying again.')
+        if (stuck) throw new DesktopHttpError(409, 'Delete recovery is incomplete. The staged entries and their journals were kept; refresh Files before trying again.')
+        await removeJournal(pinned, journalName, journalIdentity, assertUnmoved)
+        return { path }
+    } catch (error) {
+        if (error instanceof DesktopHttpError && error.status === 503 && journalIdentity && !await stagedFileRemains(folder, pinned, workspaceIdentity, assertUnmoved)) {
             await removeJournal(pinned, journalName, journalIdentity, assertUnmoved)
-            return { path: located.rel }
-        } catch (error) {
-            if (error instanceof DesktopHttpError && error.status === 503 && journalIdentity && !await stagedFileRemains(folder, pinned, workspaceIdentity, assertUnmoved)) {
-                await removeJournal(pinned, journalName, journalIdentity, assertUnmoved)
-            }
-            throw error
-        } finally {
-            unclaim(folder, sourceName)
-            unclaim(folder, journalName)
         }
-    } finally { await dir.close() }
+        throw error
+    } finally {
+        unclaim(folder, sourceName)
+        unclaim(folder, journalName)
+    }
 }

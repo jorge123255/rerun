@@ -1,3 +1,5 @@
+import { desktopCompactionReceiptSchema } from '@rerun/contracts'
+import type { UIMessage } from 'ai'
 import type { CompactionData } from '@/components/chat/CompactionBlock'
 
 /**
@@ -73,4 +75,10 @@ export function desktopCompactionSteps(parts: readonly unknown[], streaming: boo
         }
     }
     return steps
+}
+
+export function savedCompactionOf(message: Pick<UIMessage, 'role' | 'metadata'>) {
+    if (message.role !== 'user' || !isRecord(message.metadata)) return undefined
+    const result = desktopCompactionReceiptSchema.safeParse(message.metadata.compactionReceipt)
+    return result.success ? result.data : undefined
 }

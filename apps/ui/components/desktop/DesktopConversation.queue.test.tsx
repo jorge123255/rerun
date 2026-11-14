@@ -4,8 +4,11 @@ import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { UIMessage } from 'ai'
+import { loadMessages } from '@rerun/i18n/messages'
+import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
 import type { DesktopQueuedMessage } from '@/lib/desktop/queued-message'
 import { DesktopConversation, type ComposerDraft } from './DesktopConversation'
+import { DesktopLocale } from './DesktopLocale'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const chat = vi.hoisted(() => ({ messages: [] as UIMessage[], status: 'ready', error: undefined as Error | undefined, sendMessage: vi.fn(), stop: vi.fn(), setMessages: vi.fn(), clearError: vi.fn() }))
@@ -14,6 +17,7 @@ vi.mock('@ai-sdk/react', () => ({ useChat: ({ transport }: { transport: { fetch:
 vi.mock('./DesktopModelSelector', () => ({ DesktopModelSelector: ({ onReady }: { onReady?: (ready: boolean) => void }) => { useEffect(() => onReady?.(true), [onReady]); return null } }))
 
 let root: Root, container: HTMLDivElement, running: boolean, stopResponse: () => Promise<Response>, reconcileMissing: boolean, loseEnqueueAck: boolean, queueReads: number
+let beforeReview: (() => Promise<void>) | undefined
 const saved = new Map<string, DesktopQueuedMessage>()
 const sent: Record<string, unknown>[] = []
 const firstRun = 'first-run'
@@ -21,7 +25,7 @@ const agent = { id: 'agent', name: 'Researcher', description: '', createdAt: '',
 const item = (state: DesktopQueuedMessage['state'] = 'waiting'): DesktopQueuedMessage => ({ id: crypto.randomUUID(), text: 'Saved follow-up', attachmentPath: 'notes.md', createdAt: Date.now(), behindRunId: firstRun, state })
 
 beforeEach(() => {
-    running = true; reconcileMissing = false; loseEnqueueAck = false; queueReads = 0; saved.clear(); sent.length = 0
+    running = true; reconcileMissing = false; loseEnqueueAck = false; queueReads = 0; beforeReview = undefined; saved.clear(); sent.length = 0
     chat.status = 'ready'; chat.error = undefined; chat.stop.mockReset(); chat.sendMessage.mockReset()
     chat.clearError.mockImplementation(() => { chat.error = undefined })
     stopResponse = async () => { running = false; return Response.json({ canceled: 1, alreadyFinished: false }) }
@@ -33,6 +37,7 @@ beforeEach(() => {
         if (url.pathname.endsWith('/queue')) {
             if (init?.method === 'PUT') {
                 const body = JSON.parse(String(init.body)), key = body.scope.sessionId ?? body.scope.tabUid
+                if (body.action === 'review') await beforeReview?.()
                 const current = saved.get(key)
                 if (body.action === 'enqueue') {
                     saved.set(key, body.item)
@@ -62,7 +67,10 @@ beforeEach(() => {
     container = document.createElement('div'); document.body.append(container); root = createRoot(container)
 })
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals() })
-const render = (sessionId = 'one', initialDraft?: ComposerDraft) => act(async () => { root.render(<DesktopConversation agent={agent} sessionId={sessionId} sessions={[]} initialDraft={initialDraft} onChatSession={() => {}} onSelectSession={() => {}} />) })
+const render = (sessionId = 'one', initialDraft?: ComposerDraft, language?: DesktopLanguage) => act(async () => {
+    const conversation = <DesktopConversation agent={agent} sessionId={sessionId} sessions={[]} initialDraft={initialDraft} onChatSession={() => {}} onSelectSession={() => {}} />
+    root.render(language ? <DesktopLocale initial={language}>{conversation}</DesktopLocale> : conversation)
+})
 const button = (label: string) => [...container.querySelectorAll('button')].find(el => el.getAttribute('aria-label') === label || el.textContent?.trim() === label)!
 const click = (label: string) => act(async () => { button(label).click() })
 const type = (text: string) => act(async () => {
@@ -71,6 +79,20 @@ const type = (text: string) => act(async () => {
     el.dispatchEvent(new Event('input', { bubbles: true }))
 })
 async function finishRun() { chat.status = 'streaming'; await render(); running = false; chat.status = 'ready'; await render() }
+
+test('queued chat uses the workspace language for its badge and action labels', async () => {
+    const source = await loadMessages('fr')
+    const language: DesktopLanguage = { preference: 'fr', locale: 'fr', messages: desktopMessages('fr', source) }
+    await render('one', undefined, language)
+    await type('Suivi après cette réponse')
+    await click(source.chat.composer.editor.send)
+    const send = button(source.chat.queued.sendNowLabel)
+    expect(send).toBeTruthy()
+    expect(send.closest('.grid')?.textContent).toContain(source.chat.queued.badge)
+    await click(source.chat.queued.removeLabel)
+    expect(saved.has('one')).toBe(false)
+    expect(sent).toHaveLength(0)
+})
 
 test('busy Send saves the attachment and exact chat, then flushes once using its stored UUID', async () => {
     await render('one', { text: '', attachment: 'notes.md' })
@@ -82,6 +104,23 @@ test('busy Send saves the attachment and exact chat, then flushes once using its
     await finishRun()
     expect(chat.sendMessage).toHaveBeenCalledTimes(1)
     expect(sent).toEqual([{ agentId: 'agent', sessionId: 'one', text: queued.text, requestId: queued.id, attachmentPath: 'notes.md' }])
+    expect(saved.has('one')).toBe(false)
+})
+
+test('Send in the full editor queues the same long draft behind the current reply', async () => {
+    const text = 'Prepare the follow-up after this reply. '.repeat(10).trim()
+    await render('one', { text: '', attachment: 'notes.md' })
+    await type(text)
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Open the full editor"]')!.click() })
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.textContent).toContain('Write your message')
+    const send = [...dialog.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Send')!
+    await act(async () => { send.click() })
+    const queued = saved.get('one')
+    expect(queued).toMatchObject({ text, attachmentPath: 'notes.md', behindRunId: firstRun })
+    expect(sent).toHaveLength(0)
+    await finishRun()
+    expect(sent).toEqual([{ agentId: 'agent', sessionId: 'one', text, requestId: queued!.id, attachmentPath: 'notes.md' }])
     expect(saved.has('one')).toBe(false)
 })
 
@@ -110,6 +149,28 @@ test('reopening an old waiting item restores its draft without sending or replac
     expect(container.querySelector('textarea')!.value).toBe('Newer unsent draft')
 })
 
+test.each([false, true])('a queue changed during recovery cannot restore the stale draft (replacement: %s)', async replaced => {
+    const original = item()
+    saved.set('one', original)
+    running = false
+    const reviewStarted = Promise.withResolvers<void>()
+    const resumeReview = Promise.withResolvers<void>()
+    beforeReview = async () => {
+        reviewStarted.resolve()
+        await resumeReview.promise
+    }
+    await render()
+    await reviewStarted.promise
+    const replacement = { ...item(), text: 'Newer queued follow-up' }
+    if (replaced) saved.set('one', replacement)
+    else saved.delete('one')
+    await act(async () => { resumeReview.resolve() })
+    expect(container.querySelector('textarea')!.value).toBe(replaced ? replacement.text : '')
+    const visibleQueue = container.querySelector('[aria-label="Send queued message now"]')?.closest('.grid:not([inert])')
+    expect(visibleQueue?.textContent ?? '').not.toContain(original.text)
+    expect(sent).toHaveLength(0)
+})
+
 test('an interrupted send reconciles the same ID after remount without sending a second message', async () => {
     const queued = item('sending'); saved.set('one', queued); running = false
     await render()
@@ -128,6 +189,25 @@ test('an unaccepted interrupted send restores a review draft and retries with it
     expect(sent).toHaveLength(2)
     expect(sent[1]).toMatchObject({ requestId: queued.id, text: queued.text, attachmentPath: 'notes.md' })
     expect(sent[1]).not.toHaveProperty('reconcileOnly')
+})
+
+test('a restored queue draft and its full editor follow the workspace language', async () => {
+    const queued = item('sending')
+    const source = await loadMessages('fr')
+    const language: DesktopLanguage = { preference: 'fr', locale: 'fr', messages: desktopMessages('fr', source) }
+    saved.set('one', queued)
+    running = false
+    reconcileMissing = true
+    await render('one', undefined, language)
+    expect(container.querySelector('textarea')!.value).toBe(queued.text)
+    expect(container.textContent).toContain('Vérifiez le message en attente enregistré avant de l’envoyer.')
+    await type(queued.text.repeat(30))
+    await click(source.chat.composer.openEditor)
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.textContent).toContain(source.chat.composer.editor.title)
+    expect(dialog.textContent).toContain(source.chat.composer.editor.hint)
+    expect(dialog.textContent).toContain(source.chat.composer.editor.cancel)
+    expect(chat.sendMessage).not.toHaveBeenCalled()
 })
 
 test('switching conversations never sends or removes the other chat’s queue', async () => {

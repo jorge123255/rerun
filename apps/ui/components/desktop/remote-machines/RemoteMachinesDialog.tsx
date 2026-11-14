@@ -3,7 +3,9 @@ import { useEffect, useState } from 'react'
 import { REMOTE_MACHINE_COPY, type DesktopRemoteMachineBridge } from '@rerun/contracts'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { ServerIcon } from '@/lib/icons'
 import { SkeletonList } from '@/components/ui/skeleton'
 import { ScrollFade } from '@rerun/ui/primitives'
 import { useRemoteMachines, type RemoteMachineActorSeed } from '@/lib/desktop/remote-machines/use-remote-machines'
@@ -114,10 +116,7 @@ function RemoteMachinesPanel({ open, onOpenChange, actor, bridge }: RemoteMachin
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="flex flex-col sm:max-h-[85dvh] sm:max-w-lg sm:overflow-hidden">
-                <DialogHeader>
-                    <DialogTitle>{REMOTE_MACHINE_COPY.title}</DialogTitle>
-                    <p className="text-sm text-muted-foreground">{REMOTE_MACHINE_COPY.description}</p>
-                </DialogHeader>
+                <DialogHeaderBar icon={ServerIcon} title={REMOTE_MACHINE_COPY.title} description={REMOTE_MACHINE_COPY.description} />
                 <ScrollFade className="-mx-1 min-h-0 flex-1 px-1 py-1">
                     <div className="space-y-4">{snapshot?.localRuntime && !snapshot.selected && <LocalMachineRow runtime={snapshot.localRuntime} />}{body}</div>
                 </ScrollFade>

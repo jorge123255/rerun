@@ -1,0 +1,24 @@
+body { align-items: start; font-size: 14px; line-height: 1.45; }
+main { width: min(100%, 480px); padding: 28px 24px; display: grid; gap: 16px; }
+header { text-align: center; }
+.foreman { display: block; margin: 0 auto 8px; }
+h1 { font-size: 26px; font-weight: 600; letter-spacing: -.035em; margin: 0; }
+h2 { font-size: 15px; margin: 0 0 8px; }
+#pairing-entry, #pairing-controls:not([hidden]) { display: grid; gap: 12px; }
+#pairing-entry[hidden] { display: none; }
+#pairing-entry { text-align: center; }
+.footnote { margin: 0; font-size: 13px; color: var(--auth-muted); }
+#current-workspace, #origin, li > span { overflow-wrap: anywhere; }
+.toggle { display: flex; gap: 8px; align-items: center; }
+select { max-width: 100%; }
+.actions:not(:has(button:not([hidden]))) { display: none; }
+#pairing-code:not([hidden]) { display: grid; justify-items: center; gap: 8px; }
+#pairing-qr { width: min(256px, 100%); aspect-ratio: 1; padding: 16px; background: white; image-rendering: pixelated; }
+#manual-offer { width: 100%; }
+summary { cursor: pointer; font-size: 13px; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--auth-card); padding: 12px; border-radius: 8px; }
+ul { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 8px; }
+li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: center; }
+.pending-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.pairing-detail { display: block; }
+.error { color: light-dark(#b70013, #ff9294); margin: 0; }

@@ -27,15 +27,18 @@ function savedAssistantIds(messages: readonly { id: string; role: string; parts:
     return ids
 }
 
-async function ownedState(runtime: Parameters<typeof desktopForeman>[0]) {
+async function ownedState(runtime: Parameters<typeof desktopForeman>[0], scope: z.infer<typeof desktopForemanFeedbackScopeSchema>) {
     const app = await desktopForeman(runtime)
-    try { return await app.state() } catch { throw new DesktopHttpError(502, 'Could not read this Foreman conversation. Try again.') }
+    try { return await app.state(scope) } catch (error) {
+        if (error instanceof DesktopHttpError && error.status === 404) throw error
+        throw new DesktopHttpError(502, 'Could not read this Foreman conversation. Try again.')
+    }
 }
 
 export function GET(request: Request) {
     return desktopRoute(request, async runtime => {
         const scope = scopeOf(new URL(request.url))
-        const state = await ownedState(runtime)
+        const state = await ownedState(runtime, scope)
         if (state.chat.workspaceId !== scope.workspaceId || state.chat.chatId !== scope.chatId) throw new DesktopHttpError(404, 'Foreman conversation not found.')
         const saved = savedAssistantIds(state.messages)
         const votes = (await listDesktopForemanFeedback(await openDesktopDatabase(runtime.dataRoot), scope.workspaceId, scope.chatId)).filter(vote => saved.has(vote.messageId))
@@ -47,7 +50,7 @@ export function PUT(request: Request) {
     return desktopRoute(request, async runtime => {
         const parsed = desktopForemanFeedbackRateSchema.safeParse(await request.json().catch(() => null))
         if (!parsed.success) throw new DesktopHttpError(400, 'Invalid feedback')
-        const state = await ownedState(runtime)
+        const state = await ownedState(runtime, { workspaceId: parsed.data.workspaceId, chatId: parsed.data.chatId })
         if (state.chat.workspaceId !== parsed.data.workspaceId || state.chat.chatId !== parsed.data.chatId) throw new DesktopHttpError(404, 'Foreman conversation not found.')
         if (state.view.live) throw new DesktopHttpError(409, 'Wait for this Foreman reply to finish before rating it.')
         if (!savedAssistantIds(state.messages).has(parsed.data.messageId)) throw new DesktopHttpError(404, 'Message not found')

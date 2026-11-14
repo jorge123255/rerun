@@ -2,13 +2,13 @@ import { rerunCreditTotalMicros, type RerunCreditColumns } from '@/cloud/billing
 import { catalogFor, modelLabel, modelPower, type CatalogModel } from '@/lib/engine/models'
 import type { BoxConnection, BoxDefault } from '@/lib/engine/types'
 import { shortUntil } from '@/lib/time'
-import { PROVIDER_LABELS, RERUN_CONNECTION_ID, RERUN_MODEL, RERUN_MODELS, RERUN_TIERS, canonicalModelId, isPremiumModel, type PlanLimitWindow, type Provider, type RerunTier } from '@rerun/contracts'
+import { PROVIDER_LABELS, RERUN_CONNECTION_ID, RERUN_MODEL, RERUN_MODELS, RERUN_TIERS, canonicalModelId, isPremiumModel, type DesktopSubscriptionProvider, type PlanLimitWindow, type Provider, type RerunTier } from '@rerun/contracts'
 
 // The AI providers dialog sorts every connection by who pays for it: the credit included with
 // Rerun, the user's own subscription, or the user's own API key.
 export type SourceKind = 'included' | 'plan' | 'key'
 
-export type AddableProvider = Exclude<Provider, 'rerun' | 'custom'>
+export type AddableProvider = Exclude<Provider, 'rerun' | 'custom' | 'opencode' | DesktopSubscriptionProvider>
 
 export type KeyProvider = Exclude<AddableProvider, 'claude' | 'codex'>
 

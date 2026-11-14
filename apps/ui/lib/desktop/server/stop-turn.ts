@@ -4,6 +4,7 @@ import { cancelRun, EngineRequestError, listRuns } from '@/lib/engine/client'
 import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
+import { withDesktopSecretSessionTransition } from './secret-requests/lifecycle'
 import { engineOf } from './settings'
 import { findDesktopAgent, findDesktopSession } from './store'
 
@@ -18,42 +19,36 @@ async function targetOf(runtime: DesktopRuntime, sessionId: string): Promise<Tar
     return { conn: engineOf(runtime), engineAgentId: agent.engineAgentId, engineSessionId: session.engineSessionId }
 }
 
-// Mirrors Rerun's cancelSessionRuns, but never trusts the engine's filters: a candidate must be
-// running, belong to this engine session, and be owned by this coworker's engine agent.
-async function runningRuns({ conn, engineAgentId, engineSessionId }: Target) {
+// Never trust the engine's filters. Stop requires the exact run, session and owner.
+async function hasRunningReply({ conn, engineAgentId, engineSessionId }: Target, runId: string) {
     try {
         const runs = await listRuns(conn, engineAgentId, { sessionId: engineSessionId, status: 'running' })
-        return runs.filter(run => run.status === 'running' && run.sessionId === engineSessionId && run.agentId === engineAgentId)
+        return runs.some(run => run.id === runId && run.status === 'running' && run.sessionId === engineSessionId && run.agentId === engineAgentId)
     } catch {
         throw new DesktopHttpError(502, 'Could not stop this reply. Try again.')
     }
 }
 
-export async function readDesktopTurnRunning(runtime: DesktopRuntime, sessionId: string): Promise<{ running: boolean; runId: string | null; failedRunId: string | null; failedRunError: string | null }> {
+export async function readDesktopTurnRunning(runtime: DesktopRuntime, sessionId: string) {
     const target = await targetOf(runtime, sessionId)
     try {
-        const owned = (await listRuns(target.conn, target.engineAgentId, { sessionId: target.engineSessionId })).filter(run => run.sessionId === target.engineSessionId && run.agentId === target.engineAgentId)
-        const recovery = desktopRunRecovery(owned, target.engineAgentId, target.engineSessionId)
-        const latest = [...owned].sort((left, right) => right.startedAt.localeCompare(left.startedAt) || right.id.localeCompare(left.id))[0]
-        return { running: !!recovery.activeRunId, runId: recovery.activeRunId, failedRunId: latest?.status === 'error' ? latest.id : null, failedRunError: recovery.lastError }
+        const runs = await listRuns(target.conn, target.engineAgentId, { sessionId: target.engineSessionId, limit: 50 })
+        const recovery = desktopRunRecovery(runs, target.engineAgentId, target.engineSessionId)
+        return { running: !!recovery.activeRunId, runId: recovery.activeRunId, failedRunId: recovery.failedRunId, failedRunError: recovery.lastError, runVersion: recovery.runVersion }
     } catch { throw new DesktopHttpError(502, 'Could not read this reply’s status. Try again.') }
 }
 
-export async function stopDesktopTurn(runtime: DesktopRuntime, sessionId: string): Promise<{ canceled: number; alreadyFinished: boolean }> {
+export async function stopDesktopTurn(runtime: DesktopRuntime, sessionId: string, runId: string): Promise<{ canceled: number; alreadyFinished: boolean }> {
     const target = await targetOf(runtime, sessionId)
-    const runs = await runningRuns(target)
-    let canceled = 0
-    let failed = false
-    for (const run of runs) {
+    if (!await hasRunningReply(target, runId)) return { canceled: 0, alreadyFinished: true }
+    return withDesktopSecretSessionTransition(runtime, sessionId, async () => {
         try {
-            await cancelRun(target.conn, target.engineAgentId, run.id)
-            canceled++
+            await cancelRun(target.conn, target.engineAgentId, runId)
+            return { canceled: 1, alreadyFinished: false }
         } catch (cause) {
             // 404/409: the run finished (or vanished) between list and cancel — already finished.
-            if (cause instanceof EngineRequestError && (cause.status === 404 || cause.status === 409)) continue
-            failed = true
+            if (cause instanceof EngineRequestError && (cause.status === 404 || cause.status === 409)) return { canceled: 0, alreadyFinished: true }
+            throw new DesktopHttpError(502, 'Could not stop this reply. Try again.')
         }
-    }
-    if (failed) throw new DesktopHttpError(502, 'Could not stop this reply. Try again.')
-    return { canceled, alreadyFinished: canceled === 0 }
+    })
 }

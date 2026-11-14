@@ -37,6 +37,8 @@ export type IsolatedScreenDeps = {
     randomBytes?: (size: number) => Buffer
     sleep?: (ms: number, signal: AbortSignal) => Promise<void>
     readyAttempts?: number
+    knownUnusedScreen?: (engineAgentId: string) => Promise<boolean>
+    recordPossibleScreenResources?: (engineAgentId: string) => Promise<void>
     authorizeInput?: (target: ScreenTarget, app: ScreenForeground, signal: AbortSignal) => Promise<void>
 }
 
@@ -418,6 +420,8 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
             const report = await status(owner, signal)
             if (report.prerequisite === 'name-conflict') throw new IsolatedScreenRefusal(CONFLICT, 'conflict')
             if (report.prerequisite !== 'ready') throw new IsolatedScreenRefusal(prerequisiteText(report.prerequisite), 'prerequisite')
+            await deps.recordPossibleScreenResources?.(owner.engineAgentId)
+            throwIfAborted(signal)
             const name = containerName(owner.engineAgentId)
             const volume = volumeName(owner.engineAgentId)
             const existingVolume = await docker.inspectVolume(volume, signal)
@@ -615,6 +619,7 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         if (live) live.stopping = true
         drop(live)
         await lock(owner.engineAgentId, async () => {
+            if (!lives.has(owner.engineAgentId) && await deps.knownUnusedScreen?.(owner.engineAgentId)) return
             const name = containerName(owner.engineAgentId)
             const volume = volumeName(owner.engineAgentId)
             const existing = await docker.inspectContainer(name, signal)

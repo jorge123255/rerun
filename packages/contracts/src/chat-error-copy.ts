@@ -1,4 +1,4 @@
-import { OPENCODE_CREDITS_USED_UP, OPENCODE_GO_LIMIT, classifyChatError, stripErrorPrefix, type ChatErrorKind } from './chat-error.js'
+import { OPENAI_API_CREDITS_USED_UP, PROVIDER_API_CREDITS_USED_UP, OPENCODE_CREDITS_USED_UP, OPENCODE_GO_LIMIT, classifyChatError, stripErrorPrefix, type ChatErrorKind } from './chat-error.js'
 import { modelLabel } from './models.js'
 
 const GENERIC_ERROR = 'Something went wrong. Try sending your message again.'
@@ -18,7 +18,7 @@ export function isBudgetExhausted(message: string): boolean {
 // `not_in_plan` is a model the plan does not include at all ("Fable 5.1 requires usage credits"),
 // `credits` the paid overage spent, `spend` an organization's monthly cap.
 export type SubscriptionLimit = {
-    plan: 'claude' | 'chatgpt' | 'opencode' | null
+    plan: 'claude' | 'chatgpt' | 'opencode' | 'openai' | null
     scope: 'session' | 'weekly' | 'monthly' | 'model' | 'not_in_plan' | 'credits' | 'spend'
     modelName?: string
     resetsAt?: string
@@ -59,6 +59,8 @@ export function describeSubscriptionLimit(raw: string): SubscriptionLimit {
     // Before the Claude rules: a Console model is often a Claude, and its 402 names it.
     const opencode = opencodeLimit(message, m)
     if (opencode) return opencode
+    if (m === OPENAI_API_CREDITS_USED_UP.toLowerCase()) return { plan: 'openai', scope: 'credits' }
+    if (m === PROVIDER_API_CREDITS_USED_UP.toLowerCase() || /no credits remaining|insufficient_quota/i.test(raw)) return { plan: null, scope: 'credits' }
     const codex = m.includes('codex') || m.includes('chatgpt')
     if (m.includes('requires usage credits')) return { plan: 'claude', scope: 'not_in_plan', modelName: modelNotInPlan(message) }
     if (m.includes('not supported when using codex') || m.includes('does not exist or you do not have access')) return { plan: codex ? 'chatgpt' : null, scope: 'not_in_plan', modelName: modelNotInPlan(message) }
@@ -96,6 +98,8 @@ function opencodeLimitTitle(limit: SubscriptionLimit): string {
 // "the provider", because a Box can hold both and only one of them is out.
 export function subscriptionLimitMessage(limit: SubscriptionLimit): string {
     if (limit.plan === 'opencode') return opencodeLimitMessage(limit)
+    if (limit.plan === 'openai') return 'Your OpenAI API account has no credits left. Add credits on platform.openai.com, or switch this coworker to another model.'
+    if (!limit.plan && limit.scope === 'credits') return 'This provider has no API credits left. Check its billing settings or switch to another model.'
     if (limit.scope === 'not_in_plan') {
         const model = limit.modelName ?? 'this model'
         if (!limit.plan) return `This connection can't run ${model}. Pick another model to keep going.`
@@ -114,6 +118,8 @@ export function subscriptionLimitMessage(limit: SubscriptionLimit): string {
 
 export function subscriptionLimitTitle(limit: SubscriptionLimit): string {
     if (limit.plan === 'opencode') return opencodeLimitTitle(limit)
+    if (limit.plan === 'openai') return OPENAI_API_CREDITS_USED_UP
+    if (!limit.plan && limit.scope === 'credits') return PROVIDER_API_CREDITS_USED_UP
     if (limit.scope === 'not_in_plan') {
         if (!limit.plan) return `${limit.modelName ?? 'Model'} unavailable`
         return limit.modelName ? `${limit.modelName} isn't in your ${PLAN_LABELS[limit.plan]} plan` : `Model not in your ${PLAN_LABELS[limit.plan]} plan`
@@ -164,14 +170,12 @@ const KIND_MESSAGES: Partial<Record<ChatErrorKind, string>> = {
     session_gone: 'This coworker cannot reach this conversation anymore, so the message was not sent. Start a new conversation to keep going.',
 }
 
-export function friendlyError(message: string): string {
-    if (!message) return GENERIC_ERROR
-    const kind = classifyChatError(message)
+export function friendlyError(message: string, kind = classifyChatError(message)): string {
     if (kind === 'usage_limit') return subscriptionLimitMessage(describeSubscriptionLimit(message))
     if (isModelAtCapacity(kind, message)) return 'This model has no room right now. Try again in a moment or pick another model.'
     const known = KIND_MESSAGES[kind]
     if (known) return known
-    return stripErrorPrefix(message) || GENERIC_ERROR
+    return (message && stripErrorPrefix(message)) || GENERIC_ERROR
 }
 
 /**

@@ -1,19 +1,28 @@
 import { createServer, type Server } from 'node:http'
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, expect, test } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { findDesktopQuestion, HITL_CANCELLED, serializeAnswers, type Message } from '@rerun/contracts'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent, createDesktopSession, type DesktopAgent, type DesktopSession } from '@/lib/desktop/server/store'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { GET, POST } from './route'
+import { POST as TRANSCRIBE } from './transcribe/route'
+import { SAFE_RED_CIRCLE } from '@/lib/desktop/server/preview-svg/fixtures'
+import { composerTestPng } from '@/lib/desktop/server/composer-image.test-fixtures'
+import { desktopAuxiliaryStore } from '@/lib/desktop/server/auxiliary/store'
+import { GET as GET_FILES, POST as POST_FILES } from '@/app/api/desktop/coworkers/[agentId]/document-attachments/route'
+import { POST as POST_CHAT } from '@/app/api/desktop/chat/route'
+import { questionDocumentTabUid, QUESTION_DOCUMENT_POSITIONS } from '@/lib/desktop/question-documents'
 
 const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime, alice: DesktopAgent, bob: DesktopAgent, a: DesktopSession, b: DesktopSession
 let rejectBeforeAccept: boolean, foreignHistory: boolean, historyReads: number, modelReads: number
 let sourceUnavailable: boolean
+let fixtureProvider: 'codex' | 'openrouter'
 const histories = new Map<string, Message[]>(), receipts = new Map<string, string>(), dispatches: Record<string, unknown>[] = []
 const questions = [
     { question: 'Which name?', options: [] },
@@ -39,9 +48,17 @@ const get = (sessionId = a.id) => GET(request(sessionId), { params: Promise.reso
 const post = (body: unknown, sessionId = a.id, headers?: Record<string, string>) => POST(request(sessionId, 'POST', body, headers), { params: Promise.resolve({ sessionId }) })
 const pending = async (sessionId = a.id) => (await (await get(sessionId)).json()).question as DesktopPendingQuestion
 const answer = (question: DesktopPendingQuestion, answers = values): DesktopQuestionAnswer => ({ questionId: question.id, requestId: crypto.randomUUID(), action: 'answer', answers })
+const recording = {
+    format: { mimeType: 'audio/webm;codecs=opus', extension: 'webm', transcriptionFormat: 'webm' },
+    durationMs: 1000, levels: [0.1], audioBase64: Buffer.from([0x1a, 0x45, 0xdf, 0xa3, ...Buffer.from('fixture-webm')]).toString('base64'),
+}
+const transcribe = (input: unknown, sessionId = a.id, headers?: Record<string, string>) => TRANSCRIBE(
+    request(sessionId, 'POST', input, headers), { params: Promise.resolve({ sessionId }) },
+)
 
 beforeEach(async () => {
     sourceUnavailable = false
+    fixtureProvider = 'codex'
     root = await mkdtemp(join(tmpdir(), 'rerun-question-api-'))
     histories.clear(); receipts.clear(); dispatches.length = 0; rejectBeforeAccept = false; foreignHistory = false; historyReads = 0; modelReads = 0
     server = createServer(async (req, res) => {
@@ -62,7 +79,7 @@ beforeEach(async () => {
         })
         if (req.method === 'GET' && req.url === '/connections') {
             modelReads++
-            return reply(200, { connections: [{ id: 'provider', name: 'Fixture', provider: 'codex', models: ['workspace-model', 'chat-model'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }], default: { connectionId: 'provider', model: 'workspace-model' } })
+            return reply(200, { connections: [{ id: 'provider', name: 'Fixture', provider: fixtureProvider, models: ['workspace-model', 'chat-model'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }], default: { connectionId: 'provider', model: 'workspace-model' } })
         }
         const agentMatch = req.url?.match(/^\/agents\/(engine-alice|engine-bob)$/)
         if (req.method === 'GET' && agentMatch) return reply(200, { id: agentMatch[1], config: { name: agentMatch[1], enabled: true }, soul: '' })
@@ -75,7 +92,7 @@ beforeEach(async () => {
         const chat = req.url?.match(/^\/agents\/(engine-alice|engine-bob)\/chat$/)
         if (req.method === 'POST' && chat) {
             const turn = body.desktopQueuedTurn
-            const identity = JSON.stringify([chat[1], body.sessionId, body.message, turn?.question])
+            const identity = JSON.stringify([chat[1], body.sessionId, body.message, turn?.question, turn?.documents])
             if (receipts.has(turn?.runId)) {
                 if (receipts.get(turn.runId) !== identity) return reply(409, { error: 'Different queued message' })
                 return res.writeHead(204, { 'x-session-id': body.sessionId, 'x-run-id': turn.runId }).end()
@@ -104,9 +121,211 @@ beforeEach(async () => {
     histories.set('engine-a', questionRows('engine-a')); histories.set('engine-b', questionRows('engine-b'))
 })
 afterEach(async () => {
+    vi.unstubAllGlobals()
     await closeDesktopDatabase(root); process.env = { ...originalEnv }
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
     await rm(root, { recursive: true, force: true })
+})
+
+test('transcribes only a current owned question and does not save or dispatch the voice answer', async () => {
+    const question = await pending()
+    const input = { ...recording, questionId: question.id }
+    const db = await openDesktopDatabase(root)
+    process.env.RERUN_DESKTOP_SECRET_KEY = 'ab'.repeat(32)
+    const nativeFetch = globalThis.fetch
+    const provider = vi.fn(async () => Response.json({ text: 'Speak the quarterly review' }))
+    vi.stubGlobal('fetch', (target: string | URL | Request, options?: RequestInit) =>
+        String(target) === 'https://openrouter.ai/api/v1/audio/transcriptions' ? provider() : nativeFetch(target, options))
+
+    expect((await transcribe(input, a.id, { cookie: 'invalid' })).status).toBe(401)
+    expect((await transcribe(input, b.id)).status).toBe(409)
+    expect((await transcribe({ ...input, audioBase64: 'aW52YWxpZA==' })).status).toBe(400)
+    expect((await transcribe(input)).status).toBe(503)
+    expect(provider).not.toHaveBeenCalled()
+    await desktopAuxiliaryStore(db).change({ purpose: 'transcription', expectedRevision: 'unconfigured', key: 'synthetic-key' })
+    const result = await transcribe(input)
+    expect(result.status).toBe(200)
+    expect(result.headers.get('cache-control')).toBe('no-store')
+    expect(await result.json()).toEqual({ transcript: 'Speak the quarterly review' })
+    expect(await pending()).toEqual(question)
+    expect((await db.execute('SELECT * FROM desktop_question_answers')).rows).toEqual([])
+    expect(dispatches).toEqual([])
+    expect(provider).toHaveBeenCalledOnce()
+
+    provider.mockImplementationOnce(async () => {
+        histories.set('engine-a', questionRows('engine-a', 'ask_user', 'new-call'))
+        return Response.json({ text: 'This transcript must not reach the new question' })
+    })
+    expect((await transcribe(input)).status).toBe(409)
+    expect(provider).toHaveBeenCalledTimes(2)
+    expect(dispatches).toEqual([])
+})
+
+async function restartQuestionFixture() {
+    await closeDesktopDatabase(root)
+    runtime = { ...runtime, launchNonce: crypto.randomUUID() }
+    await writeFile(join(root, 'runtime.json'), JSON.stringify(runtime))
+}
+
+test('retains a file-only answer for its exact question and reconciles with the same bytes after restart', async () => {
+    const question = await pending()
+    const scope = { agentId: alice.id, sessionId: a.id, tabUid: questionDocumentTabUid(question.id) }
+    const attachmentId = crypto.randomUUID()
+    const documents = { scope, admissionId: crypto.randomUUID(), attachmentIds: [attachmentId] }
+    const url = (agentId: string) => `${runtime.app.origin}/api/desktop/coworkers/${agentId}/document-attachments`
+    const headers = { origin: runtime.app.origin, host: new URL(runtime.app.origin).host, 'content-type': 'application/json',
+        cookie: 'rerun-desktop-session=' + runtime.app.sessionToken }
+    const upload = { ...scope, operation: 'upload', attachmentId, name: 'quarterly [draft].txt', mimeType: 'text/plain',
+        position: QUESTION_DOCUMENT_POSITIONS, audioBase64: Buffer.from('Original quarterly figures').toString('base64') }
+    const files = (input: object, agentId = alice.id) => POST_FILES(new Request(url(agentId), {
+        method: 'POST', headers, body: JSON.stringify(input),
+    }), { params: Promise.resolve({ agentId }) })
+    expect((await files({ ...upload, agentId: bob.id }, bob.id)).status).toBe(409)
+    const saved = await files(upload)
+    expect(saved.status).toBe(200)
+    const { attachment } = await saved.json()
+    expect(attachment).toMatchObject({ kind: 'text', conversion: { mode: 'plain-text', state: 'ready' } })
+    await restartQuestionFixture()
+    const listing = await GET_FILES(new Request(url(alice.id) + '?' + new URLSearchParams({
+        sessionId: a.id, tabUid: scope.tabUid,
+    }), { headers }), { params: Promise.resolve({ agentId: alice.id }) })
+    const listed = await listing.json()
+    expect(listing.status, JSON.stringify(listed)).toBe(200)
+    expect(listed.attachments).toEqual([attachment])
+
+    const ordinary = await POST_CHAT(new Request(runtime.app.origin + '/api/desktop/chat', {
+        method: 'POST', headers, body: JSON.stringify({ agentId: alice.id, sessionId: a.id, text: 'ordinary chat', documents }),
+    }))
+    expect(ordinary.status).toBe(409)
+    expect(dispatches).toHaveLength(0)
+    const body = { ...answer(question, [[], [], [], []]), documents }
+    rejectBeforeAccept = true
+    expect((await post(body)).status).toBe(502)
+    await restartQuestionFixture()
+    expect((await pending()).attempt).toMatchObject({ requestId: body.requestId, documents })
+    expect((await post({ ...body, documents: { ...documents, attachmentIds: [crypto.randomUUID()] } })).status).toBe(409)
+    rejectBeforeAccept = false
+    const response = await post(body)
+    expect(response.headers.get('x-run-id')).toBe(body.requestId)
+    expect(dispatches).toHaveLength(2)
+    expect(dispatches[1]).toMatchObject({
+        message: expect.stringContaining('**Choose a color**\nAttached: quarterly [draft].txt'),
+        desktopQueuedTurn: { runId: body.requestId, documents },
+        desktopDocuments: [{ text: 'Original quarterly figures', reference: { attachmentId, scope, sha256: attachment.sha256 } }],
+    })
+    expect(dispatches[1].message).not.toContain('Attachments added to your workspace')
+    await restartQuestionFixture()
+    expect((await post(body)).headers.get('x-run-id')).toBe(body.requestId)
+    expect(dispatches).toHaveLength(2)
+    const download = await GET_FILES(new Request(url(alice.id) + '?' + new URLSearchParams({
+        sessionId: a.id, tabUid: scope.tabUid, attachmentId, sha256: attachment.sha256, view: 'download',
+    }), { headers }), { params: Promise.resolve({ agentId: alice.id }) })
+    expect(download.status).toBe(200)
+    expect(await download.text()).toBe('Original quarterly figures')
+})
+
+test('saves an image with its question, refuses a text-only model, and sends the original PNG with mixed answers', async () => {
+    const question = await pending()
+    const scope = { agentId: alice.id, sessionId: a.id, tabUid: questionDocumentTabUid(question.id) }
+    const url = `${runtime.app.origin}/api/desktop/coworkers/${alice.id}/document-attachments`
+    const headers = { origin: runtime.app.origin, host: new URL(runtime.app.origin).host, 'content-type': 'application/json',
+        cookie: 'rerun-desktop-session=' + runtime.app.sessionToken }
+    const imageBytes = Buffer.from(composerTestPng())
+    const imageId = crypto.randomUUID(), textId = crypto.randomUUID()
+    const image = { ...scope, operation: 'upload', attachmentId: imageId, name: 'sample.png', mimeType: 'image/png',
+        position: QUESTION_DOCUMENT_POSITIONS, audioBase64: imageBytes.toString('base64') }
+    const files = (input: object) => POST_FILES(new Request(url, { method: 'POST', headers, body: JSON.stringify(input) }),
+        { params: Promise.resolve({ agentId: alice.id }) })
+    const corrupt = await files({ ...image, audioBase64: Buffer.from('Wrong file').toString('base64') })
+    expect(corrupt.status).toBe(415)
+    const saved = await files(image)
+    expect(saved.status).toBe(200)
+    const { attachment } = await saved.json()
+    expect(attachment).toMatchObject({ kind: 'image', conversion: { mode: 'image', state: 'ready' } })
+    expect((await files({ ...image, attachmentId: textId, name: 'sample.txt', mimeType: 'text/plain',
+        position: 0, audioBase64: Buffer.from('These are supporting notes').toString('base64') })).status).toBe(200)
+    await restartQuestionFixture()
+    const query = new URLSearchParams({ tabUid: scope.tabUid, sessionId: scope.sessionId, attachmentId: imageId, sha256: attachment.sha256, view: 'preview' })
+    const preview = await GET_FILES(new Request(url + '?' + query, { headers }), { params: Promise.resolve({ agentId: alice.id }) })
+    expect(preview.status).toBe(200)
+    expect(preview.headers.get('content-type')).toBe('image/png')
+    expect(Buffer.from(await preview.arrayBuffer())).toEqual(imageBytes)
+
+    const documents = { scope, admissionId: crypto.randomUUID(), attachmentIds: [textId, imageId] }
+    const body = { ...answer(question, [['Start'], [], [], []]), documents }
+    fixtureProvider = 'openrouter'
+    expect((await post(body)).status).toBe(400)
+    expect((await pending()).attempt).toBeUndefined()
+    expect(dispatches).toHaveLength(0)
+
+    fixtureProvider = 'codex'
+    const result = await post(body)
+    expect(result.status).toBe(200)
+    expect(dispatches[0]).toMatchObject({ desktopDocuments: [
+        { reference: { attachmentId: textId }, text: 'These are supporting notes' },
+        { reference: { attachmentId: imageId, sha256: attachment.sha256 }, dataBase64: image.audioBase64 },
+    ], desktopQueuedTurn: { documents } })
+    await restartQuestionFixture()
+    expect((await post(body)).headers.get('x-run-id')).toBe(body.requestId)
+    expect(dispatches).toHaveLength(1)
+})
+
+test('preserves an original SVG and sends only its stored PNG representation after restart', async () => {
+    const question = await pending()
+    const scope = { agentId: alice.id, sessionId: a.id, tabUid: questionDocumentTabUid(question.id) }
+    const attachmentId = crypto.randomUUID()
+    const original = Buffer.from(SAFE_RED_CIRCLE)
+    const url = `${runtime.app.origin}/api/desktop/coworkers/${alice.id}/document-attachments`
+    const headers = { origin: runtime.app.origin, host: new URL(runtime.app.origin).host, 'content-type': 'application/json',
+        cookie: 'rerun-desktop-session=' + runtime.app.sessionToken }
+    const params = { params: Promise.resolve({ agentId: alice.id }) }
+    const upload = { ...scope, operation: 'upload', attachmentId, name: 'reference.svg', mimeType: 'image/svg+xml',
+        position: 0, audioBase64: original.toString('base64') }
+    const write = (input: object) => POST_FILES(new Request(url, { method: 'POST', headers, body: JSON.stringify(input) }), params)
+    const refused = await write({ ...upload, audioBase64: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><foreignObject/></svg>').toString('base64') })
+    expect(refused.status).toBe(415)
+    const uploaded = await write(upload)
+    const body = await uploaded.json()
+    expect(uploaded.status, JSON.stringify(body)).toBe(200)
+    const { attachment } = body
+    expect(attachment).toMatchObject({ sha256: createHash('sha256').update(original).digest('hex'), mimeType: 'image/svg+xml',
+        conversion: { mode: 'image', state: 'ready', renderedImage: { mimeType: 'image/png' } } })
+    const renderedImage = attachment.conversion.renderedImage
+    const read = (view: string, hash = attachment.sha256) => GET_FILES(new Request(url + '?' + new URLSearchParams({
+        tabUid: scope.tabUid, sessionId: scope.sessionId, attachmentId, sha256: hash, view,
+    }), { headers }), params)
+    await restartQuestionFixture()
+    const preview = await read('preview')
+    expect(preview.status).toBe(200)
+    expect(preview.headers.get('content-type')).toBe('image/png')
+    const png = Buffer.from(await preview.arrayBuffer())
+    expect(png.length).toBe(renderedImage.byteLength)
+    expect(createHash('sha256').update(png).digest('hex')).toBe(renderedImage.sha256)
+    expect((await read('preview', renderedImage.sha256)).status).toBe(409)
+
+    const download = await read('read')
+    expect(download.headers.get('content-type')).toBe('application/octet-stream')
+    expect(Buffer.from(await download.arrayBuffer())).toEqual(original)
+    const documents = { scope, admissionId: crypto.randomUUID(), attachmentIds: [attachmentId] }
+    const payload = { ...answer(question, [[], [], [], []]), documents }
+    const db = await openDesktopDatabase(root)
+    const changeBytes = (bytes: Uint8Array) => db.execute({ sql: 'UPDATE desktop_document_rendered_images SET bytes=? WHERE attachment_id=?', args: [bytes, attachmentId] })
+    await changeBytes(new Uint8Array(png.length))
+    expect((await read('preview')).status).toBe(409)
+    expect((await post(payload)).status).toBe(409)
+    expect((await pending()).attempt).toBeUndefined()
+    expect(dispatches).toHaveLength(0)
+    await changeBytes(png)
+    expect((await post(payload)).status).toBe(200)
+    expect(dispatches[0].desktopDocuments).toMatchObject([{ reference: { name: 'reference.svg', sha256: attachment.sha256 },
+        renderedImage, dataBase64: png.toString('base64') }])
+    expect(JSON.stringify(dispatches[0])).not.toContain(original.toString('base64'))
+    await restartQuestionFixture()
+    expect((await post(payload)).headers.get('x-run-id')).toBe(payload.requestId)
+    expect(dispatches).toHaveLength(1)
+    const saved = await read('download')
+    expect(saved.status).toBe(200)
+    expect(Buffer.from(await saved.arrayBuffer())).toEqual(original)
 })
 
 test('an unavailable source lookup cannot bypass webhook authority and dispatch an ordinary reply', async () => {
@@ -117,6 +336,7 @@ test('an unavailable source lookup cannot bypass webhook authority and dispatch 
     expect(receipts.size).toBe(0)
     expect((await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_question_answers')).rows).toHaveLength(0)
     sourceUnavailable = false
+    fixtureProvider = 'codex'
     const response = await post(body)
     expect(response.status).toBe(200)
     expect(response.headers.get('x-run-id')).toBe(body.requestId)

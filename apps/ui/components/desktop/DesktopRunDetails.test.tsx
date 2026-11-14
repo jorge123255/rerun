@@ -77,6 +77,6 @@ test('refreshes a running row when it becomes terminal and aborts closed reads',
     await act(async () => { finish(Response.json(detail)) })
 })
 test('does not infer success when a tool outcome was not recorded', () => {
-    expect(recordedToolOutcome({ ...detail.tools[0], resultJson: null })).toBe('Outcome not recorded')
-    expect(recordedToolOutcome({ ...detail.tools[0], resultJson: null, isError: 1 })).toBe('Failed')
+    expect(recordedToolOutcome({ ...detail.tools[0], resultJson: null })).toBe('outcomeNotRecorded')
+    expect(recordedToolOutcome({ ...detail.tools[0], resultJson: null, isError: 1 })).toBe('outcomeFailed')
 })

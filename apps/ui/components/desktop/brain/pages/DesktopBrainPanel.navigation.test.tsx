@@ -2,8 +2,11 @@
 import { act, type ComponentProps, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
+import { loadMessages } from '@rerun/i18n/messages'
 import type { SharedFilesTree } from '@/components/brain/useSharedFilesTree'
 import { DesktopBrainRequestError } from '@/lib/desktop/brain-pages'
+import { desktopMessages, englishDesktopLanguage, type DesktopLanguage } from '@/lib/desktop/locale'
+import { DesktopLocale, useDesktopLocale } from '../../DesktopLocale'
 import { DesktopBrainPanel } from './DesktopBrainPanel'
 import type { DesktopBrainActions } from './types'
 
@@ -70,11 +73,21 @@ async function settle() {
     for (let i = 0; i < 4; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
 }
 
-async function mount(actions: DesktopBrainActions, extra: Partial<ComponentProps<typeof DesktopBrainPanel>> = {}) {
+function ChangeLanguage({ language }: { language: DesktopLanguage }) {
+    const { setLanguage } = useDesktopLocale()
+    return <button type="button" onClick={() => setLanguage(language)}>Change fixture language</button>
+}
+
+async function mount(actions: DesktopBrainActions, extra: Partial<ComponentProps<typeof DesktopBrainPanel>> = {}, language = englishDesktopLanguage, nextLanguage?: DesktopLanguage) {
     const node = document.createElement('div')
     document.body.append(node)
     root = createRoot(node)
-    await act(async () => { root!.render(<DesktopBrainPanel actions={actions} onClose={() => {}} files={files} renderProposals={() => <div>Review proposals</div>} {...extra} />) })
+    await act(async () => {
+        root!.render(<DesktopLocale initial={language}>
+            {nextLanguage && <ChangeLanguage language={nextLanguage} />}
+            <DesktopBrainPanel actions={actions} onClose={() => {}} files={files} renderProposals={() => <div>Review proposals</div>} {...extra} />
+        </DesktopLocale>)
+    })
     await settle()
 }
 
@@ -170,6 +183,25 @@ it('focuses the sidebar search on ⌘K', async () => {
     input.blur()
     await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true, cancelable: true })) })
     expect(document.activeElement).toBe(input)
+})
+
+it('uses the saved language for Brain navigation and opens the original table', async () => {
+    const actions = actionsFor()
+    const language = { preference: 'de', locale: 'de', messages: desktopMessages('de', await loadMessages('de')) } as const
+    const french = { preference: 'fr', locale: 'fr', messages: desktopMessages('fr', await loadMessages('fr')) } as const
+    await mount(actions, {}, language, french)
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Seiten und Dateien durchsuchen"]')
+    expect(input?.placeholder).toBe('Suchen')
+    expect(labels('aside')).toEqual(expect.arrayContaining(['Vorschläge', 'Pricing', 'Dateien', 'Datenbank', 'Orders', 'notes ausklappen']))
+    await click('aside', 'Orders')
+    expect(document.querySelector('nav[aria-label="Brotkrümelnavigation"]')?.textContent).toBe('DatenbankOrders')
+    expect(labels('main')).toContain('Schließen')
+    await click('body', 'Change fixture language')
+    expect(document.documentElement.lang).toBe('fr')
+    expect(labels('aside')).toEqual(expect.arrayContaining(['Propositions', 'Pricing', 'Fichiers', 'Base de données', 'Orders', 'Déplier notes']))
+    expect(labels('main')).toContain('Fermer')
+    expect(document.querySelector('[data-testid="data-browser"]')?.getAttribute('data-table')).toBe('orders')
+    expect(actions.readPage).toHaveBeenCalledTimes(1)
 })
 
 it('opens a shared folder from the injected tree and does not import', async () => {

@@ -5,8 +5,8 @@ import { buildSystemPrompt, systemPromptText } from '../agents/systemPrompt.js'
 
 const hosted = vi.hoisted(() => ({ agent: vi.fn(async () => 'private-company-sentinel brain_write'), foreman: vi.fn(async () => 'private-foreman-sentinel brain_write') }))
 vi.mock('../brain/prompt.js', () => ({ buildBrainSection: hosted.agent, buildForemanBrainSection: hosted.foreman }))
-const coworker = (grant?: boolean, master = true, enabled = true, foreman = false): LoadedAgent => ({
-    id: 'brain-prompt-coworker', config: agentConfigSchema.parse({ name: 'Brain prompt', enabled, kind: foreman ? 'foreman' : 'user', tools: { brain: master, memory: false, db: false, sharedDb: false, schedule: false, trigger: false, desktopToolGrants: grant === undefined ? {} : { brain: grant } } }),
+const coworker = (grant?: boolean, master = true, enabled = true, foreman = false, callAgent = false): LoadedAgent => ({
+    id: 'brain-prompt-coworker', config: agentConfigSchema.parse({ name: 'Brain prompt', enabled, kind: foreman ? 'foreman' : 'user', tools: { brain: master, memory: false, db: false, sharedDb: false, schedule: false, trigger: false, desktopToolGrants: { ...(grant !== undefined && { brain: grant }), ...(callAgent && { callAgent: true }) } } }),
     soul: 'Coworker', install: '', env: {}, resolved: { connection: null, provider: 'codex', model: 'test' },
 })
 afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks() })
@@ -79,8 +79,11 @@ it('directs a called desktop coworker to answer its caller within its own permis
     }
     for (const trigger of [{ source: 'chat' as const }, { source: 'schedule' as const, slug: 'daily', name: 'Daily' }, { source: 'trigger' as const, slug: 'hook', name: 'Hook' }]) {
         const ordinary = systemPromptText(await buildSystemPrompt(coworker(), trigger))
+        const granted = systemPromptText(await buildSystemPrompt(coworker(undefined, true, true, false, true), trigger))
         expect(ordinary).not.toContain(replyDirectly)
-        expect(ordinary).toContain('To reach another persistent coworker on this engine, use call_agent')
+        expect(granted).not.toContain(replyDirectly)
+        expect(ordinary.match(/<environment>\s*([\s\S]*?)<\/environment>/)?.[1]).not.toContain('call_agent')
+        expect(granted.match(/<environment>\s*([\s\S]*?)<\/environment>/)?.[1]).toContain('call_agent')
     }
     expect(hosted.agent).not.toHaveBeenCalled()
 })

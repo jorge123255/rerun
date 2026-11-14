@@ -154,6 +154,7 @@ export function DesktopFilesGrid({
             {onGoUp && (
                 <button
                     type="button"
+                    data-files-parent=""
                     title="Parent directory"
                     aria-label=".."
                     disabled={pending}
@@ -198,13 +199,24 @@ export function DesktopFilesGrid({
                         title={entry.type === 'dir' ? entry.name : `${entry.name} — ${formatBytes(entry.size)}`}
                         aria-label={entry.name}
                         aria-selected={selected}
+                        aria-haspopup={onContextMenu ? 'menu' : undefined}
                         disabled={pending}
                         onClick={() => {
                             if (pending) return
                             if (entry.type === 'dir') onOpenDir(entry.name)
                             else onOpenFile(entry.name)
                         }}
-                        onContextMenu={() => onContextMenu?.(entry.name)}
+                        onContextMenu={() => { if (!pending) onContextMenu?.(entry.name) }}
+                        onKeyDown={event => {
+                            const menuKey = event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')
+                            if (pending || !onContextMenu || !menuKey || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
+                            event.preventDefault()
+                            const tile = event.currentTarget
+                            const { left, top, width, height } = tile.getBoundingClientRect()
+                            tile.dispatchEvent(new MouseEvent('contextmenu', {
+                                bubbles: true, cancelable: true, button: 2, clientX: left + width / 2, clientY: top + height / 2,
+                            }))
+                        }}
                         className={`${TILE}${selected ? ' border-border/70 bg-accent/60' : ''}`}
                     >
                         {thumb}

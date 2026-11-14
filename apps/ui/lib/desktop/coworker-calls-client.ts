@@ -1,6 +1,7 @@
 'use client'
 
 import {
+    FOREMAN_AGENT_ID,
     desktopCoworkerCallListSchema,
     desktopCoworkerCallStopResultSchema,
     type DesktopCoworkerCallSnapshot,
@@ -53,7 +54,8 @@ function errorMessage(body: unknown, fallback: string): string {
 }
 
 export function createDesktopCoworkerCallsClient(parentAgentId: string, parentSessionId: string) {
-    const url = `/api/desktop/sessions/${encodeURIComponent(parentSessionId)}/coworker-calls`
+    const resource = parentAgentId === FOREMAN_AGENT_ID ? 'foreman' : 'sessions'
+    const url = `/api/desktop/${resource}/${encodeURIComponent(parentSessionId)}/coworker-calls`
     const controllers = new Set<AbortController>()
     const stopRequests = new Map<string, { expectedRevision: string; requestId: string }>()
     let closed = false

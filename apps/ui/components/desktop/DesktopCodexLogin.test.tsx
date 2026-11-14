@@ -4,7 +4,10 @@ import type { ConnectionsList, DesktopCodexStatus } from '@rerun/contracts'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
+import { copyDesktopPlainText } from '@/lib/desktop/clipboard'
 import { DesktopCodexLogin } from './DesktopCodexLogin'
+
+vi.mock('@/lib/desktop/clipboard', () => ({ copyDesktopPlainText: vi.fn() }))
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -18,6 +21,7 @@ const waiting: DesktopCodexStatus = {
 
 afterEach(() => {
     vi.useRealTimers()
+    vi.mocked(copyDesktopPlainText).mockReset()
     vi.unstubAllGlobals()
     document.body.replaceChildren()
 })
@@ -51,6 +55,7 @@ test('shows a device code from a successful start when the provider list is unav
         const status = started ? waiting : { phase: 'idle' as const }
         return Response.json({ status, providers: init?.method === 'POST' ? null : providers })
     }))
+    const copyText = vi.mocked(copyDesktopPlainText).mockImplementationOnce(() => { throw new Error('Clipboard unavailable') })
     const onProviders = vi.fn()
     const container = document.createElement('div')
     document.body.append(container)
@@ -60,6 +65,15 @@ test('shows a device code from a successful start when the provider list is unav
     await act(async () => { button().click() })
     expect(container.querySelector('[aria-label="Device code"]')?.textContent).toBe('TEST-CODE')
     expect(onProviders.mock.calls.some(([value]) => value == null)).toBe(false)
+    const copy = () => container.querySelector<HTMLButtonElement>('button[aria-label="Copy code"]')!
+    expect(copy()).not.toBeNull()
+    await act(async () => { copy().click() })
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Could not copy the code. Select it to copy it manually.')
+    expect(container.querySelector('[aria-label="Device code"]')?.textContent).toBe('TEST-CODE')
+    await act(async () => { copy().click() })
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(container.textContent).toContain('Copied')
+    expect(copyText.mock.calls).toEqual([['TEST-CODE'], ['TEST-CODE']])
     await act(async () => { root.unmount() })
 })
 

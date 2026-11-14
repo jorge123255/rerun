@@ -1,4 +1,5 @@
-import { PROVIDER_LABELS, modelLabel, type BoxDefaultModel, type ConnectionSummary, type Provider } from '@rerun/contracts'
+import { isFreeDesktopOpencodeModel } from '@rerun/contracts'
+import { PROVIDER_LABELS, connectionReasoningOptions, modelEffortKey, modelLabel, type BoxDefaultModel, type ConnectionSummary, type ModelEfforts, type Provider } from '@rerun/contracts'
 import { z } from 'zod'
 import { desktopProvider } from './settings'
 
@@ -10,7 +11,7 @@ import { desktopProvider } from './settings'
 
 export type DesktopModelPick = { connectionId: string; model: string }
 export type DesktopModelSource = 'conversation' | 'coworker' | 'workspace'
-export type DesktopReasoning = { effort: string; source: 'workspace' | 'model-default' }
+export type DesktopReasoning = { effort: string; source: 'model' | 'workspace' | 'model-default' }
 
 export const desktopModelPickSchema = z.object({
     connectionId: z.string().trim().min(1).max(256),
@@ -18,7 +19,7 @@ export const desktopModelPickSchema = z.object({
 })
 
 const catalogModelSchema = z.object({ id: z.string(), label: z.string() })
-const reasoningSchema = z.object({ effort: z.string(), source: z.enum(['workspace', 'model-default']) })
+const reasoningSchema = z.object({ effort: z.string(), source: z.enum(['model', 'workspace', 'model-default']) })
 export const desktopModelViewSchema = z.object({
     catalog: z.array(z.object({
         connectionId: z.string(),
@@ -56,17 +57,21 @@ export const desktopModelViewSchema = z.object({
         label: z.string(),
         available: z.boolean(),
         reasoning: reasoningSchema.optional(),
+        // The efforts this model can be given from the picker. Absent when it has none to choose.
+        reasoningOptions: z.array(z.string()).optional(),
+        reasoningUnavailable: z.boolean().optional(),
     }),
 })
 export type DesktopModelView = z.infer<typeof desktopModelViewSchema>
 
-export const MODEL_SOURCE_LABEL: Record<DesktopModelSource, string> = {
-    conversation: 'This chat',
-    coworker: 'Coworker default',
-    workspace: 'Workspace default',
-}
+type CatalogConnection = Pick<ConnectionSummary, 'id' | 'name' | 'provider' | 'connected' | 'models' | 'extraModels'
+    | 'codexReasoning' | 'customReasoning' | 'customRevision' | 'subscriptionModels' | 'opencodeModels'> & Partial<Pick<ConnectionSummary, 'credentialRejected'>>
 
-type CatalogConnection = Pick<ConnectionSummary, 'id' | 'name' | 'provider' | 'connected' | 'models' | 'extraModels' | 'codexReasoning'> & Partial<Pick<ConnectionSummary, 'credentialRejected'>>
+export function desktopConnectionModelLabel(connection: Pick<ConnectionSummary, 'subscriptionModels' | 'opencodeModels'> | null | undefined, id: string | null) {
+    const opencode = connection?.opencodeModels?.find(model => model.id === id)
+    if (opencode) return opencode.label + (isFreeDesktopOpencodeModel(opencode.price) ? ' · Free' : '')
+    return connection?.subscriptionModels?.find(model => model.id === id)?.label ?? modelLabel(id)
+}
 
 export function offeredModelIds(connection: { models: string[]; extraModels?: string[] }): string[] {
     return [...connection.models, ...(connection.extraModels ?? [])]
@@ -80,16 +85,23 @@ export function desktopConnections(connections: ConnectionSummary[]): Connection
 export function usableConnection(connections: CatalogConnection[], pick: DesktopModelPick | null): CatalogConnection | null {
     if (!pick) return null
     const connection = connections.find(item => item.id === pick.connectionId)
-    if (!connection?.connected || (connection.provider === 'claude' && connection.credentialRejected) || !offeredModelIds(connection).includes(pick.model)) return null
+    if (!connection?.connected || ((connection.provider === 'claude' || connection.provider === 'opencode') && connection.credentialRejected) || !offeredModelIds(connection).includes(pick.model)) return null
     return connection
 }
 
-// The same choice desktopCodexEffort makes at run time: the saved workspace effort when this
-// Codex model is the workspace model, otherwise that model's own recommended effort.
-export function desktopReasoningChoice(connection: CatalogConnection | null, model: string | null, workspace: BoxDefaultModel | null): DesktopReasoning | undefined {
-    if (connection?.provider !== 'codex' || !model) return
-    const options = connection.codexReasoning?.[model]
+export function customReasoningUnavailable(connection: CatalogConnection | null, model: string | null, workspace: BoxDefaultModel | null): boolean {
+    if (connection?.provider !== 'custom' || workspace?.connectionId !== connection.id || workspace.model !== model || !workspace.reasoningEffort) return false
+    return !connection.customRevision || workspace.customReasoningRevision !== connection.customRevision
+        || !connectionReasoningOptions(connection, workspace.model)?.supported.includes(workspace.reasoningEffort)
+}
+
+export function desktopReasoningChoice(connection: CatalogConnection | null, model: string | null, workspace: BoxDefaultModel | null, efforts: ModelEfforts = {}): DesktopReasoning | undefined {
+    if (!connection || !model || customReasoningUnavailable(connection, model, workspace)) return
+    const options = connectionReasoningOptions(connection, model)
     if (!options) return
+    // The effort chosen for this model wins wherever the model runs.
+    const chosen = efforts[modelEffortKey(connection.id, model)]
+    if (chosen && options.supported.includes(chosen)) return { effort: chosen, source: 'model' }
     if (workspace?.connectionId === connection.id && workspace.model === model && workspace.reasoningEffort && options.supported.includes(workspace.reasoningEffort)) {
         return { effort: workspace.reasoningEffort, source: 'workspace' }
     }
@@ -106,6 +118,7 @@ export function buildDesktopModelView(input: {
     workspace: BoxDefaultModel | null
     coworker: { connectionId: string | null; provider: string | null; model: string | null } | null
     conversation: DesktopModelPick | null
+    efforts?: ModelEfforts
 }): DesktopModelView {
     const connections = desktopConnections(input.connections)
     const workspaceConnection = usableConnection(connections, input.workspace)
@@ -114,7 +127,7 @@ export function buildDesktopModelView(input: {
         provider: desktopProvider.parse(workspaceConnection.provider),
         name: workspaceConnection.name,
         model: input.workspace.model,
-        label: modelLabel(input.workspace.model),
+        label: desktopConnectionModelLabel(workspaceConnection, input.workspace.model),
         ...(input.workspace.reasoningEffort ? { reasoningEffort: input.workspace.reasoningEffort } : {}),
     } : null
     const pinned = input.coworker?.model ? { connectionId: input.coworker.connectionId ?? '', model: input.coworker.model } : null
@@ -123,40 +136,46 @@ export function buildDesktopModelView(input: {
         connectionId: input.coworker?.connectionId ?? null,
         provider: pinnedConnection?.provider ?? input.coworker?.provider ?? null,
         model: pinned.model,
-        label: modelLabel(pinned.model),
+        label: desktopConnectionModelLabel(pinnedConnection, pinned.model),
         available: !!usableConnection(connections, input.coworker?.connectionId ? { connectionId: input.coworker.connectionId, model: pinned.model } : null),
     } : null
     const conversation = input.conversation ? {
         connectionId: input.conversation.connectionId,
         model: input.conversation.model,
-        label: modelLabel(input.conversation.model),
+        label: desktopConnectionModelLabel(usableConnection(connections, input.conversation), input.conversation.model),
         available: !!usableConnection(connections, input.conversation),
     } : null
     const source: DesktopModelSource = conversation ? 'conversation' : coworker ? 'coworker' : 'workspace'
-    const selected = source === 'conversation' ? input.conversation : source === 'coworker' && input.coworker?.connectionId ? { connectionId: input.coworker.connectionId, model: coworker!.model } : input.workspace
+    const selected = input.conversation ?? pinned ?? input.workspace
     const selectedConnection = usableConnection(connections, selected) ?? (selected ? connections.find(item => item.id === selected.connectionId) ?? null : null)
     const model = selected?.model ?? null
     const available = !!usableConnection(connections, selected)
-    const reasoning = desktopReasoningChoice(available ? selectedConnection : null, model, input.workspace)
+    const reasoning = desktopReasoningChoice(available ? selectedConnection : null, model, input.workspace, input.efforts)
+    // A custom endpoint's efforts follow a revision of its catalog and stay in Settings.
+    const reasoningOptions = available && selectedConnection && model && selectedConnection.provider !== 'custom'
+        ? connectionReasoningOptions(selectedConnection, model)?.supported : undefined
+    const reasoningUnavailable = available && customReasoningUnavailable(selectedConnection, model, input.workspace)
     return desktopModelViewSchema.parse({
         catalog: connections.filter(item => item.connected && offeredModelIds(item).length > 0).map(item => ({
             connectionId: item.id,
             name: item.name,
             provider: desktopProvider.parse(item.provider),
-            models: offeredModelIds(item).map(id => ({ id, label: modelLabel(id) })),
+            models: offeredModelIds(item).map(id => ({ id, label: desktopConnectionModelLabel(item, id) })),
         })),
         workspace,
         coworker,
         conversation,
         effective: {
             source,
-            connectionId: selectedConnection?.id ?? selected?.connectionId ?? null,
+            connectionId: selectedConnection?.id ?? (selected?.connectionId || null),
             provider: selectedConnection?.provider ?? coworker?.provider ?? null,
             name: selectedConnection?.name ?? providerName(selectedConnection?.provider ?? coworker?.provider ?? null),
             model,
-            label: modelLabel(model),
+            label: desktopConnectionModelLabel(selectedConnection, model),
             available,
             ...(reasoning ? { reasoning } : {}),
+            ...(reasoningOptions?.length ? { reasoningOptions } : {}),
+            ...(reasoningUnavailable && { reasoningUnavailable }),
         },
     })
 }

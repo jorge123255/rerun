@@ -1,9 +1,11 @@
 'use client'
 
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { PencilIcon } from '@/lib/icons'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { NewBoxForm } from '@/components/dialogs/new-box/NewBoxForm'
 import { SplitDialogContent } from '@/components/dialogs/SplitDialogContent'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from '@/components/ui/dialog'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -79,7 +81,7 @@ export function DesktopSpaceDialogs({ target, spaces, memberCount, onCommand, on
                 if (name.trim() === latest.current.space?.name) { close(); return }
                 void save({ kind: 'rename', spaceId: space.id, name: name.trim() })
             }}>
-                <DialogHeader><DialogTitle>Rename Box</DialogTitle><DialogDescription>The name you read on the board. Nothing else depends on it.</DialogDescription></DialogHeader>
+                <DialogHeaderBar icon={PencilIcon} title="Rename Box" description="The name you read on the board. Nothing else depends on it." />
                 <Input label="Name" required autoFocus maxLength={BOX_NAME_MAX} placeholder={UNNAMED_BOX_LABEL} value={name} disabled={blocked} onChange={event => setName(event.target.value)} />
                 {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
                 <DialogFooter><Button type="button" variant="outline" disabled={blocked} onClick={close}>Cancel</Button><Button type="submit" disabled={blocked || !name.trim()}>{saving ? 'Renaming…' : 'Rename'}</Button></DialogFooter>

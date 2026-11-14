@@ -8,6 +8,10 @@ export const desktopApiConnectionProviderSchema = z.enum(DESKTOP_API_CONNECTION_
 export type DesktopApiConnectionProvider = z.infer<typeof desktopApiConnectionProviderSchema>
 
 export const desktopApiConnectionIdSchema = z.string().regex(/^cnx_[a-z0-9-]{8,80}$/)
+// Legacy routes reserve the whole prefix, including aliases on case-insensitive filesystems.
+export function hasDesktopApiConnectionPrefix(id: string): boolean {
+    return /^cnx_/i.test(id)
+}
 export type DesktopApiConnectionId = z.infer<typeof desktopApiConnectionIdSchema>
 export const desktopApiConnectionReferenceSchema = z.string().min(1).max(200)
 export const desktopApiConnectionRevisionSchema = z.string().regex(/^rev_[a-z0-9-]{8,80}$/)

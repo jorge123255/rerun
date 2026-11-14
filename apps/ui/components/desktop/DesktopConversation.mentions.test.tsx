@@ -131,3 +131,34 @@ test('typing a matching coworker name without picking it remains ordinary text',
     expect(sent).toEqual([{ text: '@Alex', agentId: agent.id, sessionId }])
     expect(chat.sendMessage.mock.calls[0][0]).not.toHaveProperty('metadata.coworkerMentions')
 })
+
+test('pasted link chips preserve the original draft, clipboard URL and selected mention through a chat remount and send', async () => {
+    const url = 'https://example.invalid/work/long-path/brief?view=detail&revision=42#notes'
+    await render()
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', { value: { files: [], getData: () => url + ' @' } })
+    await act(async () => { composer().dispatchEvent(paste) })
+    const chip = () => [...container.querySelectorAll('button')].find(node => node.getAttribute('aria-label') === url)
+    expect(chip()?.textContent).toContain('example.invalid/…/brief…')
+    expect(composer().value).not.toContain(url)
+    await act(async () => {
+        const option = [...container.querySelectorAll<HTMLElement>('[role="option"]')].find(row => row.textContent?.includes('Second Box'))!
+        option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+    })
+    expect(composer().value.endsWith(' @Alex ')).toBe(true)
+
+    await restart()
+    const mention = { ...selected[0], start: url.length + 1, end: url.length + 6 }
+    expect(chip()).toBeDefined()
+    expect(await savedDraft()).toMatchObject({ text: url + ' @Alex ', coworkerMentions: [mention] })
+    const setData = vi.fn()
+    const copy = new Event('copy', { bubbles: true, cancelable: true })
+    Object.defineProperty(copy, 'clipboardData', { value: { setData } })
+    composer().setSelectionRange(2, 8)
+    await act(async () => { composer().dispatchEvent(copy) })
+    expect(setData).toHaveBeenCalledExactlyOnceWith('text/plain', url)
+    await submit()
+    expect(sent).toEqual([{ text: url + ' @Alex', agentId: agent.id, sessionId, coworkerMentions: [mention] }])
+    expect(composer().value).toBe('')
+    expect(chip()).toBeUndefined()
+})

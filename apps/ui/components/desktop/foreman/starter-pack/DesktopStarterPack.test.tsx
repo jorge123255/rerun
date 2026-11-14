@@ -5,6 +5,8 @@ import { afterEach, expect, test, vi } from 'vitest'
 import type { DesktopTemplatesClient } from '@/lib/desktop/templates-client'
 import type { DesktopTemplateSummary } from '@/components/desktop/templates/types'
 import { DesktopStarterPack } from './DesktopStarterPack'
+import { DesktopStarterOfferCard } from './DesktopStarterOfferCard'
+import type { DesktopStarterView } from '@/lib/desktop/foreman-client/starter'
 
 // The shared rail draws heavy cards; this suite is about what it is handed and what a press does.
 vi.mock('@/components/foreman/widgets/starter-pack/StarterPackRail', () => ({
@@ -93,5 +95,26 @@ test('shows nothing when there is genuinely nothing to offer, and says why when 
     await act(async () => retry.click())
     await act(async () => {})
     expect(failing.list).toHaveBeenCalledTimes(2)
+    await act(async () => root.unmount())
+})
+
+test('the shared Mac starter card submits a template review or dismisses the saved offer', async () => {
+    const offer: DesktopStarterView = { offerId: '00000000-0000-4000-8000-000000000001', intakeRequestId: '00000000-0000-4000-8000-000000000002',
+        digest: 'a'.repeat(64), cards: [{ templateId: 'b'.repeat(32), revision: 'c'.repeat(64), title: 'Support' }], decision: null }
+    const onAnswer = vi.fn(), onStop = vi.fn()
+    await render(<DesktopStarterOfferCard offer={offer} disabled={false} onAnswer={onAnswer} onStop={onStop} />)
+    await act(async () => railButtons()[0].click())
+    expect(reviewButton()?.textContent).toContain('Review team')
+    await act(async () => reviewButton()!.click())
+    expect(onAnswer).toHaveBeenCalledWith({ kind: 'cards', chosen: [offer.cards[0]!.templateId] })
+    const button = (text: string) => [...document.querySelectorAll('button')].find(node => node.textContent?.trim() === text)!
+    await act(async () => button('Dismiss').click())
+    expect(onAnswer).toHaveBeenLastCalledWith({ kind: 'dismiss' })
+    const choice = { kind: 'text' as const, text: 'Design a support coworker' }
+    await act(async () => root.render(<DesktopStarterOfferCard offer={{ ...offer, decision: { choice, settled: false } }} disabled={false} onAnswer={onAnswer} onStop={onStop} />))
+    await act(async () => button('Retry choice').click())
+    expect(onAnswer).toHaveBeenLastCalledWith(choice)
+    await act(async () => button('Stop').click())
+    expect(onStop).toHaveBeenCalledOnce()
     await act(async () => root.unmount())
 })

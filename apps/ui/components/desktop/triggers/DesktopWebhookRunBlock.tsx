@@ -6,12 +6,17 @@ import { DesktopTriggerPayloadDetails, DesktopTriggerPayloadSummary } from '@/co
 import { WebhookIcon } from '@/lib/icons'
 import { type TriggerPayload } from '@/lib/desktop/triggers'
 import { useState } from 'react'
+import { DesktopWorkspaceMessage, type DesktopOpenWorkspaceFile } from '../DesktopWorkspaceMessage'
 
 type OpenDialog = 'prompt' | 'payload' | null
 
 // The webhook speaks, not the user: a divider marks where it fired, with its prompt and what the
 // caller sent each one click away.
-export function DesktopWebhookRunBlock({ agentId, payload }: { agentId: string | undefined; payload: TriggerPayload }) {
+export function DesktopWebhookRunBlock({ agentId, payload, onOpenWorkspaceFile }: {
+    agentId?: string
+    payload: TriggerPayload
+    onOpenWorkspaceFile?: DesktopOpenWorkspaceFile
+}) {
     const [openDialog, setOpenDialog] = useState<OpenDialog>(null)
     const icon = <WebhookIcon className="size-3.5 text-muted-foreground" />
     const closeOn = (dialog: Exclude<OpenDialog, null>) => (open: boolean) => setOpenDialog(open ? dialog : null)
@@ -32,7 +37,7 @@ export function DesktopWebhookRunBlock({ agentId, payload }: { agentId: string |
                 <ThreadDividerLink onClick={() => setOpenDialog('payload')}>View payload</ThreadDividerLink>
             </ThreadDividerLine>
             <ThreadDividerDialog open={openDialog === 'prompt'} onOpenChange={closeOn('prompt')} icon={icon} title={`${payload.slug} prompt`}>
-                <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-muted px-3 py-2 text-xs font-mono">{payload.prompt}</pre>
+                <DesktopWorkspaceMessage agentId={agentId} onOpenWorkspaceFile={onOpenWorkspaceFile}>{payload.prompt ?? ''}</DesktopWorkspaceMessage>
             </ThreadDividerDialog>
             <ThreadDividerDialog
                 open={openDialog === 'payload'}

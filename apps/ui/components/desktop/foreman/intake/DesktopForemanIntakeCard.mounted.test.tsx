@@ -83,6 +83,41 @@ afterEach(async () => {
 })
 
 describe('mounted Foreman intake lifecycle', () => {
+    it('offers Skip for a social profile without reading it and continues to the industry question', async () => {
+        vi.useFakeTimers()
+        const chat = chatOf(), f = fixture()
+        const decideIndustry = vi.fn(async () => 'saas' as const)
+        const analyzeSite = vi.fn(async () => ({ state: 'ready' as const }))
+        await render(chat, { ...f.ports, decideIndustry, analyzeSite })
+        await act(async () => controller.set({ companyUrl: 'https://www.linkedin.com/company/example' }))
+        await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+
+        expect(document.querySelector('input')?.getAttribute('aria-invalid')).toBe('true')
+        expect(document.querySelector('[data-foreman-intake]')?.textContent).toContain('linkedin.com')
+        expect(controller.canAdvance).toBe(false)
+        expect(controller.siteRead).toBeNull()
+        expect(decideIndustry).not.toHaveBeenCalled()
+        expect(analyzeSite).not.toHaveBeenCalled()
+        await act(async () => controller.next())
+        expect(controller.step).toBe('company')
+        await click('Skip')
+        expect(controller.step).toBe('industry')
+        expect((await f.store.read(chat)).session.draft).toMatchObject({ companyUrl: '', websiteSkipped: true })
+        expect(f.ports.complete).not.toHaveBeenCalled()
+    })
+
+    it('omits a saved social profile and its inferred industry when sending a direct request', async () => {
+        const chat = chatOf(), f = fixture()
+        await f.seed(chat, { draft: { ...EMPTY_DRAFT, companyUrl: 'm.facebook.com/acme' }, decidedIndustry: 'saas' })
+        await render(chat, f.ports)
+        expect(controller.step).toBe('company')
+        expect(controller.industry).toBeNull()
+        await act(async () => { expect(await controller.sendOwn('Help organize our design work.')).toBe(true) })
+        expect(f.authority.deliver).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            answers: expect.objectContaining({ companyUrl: null, decidedIndustry: null, ownAsk: 'Help organize our design work.' }),
+        }))
+    })
+
     it('gates fields during restore, shows a real read failure, and restores on explicit retry', async () => {
         const chat = chatOf(), f = fixture(), read = deferred<Awaited<ReturnType<typeof f.ports.read>>>()
         f.ports.read.mockImplementationOnce(() => read.promise)

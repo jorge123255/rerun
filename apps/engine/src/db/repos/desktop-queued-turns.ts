@@ -9,7 +9,7 @@ import { HttpError } from '../../lib/errors.js'
 import { newId, nowIso } from '../../lib/ids.js'
 import { desktopApp } from '../../desktop/policy.js'
 
-export type QueuedTurn = { runId: string; sessionId: string; message: string; documents?: DesktopDocumentSendSelection; mcpSignIn?: DesktopMcpSignInGuard; coworkerMentions?: DesktopCoworkerMention[]; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard; service?: DesktopServiceRequestGuard; secret?: DesktopSecretRequestGuard; foreman?: { binding: DesktopForemanBinding; brief: ForemanBrief; question?: DesktopForemanQuestionGuard } }
+export type QueuedTurn = { runId: string; sessionId: string; message: string; documents?: DesktopDocumentSendSelection; mcpSignIn?: DesktopMcpSignInGuard; coworkerMentions?: DesktopCoworkerMention[]; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard; service?: DesktopServiceRequestGuard; secret?: DesktopSecretRequestGuard; foreman?: { binding: DesktopForemanBinding; brief: ForemanBrief; question?: DesktopForemanQuestionGuard; approval?: DesktopForemanQuestionGuard } }
 
 function fingerprint(turn: QueuedTurn) {
     const parts: unknown[] = [turn.sessionId, turn.message, desktopAttachmentFingerprintOf(desktopAttachmentSelectionsOf(turn))]
@@ -21,6 +21,7 @@ function fingerprint(turn: QueuedTurn) {
     if (turn.service) parts.push(['service', turn.service.sourceMessageId, turn.service.toolCallId, turn.service.fingerprint])
     if (turn.secret) parts.push(['secret', turn.secret.runId, turn.secret.sourceMessageId, turn.secret.toolCallId, turn.secret.fingerprint])
     if (turn.foreman) parts.push(['foreman', turn.foreman.binding, turn.foreman.brief])
+    if (turn.foreman?.approval) parts.push(['foremanApproval', turn.foreman.approval])
     if (turn.documents) parts.push(['documents', turn.documents])
     if (turn.mcpSignIn) parts.push(['mcpSignIn', turn.mcpSignIn])
     if (turn.coworkerMentions?.length) parts.push(['coworkerMentions', turn.coworkerMentions])

@@ -14,7 +14,7 @@ export function desktopVisionModelFor(agent: LoadedAgent): ModelOverride | undef
     const { provider, model, connection } = agent.resolved
     if (String(provider) !== DESKTOP_OPENCODE_PROVIDER) return undefined
     const recorded = connection as VisionConnection | undefined
-    const catalog = recorded?.providerModels ?? recorded?.config?.providerModels
+    const catalog = recorded?.config?.opencodeModels ?? recorded?.providerModels ?? recorded?.config?.providerModels
     if (!catalog?.length) return null
     const current = catalog.find(candidate => candidate.id === model)
     if (current?.images) return undefined

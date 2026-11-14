@@ -26,7 +26,7 @@ export type DesktopPendingInboxController = DesktopPendingInboxState & {
 // window is visible; the board can observe counts while the panel is closed. Mutations still
 // require an active panel and its current lifecycle. Opening a row
 // never acknowledges anything, and a failed or stale mark stays visible with a retry.
-export function useDesktopPendingInbox(active = true, agentIds?: readonly string[], observeWhileClosed = false): DesktopPendingInboxController {
+export function useDesktopPendingInbox(active = true, agentIds?: readonly string[], observeWhileClosed = false, whileHidden = false): DesktopPendingInboxController {
     const scope = agentIds ? JSON.stringify([...new Set(agentIds)].sort()) : '*'
     const lifecycle = JSON.stringify([active, scope])
     const identity = useRef({ lifecycle, generation: 0 })
@@ -48,7 +48,7 @@ export function useDesktopPendingInbox(active = true, agentIds?: readonly string
     const [version, setVersion] = useState(0)
 
     const read = useCallback(async () => {
-        if (!current() || !enabled || isDesktopQuitting() || inFlight.current || document.visibilityState === 'hidden') return
+        if (!current() || !enabled || isDesktopQuitting() || inFlight.current || (!whileHidden && document.visibilityState === 'hidden')) return
         const controller = new AbortController()
         inFlight.current = controller
         try {
@@ -64,7 +64,7 @@ export function useDesktopPendingInbox(active = true, agentIds?: readonly string
         } finally {
             if (inFlight.current === controller) inFlight.current = null
         }
-    }, [current, enabled, scope])
+    }, [current, enabled, scope, whileHidden])
 
     const postRead = useCallback(async (targets: DesktopPendingReadTarget[]) => {
         if (!active || !current() || isDesktopQuitting()) return
@@ -108,14 +108,15 @@ export function useDesktopPendingInbox(active = true, agentIds?: readonly string
         setState(value => value.scope === scope ? value : { ...empty, scope })
         return () => { inFlight.current?.abort(); inFlight.current = null }
     }, [generation, scope])
-    useVisibleInterval(read, DESKTOP_PENDING_INBOX_POLL_MS)
+    useVisibleInterval(read, DESKTOP_PENDING_INBOX_POLL_MS, { enabled, whileHidden })
     useEffect(() => {
+        if (whileHidden) return
         const stopHiddenRead = () => {
             if (document.visibilityState === 'hidden') { inFlight.current?.abort(); inFlight.current = null }
         }
         document.addEventListener('visibilitychange', stopHiddenRead)
         return () => document.removeEventListener('visibilitychange', stopHiddenRead)
-    }, [])
+    }, [whileHidden])
     useEffect(() => { if (attempt > 0) void read() }, [attempt, read])
 
     const items = useMemo(() => (state.scope !== scope ? [] : state.items.filter(item => (!allowed || allowed.has(item.agentId)) && !hidden.current.has(item.id))), [state, scope, allowed, version])

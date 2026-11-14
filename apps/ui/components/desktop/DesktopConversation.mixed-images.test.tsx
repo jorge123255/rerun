@@ -259,6 +259,42 @@ test('a mixed over-limit selection imports valid siblings and names the rejected
     expect(chat.sendMessage).not.toHaveBeenCalled()
 })
 
+test('a folder dropped beside files is named without discarding the valid siblings', async () => {
+    await render('saved', 'mixed-drop'); await drain()
+    const files = [txt('one.txt'), png('keep.png')]
+    const folder = { kind: 'file', webkitGetAsEntry: () => ({ isDirectory: true, name: 'Project folder' }),
+        getAsFile: () => { throw new Error('Do not read a directory as a file') } }
+    const drop = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperty(drop, 'dataTransfer', { value: { types: ['Files'],
+        files: [files[0], new File([], 'Project folder'), files[1]], items: [
+            { kind: 'file', getAsFile: () => files[0] }, folder, { kind: 'file', getAsFile: () => files[1] },
+        ],
+    } })
+    let release!: () => void
+    importFile = (name, image) => name === 'one.txt' ? new Promise(resolve => { release = () => resolve(success(name, image)) })
+        : Promise.resolve(success(name, image))
+    await type('Review the files')
+    await act(async () => { composer().dispatchEvent(drop) }); await flush()
+    expect(drop.defaultPrevented).toBe(true)
+    expect(imports).toEqual(['one.txt'])
+    await submit()
+    await act(async () => { release() }); await drain()
+    expect(imports).toEqual(['one.txt', 'keep.png'])
+    expect(container.textContent).toContain('Project folder')
+    expect(container.querySelector('img[alt="keep.png"]')).not.toBeNull()
+    expect(chat.sendMessage).not.toHaveBeenCalled()
+    await submit(); await drain()
+    expect(chat.sendMessage).toHaveBeenCalledOnce()
+})
+
+test('an unavailable document import names the document and keeps valid siblings without a tab', async () => {
+    await render(); await drain()
+    await pick([txt('one.txt'), new File(['sample'], 'report.pdf', { type: 'application/pdf' }), png('keep.png')]); await drain()
+    expect(imports).toEqual(['one.txt', 'keep.png'])
+    expect(container.textContent).toContain('"report.pdf": Documents are not available on this chat yet.')
+    expect(savedDocuments).toEqual([])
+})
+
 test('a mixed selection beyond fourteen names every refused document and restores the accepted siblings', async () => {
     const docs = Array.from({ length: 12 }, (_, index) => new File(['sample'], `sample-${index + 1}.pdf`, { type: 'application/pdf' }))
     const accepted = docs.slice(0, 10).map(file => file.name)
@@ -273,7 +309,8 @@ test('a mixed selection beyond fourteen names every refused document and restore
 
     await act(async () => { root.unmount() }); forgetCoworkerDrafts(agent.id); root = createRoot(container)
     await render('saved', 'overflow-tab'); await drain()
-    expect([...container.querySelectorAll<HTMLSpanElement>('span[title$=".pdf"]')].map(node => node.title)).toEqual(accepted)
+    const previewButtons = [...container.querySelectorAll<HTMLButtonElement>('button[aria-label^="Preview "][title$=".pdf"]')]
+    expect(previewButtons.map(button => button.title)).toEqual(accepted)
     expect(container.querySelector('img[alt="keep.png"]')).not.toBeNull()
     expect(savedDocuments.map(document => document.name)).toEqual(accepted)
     expect(imports).toEqual(['one.txt', 'keep.png', 'two.md'])

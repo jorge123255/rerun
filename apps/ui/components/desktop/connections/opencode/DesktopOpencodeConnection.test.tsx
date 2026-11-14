@@ -11,7 +11,7 @@ let root: Root | undefined
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; document.body.innerHTML = ''; vi.restoreAllMocks() })
 
 const connection = (revision = 'rev-1'): DesktopOpencodeConnectionSnapshot => ({
-    workspaceId: 1, owner: 'OpenCode', connectionId: 'oc-1', connectionRevision: revision, apiKey: 'oc_sk_masked', consoleEnabled: false, enabledModelIds: ['go/deepseek-v4-pro'], defaultModelId: 'go/deepseek-v4-pro', state: 'active', launchNonce: 'launch-1',
+    workspaceId: 1, owner: 'OpenCode', connectionId: 'oc-1', connectionRevision: revision, credentialStored: true, consoleEnabled: false, enabledModelIds: ['go/deepseek-v4-pro'], defaultModelId: 'go/deepseek-v4-pro', state: 'active',
 })
 
 function driver(overrides: Partial<DesktopOpencodeDriver> = {}): DesktopOpencodeDriver {

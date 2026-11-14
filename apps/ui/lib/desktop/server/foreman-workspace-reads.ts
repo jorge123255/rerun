@@ -1,10 +1,14 @@
 import 'server-only'
 import type { Client } from '@libsql/client'
 import { FOREMAN_WORKSPACE_CATALOG_ID, type ForemanWorkspaceSnapshot } from '@rerun/contracts'
+import { request } from '@/lib/engine/client'
+import { foremanFilePermissionSnapshotSchema } from '../foreman-file-permissions'
+import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
 import { readDesktopRuntime, type DesktopRuntime } from './runtime'
-import { readDesktopBoardState } from './spaces'
-import { listDesktopAgents } from './store'
+import { engineOf } from './settings'
+import { readDesktopRosterSnapshot } from './store'
+import { assertDesktopWorkspaceAdmission } from './workspace-admission'
 
 type SnapshotDeps = {
     runtime: () => Promise<Pick<DesktopRuntime, 'workspaceId' | 'dataRoot' | 'launchNonce'>>
@@ -28,6 +32,33 @@ export async function foremanWorkspaceReadRuntimeMatches(workspaceId: string, re
     }
 }
 
+export async function readGrantedForemanWorkspaceSnapshot(runtime: DesktopRuntime, workspaceId: string, signal: AbortSignal): Promise<ForemanWorkspaceSnapshot> {
+    const readRuntime = async () => {
+        signal.throwIfAborted()
+        const current = await readDesktopRuntime()
+        if (String(current.workspaceId) !== workspaceId || current.workspaceId !== runtime.workspaceId
+            || current.launchNonce !== runtime.launchNonce || current.dataRoot !== runtime.dataRoot) {
+            throw new DesktopHttpError(409, 'The workspace or app launch changed.')
+        }
+        return current
+    }
+    const checkGrant = async () => {
+        await readRuntime()
+        assertDesktopWorkspaceAdmission(runtime)
+        const permissions = await request(engineOf(runtime), '/desktop/foreman/file-permissions', {
+            method: 'GET', cache: 'no-store', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
+        }, foremanFilePermissionSnapshotSchema.parse)
+        signal.throwIfAborted()
+        assertDesktopWorkspaceAdmission(runtime)
+        if (permissions.workspaceId !== workspaceId || permissions.launchNonce !== runtime.launchNonce
+            || permissions.grants.foremanWorkspaceRead !== true) throw new DesktopHttpError(409, 'Workspace metadata access is unavailable.')
+    }
+    await checkGrant()
+    const snapshot = await readForemanWorkspaceSnapshot(workspaceId, { ...production, runtime: readRuntime })
+    await checkGrant()
+    return snapshot
+}
+
 export async function readForemanWorkspaceSnapshot(workspaceId: string, deps: SnapshotDeps = production): Promise<ForemanWorkspaceSnapshot> {
     let runtime: Pick<DesktopRuntime, 'workspaceId' | 'dataRoot' | 'launchNonce'>
     try {
@@ -38,18 +69,16 @@ export async function readForemanWorkspaceSnapshot(workspaceId: string, deps: Sn
     if (String(runtime.workspaceId) !== workspaceId) return { kind: 'other-workspace' }
     try {
         const db = await deps.open(runtime.dataRoot)
-        const first = await readDesktopBoardState(db)
-        const agents = await listDesktopAgents(db)
-        const second = await readDesktopBoardState(db)
+        const { board, agents } = await readDesktopRosterSnapshot(db)
         const again = await deps.runtime()
-        if (String(again.workspaceId) !== workspaceId || again.launchNonce !== runtime.launchNonce || first.revision !== second.revision) return { kind: 'uncertain' }
+        if (String(again.workspaceId) !== workspaceId || again.launchNonce !== runtime.launchNonce || again.dataRoot !== runtime.dataRoot) return { kind: 'uncertain' }
         const localId = Number(FOREMAN_WORKSPACE_CATALOG_ID)
         return {
             kind: 'ready',
             workspaceId,
             catalogWorkspaceId: FOREMAN_WORKSPACE_CATALOG_ID,
-            revision: second.revision,
-            boxes: second.spaces.map(space => ({ id: space.id, name: space.name })),
+            revision: board.revision,
+            boxes: board.spaces.map(space => ({ id: space.id, name: space.name })),
             roster: agents.filter(agent => agent.workspaceId === localId).map(agent => ({
                 id: agent.id,
                 workspaceId,

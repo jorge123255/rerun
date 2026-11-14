@@ -13,11 +13,11 @@ export const RUN_STATUS_META: Record<Run['status'], { label: string; icon: Lucid
     cancelled: { label: 'Cancelled', icon: BanIcon, color: 'text-muted-foreground', tint: 'border-muted-foreground/20 bg-muted-foreground/10 text-muted-foreground', tone: 'neutral' },
 }
 
-export function RunStatusBadge({ status }: { status: Run['status'] }) {
+export function RunStatusBadge({ status, label }: { status: Run['status']; label?: string }) {
     const meta = RUN_STATUS_META[status] ?? RUN_STATUS_META.done
     return (
         <Badge tone={meta.tone} size="xs" className="font-medium uppercase tracking-wide">
-            {meta.label}
+            {label ?? meta.label}
         </Badge>
     )
 }

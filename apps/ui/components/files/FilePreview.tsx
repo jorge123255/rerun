@@ -3,6 +3,7 @@
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { filePreviewKind } from '@/lib/files/preview'
+import { useFileTranslations } from '@/lib/files/translations'
 import { DownloadIcon, FileIcon } from '@/lib/icons'
 
 type FilePreviewProps = {
@@ -13,6 +14,7 @@ type FilePreviewProps = {
 }
 
 export function FilePreview({ fileName, content, rawUrl, loading }: FilePreviewProps) {
+    const t = useFileTranslations()
     if (loading) return <FilePreviewSkeleton />
 
     const kind = filePreviewKind(fileName)
@@ -47,13 +49,13 @@ export function FilePreview({ fileName, content, rawUrl, loading }: FilePreviewP
     return (
         <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground">
             <FileIcon className="size-8" />
-            <p className="text-xs">No preview available for this file type</p>
-            <Button asChild variant="outline" size="sm">
+            <p className="text-xs">{t('files.preview.noPreview')}</p>
+            {rawUrl && <Button asChild variant="outline" size="sm">
                 <a href={rawUrl} download={fileName}>
                     <DownloadIcon className="size-3.5" />
-                    Download
+                    {t('files.preview.download')}
                 </a>
-            </Button>
+            </Button>}
         </div>
     )
 }

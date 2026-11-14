@@ -15,6 +15,7 @@ import { DesktopHttpError } from '../auth'
 
 export type DesktopMcpSignInAuthority = { check: () => void }
 type Query = Pick<Client, 'execute'>
+export type DesktopMcpSignInBrowserCapture = (query: Query, input: DesktopMcpSignInDecision) => Promise<void>
 type RequestRow = {
     requestId: string
     source: DesktopMcpSignInSource
@@ -122,7 +123,7 @@ export function createDesktopMcpSignInStore(db: Client) {
     async function update(db: Query, requestId: string, status: RequestRow['status'], active: string | null, error: string | null = null) {
         await db.execute({ sql: 'UPDATE desktop_mcp_sign_in_requests SET status=?, active_attempt_id=?, revision=?, error=?, updated_at=? WHERE request_id=?', args: [status, active, randomUUID(), error, new Date().toISOString(), requestId] })
     }
-    async function beginAttempt(input: DesktopMcpSignInDecision, authority: DesktopMcpSignInAuthority) {
+    async function beginAttempt(input: DesktopMcpSignInDecision, authority: DesktopMcpSignInAuthority, capture?: DesktopMcpSignInBrowserCapture) {
         if (input.operation !== 'connect') refusal(400, 'Only Connect starts OAuth.')
         authority.check()
         return transaction(input.requestId, async tx => {
@@ -135,6 +136,7 @@ export function createDesktopMcpSignInStore(db: Client) {
             }
             if (request.revision !== input.expectedRevision || request.activeAttemptId) refusal(409, 'This MCP sign-in changed. Reload it before connecting.')
             await tx.execute({ sql: 'INSERT INTO desktop_mcp_sign_in_attempts(attempt_id,request_id,operation,expected_revision,body_fingerprint,state,created_at) VALUES(?,?,?,?,?,?,?)', args: [input.attemptId, input.requestId, 'connect', input.expectedRevision, fingerprint(input), 'pending', new Date().toISOString()] })
+            await capture?.(tx, { ...input, source: request.source })
             await update(tx, input.requestId, 'connecting', input.attemptId)
             const next = (await requestById(tx, input.requestId))!
             authority.check(); return { request: viewOf(next, null), created: true }

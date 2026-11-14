@@ -4,7 +4,7 @@ import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { cardCallTiming } from '../../agents/turn-order.js'
 import { CLI_PROVIDERS } from '../../agents/providers.js'
-import { HITL_ACK } from '../../tools/builtin/hitl.js'
+import { hitlAck } from '../../tools/builtin/hitl.js'
 import { withKeyedLock } from '../../lib/lock.js'
 import type { RunContext } from '../../runtime/context.js'
 import { createScreenshotStore } from '../../runtime/screenshots.js'
@@ -218,7 +218,7 @@ export function isolatedScreenTools(ctx: RunContext, options: { publishExports?:
             execute: async input => {
                 await requireScreenGrant(id, linkedSignal())
                 if (!desktopTakeoverInput(input)) throw new Error('Give the takeover a valid http(s) page and a short reason.')
-                return HITL_ACK
+                return hitlAck(ctx.turnOrder)
             },
         }))
     }

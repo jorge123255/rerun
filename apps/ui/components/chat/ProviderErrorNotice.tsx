@@ -41,7 +41,7 @@ function header(kind: NoticeKind, message: string): { title: string; icon: Compo
 // The dead end this replaces: a raw provider stack, or "A run is already in flight on this
 // conversation." with nothing to click. Every kind here says what happened and, where there is one,
 // offers the move that fixes it.
-export function ProviderErrorNotice({ kind, message, onSwitchModel, onOpenConnections, onReconnect, onStopRun, onContinue, onRetry }: { kind: NoticeKind; message: string; onSwitchModel?: () => void; onOpenConnections?: () => void; onReconnect?: () => void; onStopRun?: () => void; onContinue?: () => void; onRetry?: () => void }) {
+export function ProviderErrorNotice({ kind, message = '', onSwitchModel, onOpenConnections, onReconnect, onStopRun, onContinue, onRetry }: { kind: NoticeKind; message?: string; onSwitchModel?: () => void; onOpenConnections?: () => void; onReconnect?: () => void; onStopRun?: () => void; onContinue?: () => void; onRetry?: () => void }) {
     const { title, icon } = header(kind, message)
 
     const actions: NoticeAction[] = []
@@ -81,9 +81,9 @@ export function ProviderErrorNotice({ kind, message, onSwitchModel, onOpenConnec
         actions.push({
             key: 'switch',
             leading: <Icon icon={GaugeIcon} size="sm" />,
-            title: 'Switch to another model',
-            cta: 'Switch',
-            description: onSwitchModel ? 'Pick another model for this conversation.' : 'Pick another connection of this workspace.',
+            title: onSwitchModel ? 'Switch to another model' : 'Open provider settings',
+            cta: onSwitchModel ? 'Switch' : 'Settings',
+            description: onSwitchModel ? 'Pick another model for this conversation.' : 'Add or reconnect a provider for this workspace.',
             onClick: switchModel,
         })
     }
@@ -105,7 +105,7 @@ export function ProviderErrorNotice({ kind, message, onSwitchModel, onOpenConnec
                 <Icon size="sm" tone="red" icon={icon} className="bg-red-500/10 text-foreground" />
                 <span className="font-medium">{title}</span>
             </div>
-            <p className="text-sm">{kind === 'run_in_flight' ? 'A run started earlier is still holding this conversation. Stop it to send your message.' : friendlyError(message)}</p>
+            <p className="text-sm">{kind === 'run_in_flight' ? 'A run started earlier is still holding this conversation. Stop it to send your message.' : message ? friendlyError(message) : friendlyError('', kind)}</p>
             <NoticeActions actions={actions} />
         </div>
     )

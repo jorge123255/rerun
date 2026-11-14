@@ -476,7 +476,7 @@ export function AgentChat({ uid, active, agentId, agentName, sessionId, onSessio
                 getRun: () => getRunAction(agentId, runId),
                 fetchMessages: () => fetchSessionMessages(sid),
                 onSettled: async ({ errored, errorText }) => {
-                    await finalizeSessionAction(sid, errored ? 'error' : 'idle').catch(() => {})
+                    await finalizeSessionAction(sid, errored ? 'error' : 'idle', { onlyWhileWorking: true }).catch(() => {})
                     activeRunIdRef.current = null
                     if (errorText) setRunError(errorText)
                 },

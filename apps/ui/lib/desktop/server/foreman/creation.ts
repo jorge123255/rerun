@@ -2,9 +2,8 @@ import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Client, Transaction } from '@libsql/client'
 import { z } from 'zod'
-import { DESKTOP_SETUP_DEFAULT_PROMPT, desktopTemplateDetailSchema, desktopTemplateInstallResultSchema, desktopTemplateOperationSchema, desktopSetupMutationResultSchema, foremanModelRefSchema, providerSchema, type DesktopTemplateOperation } from '@rerun/contracts'
-import { getAgent, request } from '@/lib/engine/client'
-import { installWithFocus } from '@/lib/foreman/starter-pack'
+import { foremanImportedSetupPrompt, desktopTemplateDetailSchema, desktopTemplateInstallResultSchema, desktopTemplateOperationSchema, desktopTemplateRevisionSchema, desktopSetupMutationResultSchema, foremanModelRefSchema, providerSchema, type DesktopTemplateOperation } from '@rerun/contracts'
+import { EngineRequestError, getAgent, request } from '@/lib/engine/client'
 import { usableConnection } from '../../chat-model'
 import type { DesktopSpaceWrite } from '../../spaces'
 import { DesktopHttpError } from '../auth'
@@ -32,7 +31,7 @@ CREATE TABLE IF NOT EXISTS desktop_foreman_creation_receipts (
 const uuid = z.uuid()
 const boxBody = z.strictObject({ requestId: uuid, name: z.string().trim().min(1).max(60), order: z.number().int().nonnegative() })
 const coworkerBody = z.strictObject({ requestId: uuid, spaceId: uuid, name: z.string().min(1).max(60), description: z.string().max(2000), soulMd: z.string().min(1).refine(text => Buffer.byteLength(text,'utf8') <= 24*1024), installMd: z.string().min(1).refine(text => Buffer.byteLength(text,'utf8') <= 24*1024), model: foremanModelRefSchema })
-const templateBody = z.strictObject({ requestId: uuid, templateId: z.string().regex(/^[a-f0-9]{32}$/), spaceId: uuid, focus: z.string().min(1).max(2000).optional() })
+const templateBody = z.strictObject({ requestId: uuid, templateId: z.string().regex(/^[a-f0-9]{32}$/), templateRevision: desktopTemplateRevisionSchema.optional(), spaceId: uuid, focus: z.string().min(1).max(2000).optional() })
 const setupBody = z.strictObject({ requestId: uuid, agentId: uuid })
 const boxResult = z.strictObject({ spaceId: uuid })
 const coworkerResult = z.strictObject({ agentId: uuid, spaceId: uuid, engineAgentId: z.string().min(1) })
@@ -84,10 +83,6 @@ function exclusive<T>(root: string, id: string, action: () => Promise<T>): Promi
     const clear = () => { if (locks().get(key) === result) locks().delete(key) }
     void result.then(clear,clear); return result
 }
-function stableId(requestId: string, role: string) {
-    const raw = hash([requestId,role]); return `${raw.slice(0,8)}-${raw.slice(8,12)}-4${raw.slice(13,16)}-a${raw.slice(17,20)}-${raw.slice(20,32)}`
-}
-
 export async function createDesktopForemanCreationAuthority(runtime: DesktopRuntime, db: Client): Promise<{ creation: ForemanCreationAuthority; setup: ForemanSetupAuthority }> {
     const engine = engineOf(runtime)
     const engineClient: DesktopTemplateEngineClient = {
@@ -97,6 +92,17 @@ export async function createDesktopForemanCreationAuthority(runtime: DesktopRunt
     async function current() {
         const now = await readDesktopRuntime()
         if (canonical(now) !== canonical(runtime)) throw new ForemanRefusal('workspace_changed','The workspace changed. Reopen the Foreman.')
+    }
+    async function templateDetail(templateId: string, revision?: string) {
+        const path = '/desktop/templates/' + encodeURIComponent(templateId) + (revision ? '?revision=' + encodeURIComponent(revision) : '')
+        const replaced = () => new ForemanRefusal('template_failed', 'The selected template revision is unavailable. Review the current template before installing it.')
+        const detail = await engineClient.get(path).then(data => desktopTemplateDetailSchema.parse(data)).catch(error => {
+            if (revision && error instanceof EngineRequestError && (error.status === 404 || error.status === 409)) throw replaced()
+            throw error
+        })
+        if (!revision && detail.templateId !== templateId) throw changed()
+        if (detail.templateId !== templateId || (revision && detail.revision !== revision)) throw replaced()
+        return detail
     }
     async function exactAgent(agentId: string, engineAgentId: string) {
         await assertCoworkerNotDeleting(db,agentId)
@@ -133,8 +139,9 @@ export async function createDesktopForemanCreationAuthority(runtime: DesktopRunt
         if (!row) return {state:'absent'}
         if (row.kind !== 'template') return {state:'replaced'}
         if (row.state !== 'complete') return {state:'unknown'}
-        const value = templateResult.parse(row.result)
-        if (value.agentIds.length !== value.engineAgentIds.length) return {state:'replaced'}
+        const value = templateResult.parse(row.result), body = templateBody.parse(row.body)
+        if (value.agentIds.length !== value.engineAgentIds.length || value.templateId !== body.templateId
+            || (body.templateRevision && value.revision !== body.templateRevision)) return {state:'replaced'}
         try {
             const canonicalReceipt = (await db.execute({sql:"SELECT receipt_id,status FROM desktop_template_requests WHERE request_id=? AND operation='install'",args:[requestId]})).rows[0]
             if (canonicalReceipt?.receipt_id !== value.importReceiptId || canonicalReceipt.status !== 'installed') return {state:'replaced'}
@@ -197,6 +204,10 @@ export async function createDesktopForemanCreationAuthority(runtime: DesktopRunt
             else throw changed()
         },
         lookupBox, lookupCoworker, lookupTemplateInstall,
+        async assertTemplateRevision(templateId, revision) {
+            await current()
+            await templateDetail(templateId, revision)
+        },
         ensureBox: raw => exclusive(runtime.dataRoot,raw.requestId,async () => {
             await current(); const body = boxBody.parse(raw)
             let row = await saved(db,body.requestId)
@@ -320,30 +331,22 @@ export async function createDesktopForemanCreationAuthority(runtime: DesktopRunt
                     if (operation.operation !== 'install' || reserved.key !== hash({body:{operation:'install',templateId:body.templateId,revision:operation.revision,spaceId:body.spaceId},scopeKey:`foreman:${body.requestId}`})) throw changed()
                 }
                 else {
-                const detail = desktopTemplateDetailSchema.parse(await engineClient.get(`/desktop/templates/${body.templateId}`))
-                if (detail.templateId !== body.templateId) throw changed()
+                const detail = await templateDetail(body.templateId, body.templateRevision)
                 operation = await prepareTemplateIntent(db,engineClient,{operation:{operation:'install',templateId:body.templateId,revision:detail.revision,spaceId:body.spaceId}}, {requestId:body.requestId,scopeKey:`foreman:${body.requestId}`})
                 }
                 await payload(db,row,{...row.payload,operation})
             }
-            if (operation.operation !== 'install' || operation.requestId !== body.requestId || operation.spaceId !== body.spaceId || operation.templateId !== body.templateId) throw changed()
+            if (operation.operation !== 'install' || operation.requestId !== body.requestId || operation.spaceId !== body.spaceId || operation.templateId !== body.templateId
+                || (body.templateRevision && operation.revision !== body.templateRevision)) throw changed()
             const canonicalAuthority = desktopTemplateAuthority(runtime)
             const templateServer = createDesktopTemplateServer({db,engine:engineClient,foremanDisabled:true,
                 initializeImportedSetup: async input => {
                     await current()
-                    await canonicalAuthority.initializeImportedSetup(input)
-                    const path = `/agents/${encodeURIComponent(input.engineAgentId)}/setup`
                     const key = `setup:${input.engineAgentId}`
-                    let setupInput = row.payload[key]
-                    if (!setupInput) {
-                        const view = setupWire.parse(await engineClient.get(path))
-                        const prompt = input.prompt.trim() || DESKTOP_SETUP_DEFAULT_PROMPT
-                        setupInput = {requestId:stableId(body.requestId,key),expectedRevision:view.revision,prompt:body.focus ? installWithFocus(prompt,body.focus) : prompt,required:true}
-                        await payload(db,row,{...row.payload,[key]:setupInput})
-                    }
-                    const result = setupWire.parse(await engineClient.post(`${path}/save`,setupInput))
-                    if (result.required !== true || result.completedAt !== null || result.sessionId !== null) throw changed()
-                    return {revision:result.revision}
+                    const prompt = foremanImportedSetupPrompt(input.prompt, body.focus)
+                    if (!row.payload[key]) await payload(db,row,{...row.payload,[key]:{prompt}})
+                    else if (z.object({prompt:z.string()}).parse(row.payload[key]).prompt !== prompt) throw changed()
+                    return canonicalAuthority.initializeImportedSetup({ ...input, foreman: body.focus ? { focus: body.focus } : {} })
                 },
                 commitInstalled: async input => {
                     await current()

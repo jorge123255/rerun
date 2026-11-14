@@ -24,7 +24,7 @@ export type DesktopTrustedPlanSnapshot = {
     digest: string
     chatId: string
     workspaceId: string
-    runId: string
+    runId: string | null
     state: 'shown' | 'confirmed' | 'changes_requested' | 'superseded'
     streaming: boolean
     /** Sealed plan or raw show_plan input. */
@@ -164,7 +164,7 @@ export function revisionToTrustedSnapshot(input: {
     revisionId: string
     digest: string
     chat: { workspaceId: string; chatId: string }
-    runId: string
+    runId: string | null
     state: DesktopTrustedPlanSnapshot['state']
     plan: DesktopTrustedPlanSnapshot['plan']
     streaming?: boolean

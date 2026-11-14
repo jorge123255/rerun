@@ -46,6 +46,8 @@ test.each([
     const buttons = [...container.querySelectorAll('button')].map(button => button.textContent?.trim())
     if (gate) {
         expect(buttons).toContain(gate)
+        expect(buttons).not.toContain('What can you help me with?')
+        expect(container.textContent).not.toContain('Start a conversation')
         expect(container.querySelector('textarea')?.closest('form')?.hidden).toBe(true)
     } else {
         expect(buttons).not.toContain('Install Setup QA')

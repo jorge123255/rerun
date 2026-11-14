@@ -65,6 +65,7 @@ export const desktopMcpSignInOAuthViewSchema = z.object({
     state: z.enum(['idle', 'waiting', 'connected', 'error', 'unsupported']),
     message: z.string().max(400).optional(),
     authorizationUrl: authorizationUrl.optional(),
+    deviceAvailable: z.boolean().optional(),
 }).strict()
 export type DesktopMcpSignInOAuthView = z.infer<typeof desktopMcpSignInOAuthViewSchema>
 

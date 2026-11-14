@@ -21,6 +21,7 @@ import {
     FocusCenterIcon,
     FolderIcon,
     FlagIcon,
+    GaugeIcon,
     GlobeIcon,
     HistoryIcon,
     HeartIcon,
@@ -219,6 +220,7 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
     request_takeover: MonitorIcon,
     request_spend: CoinsIcon,
     notify_user: BellIcon,
+    ai_status: GaugeIcon,
     install_complete: CheckCircle2Icon,
 }
 

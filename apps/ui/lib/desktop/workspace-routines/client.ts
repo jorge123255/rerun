@@ -1,8 +1,14 @@
 'use client'
 
-import { desktopWorkspaceRoutineMutationSchema, desktopWorkspaceRoutineMutationResultSchema, desktopWorkspaceRoutinesViewSchema, type DesktopWorkspaceRoutineMutation, type DesktopWorkspaceRoutineMutationResult, type DesktopWorkspaceRoutinesView } from '../../../../../packages/contracts/src/desktop-workspace-routines'
+import { desktopUpcomingRoutinesSchema, desktopWorkspaceRoutineMutationSchema, desktopWorkspaceRoutineMutationResultSchema, desktopWorkspaceRoutinesViewSchema, type DesktopWorkspaceRoutineMutation, type DesktopWorkspaceRoutineMutationResult, type DesktopWorkspaceRoutinesView } from '@rerun/contracts'
 
 const url = '/api/desktop/workspace/routines'
+
+export async function readDesktopUpcomingRoutines(signal: AbortSignal) {
+    const response = await fetch(`${url}/upcoming`, { cache: 'no-store', signal })
+    if (!response.ok) throw new Error('Upcoming routines could not be loaded.')
+    return desktopUpcomingRoutinesSchema.parse(await response.json())
+}
 
 export function createDesktopWorkspaceRoutinesClient() {
     return {

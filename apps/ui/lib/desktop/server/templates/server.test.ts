@@ -346,6 +346,54 @@ test('captured disabled state reaches both local placement and the replayed inst
  expect((await db.execute('SELECT enabled FROM desktop_agents')).rows[0]?.enabled).toBe(0)
 })
 
+test('cleanup cancels a saved placement before install starts and frees the spot across reopen', async () => {
+    const { rollbackDesktopTemplateRequest } = await import('./rollback')
+    const { engine, posts } = engineFor()
+    const identity = { templateId, revision }
+    const body = { operation: { operation: 'install', ...identity, ...target } }
+    const operation = await prepareTemplateIntent(db, engine, body)
+    if (operation.operation !== 'install') throw new Error('Expected install')
+    expect(await readTemplateInstallIntent(db, identity)).toEqual({ status: 'pending', ...identity, requestId: operation.requestId })
+    expect((await db.execute('SELECT * FROM desktop_template_requests')).rows).toEqual([])
+    await expect(rollbackDesktopTemplateRequest(db, engine, { requestId: crypto.randomUUID() })).rejects.toMatchObject({ status: 404 })
+    const internalRequestId = crypto.randomUUID()
+    await prepareTemplateIntent(db, engine, {
+        operation: { ...body.operation, positions: [{ col: 4, row: 4 }] },
+    }, { requestId: internalRequestId, scopeKey: `foreman:${internalRequestId}` })
+    await expect(rollbackDesktopTemplateRequest(db, engine, { requestId: internalRequestId })).rejects.toMatchObject({ status: 404 })
+    await expect(prepareTemplateIntent(db, engine, {
+        operation: { ...body.operation, templateId: 'ef'.repeat(16) },
+    })).rejects.toMatchObject({ status: 409 })
+
+    const cancelled = { status: 'rolled-back', requestId: operation.requestId }
+    const cleanup = rollbackDesktopTemplateRequest(db, engine, { requestId: operation.requestId })
+    const delayedInstall = createDesktopTemplateServer({ db, engine }).handle(operation)
+    await Promise.all([
+        expect(cleanup).resolves.toEqual(cancelled),
+        expect(delayedInstall).rejects.toThrow('cancelled'),
+    ])
+    const reopened = createClient({ url: `file:${join(directory, 'app.db')}` })
+    try {
+        expect(await readTemplateInstallIntent(reopened, identity)).toEqual({ status: 'refused', ...identity, requestId: operation.requestId })
+        expect(await rollbackDesktopTemplateRequest(reopened, engine, { requestId: operation.requestId })).toEqual(cancelled)
+        const server = createDesktopTemplateServer({ db: reopened, engine })
+        await expect(server.handle(operation)).rejects.toThrow('cancelled')
+        await expect(server.handle({ ...operation, positions: [{ col: 3, row: 3 }] })).rejects.toThrow('another change')
+        const next = await prepareTemplateIntent(reopened, engine, body)
+        if (next.operation !== 'install') throw new Error('Expected a new install')
+        expect(next).toMatchObject({ ...target })
+        expect(next.requestId).not.toBe(operation.requestId)
+        expect(await rollbackDesktopTemplateRequest(reopened, engine, { requestId: operation.requestId })).toEqual(cancelled)
+        expect(await readTemplateInstallIntent(reopened, identity)).toMatchObject({
+            status: 'pending', requestId: next.requestId,
+        })
+        expect((await reopened.execute('SELECT * FROM desktop_agents')).rows).toEqual([])
+        expect(posts).toEqual([])
+    } finally {
+        reopened.close()
+    }
+})
+
 test('explicit interrupted cleanup is durable and an old install cannot publish after lost cleanup acknowledgement',async()=>{
  const {rollbackDesktopTemplateRequest}=await import('./rollback')
  const original=engineFor(),cleanupBodies:unknown[]=[]

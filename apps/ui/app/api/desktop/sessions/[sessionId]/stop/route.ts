@@ -1,6 +1,6 @@
 import { desktopRoute } from '@/lib/desktop/server/http'
+import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { readDesktopTurnRunning, stopDesktopTurn } from '@/lib/desktop/server/stop-turn'
-import { withDesktopSecretSessionTransition } from '@/lib/desktop/server/secret-requests/lifecycle'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,10 +11,12 @@ export async function GET(request: Request, { params }: Params): Promise<Respons
     return desktopRoute(request, async runtime => Response.json(await readDesktopTurnRunning(runtime, (await params).sessionId), { headers: { 'cache-control': 'no-store' } }))
 }
 
-// Cancel the engine run(s) generating a reply in this conversation.
+// Cancel the exact reply shown when Stop was clicked.
 export async function POST(request: Request, { params }: Params): Promise<Response> {
     return desktopRoute(request, async runtime => {
         const sessionId = (await params).sessionId
-        return Response.json(await withDesktopSecretSessionTransition(runtime, sessionId, () => stopDesktopTurn(runtime, sessionId)))
+        const [runId, ...duplicates] = new URL(request.url).searchParams.getAll('runId')
+        if (!runId || duplicates.length || !/^[A-Za-z0-9_-]{1,128}$/.test(runId)) throw new DesktopHttpError(400, 'A reply is required to stop this conversation.')
+        return Response.json(await stopDesktopTurn(runtime, sessionId, runId))
     })
 }

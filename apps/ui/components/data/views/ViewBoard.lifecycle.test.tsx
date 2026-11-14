@@ -6,13 +6,13 @@ import type { DragEndEvent } from '@dnd-kit/core'
 import type { TableView } from '@rerun/contracts'
 import type { DataSource } from '@/lib/data/source'
 
-const dnd = vi.hoisted(() => ({ end: null as null | ((event: DragEndEvent) => void) }))
+const dnd = vi.hoisted(() => ({ end: null as null | ((event: DragEndEvent) => void), dragging: false }))
 vi.mock('@dnd-kit/core', () => ({
     DndContext: ({ children, onDragEnd }: { children: ReactNode; onDragEnd: (event: DragEndEvent) => void }) => { dnd.end = onDragEnd; return <>{children}</> },
     DragOverlay: ({ children }: { children: ReactNode }) => <>{children}</>,
     KeyboardSensor: class {}, PointerSensor: class {}, useSensor: () => ({}), useSensors: () => [],
     useDroppable: () => ({ setNodeRef: () => {}, isOver: false }),
-    useDraggable: ({ disabled }: { disabled: boolean }) => ({ setNodeRef: () => {}, listeners: {}, attributes: { 'data-drag-disabled': String(disabled) }, isDragging: false }),
+    useDraggable: ({ disabled }: { disabled: boolean }) => ({ setNodeRef: () => {}, listeners: {}, attributes: { 'data-drag-disabled': String(disabled) }, isDragging: dnd.dragging }),
 }))
 vi.mock('@/components/data/DataBrowserTable', () => ({ rowKey: (row: Record<string, unknown>) => row.__rowid == null ? null : String(row.__rowid) }))
 vi.mock('@rerun/ui/chat', () => ({
@@ -60,7 +60,7 @@ let root: Root, container: HTMLDivElement, props: ComponentProps<typeof ViewBoar
 beforeEach(() => {
     container = document.createElement('div'); document.body.append(container); root = createRoot(container)
     props = { source: fixture().source, table: 'alpha', view: boardView, query: '', refreshKey: 0, context: {} }
-    dnd.end = null; vi.clearAllMocks()
+    dnd.end = null; dnd.dragging = false; vi.clearAllMocks()
 })
 afterEach(async () => { await act(async () => { root.unmount() }); container.remove() })
 const render = async (patch: Partial<ComponentProps<typeof ViewBoard>>) => {
@@ -78,6 +78,41 @@ const move = (item: Row, from = 'Todo', to = 'Done') => {
 }
 
 describe('ViewBoard current view ownership', () => {
+    it('marks Escape during a drag as handled before it reaches a parent panel', async () => {
+        dnd.dragging = true
+        await render({})
+        const card = container.querySelector('[data-drag-disabled]')!
+        const parent = vi.fn()
+        container.addEventListener('keydown', parent)
+        const escape = () => new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        const duringDrag = escape()
+        await act(async () => { card.dispatchEvent(duringDrag) })
+        expect(duringDrag.defaultPrevented).toBe(true)
+        expect(parent).toHaveBeenCalledExactlyOnceWith(duringDrag)
+
+        dnd.dragging = false
+        await render({})
+        const afterDrag = escape()
+        await act(async () => { card.dispatchEvent(afterDrag) })
+        expect(afterDrag.defaultPrevented).toBe(false)
+    })
+
+    it('opens the focused row on Enter without using the drag gesture', async () => {
+        const onOpenRow = vi.fn()
+        await render({ onOpenRow })
+        const card = container.querySelector('[data-drag-disabled]')!
+        const press = (key: string, init: KeyboardEventInit = {}) => act(async () => {
+            card.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }))
+        })
+        await press(' ')
+        await press('Enter', { isComposing: true })
+        await press('Enter', { repeat: true })
+        expect(onOpenRow).not.toHaveBeenCalled()
+        await press('Enter')
+        expect(onOpenRow).toHaveBeenCalledExactlyOnceWith(row('Original row'), card)
+        expect(props.source.updateRow).not.toHaveBeenCalled()
+    })
+
     it.each(['source', 'table', 'view', 'query', 'refresh'] as const)('does not publish a late Show more response after a %s change', async changed => {
         const f = fixture(), pending = deferred<Awaited<ReturnType<DataSource['readRows']>>>()
         const read = f.source.readRows

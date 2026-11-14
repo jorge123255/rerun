@@ -6,11 +6,13 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { TooltipDisabledReason } from '@/components/ui/tooltip'
 import { XIcon } from '@/lib/icons'
+import { useFileTranslations } from '@/lib/files/translations'
 import { Badge } from '@rerun/ui/primitives'
 import { useCallback, useState } from 'react'
 
 import { FileTextEditor } from './FileTextEditor'
 import { useFileDraft } from './useFileDraft'
+import type { FileDraftHost } from './useFileUnloadGuard'
 
 type FileEditorDialogProps = {
     fileName: string
@@ -18,13 +20,15 @@ type FileEditorDialogProps = {
     onSave: (content: string, baseHash: string | null) => Promise<SaveFileResult>
     onSaved: (content: string) => void
     onClose: () => void
+    host?: FileDraftHost
 }
 
 // Mounted only while editing, so it opens on content that has finished loading and unmounting it is
 // what throws a draft away. Being modal is also what protects the draft: the panel behind cannot be
 // navigated away, which unmounting it would do silently.
-export function FileEditorDialog({ fileName, initialContent, onSave, onSaved, onClose }: FileEditorDialogProps) {
-    const { draft, dirty, saving, error, conflict, setDraft, save, overwrite, dismissConflict } = useFileDraft({ initialContent, onSave, onSaved })
+export function FileEditorDialog({ fileName, initialContent, onSave, onSaved, onClose, host }: FileEditorDialogProps) {
+    const { draft, dirty, saving, error, conflict, setDraft, save, overwrite, dismissConflict } = useFileDraft({ initialContent, onSave, onSaved, host })
+    const t = useFileTranslations()
     const [confirmingDiscard, setConfirmingDiscard] = useState(false)
 
     const requestClose = useCallback(() => {
@@ -48,10 +52,10 @@ export function FileEditorDialog({ fileName, initialContent, onSave, onSaved, on
                     <DialogTitle className="min-w-0 flex-1 truncate text-left font-mono text-xs font-normal text-muted-foreground">{fileName}</DialogTitle>
                     {dirty && (
                         <Badge size="xs" tone="orange" glow={false}>
-                            Unsaved
+                            {t('files.editor.unsaved')}
                         </Badge>
                     )}
-                    <Button size="icon-sm" variant="ghost" onClick={requestClose} disabled={saving} title="Close editor" aria-label="Close editor">
+                    <Button size="icon-sm" variant="ghost" onClick={requestClose} disabled={saving} title={t('files.editor.close')} aria-label={t('files.editor.close')}>
                         <XIcon className="size-4" />
                     </Button>
                 </div>
@@ -61,11 +65,11 @@ export function FileEditorDialog({ fileName, initialContent, onSave, onSaved, on
                 {error && <p className="shrink-0 border-t border-border px-4 pt-2 text-xs text-destructive">{error}</p>}
                 <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
                     <Button size="sm" variant="outline" onClick={requestClose} disabled={saving}>
-                        Cancel
+                        {t('files.editor.cancel')}
                     </Button>
-                    <TooltipDisabledReason reason={dirty ? undefined : 'No changes to save'}>
+                    <TooltipDisabledReason reason={dirty ? undefined : t('files.editor.noChanges')}>
                         <Button size="sm" loading={saving} disabled={!dirty} onClick={save}>
-                            Save changes
+                            {t('files.editor.save')}
                         </Button>
                     </TooltipDisabledReason>
                 </div>
@@ -74,10 +78,10 @@ export function FileEditorDialog({ fileName, initialContent, onSave, onSaved, on
                 <ConfirmDialog
                     open
                     onOpenChange={open => !open && dismissConflict()}
-                    title={`${fileName} changed on the Box`}
-                    description="Someone, or a coworker, wrote to this file after you opened it. Saving now replaces their version with yours."
-                    confirmLabel="Overwrite"
-                    cancelLabel="Keep theirs"
+                    title={t('files.editor.conflictTitle', { name: fileName })}
+                    description={t('files.editor.conflictDescription')}
+                    confirmLabel={t('files.editor.overwrite')}
+                    cancelLabel={t('files.editor.keepTheirs')}
                     onConfirm={overwrite}
                 />
             )}
@@ -85,10 +89,10 @@ export function FileEditorDialog({ fileName, initialContent, onSave, onSaved, on
                 <ConfirmDialog
                     open
                     onOpenChange={open => !open && setConfirmingDiscard(false)}
-                    title="Discard your changes?"
-                    description={`Your edits to ${fileName} are not saved yet. Closing the editor throws them away.`}
-                    confirmLabel="Discard changes"
-                    cancelLabel="Keep editing"
+                    title={t('files.editor.discardTitle')}
+                    description={t('files.editor.discardDescription', { name: fileName })}
+                    confirmLabel={t('files.editor.discard')}
+                    cancelLabel={t('files.editor.keepEditing')}
                     onConfirm={() => {
                         setConfirmingDiscard(false)
                         onClose()

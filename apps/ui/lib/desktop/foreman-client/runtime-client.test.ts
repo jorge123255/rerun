@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { randomUUID } from 'node:crypto'
+import { foremanDocumentScope } from '@rerun/contracts'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { cancelDraftShutdown } from '@/lib/desktop/draft-writes'
 import { DEFAULT_DESKTOP_FOREMAN_PLACEMENT } from './persistence'
@@ -47,13 +48,118 @@ it('persists immutable send identity before execution and recovers the same requ
     await expect(first.ports.conversation.sendMessage('hello')).rejects.toThrow('lost acknowledgement')
     const request = server.ui.snapshot?.pendingSend
     expect(request).toBeTruthy(); first.close()
-    const restarted = connect(await readDesktopForemanState())
+    server.ui.snapshot!.draft = 'My next draft'
+    server.ui.revision++
+    const restarted = connect(await readDesktopForemanState(), { connectionId: 'later', model: 'different' })
     await expect(restarted.ports.conversation.sendMessage('different')).rejects.toThrow('previous message')
-    expect(await restarted.ports.conversation.sendMessage('hello')).toBe(true)
+    expect(await restarted.retryPendingMessage(randomUUID())).toBe(false)
+    expect(await restarted.retryPendingMessage(request!.requestId)).toBe(true)
     const sends = bodies.filter(body => body.action === 'send')
     expect(sends).toHaveLength(2); expect(sends.map(body => body.requestId)).toEqual([request!.requestId, request!.requestId])
     expect(sends.every(body => JSON.stringify(body.modelChoice) === JSON.stringify(model))).toBe(true)
     expect(server.ui.snapshot?.pendingSend).toBeUndefined()
+    expect(server.ui.snapshot?.draft).toBe('My next draft')
+})
+it('recovers a file-only send from the composer without preparing or uploading the attachment again', async () => {
+    const transport = vi.mocked(fetch).getMockImplementation()!
+    const documents = { scope: foremanDocumentScope(chat, server.sessionId), admissionId: randomUUID(), attachmentIds: [randomUUID()], modelChoice: model }
+    const prepare = vi.fn(async () => documents)
+    let lost = false
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : null
+        if (body?.action === 'send' && !lost) {
+            lost = true
+            expect(server.ui.snapshot?.pendingSend).toEqual({ requestId: body.requestId, text: '', modelChoice: model, documents })
+            throw new Error('lost file acknowledgement')
+        }
+        return transport(url, init)
+    })
+    const client = connect(server, model)
+    await expect(client.ports.conversation.sendMessage('', undefined, { prepareDocuments: prepare })).rejects.toThrow('lost file acknowledgement')
+    const requestId = server.ui.snapshot?.pendingSend?.requestId
+    client.close()
+    const restored = connect(await readDesktopForemanState())
+    await expect(restored.ports.conversation.sendMessage('')).rejects.toThrow('Retry the attached message')
+    expect(await restored.retryPendingMessage(requestId!)).toBe(true)
+    expect(prepare).toHaveBeenCalledExactlyOnceWith(model)
+    expect(bodies.find(body => body.action === 'send')).toMatchObject({ requestId, text: '', modelChoice: model, documents })
+    expect(server.ui.snapshot?.pendingSend).toBeUndefined()
+})
+
+it('keeps the exact send recoverable if clearing its acknowledged reservation fails', async () => {
+    const transport = vi.mocked(fetch).getMockImplementation()!
+    let refused = false
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : null
+        if (body?.action === 'ui' && !body.snapshot.pendingSend && server.ui.snapshot?.pendingSend && !refused) {
+            refused = true
+            throw new Error('confirmation could not be saved')
+        }
+        return transport(url, init)
+    })
+    const client = connect(server, model)
+    await expect(client.ports.conversation.sendMessage('hello')).rejects.toThrow('confirmation could not be saved')
+    const saved = server.ui.snapshot?.pendingSend
+    expect(saved).toBeDefined()
+    expect(await client.retryPendingMessage(saved!.requestId)).toBe(true)
+    expect(bodies.filter(body => body.action === 'send').map(body => body.requestId)).toEqual([saved!.requestId, saved!.requestId])
+    expect(server.ui.snapshot?.pendingSend).toBeUndefined()
+})
+it('restores the selected coworker ID after a lost acknowledgment and refuses a same-name replacement', async () => {
+    const transport = vi.mocked(fetch).getMockImplementation()!
+    const text = 'Review with @Sam'
+    const mention = { token: '@Sam', start: 12, end: 16, targetId: 'selected-sam' }
+    const options = { coworkerMentions: [mention] }
+    server.ui.snapshot = { ...server.ui.snapshot!, draft: text, draftCoworkerMentions: options.coworkerMentions }
+    let lost = false
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : null
+        if (body?.action === 'send' && !lost) {
+            lost = true
+            expect(server.ui.snapshot?.pendingSend).toMatchObject({ requestId: body.requestId, ...options })
+            throw new Error('lost mention acknowledgment')
+        }
+        return transport(url, init)
+    })
+    const first = connect(server, model)
+    await expect(first.ports.conversation.sendMessage(text, undefined, options)).rejects.toThrow('lost mention acknowledgment')
+    const requestId = server.ui.snapshot?.pendingSend?.requestId
+    first.close()
+    const saved = await readDesktopForemanState()
+    expect(saved.ui.snapshot?.draftCoworkerMentions).toEqual([mention])
+    const restored = connect(saved)
+    await expect(restored.ports.conversation.sendMessage(text, undefined, { coworkerMentions: [{ ...mention, targetId: 'different-sam' }] })).rejects.toThrow('original model and mentions')
+    expect(await restored.ports.conversation.sendMessage(text, undefined, options)).toBe(true)
+    expect(bodies.filter(body => body.action === 'send')).toEqual([expect.objectContaining({ requestId, ...options })])
+})
+it('uses an acknowledged model immediately and ignores a state read that predates the change', async () => {
+    const transport = vi.mocked(fetch).getMockImplementation()!
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let read = false
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+        if (!init?.body && !read) {
+            read = true
+            const prior = structuredClone(server)
+            await gate
+            return Response.json(prior)
+        }
+        const body = init?.body && JSON.parse(String(init.body))
+        if (body?.action === 'model') {
+            bodies.push(body)
+            server.model = body.model
+            return Response.json({ model: server.model })
+        }
+        return transport(url, init)
+    })
+    const client = connect()
+    const earlierRead = client.refresh()
+    await client.setModel(null, model)
+    release()
+    expect((await earlierRead).model).toEqual(model)
+    expect(await client.ports.conversation.sendMessage('Use the selected model')).toBe(true)
+    expect(bodies.find(body => body.action === 'model')).toEqual({ action: 'model', chat, expected: null, model })
+    expect(bodies.find(body => body.action === 'send')?.modelChoice).toEqual(model)
 })
 it('recovers only an exact saved snapshot after a lost UI ACK and then advances the CAS revision', async () => {
     const transport = vi.mocked(fetch).getMockImplementation()!
@@ -68,6 +174,28 @@ it('recovers only an exact saved snapshot after a lost UI ACK and then advances 
     await client.ports.persistence.save({ ...server.ui.snapshot!, draft: 'second' })
     expect(server.ui.snapshot?.draft).toBe('second')
     expect(bodies.filter(body => body.action === 'ui').map(body => body.expectedRevision)).toEqual([0, 1])
+})
+it('recovers an exact starter answer after a lost response without sending ordinary chat', async () => {
+    const offerId = randomUUID(), intakeRequestId = randomUUID(), digest = 'a'.repeat(64)
+    const choice = { kind: 'text' as const, text: 'Design a support coworker' }
+    server.starter = { offerId, intakeRequestId, digest, decision: null, cards: [{ templateId: 'b'.repeat(32), revision: 'c'.repeat(64), title: 'Support' }] }
+    const transport = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : null
+        if (body?.action === 'starter') {
+            bodies.push(body)
+            server.starter!.decision = { choice, settled: true }
+            throw new Error('Lost starter response')
+        }
+        return transport(url, init)
+    })
+    const client = connect()
+    expect(await client.ports.conversation.sendMessage(choice.text)).toBe(false)
+    await expect(client.answerStarter({ offerId, intakeRequestId, digest: 'd'.repeat(64), choice })).rejects.toThrow('cannot be answered')
+    expect(bodies).toEqual([])
+    await expect(client.answerStarter({ offerId, intakeRequestId, digest, choice })).resolves.toBeUndefined()
+    expect(bodies).toEqual([{ action: 'starter', chat, input: { offerId, intakeRequestId, digest, choice } }])
+    expect((await client.refresh()).starter?.decision).toEqual({ choice, settled: true })
 })
 it('refuses foreign state and hides context parts from restored transcript', async () => {
     server.messages = [{ id: 'one', role: 'user', parts: [{ type: 'text', text: 'Visible message' }, { type: 'text', text: 'private context', providerOptions: { rerun: { context: true } } }] }]
@@ -165,4 +293,27 @@ it('submits the authoritative Foreman card through the answer action and blocks 
     await expect(client.answerQuestion({ ...answer, questionId: 'b'.repeat(64) })).rejects.toThrow('cannot be answered')
     await client.answerQuestion(answer)
     expect(bodies).toEqual([{ action: 'answer', chat, input: answer }])
+})
+
+it('shows only the exact saved decision and keeps other calls with a reused ID visible', async () => {
+    const tool = { type: 'tool-request_approval', toolName: 'request_approval', toolCallId: 'same-call', state: 'output-available' }
+    const receipt = { sourceMessageId: 'engine-first', sourceToolCallId: 'same-call', decision: {
+        kind: 'approvals', items: [{ action: 'Review the draft', decision: 'declined', note: 'Tomorrow.' }],
+    } }
+    server.messages = [
+        { id: 'engine-first', role: 'assistant', parts: [{ type: 'text', text: 'First request' }, tool] },
+        { id: 'engine-decision', role: 'user', parts: [{ type: 'text', text: 'The wire decision' }], metadata: { savedDecision: receipt } },
+        { id: 'engine-later', role: 'assistant', parts: [tool] },
+        { id: 'engine-paste', role: 'user', parts: [{ type: 'text', text: 'The wire decision' }] },
+    ]
+    const messages = desktopForemanMessages(await readDesktopForemanState())
+    expect(messages[0].history.map(part => part.kind)).toEqual(['text'])
+    expect(messages[1].savedDecision).toEqual(receipt.decision)
+    expect(messages[2].history.map(part => part.kind)).toEqual(['tool'])
+    expect(messages[3].savedDecision).toBeUndefined()
+
+    server.messages[1].metadata = { savedDecision: { ...receipt, decision: { kind: 'approvals', items: [] } } }
+    const invalid = desktopForemanMessages(await readDesktopForemanState())
+    expect(invalid[1].savedDecision).toBeUndefined()
+    expect(invalid[0].history.map(part => part.kind)).toEqual(['text', 'tool'])
 })

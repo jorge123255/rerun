@@ -7,13 +7,18 @@ export const STAMP_FILE = 'desktop-build.json'
 export async function sourceStamp() {
     const dirty = await output('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: repoRoot })
     if (dirty) throw new Error('Commit or move source changes and untracked files before staging a desktop build')
-    return { protocolVersion: 1, sourceCommit: await output('git', ['rev-parse', 'HEAD'], { cwd: repoRoot }), buildId: await buildId() }
+    return { protocolVersion: 1, sourceCommit: await output('git', ['rev-parse', 'HEAD'], { cwd: repoRoot }), buildId: await buildId(), arch: process.arch }
+}
+
+export function matchesSourceStamp(value, expected) {
+    return value?.protocolVersion === expected.protocolVersion && value.sourceCommit === expected.sourceCommit
+        && value.buildId === expected.buildId && value.arch === expected.arch
 }
 
 export async function stampMatches(directory, expected) {
     try {
         const value = JSON.parse(await readFile(join(directory, STAMP_FILE), 'utf8'))
-        return value.protocolVersion === expected.protocolVersion && value.sourceCommit === expected.sourceCommit && value.buildId === expected.buildId
+        return matchesSourceStamp(value, expected)
     } catch { return false }
 }
 

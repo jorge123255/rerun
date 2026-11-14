@@ -20,7 +20,7 @@ export function buildDesktopControlCoworkerTabs({ panels, setup, actions }: {
         : panels && isDesktopCoworkerPanel(tab.id) && (tab.id !== 'actions' || actions)).map(tab => tab.id === 'triggers' ? { ...tab, description: 'URLs that start a run when called on this Mac' } : tab)
 }
 
-export const DESKTOP_CONTROL_COMMAND_IDS = ['add_coworker', 'new_box', 'shared_files', 'company_brain', 'team_board', 'model_settings', 'workspace_settings', 'recenter_board', 'toggle_theme', 'notifications', 'shortcuts', 'getting_started', 'help'] as const
+export const DESKTOP_CONTROL_COMMAND_IDS = ['add_coworker', 'new_box', 'shared_files', 'company_brain', 'team_board', 'model_settings', 'workspace_settings', 'recenter_board', 'toggle_theme', 'notifications', 'shortcuts', 'getting_started', 'help', 'whats_new'] as const
 
 export type DesktopControlCommandId = (typeof DESKTOP_CONTROL_COMMAND_IDS)[number]
 
@@ -42,6 +42,7 @@ export type DesktopControlCommandOptions = {
     addBox?: boolean
     shortcuts?: boolean
     help?: boolean
+    changelog?: boolean
     notifications?: boolean
     workspaceSettings?: boolean
     recenterBoard?: boolean
@@ -65,6 +66,7 @@ export function buildDesktopControlCommands(options: DesktopControlCommandOption
     if (options.notifications) commands.push({ id: 'notifications', group: 'settings', label: 'Notifications', keywords: ['alerts', 'push', 'sound'] })
     if (options.shortcuts) commands.push({ id: 'shortcuts', group: 'settings', label: 'Keyboard shortcuts', keywords: ['keys', 'hotkeys'] })
     if (options.help) commands.push({ id: 'help', group: 'settings', label: 'Help', keywords: ['docs', 'documentation', 'community', 'getting started', 'checklist'] })
+    if (options.changelog) commands.push({ id: 'whats_new', group: 'settings', label: "What's new", keywords: ['changelog', 'updates', 'release'] })
     return commands
 }
 
@@ -151,8 +153,7 @@ function editingFieldFocused(): boolean {
 }
 
 // ⌘F on a Mac, Ctrl+F elsewhere opens the center. Pressed while the center is open it closes
-// the center and asks the shell to find in the open conversation. Electron has no browser find
-// bar, so the event is not left to the default. ⌘K
+// the center and opens Find in the active conversation or the Mac page. ⌘K
 // toggles the center where nothing else holds it — never from an open coworker chat or from an
 // editing field. The capture listener precedes every local handler, like the original's.
 export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen, disabled = false }: {
@@ -178,10 +179,11 @@ export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen, d
                 return
             }
             if (open) {
-                event.preventDefault()
-                event.stopPropagation()
                 setOpen(false)
-                window.dispatchEvent(new Event('rerun-desktop-conversation-find'))
+                if (!window.dispatchEvent(new Event('rerun-desktop-conversation-find', { cancelable: true }))) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                }
                 return
             }
             event.preventDefault()
@@ -190,4 +192,16 @@ export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen, d
         window.addEventListener('keydown', onKey, true)
         return () => window.removeEventListener('keydown', onKey, true)
     }, [open, setOpen, conversationOpen, disabled])
+    useEffect(() => {
+        const openFind = (window as Window & { desktopApp?: { openFind?: () => void } }).desktopApp?.openFind
+        if (!openFind) return
+        const fallback = (event: KeyboardEvent) => {
+            if (event.defaultPrevented || isDesktopQuitting() || event.key?.toLowerCase() !== 'f'
+                || !event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+            event.preventDefault()
+            openFind()
+        }
+        window.addEventListener('keydown', fallback)
+        return () => window.removeEventListener('keydown', fallback)
+    }, [])
 }

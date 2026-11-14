@@ -3,8 +3,9 @@ import { saveDesktopWorkspaceMetadataOutbox } from './workspaces/metadata'
 import type { Client } from '@libsql/client'
 import { z } from 'zod'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
-import { DESKTOP_IMAGE_MAX_BYTES, DESKTOP_IMAGE_MAX_PIXELS, DesktopImageBytesError, desktopRasterKind, inspectDesktopImageBytes } from './image-bytes'
+import { DESKTOP_IMAGE_MAX_BYTES, DesktopImageBytesError, desktopRasterKind, inspectDesktopImageBytes } from './image-bytes'
 import { DesktopHttpError } from './auth'
+import { normalizeDesktopIconRaster } from './icon-raster'
 import { desktopWorkspaceIconById, type DesktopWorkspaceSavedIcon } from '../icon-catalog'
 
 // The workspace icon slice keeps its own tables beside the central schema, so the central
@@ -160,7 +161,7 @@ export async function writeDesktopWorkspaceLogoUpload(db: Client, input: { name:
         throw new DesktopHttpError(415, 'This image is damaged and can’t be used.')
     }
     // Decode before taking SQLite's write lock; a bad image never begins a name/icon write.
-    const raster = await normalizeDesktopLogoRaster(bytes)
+    const raster = await normalizeDesktopIconRaster(bytes)
     await ensureDesktopWorkspaceIconStore(db)
     const transaction = await db.transaction('write')
     try {
@@ -182,22 +183,6 @@ export async function writeDesktopWorkspaceLogoUpload(db: Client, input: { name:
         await transaction.commit()
         return result
     } finally { transaction.close() }
-}
-
-// The original stores one raster capped at 256px: normalize the orientation, cap the dimensions
-// and encode one WebP at the original's quality.
-async function normalizeDesktopLogoRaster(bytes: Uint8Array): Promise<Uint8Array> {
-    const { default: sharp } = await import('sharp')
-    try {
-        const webp = await sharp(Buffer.from(bytes), { limitInputPixels: DESKTOP_IMAGE_MAX_PIXELS })
-            .rotate()
-            .resize(256, 256, { fit: 'inside', withoutEnlargement: true })
-            .webp({ quality: 82, effort: 6 })
-            .toBuffer()
-        return new Uint8Array(webp)
-    } catch {
-        throw new DesktopHttpError(415, 'This image is damaged and can’t be used.')
-    }
 }
 
 export type DesktopWorkspaceIconBytes = { contentType: string; bytes: Uint8Array }

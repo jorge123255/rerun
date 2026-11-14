@@ -1,4 +1,6 @@
-export type RemoteServer = { id?: string; transport?: 'http' | 'sse'; name: string; url: string; revision: string; hasBearer: boolean }
+export type DeviceOAuthClient = { clientId: string; verificationUri: string }
+export type RemoteServer = { id?: string; transport?: 'http' | 'sse'; name: string; url: string; revision: string; hasBearer: boolean; deviceClient?: DeviceOAuthClient }
+export type RemoteMcpConfiguration = { name: string; url: string; bearer?: string; revision?: string; deviceClient?: DeviceOAuthClient | null }
 export type RemoteTool = { name: string; description?: string; inputSchema: Record<string, unknown> }
 export function endpoint(value: string): string {
     const url = new URL(value)

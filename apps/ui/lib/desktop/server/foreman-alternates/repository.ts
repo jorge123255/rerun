@@ -7,7 +7,7 @@ export const alternateInputSchema = z.strictObject({ workspaceId: id, chatId: id
 export type AlternateInput = z.infer<typeof alternateInputSchema>
 export type AlternateProof = { workspaceId: string; chatId: string; sourceSessionId: string; messageId: string; sourceRunId: string; transcriptRevision: string; textDigest: string; precedingUserId: string; activeTurn: boolean; activeBuild: boolean; pendingDecision: boolean; completed: boolean }
 export type AlternateTarget = { sessionId: string; runId: string; requestId: string; sourceSessionId: string; sourceRunId: string; messageId: string; transcriptRevision: string }
-export type AlternateReceipt = { input: AlternateInput; proof: AlternateProof; state: 'reserved' | 'uncertain' | 'ready'; alternate: AlternateTarget | null }
+export type AlternateReceipt = { input: AlternateInput; proof: AlternateProof; state: 'reserved' | 'uncertain' | 'ready'; alternate: AlternateTarget | null; runIntent?: 'start' | 'stop' }
 export const FOREMAN_ALTERNATE_SQL = `CREATE TABLE IF NOT EXISTS desktop_foreman_alternates(request_id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL,chat_id TEXT NOT NULL,fingerprint TEXT NOT NULL,body TEXT NOT NULL);`
 export type AlternateAuthority = {
     access(tx: Transaction, scope: { workspaceId: string; chatId: string }): Promise<void>
@@ -37,12 +37,12 @@ export function createForemanAlternateRepository(db: Client, authority: Alternat
         return { row, fingerprint }
     }
     return {
-        async request(raw: AlternateInput): Promise<AlternateReceipt> {
+        async request(raw: AlternateInput, mode: 'prepare' | 'recover' = 'prepare'): Promise<AlternateReceipt> {
             const input = alternateInputSchema.parse(raw)
             const reservation = await write(async tx => {
                 const { row, fingerprint } = await owned(tx, input)
                 if (row) return { receipt: JSON.parse(String(row.body)) as AlternateReceipt, fresh: false }
-                if (!engine) throw refusal()
+                if (!engine || mode === 'recover') throw refusal()
                 const proof = await authority.target(tx, input)
                 if (!proof || proof.workspaceId !== input.workspaceId || proof.chatId !== input.chatId || proof.messageId !== input.messageId || proof.transcriptRevision !== input.transcriptRevision || !proof.sourceSessionId || !proof.sourceRunId || !proof.textDigest || !proof.precedingUserId || !proof.completed || proof.activeTurn || proof.activeBuild || proof.pendingDecision) throw refusal()
                 const receipt: AlternateReceipt = { input, proof, state: 'reserved', alternate: null }

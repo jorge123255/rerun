@@ -7,6 +7,7 @@ import { stdioInput } from '../mcp-stdio/store'
 import type { SelfMcpApplyIdentity, SelfMcpApplyReceipt, SelfMcpConfigAdapter, SelfMcpServerCandidate } from './adapters'
 import { selfMcpFingerprint } from './fingerprint'
 import { adoptDesktopMcpReferences } from '../mcp-secret-references/transaction'
+import { readDesktopMcpCredentialVersion } from '../vault/mcp-credentials'
 
 const activeEffects = new WeakMap<Client, Set<string>>()
 
@@ -76,8 +77,11 @@ export function createSelfMcpConfigAdapter(ports: {
             return !authentication.length && !!existing && selfMcpCanonicalInput(existing) === selfMcpCanonicalInput(server)
         },
         async connectivity(owner, server) {
-            const rows = (await db.execute({ sql: 'SELECT r.status,r.secret_version,c.version FROM desktop_mcp_secret_references r LEFT JOIN desktop_secret_credentials c ON c.agent_id=r.agent_id AND c.key=r.secret_name WHERE r.agent_id=? AND r.server_name=?', args: [owner, server.name] })).rows
-            return rows.some(row => row.status !== 'bound' || row.secret_version !== row.version) ? 'needs_credentials' : 'unverified'
+            const rows = (await db.execute({ sql: 'SELECT status,secret_version,secret_name FROM desktop_mcp_secret_references WHERE agent_id=? AND server_name=?', args: [owner, server.name] })).rows
+            for (const row of rows) {
+                if (row.status !== 'bound' || row.secret_version !== await readDesktopMcpCredentialVersion(db, owner, String(row.secret_name)).catch(() => undefined)) return 'needs_credentials'
+            }
+            return 'unverified'
         },
         async recover(owner, identity) {
             if (active!.has(activeKey(owner, identity.decision.id))) return { state: 'uncertain' }

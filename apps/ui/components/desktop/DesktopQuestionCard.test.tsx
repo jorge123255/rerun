@@ -3,6 +3,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer } from '@/lib/desktop/questions'
+import { questionDocumentTabUid } from '@/lib/desktop/question-documents'
+import { foremanDocumentScope, type DesktopDocumentAttachment } from '@rerun/contracts'
 import { loadMessages } from '@rerun/i18n/messages'
 import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
 import { DesktopLocale } from './DesktopLocale'
@@ -44,6 +46,7 @@ afterEach(async () => {
     for (const root of roots.splice(0)) await act(async () => { root.unmount() })
     document.body.innerHTML = ''
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
 })
 
 test('uses the original option form and submits an authoritative answer only once', async () => {
@@ -59,6 +62,113 @@ test('uses the original option form and submits an authoritative answer only onc
     await click('[data-hitl="option-0"]')
     expect(onAnswer).toHaveBeenCalledTimes(1)
     expect(document.querySelector('input[type="file"]')).toBeNull()
+})
+
+test('Enter confirms an in-progress input-method composition before submitting the final answer', async () => {
+    const onAnswer = vi.fn(async (_payload: DesktopQuestionAnswer) => {})
+    const root = mount()
+    await act(async () => {
+        root.render(<DesktopQuestionCard question={{ ...question, questions: [{ question: 'What should I call this?', options: [] }] }}
+            onAnswer={onAnswer} />)
+    })
+    const textarea = document.querySelector('textarea')!
+    const pressEnter = async (isComposing: boolean) => {
+        const event = new KeyboardEvent('keydown', { key: 'Enter', isComposing, bubbles: true, cancelable: true })
+        await act(async () => { textarea.dispatchEvent(event) })
+        return event
+    }
+    await enter('とうきょう')
+    expect((await pressEnter(true)).defaultPrevented).toBe(false)
+    expect(onAnswer).not.toHaveBeenCalled()
+    await enter('東京')
+    expect((await pressEnter(false)).defaultPrevented).toBe(true)
+    expect(onAnswer).toHaveBeenCalledExactlyOnceWith({ questionId: question.id, requestId: expect.any(String), action: 'answer', answers: [['東京']] })
+})
+
+test('holds the answer and dismiss controls until saved attachments can be read', async () => {
+    const scope = { agentId: 'coworker', tabUid: questionDocumentTabUid(question.id), sessionId: 'saved-chat' }
+    let finishRead!: (response: Response) => void
+    const read = vi.fn(() => new Promise<Response>(resolve => { finishRead = resolve }))
+    vi.stubGlobal('fetch', read)
+    const onAnswer = vi.fn(async (_payload: DesktopQuestionAnswer) => {})
+    const root = mount()
+    await act(async () => { root.render(<DesktopQuestionCard question={question} documentScope={scope} onAnswer={onAnswer} />) })
+
+    const option = document.querySelector('[data-hitl="option-0"]')
+    const dismiss = document.querySelector<HTMLButtonElement>('[data-hitl="dismiss"]')
+    expect(document.querySelector('[role="status"]')?.textContent).toBe('Loading saved attachments…')
+    expect(option?.getAttribute('aria-disabled')).toBe('true')
+    expect(dismiss?.disabled).toBe(true)
+    await click('[data-hitl="option-0"]')
+    await click('[data-hitl="dismiss"]')
+    expect(onAnswer).not.toHaveBeenCalled()
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+
+    await act(async () => { finishRead(Response.json({ error: 'Could not restore attachments.' }, { status: 503 })) })
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe('Could not restore attachments.')
+    expect(option?.getAttribute('aria-disabled')).toBe('true')
+    await click('button:not([data-hitl])')
+    expect(read).toHaveBeenCalledTimes(2)
+    await act(async () => { finishRead(Response.json({ attachments: [] })) })
+
+    expect(document.querySelector('[role="status"]')).toBeNull()
+    expect(option?.getAttribute('aria-disabled')).toBe('false')
+    expect(dismiss?.disabled).toBe(false)
+    await click('[data-hitl="option-0"]')
+    expect(onAnswer).toHaveBeenCalledExactlyOnceWith({ questionId: question.id, requestId: expect.any(String), action: 'answer', answers: [['Blue']] })
+})
+
+test.each([
+    ['text', false], ['image', false], ['text', true], ['image', true],
+] as const)('restores a %s attachment and submits a file-only answer (Chief of Staff: %s)', async (kind, foreman) => {
+    const scope = foreman ? foremanDocumentScope({ workspaceId: '1', chatId: 'fmc_filefixture' }, 'saved-chat', question.id)
+        : { agentId: 'coworker', tabUid: questionDocumentTabUid(question.id), sessionId: 'saved-chat' }
+    const content = 'Résumé <script>do not execute</script>'
+    const bytes = new TextEncoder().encode(content)
+    const sha256 = Buffer.from(await crypto.subtle.digest('SHA-256', bytes)).toString('hex')
+    const saved: DesktopDocumentAttachment = {
+        attachmentId: crypto.randomUUID(), scope, name: kind === 'image' ? 'notes.png' : 'notes.txt', mimeType: kind === 'image' ? 'image/png' : 'text/plain', kind, byteLength: bytes.length,
+        sha256, conversion: { mode: kind === 'image' ? 'image' : 'plain-text', state: 'ready' }, uploaded: true, selected: true,
+        admitted: false, position: 0, revision: crypto.randomUUID(), createdAt: '', updatedAt: '',
+    }
+    const admit = vi.fn()
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+        const endpoint = foreman ? '/api/desktop/foreman/document-attachments' : '/api/desktop/coworkers/coworker/document-attachments'
+        if (init.method === 'POST') {
+            expect(url).toBe(endpoint)
+            const payload = JSON.parse(String(init.body))
+            admit(payload)
+            return Response.json({ allowed: true, admissionId: payload.admissionId, references: [], inputs: [] })
+        }
+        const list = `${endpoint}?${new URLSearchParams({ tabUid: scope.tabUid, sessionId: scope.sessionId!, ...('questionId' in scope && scope.questionId ? { questionId: scope.questionId } : {}) })}`
+        if (url !== list) {
+            expect(url).toBe(`${list}&${new URLSearchParams({ attachmentId: saved.attachmentId, sha256, view: 'read' })}`)
+            return new Response(bytes, { headers: { 'content-type': 'text/plain', 'x-rerun-document-sha256': sha256 } })
+        }
+        return Response.json({ attachments: [saved] })
+    })
+    const onAnswer = vi.fn(async (_payload: DesktopQuestionAnswer) => {})
+    const root = mount()
+    await act(async () => {
+        root.render(<DesktopQuestionCard question={{ ...question, questions: [{ question: 'Which notes?', options: [] }] }}
+            documentScope={scope} onAnswer={onAnswer} />)
+    })
+    expect(document.querySelector('[data-hitl="attach"]')).not.toBeNull()
+    expect(document.body.textContent).toContain(saved.name)
+    if (kind === 'image') {
+        expect(document.querySelector<HTMLInputElement>('input[type=file]')?.accept).toContain('.png')
+        expect(document.querySelector('img')?.getAttribute('src')).toContain('view=preview')
+    } else {
+        await click('[aria-label="Preview notes.txt"]')
+        await vi.waitFor(() => expect(document.querySelector('[role="dialog"] pre')?.textContent).toBe(content))
+        expect(document.querySelector('[role="dialog"] script')).toBeNull()
+        expect(onAnswer).not.toHaveBeenCalled()
+        await click('[data-slot="dialog-close"]')
+    }
+    await click('[data-hitl="next"]')
+    const documents = { scope, attachmentIds: [saved.attachmentId], admissionId: expect.any(String) }
+    expect(admit).toHaveBeenCalledExactlyOnceWith({ ...scope, operation: 'admission', attachmentIds: documents.attachmentIds, admissionId: documents.admissionId })
+    expect(onAnswer).toHaveBeenCalledExactlyOnceWith({ action: 'answer', questionId: question.id, requestId: expect.any(String), answers: [[]], documents })
 })
 
 test('a failed answer keeps the form editable and reuses only the same canonical intent ID', async () => {
