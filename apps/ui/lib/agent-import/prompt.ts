@@ -10,18 +10,21 @@ import { importSource, type ImportSourceId } from './sources'
 // rather than in the address, and its file door is narrower than the hosted one.
 export function buildImportPrompt(sourceId: ImportSourceId, connectorUrl: string, spaceId: string | null, local?: { header: string }): string {
     const source = importSource(sourceId)
+    // The local server wants a request id on every call that writes, so a call sent twice is done
+    // once. An ordinary MCP client cannot set a header per call, hence the plain HTTP route first.
     const connect = local
-        ? `add this MCP server (streamable HTTP) with the header "${local.header}": ${connectorUrl}`
-        : `add this MCP server (streamable HTTP, no other auth needed): ${connectorUrl}`
-    const direct = local ? 'call that URL directly, with the same header,' : 'call that URL directly'
+        ? `call this address directly with HTTP POST JSON-RPC 2.0 requests: ${connectorUrl}
+Send two headers on every request: "${local.header}" and "x-rerun-external-request-id: <a new UUID>". Use a new UUID for each call; when a call did not answer and you send it again, reuse its UUID so it is not done twice. An MCP client that cannot set that second header can list and read, but its writes are refused.
+The requests:`
+        : `add this MCP server (streamable HTTP, no other auth needed): ${connectorUrl}
+If you cannot add an MCP server, call that URL directly with HTTP POST JSON-RPC 2.0 requests:`
     const files = local
         ? 'Copy your text and Markdown working files (.txt and .md, up to 1 MB each) with upload_workspace_file, one call per file. A file already there is never replaced. Skip everything else.'
         : `Copy your working files with upload_workspace_file, one call per file, base64 for binary files. Skip caches, logs, databases and anything over ${MAX_UPLOAD_MB} MB.`
     const createArgs = spaceId ? `name, description, soul and spaceId "${spaceId}"` : 'name, description and soul'
     return `Move yourself to Rerun, a platform where you will keep working for me as a "coworker". Everything you are and know gets copied there through the Rerun MCP server.
 
-Connect: ${connect}
-If you cannot add an MCP server, ${direct} with HTTP POST JSON-RPC 2.0 requests: first {"jsonrpc":"2.0","id":1,"method":"tools/list"}, then {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"<tool>","arguments":{...}}}.
+Connect: ${connect} first {"jsonrpc":"2.0","id":1,"method":"tools/list"}, then {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"<tool>","arguments":{...}}}.
 
 What to read: ${source.whereToLook}
 
