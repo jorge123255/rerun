@@ -1,7 +1,8 @@
 export type DeviceOAuthClient = { clientId: string; verificationUri: string }
 export type RemoteServer = { id?: string; transport?: 'http' | 'sse'; name: string; url: string; revision: string; hasBearer: boolean; deviceClient?: DeviceOAuthClient }
 export type RemoteMcpConfiguration = { name: string; url: string; bearer?: string; revision?: string; deviceClient?: DeviceOAuthClient | null }
-export type RemoteTool = { name: string; description?: string; inputSchema: Record<string, unknown> }
+// `destructive` is the tool's own MCP `destructiveHint`: such a tool asks before it runs, whatever it is called.
+export type RemoteTool = { name: string; description?: string; inputSchema: Record<string, unknown>; destructive?: boolean }
 export function endpoint(value: string): string {
     const url = new URL(value)
     if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('Use an HTTPS endpoint without credentials, query or fragment')
