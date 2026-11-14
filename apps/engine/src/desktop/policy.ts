@@ -104,5 +104,5 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (method === 'POST') return new RegExp(`^/(?:agents|connections|agents/${id}/(?:duplicate|chat|memories(?:/recall)?)|agents/${id}/runs/${id}/cancel)$`).test(path)
     if (method === 'DELETE') return new RegExp(`^/agents/${id}(?:/memories(?:/(?!recall$)${id})?)?$`).test(path)
     if (method === 'PATCH') return new RegExp(`^/(?:agents/${id}|connections/${id}(?:/keys)?)$`).test(path)
-    return method === 'PUT' && path === '/connections/default'
+    return method === 'PUT' && (path === '/connections/default' || path === '/connections/model-effort')
 }

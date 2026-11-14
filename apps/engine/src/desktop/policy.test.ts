@@ -36,6 +36,9 @@ test('generic connection mutations cannot bypass named API receipts through raw,
         expect(desktopRouteAllowed('PATCH', `/connections/${id}/keys`)).toBe(true)
     }
     expect(desktopRouteAllowed('PUT', '/connections/default')).toBe(true)
+    // The effort chosen for a model in a chat's model picker.
+    expect(desktopRouteAllowed('PUT', '/connections/model-effort')).toBe(true)
+    expect(desktopRouteAllowed('POST', '/connections/model-effort')).toBe(false)
 })
 
 test('desktop Foreman authority can read its details without opening mutation or hosted routes', () => {
