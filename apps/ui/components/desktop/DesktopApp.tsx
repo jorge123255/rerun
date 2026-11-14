@@ -270,6 +270,28 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [templateToReview, setTemplateToReview] = useState<DesktopTemplateIdentity | null>(null)
     const templatesActive = templatesOpen || templateFlowActive
     const [agents, setAgents] = useState(initialData.agents)
+    // A coworker made outside this window, such as one an outside agent imports through a key, is
+    // picked up here: the activity read names every coworker, so one this window does not know
+    // prompts a read of the list. No timer of its own.
+    const knownAgentIds = useRef(new Set(initialData.agents.map(agent => agent.id)))
+    useEffect(() => { knownAgentIds.current = new Set(agents.map(agent => agent.id)) }, [agents])
+    const adoptOutsideAgents = useRef<(latest: DesktopAgentView[]) => Promise<void>>(async () => {})
+    const outsideRead = useRef(0)
+    // A coworker this window is itself creating is also unknown for a moment; it joins the list
+    // through its own confirmed steps, never through this read.
+    const outsideHold = useRef(false)
+    const refreshOutsideAgents = useCallback(async () => {
+        if (outsideHold.current || Date.now() - outsideRead.current < 10_000) return
+        outsideRead.current = Date.now()
+        try {
+            const response = await fetch('/api/desktop/agents', { cache: 'no-store' })
+            if (!response.ok) return
+            const latest = (await response.json() as { agents?: DesktopAgentView[] }).agents
+            if (!outsideHold.current && Array.isArray(latest) && latest.some(agent => !knownAgentIds.current.has(agent.id))) await adoptOutsideAgents.current(latest)
+        } catch {
+            // The list keeps what it shows; the next read tries again.
+        }
+    }, [])
     const foremanMentionTargets = useMemo(() => {
         const boxNames = new Map(boardState.board?.spaces.map(box => [box.id, box.name]))
         const boxesByAgent = new Map(boardState.board?.placements.map(placement => [placement.agentId, placement.spaceId]))
@@ -279,7 +301,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             enabled: agent.enabled !== false, callable: false,
         }))
     }, [agents, boardState.board])
-    const boardActivity = useBoardActivity(agents.map(agent => agent.id))
+    const boardActivity = useBoardActivity(agents.map(agent => agent.id), true, () => { void refreshOutsideAgents() })
     const foremanTeam = useMemo<TeamAgent[]>(() => agents.filter(agent => agent.enabled !== false).map(agent => ({
         id: agent.id, name: agent.name, handle: null, status: boardActivity.statuses[agent.id] ?? 'unknown', disabledAt: null,
     })), [agents, boardActivity.statuses])
@@ -344,6 +366,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const creationNavigationBlocked = !!creation.placement || !!templatePlacement.placement || creation.checking || !!creation.checkError
     const creationSettingsAllowed = !creationNavigationBlocked || (!busy && (!!creation.checkError || !!creation.placement?.error))
     creationAdmission.current = { blocked: creationNavigationBlocked, settingsAllowed: creationSettingsAllowed }
+    outsideHold.current = creationNavigationBlocked || !!creation.placement || creation.checking
     const resumedCreation = useRef<string | null>(null)
     useEffect(() => {
         const pending = creation.placement
@@ -494,6 +517,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         return 'created'
     }
 
+    adoptOutsideAgents.current = async latest => { mergeBoardAgents(latest); await boardState.refresh() }
     function mergeBoardAgents(incoming: DesktopAgentView[]) {
         setAgents(current => {
             const merged = new Map(current.map(agent => [agent.id, agent]))

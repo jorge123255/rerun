@@ -38,8 +38,16 @@ export function createDesktopExternalMcpToolsHandler(options: {
                 const tools = externalMcpToolRegistrationSchema.array().parse(await dispatch.listTools(principal))
                 result = await readDesktopImportKey(db, keyId) ? tools.filter(tool => desktopImportToolNames.has(tool.name)) : tools
             } else {
-                const admitted = await admitDesktopImportCall(db, keyId, input.context.tool, input.context.arguments as Record<string, unknown>, input.context.requestId)
+                let admitted: Awaited<ReturnType<typeof admitDesktopImportCall>> = null, refused: string | null = null
                 try {
+                    admitted = await admitDesktopImportCall(db, keyId, input.context.tool, input.context.arguments as Record<string, unknown>, input.context.requestId)
+                } catch (error) {
+                    // What an import key may not do is said in words the calling agent can act on.
+                    // Nothing was run, so this is an answer, not an uncertain outcome.
+                    refused = error instanceof Error && error.message ? error.message.slice(0, 400) : 'This import key cannot make that call.'
+                }
+                if (refused) result = externalMcpToolResultSchema.parse({ content: [{ type: 'text', text: refused }], isError: true })
+                else try {
                     const called = externalMcpToolResultSchema.parse(await dispatch.callTool(input.context, signal))
                     const created = (called.structuredContent as { agent?: { id?: unknown } } | undefined)?.agent?.id
                     await admitted?.settle(typeof created === 'string' ? created : null)

@@ -71,7 +71,9 @@ it('shows an import key only the import tools, and any other key all of them', a
 
 it('refuses a call an import key may not make before any tool runs', async () => {
     state.admit.mockRejectedValue(new Error('"delete_agent" is not available to an import key.'))
-    expect((await createDesktopExternalMcpToolsHandler()(request(call('delete_agent')))).status).toBe(409)
+    const response = await createDesktopExternalMcpToolsHandler()(request(call('delete_agent')))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ content: [{ type: 'text', text: '"delete_agent" is not available to an import key.' }], isError: true })
     expect(state.callTool).not.toHaveBeenCalled()
 })
 
