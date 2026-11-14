@@ -39,6 +39,16 @@ test('lists what runs without asking and turns one off', async () => {
     expect([...host.querySelectorAll('li span')].map(node => node.textContent)).toEqual(['Gmail Send Email · always', 'Drive Delete File · this conversation'])
     await act(async () => { host.querySelector<HTMLButtonElement>('li button')!.click() })
     await act(async () => { await Promise.resolve() })
-    expect(calls.at(-1)).toEqual({ url: '/api/desktop/agents/coworker%201/connector-approvals', method: 'DELETE', body: { ruleId: A } })
+    expect(calls.find(call => call.method === 'DELETE')).toEqual({ url: '/api/desktop/agents/coworker%201/connector-approvals', method: 'DELETE', body: { ruleId: A } })
     expect([...host.querySelectorAll('li span')].map(node => node.textContent)).toEqual(['Drive Delete File · this conversation'])
+})
+
+test('re-reads when an answer is given or taken back in a chat', async () => {
+    const { host, calls } = await mount([{ id: A, tool: 'gmail_send_email', scope: 'always' }])
+    const reads = () => calls.filter(call => call.method === 'GET').length
+    expect(reads()).toBe(1)
+    await act(async () => { window.dispatchEvent(new Event('rerun:connector-approvals-changed')) })
+    await act(async () => { await Promise.resolve() })
+    expect(reads()).toBe(2)
+    expect(host.textContent).toContain('Gmail Send Email · always')
 })

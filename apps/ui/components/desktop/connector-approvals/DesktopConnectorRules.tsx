@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { desktopConnectorApprovalViewSchema, toolLabelOf, type DesktopConnectorApprovalView } from '@rerun/contracts'
 import { useDesktopLocale } from '../DesktopLocale'
+import { announceConnectorApprovalsChanged, CONNECTOR_APPROVALS_CHANGED } from './DesktopConnectorApprovals'
 
 type Rules = DesktopConnectorApprovalView['rules']
 const rulesSchema = desktopConnectorApprovalViewSchema.pick({ rules: true })
@@ -16,12 +17,17 @@ export function DesktopConnectorRules({ agentId, disabled = false }: { agentId: 
     const [rules, setRules] = useState<Rules>([])
     const [busy, setBusy] = useState(false)
     const url = `/api/desktop/agents/${encodeURIComponent(agentId)}/connector-approvals`
+    // Read when the settings open, and again whenever an answer is given or taken back in a chat.
     useEffect(() => {
         const controller = new AbortController()
-        void fetch(url, { cache: 'no-store', signal: controller.signal })
-            .then(async response => { if (response.ok) setRules(rulesSchema.parse(await response.json()).rules) })
-            .catch(() => { /* The list is optional; the settings above it still work. */ })
-        return () => controller.abort()
+        const read = () => {
+            void fetch(url, { cache: 'no-store', signal: controller.signal })
+                .then(async response => { if (response.ok) setRules(rulesSchema.parse(await response.json()).rules) })
+                .catch(() => { /* The list is optional; the settings above it still work. */ })
+        }
+        read()
+        window.addEventListener(CONNECTOR_APPROVALS_CHANGED, read)
+        return () => { controller.abort(); window.removeEventListener(CONNECTOR_APPROVALS_CHANGED, read) }
     }, [url])
     async function forget(ruleId: string) {
         setBusy(true)
@@ -30,7 +36,7 @@ export function DesktopConnectorRules({ agentId, disabled = false }: { agentId: 
             if (response.ok) setRules(rulesSchema.parse(await response.json()).rules)
             else setRules(current => current.filter(rule => rule.id !== ruleId))
         } catch { /* It stays listed and can be tried again. */ }
-        finally { setBusy(false) }
+        finally { setBusy(false); announceConnectorApprovalsChanged() }
     }
     if (!rules.length) return null
     return (
