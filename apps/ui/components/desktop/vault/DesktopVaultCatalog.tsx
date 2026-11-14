@@ -1,14 +1,15 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { ArrowLeft, ChevronRight, Plug } from 'lucide-react'
+import { ArrowLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PanelRow } from '@/components/ui/panel-row'
 import type { ServiceAccountMethod } from '@/lib/desktop/service-accounts-client'
 import { DesktopServiceAccountForm } from '../services/accounts/DesktopServiceAccountForm'
+import { DesktopAppLogo } from './DesktopAppLogo'
 
-type CatalogApp = { slug: string; name: string; summary: string; multiInstance: boolean; methods: ServiceAccountMethod[] }
+type CatalogApp = { slug: string; name: string; summary: string; icon?: string | null; multiInstance: boolean; methods: ServiceAccountMethod[] }
 
 export function DesktopVaultCatalog({ slug, editing = false, busy, replacesSignIn, existingAccounts, onSave, onCancel }: {
     slug?: string
@@ -87,7 +88,7 @@ export function DesktopVaultCatalog({ slug, editing = false, busy, replacesSignI
         {!matches.length && <p className="text-sm text-muted-foreground">No matching apps.</p>}
         {matches.map(item => <PanelRow key={item.slug} title={item.name} description={item.summary}
             footer={existingAccounts?.[item.slug]?.length ? (existingAccounts[item.slug].length + ' in Vault') : undefined}
-            leading={<Plug className="size-4" />} actions={<ChevronRight className="size-4" />}
+            leading={<DesktopAppLogo logo={item.icon} />} actions={<ChevronRight className="size-4" />}
             onClick={() => setSelected(item)} />)}
     </div>
 }

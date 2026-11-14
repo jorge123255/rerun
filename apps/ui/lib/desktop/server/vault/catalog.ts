@@ -49,7 +49,7 @@ export function vaultCatalogMethods({ manifest, details }: ReturnType<typeof get
 export function vaultCatalog(query: string) {
     return listDesktopServiceCatalog({ query, limit: 500 }).services.flatMap(row => {
         const methods = vaultCatalogMethods(getDesktopServiceManifest(row.slug))
-        return methods.length ? [{ slug: row.slug, name: row.name, summary: row.summary, multiInstance: row.multiInstance, methods }] : []
+        return methods.length ? [{ slug: row.slug, name: row.name, summary: row.summary, icon: row.icon, multiInstance: row.multiInstance, methods }] : []
     })
 }
 
