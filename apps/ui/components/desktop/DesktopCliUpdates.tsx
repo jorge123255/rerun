@@ -29,18 +29,21 @@ export function useDesktopCliUpdates(enabled: boolean) {
         }
     }, [])
     const busy = tools.some(tool => BUSY.includes(tool.state))
+    // The first read starts the vendors' check in the background; its answer is picked up shortly after.
+    const unchecked = tools.some(tool => tool.checkedAt === null)
     useEffect(() => {
         if (!enabled) return
         alive.current = true
         void read()
-        const timer = setInterval(() => { void read() }, busy ? 3000 : 30 * 60_000)
+        const timer = setInterval(() => { void read() }, busy ? 3000 : unchecked ? 5000 : 30 * 60_000)
         return () => { alive.current = false; clearInterval(timer) }
-    }, [read, busy, enabled])
+    }, [read, busy, unchecked, enabled])
     const act = useCallback(async (action: DesktopCliUpdateAction) => {
         setActing(true)
         try { await read(action) } finally { if (alive.current) setActing(false) }
     }, [read])
-    return { tools, act, acting }
+    const refresh = useCallback(() => { if (enabled) void read() }, [enabled, read])
+    return { tools, act, acting, refresh }
 }
 
 const FAILURES = { offline: 'boardUI.toolOffline', download: 'boardUI.toolDownloadFailed', verification: 'boardUI.toolVerificationFailed', start: 'boardUI.toolStartFailed' } as const

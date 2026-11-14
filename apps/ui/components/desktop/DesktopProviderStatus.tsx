@@ -47,6 +47,9 @@ export function DesktopProviderStatus({ providerLabel, modelLabel, connections =
     const connected = connections.filter(connection => connection.connected && !connection.credentialRejected)
     const updates = useDesktopCliUpdates(connected.some(connection => (DESKTOP_CLI_TOOLS as readonly string[]).includes(connection.provider)))
     const toolOf = (provider: string) => updates.tools.find(tool => tool.tool === provider)
+    // Opening the list is a moment to look again: a check may have finished since the last read.
+    const refreshUpdates = updates.refresh
+    useEffect(() => { if (open) refreshUpdates() }, [open, refreshUpdates])
     // Only a tool that runs a connected provider is worth a notice.
     const waiting = connected.filter(connection => toolOf(connection.provider)?.state === 'available').length
     const updateNotice = t('boardUI.updatesAvailable', { count: waiting })
