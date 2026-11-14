@@ -5,6 +5,7 @@ import { desktopManagedAppsResultSchema, desktopManagedAppsViewSchema, type Desk
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { DesktopAppLogo } from './DesktopAppLogo'
 
 const URL_PATH = '/api/desktop/managed-apps'
 
@@ -77,8 +78,9 @@ export function DesktopManagedApps({ coworkers, disabled = false }: { coworkers:
                 <>
                     {view.accounts.map(account => (
                         <div key={account.id} className="space-y-2 rounded-md border border-border p-2.5" data-managed-account={account.slug}>
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <DesktopAppLogo logo={view.apps.find(app => app.slug === account.slug)?.logo} />
+                                <div className="min-w-0 flex-1">
                                     <p className="truncate text-sm font-medium">{account.name}</p>
                                     <p className="text-xs text-muted-foreground">{account.status === 'active' ? 'Signed in' : 'Waiting for you to finish signing in in your browser'}</p>
                                 </div>
@@ -106,8 +108,9 @@ export function DesktopManagedApps({ coworkers, disabled = false }: { coworkers:
                         <ul className="max-h-56 divide-y divide-border overflow-auto rounded-md border border-border">
                             {offered.length === 0 && <li className="px-3 py-2 text-sm text-muted-foreground">No matching apps.</li>}
                             {offered.map(app => (
-                                <li key={app.slug} className="flex items-center justify-between gap-3 px-3 py-2">
-                                    <div className="min-w-0">
+                                <li key={app.slug} className="flex items-center gap-3 px-3 py-2">
+                                    <DesktopAppLogo logo={app.logo} />
+                                    <div className="min-w-0 flex-1">
                                         <p className="truncate text-sm font-medium">{app.name}</p>
                                         <p className="truncate text-xs text-muted-foreground">{app.summary}</p>
                                     </div>

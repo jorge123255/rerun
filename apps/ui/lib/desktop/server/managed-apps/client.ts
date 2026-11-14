@@ -12,18 +12,41 @@ export class ManagedAppsError extends Error {
 
 export type ManagedTool = { slug: string; description: string; inputSchema: Record<string, unknown>; destructive: boolean }
 
-export function managedAppsClient(key: string, network: ManagedAppsFetch = fetch, base = COMPOSIO_API) {
+/** Composio issues a key for a project and a key for a person's account; each travels in its own header. */
+export type ManagedAppsKeyKind = 'project' | 'account'
+const KEY_HEADER: Record<ManagedAppsKeyKind, string> = { project: 'x-api-key', account: 'x-user-api-key' }
+
+/** Tries the key the way each kind is sent and says which one Composio accepted. */
+export async function managedAppsKeyKind(key: string, network: ManagedAppsFetch = fetch, signal?: AbortSignal): Promise<ManagedAppsKeyKind> {
+    let refusal: ManagedAppsError | null = null
+    for (const kind of ['project', 'account'] as const) {
+        try { await managedAppsClient(key, network, COMPOSIO_API, kind).check(signal); return kind }
+        catch (error) {
+            if (!(error instanceof ManagedAppsError) || (error.status !== 401 && error.status !== 403)) throw error
+            refusal ??= error
+        }
+    }
+    throw refusal ?? new ManagedAppsError(401, 'Composio refused this key.')
+}
+
+function httpsPicture(value: unknown): string | null {
+    if (typeof value !== 'string' || value.length > 700) return null
+    try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null } catch { return null }
+}
+
+export function managedAppsClient(key: string, network: ManagedAppsFetch = fetch, base = COMPOSIO_API, kind: ManagedAppsKeyKind = 'project') {
     async function call<T>(path: string, init: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
         let response: Response
         try {
             response = await network(base + path, {
                 method: init.method ?? 'GET', redirect: 'error', cache: 'no-store', credentials: 'omit',
                 signal: AbortSignal.any([...(init.signal ? [init.signal] : []), AbortSignal.timeout(60_000)]),
-                headers: { 'x-api-key': key, ...(init.body === undefined ? {} : { 'content-type': 'application/json' }) },
+                headers: { [KEY_HEADER[kind]]: key, ...(init.body === undefined ? {} : { 'content-type': 'application/json' }) },
                 ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
             })
         } catch { throw new ManagedAppsError(503, 'Composio could not be reached. Check the connection and try again.') }
-        if (response.status === 401 || response.status === 403) { await response.body?.cancel(); throw new ManagedAppsError(401, 'Composio refused this key.') }
+        if (response.status === 401) { await response.body?.cancel(); throw new ManagedAppsError(401, 'Composio did not recognize this key. Copy the API key from your Composio project’s settings and paste it again.') }
+        if (response.status === 403) { await response.body?.cancel(); throw new ManagedAppsError(403, 'Composio recognized this key but it is not allowed to do this. Use the API key of the project you want to use, not an organization key.') }
         if (!response.ok) { await response.body?.cancel(); throw new ManagedAppsError(502, `Composio answered ${response.status}.`) }
         const text = await response.text()
         if (text.length > 4_000_000) throw new ManagedAppsError(502, 'Composio sent too much data.')
@@ -31,7 +54,7 @@ export function managedAppsClient(key: string, network: ManagedAppsFetch = fetch
     }
     return {
         /** A cheap call that only succeeds with a working key. */
-        async check(signal?: AbortSignal) { await call('/auth_configs?limit=1', { signal }) },
+        async check(signal?: AbortSignal) { await call('/toolkits?limit=1', { signal }) },
         /**
          * The sign-in set up for one app in this project. One the person made in their Composio
          * dashboard is used as it is; otherwise Composio's own ready-made sign-in is set up, where
@@ -52,17 +75,17 @@ export function managedAppsClient(key: string, network: ManagedAppsFetch = fetch
             return made.auth_config.id
         },
         /** Every app this project can use, most used first. */
-        async toolkits(signal?: AbortSignal): Promise<{ slug: string; name: string; summary: string; noAuth: boolean; managed: boolean }[]> {
-            const rows: { slug: string; name: string; summary: string; noAuth: boolean; managed: boolean }[] = []
+        async toolkits(signal?: AbortSignal): Promise<{ slug: string; name: string; summary: string; logo: string | null; noAuth: boolean; managed: boolean }[]> {
+            const rows: { slug: string; name: string; summary: string; logo: string | null; noAuth: boolean; managed: boolean }[] = []
             let cursor: string | null = null
             for (let page = 0; page < 10; page++) {
                 const query = new URLSearchParams({ sort_by: 'usage', limit: '1000' })
                 if (cursor) query.set('cursor', cursor)
-                const data: { items?: { slug?: string; name?: string; no_auth?: boolean; composio_managed_auth_schemes?: string[]; deprecated?: unknown; meta?: { description?: string } }[]; next_cursor?: string | null } = await call(`/toolkits?${query}`, { signal })
+                const data: { items?: { slug?: string; name?: string; no_auth?: boolean; composio_managed_auth_schemes?: string[]; deprecated?: unknown; meta?: { description?: string; logo?: string } }[]; next_cursor?: string | null } = await call(`/toolkits?${query}`, { signal })
                 for (const row of data.items ?? []) {
                     const slug = (row.slug ?? '').toLowerCase()
                     if (!/^[a-z0-9_-]{1,128}$/.test(slug) || rows.some(known => known.slug === slug)) continue
-                    rows.push({ slug, name: (row.name ?? slug).slice(0, 200), summary: (row.meta?.description ?? '').replace(/\s+/g, ' ').trim().slice(0, 600), noAuth: row.no_auth === true, managed: (row.composio_managed_auth_schemes ?? []).length > 0 })
+                    rows.push({ slug, name: (row.name ?? slug).slice(0, 200), summary: (row.meta?.description ?? '').replace(/\s+/g, ' ').trim().slice(0, 600), logo: httpsPicture(row.meta?.logo), noAuth: row.no_auth === true, managed: (row.composio_managed_auth_schemes ?? []).length > 0 })
                 }
                 cursor = data.next_cursor ?? null
                 if (!cursor || rows.length >= 5000) break

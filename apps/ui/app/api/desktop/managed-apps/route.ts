@@ -24,7 +24,7 @@ export function POST(request: Request) {
             return Response.json(await (await openDesktopManagedApps(runtime)).act(parsed.data, AbortSignal.any([request.signal, AbortSignal.timeout(90_000)])), { headers })
         } catch (error) {
             // Composio's own words may carry the key or an account detail, so only these fixed messages leave.
-            if (error instanceof ManagedAppsError) throw new DesktopHttpError(error.status === 401 ? 400 : error.status === 400 || error.status === 409 ? error.status : 502, error.message)
+            if (error instanceof ManagedAppsError) throw new DesktopHttpError(error.status === 401 || error.status === 403 ? 400 : error.status === 400 || error.status === 409 ? error.status : 502, error.message)
             throw error
         }
     })

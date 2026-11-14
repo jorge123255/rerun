@@ -10,7 +10,7 @@ const { initializeDesktopRound62 } = await import('../round62-schema')
 const { desktopManagedApps, managedAppCatalog } = await import('./service')
 const { COMPOSIO_API } = await import('./client')
 
-const KEY = 'fixture-composio-key-0001'
+const KEY = 'fixture-composio-key-0001', ACCOUNT_KEY = 'fixture-account-key-0002', ORG_KEY = 'fixture-org-key-0003'
 let db: Client, dir: string
 beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'managed-apps-'))
@@ -29,12 +29,17 @@ function composio() {
         const url = new URL(String(input)), path = url.pathname.replace('/api/v3.1', '') + url.search
         const body = init?.body ? JSON.parse(String(init.body)) : undefined
         expect(String(input).startsWith(COMPOSIO_API)).toBe(true)
-        if (new Headers(init?.headers).get('x-api-key') !== KEY) return Response.json({ error: { message: `bad key ${new Headers(init?.headers).get('x-api-key')}` } }, { status: 401 })
+        const sent = new Headers(init?.headers)
+        // Composio takes a project key in one header and an account key in another, and never the wrong way round.
+        const accepted = sent.get('x-api-key') === KEY || sent.get('x-user-api-key') === ACCOUNT_KEY
+        if (sent.get('x-api-key') === ORG_KEY) return Response.json({ error: { message: 'forbidden' } }, { status: 403 })
+        if (!accepted) return Response.json({ error: { message: `bad key ${sent.get('x-api-key') ?? sent.get('x-user-api-key')}` } }, { status: 401 })
         seen.push({ method: init?.method ?? 'GET', path, ...(body ? { body } : {}) })
         if (path.startsWith('/auth_configs?limit=1')) return Response.json({ items: [] })
+        if (path.startsWith('/toolkits?limit=1')&&!path.includes('limit=1000')) return Response.json({ items: [] })
         if (path.startsWith('/toolkits?')) return Response.json({ items: [
             { slug: 'GMAIL', name: 'Gmail', composio_managed_auth_schemes: ['OAUTH2'], meta: { description: 'Read and send   email' } },
-            { slug: 'slack', name: 'Slack', composio_managed_auth_schemes: ['OAUTH2'], meta: { description: 'Team chat' } },
+            { slug: 'slack', name: 'Slack', composio_managed_auth_schemes: ['OAUTH2'], meta: { description: 'Team chat', logo: 'https://logos.composio.example/slack.png' } },
             { slug: 'hackernews', name: 'Hacker News', no_auth: true, meta: { description: 'Read stories' } },
             { slug: 'acme_erp', name: 'Acme ERP', auth_schemes: ['API_KEY'], meta: { description: 'Needs your own credentials' } },
             { slug: 'Bad Slug!', name: 'Ignored' },
@@ -77,7 +82,7 @@ test('the catalog offers the managed apps, Gmail among them', () => {
 test('a key is tried before it is kept, is sealed at rest, and never comes back out', async () => {
     const fake = composio(), service = apps(fake.network)
     expect((await service.view()).configured).toBe(false)
-    await expect(service.act({ action: 'set-key', key: 'wrong-key-000000' })).rejects.toThrow('Composio refused this key.')
+    await expect(service.act({ action: 'set-key', key: 'wrong-key-000000' })).rejects.toThrow('Composio did not recognize this key.')
     expect((await service.view()).configured).toBe(false)
     await expect(service.act({ action: 'connect', slug: 'gmail' })).rejects.toThrow('Add your Composio key first.')
 
@@ -160,13 +165,13 @@ test('with a key the Vault offers every app of the project, and any of them can 
 
     const { view } = await service.act({ action: 'set-key', key: KEY })
     expect(view.apps).toEqual([
-        { slug: 'gmail', name: 'Gmail', summary: 'Read and send email' },
-        { slug: 'slack', name: 'Slack', summary: 'Team chat' },
+        { slug: 'gmail', name: 'Gmail', summary: 'Read and send email', logo: '/services/gmail.svg' },
+        { slug: 'slack', name: 'Slack', summary: 'Team chat', logo: '/services/slack.png' },
         { slug: 'hackernews', name: 'Hacker News', summary: 'Read stories' },
         { slug: 'acme_erp', name: 'Acme ERP', summary: 'Needs your own credentials' },
     ])
     await service.view()
-    expect(fake.seen.filter(call => call.path.startsWith('/toolkits?')).length).toBe(1)
+    expect(fake.seen.filter(call => call.path.startsWith('/toolkits?') && call.path.includes('limit=1000')).length).toBe(1)
     await expect(service.act({ action: 'connect', slug: 'not-offered' })).rejects.toThrow('not in the catalog')
 
     // An app the bundled catalog does not know: the tools Composio features, and no more than the limit.
@@ -193,4 +198,16 @@ test('with a key the Vault offers every app of the project, and any of them can 
     // An app Composio has no ready-made sign-in for says what to do instead of failing blankly.
     await expect(service.act({ action: 'connect', slug: 'acme_erp' })).rejects.toThrow('Set one up for it in your Composio dashboard')
     expect((await service.view()).accounts.map(row => row.slug)).toEqual(['slack'])
+})
+
+test('an account key is accepted the way Composio takes it, and an organization key says why it is not', async () => {
+    const fake = composio(), service = apps(fake.network)
+    await expect(service.act({ action: 'set-key', key: ORG_KEY })).rejects.toThrow('recognized this key but it is not allowed')
+    expect((await service.view()).configured).toBe(false)
+
+    expect((await service.act({ action: 'set-key', key: ACCOUNT_KEY })).view.configured).toBe(true)
+    // Every later call travels the same way the key was accepted.
+    expect((await service.view()).apps.map(app => app.slug)).toContain('slack')
+    const row = (await db.execute('SELECT sealed FROM desktop_managed_app_key')).rows[0]!
+    expect(Buffer.from(String(row.sealed), 'base64').toString('latin1')).not.toContain(ACCOUNT_KEY)
 })

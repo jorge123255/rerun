@@ -4,10 +4,10 @@ import type { Client } from '@libsql/client'
 import type { DesktopManagedAppsAction, DesktopManagedAppsResult, DesktopManagedAppsView } from '@rerun/contracts'
 import bundledCatalog from '../services/catalog/bundled-services.json'
 import type { DesktopSecretCrypto } from '../secret-requests/crypto'
-import { managedAppsClient, ManagedAppsError, type ManagedAppsFetch } from './client'
+import { COMPOSIO_API, managedAppsClient, managedAppsKeyKind, ManagedAppsError, type ManagedAppsFetch, type ManagedAppsKeyKind } from './client'
 
 type CatalogApp = { slug: string; name: string; summary: string; toolkit: string; allowedTools: readonly string[] }
-type BundledService = { slug?: string; name?: string; summary?: string; manifest?: { authMethods?: { kind?: string; composio?: { toolkit?: string; allowedTools?: string[] } }[] } }
+type BundledService = { slug?: string; name?: string; summary?: string; icon?: string | null; manifest?: { authMethods?: { kind?: string; composio?: { toolkit?: string; allowedTools?: string[] } }[] } }
 
 /** The apps of the bundled catalog whose only sign-in is a managed one. */
 export const managedAppCatalog: readonly CatalogApp[] = ((bundledCatalog as { services: BundledService[] }).services).flatMap(service => {
@@ -19,7 +19,17 @@ export const managedAppCatalog: readonly CatalogApp[] = ((bundledCatalog as { se
 /** The most tools one app gives a coworker. A model step carries a bounded number of tools, and some apps have hundreds. */
 export const MANAGED_APP_TOOL_LIMIT = 40
 // The apps a Composio project offers change rarely: one listing per key serves for six hours.
-const appCache = new Map<string, { at: number; apps: { slug: string; name: string; summary: string; noAuth: boolean }[] }>()
+type OfferedApp = { slug: string; name: string; summary: string; logo?: string; noAuth: boolean }
+const appCache = new Map<string, { at: number; apps: OfferedApp[] }>()
+// The artwork this app ships, by the name Composio knows the app by and by its catalog name with the punctuation dropped.
+const bundledLogos = new Map<string, string>()
+for (const service of (bundledCatalog as { services: BundledService[] }).services) {
+    if (!service.slug || !service.icon) continue
+    const toolkit = service.manifest?.authMethods?.find(row => row.composio?.toolkit)?.composio?.toolkit
+    for (const name of [service.slug, toolkit]) if (name) bundledLogos.set(name.toLowerCase().replace(/[-_]/g, ''), service.icon)
+}
+/** Bundled artwork first: it is on the Mac already and matches the rest of the catalog. */
+export const managedAppLogo = (slug: string, remote?: string | null) => bundledLogos.get(slug.toLowerCase().replace(/[-_]/g, '')) ?? remote ?? undefined
 // What each app offers changes rarely; one listing serves every coworker for ten minutes.
 const toolCache = new Map<string, { at: number; tools: Awaited<ReturnType<ReturnType<typeof managedAppsClient>['tools']>> }>()
 const sealContext = (workspaceId: number, revision: string) => ({ domain: 'vault' as const, agentId: 'managed-apps', key: 'composio-key', version: 1, workspaceId, revision })
@@ -30,15 +40,21 @@ type ToolDefinition = {
 }
 
 export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, options: { network?: ManagedAppsFetch; returnUrl: string; coworkerExists(agentId: string): Promise<boolean> }) {
-    async function key(): Promise<string | null> {
+    // The sealed value is the key and which kind Composio accepted it as. A key kept before kinds were told apart is a project key.
+    async function key(): Promise<{ value: string; kind: ManagedAppsKeyKind } | null> {
         const row = (await db.execute('SELECT sealed,revision FROM desktop_managed_app_key WHERE id=1')).rows[0]
         if (!row) return null
-        return Buffer.from(await crypto.open(sealContext(workspaceId, String(row.revision)), String(row.sealed))).toString('utf8')
+        const opened = Buffer.from(await crypto.open(sealContext(workspaceId, String(row.revision)), String(row.sealed))).toString('utf8')
+        try {
+            const parsed = JSON.parse(opened) as { key?: unknown; kind?: unknown }
+            if (typeof parsed.key === 'string' && (parsed.kind === 'project' || parsed.kind === 'account')) return { value: parsed.key, kind: parsed.kind }
+        } catch { /* a bare key */ }
+        return { value: opened, kind: 'project' }
     }
     async function client() {
-        const value = await key()
-        if (!value) throw new ManagedAppsError(409, 'Add your Composio key first.')
-        return managedAppsClient(value, options.network)
+        const kept = await key()
+        if (!kept) throw new ManagedAppsError(409, 'Add your Composio key first.')
+        return managedAppsClient(kept.value, options.network, COMPOSIO_API, kept.kind)
     }
     async function accounts(): Promise<Account[]> {
         return (await db.execute('SELECT id,slug,toolkit,name,user_id,connected_account_id,status FROM desktop_managed_app_accounts ORDER BY name')).rows.map(row => ({
@@ -55,15 +71,15 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
      * The apps on offer. With a key it is everything the person's Composio project lists; without
      * one, or while Composio cannot be reached, it is the apps the bundled catalog names.
      */
-    async function offered(): Promise<{ slug: string; name: string; summary: string; noAuth: boolean }[]> {
-        const bundled = managedAppCatalog.map(app => ({ slug: app.toolkit.toLowerCase(), name: app.name, summary: app.summary, noAuth: false }))
+    async function offered(): Promise<OfferedApp[]> {
+        const bundled: OfferedApp[] = managedAppCatalog.map(app => ({ slug: app.toolkit.toLowerCase(), name: app.name, summary: app.summary, logo: managedAppLogo(app.toolkit), noAuth: false }))
         const row = (await db.execute('SELECT revision FROM desktop_managed_app_key WHERE id=1')).rows[0]
         if (!row) return bundled
         const cached = appCache.get(String(row.revision))
         if (cached && Date.now() - cached.at < 6 * 60 * 60_000) return cached.apps
         const listed = await (await client()).toolkits(AbortSignal.timeout(20_000)).catch(() => null)
         if (!listed?.length) return cached?.apps ?? bundled
-        const apps = listed.map(app => ({ slug: app.slug, name: app.name, summary: app.summary, noAuth: app.noAuth }))
+        const apps: OfferedApp[] = listed.map(app => ({ slug: app.slug, name: app.name, summary: app.summary, logo: managedAppLogo(app.slug, app.logo), noAuth: app.noAuth }))
         appCache.clear()
         appCache.set(String(row.revision), { at: Date.now(), apps })
         return apps
@@ -76,16 +92,16 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         ])
         return {
             configured,
-            apps: (await offered()).map(app => ({ slug: app.slug, name: app.name, summary: app.summary })),
+            apps: (await offered()).map(app => ({ slug: app.slug, name: app.name, summary: app.summary, ...(app.logo ? { logo: app.logo } : {}) })),
             accounts: rows.map(row => ({ id: row.id, slug: row.slug, name: row.name, status: row.status, agentIds: attached.rows.filter(link => link.account_id === row.id).map(link => String(link.agent_id)) })),
         }
     }
     async function act(action: DesktopManagedAppsAction, signal?: AbortSignal): Promise<DesktopManagedAppsResult> {
         if (action.action === 'set-key') {
             // The key is tried before it is kept, so a mistyped key is heard now and not at a coworker's first call.
-            await managedAppsClient(action.key, options.network).check(signal)
+            const kind = await managedAppsKeyKind(action.key, options.network, signal)
             const revision = randomUUID()
-            const sealed = await crypto.seal(sealContext(workspaceId, revision), Buffer.from(action.key, 'utf8'))
+            const sealed = await crypto.seal(sealContext(workspaceId, revision), Buffer.from(JSON.stringify({ key: action.key, kind }), 'utf8'))
             await db.execute({ sql: 'INSERT INTO desktop_managed_app_key(id,sealed,revision,updated_at) VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET sealed=excluded.sealed, revision=excluded.revision, updated_at=excluded.updated_at', args: [sealed, revision, new Date().toISOString()] })
             toolCache.clear(); appCache.clear()
             return { view: await view() }
