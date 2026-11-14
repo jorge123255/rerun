@@ -58,7 +58,7 @@ test('asks about a held action and tells the coworker the answer', async () => {
 
     await act(async () => { button(host, 'Turn off').click() })
     await act(async () => { await Promise.resolve() })
-    expect(calls.at(-2)!.body).toEqual({ action: 'forget', ruleId: RULE })
+    expect(calls.filter(call => call.body).at(-1)!.body).toEqual({ action: 'forget', ruleId: RULE })
     expect(onAnswered).toHaveBeenCalledTimes(1)
 })
 

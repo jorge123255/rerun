@@ -281,6 +281,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
         else if (!beside && openedBeside.current) { openedBeside.current = false; setCardOpen(false) }
     }, [beside, cardBeside])
     const [overviewCovered, setOverviewCovered] = useState(false)
+    const chatCovered = overviewCovered && !beside
     const [serviceStreaming, setServiceStreaming] = useState(false)
     const [voiceActivity, setVoiceActivity] = useState({ busy: false, dirty: false })
     const [voiceReviewTarget, setVoiceReviewTarget] = useState<HTMLDivElement | null>(null)
@@ -1614,7 +1615,8 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                 </div>
                 </div>
             </section>
-            <div inert={overviewCovered} className={cn('contents', overviewCovered && 'invisible')}>
+            {/* A coworker screen covers the chat only when it opens over it. Beside the chat, in its own column, the chat stays in use. */}
+            <div inert={chatCovered} className={cn('contents', chatCovered && 'invisible')}>
             {tabStrip ?? <div className="flex shrink-0 items-center gap-1 px-3 pt-2 pb-1">
                 <div aria-label="Current conversation" className="flex h-7 min-w-0 items-center gap-1 rounded-md bg-muted pl-2.5 pr-1 text-xs text-foreground">
                     <span title={currentTitle} className="max-w-40 truncate">{currentTitle}</span>
@@ -1789,7 +1791,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                     await decideTakeover(takeover.attempt ?? { action: 'done', takeoverId: takeover.id, requestId: crypto.randomUUID() })
                 }} />
             <MessageFeedbackDialog open={feedback.dialogOpen} rating={feedback.dialogRating} notice="Feedback is stored on this Mac." onOpenChange={feedback.onDialogOpenChange} onSubmit={feedback.submitDetails} />
-            <div inert={overviewCovered} className={cn('shrink-0 border-t p-2.5', pendingRequest && 'border-t-0 py-0', overviewCovered && 'invisible')}>
+            <div inert={chatCovered} className={cn('shrink-0 border-t p-2.5', pendingRequest && 'border-t-0 py-0', chatCovered && 'invisible')}>
                 {proposalsActive && <DesktopSkillProposalDock proposals={pinnedSkillProposals} pendingId={skillProposals.pendingId} onDecide={skillProposals.decide} onOpenSkill={openProposalSkill} />}
                 {proposalsActive && skillProposals.unavailable && <p role="status" className="mb-2 text-xs text-muted-foreground">Could not check all proposed changes. <Button type="button" variant="link" size="sm" onClick={() => void skillProposals.refresh()}>Retry</Button></p>}
                 {draft.quitting ? <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">Saving drafts before quitting…</p>

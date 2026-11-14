@@ -16,6 +16,10 @@ const ANSWERS = [
 ] as const satisfies readonly (readonly [DesktopConnectorApprovalDecision, string])[]
 const EMPTY: DesktopConnectorApprovalView = { pending: [], rules: [] }
 
+/** Sent on this window whenever an answer is given or taken back, so every open list re-reads. */
+export const CONNECTOR_APPROVALS_CHANGED = 'rerun:connector-approvals-changed'
+export const announceConnectorApprovalsChanged = () => { window.dispatchEvent(new Event(CONNECTOR_APPROVALS_CHANGED)) }
+
 /** What the coworker is told once the person has answered. It is a chat message, so it stays in English like the rest of the run. */
 export function connectorAnswerText(tool: string, decision: DesktopConnectorApprovalDecision): string {
     const name = toolLabelOf(tool)
@@ -47,6 +51,12 @@ export function DesktopConnectorApprovals({ sessionId, generating, disabled, onA
     useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
     // A call can be held at any point of a reply, so the list is read while one is under way and once more when it ends.
     useEffect(() => { setView(EMPTY) }, [url])
+    // The coworker's settings can turn a standing answer off while this chat is open.
+    useEffect(() => {
+        const changed = () => { void read() }
+        window.addEventListener(CONNECTOR_APPROVALS_CHANGED, changed)
+        return () => window.removeEventListener(CONNECTOR_APPROVALS_CHANGED, changed)
+    }, [read])
     useEffect(() => {
         void read()
         if (!generating) return
@@ -64,7 +74,7 @@ export function DesktopConnectorApprovals({ sessionId, generating, disabled, onA
                 onAnswered(connectorAnswerText(result.tool, result.decision))
             }
         } catch { if (alive.current) setFailed(true) }
-        finally { await read(); if (alive.current) setBusy(false) }
+        finally { await read(); if (alive.current) setBusy(false); announceConnectorApprovalsChanged() }
     }
 
     if (!view.pending.length && !view.rules.length) return null
