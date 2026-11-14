@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, 
 import { MonitorCard, StatsChart, TokenUsageChart } from '@rerun/ui/monitoring'
 import type { StatsChartType, StatsGroupBy, StatsMetric, StatsPoint } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useVisibleInterval } from '@/hooks/useVisibleInterval'
@@ -177,9 +178,7 @@ export function DesktopCoworkerMonitoringBody({ agent }: { agent: DesktopAgentVi
 
             <Dialog open={!!expanded} onOpenChange={open => !open && setExpandedKey(null)}>
                 <DialogContent closeLabel={t('monitoring.close')} aria-describedby={undefined} className="sm:max-w-3xl">
-                    <DialogHeader>
-                        <DialogTitle>{expanded?.title}</DialogTitle>
-                    </DialogHeader>
+                    <DialogHeaderBar icon={ActivityIcon} title={expanded?.title} />
                     <div className="h-[60vh] w-full">{expanded?.node}</div>
                 </DialogContent>
             </Dialog>

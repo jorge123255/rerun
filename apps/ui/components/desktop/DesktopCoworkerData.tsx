@@ -4,6 +4,8 @@ import { DataBrowser } from '@/components/data/DataBrowser'
 import { PanelDialogContent } from '@/components/dialogs/PanelDialogContent'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { DatabaseIcon } from '@/lib/icons'
 import type { DataFocus } from '@/lib/data/source'
 import { desktopDataSource } from '@/lib/desktop/data-source'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
@@ -39,10 +41,7 @@ export function DesktopCoworkerData({ agent, dialogControl, initial, hideTrigger
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
         {!hideTrigger && <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Database</Button></DialogTrigger>}
         {open && <DialogContent onCloseAutoFocus={onCloseAutoFocus} className="flex h-[80dvh] flex-col sm:max-w-5xl">
-            <DialogHeader>
-                <DialogTitle>Database</DialogTitle>
-                <DialogDescription>{agent.name}’s private database. Browse, filter, edit a row, or save a view. Only {agent.name} reads and writes it.</DialogDescription>
-            </DialogHeader>
+            <DialogHeaderBar icon={DatabaseIcon} title="Database" description={<>{agent.name}’s private database. Browse, filter, edit a row, or save a view. Only {agent.name} reads and writes it.</>} />
             <DesktopCoworkerDataBody key={agent.id} agentId={agent.id} initial={initial} requireInitialView={requireInitialView} />
         </DialogContent>}
     </Dialog>

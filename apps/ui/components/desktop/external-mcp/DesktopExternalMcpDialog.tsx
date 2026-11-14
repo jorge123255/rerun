@@ -3,12 +3,13 @@
 import { useMemo, type ReactNode } from 'react'
 import { EXTERNAL_MCP_COPY, type ExternalMcpScope } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { DocsLink } from '@/components/ui/docs-link'
 import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { SkeletonList } from '@/components/ui/skeleton'
-import { Loader2Icon } from '@/lib/icons'
+import { Loader2Icon, KeyIcon } from '@/lib/icons'
 import { createDesktopExternalMcpDriver } from '@/lib/desktop/external-mcp/client'
 import type { DesktopExternalMcpDriver } from '@/lib/desktop/external-mcp/driver'
 import { externalMcpEndpoint } from '@/lib/desktop/external-mcp/snippets'
@@ -50,10 +51,7 @@ function DialogFrame({ open, onOpenChange, workspaceId, driver }: { open: boolea
     return (
         <Dialog open={open} onOpenChange={change}>
             <DialogContent className="flex flex-col sm:max-h-[85dvh] sm:max-w-lg sm:overflow-hidden">
-                <DialogHeader>
-                    <DialogTitle>{EXTERNAL_MCP_COPY.dialogTitle}</DialogTitle>
-                    <p className="text-sm text-muted-foreground">{EXTERNAL_MCP_COPY.dialogBody}</p>
-                </DialogHeader>
+                <DialogHeaderBar icon={KeyIcon} title={EXTERNAL_MCP_COPY.dialogTitle} description={EXTERNAL_MCP_COPY.dialogBody} />
 
                 <ScrollFade className="-mx-1 min-h-0 flex-1 px-1 py-1">
                     <div className="space-y-4">

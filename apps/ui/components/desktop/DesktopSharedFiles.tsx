@@ -3,7 +3,8 @@
 import { BrainChromeContext, BrainTopBar, type BrainCrumb } from '@/components/brain/BrainTopBar'
 import { FileList } from '@/components/files/FileList'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { importDesktopSharedFiles, listDesktopSharedFolder, renameDesktopSharedEntry, type DesktopSharedEntry, type DesktopSharedImportResult } from '@/lib/desktop/shared-workspace-files'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { UploadEntry } from '@/lib/files/upload'
@@ -248,10 +249,7 @@ export function DesktopSharedFiles({ dialogControl, hideTrigger = false, onClose
         <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
             {!hideTrigger && <DialogTrigger asChild><Button type="button" variant="outline" size="sm">{t('sharedFiles.title')}</Button></DialogTrigger>}
             {open && <DialogContent onCloseAutoFocus={onCloseAutoFocus} className="flex h-[80dvh] flex-col sm:max-w-5xl">
-                <DialogHeader>
-                    <DialogTitle>{t('sharedFiles.title')}</DialogTitle>
-                    <DialogDescription>{t('sharedFiles.description')}</DialogDescription>
-                </DialogHeader>
+                <DialogHeaderBar icon={FolderIcon} title={t('sharedFiles.title')} description={t('sharedFiles.description')} />
                 <SharedFilesPanel key={workspaceId ?? 'loading'} workspaceId={workspaceId} onClose={() => setOpen(false)} />
             </DialogContent>}
         </Dialog>

@@ -4,7 +4,8 @@ import { DESKTOP_ATTACHMENT_MAX_BYTES, DESKTOP_ATTACHMENT_MAX_FILES, DESKTOP_ATT
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useFileNavigation } from '@/components/files/useFileNavigation'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogClose, DialogContent, DialogFooter, DialogTrigger } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { ArrowLeftIcon, FileTextIcon, FolderIcon, PaperclipIcon, XIcon } from '@/lib/icons'
 import { formatBytes } from '@/lib/files/format'
 import type { DesktopAgentView } from './DesktopApp'
@@ -189,10 +190,7 @@ export function DesktopAttachmentPicker({ agent, disabled, paths, onChange }: {
     return <Dialog open={open} onOpenChange={next => { if (next) start(); else close() }}>
         <DialogTrigger asChild><Button type="button" size="icon-sm" variant="ghost" title="Attach from Files" disabled={disabled}><PaperclipIcon aria-hidden className="size-4" /><span className="sr-only">Attach from Files</span></Button></DialogTrigger>
         {open && <DialogContent className="flex h-[65dvh] flex-col sm:max-w-lg">
-            <DialogHeader>
-                <DialogTitle>Attach from Files</DialogTitle>
-                <DialogDescription>Choose up to {DESKTOP_ATTACHMENT_MAX_FILES} text or Markdown files from {agent.name}’s workspace, up to {DESKTOP_ATTACHMENT_MAX_BYTES / 1024} KiB each and {DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES / 1024} KiB total. Their contents go to the chat provider when you send.</DialogDescription>
-            </DialogHeader>
+            <DialogHeaderBar icon={PaperclipIcon} title="Attach from Files" description={<>Choose up to {DESKTOP_ATTACHMENT_MAX_FILES} text or Markdown files from {agent.name}’s workspace, up to {DESKTOP_ATTACHMENT_MAX_BYTES / 1024} KiB each and {DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES / 1024} KiB total. Their contents go to the chat provider when you send.</>} />
             {selected.length > 0 && <AttachmentChips paths={selected} disabled={disabled} onRemove={toggle} />}
             {unknown && <p role="status" className="text-xs text-muted-foreground">{metadataError ? 'Could not check all selected files.' : 'Checking selected files…'}</p>}
             {unknown && metadataError && <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={() => checkSelected(selected)}>Retry selected files</Button>}

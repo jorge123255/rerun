@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { SettingsIcon } from '@/lib/icons'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { DesktopAgentView } from './DesktopApp'
 import { DesktopAgentPanelSetup } from './setup/DesktopAgentPanelSetup'
@@ -44,10 +46,7 @@ function CoworkerSetupDialog({ agent, dialogControl }: { agent: DesktopAgentView
     return <Dialog open={open} onOpenChange={changeOpen} asSheet={false}>
         <DialogTrigger asChild><Button type="button" variant="outline" size="sm">{t('coworkerSetup.tab.label')}</Button></DialogTrigger>
         {open && <DialogContent className="flex h-[80dvh] flex-col sm:max-w-2xl" showCloseButton={!saving} closeLabel={t('closeDialog')}>
-            <DialogHeader>
-                <DialogTitle>{t('coworkerSetup.tab.label')}</DialogTitle>
-                <DialogDescription>{t('coworkerSetup.tab.description')}.</DialogDescription>
-            </DialogHeader>
+            <DialogHeaderBar icon={SettingsIcon} title={t('coworkerSetup.tab.label')} description={<>{t('coworkerSetup.tab.description')}.</>} />
             <div className="min-h-0 flex-1">
                 <DesktopAgentPanelSetup agentId={agent.id} onDirtyChange={setDirty} onSavingChange={setSaving} onCancel={close} />
             </div>
