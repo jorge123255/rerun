@@ -24,7 +24,7 @@ afterEach(async () => { db.close(); await rm(dir, { recursive: true, force: true
 // A pretend Composio: one project, one key, and what was asked of it.
 function composio() {
     const seen: { method: string; path: string; body?: Record<string, unknown> }[] = []
-    const state = { status: 'INITIATED', authConfigs: [] as { id: string; toolkit: string }[], executed: [] as unknown[], removed: [] as string[], user: '' }
+    const state = { status: 'INITIATED', authConfigs: [] as { id: string; toolkit: string }[], executed: [] as unknown[], removed: [] as string[], user: '', toolkit: '' }
     const network = (async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input)), path = url.pathname.replace('/api/v3.1', '') + url.search
         const body = init?.body ? JSON.parse(String(init.body)) : undefined
@@ -32,11 +32,24 @@ function composio() {
         if (new Headers(init?.headers).get('x-api-key') !== KEY) return Response.json({ error: { message: `bad key ${new Headers(init?.headers).get('x-api-key')}` } }, { status: 401 })
         seen.push({ method: init?.method ?? 'GET', path, ...(body ? { body } : {}) })
         if (path.startsWith('/auth_configs?limit=1')) return Response.json({ items: [] })
+        if (path.startsWith('/toolkits?')) return Response.json({ items: [
+            { slug: 'GMAIL', name: 'Gmail', composio_managed_auth_schemes: ['OAUTH2'], meta: { description: 'Read and send   email' } },
+            { slug: 'slack', name: 'Slack', composio_managed_auth_schemes: ['OAUTH2'], meta: { description: 'Team chat' } },
+            { slug: 'hackernews', name: 'Hacker News', no_auth: true, meta: { description: 'Read stories' } },
+            { slug: 'acme_erp', name: 'Acme ERP', auth_schemes: ['API_KEY'], meta: { description: 'Needs your own credentials' } },
+            { slug: 'Bad Slug!', name: 'Ignored' },
+        ], next_cursor: null })
         if (path.startsWith('/auth_configs?toolkit_slug=')) return Response.json({ items: state.authConfigs.filter(row => row.toolkit === url.searchParams.get('toolkit_slug')).map(row => ({ id: row.id, status: 'ENABLED', is_composio_managed: true, toolkit: { slug: row.toolkit } })) })
+        if (path === '/auth_configs' && body.toolkit.slug === 'acme_erp') return Response.json({ error: { message: 'no managed auth' } }, { status: 400 })
         if (path === '/auth_configs') { const made = { id: `ac_${state.authConfigs.length + 1}`, toolkit: body.toolkit.slug }; state.authConfigs.push(made); return Response.json({ toolkit: { slug: made.toolkit }, auth_config: { id: made.id } }, { status: 201 }) }
-        if (path === '/connected_accounts/link') { state.user = body.user_id; return Response.json({ connected_account_id: 'ca_1', redirect_url: 'https://connect.composio.example/link/ca_1' }) }
+        if (path === '/connected_accounts/link') { state.user = body.user_id; state.toolkit = state.authConfigs.find(row => row.id === body.auth_config_id)?.toolkit ?? ''; return Response.json({ connected_account_id: 'ca_1', redirect_url: 'https://connect.composio.example/link/ca_1' }) }
         if (path === '/connected_accounts/ca_1' && init?.method === 'DELETE') { state.removed.push('ca_1'); return Response.json({ success: true }) }
-        if (path === '/connected_accounts/ca_1') return Response.json({ id: 'ca_1', user_id: state.user, status: state.status, toolkit: { slug: 'gmail' } })
+        if (path === '/connected_accounts/ca_1') return Response.json({ id: 'ca_1', user_id: state.user, status: state.status, toolkit: { slug: state.toolkit } })
+        if (path.startsWith('/tools?') && url.searchParams.get('toolkit_slug') === 'slack') return Response.json({ items: Array.from({ length: url.searchParams.get('important') === 'true' ? 55 : 300 }, (_unused, index) => (
+            { slug: `SLACK_TOOL_${index}`, description: 'A Slack tool', input_parameters: { type: 'object', properties: {} } })), next_cursor: null })
+        if (path.startsWith('/tools?') && url.searchParams.get('toolkit_slug') === 'hackernews') return Response.json({ items: url.searchParams.get('important') === 'true' ? [] : [
+            { slug: 'HACKERNEWS_GET_FRONTPAGE', description: 'Front page', input_parameters: { type: 'object', properties: {} } }], next_cursor: null })
+        if (path === '/tools/execute/HACKERNEWS_GET_FRONTPAGE') return Response.json({ successful: true, data: { stories: 3 } })
         if (path.startsWith('/tools?')) return Response.json({ items: [
             { slug: 'GMAIL_SEND_EMAIL', description: 'Send an email', input_parameters: { type: 'object', properties: { to: { type: 'string' } } } },
             { slug: 'GMAIL_FETCH_EMAILS', description: 'Read mail', input_parameters: { type: 'object', properties: {} } },
@@ -136,4 +149,48 @@ test('an account signed in by someone else, or to another app, is never marked u
     const { view } = await service.act({ action: 'connect', slug: 'gmail' })
     fake.state.status = 'ACTIVE'; fake.state.user = 'somebody_else'
     expect((await service.act({ action: 'refresh', id: view.accounts[0]!.id })).view.accounts[0]!.status).toBe('pending')
+})
+
+test('with a key the Vault offers every app of the project, and any of them can be connected', async () => {
+    const fake = composio(), service = apps(fake.network), signal = new AbortController().signal
+    // Before a key: the apps the bundled catalog names, under the names Composio knows them by.
+    const before = (await service.view()).apps.map(app => app.slug)
+    expect(before).toEqual(expect.arrayContaining(['gmail', 'googlecalendar', 'outlook']))
+    expect(before).not.toContain('slack')
+
+    const { view } = await service.act({ action: 'set-key', key: KEY })
+    expect(view.apps).toEqual([
+        { slug: 'gmail', name: 'Gmail', summary: 'Read and send email' },
+        { slug: 'slack', name: 'Slack', summary: 'Team chat' },
+        { slug: 'hackernews', name: 'Hacker News', summary: 'Read stories' },
+        { slug: 'acme_erp', name: 'Acme ERP', summary: 'Needs your own credentials' },
+    ])
+    await service.view()
+    expect(fake.seen.filter(call => call.path.startsWith('/toolkits?')).length).toBe(1)
+    await expect(service.act({ action: 'connect', slug: 'not-offered' })).rejects.toThrow('not in the catalog')
+
+    // An app the bundled catalog does not know: the tools Composio features, and no more than the limit.
+    const slack = (await service.act({ action: 'connect', slug: 'slack' })).view.accounts.find(row => row.slug === 'slack')!
+    fake.state.status = 'ACTIVE'
+    fake.state.user = (fake.seen.findLast(call => call.path === '/connected_accounts/link')!.body as { user_id: string }).user_id
+    await service.act({ action: 'refresh', id: slack.id })
+    await service.act({ action: 'attach', id: slack.id, agentId: 'coworker-1', attached: true })
+    const slackTools = await service.tools('coworker-1', signal)
+    expect(slackTools).toHaveLength(40)
+    expect(fake.seen.findLast(call => call.path.startsWith('/tools?'))!.path).toContain('important=true')
+
+    // An app that needs no sign-in is ready at once, and falls back to its full list when nothing is featured.
+    const news = await service.act({ action: 'connect', slug: 'hackernews' })
+    expect(news.signIn).toBeUndefined()
+    const account = news.view.accounts.find(row => row.slug === 'hackernews')!
+    expect(account.status).toBe('active')
+    await service.act({ action: 'attach', id: account.id, agentId: 'coworker-1', attached: true })
+    const all = await service.tools('coworker-1', signal)
+    const frontpage = all.find(tool => tool.name === 'HACKERNEWS_GET_FRONTPAGE')!
+    expect((await frontpage.execute({}, signal, 'call-9')).result).toEqual({ content: [{ type: 'text', text: '{"stories":3}' }] })
+    expect((await service.act({ action: 'remove', id: account.id })).view.accounts.map(row => row.slug)).toEqual(['slack'])
+
+    // An app Composio has no ready-made sign-in for says what to do instead of failing blankly.
+    await expect(service.act({ action: 'connect', slug: 'acme_erp' })).rejects.toThrow('Set one up for it in your Composio dashboard')
+    expect((await service.view()).accounts.map(row => row.slug)).toEqual(['slack'])
 })

@@ -76,3 +76,14 @@ test('with a key: connect opens the sign-in page, a signed-in account is given t
     expect(posts.at(-1)).toEqual({ action: 'attach', id: ACCOUNT, agentId: 'c2', attached: true })
     expect([...host.querySelectorAll<HTMLInputElement>('input[type=checkbox]')].map(box => box.checked)).toEqual([false, true])
 })
+
+test('a large account shows the first matches and search finds the rest', async () => {
+    const many = Array.from({ length: 300 }, (_unused, index) => ({ slug: `app${index}`, name: `App ${index}`, summary: index === 250 ? 'Invoices and billing' : 'Something else' }))
+    const { host } = await mount({ configured: true, apps: many, accounts: [] })
+    expect(host.textContent).toContain('Every app in your Composio account: 300 to choose from.')
+    expect(host.querySelectorAll('li').length).toBe(40)
+    expect(host.textContent).toContain('Showing 40 of 300. Search to find the others.')
+    await act(async () => { type(host.querySelector<HTMLInputElement>('input[aria-label="Search managed apps"]')!, 'billing') })
+    expect([...host.querySelectorAll('li p:first-child')].map(node => node.textContent)).toEqual(['App 250'])
+    expect(host.textContent).not.toContain('Showing 40')
+})

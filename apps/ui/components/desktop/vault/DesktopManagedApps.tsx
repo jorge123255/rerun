@@ -47,13 +47,18 @@ export function DesktopManagedApps({ coworkers, disabled = false }: { coworkers:
     if (!view) return null
     const locked = busy || disabled
     const taken = new Set(view.accounts.map(account => account.slug))
-    const offered = view.apps.filter(app => !taken.has(app.slug) && `${app.name} ${app.summary}`.toLowerCase().includes(query.trim().toLowerCase()))
+    // A project can offer more than a thousand apps: the list shows the first matches and search finds the rest.
+    const SHOWN = 40
+    const matches = view.apps.filter(app => !taken.has(app.slug) && `${app.name} ${app.slug} ${app.summary}`.toLowerCase().includes(query.trim().toLowerCase()))
+    const offered = matches.slice(0, SHOWN)
     return (
         <section className="space-y-3 rounded-lg border border-border p-3" aria-label="Managed apps" data-testid="desktop-managed-apps">
             <div>
                 <h3 className="font-medium">Managed apps</h3>
                 <p className="text-sm text-muted-foreground">
-                    Gmail, Google Calendar, Outlook and {Math.max(0, view.apps.length - 3)} more apps sign in through Composio. They need your own Composio key, and you pay Composio for it.
+                    {view.configured
+                        ? `Every app in your Composio account: ${view.apps.length} to choose from. Their sign-ins are held by Composio.`
+                        : 'Gmail, Google Calendar, Outlook and every other app Composio offers. They need your own Composio key, and you pay Composio for it.'}
                 </p>
             </div>
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
@@ -110,6 +115,7 @@ export function DesktopManagedApps({ coworkers, disabled = false }: { coworkers:
                                 </li>
                             ))}
                         </ul>
+                        {matches.length > SHOWN && <p className="text-xs text-muted-foreground">Showing {SHOWN} of {matches.length}. Search to find the others.</p>}
                     </div>
                     <button type="button" className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={locked} onClick={() => setRemoveKey(true)}>
                         Remove the Composio key

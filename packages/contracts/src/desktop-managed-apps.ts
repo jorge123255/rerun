@@ -2,12 +2,13 @@ import { z } from 'zod'
 
 // Managed apps on the Mac: apps such as Gmail and Outlook that are signed in through the person's
 // own Composio account. Composio holds the sign-in to the app; the Mac holds the Composio key.
-const slug = z.string().regex(/^[a-z0-9-]{1,128}$/)
+const slug = z.string().regex(/^[a-z0-9_-]{1,128}$/)
 const id = z.string().uuid()
 
 export const desktopManagedAppsViewSchema = z.object({
     configured: z.boolean(),
-    apps: z.array(z.object({ slug, name: z.string().max(200), summary: z.string().max(600) }).strict()).max(200),
+    // Every app the person's Composio project offers once a key is kept; the bundled ones before that.
+    apps: z.array(z.object({ slug, name: z.string().max(200), summary: z.string().max(600) }).strict()).max(5000),
     accounts: z.array(z.object({
         id, slug, name: z.string().max(200), status: z.enum(['pending', 'active']), agentIds: z.array(z.string().max(200)).max(250),
     }).strict()).max(200),

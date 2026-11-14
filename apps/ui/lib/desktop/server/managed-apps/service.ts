@@ -16,6 +16,10 @@ export const managedAppCatalog: readonly CatalogApp[] = ((bundledCatalog as { se
     return [{ slug: service.slug, name: service.name ?? service.slug, summary: (service.summary ?? '').slice(0, 600), toolkit: method.composio.toolkit, allowedTools: method.composio.allowedTools ?? [] }]
 }).sort((a, b) => a.name.localeCompare(b.name))
 
+/** The most tools one app gives a coworker. A model step carries a bounded number of tools, and some apps have hundreds. */
+export const MANAGED_APP_TOOL_LIMIT = 40
+// The apps a Composio project offers change rarely: one listing per key serves for six hours.
+const appCache = new Map<string, { at: number; apps: { slug: string; name: string; summary: string; noAuth: boolean }[] }>()
 // What each app offers changes rarely; one listing serves every coworker for ten minutes.
 const toolCache = new Map<string, { at: number; tools: Awaited<ReturnType<ReturnType<typeof managedAppsClient>['tools']>> }>()
 const sealContext = (workspaceId: number, revision: string) => ({ domain: 'vault' as const, agentId: 'managed-apps', key: 'composio-key', version: 1, workspaceId, revision })
@@ -47,6 +51,23 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         if (!found) throw new ManagedAppsError(409, 'This account is no longer in the Vault.')
         return found
     }
+    /**
+     * The apps on offer. With a key it is everything the person's Composio project lists; without
+     * one, or while Composio cannot be reached, it is the apps the bundled catalog names.
+     */
+    async function offered(): Promise<{ slug: string; name: string; summary: string; noAuth: boolean }[]> {
+        const bundled = managedAppCatalog.map(app => ({ slug: app.toolkit.toLowerCase(), name: app.name, summary: app.summary, noAuth: false }))
+        const row = (await db.execute('SELECT revision FROM desktop_managed_app_key WHERE id=1')).rows[0]
+        if (!row) return bundled
+        const cached = appCache.get(String(row.revision))
+        if (cached && Date.now() - cached.at < 6 * 60 * 60_000) return cached.apps
+        const listed = await (await client()).toolkits(AbortSignal.timeout(20_000)).catch(() => null)
+        if (!listed?.length) return cached?.apps ?? bundled
+        const apps = listed.map(app => ({ slug: app.slug, name: app.name, summary: app.summary, noAuth: app.noAuth }))
+        appCache.clear()
+        appCache.set(String(row.revision), { at: Date.now(), apps })
+        return apps
+    }
     async function view(): Promise<DesktopManagedAppsView> {
         const [configured, rows, attached] = await Promise.all([
             db.execute('SELECT 1 FROM desktop_managed_app_key WHERE id=1').then(result => result.rows.length === 1),
@@ -55,7 +76,7 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         ])
         return {
             configured,
-            apps: managedAppCatalog.map(app => ({ slug: app.slug, name: app.name, summary: app.summary })),
+            apps: (await offered()).map(app => ({ slug: app.slug, name: app.name, summary: app.summary })),
             accounts: rows.map(row => ({ id: row.id, slug: row.slug, name: row.name, status: row.status, agentIds: attached.rows.filter(link => link.account_id === row.id).map(link => String(link.agent_id)) })),
         }
     }
@@ -66,29 +87,36 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
             const revision = randomUUID()
             const sealed = await crypto.seal(sealContext(workspaceId, revision), Buffer.from(action.key, 'utf8'))
             await db.execute({ sql: 'INSERT INTO desktop_managed_app_key(id,sealed,revision,updated_at) VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET sealed=excluded.sealed, revision=excluded.revision, updated_at=excluded.updated_at', args: [sealed, revision, new Date().toISOString()] })
-            toolCache.clear()
+            toolCache.clear(); appCache.clear()
             return { view: await view() }
         }
         if (action.action === 'remove-key') {
             // The accounts belong to that key's project: without it they cannot be used or cleaned up, so they go with it.
             const composio = await client().catch(() => null)
-            for (const row of await accounts()) await composio?.remove(row.connectedAccountId, signal).catch(() => {})
+            for (const row of await accounts()) if (row.connectedAccountId) await composio?.remove(row.connectedAccountId, signal).catch(() => {})
             await db.batch(['DELETE FROM desktop_managed_app_attachments', 'DELETE FROM desktop_managed_app_accounts', 'DELETE FROM desktop_managed_app_key'], 'write')
             toolCache.clear()
             return { view: await view() }
         }
         if (action.action === 'connect') {
-            const app = managedAppCatalog.find(row => row.slug === action.slug)
+            const app = (await offered()).find(row => row.slug === action.slug)
             if (!app) throw new ManagedAppsError(400, 'This app is not in the catalog.')
             if ((await accounts()).some(row => row.slug === app.slug)) throw new ManagedAppsError(409, 'This app already has an account in the Vault.')
             const composio = await client()
-            const id = randomUUID(), userId = `rerun_mac_${id}`
-            const link = await composio.link(userId, await composio.authConfig(app.toolkit, signal), options.returnUrl, signal)
-            await db.execute({ sql: "INSERT INTO desktop_managed_app_accounts(id,slug,toolkit,name,user_id,connected_account_id,status,created_at) VALUES(?,?,?,?,?,?,'pending',?)", args: [id, app.slug, app.toolkit, app.name, userId, link.connectedAccountId, new Date().toISOString()] })
+            const id = randomUUID(), userId = `rerun_mac_${id}`, created = new Date().toISOString()
+            const insert = "INSERT INTO desktop_managed_app_accounts(id,slug,toolkit,name,user_id,connected_account_id,status,created_at) VALUES(?,?,?,?,?,?,?,?)"
+            // An app that needs no sign-in is ready at once: there is nothing to link.
+            if (app.noAuth) {
+                await db.execute({ sql: insert, args: [id, app.slug, app.slug, app.name, userId, '', 'active', created] })
+                return { view: await view() }
+            }
+            const link = await composio.link(userId, await composio.authConfig(app.slug, signal), options.returnUrl, signal)
+            await db.execute({ sql: insert, args: [id, app.slug, app.slug, app.name, userId, link.connectedAccountId, 'pending', created] })
             return { view: await view(), signIn: link.redirectUrl }
         }
         if (action.action === 'refresh') {
             const row = await account(action.id)
+            if (!row.connectedAccountId) return { view: await view() }
             const remote = await (await client()).account(row.connectedAccountId, signal)
             // Only Composio's own word that this very account, for this very app, is signed in makes it usable.
             if (remote.status === 'ACTIVE' && remote.userId === row.userId && (!remote.toolkit || remote.toolkit.toLowerCase() === row.toolkit.toLowerCase())) {
@@ -98,7 +126,7 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         }
         if (action.action === 'remove') {
             const row = await account(action.id)
-            await (await client()).remove(row.connectedAccountId, signal).catch(error => { if (!(error instanceof ManagedAppsError) || error.status !== 502) throw error })
+            if (row.connectedAccountId) await (await client()).remove(row.connectedAccountId, signal).catch(error => { if (!(error instanceof ManagedAppsError) || error.status !== 502) throw error })
             await db.batch([{ sql: 'DELETE FROM desktop_managed_app_attachments WHERE account_id=?', args: [row.id] }, { sql: 'DELETE FROM desktop_managed_app_accounts WHERE id=?', args: [row.id] }], 'write')
             return { view: await view() }
         }
@@ -120,17 +148,21 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         if (!composio) return []
         const definitions: ToolDefinition[] = []
         for (const id of held) {
-            const row = await account(id), app = managedAppCatalog.find(entry => entry.slug === row.slug)
-            if (!app) continue
-            let cached = toolCache.get(app.toolkit)
+            const row = await account(id)
+            // An app the bundled catalog knows keeps its chosen tools; any other app gives the ones Composio features.
+            const chosen = managedAppCatalog.find(entry => entry.toolkit.toLowerCase() === row.toolkit.toLowerCase())?.allowedTools ?? []
+            let cached = toolCache.get(row.toolkit)
             if (!cached || Date.now() - cached.at > 10 * 60_000) {
                 // An app that cannot be listed now must not hide the coworker's other tools.
-                const listed = await composio.tools(app.toolkit, signal).catch(() => null)
+                const listed = await (async () => {
+                    if (chosen.length) return (await composio.tools(row.toolkit, signal)).filter(tool => chosen.includes(tool.slug))
+                    const featured = await composio.tools(row.toolkit, signal, true)
+                    return (featured.length ? featured : await composio.tools(row.toolkit, signal)).slice(0, MANAGED_APP_TOOL_LIMIT)
+                })().catch(() => null)
                 signal.throwIfAborted()
-                if (listed) { cached = { at: Date.now(), tools: listed }; toolCache.set(app.toolkit, cached) }
+                if (listed) { cached = { at: Date.now(), tools: listed }; toolCache.set(row.toolkit, cached) }
             }
             for (const tool of cached?.tools ?? []) {
-                if (app.allowedTools.length && !app.allowedTools.includes(tool.slug)) continue
                 definitions.push({
                     name: tool.slug, description: tool.description, inputSchema: tool.inputSchema, destructive: tool.destructive,
                     async execute(args, stop) {
