@@ -13,7 +13,9 @@ import { Dialog } from '@/components/ui/dialog'
 import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { LockKeyholeIcon } from '@/lib/icons'
 import { Input } from '@/components/ui/input'
-import { PanelRow } from '@/components/ui/panel-row'
+import { PANEL_CARD, PANEL_CARD_INTERACTIVE, PanelRow } from '@/components/ui/panel-row'
+import { cn } from '@/lib/utils'
+import { DesktopAppLogo } from './DesktopAppLogo'
 import { PanelSteps } from '@/components/ui/panel-steps'
 import { PanelScroller } from '@/components/ui/panel-list'
 import { desktopVaultListing, desktopVaultProgramCredentialLimit, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '@/lib/desktop/vault'
@@ -104,7 +106,20 @@ function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: Sug
         if ('kind' in item && item.kind === 'mcp' && item.catalog) (accounts[item.catalog.slug] ??= []).push(entryTitle(item))
     }
     const entry = listing?.entries.find(item => item.id === page)
-    const navigate = (next: string) => { setError(''); setPage(next) }
+    // Which app the Add page opens on, when the person came from one of the suggested tiles.
+    const [addSlug, setAddSlug] = useState<string | undefined>(undefined)
+    const navigate = (next: string, slug?: string) => { setError(''); setAddSlug(next === 'add-app' ? slug : undefined); setPage(next) }
+    // Logos and names come from the app catalog; a Vault entry only keeps the app's id.
+    const [catalog, setCatalog] = useState<Record<string, { name: string; icon?: string | null }>>({})
+    useEffect(() => {
+        const controller = new AbortController()
+        void fetch('/api/desktop/vault/catalog', { cache: 'no-store', signal: controller.signal }).then(async response => {
+            if (!response.ok) return
+            const apps = await response.json() as Array<{ slug: string; name: string; icon?: string | null }>
+            if (!controller.signal.aborted && Array.isArray(apps)) setCatalog(Object.fromEntries(apps.map(app => [app.slug, { name: app.name, icon: app.icon }])))
+        }).catch(() => { /* Tiles fall back to the plain connector mark. */ })
+        return () => controller.abort()
+    }, [])
     const stepKey = entry?.id ?? page
     const filtered = listing?.entries.filter(item => (
         !coworkerApp || 'kind' in item && item.kind === 'mcp' && item.catalog?.slug === coworkerApp
@@ -116,7 +131,7 @@ function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: Sug
             {alert}
             {!listing ? (error ? <Button variant="outline" disabled={busy} onClick={() => void run()}>Try again</Button> : <p role="status">Loading Vault…</p>)
                 : page === 'add' ? <SecretForm busy={busy} onSubmit={fields => void run({ operation: 'create', ...fields }, 'list')} />
-                : page === 'add-app' ? <DesktopVaultCatalog slug={suggestedApp?.slug ?? coworkerApp} busy={busy} existingAccounts={accounts} onCancel={suggestedApp ? onClose : () => navigate('list')}
+                : page === 'add-app' ? <DesktopVaultCatalog slug={suggestedApp?.slug ?? coworkerApp ?? addSlug} busy={busy} existingAccounts={accounts} onCancel={suggestedApp ? onClose : () => navigate('list')}
                     onSave={async (slug, methodId, values, account) => {
                         const previousIds = new Set(listing.entries.map(item => item.id))
                         const failure = await run({ operation: 'add-app', slug, methodId, values, ...account }, saved => {
@@ -145,13 +160,25 @@ function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: Sug
                     </div>
                     {!coworkerApp && listing.entries.length >= 8 && <Input aria-label="Search Vault" placeholder="Search Vault" value={query} onChange={event => setQuery(event.target.value)} />}
                     {coworkerApp && filtered?.length === 0 ? <p className="text-sm text-muted-foreground">No accounts for this app in the Vault.</p>
-                        : listing.entries.length === 0 ? <p className="text-sm text-muted-foreground">No entries in this workspace.</p>
+                        : listing.entries.length === 0 ? <section className="space-y-2" aria-label="Popular apps">
+                            <p className="text-sm text-muted-foreground">Nothing here yet. Sign in to an app once, then pick the coworkers that use it.</p>
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                                {POPULAR_APPS.map(app => <button key={app.slug} type="button" disabled={busy} onClick={() => navigate('add-app', app.slug)}
+                                    className={cn('flex items-center gap-2 p-3 text-left text-sm font-medium', PANEL_CARD, PANEL_CARD_INTERACTIVE)}>
+                                    <DesktopAppLogo logo={catalog[app.slug]?.icon} className="size-7" />
+                                    <span className="min-w-0 truncate">{catalog[app.slug]?.name ?? app.name}</span>
+                                </button>)}
+                            </div>
+                        </section>
                         : filtered?.length === 0 ? <p className="text-sm text-muted-foreground">No matching entries.</p>
                         : (['Apps', 'MCP servers', 'Secrets'] as const).map(label => {
                             const items = filtered?.filter(item => entryGroup(item) === label)
                             return !!items?.length && <section key={label} className="space-y-2">
                                 <h4 className="text-xs font-medium uppercase text-muted-foreground">{label}</h4>
-                                {items.map(item => <PanelRow key={item.id} leading={'kind' in item ? <Plug className="size-4" /> : <KeyRound className="size-4" />} title={entryTitle(item)}
+                                {label === 'Apps' ? <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                    {items.map(item => <VaultAppTile key={item.id} entry={item} icon={'kind' in item && item.kind === 'mcp' ? catalog[item.catalog?.slug ?? '']?.icon : undefined}
+                                        coworkers={listing.coworkers} onOpen={() => navigate(item.id)} />)}
+                                </div> : items.map(item => <PanelRow key={item.id} leading={'kind' in item ? <Plug className="size-4" /> : <KeyRound className="size-4" />} title={entryTitle(item)}
                                     description={`${entrySubtitle(item)} · ${item.sharedWithAll ? 'Every coworker' : item.agentIds.length ? `${item.agentIds.length} assigned` : 'Unassigned'}`}
                                     footer={'kind' in item && item.kind === 'mcp' && item.catalog ? vaultAccountHealthText(item.catalog.health, item.signedOut) : undefined}
                                     actions={<ChevronRight className="size-4" />} onClick={() => navigate(item.id)} />)}
@@ -161,6 +188,37 @@ function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: Sug
                 </>}
         </PanelScroller>
     </PanelSteps>
+}
+
+// The six apps upstream offers first to an empty Vault. All six are in the Mac's bundled catalog.
+const POPULAR_APPS = [
+    { slug: 'notion', name: 'Notion' }, { slug: 'slack', name: 'Slack' }, { slug: 'hubspot', name: 'HubSpot' },
+    { slug: 'linear', name: 'Linear' }, { slug: 'github', name: 'GitHub' }, { slug: 'airtable', name: 'Airtable' },
+] as const
+
+const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map(word => word[0]?.toUpperCase() ?? '').join('') || '?'
+
+/** One app account as a tile: its logo, whose it is, and the coworkers that use it. */
+export function VaultAppTile({ entry, icon, coworkers, onOpen }: { entry: DesktopVaultEntry; icon?: string | null; coworkers: { id: string; name: string }[]; onOpen: () => void }) {
+    const assigned = entry.agentIds.map(id => coworkers.find(coworker => coworker.id === id)).filter((coworker): coworker is { id: string; name: string } => !!coworker)
+    const health = 'kind' in entry && entry.kind === 'mcp' && entry.catalog ? vaultAccountHealthText(entry.catalog.health, entry.signedOut) : undefined
+    return <button type="button" onClick={onOpen} className={cn('flex min-w-0 items-start gap-3 p-3 text-left', PANEL_CARD, PANEL_CARD_INTERACTIVE)}>
+        <DesktopAppLogo logo={icon} className="size-8" />
+        <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium">{entryTitle(entry)}</span>
+            <span className="block truncate text-xs text-muted-foreground">{entrySubtitle(entry)}</span>
+            {health && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{health}</span>}
+        </span>
+        <span className="flex shrink-0 items-center" aria-label={entry.sharedWithAll ? 'Every coworker' : assigned.length ? `Used by ${assigned.map(coworker => coworker.name).join(', ')}` : 'Unassigned'}>
+            {entry.sharedWithAll ? <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium">All</span>
+                : assigned.length ? <>
+                    {assigned.slice(0, 3).map(coworker => <span key={coworker.id} title={coworker.name} aria-hidden
+                        className="-ml-1 flex size-6 items-center justify-center rounded-full border bg-background text-[10px] font-medium first:ml-0">{initials(coworker.name)}</span>)}
+                    {assigned.length > 3 && <span aria-hidden className="ml-1 text-[11px] text-muted-foreground">+{assigned.length - 3}</span>}
+                </>
+                : <span className="text-[11px] text-muted-foreground">Unassigned</span>}
+        </span>
+    </button>
 }
 
 function entryTitle(entry: DesktopVaultEntry) {
