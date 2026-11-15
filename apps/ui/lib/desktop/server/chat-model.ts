@@ -7,7 +7,7 @@ import { DesktopHttpError } from './auth'
 import { disabledCoworkerMessage } from './coworker-enabled'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
-import { desktopModel, engineOf, readDesktopProviders } from './settings'
+import { desktopModel, engineOf, readDesktopProviders, readDesktopWorkspacePreset } from './settings'
 import { findDesktopAgent, findDesktopSession, setDesktopSessionModel, type DesktopAgent, type DesktopSession } from './store'
 
 export async function assertDesktopImageModel(runtime: DesktopRuntime, connectionId: string | undefined) {
@@ -74,7 +74,10 @@ export async function readDesktopModelState(runtime: DesktopRuntime, agentId: st
         engineCoworker(runtime, agent),
     ])
     const preset = options.presets ? await coworkerPreset(await openDesktopDatabase(runtime.dataRoot), agent.id) : null
-    return buildDesktopModelView({ connections, workspace, coworker, conversation: savedChoice(session), efforts, presets: options.presets, coworkerPreset: preset })
+    // When the workspace default is a preset, the picker's Workspace default row shows what it runs on now.
+    const defaultTier = await readDesktopWorkspacePreset(runtime).catch(() => null)
+    const defaultNow = defaultTier ? concreteDesktopPick(desktopConnections(connections), { connectionId: DESKTOP_PRESET_CONNECTION_ID, model: defaultTier }) : null
+    return buildDesktopModelView({ connections, workspace: defaultNow ?? workspace, coworker, conversation: savedChoice(session), efforts, presets: options.presets, coworkerPreset: preset })
 }
 
 export async function setDesktopCoworkerModel(runtime: DesktopRuntime, agentId: string, pick: DesktopModelPick | null, sessionId?: string): Promise<DesktopModelView> {

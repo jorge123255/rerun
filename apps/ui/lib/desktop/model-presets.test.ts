@@ -58,3 +58,13 @@ describe('Rerun presets in the Mac app', () => {
         expect(buildDesktopModelView({ ...base, conversation: { connectionId: DESKTOP_PRESET_CONNECTION_ID, model: 'fast' } }).effective.available).toBe(false)
     })
 })
+
+describe('a preset as the workspace default', () => {
+    it('shows the plan it runs on now in the picker’s workspace row, and the saved model when no plan can', () => {
+        const saved = { connectionId: 'mac-chatgpt', model: 'gpt-6-sol' }
+        const now = buildDesktopModelView({ connections: [chatgpt, claude], workspace: { connectionId: 'mac-claude', model: 'claude-haiku-5-5' }, coworker: null, conversation: null, presets: true })
+        expect(now.workspace).toMatchObject({ connectionId: 'mac-claude', model: 'claude-haiku-5-5' })
+        expect(now.effective).toMatchObject({ source: 'workspace', connectionId: 'mac-claude', model: 'claude-haiku-5-5', available: true })
+        expect(buildDesktopModelView({ connections: [chatgpt, claude], workspace: saved, coworker: null, conversation: null }).effective.model).toBe('gpt-6-sol')
+    })
+})
