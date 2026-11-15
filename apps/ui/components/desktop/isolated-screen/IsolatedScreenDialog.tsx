@@ -1,5 +1,6 @@
 'use client'
 
+import { DesktopScreenSetupCard } from './DesktopScreenSetupCard'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { DesktopNotch } from '@/components/desktop/DesktopNotch'
@@ -104,7 +105,10 @@ function IsolatedScreenSession({ agentId, takeover, onHandBack, onClose, screenA
             </div>}
             {screen.status === 'error' && <EmptyState icon={MonitorIcon} title="The screen is not available" description={screen.error}
                 action={<Button size="sm" variant="outline" disabled={busy} onClick={() => void (screen.handoff ? done() : connect(mode))}>{screen.handoff ? 'Done' : 'Try again'}</Button>} />}
-            {screen.status === 'unavailable' && <EmptyState icon={MonitorIcon} title="The screen is not available" description={screen.reason} />}
+            {screen.status === 'unavailable' && <div className="flex flex-col gap-3">
+                <DesktopScreenSetupCard onReady={() => void connect(mode)} />
+                <EmptyState icon={MonitorIcon} title="The screen is not available" description={screen.reason} />
+            </div>}
             {screen.status === 'disconnected' && <EmptyState icon={MonitorIcon} title="The screen went away" description="The connection to the isolated screen closed. Reconnect to check its current state."
                 action={<Button size="sm" variant="outline" disabled={busy} onClick={() => void connect(mode)}>Reconnect</Button>} />}
             <DesktopNotch launchers={false} browsing={driving} disabled={!driving || busy}
