@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DESKTOP_PRESET_CONNECTION_ID, desktopPlanExhausted, desktopPresetUnavailable, resolveDesktopPreset, type ConnectionSummary } from '@rerun/contracts'
+import { DESKTOP_PRESET_CONNECTION_ID, desktopPlanExhausted, desktopPresetFallbackNote, desktopPresetUnavailable, resolveDesktopPreset, type ConnectionSummary } from '@rerun/contracts'
 import { buildDesktopModelView } from './chat-model'
 
 const now = new Date('2026-11-15T12:00:00.000Z')
@@ -66,5 +66,19 @@ describe('a preset as the workspace default', () => {
         expect(now.workspace).toMatchObject({ connectionId: 'mac-claude', model: 'claude-haiku-5-5' })
         expect(now.effective).toMatchObject({ source: 'workspace', connectionId: 'mac-claude', model: 'claude-haiku-5-5', available: true })
         expect(buildDesktopModelView({ connections: [chatgpt, claude], workspace: saved, coworker: null, conversation: null }).effective.model).toBe('gpt-6-sol')
+    })
+})
+
+describe('saying so when a preset is not on its first choice', () => {
+    it('names what is answering and why the first choice is not', () => {
+        const spent = resolveDesktopPreset('balanced', [chatgpt, { ...claude, planLimits: full(later) }], now)
+        expect(desktopPresetFallbackNote(spent, 'GPT-6.1 Terra')).toBe('Rerun Balanced is answering on mac-chatgpt · GPT-6.1 Terra: mac-claude is out of usage.')
+        const signedOut = resolveDesktopPreset('smart', [{ ...chatgpt, connected: false }, claude], now)
+        expect(desktopPresetFallbackNote(signedOut, 'Opus 5.5')).toContain('mac-chatgpt is not connected')
+    })
+
+    it('says nothing when the preset is on its first choice, or cannot run at all', () => {
+        expect(desktopPresetFallbackNote(resolveDesktopPreset('fast', [chatgpt, claude], now), 'GPT-6 Luna')).toBeNull()
+        expect(desktopPresetFallbackNote(null, '')).toBeNull()
     })
 })

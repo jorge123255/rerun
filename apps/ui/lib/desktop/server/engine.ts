@@ -1,3 +1,4 @@
+import { DESKTOP_PRESET_NOTE_HEADER } from '@rerun/contracts'
 import type { DesktopDocumentSendSelection } from '@rerun/contracts'
 import { admitDesktopChatDocuments } from './document-attachments/chat'
 import { consumeDesktopDocumentAdmission } from './document-attachments/binding'
@@ -221,7 +222,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     }
     // Existing chats resolve their own saved model. Only a first send carries an unsaved choice.
     const firstChoice = !regenerate && !existing ? input.modelChoice : undefined
-    const { connectionId, model } = replay ? {} : await resolveDesktopChatModel(runtime, agent, existing, firstChoice)
+    const { connectionId, model, presetNote } = replay ? {} as { connectionId?: string; model?: string; presetNote?: string } : await resolveDesktopChatModel(runtime, agent, existing, firstChoice)
     const images = attachmentPaths.filter((item): item is Exclude<typeof item, string> => typeof item !== 'string')
     const files = !replay && !regenerate ? await readDesktopAttachments(runtime, agent.id,
         attachmentPaths.filter((item): item is string => typeof item === 'string')) : []
@@ -315,6 +316,8 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     })
     const runId = engineResponse.headers.get('x-run-id')
     if (runId) headers.set('x-run-id', runId)
+    // A preset that is not on its first choice says so once, beside the reply it applies to.
+    if (presetNote) headers.set(DESKTOP_PRESET_NOTE_HEADER, encodeURIComponent(presetNote))
     // Transfer ownership through a reader. Rewrapping the raw fetch body leaves it unlocked;
     // Undici can cancel that body when its original Response is collected before we send it.
     const body = completedReplay ? 'data: [DONE]\n\n' : engineResponse.body!.pipeThrough(new TransformStream())
