@@ -95,10 +95,10 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
                                 <div className="flex flex-wrap gap-2">
                                     {account.status === 'pending' && <Button type="button" variant="outline" size="sm" disabled={locked} onClick={() => { void act({ action: 'refresh', id: account.id }) }}>Check sign-in</Button>}
                                     {account.status === 'pending' && view.connector && <Button type="button" variant="outline" size="sm" disabled={locked} onClick={() => { void act({ action: 'refresh', id: account.id, retry: true }) }}>Open sign-in again</Button>}
-                                    <Button type="button" variant="ghost" size="sm" disabled={locked} aria-label={`Remove ${account.name}`} onClick={() => { void act({ action: 'remove', id: account.id }) }}>{view.connector ? 'Remove from list' : 'Remove'}</Button>
+                                    <Button type="button" variant="ghost" size="sm" disabled={locked} aria-label={`Remove ${account.name}`} onClick={() => { void act({ action: 'remove', id: account.id }) }}>Remove</Button>
                                 </div>
                             </div>
-                            {account.status === 'active' && view.connector && <p className="text-xs text-muted-foreground">Coworkers given “{view.connector}” can use it. Removing it here leaves the sign-in with Composio.</p>}
+                            {account.status === 'active' && view.connector && <p className="text-xs text-muted-foreground">Coworkers given “{view.connector}” can use it. Removing it signs it out at Composio too.</p>}
                             {account.status === 'active' && !view.connector && (coworkers.length === 0
                                 ? <p className="text-xs text-muted-foreground">No coworkers in this workspace yet.</p>
                                 : <fieldset className="flex flex-wrap gap-x-4 gap-y-1" disabled={locked}>
@@ -130,6 +130,9 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
                         </ul>
                         {matches.length > SHOWN && <p className="text-xs text-muted-foreground">Showing {SHOWN} of {matches.length}. Search to find the others.</p>}
                     </div>
+                    {view.connector && <button type="button" className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={locked} onClick={() => { void act({ action: 'find' }) }}>
+                        {busy ? 'Working…' : 'Find apps already signed in at Composio'}
+                    </button>}
                     {!view.connector && <button type="button" className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={locked} onClick={() => setRemoveKey(true)}>
                         Remove the Composio key
                     </button>}

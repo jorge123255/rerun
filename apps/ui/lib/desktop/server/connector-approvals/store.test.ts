@@ -160,3 +160,10 @@ it('a tool that runs other tools and is marked destructive is held under the too
     // Nothing readable in the call: the mark still holds it.
     expect(desktopConnectorCall(run, true, { payload: 'opaque' })).toEqual({ kind: 'delete', tool: run })
 })
+
+it('remote sandbox code is held under the asking tools it names, and runs freely when it names none', () => {
+    const bench = 'composio_COMPOSIO_REMOTE_WORKBENCH'
+    expect(desktopConnectorCall(bench, false, { code_to_execute: 'res, err = run_composio_tool("GMAIL_SEND_EMAIL", p)' })).toEqual({ kind: 'send', tool: 'GMAIL_SEND_EMAIL' })
+    expect(desktopConnectorCall(bench, true, { code_to_execute: 'rows = run_composio_tool("GMAIL_FETCH_EMAILS", {})\nprint(len(rows))' })).toBeNull()
+    expect(desktopConnectorCall('composio_COMPOSIO_REMOTE_BASH_TOOL', true, { command: 'wc -l /tmp/out.json' })).toBeNull()
+})

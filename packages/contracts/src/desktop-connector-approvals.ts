@@ -86,6 +86,14 @@ function innerTools(value: unknown, depth = 0, found: string[] = []): string[] {
     return found
 }
 
+const RUNS_CODE = /(?:^|_)REMOTE_(?:WORKBENCH|BASH_TOOL)$/i
+function strings(value: unknown, depth = 0, found: string[] = []): string[] {
+    if (depth > 4 || found.length >= 40) return found
+    if (typeof value === 'string') found.push(value.slice(0, 200_000))
+    else if (value && typeof value === 'object') for (const child of Object.values(value)) strings(child, depth + 1, found)
+    return found
+}
+
 function namedActions(value: unknown, depth = 0, found: string[] = []): string[] {
     if (depth > 4 || found.length >= 60 || !value || typeof value !== 'object') return found
     for (const [key, child] of Array.isArray(value) ? value.map((item, index) => [String(index), item] as const) : Object.entries(value)) {
@@ -111,6 +119,13 @@ export function desktopConnectorCall(toolName: string, destructive: boolean, arg
     // A tool that runs other tools is marked destructive because some of them are. The tools a call names decide:
     // the mark alone holds it only when none can be read out of the call.
     const hinted = !!own && !desktopConnectorActionKind(toolName)
+    // A remote sandbox runs code the coworker wrote, and that code can run other tools by name. It is held
+    // under the asking tools its code names; code that names none runs like any other read.
+    if (RUNS_CODE.test(toolName) && (!own || hinted)) {
+        const named = [...new Set(strings(args).flatMap(text => text.match(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g) ?? []))].slice(0, 60)
+        const asking = named.flatMap(tool => { const kind = desktopConnectorActionKind(tool); return kind ? [{ tool, kind }] : [] })
+        return asking.length ? { kind: asking[0]!.kind, tool: asking.map(item => item.tool).sort().join('+').slice(0, 200) } : null
+    }
     if (own && !(hinted && RUNS_OTHER_TOOLS.test(toolName))) return { kind: own, tool: toolName }
     if (!RUNS_OTHER_TOOLS.test(toolName)) return null
     const inner = innerTools(args)

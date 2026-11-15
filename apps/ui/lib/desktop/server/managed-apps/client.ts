@@ -151,7 +151,7 @@ export function managedAppsClient(key: string, network: ManagedAppsFetch = fetch
     }
 }
 
-export type ManagedConnection = { state: 'active' | 'pending'; signIn?: string }
+export type ManagedConnection = { state: 'active' | 'pending'; signIn?: string; accountIds: string[] }
 
 function signInPage(value: unknown, depth = 0): string | undefined {
     if (depth > 5 || !value || typeof value !== 'object') return undefined
@@ -170,11 +170,19 @@ export function managedConnectionOf(data: unknown, toolkit: string): ManagedConn
     const row = (results && typeof results === 'object' ? (results as Record<string, unknown>)[toolkit] ?? Object.values(results).find(entry => (entry as { toolkit?: unknown } | null)?.toolkit === toolkit) : null) as
         { status?: unknown; has_active_connection?: unknown; accounts?: unknown } | null
     if (!row || typeof row !== 'object') throw new ManagedAppsError(502, 'Composio did not answer for this app.')
+    if (row.status === 'failed') throw new ManagedAppsError(502, 'Composio could not do this for the app. Try again.')
     const live = (value: unknown) => typeof value === 'string' && /^(active|connected)$/i.test(value)
-    const accounts = Array.isArray(row.accounts) ? row.accounts as { status?: unknown }[] : []
-    if (live(row.status) || row.has_active_connection === true || accounts.some(account => live(account?.status))) return { state: 'active' }
+    const accounts = Array.isArray(row.accounts) ? row.accounts as { id?: unknown; status?: unknown }[] : []
+    const accountIds = accounts.flatMap(account => typeof account?.id === 'string' && /^[\w.:-]{1,200}$/.test(account.id) ? [account.id] : [])
+    if (live(row.status) || row.has_active_connection === true || accounts.some(account => live(account?.status))) return { state: 'active', accountIds }
     const signIn = signInPage(row)
-    return { state: 'pending', ...(signIn ? { signIn } : {}) }
+    return { state: 'pending', accountIds, ...(signIn ? { signIn } : {}) }
+}
+
+// A removal is answered per app like everything else; only a stated failure stops it.
+function managedConnectionOfRemoval(data: unknown, toolkit: string) {
+    const row = (data as { results?: Record<string, { status?: unknown } | undefined> } | null)?.results?.[toolkit]
+    if (!row || row.status === 'failed') throw new ManagedAppsError(502, 'Composio could not sign this app out. Remove it in your Composio account, then remove it here.')
 }
 
 /**
@@ -208,12 +216,19 @@ export function managedAppsConnectClient(key: string, network: ManagedAppsFetch 
         }
         throw new ManagedAppsError(502, 'Composio sent an answer that could not be read.')
     }
-    async function call(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    // One handshake serves every call this client makes.
+    let opening: Promise<string | null> | null = null, next = 2
+    async function open(signal?: AbortSignal) {
         const opened = await post({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'rerun-desktop', version: '1.0.0' } } }, null, signal)
         const session = opened.headers.get('mcp-session-id')
         await reply(opened, 1)
         await (await post({ jsonrpc: '2.0', method: 'notifications/initialized' }, session, signal)).body?.cancel()
-        const answer = await reply(await post({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: tool, arguments: args } }, session, signal), 2)
+        return session
+    }
+    async function call(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+        const session = await (opening ??= open(signal).catch(error => { opening = null; throw error }))
+        const id = next++
+        const answer = await reply(await post({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: tool, arguments: args } }, session, signal), id)
         const result = answer.result as { isError?: unknown; content?: { type?: unknown; text?: unknown }[] } | undefined
         const text = result?.content?.find(part => part?.type === 'text' && typeof part.text === 'string')?.text
         if (answer.error || !result || result.isError === true || typeof text !== 'string') throw new ManagedAppsError(502, 'Composio could not do this now. Try again.')
@@ -227,6 +242,22 @@ export function managedAppsConnectClient(key: string, network: ManagedAppsFetch 
         async connect(toolkit: string, signal?: AbortSignal) { return managedConnectionOf(await call('COMPOSIO_MANAGE_CONNECTIONS', { toolkits: [{ name: toolkit, action: 'add' }] }, signal), toolkit) },
         /** Whether one app is signed in. Nothing is started. */
         async status(toolkit: string, signal?: AbortSignal) { return managedConnectionOf(await call('COMPOSIO_MANAGE_CONNECTIONS', { toolkits: [{ name: toolkit, action: 'list' }] }, signal), toolkit) },
+        /** Which of these apps are signed in, asked a batch at a time. An app Composio does not answer for is left out. */
+        async signedIn(toolkits: readonly string[], signal?: AbortSignal): Promise<string[]> {
+            const found: string[] = []
+            for (let start = 0; start < toolkits.length; start += 50) {
+                const batch = toolkits.slice(start, start + 50)
+                const data = await call('COMPOSIO_MANAGE_CONNECTIONS', { toolkits: batch.map(name => ({ name, action: 'list' })) }, signal)
+                for (const toolkit of batch) { try { if (managedConnectionOf(data, toolkit).state === 'active') found.push(toolkit) } catch { /* not answered */ } }
+            }
+            return found
+        },
+        /** Signs one app out at Composio: every account it holds for the app is removed, and Composio is asked again to be sure. */
+        async remove(toolkit: string, signal?: AbortSignal) {
+            const held = await this.status(toolkit, signal)
+            for (const account of held.accountIds) managedConnectionOfRemoval(await call('COMPOSIO_MANAGE_CONNECTIONS', { toolkits: [{ name: toolkit, action: 'remove', account_id: account }] }, signal), toolkit)
+            if (held.accountIds.length && (await this.status(toolkit, signal)).state === 'active') throw new ManagedAppsError(502, 'Composio still shows this app signed in. Remove it in your Composio account, then remove it here.')
+        },
     }
 }
 export type ManagedAppsConnect = ReturnType<typeof managedAppsConnectClient>

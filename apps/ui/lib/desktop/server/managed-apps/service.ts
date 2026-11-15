@@ -31,6 +31,8 @@ for (const service of (bundledCatalog as { services: BundledService[] }).service
 }
 /** Bundled artwork first: it is on the Mac already and matches the rest of the catalog. */
 export const managedAppLogo = (slug: string, remote?: string | null) => bundledLogos.get(slug.toLowerCase().replace(/[-_]/g, '')) ?? remote ?? undefined
+/** How many of the most used apps are asked about when looking for ones already signed in. */
+export const MANAGED_APP_FIND_LIMIT = 300
 /** The name the Vault keeps a Composio Connect key under. */
 export const COMPOSIO_CONNECT_NAME = 'composio'
 // Every app Composio lists publicly, by its name there, most used first. With a Connect key the
@@ -133,6 +135,21 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
             toolCache.clear()
             return { view: await view() }
         }
+        if (action.action === 'find') {
+            if (!connect) throw new ManagedAppsError(409, 'This needs a Composio Connect key in the Vault.')
+            // Composio is asked about the most used apps; one further down the list is found by pressing Connect on it.
+            const known = new Map((await accounts()).map(row => [row.slug, row]))
+            const apps = (await offered()).slice(0, MANAGED_APP_FIND_LIMIT)
+            const live = new Set(await connect.signedIn(apps.map(app => app.slug), signal))
+            const created = new Date().toISOString()
+            for (const app of apps) {
+                if (!live.has(app.slug)) continue
+                const row = known.get(app.slug)
+                if (row) await db.execute({ sql: "UPDATE desktop_managed_app_accounts SET status='active' WHERE id=?", args: [row.id] })
+                else await db.execute({ sql: 'INSERT INTO desktop_managed_app_accounts(id,slug,toolkit,name,user_id,connected_account_id,status,created_at) VALUES(?,?,?,?,?,?,?,?)', args: [randomUUID(), app.slug, app.slug, app.name, '', '', 'active', created] })
+            }
+            return { view: await view() }
+        }
         if (action.action === 'connect') {
             const app = (await offered()).find(row => row.slug === action.slug)
             if (!app) throw new ManagedAppsError(400, 'This app is not in the catalog.')
@@ -174,6 +191,8 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         }
         if (action.action === 'remove') {
             const row = await account(action.id)
+            // With Connect the app is signed out at Composio first; if that fails the row stays, so nothing is left signed in unseen.
+            if (connect) await connect.remove(row.toolkit, signal)
             if (row.connectedAccountId && !connect) await (await client()).remove(row.connectedAccountId, signal).catch(error => { if (!(error instanceof ManagedAppsError) || error.status !== 502) throw error })
             await db.batch([{ sql: 'DELETE FROM desktop_managed_app_attachments WHERE account_id=?', args: [row.id] }, { sql: 'DELETE FROM desktop_managed_app_accounts WHERE id=?', args: [row.id] }], 'write')
             return { view: await view() }
