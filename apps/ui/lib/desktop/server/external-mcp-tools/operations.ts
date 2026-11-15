@@ -28,7 +28,7 @@ import { MAX_MEMORIES_PER_CALL, MAX_MEMORY_CHARS } from '@/lib/mcp/account-tools
 import { createCoworkerSkill, deleteCoworkerSkill, getCoworkerSkill, listCoworkerSkills, readCoworkerSkillFile, updateCoworkerSkill, writeCoworkerSkillFile } from '../coworker-skills'
 import { deleteDesktopCoworker } from '../coworker-delete'
 import { renameDesktopCoworker } from '../coworker-rename'
-import { startDesktopChat } from '../engine'
+import { startDesktopChat, startDesktopPhoneConversation } from '../engine'
 import { acknowledgeDesktopCreation, createDescribedDesktopCoworker } from '../new-agent'
 import { authorizeDesktopSchedules } from '../schedules-binding'
 import { listDesktopServiceCatalog } from '../services/catalog/index'
@@ -84,6 +84,16 @@ async function waitRun(engine: ReturnType<typeof engineOf>, engineAgentId: strin
         })
     }
     return getRun(engine, engineAgentId, runId, { signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]) })
+}
+
+/**
+ * The engine accepts a request id only on a conversation that exists. A first message goes through
+ * the same door the paired phone uses: the new conversation's id and its run id are fixed by the
+ * request id, so the same call sent again finds the conversation it opened instead of opening another.
+ */
+export function externalMcpFirstTurn(requestId: string): { sessionId: string; runId: string } {
+    const hex = createHash('sha256').update(JSON.stringify(['external-mcp-first-turn', requestId])).digest('hex')
+    return { runId: requestId, sessionId: `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}` }
 }
 
 function publicAgent(row: { id: string; name: string; description: string; spaceId?: string; enabled: boolean }) {
@@ -585,17 +595,17 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
         const agent = await externalMcpOwnedAgent(db, context, deps.recheck, signal, agentId)
         const sessionId = asString(args.sessionId)
         const waitSeconds = typeof args.waitSeconds === 'number' ? args.waitSeconds : 120
-        const started = await externalMcpGuarded(context, deps.recheck, signal, () => startDesktopChat(runtime, {
-            agentId: agent.id,
-            text: message,
-            ...(sessionId ? { sessionId } : {}),
-            requestId: context.requestId,
-        }))
+        const started = await externalMcpGuarded(context, deps.recheck, signal, () => sessionId
+            ? startDesktopChat(runtime, { agentId: agent.id, text: message, sessionId, requestId: context.requestId })
+            : startDesktopPhoneConversation(runtime, { agentId: agent.id, text: message }, externalMcpFirstTurn(context.requestId)))
         const runId = started.response.headers.get('x-run-id')
         await drain(started.response, signal)
         if (!runId) return { status: 'uncertain', sessionId: started.sessionId, message: 'Chat was accepted but no run id was returned.' }
         const run = await waitRun(engine, agent.engineAgentId, runId, waitSeconds, context, deps, signal)
-        return { status: run.status, runId: run.id, sessionId: started.sessionId, run: desktopRunView(run) }
+        const view = desktopRunView(run)
+        // Still going when the wait ran out: say so, so the caller reads the result with get_run instead of sending again.
+        const waiting = !['done', 'error', 'cancelled'].includes(run.status)
+        return { status: run.status, runId: run.id, sessionId: started.sessionId, run: view, output: waiting ? null : run.output ?? null, ...(waiting && { note: `Still working after ${Math.round(Math.min(Math.max(waitSeconds, 1), 600))} seconds. Read the result with get_run; do not send the message again.` }) }
     }
 
     if (tool === 'list_runs') {
