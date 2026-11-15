@@ -91,8 +91,18 @@ export function createSqliteDesktopCompanyProfileStore(db: Client, options?: { s
     // Each write here is one statement, so it is atomic without a transaction. A transaction takes
     // the client's connection and leaves other work on a new one that has no busy timeout; in the
     // running app a second writer then failed at once with SQLITE_BUSY and the website read was lost.
+    // Other stores on this database open transactions, which also moves this store's next statement
+    // to a connection without a busy timeout. A locked database is waited out here instead.
     async function write<T>(work: (tx: Executor) => Promise<T>): Promise<T> {
-        return serialized(() => work(db))
+        return serialized(async () => {
+            for (let attempt = 0; ; attempt += 1) {
+                try { return await work(db) }
+                catch (error) {
+                    if (attempt >= 40 || !/SQLITE_BUSY|database is locked/i.test(error instanceof Error ? error.message : String(error))) throw error
+                    await new Promise(resolve => setTimeout(resolve, 50))
+                }
+            }
+        })
     }
     return {
         async get(requestId) { await ensure(); return getWith(db, requestId) },

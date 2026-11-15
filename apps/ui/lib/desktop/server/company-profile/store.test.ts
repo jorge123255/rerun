@@ -36,3 +36,23 @@ describe('SQLite company profile derived attempt store', () => {
         } finally { second.close(); await rm(root, { recursive: true, force: true }) }
     })
 })
+
+describe('company profile store under a locked database', () => {
+    it('waits out a lock held by another connection instead of losing the write', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'rerun-company-profile-'))
+        const file = join(root, 'desktop.db')
+        const first = createClient({ url: `file:${file}` }), other = createClient({ url: `file:${file}` })
+        try {
+            await ensureDesktopCompanyProfileSchema(first)
+            const store = createSqliteDesktopCompanyProfileStore(first, { schemaReady: true })
+            const row = { ...attempt, requestId: randomUUID() }
+            await store.insert(row)
+            const holder = await other.transaction('write')
+            const pending = store.updateProgress({ ...row, progress: { ...row.progress, stage: 'reading_site' as const } })
+            await new Promise(resolve => setTimeout(resolve, 150))
+            await holder.commit(); holder.close()
+            expect(await pending).toBe(true)
+            expect((await store.get(row.requestId))?.attempt.progress.stage).toBe('reading_site')
+        } finally { first.close(); other.close(); await rm(root, { recursive: true, force: true }) }
+    })
+})
