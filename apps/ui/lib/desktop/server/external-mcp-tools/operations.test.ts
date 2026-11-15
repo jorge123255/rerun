@@ -295,3 +295,13 @@ it('update_agent authority deny does not require engine identity lookup when pay
     }
     expect(() => assertExternalMcpAgentMetadataOnlyUpdate(readOnlyArgs)).toThrow(/no changes were applied/)
 })
+
+it('a first message gets a conversation and run fixed by its request id, so a repeat cannot open a second one', async () => {
+    const { externalMcpFirstTurn } = await import('./operations')
+    const id = '55555555-5555-4555-8555-555555555555'
+    const first = externalMcpFirstTurn(id)
+    expect(first.runId).toBe(id)
+    expect(first.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(externalMcpFirstTurn(id)).toEqual(first)
+    expect(externalMcpFirstTurn('66666666-6666-4666-8666-666666666666').sessionId).not.toBe(first.sessionId)
+})
