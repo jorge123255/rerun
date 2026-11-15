@@ -1,3 +1,4 @@
+import { generateText, NoObjectGeneratedError } from 'ai'
 import { z } from 'zod'
 import { connectorSkillReadOnlyError } from '@rerun/contracts'
 import { modelFor } from '../agents/providers.js'
@@ -51,17 +52,27 @@ async function draft(agent: LoadedAgent, row: SkillProposalRow, abortSignal: Abo
     if (row.mode === 'edit' && !editing) throw new Error('That skill no longer exists.')
     const others = editing ? [] : desktop ? await listPublishedSkills(skillsDir(agent.id), { signal: abortSignal }) : await listSkillSummaries(agent.id).catch(() => [])
 
-    const output = await generateStructured({
-        model: modelFor(agent),
-        schema: draftSchema,
-        prompt: applyProposalPrompt({ title: row.title, instructions, current: editing, others }),
-        abortSignal,
-    })
+    const model = modelFor(agent)
+    const prompt = applyProposalPrompt({ title: row.title, instructions, current: editing, others })
 
     // An edit keeps the folder it was read from: writeSkill would re-slugify from the name and
     // fork a second skill the moment the two ever drifted apart.
-    const slug = editing ? editing.slug : slugify(output.name || row.title)
-    return { ...output, name: editing ? editing.name : output.name, slug, ...(desktop && editing && 'identity' in editing ? { baseIdentity: editing.identity as string | undefined } : {}) }
+    const named = (output: { name: string; description: string; body: string }) => {
+        const slug = editing ? editing.slug : slugify(output.name || row.title)
+        return { ...output, name: editing ? editing.name : output.name, slug, ...(desktop && editing && 'identity' in editing ? { baseIdentity: editing.identity as string | undefined } : {}) }
+    }
+
+    try {
+        return named(await generateStructured({ model, schema: draftSchema, prompt, abortSignal }))
+    } catch (err) {
+        // A provider without native structured output (many OpenAI-compatible local endpoints) cannot
+        // wrap a long Markdown body in JSON, so the body is asked as plain text and the name and
+        // description come from what is known. Upstream #242, not merged there yet.
+        if (!NoObjectGeneratedError.isInstance(err)) throw err
+        const body = (await generateText({ model, prompt, abortSignal })).text.trim()
+        if (!body) throw err
+        return named({ name: row.title, description: editing?.description ?? row.summary, body })
+    }
 }
 
 // The accept click comes with no model of its own, so the job writes on the pair the proposing
