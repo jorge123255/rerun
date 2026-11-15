@@ -81,9 +81,19 @@ export async function POST(request: Request) {
                     return Response.json({ error: 'These company details are still being saved.', pending: true }, { status: 409 })
                 }
                 if (input.action === 'decide-industry') return Response.json({ industry: await service.decideIndustry(input.hint) })
-                const read = await profile.analyzeSite(chat)
-                const outcome = read.attempt?.outcome?.status
-                return Response.json({ state: outcome === 'succeeded' ? 'ready' : outcome === 'unavailable' ? 'unavailable' : 'failed' })
+                // The website read is a convenience: when it cannot finish, the intake carries on and
+                // says why, instead of failing the request.
+                try {
+                    const read = await profile.analyzeSite(chat)
+                    const outcome = read.attempt?.outcome
+                    return Response.json({
+                        state: outcome?.status === 'succeeded' ? 'ready' : outcome?.status === 'unavailable' ? 'unavailable' : 'failed',
+                        ...(outcome && outcome.status !== 'succeeded' && 'message' in outcome && { reason: outcome.message.slice(0, 200) }),
+                    })
+                } catch (error) {
+                    if (error instanceof DesktopHttpError) throw error
+                    return Response.json({ state: 'failed', reason: (error instanceof Error && error.message ? `${error.name}: ${error.message}` : 'The website could not be read.').slice(0, 200) })
+                }
             }
             assertDesktopWorkspaceAdmission(runtime)
             return Response.json(await service.complete(input.input))

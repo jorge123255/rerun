@@ -15,7 +15,7 @@ export type DesktopCompanyProfileEngineClient = {
 
 export function createDesktopCompanyProfileEngineClient(runtime: DesktopRuntime): DesktopCompanyProfileEngineClient {
     return {
-        decide: (input, signal) => request(runtime, '/decide', input, signal, 10_000),
+        decide: (input, signal) => request(runtime, '/decide', input, signal, 25_000),
         enrich: (input, signal) => request(runtime, '/enrich', input, signal, 40_000),
     }
 }

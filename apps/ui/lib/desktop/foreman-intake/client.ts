@@ -48,7 +48,7 @@ export function createDesktopForemanIntakeClient(chat?: DesktopForemanChatRef): 
         },
         ...(chat && {
             decideIndustry: async (input: string, signal?: AbortSignal) => {
-                const industry = (await hinted(chat, 'decide-industry', input, 20_000, signal) as { industry?: unknown } | null)?.industry
+                const industry = (await hinted(chat, 'decide-industry', input, 40_000, signal) as { industry?: unknown } | null)?.industry
                 return typeof industry === 'string' && isTemplateCategory(industry) ? industry : null
             },
             analyzeSite: async (url: string, signal?: AbortSignal) => {
