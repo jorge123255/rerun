@@ -150,3 +150,83 @@ export function managedAppsClient(key: string, network: ManagedAppsFetch = fetch
         },
     }
 }
+
+export type ManagedConnection = { state: 'active' | 'pending'; signIn?: string }
+
+function signInPage(value: unknown, depth = 0): string | undefined {
+    if (depth > 5 || !value || typeof value !== 'object') return undefined
+    for (const [name, child] of Object.entries(value)) {
+        if (typeof child === 'string') {
+            if (!/url|link/i.test(name) || child.length > 2000) continue
+            try { const url = new URL(child); if (url.protocol === 'https:' && !url.username && !url.password && (url.hostname === 'composio.dev' || url.hostname.endsWith('.composio.dev'))) return url.href } catch { /* not a page */ }
+        } else { const found = signInPage(child, depth + 1); if (found) return found }
+    }
+    return undefined
+}
+
+/** What Composio said about one app's connection: signed in, or waiting on the sign-in page it gave. */
+export function managedConnectionOf(data: unknown, toolkit: string): ManagedConnection {
+    const results = (data as { results?: Record<string, unknown> } | null)?.results
+    const row = (results && typeof results === 'object' ? (results as Record<string, unknown>)[toolkit] ?? Object.values(results).find(entry => (entry as { toolkit?: unknown } | null)?.toolkit === toolkit) : null) as
+        { status?: unknown; has_active_connection?: unknown; accounts?: unknown } | null
+    if (!row || typeof row !== 'object') throw new ManagedAppsError(502, 'Composio did not answer for this app.')
+    const live = (value: unknown) => typeof value === 'string' && /^(active|connected)$/i.test(value)
+    const accounts = Array.isArray(row.accounts) ? row.accounts as { status?: unknown }[] : []
+    if (live(row.status) || row.has_active_connection === true || accounts.some(account => live(account?.status))) return { state: 'active' }
+    const signIn = signInPage(row)
+    return { state: 'pending', ...(signIn ? { signIn } : {}) }
+}
+
+/**
+ * Composio Connect spoken to directly: the app asks it to start or look up one app's connection,
+ * the same call a coworker would make. The consumer key travels in its one header to its one host.
+ */
+export function managedAppsConnectClient(key: string, network: ManagedAppsFetch = fetch, base = COMPOSIO_CONNECT) {
+    async function post(body: unknown, session: string | null, signal?: AbortSignal) {
+        let response: Response
+        try {
+            response = await network(base, {
+                method: 'POST', redirect: 'error', cache: 'no-store', credentials: 'omit',
+                signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(60_000)]),
+                headers: { [COMPOSIO_CONNECT_HEADER]: key, 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...(session ? { 'mcp-session-id': session } : {}) },
+                body: JSON.stringify(body),
+            })
+        } catch { throw new ManagedAppsError(503, 'Composio could not be reached. Check the connection and try again.') }
+        if (response.status === 401 || response.status === 403) { await response.body?.cancel(); throw new ManagedAppsError(401, 'Composio refused the key kept in the Vault. Open “composio” in the Vault and replace its key.') }
+        if (!response.ok) { await response.body?.cancel(); throw new ManagedAppsError(502, `Composio answered ${response.status}.`) }
+        return response
+    }
+    /** The reply to one request: plain JSON, or the matching message of an event stream. */
+    async function reply(response: Response, id: number): Promise<{ result?: unknown; error?: unknown }> {
+        const text = await response.text()
+        if (text.length > 4_000_000) throw new ManagedAppsError(502, 'Composio sent too much data.')
+        const candidates = (response.headers.get('content-type') ?? '').includes('text/event-stream')
+            ? text.split(/\r?\n\r?\n/).map(event => event.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')).filter(Boolean)
+            : [text]
+        for (const candidate of candidates) {
+            try { const message = JSON.parse(candidate) as { id?: unknown; result?: unknown; error?: unknown }; if (message.id === id) return message } catch { /* not this one */ }
+        }
+        throw new ManagedAppsError(502, 'Composio sent an answer that could not be read.')
+    }
+    async function call(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+        const opened = await post({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'rerun-desktop', version: '1.0.0' } } }, null, signal)
+        const session = opened.headers.get('mcp-session-id')
+        await reply(opened, 1)
+        await (await post({ jsonrpc: '2.0', method: 'notifications/initialized' }, session, signal)).body?.cancel()
+        const answer = await reply(await post({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: tool, arguments: args } }, session, signal), 2)
+        const result = answer.result as { isError?: unknown; content?: { type?: unknown; text?: unknown }[] } | undefined
+        const text = result?.content?.find(part => part?.type === 'text' && typeof part.text === 'string')?.text
+        if (answer.error || !result || result.isError === true || typeof text !== 'string') throw new ManagedAppsError(502, 'Composio could not do this now. Try again.')
+        let parsed: { successful?: unknown; data?: unknown }
+        try { parsed = JSON.parse(text) as { successful?: unknown; data?: unknown } } catch { throw new ManagedAppsError(502, 'Composio sent an answer that could not be read.') }
+        if (parsed.successful !== true) throw new ManagedAppsError(502, 'Composio could not do this now. Try again.')
+        return parsed.data
+    }
+    return {
+        /** Starts the sign-in to one app, or says it is signed in already. */
+        async connect(toolkit: string, signal?: AbortSignal) { return managedConnectionOf(await call('COMPOSIO_MANAGE_CONNECTIONS', { toolkits: [{ name: toolkit, action: 'add' }] }, signal), toolkit) },
+        /** Whether one app is signed in. Nothing is started. */
+        async status(toolkit: string, signal?: AbortSignal) { return managedConnectionOf(await call('COMPOSIO_MANAGE_CONNECTIONS', { toolkits: [{ name: toolkit, action: 'list' }] }, signal), toolkit) },
+    }
+}
+export type ManagedAppsConnect = ReturnType<typeof managedAppsConnectClient>

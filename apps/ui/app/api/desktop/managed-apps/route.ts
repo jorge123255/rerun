@@ -3,6 +3,7 @@ import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { openDesktopManagedApps } from '@/lib/desktop/server/managed-apps/binding'
 import { COMPOSIO_CONNECT, COMPOSIO_CONNECT_HEADER, managedAppsConnectAccepts, ManagedAppsError } from '@/lib/desktop/server/managed-apps/client'
+import { COMPOSIO_CONNECT_NAME } from '@/lib/desktop/server/managed-apps/service'
 import { openDesktopVault } from '@/lib/desktop/server/vault/binding'
 import { readDesktopJson } from '@/lib/desktop/server/request-json'
 import { assertDesktopWorkspaceAdmission } from '@/lib/desktop/server/workspace-admission'
@@ -10,7 +11,6 @@ import { assertDesktopWorkspaceAdmission } from '@/lib/desktop/server/workspace-
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 const headers = { 'cache-control': 'no-store' }
-const COMPOSIO_CONNECT_NAME = 'composio'
 
 // Managed apps in the Vault: whether a Composio key is kept, the apps on offer and the accounts signed in.
 export function GET(request: Request) {

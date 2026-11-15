@@ -60,14 +60,16 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
             <div>
                 <h3 className="font-medium">Managed apps</h3>
                 <p className="text-sm text-muted-foreground">
-                    {view.configured
+                    {view.connector
+                        ? `Every app Composio offers: ${view.apps.length} to choose from. Connect one and sign in in your browser. Coworkers given “${view.connector}” in the list above can then use it.`
+                        : view.configured
                         ? `Every app in your Composio account: ${view.apps.length} to choose from. Their sign-ins are held by Composio.`
                         : 'Gmail, Google Calendar, Outlook and every other app Composio offers. They need your own Composio key, and you pay Composio for it.'}
                 </p>
             </div>
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             {added && <p role="status" className="text-sm text-foreground">
-                Composio was added to the Vault as “{added}”. Open it in the list above and choose its coworkers. A coworker with it finds the app it needs, gives you a sign-in link in the chat the first time, and its sends and deletes still wait for your answer.
+                Composio was added to the Vault as “{added}”. Open it in the list above and choose its coworkers, then connect your apps below. A coworker’s sends and deletes still wait for your answer.
             </p>}
             {!view.configured ? (
                 <form className="space-y-2" onSubmit={(event: FormEvent) => { event.preventDefault(); void act({ action: 'set-key', key: key.trim() }).then(saved => { if (saved) setKey('') }) }}>
@@ -92,10 +94,12 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
                                 </div>
                                 <div className="flex flex-wrap gap-2">
                                     {account.status === 'pending' && <Button type="button" variant="outline" size="sm" disabled={locked} onClick={() => { void act({ action: 'refresh', id: account.id }) }}>Check sign-in</Button>}
-                                    <Button type="button" variant="ghost" size="sm" disabled={locked} aria-label={`Remove ${account.name}`} onClick={() => { void act({ action: 'remove', id: account.id }) }}>Remove</Button>
+                                    {account.status === 'pending' && view.connector && <Button type="button" variant="outline" size="sm" disabled={locked} onClick={() => { void act({ action: 'refresh', id: account.id, retry: true }) }}>Open sign-in again</Button>}
+                                    <Button type="button" variant="ghost" size="sm" disabled={locked} aria-label={`Remove ${account.name}`} onClick={() => { void act({ action: 'remove', id: account.id }) }}>{view.connector ? 'Remove from list' : 'Remove'}</Button>
                                 </div>
                             </div>
-                            {account.status === 'active' && (coworkers.length === 0
+                            {account.status === 'active' && view.connector && <p className="text-xs text-muted-foreground">Coworkers given “{view.connector}” can use it. Removing it here leaves the sign-in with Composio.</p>}
+                            {account.status === 'active' && !view.connector && (coworkers.length === 0
                                 ? <p className="text-xs text-muted-foreground">No coworkers in this workspace yet.</p>
                                 : <fieldset className="flex flex-wrap gap-x-4 gap-y-1" disabled={locked}>
                                     <legend className="mb-1 text-xs text-muted-foreground">Coworkers that may use it</legend>
@@ -126,9 +130,9 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
                         </ul>
                         {matches.length > SHOWN && <p className="text-xs text-muted-foreground">Showing {SHOWN} of {matches.length}. Search to find the others.</p>}
                     </div>
-                    <button type="button" className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={locked} onClick={() => setRemoveKey(true)}>
+                    {!view.connector && <button type="button" className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={locked} onClick={() => setRemoveKey(true)}>
                         Remove the Composio key
-                    </button>
+                    </button>}
                     <ConfirmDialog open={removeKey} onOpenChange={setRemoveKey} title="Remove the Composio key?"
                         description="Every managed app account in this Vault is removed with it, and coworkers lose those apps."
                         confirmLabel="Remove key" pending={busy} onConfirm={() => { void act({ action: 'remove-key' }).then(() => setRemoveKey(false)) }} />

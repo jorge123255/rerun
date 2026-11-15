@@ -142,3 +142,21 @@ describe('holding a connector call until the person answers', () => {
         expect(await admitConnectorCall(db, call({ sessionId: 'chat-5' }))).toMatch(/did not run/)
     })
 })
+
+it('a manage tool marked destructive asks only for the action a call names', async () => {
+    const call = (action: string) => desktopConnectorCall('composio_COMPOSIO_MANAGE_CONNECTIONS', true, { toolkits: [{ name: 'gmail', action }], session_id: 'club' })
+    expect(call('list')).toBeNull()
+    expect(call('add')).toBeNull()
+    expect(call('remove')).toEqual({ kind: 'delete', tool: 'composio_COMPOSIO_MANAGE_CONNECTIONS' })
+    // With no action named, or on a tool that is not a manage tool, the mark still decides.
+    expect(desktopConnectorCall('composio_COMPOSIO_MANAGE_CONNECTIONS', true, {})?.kind).toBe('delete')
+    expect(desktopConnectorCall('files_overwrite_all', true, { action: 'list' })?.kind).toBe('delete')
+})
+
+it('a tool that runs other tools and is marked destructive is held under the tools it runs', () => {
+    const run = 'composio_COMPOSIO_MULTI_EXECUTE_TOOL'
+    expect(desktopConnectorCall(run, true, { tools: [{ tool_slug: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'pat@example.test' } }], session_id: 'draw' })).toEqual({ kind: 'send', tool: 'GMAIL_SEND_EMAIL' })
+    expect(desktopConnectorCall(run, true, { tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: {} }] })).toBeNull()
+    // Nothing readable in the call: the mark still holds it.
+    expect(desktopConnectorCall(run, true, { payload: 'opaque' })).toEqual({ kind: 'delete', tool: run })
+})

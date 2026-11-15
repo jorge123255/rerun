@@ -224,3 +224,76 @@ test('a Connect key is recognized by the handshake alone, in its own header', as
     expect(seen.map(call => [call.url, call.body.method])).toEqual([[COMPOSIO_CONNECT, 'initialize'], [COMPOSIO_CONNECT, 'initialize']])
     await expect(managedAppsConnectAccepts('ck_fixture_good', (async () => { throw new Error('offline') }) as typeof fetch)).rejects.toThrow('could not be reached')
 })
+
+// A pretend Composio Connect: one consumer key, one MCP address, and what it was asked.
+function connectServer() {
+    const asked: { name: string; arguments: { toolkits: { name: string; action: string }[] } }[] = []
+    const state = { signedIn: false, stream: false }
+    const network = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        expect(String(input)).toBe(COMPOSIO_CONNECT)
+        const sent = new Headers(init?.headers)
+        if (sent.get('x-consumer-api-key') !== 'ck_fixture_consumer') return new Response('', { status: 401 })
+        const body = JSON.parse(String(init?.body)) as { id?: number; method: string; params?: { name: string; arguments: { toolkits: { name: string; action: string }[] } } }
+        if (body.method === 'initialize') return Response.json({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-03-26' } }, { headers: { 'mcp-session-id': 'session-1' } })
+        expect(sent.get('mcp-session-id')).toBe('session-1')
+        if (body.method === 'notifications/initialized') return new Response(null, { status: 202 })
+        asked.push(body.params!)
+        const toolkit = body.params!.arguments.toolkits[0]!
+        const row = state.signedIn ? { toolkit: toolkit.name, status: 'active', accounts: [{ id: 'ca_9', status: 'ACTIVE' }] }
+            : { toolkit: toolkit.name, status: 'initiated', accounts: [], ...(toolkit.action === 'add' ? { redirect_url: 'https://connect.composio.dev/link/lk_fixture' } : {}) }
+        const message = { jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify({ successful: true, data: { results: { [toolkit.name]: row } }, error: null }) }], isError: false } }
+        return state.stream ? new Response(`event: message\ndata: ${JSON.stringify(message)}\n\n`, { headers: { 'content-type': 'text/event-stream' } }) : Response.json(message)
+    }) as typeof fetch
+    return { asked, state, network }
+}
+
+test('with a Connect key in the Vault every Composio app is offered and connected from the catalog', async () => {
+    const { managedAppsConnectClient } = await import('./client')
+    const server = connectServer()
+    const crypto = createDesktopSecretCrypto(() => Buffer.alloc(32, 7))
+    let inVault = false
+    const apps = desktopManagedApps(db, crypto, 1, {
+        returnUrl: 'http://127.0.0.1:4000/api/desktop/managed-apps/return', coworkerExists: async () => true,
+        connect: async () => inVault ? managedAppsConnectClient('ck_fixture_consumer', server.network) : null,
+    })
+    // Without the Vault entry the section still asks for a key.
+    expect((await apps.view()).configured).toBe(false)
+    inVault = true
+    const view = await apps.view()
+    expect(view.configured).toBe(true)
+    expect(view.connector).toBe('composio')
+    expect(view.apps.length).toBeGreaterThan(1500)
+    expect(view.apps[0]).toMatchObject({ slug: 'gmail', name: 'Gmail' })
+    expect(view.apps.find(app => app.slug === 'notion')?.logo).toBeTruthy()
+
+    const started = await apps.act({ action: 'connect', slug: 'gmail' })
+    expect(started.signIn).toBe('https://connect.composio.dev/link/lk_fixture')
+    expect(server.asked).toEqual([{ name: 'COMPOSIO_MANAGE_CONNECTIONS', arguments: { toolkits: [{ name: 'gmail', action: 'add' }] } }])
+    const account = started.view.accounts[0]!
+    expect(account).toMatchObject({ slug: 'gmail', status: 'pending', agentIds: [] })
+
+    // Checking only looks; asking for the page again starts the sign-in afresh.
+    expect((await apps.act({ action: 'refresh', id: account.id })).signIn).toBeUndefined()
+    expect(server.asked.at(-1)!.arguments.toolkits[0]!.action).toBe('list')
+    server.state.stream = true
+    expect((await apps.act({ action: 'refresh', id: account.id, retry: true })).signIn).toBe('https://connect.composio.dev/link/lk_fixture')
+    server.state.signedIn = true
+    expect((await apps.act({ action: 'refresh', id: account.id })).view.accounts[0]!.status).toBe('active')
+
+    // Coworkers and the key belong to the Vault entry, and no coworker gets tools from this list.
+    await expect(apps.act({ action: 'attach', id: account.id, agentId: 'coworker-1', attached: true })).rejects.toMatchObject({ status: 409 })
+    await expect(apps.act({ action: 'remove-key' })).rejects.toMatchObject({ status: 409 })
+    expect(await apps.tools('coworker-1', new AbortController().signal)).toEqual([])
+    const asked = server.asked.length
+    expect((await apps.act({ action: 'remove', id: account.id })).view.accounts).toEqual([])
+    expect(server.asked.length).toBe(asked)
+})
+
+test('a Connect key the Vault no longer holds right is said plainly, and a page from elsewhere is not opened', async () => {
+    const { managedAppsConnectClient, managedConnectionOf } = await import('./client')
+    const server = connectServer()
+    await expect(managedAppsConnectClient('ck_wrong', server.network).status('gmail')).rejects.toMatchObject({ status: 401 })
+    expect(managedConnectionOf({ results: { gmail: { toolkit: 'gmail', status: 'initiated', redirect_url: 'https://evil.example/link' } } }, 'gmail')).toEqual({ state: 'pending' })
+    expect(managedConnectionOf({ results: { gmail: { toolkit: 'gmail', has_active_connection: true } } }, 'gmail')).toEqual({ state: 'active' })
+    expect(() => managedConnectionOf({ results: {} }, 'gmail')).toThrow()
+})
