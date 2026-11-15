@@ -77,11 +77,15 @@ const RUNS_OTHER_TOOLS = /(?:^|_)(?:MULTI_)?EXECUTE_TOOLS?$/i
 const INNER_TOOL_KEY = /^(?:tool_?slug|tool_?name|tool|slug|action|name)$/i
 const INNER_TOOL = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/
 
-function innerTools(value: unknown, depth = 0, found: string[] = []): string[] {
+function innerTools(value: unknown, depth = 0, found: string[] = [], entries: unknown[] = []): string[] {
     if (depth > 6 || found.length >= 60 || !value || typeof value !== 'object') return found
     for (const [key, child] of Array.isArray(value) ? value.map((item, index) => [String(index), item] as const) : Object.entries(value)) {
-        if (typeof child === 'string') { if (INNER_TOOL_KEY.test(key) && INNER_TOOL.test(child) && !found.includes(child)) found.push(child) }
-        else innerTools(child, depth + 1, found)
+        if (typeof child === 'string') {
+            if (!INNER_TOOL_KEY.test(key) || !INNER_TOOL.test(child)) continue
+            if (!found.includes(child)) found.push(child)
+            // The object naming the tool is the call itself: the tool and what it is given.
+            if (!entries.includes(value)) entries.push(value)
+        } else innerTools(child, depth + 1, found, entries)
     }
     return found
 }
@@ -108,7 +112,9 @@ function namedActions(value: unknown, depth = 0, found: string[] = []): string[]
  * for a call that needs no answer. A tool that runs other tools is held under the inner tools
  * that ask, so the card names what will really happen and an "always allow" covers only that.
  */
-export function desktopConnectorCall(toolName: string, destructive: boolean, args: unknown): { kind: DesktopConnectorActionKind; tool: string } | null {
+// `subject` is what the person is asked about and what an "allow once" covers: the inner calls or the code alone.
+// A wrapper's own notes (its "thought", its step counters) change from one attempt to the next and are left out.
+export function desktopConnectorCall(toolName: string, destructive: boolean, args: unknown): { kind: DesktopConnectorActionKind; tool: string; subject?: Record<string, unknown> } | null {
     const own = desktopConnectorActionKind(toolName, destructive)
     // A tool marked destructive only because one of its actions is (Composio's MANAGE_CONNECTIONS lists, adds and
     // removes) is held for the action a call names: listing or adding asks nothing, removing asks as deleting does.
@@ -122,17 +128,20 @@ export function desktopConnectorCall(toolName: string, destructive: boolean, arg
     // A remote sandbox runs code the coworker wrote, and that code can run other tools by name. It is held
     // under the asking tools its code names; code that names none runs like any other read.
     if (RUNS_CODE.test(toolName) && (!own || hinted)) {
-        const named = [...new Set(strings(args).flatMap(text => text.match(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g) ?? []))].slice(0, 60)
+        const TOOL_NAME = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g
+        const code = strings(args).filter(text => (text.match(TOOL_NAME) ?? []).some(tool => desktopConnectorActionKind(tool)))
+        const named = [...new Set(code.flatMap(text => text.match(TOOL_NAME) ?? []))].slice(0, 60)
         const asking = named.flatMap(tool => { const kind = desktopConnectorActionKind(tool); return kind ? [{ tool, kind }] : [] })
-        return asking.length ? { kind: asking[0]!.kind, tool: asking.map(item => item.tool).sort().join('+').slice(0, 200) } : null
+        return asking.length ? { kind: asking[0]!.kind, tool: asking.map(item => item.tool).sort().join('+').slice(0, 200), subject: { code } } : null
     }
     if (own && !(hinted && RUNS_OTHER_TOOLS.test(toolName))) return { kind: own, tool: toolName }
     if (!RUNS_OTHER_TOOLS.test(toolName)) return null
-    const inner = innerTools(args)
+    const entries: unknown[] = []
+    const inner = innerTools(args, 0, [], entries)
     if (own && !inner.length) return { kind: own, tool: toolName }
     const asking = inner.flatMap(tool => { const kind = desktopConnectorActionKind(tool); return kind ? [{ tool, kind }] : [] })
     if (!asking.length) return null
-    return { kind: asking[0]!.kind, tool: asking.map(item => item.tool).sort().join('+').slice(0, 200) }
+    return { kind: asking[0]!.kind, tool: asking.map(item => item.tool).sort().join('+').slice(0, 200), subject: { tools: entries } }
 }
 
 export const desktopConnectorApprovalDecisionSchema = z.enum(['once', 'conversation', 'always', 'deny'])
