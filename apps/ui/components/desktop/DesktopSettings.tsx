@@ -1,3 +1,4 @@
+import { DesktopDefaultPreset } from './DesktopDefaultPreset'
 import { useDesktopLocale } from './DesktopLocale'
 import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata'
 import { useMemo, useState, type FormEvent } from 'react'
@@ -146,6 +147,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                     <option key={p.model} value={index}>{c.provider === 'opencode' ? desktopConnectionModelLabel(c, p.model) : c.subscriptionModels?.find(m => m.id === p.model)?.label ?? modelName(c.id, p.model)}</option>)}</optgroup>)}
                             </select>
                             {activeNamed && <p className="text-xs text-muted-foreground">Choose another provider to change this workspace default.</p>}
+                            <DesktopDefaultPreset />
                             {activeConnection && active && (activeConnection.provider === 'codex' || reasoning || staleEffort) && <div className="space-y-2 pt-3">
                                 <label htmlFor="desktop-reasoning-effort" className="font-semibold">Reasoning effort</label>
                                 <p id="desktop-reasoning-hint" className="text-sm text-muted-foreground">How much reasoning {activeConnection.provider === 'codex' ? 'Codex' : activeConnection.name} uses for the next message.</p>

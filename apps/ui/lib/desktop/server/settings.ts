@@ -1,3 +1,4 @@
+import { DESKTOP_PRESET_CONNECTION_ID, desktopPresetTier, resolveDesktopPreset, type DesktopPresetTier } from '@rerun/contracts'
 import 'server-only'
 import { writeDesktopWorkspaceIcon } from './workspace-icon'
 import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, connectionReasoningOptions, hasDesktopApiConnectionPrefix, isDesktopSubscriptionProvider } from '@rerun/contracts'
@@ -39,8 +40,27 @@ export async function readDesktopWorkspace(runtime: DesktopRuntime) {
     return { ...bootstrap, ...providers, ...(desktopAppStoreBuild() && { appStoreBuild: true }), runtimeWorkspaceId: runtime.workspaceId, runtimeLaunchNonce: runtime.launchNonce, agents: bootstrap.agents.map(desktopAgentView) }
 }
 
+/** The workspace default when the owner chose a Rerun preset for it, else null. */
+export async function readDesktopWorkspacePreset(runtime: DesktopRuntime): Promise<DesktopPresetTier | null> {
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    const row = (await db.execute('SELECT tier FROM desktop_workspace_model_preset WHERE id = 1')).rows[0]
+    return desktopPresetTier(row ? { connectionId: DESKTOP_PRESET_CONNECTION_ID, model: String(row.tier) } : null)
+}
+
+export async function saveDesktopWorkspacePreset(runtime: DesktopRuntime, tier: DesktopPresetTier | null): Promise<void> {
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    if (!tier) await db.execute('DELETE FROM desktop_workspace_model_preset WHERE id = 1')
+    else await db.execute({ sql: 'INSERT INTO desktop_workspace_model_preset(id,tier) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET tier=excluded.tier', args: [tier] })
+}
+
 export async function desktopModel(runtime: DesktopRuntime) {
     const list = await readDesktopProviders(runtime)
+    // A preset chosen as the workspace default answers first: the plan that can run it now. When
+    // none can (every plan is out of usage), the model saved as the default below still answers.
+    const tier = await readDesktopWorkspacePreset(runtime).catch(() => null)
+    const found = tier ? resolveDesktopPreset(tier, list.connections) : null
+    const preferred = found ? list.connections.find(c => c.id === found.connectionId) : undefined
+    if (found && preferred) return { connection: preferred, model: found.model, connections: list.connections, default: { connectionId: preferred.id, model: found.model }, preset: found.tier }
     const pick = list.default
     const connection = list.connections.find(c => c.id === pick?.connectionId)
     if (!pick || !connection?.connected || ![...connection.models, ...connection.extraModels].includes(pick.model)) {
