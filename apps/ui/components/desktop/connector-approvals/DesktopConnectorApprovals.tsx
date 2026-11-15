@@ -73,7 +73,7 @@ function ConnectorPreview({ preview, showTool }: { preview: string; showTool: bo
                                     </div>
                                 ))}
                             </dl>
-                            <p className="max-h-48 overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-sm text-foreground">{body![1]}</p>
+                            <p className="max-h-28 overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-sm text-foreground">{body![1]}</p>
                         </>}
                         {rest.length > 0 && (message
                             ? <details className="border-t border-border px-3 py-1.5 text-xs text-muted-foreground">
