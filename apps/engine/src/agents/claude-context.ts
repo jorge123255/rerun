@@ -1,6 +1,7 @@
 import type { ContextOccupancy } from '@rerun/contracts'
 import type { ClaudeCodeSettings, Query } from 'ai-sdk-provider-claude-code'
 import { planLimitWindowsFromClaude, recordPlanLimits, type ClaudePlanUsage } from '../connections/plan-limits.js'
+import { desktopApp } from '../desktop/policy.js'
 
 const CONTEXT_USAGE_TIMEOUT_MS = 3000
 
@@ -51,6 +52,10 @@ export function claudeContextCapture(connectionId?: string): ClaudeContextCaptur
     }
 
     const capturePlanLimits = async (live: Query): Promise<void> => {
+        // In the Mac app this request makes Claude's own tool ask Anthropic's usage service after
+        // every reply. The owner decided on November 14, 2026 that the app never asks it: the plan's
+        // limits come only from the rate-limit message the runner sends while it answers.
+        if (desktopApp()) return
         const readPlanUsage = connectionId ? planUsageReaderOf(live) : undefined
         if (!connectionId || !readPlanUsage) return
         // Wrapped in a function so a reader that throws synchronously lands in the same catch.

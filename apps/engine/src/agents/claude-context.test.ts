@@ -72,6 +72,19 @@ describe('claudeContextCapture', () => {
             forgetPlanLimits('conn')
         })
 
+        it('never asks for plan usage in the Mac app, and still reads the context occupancy', async () => {
+            vi.stubEnv('RERUN_DESKTOP_APP', '1')
+            try {
+                const asked = vi.fn(async () => ({ rate_limits: { five_hour: { utilization: 42, resets_at: null } } }))
+                const capture = claudeContextCapture('conn')
+                capture.settings.onQueryCreated?.({ getContextUsage: occupancy, [PLAN_USAGE]: asked } as unknown as Query)
+                await stopHookOf(capture)()
+                expect(asked).not.toHaveBeenCalled()
+                expect(readPlanLimits('conn')).toBeFalsy()
+                expect(capture.read()).toEqual({ usedTokens: 1000, maxTokens: 200_000 })
+            } finally { vi.unstubAllEnvs() }
+        })
+
         it('records the plan windows of the connection on Stop', async () => {
             const capture = claudeContextCapture('conn')
             const query = { getContextUsage: occupancy, [PLAN_USAGE]: async () => ({ rate_limits: { five_hour: { utilization: 42, resets_at: null } } }) }
