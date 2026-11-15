@@ -117,10 +117,12 @@ function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,onOpenSession
         }).catch(()=>{if(alive.current&&!controller.signal.aborted)setModelError(t('routines.modelsLoadFailed'))})
         return()=>controller.abort()
     },[agentId, t])
-    const availableGroups=useMemo<ConnectionGroup[]>(()=>modelView?.catalog.map(group=>({connectionId:group.connectionId,label:group.name,provider:group.provider,models:group.models,defaultModel:group.models[0]?.id ?? '',planWindows:[]})) ?? [],[modelView])
+    const availableGroups=useMemo<ConnectionGroup[]>(()=>modelView?.catalog.flatMap(group=>group.provider==='rerun'?[]:[{...group,provider:group.provider}]).map(group=>({connectionId:group.connectionId,label:group.name,provider:group.provider,models:group.models,defaultModel:group.models[0]?.id ?? '',planWindows:[]})) ?? [],[modelView])
     const savedProvider=task?.provider?desktopProvider.safeParse(task.provider):null
     const preservedProvider=pick.connectionId===task?.connectionId&&pick.model===task?.model&&savedProvider?.success?savedProvider.data:null
-    const provider=pick.model?modelView?.catalog.find(group=>group.connectionId===pick.connectionId)?.provider ?? preservedProvider:null
+    const catalogProvider=modelView?.catalog.find(group=>group.connectionId===pick.connectionId)?.provider
+    // A routine runs without the app, so it is never given a Rerun preset.
+    const provider=pick.model?(catalogProvider&&catalogProvider!=='rerun'?catalogProvider:null) ?? preservedProvider:null
     const unavailablePin=!!pick.model&&!!modelView&&!availableGroups.some(group=>group.connectionId===pick.connectionId&&group.models.some(model=>model.id===pick.model))
     const unverifiedPin=!!pick.model&&!modelView
     const incompletePin=!!pick.model&&(!pick.connectionId||!provider)

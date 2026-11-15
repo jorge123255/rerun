@@ -21,7 +21,7 @@ export function GET(request: Request, { params }: Context) {
         const { agentId } = await params
         const sessionId = new URL(request.url).searchParams.get('sessionId') ?? undefined
         if (sessionId !== undefined && !id.safeParse(sessionId).success) throw new DesktopHttpError(400, 'Conversation not found')
-        const state = await readDesktopModelState(runtime, agentId, sessionId)
+        const state = await readDesktopModelState(runtime, agentId, sessionId, { presets: new URL(request.url).searchParams.get('presets') === '1' })
         return Response.json(state, { headers: { 'cache-control': 'no-store' } })
     })
 }
