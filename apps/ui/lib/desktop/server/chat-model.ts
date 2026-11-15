@@ -1,7 +1,8 @@
 import 'server-only'
 import { EngineRequestError, getAgent, patchAgent, setModelEffort } from '@/lib/engine/client'
-import { connectionReasoningOptions, type ConnectionSummary } from '@rerun/contracts'
-import { buildDesktopModelView, customReasoningUnavailable, offeredModelIds, usableConnection, type DesktopModelPick, type DesktopModelSource, type DesktopModelView } from '../chat-model'
+import { DESKTOP_PRESET_CONNECTION_ID, connectionReasoningOptions, desktopPresetTier, desktopPresetUnavailable, type ConnectionSummary, type DesktopPresetTier } from '@rerun/contracts'
+import type { Client } from '@libsql/client'
+import { buildDesktopModelView, concreteDesktopPick, customReasoningUnavailable, desktopConnections, offeredModelIds, usableConnection, type DesktopModelPick, type DesktopModelSource, type DesktopModelView } from '../chat-model'
 import { DesktopHttpError } from './auth'
 import { disabledCoworkerMessage } from './coworker-enabled'
 import { openDesktopDatabase } from './database'
@@ -43,26 +44,52 @@ async function engineCoworker(runtime: DesktopRuntime, agent: DesktopAgent) {
     }
 }
 
-function offered(connections: ConnectionSummary[], pick: DesktopModelPick): ConnectionSummary {
+async function coworkerPreset(db: Client, agentId: string): Promise<DesktopPresetTier | null> {
+    const row = (await db.execute({ sql: 'SELECT tier FROM desktop_coworker_model_presets WHERE agent_id=?', args: [agentId] })).rows[0]
+    return desktopPresetTier(row ? { connectionId: DESKTOP_PRESET_CONNECTION_ID, model: String(row.tier) } : null)
+}
+
+/** A preset stands for one of the owner's own plans; this is the real pair it means right now. */
+function concrete(connections: ConnectionSummary[], pick: DesktopModelPick, status: 400 | 409): DesktopModelPick {
+    const tier = desktopPresetTier(pick)
+    if (!tier) return pick
+    const usable = desktopConnections(connections)
+    const found = concreteDesktopPick(usable, pick)
+    if (!found) throw new DesktopHttpError(status, desktopPresetUnavailable(tier, usable))
+    return found
+}
+
+function offered(connections: ConnectionSummary[], choice: DesktopModelPick): ConnectionSummary {
+    const pick = concrete(connections, choice, 400)
     const connection = usableConnection(connections, pick)
     if (!connection) throw new DesktopHttpError(400, 'Choose a model offered by a connected provider.')
     return connections.find(item => item.id === connection.id)!
 }
 
-export async function readDesktopModelState(runtime: DesktopRuntime, agentId: string, sessionId?: string): Promise<DesktopModelView> {
+export async function readDesktopModelState(runtime: DesktopRuntime, agentId: string, sessionId?: string, options: { presets?: boolean } = {}): Promise<DesktopModelView> {
     const agent = await agentOrThrow(runtime, agentId)
     const session = sessionId ? await sessionFor(runtime, agent, sessionId) : null
     const [{ connections, default: workspace, efforts }, coworker] = await Promise.all([
         readDesktopProviders(runtime),
         engineCoworker(runtime, agent),
     ])
-    return buildDesktopModelView({ connections, workspace, coworker, conversation: savedChoice(session), efforts })
+    const preset = options.presets ? await coworkerPreset(await openDesktopDatabase(runtime.dataRoot), agent.id) : null
+    return buildDesktopModelView({ connections, workspace, coworker, conversation: savedChoice(session), efforts, presets: options.presets, coworkerPreset: preset })
 }
 
 export async function setDesktopCoworkerModel(runtime: DesktopRuntime, agentId: string, pick: DesktopModelPick | null, sessionId?: string): Promise<DesktopModelView> {
     const agent = await agentOrThrow(runtime, agentId)
     const session = sessionId ? await sessionFor(runtime, agent, sessionId) : null
     const { connections } = await readDesktopProviders(runtime)
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    const tier = desktopPresetTier(pick)
+    if (pick && tier) {
+        // The engine keeps its own default for this coworker, which routines still run on.
+        offered(connections, pick)
+        await db.execute({ sql: 'INSERT INTO desktop_coworker_model_presets(agent_id,tier) VALUES(?,?) ON CONFLICT(agent_id) DO UPDATE SET tier=excluded.tier', args: [agent.id, tier] })
+        return readDesktopModelState(runtime, agentId, sessionId, { presets: true })
+    }
+    await db.execute({ sql: 'DELETE FROM desktop_coworker_model_presets WHERE agent_id=?', args: [agent.id] })
     const connection = pick ? offered(connections, pick) : null
     const patch = connection
         ? { connectionId: connection.id, provider: connection.provider, model: pick!.model }
@@ -75,8 +102,8 @@ export async function setDesktopCoworkerModel(runtime: DesktopRuntime, agentId: 
     }
     // Following the workspace is a statement about the coworker. It also drops the open chat's
     // override so the next message does not keep the model the user just left. Other chats stay.
-    if (!pick && session) await setDesktopSessionModel(await openDesktopDatabase(runtime.dataRoot), session.id, null)
-    return readDesktopModelState(runtime, agentId, sessionId)
+    if (!pick && session) await setDesktopSessionModel(db, session.id, null)
+    return readDesktopModelState(runtime, agentId, sessionId, { presets: true })
 }
 
 export async function setDesktopConversationModel(runtime: DesktopRuntime, agentId: string, sessionId: string, pick: DesktopModelPick | null): Promise<DesktopModelView> {
@@ -84,7 +111,7 @@ export async function setDesktopConversationModel(runtime: DesktopRuntime, agent
     const session = await sessionFor(runtime, agent, sessionId)
     if (pick) offered((await readDesktopProviders(runtime)).connections, pick)
     await setDesktopSessionModel(await openDesktopDatabase(runtime.dataRoot), session.id, pick)
-    return readDesktopModelState(runtime, agentId, sessionId)
+    return readDesktopModelState(runtime, agentId, sessionId, { presets: true })
 }
 
 export async function resolveDesktopChatModel(runtime: DesktopRuntime, agent: DesktopAgent, session: DesktopSession | null, requested?: DesktopModelPick): Promise<{ connectionId: string; model: string; source: DesktopModelSource }> {
@@ -101,12 +128,16 @@ export async function resolveDesktopChatModel(runtime: DesktopRuntime, agent: De
     // not create a first-turn reservation or an alternate-chat intent in the UI database.
     const coworker = await engineCoworker(runtime, agent)
     if (!coworker.enabled) throw new DesktopHttpError(403, disabledCoworkerMessage)
-    const conversation = requested ?? savedChoice(session)
-    if (conversation) {
-        if (requested) offered(connections, requested)
+    const chosen = requested ?? savedChoice(session)
+    if (chosen) {
+        // A preset is turned into the plan that can answer now; the engine is given that real pair.
+        const conversation = concrete(connections, chosen, requested ? 400 : 409)
+        if (requested) offered(connections, conversation)
         else if (!usableConnection(connections, conversation)) throw new DesktopHttpError(409, 'This conversation’s model is no longer available. Choose another model or follow the coworker default.')
         return select(conversation, 'conversation')
     }
+    const preset = await coworkerPreset(await openDesktopDatabase(runtime.dataRoot), agent.id)
+    if (preset) return select(concrete(connections, { connectionId: DESKTOP_PRESET_CONNECTION_ID, model: preset }, 409), 'coworker')
     if (coworker.model) {
         const pick = coworker.connectionId ? { connectionId: coworker.connectionId, model: coworker.model } : null
         if (!usableConnection(connections, pick)) throw new DesktopHttpError(409, 'This coworker’s default model is no longer available. Choose another model or follow the workspace default.')

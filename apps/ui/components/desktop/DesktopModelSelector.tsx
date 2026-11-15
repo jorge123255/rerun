@@ -33,7 +33,8 @@ type Props = {
 
 function modelUrl(agentId: string, sessionId: string | null) {
     const base = `/api/desktop/agents/${encodeURIComponent(agentId)}/model`
-    return sessionId ? `${base}?sessionId=${encodeURIComponent(sessionId)}` : base
+    // Only this picker offers the Rerun presets: a chat's model is resolved by the app at send time.
+    return sessionId ? `${base}?presets=1&sessionId=${encodeURIComponent(sessionId)}` : `${base}?presets=1`
 }
 
 async function readState(response: Response): Promise<DesktopModelView> {

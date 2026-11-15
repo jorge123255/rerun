@@ -72,7 +72,7 @@ test('a coworker can open memories, retry and refresh without losing a chat draf
         .mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve }))
         .mockResolvedValueOnce(Response.json({ memories: [note('one', 'Keeps weekly notes.')] }))
         .mockResolvedValueOnce(Response.json({ memories: [] }))
-    stubMemoryFetch((url: string, init: RequestInit) => url === '/api/desktop/agents/local-id/model'
+    stubMemoryFetch((url: string, init: RequestInit) => url.split('?')[0] === '/api/desktop/agents/local-id/model'
         ? Promise.resolve(Response.json({ error: 'No test model' }, { status: 404 }))
         : desktopBackgroundRead(url, init) ?? fetcher(url, init))
     try {

@@ -1,4 +1,4 @@
-import { isFreeDesktopOpencodeModel } from '@rerun/contracts'
+import { DESKTOP_PRESET_CONNECTION_ID, DESKTOP_PRESET_LABELS, DESKTOP_PRESET_TIERS, desktopPresetTier, isFreeDesktopOpencodeModel, resolveDesktopPreset, type DesktopPresetTier } from '@rerun/contracts'
 import { PROVIDER_LABELS, connectionReasoningOptions, modelEffortKey, modelLabel, type BoxDefaultModel, type ConnectionSummary, type ModelEfforts, type Provider } from '@rerun/contracts'
 import { z } from 'zod'
 import { desktopProvider } from './settings'
@@ -24,7 +24,8 @@ export const desktopModelViewSchema = z.object({
     catalog: z.array(z.object({
         connectionId: z.string(),
         name: z.string(),
-        provider: desktopProvider,
+        // A connection's provider, or 'rerun' for the Fast, Balanced and Smart presets.
+        provider: z.union([desktopProvider, z.literal('rerun')]),
         models: z.array(catalogModelSchema),
     })),
     workspace: z.object({
@@ -89,6 +90,17 @@ export function usableConnection(connections: CatalogConnection[], pick: Desktop
     return connection
 }
 
+/**
+ * The real connection and model behind a pick. A preset (Rerun Fast, Balanced, Smart) stands for
+ * whichever of the owner's own plans can answer now; anything else is already a real pair.
+ */
+export function concreteDesktopPick(connections: ConnectionSummary[], pick: DesktopModelPick | null, now: Date = new Date()): DesktopModelPick | null {
+    const tier = desktopPresetTier(pick)
+    if (!tier) return pick
+    const found = resolveDesktopPreset(tier, connections, now)
+    return found ? { connectionId: found.connectionId, model: found.model } : null
+}
+
 export function customReasoningUnavailable(connection: CatalogConnection | null, model: string | null, workspace: BoxDefaultModel | null): boolean {
     if (connection?.provider !== 'custom' || workspace?.connectionId !== connection.id || workspace.model !== model || !workspace.reasoningEffort) return false
     return !connection.customRevision || workspace.customReasoningRevision !== connection.customRevision
@@ -119,8 +131,22 @@ export function buildDesktopModelView(input: {
     coworker: { connectionId: string | null; provider: string | null; model: string | null } | null
     conversation: DesktopModelPick | null
     efforts?: ModelEfforts
+    /** Offer the Rerun presets and read preset picks. Off where a pick must be a real pair. */
+    presets?: boolean
+    /** This coworker's default when it is a preset; it is kept by the app, not by the engine. */
+    coworkerPreset?: DesktopPresetTier | null
+    now?: Date
 }): DesktopModelView {
     const connections = desktopConnections(input.connections)
+    const now = input.now ?? new Date()
+    const real = (pick: DesktopModelPick | null) => desktopPresetTier(pick) ? (input.presets ? concreteDesktopPick(connections, pick, now) : null) : pick
+    const presetLabel = (pick: DesktopModelPick | null) => {
+        const tier = desktopPresetTier(pick)
+        if (!tier) return null
+        const found = input.presets ? resolveDesktopPreset(tier, connections, now) : null
+        const via = found ? desktopConnectionModelLabel(connections.find(item => item.id === found.connectionId), found.model) : null
+        return via ? `${DESKTOP_PRESET_LABELS[tier]} · ${via}` : DESKTOP_PRESET_LABELS[tier]
+    }
     const workspaceConnection = usableConnection(connections, input.workspace)
     const workspace = input.workspace && workspaceConnection ? {
         connectionId: workspaceConnection.id,
@@ -130,9 +156,12 @@ export function buildDesktopModelView(input: {
         label: desktopConnectionModelLabel(workspaceConnection, input.workspace.model),
         ...(input.workspace.reasoningEffort ? { reasoningEffort: input.workspace.reasoningEffort } : {}),
     } : null
-    const pinned = input.coworker?.model ? { connectionId: input.coworker.connectionId ?? '', model: input.coworker.model } : null
-    const pinnedConnection = input.coworker?.connectionId ? connections.find(item => item.id === input.coworker?.connectionId) ?? null : null
-    const coworker = pinned ? {
+    const presetPin = input.presets && input.coworkerPreset ? { connectionId: DESKTOP_PRESET_CONNECTION_ID, model: input.coworkerPreset } : null
+    const pinned = presetPin ?? (input.coworker?.model ? { connectionId: input.coworker.connectionId ?? '', model: input.coworker.model } : null)
+    const pinnedConnection = !presetPin && input.coworker?.connectionId ? connections.find(item => item.id === input.coworker?.connectionId) ?? null : null
+    const coworker = presetPin ? {
+        connectionId: presetPin.connectionId, provider: 'rerun', model: presetPin.model, label: presetLabel(presetPin)!, available: !!usableConnection(connections, real(presetPin)),
+    } : pinned ? {
         connectionId: input.coworker?.connectionId ?? null,
         provider: pinnedConnection?.provider ?? input.coworker?.provider ?? null,
         model: pinned.model,
@@ -142,36 +171,43 @@ export function buildDesktopModelView(input: {
     const conversation = input.conversation ? {
         connectionId: input.conversation.connectionId,
         model: input.conversation.model,
-        label: desktopConnectionModelLabel(usableConnection(connections, input.conversation), input.conversation.model),
-        available: !!usableConnection(connections, input.conversation),
+        label: presetLabel(input.conversation) ?? desktopConnectionModelLabel(usableConnection(connections, input.conversation), input.conversation.model),
+        available: !!usableConnection(connections, real(input.conversation)),
     } : null
     const source: DesktopModelSource = conversation ? 'conversation' : coworker ? 'coworker' : 'workspace'
     const selected = input.conversation ?? pinned ?? input.workspace
-    const selectedConnection = usableConnection(connections, selected) ?? (selected ? connections.find(item => item.id === selected.connectionId) ?? null : null)
+    // A preset shows as itself in the picker; what it runs on today is in its label.
+    const preset = desktopPresetTier(selected)
+    const selectedReal = real(selected)
+    const selectedConnection = usableConnection(connections, selectedReal) ?? (selected && !preset ? connections.find(item => item.id === selected.connectionId) ?? null : null)
     const model = selected?.model ?? null
-    const available = !!usableConnection(connections, selected)
-    const reasoning = desktopReasoningChoice(available ? selectedConnection : null, model, input.workspace, input.efforts)
+    const available = !!usableConnection(connections, selectedReal)
+    const reasoning = preset ? undefined : desktopReasoningChoice(available ? selectedConnection : null, model, input.workspace, input.efforts)
     // A custom endpoint's efforts follow a revision of its catalog and stay in Settings.
-    const reasoningOptions = available && selectedConnection && model && selectedConnection.provider !== 'custom'
+    const reasoningOptions = !preset && available && selectedConnection && model && selectedConnection.provider !== 'custom'
         ? connectionReasoningOptions(selectedConnection, model)?.supported : undefined
-    const reasoningUnavailable = available && customReasoningUnavailable(selectedConnection, model, input.workspace)
+    const reasoningUnavailable = !preset && available && customReasoningUnavailable(selectedConnection, model, input.workspace)
+    const presetGroup = input.presets ? DESKTOP_PRESET_TIERS.flatMap(tier => {
+        const label = resolveDesktopPreset(tier, connections, now) && presetLabel({ connectionId: DESKTOP_PRESET_CONNECTION_ID, model: tier })
+        return label ? [{ id: tier, label }] : []
+    }) : []
     return desktopModelViewSchema.parse({
-        catalog: connections.filter(item => item.connected && offeredModelIds(item).length > 0).map(item => ({
+        catalog: [...(presetGroup.length ? [{ connectionId: DESKTOP_PRESET_CONNECTION_ID, name: 'Rerun', provider: 'rerun' as const, models: presetGroup }] : []), ...connections.filter(item => item.connected && offeredModelIds(item).length > 0).map(item => ({
             connectionId: item.id,
             name: item.name,
             provider: desktopProvider.parse(item.provider),
             models: offeredModelIds(item).map(id => ({ id, label: desktopConnectionModelLabel(item, id) })),
-        })),
+        }))],
         workspace,
         coworker,
         conversation,
         effective: {
             source,
-            connectionId: selectedConnection?.id ?? (selected?.connectionId || null),
-            provider: selectedConnection?.provider ?? coworker?.provider ?? null,
-            name: selectedConnection?.name ?? providerName(selectedConnection?.provider ?? coworker?.provider ?? null),
+            connectionId: preset ? DESKTOP_PRESET_CONNECTION_ID : selectedConnection?.id ?? (selected?.connectionId || null),
+            provider: preset ? 'rerun' : selectedConnection?.provider ?? coworker?.provider ?? null,
+            name: preset ? 'Rerun' : selectedConnection?.name ?? providerName(selectedConnection?.provider ?? coworker?.provider ?? null),
             model,
-            label: desktopConnectionModelLabel(selectedConnection, model),
+            label: presetLabel(selected) ?? desktopConnectionModelLabel(selectedConnection, model),
             available,
             ...(reasoning ? { reasoning } : {}),
             ...(reasoningOptions?.length ? { reasoningOptions } : {}),
