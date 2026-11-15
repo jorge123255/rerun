@@ -3,6 +3,7 @@ import { createDesktopWorkspaceRoutineRouter } from '../desktop/workspace-routin
 import { createDesktopBrainSemanticRouter } from '../desktop/brain-semantic/router.js'
 import { createDesktopApiConnectionRouter } from '../desktop/api-connections/router.js'
 import { createDesktopCompanyBriefRouter } from '../desktop/company-brief/router.js'
+import { createDesktopCompanyProfileRouter } from '../desktop/company-profile/router.js'
 import { getCompanyBriefService } from '../desktop/company-brief/runtime.js'
 import { desktopSetupRoutes } from '../desktop/setup/routes.js'
 import { desktopTemplateRoutes } from '../desktop/templates/router.js'
@@ -126,6 +127,8 @@ export function createServer(): Hono {
         api.route('/desktop/workspace-routines', createDesktopWorkspaceRoutineRouter())
         api.route('/desktop/brain/semantic', createDesktopBrainSemanticRouter())
         api.route('/desktop/company-brief', createDesktopCompanyBriefRouter(getCompanyBriefService))
+        // Stateless: nothing is read or called until Foreman's intake asks.
+        api.route('/desktop/company-profile', createDesktopCompanyProfileRouter())
         api.route('/desktop/api-connections', createDesktopApiConnectionRouter())
         api.route('/desktop/brain/pages', createDesktopBrainPagesRouter())
         api.route('/desktop/brain/proposals', createDesktopBrainProposalsRouter())

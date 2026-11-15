@@ -18,6 +18,7 @@ import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 import { foremanTurn, ownedForemanChat } from './chat-store'
 import { readDesktopForemanIntakeReceipt } from './intake-profile'
 import type { createDesktopLocalStarterOffers } from '../foreman-starter/local-offer'
+import type { DesktopCompanyProfileBinding } from '../company-profile/binding'
 
 type IntakeApp = {
     db: Client
@@ -41,7 +42,12 @@ export function foremanIntakeMessage(answers: DesktopForemanIntakeAnswers): stri
 }
 
 /** Uses root's existing database, exact Foreman chat and send journal as its only effect authority. */
-export function createDesktopForemanIntakeBinding(runtime: DesktopRuntime, app: IntakeApp): DesktopForemanIntakeService {
+/**
+ * `profile` is the optional reader for this exact chat: it suggests the industry from the saved
+ * company answer, reads the website when the intake asks, and knows the first name saved on this Mac.
+ * Without it the intake asks every question, as before.
+ */
+export function createDesktopForemanIntakeBinding(runtime: DesktopRuntime, app: IntakeApp, hints?: { chat: DesktopForemanChatRef; profile: DesktopCompanyProfileBinding; knownFirstName: string | null }): DesktopForemanIntakeService {
     const own = async (chat: DesktopForemanChatRef) => {
         chat = foremanChatRefSchema.parse(chat)
         if (chat.workspaceId !== String(runtime.workspaceId)) throw new DesktopHttpError(404, 'Foreman conversation not found.')
@@ -104,8 +110,10 @@ export function createDesktopForemanIntakeBinding(runtime: DesktopRuntime, app: 
         },
     }
     const service = createDesktopForemanIntakeService({
-        store: createSqliteDesktopForemanIntakeStore(app.db, { schemaReady: true }), completion,
-        industry: null, site: null, knownName: null,
+        store: createSqliteDesktopForemanIntakeStore(app.db, { schemaReady: true, ...(hints?.knownFirstName && { knownFirstName: hints.knownFirstName }) }), completion,
+        industry: hints ? { decide: () => hints.profile.decideIndustry(hints.chat) } : null,
+        site: hints ? { analyze: () => { void hints.profile.analyzeSite(hints.chat).catch(() => {}) } } : null,
+        knownName: hints ? { readKnownFirstName: current => hints.profile.resolveKnownFirstName(current) } : null,
     })
     return {
         ...service,

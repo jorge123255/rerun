@@ -162,6 +162,54 @@ describe('external MCP authority', () => {
         } finally { await box.service.close(); client.close(); await rm(root, { recursive: true, force: true }) }
     })
 
+    it('runs a write for a client that cannot send a request id, once per call, and still refuses a malformed one', async () => {
+        const box = await setup()
+        try {
+            const created = await box.service.create({ requestId: REQUEST, workspaceId: 1, name: 'Claude Code', scopes: ['mcp:read', 'runs:send'] })
+            if (!created.ok || !created.secret) throw new Error('expected a secret')
+            await box.service.enable({ requestId: crypto.randomUUID(), workspaceId: 1 })
+            const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'send_message', arguments: {} } }
+            const first = response()
+            await box.service.handle(request(call, { authorization: `Bearer ${created.secret}` }), first.res)
+            expect(first.state.status).toBe(200)
+            expect(first.state.body).toContain('sent')
+            const second = response()
+            await box.service.handle(request(call, { authorization: `Bearer ${created.secret}` }), second.res)
+            expect(second.state.body).toContain('sent')
+            expect(box.calls).toBe(2)
+            const malformed = response()
+            await box.service.handle(request(call, { authorization: `Bearer ${created.secret}`, 'x-rerun-external-request-id': 'not-a-uuid' }), malformed.res)
+            expect(malformed.state.status).toBe(400)
+            expect(box.calls).toBe(2)
+        } finally { await box.service.close(); client.close(); await rm(root, { recursive: true, force: true }) }
+    })
+
+    it('asks for the port it used last when turned on again, and stays off until then', async () => {
+        root = await mkdtemp(join(tmpdir(), 'external-mcp-'))
+        client = createClient({ url: `file:${join(root, 'external-mcp.db')}` })
+        const asked: Array<number | undefined> = []
+        const make = () => createExternalMcpService({
+            db: () => database(client),
+            authority: { read: () => ({ installId: INSTALL, launchNonce: LAUNCH, workspaceId: 1, admissionsFrozen: false, stopping: false }) },
+            dispatch: () => null,
+            engineKey: () => undefined,
+            listen: async (_handler, preferred) => { asked.push(preferred); return { origin: `http://127.0.0.1:${preferred ?? 51234}`, close: async () => {} } },
+        })
+        try {
+            const first = make()
+            await first.initialize()
+            await first.enable({ requestId: crypto.randomUUID(), workspaceId: 1 })
+            await first.close()
+            const second = make()
+            await second.initialize()
+            expect((await second.listener()).enabled).toBe(false)
+            const on = await second.enable({ requestId: crypto.randomUUID(), workspaceId: 1 })
+            expect(asked).toEqual([undefined, 51234])
+            expect(on.ok && on.listener.origin).toBe('http://127.0.0.1:51234')
+            await second.close()
+        } finally { client.close(); await rm(root, { recursive: true, force: true }) }
+    })
+
     it('stores only a hash and will not show the secret again', async () => {
         const box = await setup()
         const created = await box.service.create({ requestId: REQUEST, workspaceId: 1, name: 'Claude Code, MacBook' })

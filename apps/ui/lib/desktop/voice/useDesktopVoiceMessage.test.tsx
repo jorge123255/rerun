@@ -319,3 +319,17 @@ it('leaves sent history out of the restored composer and ignores an old owner di
     expect(api.draft).toBeNull()
     expect(recorder.start).not.toHaveBeenCalled()
 })
+
+it('offers the send again when a restart interrupted it, instead of a refused transcription', async () => {
+    const interrupted = { ...draft, phase: 'sending' as const }
+    transport.listDesktopVoiceDrafts.mockResolvedValue([interrupted])
+    transport.readDesktopVoiceDraft.mockResolvedValue(interrupted)
+    transport.sendDesktopVoice.mockResolvedValue({ draft: { ...draft, phase: 'sent', messageId: 'message-1' }, text: 'voice-message' })
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<Probe />))
+
+    expect(api.status).toBe('ready')
+    await act(async () => { await api.retry() })
+    expect(transport.transcribeDesktopVoice).not.toHaveBeenCalled()
+    expect(transport.sendDesktopVoice).toHaveBeenCalledWith(scope, draft.attemptId, draft.revision, expect.any(AbortSignal))
+})

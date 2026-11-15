@@ -19,6 +19,9 @@ type View = {
 const initialView: View = { status: 'idle', take: null, draft: null, transcript: '', error: null, attemptId: null }
 const busy = (status: DesktopVoiceLifecycle) => ['starting', 'recording', 'uploading', 'transcribing', 'sending'].includes(status)
 function restoredStatus(draft: DesktopVoiceDraft): DesktopVoiceLifecycle {
+    // A send cut off by a quit or a lost connection stays saved as sending. The server accepts the
+    // same attempt again and refuses transcription, so the restored action must be the send.
+    if (draft.phase === 'sending' && draft.transcript?.trim()) return 'ready'
     return ['ready', 'sent', 'failed', 'unavailable'].includes(draft.phase) ? draft.phase : 'review'
 }
 function fromDraft(draft: DesktopVoiceDraft): View {

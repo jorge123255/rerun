@@ -8,20 +8,31 @@ export type ExternalMcpSocket = {
 
 const BODY_CAP = 1_000_000
 
-export async function openExternalMcpListener(onRequest: (request: IncomingMessage, response: ServerResponse) => Promise<void>): Promise<ExternalMcpSocket> {
+/**
+ * Binds loopback only. `preferredPort` is the port this workspace used last, so the address a
+ * client was given keeps working; when another program holds it, any free port is used instead.
+ */
+export async function openExternalMcpListener(onRequest: (request: IncomingMessage, response: ServerResponse) => Promise<void>, preferredPort?: number): Promise<ExternalMcpSocket> {
     const server = createServer((request, response) => {
         void onRequest(request, response).catch(() => {
             if (!response.headersSent) response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' })
             if (!response.writableEnded) response.end(JSON.stringify({ ok: false, code: 'uncertain', message: 'The external request outcome is unknown. It was not started again.' }))
         })
     })
-    await new Promise<void>((resolve, reject) => {
+    const bind = (port: number) => new Promise<void>((resolve, reject) => {
         server.once('error', reject)
-        server.listen(0, '127.0.0.1', () => {
+        server.listen(port, '127.0.0.1', () => {
             server.off('error', reject)
             resolve()
         })
     })
+    const preferred = Number.isInteger(preferredPort) && preferredPort! >= 1024 && preferredPort! <= 65535 ? preferredPort! : 0
+    try {
+        await bind(preferred)
+    } catch (error) {
+        if (!preferred) throw error
+        await bind(0)
+    }
     const address = server.address()
     if (!address || typeof address === 'string' || address.address !== '127.0.0.1' || !address.port) {
         server.close()

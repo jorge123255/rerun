@@ -85,7 +85,7 @@ export function DesktopForemanPanel(props: DesktopForemanPanelProps) {
 function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { initial: DesktopForemanClientState }) {
     const { t } = useDesktopLocale()
     const [state, setState] = useState(initial)
-    const intakePorts = useMemo(() => createDesktopForemanIntakeClient(), [])
+    const intakePorts = useMemo(() => createDesktopForemanIntakeClient({ workspaceId: initial.chat.workspaceId, chatId: initial.chat.chatId }), [initial.chat.workspaceId, initial.chat.chatId])
     const intake = useDesktopForemanIntake({ chat: initial.chat, ports: intakePorts, active: !!props.controlledOpen && !props.hidden && !initial.separateConversation })
     const intakeEligible = !initial.separateConversation && (initial.messages.length === 0 || intake.hasSavedProgress)
     const intakeOpen = intakeEligible && !intake.finished
