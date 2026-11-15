@@ -152,3 +152,11 @@ it('a manage tool marked destructive asks only for the action a call names', asy
     expect(desktopConnectorCall('composio_COMPOSIO_MANAGE_CONNECTIONS', true, {})?.kind).toBe('delete')
     expect(desktopConnectorCall('files_overwrite_all', true, { action: 'list' })?.kind).toBe('delete')
 })
+
+it('a tool that runs other tools and is marked destructive is held under the tools it runs', () => {
+    const run = 'composio_COMPOSIO_MULTI_EXECUTE_TOOL'
+    expect(desktopConnectorCall(run, true, { tools: [{ tool_slug: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'pat@example.test' } }], session_id: 'draw' })).toEqual({ kind: 'send', tool: 'GMAIL_SEND_EMAIL' })
+    expect(desktopConnectorCall(run, true, { tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: {} }] })).toBeNull()
+    // Nothing readable in the call: the mark still holds it.
+    expect(desktopConnectorCall(run, true, { payload: 'opaque' })).toEqual({ kind: 'delete', tool: run })
+})

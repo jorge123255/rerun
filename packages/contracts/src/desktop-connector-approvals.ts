@@ -108,9 +108,14 @@ export function desktopConnectorCall(toolName: string, destructive: boolean, arg
         const named = namedActions(args)
         if (named.length && !named.some(action => desktopConnectorActionKind(action))) return null
     }
-    if (own) return { kind: own, tool: toolName }
+    // A tool that runs other tools is marked destructive because some of them are. The tools a call names decide:
+    // the mark alone holds it only when none can be read out of the call.
+    const hinted = !!own && !desktopConnectorActionKind(toolName)
+    if (own && !(hinted && RUNS_OTHER_TOOLS.test(toolName))) return { kind: own, tool: toolName }
     if (!RUNS_OTHER_TOOLS.test(toolName)) return null
-    const asking = innerTools(args).flatMap(tool => { const kind = desktopConnectorActionKind(tool); return kind ? [{ tool, kind }] : [] })
+    const inner = innerTools(args)
+    if (own && !inner.length) return { kind: own, tool: toolName }
+    const asking = inner.flatMap(tool => { const kind = desktopConnectorActionKind(tool); return kind ? [{ tool, kind }] : [] })
     if (!asking.length) return null
     return { kind: asking[0]!.kind, tool: asking.map(item => item.tool).sort().join('+').slice(0, 200) }
 }
