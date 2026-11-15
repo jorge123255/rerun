@@ -1,9 +1,7 @@
 import 'server-only'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { z } from 'zod'
-import { createDockerCli, type DockerClient } from '../../../../../engine/src/desktop/isolated-screen/docker-cli'
-import { decodeFrame, encodeFrame } from '../../../../../engine/src/desktop/isolated-screen/frame'
-import { LABEL_AGENT, LABEL_NONCE, containerName } from '../../../../../engine/src/desktop/isolated-screen/identity'
+import { createScreenGuest, type ScreenGuest } from './guest'
 import { authenticateDesktopEngineRequest } from '../auth'
 import { openDesktopDatabase } from '../database'
 import { getDesktopRemoteMcpService } from '../mcp-binding'
@@ -24,6 +22,13 @@ const inputSchema = z.object({
 
 class Refusal extends Error {}
 
+// The engine's names for a coworker's screen (isolated-screen/identity.ts). A test pins them to it.
+const LABEL_AGENT = 'com.rerun.engineAgentId'
+const LABEL_NONCE = 'com.rerun.launchNonce'
+export function screenContainerName(engineAgentId: string): string {
+    return `rerun-screen-${createHash('sha256').update(engineAgentId, 'utf8').digest('hex').slice(0, 32)}`
+}
+
 /** The characters to type, or a refusal: a value that would press Enter or cannot be typed is not sent. */
 export function secretChunks(value: Uint8Array): string[] {
     let text: string
@@ -39,17 +44,16 @@ export function secretChunks(value: Uint8Array): string[] {
 }
 
 /** Sends one piece of the value to the screen. On a stop it waits for the screen to confirm it stopped. */
-export async function typeChunk(docker: Pick<DockerClient, 'exec'>, name: string, text: string, expectedForeground: { app: 'browser'; windowId: string }, signal: AbortSignal): Promise<void> {
+export async function typeChunk(guest: Pick<ScreenGuest, 'call'>, name: string, text: string, expectedForeground: { app: 'browser'; windowId: string }, signal: AbortSignal): Promise<void> {
     const requestId = randomBytes(16).toString('hex')
-    let stdout: Buffer
+    let reply: { ok?: unknown; refusal?: unknown }
     try {
-        stdout = await docker.exec(name, ['rerun-rpc'], encodeFrame({ op: 'input', action: 'type', text, expectedForeground, requestId }), signal)
+        reply = await guest.call(name, { op: 'input', action: 'type', text, expectedForeground, requestId }, signal)
     } catch (error) {
-        if (signal.aborted) await docker.exec(name, ['rerun-rpc'], encodeFrame({ op: 'cancel', requestId }), AbortSignal.timeout(15_000)).catch(() => {})
+        if (signal.aborted) await guest.call(name, { op: 'cancel', requestId }, AbortSignal.timeout(15_000)).catch(() => {})
         throw error
     }
-    const reply = decodeFrame(stdout).value as { ok?: unknown; refusal?: unknown } | null
-    if (reply?.ok !== true) throw new Refusal(reply?.refusal === true ? 'The page lost the cursor before the secret was typed. Click its field and try again.' : 'The screen could not type the secret.')
+    if (reply.ok !== true) throw new Refusal(reply?.refusal === true ? 'The page lost the cursor before the secret was typed. Click its field and try again.' : 'The screen could not type the secret.')
 }
 
 function masterKey(): Buffer {
@@ -66,7 +70,7 @@ function masterKey(): Buffer {
  * coworker must be allowed to ask for secrets and to use its browser, and the request must come
  * from its run that is going on right now.
  */
-export async function handleDesktopTypeSecret(request: Request, docker: Pick<DockerClient, 'exec' | 'inspectContainer'> = createDockerCli()): Promise<Response> {
+export async function handleDesktopTypeSecret(request: Request, guest: ScreenGuest = createScreenGuest()): Promise<Response> {
     const headers = { 'Cache-Control': 'no-store' }
     const refuse = (reason: string) => Response.json({ ok: false, reason }, { headers })
     try {
@@ -81,9 +85,9 @@ export async function handleDesktopTypeSecret(request: Request, docker: Pick<Doc
             return localId
         }
         const localId = await allowed()
-        const name = containerName(run.engineAgentId)
-        const container = await docker.inspectContainer(name, signal)
-        if (container.status !== 'found' || container.state !== 'running' || container.labels[LABEL_AGENT] !== run.engineAgentId || container.labels[LABEL_NONCE] !== runtime.launchNonce) return refuse('This coworker’s screen is not running.')
+        const name = screenContainerName(run.engineAgentId)
+        const container = await guest.inspect(name, signal)
+        if (container?.state !== 'running' || container.labels[LABEL_AGENT] !== run.engineAgentId || container.labels[LABEL_NONCE] !== runtime.launchNonce) return refuse('This coworker’s screen is not running.')
         const db = await openDesktopDatabase(runtime.dataRoot)
         const crypto = createDesktopSecretCrypto(masterKey)
         const opener = desktopVaultMcpOpener(db, crypto, runtime.workspaceId, createDesktopSecretRequestStore(db, crypto))
@@ -91,7 +95,7 @@ export async function handleDesktopTypeSecret(request: Request, docker: Pick<Doc
             await opener.useCredential(localId, body.variable, { check: async () => { if (await allowed() !== localId) throw new Error('Coworker changed') } }, async value => {
                 for (const chunk of secretChunks(value)) {
                     signal.throwIfAborted()
-                    await typeChunk(docker, name, chunk, body.expectedForeground, signal)
+                    await typeChunk(guest, name, chunk, body.expectedForeground, signal)
                 }
             })
         } catch (error) {

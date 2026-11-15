@@ -59,7 +59,11 @@ function normalizeToolResult(result: unknown, toolName: string | undefined): unk
         if (Array.isArray(payload?.content)) {
             const text = payload.content.find(part => record(part)?.type === 'text')
             const metadata = typeof text?.text === 'string' ? record(parseJson(text.text)) : null
-            return metadata && typeof metadata.screenshotId === 'string' ? metadata : { status: 'failed', reason: 'Screenshot metadata was unavailable.' }
+            if (metadata && typeof metadata.screenshotId === 'string') return metadata
+            // A refusal or a failure has no picture but does say why (Docker is not running, the user
+            // is driving the screen). Passing that on lets the coworker tell the user what to do.
+            if (metadata && (metadata.status === 'refused' || metadata.status === 'failed') && typeof metadata.reason === 'string') return { status: metadata.status, reason: metadata.reason.slice(0, 500) }
+            return { status: 'failed', reason: 'Screenshot metadata was unavailable.' }
         }
     }
     return envelope ? unwrapMcpResult(envelope.result ?? {}, canonicalBridgeName(toolName) === 'fs_read') : result
