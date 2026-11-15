@@ -815,6 +815,22 @@ describe('concrete launcher and foreground admission', () => {
         expect(box.docker.execs.find(call => call.body.op === 'input')?.body.expectedForeground).toEqual({ app: 'terminal', windowId: '567' })
         expect(admitted).toEqual(['terminal', 'terminal'])
     })
+    it('holds the browser while the app types a saved secret, and never sends input itself', async () => {
+        const box = await boot(harness({ authorizeInput: async () => {} }))
+        const delivered: unknown[] = []
+        const shot = await box.service.typeSecret(box.target, async front => { delivered.push(front) }, box.signal)
+        expect(delivered).toEqual([{ app: 'browser', windowId: '123' }])
+        expect(shot.mediaType).toBe('image/jpeg')
+        // The engine asked which window is in front and took the picture. The keystrokes are the app's.
+        expect(box.docker.execs.some(call => call.body.op === 'input')).toBe(false)
+    })
+    it('will not have a saved secret typed into Terminal or Files', async () => {
+        const box = await boot(harness({ authorizeInput: async () => {} }))
+        box.docker.foreground = { app: 'terminal', windowId: '567' }
+        let asked = 0
+        await expect(box.service.typeSecret(box.target, async () => { asked++ }, box.signal)).rejects.toThrow('only be typed into the browser')
+        expect(asked).toBe(0)
+    })
     it('refuses unverifiable or missing foreground authority without an input effect', async () => {
         const box = await boot()
         box.docker.foreground = { app: 'unknown', windowId: '123' }
