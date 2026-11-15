@@ -227,21 +227,28 @@ test('a Connect key is recognized by the handshake alone, in its own header', as
 
 // A pretend Composio Connect: one consumer key, one MCP address, and what it was asked.
 function connectServer() {
-    const asked: { name: string; arguments: { toolkits: { name: string; action: string }[] } }[] = []
-    const state = { signedIn: false, stream: false }
+    const asked: { name: string; arguments: { toolkits: { name: string; action: string; account_id?: string }[] } }[] = []
+    const state = { signedIn: false, stream: false, elsewhere: [] as string[], removalFails: false }
     const network = (async (input: RequestInfo | URL, init?: RequestInit) => {
         expect(String(input)).toBe(COMPOSIO_CONNECT)
         const sent = new Headers(init?.headers)
         if (sent.get('x-consumer-api-key') !== 'ck_fixture_consumer') return new Response('', { status: 401 })
-        const body = JSON.parse(String(init?.body)) as { id?: number; method: string; params?: { name: string; arguments: { toolkits: { name: string; action: string }[] } } }
+        const body = JSON.parse(String(init?.body)) as { id?: number; method: string; params?: { name: string; arguments: { toolkits: { name: string; action: string; account_id?: string }[] } } }
         if (body.method === 'initialize') return Response.json({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-03-26' } }, { headers: { 'mcp-session-id': 'session-1' } })
         expect(sent.get('mcp-session-id')).toBe('session-1')
         if (body.method === 'notifications/initialized') return new Response(null, { status: 202 })
         asked.push(body.params!)
-        const toolkit = body.params!.arguments.toolkits[0]!
-        const row = state.signedIn ? { toolkit: toolkit.name, status: 'active', accounts: [{ id: 'ca_9', status: 'ACTIVE' }] }
-            : { toolkit: toolkit.name, status: 'initiated', accounts: [], ...(toolkit.action === 'add' ? { redirect_url: 'https://connect.composio.dev/link/lk_fixture' } : {}) }
-        const message = { jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify({ successful: true, data: { results: { [toolkit.name]: row } }, error: null }) }], isError: false } }
+        const results = Object.fromEntries(body.params!.arguments.toolkits.map(toolkit => {
+            if (toolkit.action === 'remove') {
+                if (state.removalFails || toolkit.account_id !== 'ca_9') return [toolkit.name, { toolkit: toolkit.name, status: 'failed', error_message: 'account_id is required' }]
+                state.signedIn = false
+                return [toolkit.name, { toolkit: toolkit.name, status: 'removed' }]
+            }
+            const live = toolkit.name === 'gmail' ? state.signedIn : state.elsewhere.includes(toolkit.name)
+            return [toolkit.name, live ? { toolkit: toolkit.name, status: 'active', accounts: [{ id: 'ca_9', status: 'active' }] }
+                : { toolkit: toolkit.name, status: 'initiated', accounts: [], ...(toolkit.action === 'add' ? { redirect_url: 'https://connect.composio.dev/link/lk_fixture' } : {}) }]
+        }))
+        const message = { jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify({ successful: true, data: { results }, error: null }) }], isError: false } }
         return state.stream ? new Response(`event: message\ndata: ${JSON.stringify(message)}\n\n`, { headers: { 'content-type': 'text/event-stream' } }) : Response.json(message)
     }) as typeof fetch
     return { asked, state, network }
@@ -284,16 +291,28 @@ test('with a Connect key in the Vault every Composio app is offered and connecte
     await expect(apps.act({ action: 'attach', id: account.id, agentId: 'coworker-1', attached: true })).rejects.toMatchObject({ status: 409 })
     await expect(apps.act({ action: 'remove-key' })).rejects.toMatchObject({ status: 409 })
     expect(await apps.tools('coworker-1', new AbortController().signal)).toEqual([])
-    const asked = server.asked.length
-    expect((await apps.act({ action: 'remove', id: account.id })).view.accounts).toEqual([])
-    expect(server.asked.length).toBe(asked)
+
+    // Apps signed in elsewhere at Composio are found, a batch at a time, and listed as signed in.
+    server.state.elsewhere = ['slack', 'notion']
+    const found = await apps.act({ action: 'find' })
+    expect(found.view.accounts.map(row => [row.slug, row.status])).toEqual([['gmail', 'active'], ['notion', 'active'], ['slack', 'active']])
+    expect(server.asked.slice(-6).map(call => call.arguments.toolkits.length)).toEqual([50, 50, 50, 50, 50, 50])
+
+    // Removing signs the app out at Composio by its account there; a sign-out that fails keeps the row.
+    server.state.removalFails = true
+    await expect(apps.act({ action: 'remove', id: account.id })).rejects.toMatchObject({ status: 502 })
+    expect((await apps.view()).accounts.some(row => row.slug === 'gmail')).toBe(true)
+    server.state.removalFails = false
+    expect((await apps.act({ action: 'remove', id: account.id })).view.accounts.some(row => row.slug === 'gmail')).toBe(false)
+    expect(server.asked.some(call => call.arguments.toolkits[0]!.action === 'remove' && call.arguments.toolkits[0]!.account_id === 'ca_9')).toBe(true)
+    expect(server.state.signedIn).toBe(false)
 })
 
 test('a Connect key the Vault no longer holds right is said plainly, and a page from elsewhere is not opened', async () => {
     const { managedAppsConnectClient, managedConnectionOf } = await import('./client')
     const server = connectServer()
     await expect(managedAppsConnectClient('ck_wrong', server.network).status('gmail')).rejects.toMatchObject({ status: 401 })
-    expect(managedConnectionOf({ results: { gmail: { toolkit: 'gmail', status: 'initiated', redirect_url: 'https://evil.example/link' } } }, 'gmail')).toEqual({ state: 'pending' })
-    expect(managedConnectionOf({ results: { gmail: { toolkit: 'gmail', has_active_connection: true } } }, 'gmail')).toEqual({ state: 'active' })
+    expect(managedConnectionOf({ results: { gmail: { toolkit: 'gmail', status: 'initiated', redirect_url: 'https://evil.example/link' } } }, 'gmail')).toEqual({ state: 'pending', accountIds: [] })
+    expect(managedConnectionOf({ results: { gmail: { toolkit: 'gmail', has_active_connection: true } } }, 'gmail')).toEqual({ state: 'active', accountIds: [] })
     expect(() => managedConnectionOf({ results: {} }, 'gmail')).toThrow()
 })

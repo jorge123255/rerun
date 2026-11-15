@@ -25,6 +25,8 @@ export const desktopManagedAppsActionSchema = z.discriminatedUnion('action', [
     z.object({ action: z.literal('connect'), slug }).strict(),
     z.object({ action: z.literal('refresh'), id, retry: z.boolean().optional() }).strict(),
     z.object({ action: z.literal('remove'), id }).strict(),
+    // With a Connect key: looks for apps already signed in at Composio and lists them.
+    z.object({ action: z.literal('find') }).strict(),
     z.object({ action: z.literal('attach'), id, agentId: z.string().min(1).max(200), attached: z.boolean() }).strict(),
 ])
 export type DesktopManagedAppsAction = z.infer<typeof desktopManagedAppsActionSchema>

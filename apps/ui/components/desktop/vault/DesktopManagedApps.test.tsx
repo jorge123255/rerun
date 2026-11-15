@@ -113,6 +113,7 @@ test('with Composio kept in the Vault: apps connect here, coworkers are chosen o
     expect(posts.at(-1)).toEqual({ action: 'refresh', id: ACCOUNT, retry: true })
     // Signed in: no coworker boxes, and removing is only from this list.
     expect(host.querySelector('input[type="checkbox"]')).toBeNull()
-    expect(host.textContent).toContain('Coworkers given “composio” can use it.')
-    expect(host.textContent).toContain('Remove from list')
+    expect(host.textContent).toContain('Removing it signs it out at Composio too.')
+    await press(host, 'Find apps already signed in at Composio')
+    expect(posts.at(-1)).toEqual({ action: 'find' })
 })
