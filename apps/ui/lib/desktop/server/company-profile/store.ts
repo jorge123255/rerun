@@ -88,13 +88,11 @@ async function getWith(executor: Executor, requestId: string): Promise<StoredDes
 export function createSqliteDesktopCompanyProfileStore(db: Client, options?: { schemaReady?: boolean }): DesktopCompanyProfileStore {
     let ready: Promise<void> | null = options?.schemaReady ? Promise.resolve() : null
     const ensure = () => (ready ??= serialized(() => ensureDesktopCompanyProfileSchema(db)))
-    async function write<T>(work: (tx: Transaction) => Promise<T>): Promise<T> {
-        return serialized(async () => {
-            const tx = await db.transaction('write')
-            try { const value = await work(tx); await tx.commit(); return value }
-            catch (error) { await tx.rollback().catch(() => {}); throw error }
-            finally { tx.close() }
-        })
+    // Each write here is one statement, so it is atomic without a transaction. A transaction takes
+    // the client's connection and leaves other work on a new one that has no busy timeout; in the
+    // running app a second writer then failed at once with SQLITE_BUSY and the website read was lost.
+    async function write<T>(work: (tx: Executor) => Promise<T>): Promise<T> {
+        return serialized(() => work(db))
     }
     return {
         async get(requestId) { await ensure(); return getWith(db, requestId) },
