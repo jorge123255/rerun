@@ -70,3 +70,30 @@ test('cannot be answered while the coworker is still replying', async () => {
 test('a refusal is worded as a refusal', () => {
     expect(connectorAnswerText('drive_delete_file', 'deny')).toBe('Declined: Drive Delete File. Do not run it.')
 })
+
+test('a held message is shown as a message: To, Subject and its text, not as JSON', async () => {
+    const preview = JSON.stringify({ v: 1, items: [{ tool: 'GMAIL_SEND_EMAIL', fields: [
+        ['recipient_email', 'pat@example.test'], ['cc', '["sam@example.test","lee@example.test"]'], ['subject', 'Quarterly numbers'],
+        ['body', 'Hi Pat,\n\nThe numbers are attached.'], ['include_signature', 'false'],
+    ] }] })
+    const { host } = await mount([{ pending: [{ id: ID, tool: 'GMAIL_SEND_EMAIL', kind: 'send', preview, createdAt: '2026-11-14T12:00:00.000Z' }], rules: [] }])
+    const card = host.querySelector('[data-testid="desktop-connector-preview"]')!
+    expect(card.textContent).not.toContain('{')
+    expect([...card.querySelectorAll('dt')].slice(0, 3).map(node => node.textContent)).toEqual(['To', 'Cc', 'Subject'])
+    expect([...card.querySelectorAll('dd')].slice(0, 3).map(node => node.textContent)).toEqual(['pat@example.test', 'sam@example.test, lee@example.test', 'Quarterly numbers'])
+    expect(card.querySelector('p.whitespace-pre-wrap')!.textContent).toBe('Hi Pat,\n\nThe numbers are attached.')
+    // What is not part of the message sits under More details.
+    expect(card.querySelector('details')!.textContent).toContain('Include signature')
+    expect(host.querySelector('pre')).toBeNull()
+})
+
+test('another action shows its named values, sandbox code shows as code, and an old request shows its text', async () => {
+    const shaped = (preview: string) => [{ pending: [{ id: ID, tool: 'drive_delete_file', kind: 'delete', preview, createdAt: '2026-11-14T12:00:00.000Z' }], rules: [] }]
+    const values = await mount(shaped(JSON.stringify({ v: 1, items: [{ fields: [['file_id', 'abc123'], ['permanent', 'true']] }] })))
+    expect([...values.host.querySelectorAll('dt')].map(node => node.textContent)).toEqual(['File id', 'Permanent'])
+    const code = await mount(shaped(JSON.stringify({ v: 1, items: [{ code: 'run_composio_tool("GMAIL_SEND_EMAIL", p)' }] })))
+    expect(code.host.textContent).toContain('Code it would run')
+    expect(code.host.querySelector('pre')!.textContent).toBe('run_composio_tool("GMAIL_SEND_EMAIL", p)')
+    const old = await mount(shaped('{"to":"pat@example.test"}'))
+    expect(old.host.querySelector('pre')!.textContent).toBe('{"to":"pat@example.test"}')
+})

@@ -91,10 +91,12 @@ function innerTools(value: unknown, depth = 0, found: string[] = [], entries: un
 }
 
 const RUNS_CODE = /(?:^|_)REMOTE_(?:WORKBENCH|BASH_TOOL)$/i
+// A sandbox call's own notes ("current_step": "VERIFYING_SEND") are labels, not code: they are not read for tool names.
+const NOTE_KEY = /^(?:thought|current_step(?:_metric)?|session_id|step|reason|description)$/i
 function strings(value: unknown, depth = 0, found: string[] = []): string[] {
     if (depth > 4 || found.length >= 40) return found
     if (typeof value === 'string') found.push(value.slice(0, 200_000))
-    else if (value && typeof value === 'object') for (const child of Object.values(value)) strings(child, depth + 1, found)
+    else if (value && typeof value === 'object') for (const [key, child] of Object.entries(value)) { if (Array.isArray(value) || !NOTE_KEY.test(key)) strings(child, depth + 1, found) }
     return found
 }
 
@@ -144,12 +146,26 @@ export function desktopConnectorCall(toolName: string, destructive: boolean, arg
     return { kind: asking[0]!.kind, tool: asking.map(item => item.tool).sort().join('+').slice(0, 200), subject: { tools: entries } }
 }
 
+/**
+ * What a held call's card shows, kept as the request's preview: each inner call with its fields in
+ * the order given, or the code a sandbox would run. Older requests kept the raw arguments as text.
+ */
+export const desktopConnectorPreviewSchema = z.object({
+    v: z.literal(1),
+    items: z.array(z.object({
+        tool: z.string().max(200).optional(),
+        fields: z.array(z.tuple([z.string().max(80), z.string().max(1400)])).max(14).optional(),
+        code: z.string().max(2000).optional(),
+    }).strict()).max(6),
+}).strict()
+export type DesktopConnectorPreview = z.infer<typeof desktopConnectorPreviewSchema>
+
 export const desktopConnectorApprovalDecisionSchema = z.enum(['once', 'conversation', 'always', 'deny'])
 export type DesktopConnectorApprovalDecision = z.infer<typeof desktopConnectorApprovalDecisionSchema>
 
 const kind = z.enum(DESKTOP_CONNECTOR_ACTION_KINDS)
 export const desktopConnectorApprovalViewSchema = z.object({
-    pending: z.array(z.object({ id: z.string().uuid(), tool: z.string().max(200), kind, preview: z.string().max(700), createdAt: z.string() }).strict()).max(20),
+    pending: z.array(z.object({ id: z.string().uuid(), tool: z.string().max(200), kind, preview: z.string().max(4000), createdAt: z.string() }).strict()).max(20),
     rules: z.array(z.object({ id: z.string().uuid(), tool: z.string().max(200), scope: z.enum(['conversation', 'always']) }).strict()).max(200),
 }).strict()
 export type DesktopConnectorApprovalView = z.infer<typeof desktopConnectorApprovalViewSchema>

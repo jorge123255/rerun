@@ -7,7 +7,7 @@ import { desktopConnectorActionKind, desktopConnectorCall } from '@rerun/contrac
 
 vi.mock('server-only', () => ({}))
 const { initializeDesktopRound61 } = await import('../round61-schema')
-const { admitConnectorCall, decideConnectorApproval, forgetConnectorRule, forgetConnectorRuleOf, listConnectorRules, pendingConnectorApproval, readConnectorApprovals } = await import('./store')
+const { admitConnectorCall, connectorPreview, decideConnectorApproval, forgetConnectorRule, forgetConnectorRuleOf, listConnectorRules, pendingConnectorApproval, readConnectorApprovals } = await import('./store')
 
 let db: Client, dir: string
 beforeEach(async () => {
@@ -191,4 +191,20 @@ it('an allow once covers the inner call, not the wrapper’s changing notes', as
     expect(await admit(other)).toContain('did not run')
     expect(await admit(retry)).toBeNull()
     expect(await admit(retry)).toContain('did not run')
+})
+
+it('the card’s preview keeps each inner call’s fields, strikes out credentials and always fits', () => {
+    const preview = JSON.parse(connectorPreview({ tools: [{ tool_slug: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'pat@example.test', subject: 'Hi', body: 'Hello', cc: [], token: 'Bearer abcdefghijklmnopqrstuvwxyz012345' } }] }))
+    expect(preview).toEqual({ v: 1, items: [{ tool: 'GMAIL_SEND_EMAIL', fields: [['recipient_email', 'pat@example.test'], ['subject', 'Hi'], ['body', 'Hello'], ['token', 'Bearer [redacted]']] }] })
+    expect(JSON.parse(connectorPreview({ code: ['run_composio_tool("GMAIL_SEND_EMAIL", p)'] }))).toEqual({ v: 1, items: [{ code: 'run_composio_tool("GMAIL_SEND_EMAIL", p)' }] })
+    expect(JSON.parse(connectorPreview({ to: 'pat@example.test' }))).toEqual({ v: 1, items: [{ fields: [['to', 'pat@example.test']] }] })
+    const huge = connectorPreview({ tools: Array.from({ length: 6 }, () => ({ tool_slug: 'GMAIL_SEND_EMAIL', arguments: { body: 'x'.repeat(5000), subject: 'y'.repeat(900) } })) })
+    expect(huge.length).toBeLessThanOrEqual(3800)
+    expect(JSON.parse(huge).items).toHaveLength(6)
+})
+
+it('a sandbox call’s step label is not read as a tool', () => {
+    expect(desktopConnectorCall('composio_COMPOSIO_REMOTE_WORKBENCH', true, {
+        code_to_execute: 'result, error = run_composio_tool("GMAIL_FETCH_EMAILS", {"query": "in:sent"})', thought: 'Verify the send.', current_step: 'VERIFYING_SEND', session_id: 'cent',
+    })).toBeNull()
 })

@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-    desktopConnectorApprovalResultSchema, desktopConnectorApprovalViewSchema, toolLabelOf,
-    type DesktopConnectorActionKind, type DesktopConnectorApprovalAction, type DesktopConnectorApprovalDecision, type DesktopConnectorApprovalView,
+    desktopConnectorApprovalResultSchema, desktopConnectorApprovalViewSchema, desktopConnectorPreviewSchema, toolLabelOf,
+    type DesktopConnectorActionKind, type DesktopConnectorPreview, type DesktopConnectorApprovalAction, type DesktopConnectorApprovalDecision, type DesktopConnectorApprovalView,
 } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 import { useDesktopLocale } from '../DesktopLocale'
@@ -24,6 +24,81 @@ export const announceConnectorApprovalsChanged = () => { window.dispatchEvent(ne
 export function connectorAnswerText(tool: string, decision: DesktopConnectorApprovalDecision): string {
     const name = toolLabelOf(tool)
     return decision === 'deny' ? `Declined: ${name}. Do not run it.` : `Allowed: ${name}. Run it now with exactly the same arguments.`
+}
+
+const HEADERS = [
+    [/^(?:recipient_?emails?|to|recipients?|to_?emails?)$/i, 'boardUI.askTo'], [/^cc$/i, 'boardUI.askCc'], [/^bcc$/i, 'boardUI.askBcc'], [/^(?:subject|title)$/i, 'boardUI.askSubject'],
+] as const
+const BODY = /^(?:body|message|text|content|html_?body)$/i
+const words = (key: string) => { const text = key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim().toLowerCase(); return text.charAt(0).toUpperCase() + text.slice(1) }
+// A list arrives as JSON text: ["a","b"] reads better as a, b.
+const plain = (value: string) => { try { const parsed: unknown = JSON.parse(value); return Array.isArray(parsed) && parsed.every(item => typeof item === 'string') ? parsed.join(', ') : value } catch { return value } }
+
+function readPreview(preview: string): DesktopConnectorPreview | null {
+    try { const parsed = desktopConnectorPreviewSchema.safeParse(JSON.parse(preview)); return parsed.success ? parsed.data : null } catch { return null }
+}
+
+/**
+ * What the held action would do, laid out to be read: a message as its To, Subject and text; any
+ * other action as its named values; sandbox code as code. A request kept before previews had a
+ * shape shows its text as it was.
+ */
+function ConnectorPreview({ preview, showTool }: { preview: string; showTool: boolean }) {
+    const { t } = useDesktopLocale()
+    const shaped = readPreview(preview)
+    if (!shaped) return preview === '{}' ? null : <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-muted px-2 py-1.5 font-mono text-xs text-muted-foreground">{preview}</pre>
+    return (
+        <div className="mt-2 flex flex-col gap-2" data-testid="desktop-connector-preview">
+            {shaped.items.map((item, index) => {
+                const fields = item.fields ?? []
+                const headers = HEADERS.flatMap(([key, label]) => { const found = fields.find(([name]) => key.test(name)); return found ? [{ label, value: plain(found[1]), name: found[0] }] : [] })
+                const body = fields.find(([name]) => BODY.test(name))
+                const message = !!body && headers.length > 0
+                const shown = new Set(message ? [...headers.map(header => header.name), body![0]] : [])
+                const rest = fields.filter(([name]) => !shown.has(name))
+                if (!item.code && !fields.length) return null
+                return (
+                    <div key={index} className="overflow-hidden rounded-md border border-border bg-background">
+                        {showTool && item.tool && <p className="border-b border-border bg-muted/50 px-3 py-1.5 text-xs font-medium text-muted-foreground">{toolLabelOf(item.tool)}</p>}
+                        {item.code && <>
+                            <p className="px-3 pt-2 text-xs text-muted-foreground">{t('boardUI.askCode')}</p>
+                            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words px-3 pb-2 pt-1 font-mono text-xs text-foreground">{item.code}</pre>
+                        </>}
+                        {message && <>
+                            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-b border-border px-3 py-2 text-sm">
+                                {headers.map(header => (
+                                    <div key={header.name} className="contents">
+                                        <dt className="text-muted-foreground">{t(header.label)}</dt>
+                                        <dd className={`min-w-0 break-words text-foreground ${header.label === 'boardUI.askSubject' ? 'font-medium' : ''}`}>{header.value}</dd>
+                                    </div>
+                                ))}
+                            </dl>
+                            <p className="max-h-48 overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-sm text-foreground">{body![1]}</p>
+                        </>}
+                        {rest.length > 0 && (message
+                            ? <details className="border-t border-border px-3 py-1.5 text-xs text-muted-foreground">
+                                <summary className="cursor-pointer select-none">{t('boardUI.askMore')}</summary>
+                                <FieldList fields={rest} />
+                            </details>
+                            : <div className="px-3 py-2"><FieldList fields={rest} /></div>)}
+                    </div>
+                )
+            })}
+        </div>
+    )
+}
+
+function FieldList({ fields }: { fields: readonly (readonly [string, string])[] }) {
+    return (
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+            {fields.map(([name, value]) => (
+                <div key={name} className="contents">
+                    <dt className="text-muted-foreground">{words(name)}</dt>
+                    <dd className="min-w-0 whitespace-pre-wrap break-words text-foreground">{plain(value)}</dd>
+                </div>
+            ))}
+        </dl>
+    )
 }
 
 /**
@@ -85,7 +160,7 @@ export function DesktopConnectorApprovals({ sessionId, generating, disabled, onA
                 <section className="rounded-lg border border-border bg-card p-3 text-sm" aria-label={t('boardUI.askTitle', { tool: toolLabelOf(waiting.tool) })}>
                     <p className="font-medium text-foreground">{t('boardUI.askTitle', { tool: toolLabelOf(waiting.tool) })}</p>
                     <p className="mt-0.5 text-muted-foreground">{t(KIND[waiting.kind])}</p>
-                    {waiting.preview !== '{}' && <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-muted px-2 py-1.5 font-mono text-xs text-muted-foreground">{waiting.preview}</pre>}
+                    <ConnectorPreview preview={waiting.preview} showTool={waiting.tool.includes('+')} />
                     <div className="mt-3 flex flex-wrap gap-2">
                         {ANSWERS.map(([decision, label]) => (
                             <Button key={decision} type="button" size="sm" variant={decision === 'once' ? 'default' : decision === 'deny' ? 'ghost' : 'outline'}

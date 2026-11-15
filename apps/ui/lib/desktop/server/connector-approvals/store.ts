@@ -1,11 +1,36 @@
 import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
-import type { DesktopConnectorActionKind, DesktopConnectorApprovalDecision, DesktopConnectorApprovalView } from '@rerun/contracts'
+import type { DesktopConnectorActionKind, DesktopConnectorApprovalDecision, DesktopConnectorApprovalView, DesktopConnectorPreview } from '@rerun/contracts'
 import { redactHistoricalText } from '@/components/desktop/tool-presentations/redact'
 
 const MAX_PENDING = 20
-const PREVIEW = 600
+const PREVIEW = 3800
+const NAME_KEY = /^(?:tool_?slug|tool_?name|tool|slug|action|name)$/i
+const LONG_KEY = /^(?:body|message|text|content|html_?body|description|comment|note)$/i
+
+/**
+ * What the card shows for a held call: each inner call's fields, or the code a sandbox would run,
+ * with credentials struck out and long values cut so the whole always fits and stays readable.
+ */
+export function connectorPreview(args: Record<string, unknown>): string {
+    const build = (scale: number): DesktopConnectorPreview => {
+        const text = (value: unknown, limit: number) => redactHistoricalText(typeof value === 'string' ? value : JSON.stringify(value) ?? '', Math.max(40, Math.floor(limit / scale)))
+        const fields = (source: unknown) => Object.entries(source && typeof source === 'object' && !Array.isArray(source) ? source : {})
+            .filter(([, value]) => value !== null && value !== undefined && value !== '' && !(Array.isArray(value) && value.length === 0))
+            .slice(0, 14).map(([key, value]) => [key.slice(0, 80), text(value, LONG_KEY.test(key) ? 1200 : 300)] as [string, string])
+        if (Array.isArray(args.code)) return { v: 1, items: args.code.slice(0, 6).map(code => ({ code: text(code, 1800) })) }
+        if (Array.isArray(args.tools)) return { v: 1, items: args.tools.slice(0, 6).map(entry => {
+            const row = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {}
+            const name = Object.entries(row).find(([key, value]) => NAME_KEY.test(key) && typeof value === 'string')
+            const given = ['arguments', 'args', 'params', 'parameters', 'input'].map(key => row[key]).find(value => value && typeof value === 'object')
+            return { ...(name ? { tool: String(name[1]).slice(0, 200) } : {}), fields: fields(given ?? Object.fromEntries(Object.entries(row).filter(([key]) => key !== name?.[0]))) }
+        }) }
+        return { v: 1, items: [{ fields: fields(args) }] }
+    }
+    for (const scale of [1, 2, 4, 8, 16]) { const made = JSON.stringify(build(scale)); if (made.length <= PREVIEW) return made }
+    return JSON.stringify({ v: 1, items: [] } satisfies DesktopConnectorPreview)
+}
 
 const WORDS: Record<DesktopConnectorActionKind, string> = {
     delete: 'deletes something', send: 'sends something to other people', share: 'shares something with other people',
@@ -56,7 +81,7 @@ export async function admitConnectorCall(db: Client, call: ConnectorCall, now = 
             const pending = Number((await tx.execute({ sql: "SELECT COUNT(*) AS n FROM desktop_connector_approval_requests WHERE session_id=? AND status='pending'", args: [call.sessionId] })).rows[0]?.n ?? 0)
             if (pending >= MAX_PENDING) answer = 'Too many actions are already waiting for the person’s answer in this chat. End your turn and let them answer those first.'
             else {
-                const text = redactHistoricalText(JSON.stringify(call.arguments), PREVIEW)
+                const text = connectorPreview(call.arguments)
                 await tx.execute({
                     sql: "INSERT INTO desktop_connector_approval_requests(id,owner,session_id,tool,kind,args_digest,preview,status,created_at) VALUES(?,?,?,?,?,?,?,'pending',?)",
                     args: [randomUUID(), call.owner, call.sessionId, call.tool, call.kind, digest, text, now.toISOString()],
