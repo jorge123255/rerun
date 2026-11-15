@@ -24,8 +24,17 @@ export type DesktopCompanyProfileCollector = (input: {
     onEvent(event: DesktopCompanyProfileCollectorEvent): void
 }) => Promise<{ evidence: DesktopCompanyProfileEvidence[] }>
 
+/**
+ * The intake's question is "What is your company website?", and people answer "example.com".
+ * The reader needs a full address, so a bare domain is read over https.
+ */
+export function companyProfileSiteAddress(value: string): string {
+    const typed = value.trim()
+    return /^[a-z][a-z0-9+.-]*:\/\//i.test(typed) ? typed : `https://${typed}`
+}
+
 export const collectDesktopCompanyProfileEvidence: DesktopCompanyProfileCollector = async input => {
-    const target = readCompanyDiscoveryTarget(input.url)
+    const target = readCompanyDiscoveryTarget(companyProfileSiteAddress(input.url))
     const timeout = AbortSignal.timeout(DESKTOP_COMPANY_DISCOVERY_LIMITS.runDeadlineMs)
     const signal = AbortSignal.any([input.signal, timeout])
     const evidence: DesktopCompanyProfileEvidence[] = []

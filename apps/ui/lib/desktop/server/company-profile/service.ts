@@ -135,7 +135,9 @@ export function createDesktopCompanyProfileService(ports: DesktopCompanyProfileS
                 return settle(attempt, staleOutcome(attempt.kind), attempt.evidence, attempt.modelCalled)
             }
             if (error instanceof DesktopCompanyProfileError && ['storage', 'closed', 'conflict', 'not_found'].includes(error.code)) throw error
-            return settle(attempt, { status: 'error', reason: 'authority', message: 'Company profile authority could not confirm this request.', decision: null, profile: null }, attempt.evidence, attempt.modelCalled)
+            // The cause is kept with the attempt: without it a failure in the running app cannot be told apart from any other.
+            const cause = error instanceof Error && error.message ? ` (${error.name}: ${error.message})` : ''
+            return settle(attempt, { status: 'error', reason: 'authority', message: `Company profile authority could not confirm this request.${cause}`.slice(0, 400), decision: null, profile: null }, attempt.evidence, attempt.modelCalled)
         }
     }
 
@@ -175,7 +177,8 @@ export function createDesktopCompanyProfileService(ports: DesktopCompanyProfileS
                     sources = progressSources(sources, event)
                     attempt = { ...attempt, progress: { stage: 'reading_site', sources, updatedAt: now() }, updatedAt: now() }
                     const saved = attempt
-                    queue = queue.then(() => ports.store.updateProgress(saved)).then(() => {})
+                    // Progress is for display. A save that fails must not lose the website read itself.
+                    queue = queue.then(() => ports.store.updateProgress(saved)).then(() => {}, () => {})
                 },
             })
             await queue

@@ -9,7 +9,9 @@ import { TEMPLATE_CATEGORIES } from './template-display.js'
 export const DESKTOP_COMPANY_PROFILE_CONTRACT_VERSION = 1 as const
 export const DESKTOP_COMPANY_PROFILE_CONFIDENCE_FLOOR = 0.5
 export const DESKTOP_COMPANY_PROFILE_LIMITS = {
-    decisionDeadlineMs: 2_000,
+    // Upstream's two seconds fit its hosted classifier. A model from a ChatGPT or Claude subscription
+    // starts a runner first; in the Mac app two seconds always ran out before it answered.
+    decisionDeadlineMs: 20_000,
     profileDeadlineMs: 30_000,
     maxEvidence: 40,
     maxEvidencePassageChars: 8_000,
