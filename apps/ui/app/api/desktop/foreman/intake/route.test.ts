@@ -128,3 +128,16 @@ it('refuses a corrupt saved receipt on read or lookup without acknowledging or r
     expect((await POST(request({ action: 'lookup', chat, requestId: input.requestId }))).status).toBe(503)
     expect(active.sends).toBe(1)
 })
+
+it('asks the caller to wait while the typed company answer is still being saved, and never guesses from a social address', async () => {
+    await save()
+    const early = await POST(request({ action: 'decide-industry', chat, hint: 'example.org' }))
+    expect(early.status).toBe(409)
+    expect(await early.json()).toMatchObject({ pending: true })
+    expect((await POST(request({ action: 'analyze-site', chat, hint: 'example.org' }))).status).toBe(409)
+    const social = { chat, requestId: randomUUID(), baseRevision: 1, stepIndex: 2, draft: { ...draft, companyUrl: 'linkedin.com/company/example' }, decidedIndustry: null, knownFirstName: null }
+    expect((await POST(request({ action: 'save', input: social }))).status).toBe(200)
+    const none = await POST(request({ action: 'decide-industry', chat, hint: 'linkedin.com/company/example' }))
+    expect(none.status).toBe(200)
+    expect(await none.json()).toEqual({ industry: null })
+})

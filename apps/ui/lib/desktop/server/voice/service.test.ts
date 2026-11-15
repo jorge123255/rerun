@@ -80,6 +80,13 @@ describe('desktop voice durable lifecycle', () => {
         expect(audio.bytes).toEqual(bytes)
     })
 
+    it('reports a recording that is too long as itself, not as a failure worth retrying', async () => {
+        const f = fixture({ transcribe: async () => 'word '.repeat(5000) })
+        const uploaded = await f.service.upload(scope, upload, bytes, new AbortController().signal)
+        await expect(f.service.transcribe(scope, { ...scope, attemptId, expectedRevision: uploaded.revision }, new AbortController().signal)).rejects.toMatchObject({ status: 413, message: expect.stringContaining('too long') })
+        expect(await f.service.draft(scope, attemptId, new AbortController().signal)).toMatchObject({ phase: 'failed', error: expect.stringContaining('too long') })
+    })
+
     it('reuses upload/transcription after failure and preserves ready state after a lost send acknowledgement', async () => {
         let attempts = 0
         const f = fixture({ transcribe: async () => ++attempts === 1 ? Promise.reject(new Error('offline')) : Promise.resolve('recognized text') })

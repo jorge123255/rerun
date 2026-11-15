@@ -26,4 +26,8 @@ CREATE TABLE IF NOT EXISTS desktop_external_mcp_receipts (
   response_json TEXT,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS desktop_external_mcp_settings (
+  workspace_id INTEGER PRIMARY KEY,
+  port INTEGER NOT NULL
+);
 `

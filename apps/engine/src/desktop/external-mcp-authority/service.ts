@@ -47,7 +47,7 @@ export type ExternalMcpDb = {
 }
 
 type Row = Record<string, unknown>
-type Listen = (onRequest: (request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse) => Promise<void>) => Promise<ExternalMcpSocket>
+type Listen = (onRequest: (request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse) => Promise<void>, preferredPort?: number) => Promise<ExternalMcpSocket>
 
 const REFUSED = new Set<string>(EXTERNAL_MCP_REFUSED_SCOPES)
 
@@ -160,6 +160,18 @@ export function createExternalMcpService(deps: {
             installId: listener?.installId ?? null,
             launchNonce: listener?.launchNonce ?? null,
         }
+    }
+
+    /** The port this workspace's listener used last. Remembering it starts nothing: the listener is still off until it is turned on. */
+    async function savedPort(workspaceId: number): Promise<number | undefined> {
+        const found = await deps.db().execute({ sql: 'SELECT port FROM desktop_external_mcp_settings WHERE workspace_id = ?', args: [workspaceId] }).catch(() => ({ rows: [] as Row[] }))
+        const port = Number(found.rows[0]?.port)
+        return Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : undefined
+    }
+    async function savePort(workspaceId: number, origin: string): Promise<void> {
+        const port = Number(new URL(origin).port)
+        if (!Number.isInteger(port) || port < 1024) return
+        await deps.db().execute({ sql: 'INSERT INTO desktop_external_mcp_settings(workspace_id, port) VALUES(?, ?) ON CONFLICT(workspace_id) DO UPDATE SET port = excluded.port', args: [workspaceId, port] }).catch(() => undefined)
     }
 
     function gate(workspaceId: number): { ok: true; snapshot: ExternalMcpRuntimeSnapshot } | ExternalMcpRefusal {
@@ -317,7 +329,11 @@ export function createExternalMcpService(deps: {
         return tools.filter(tool => live.principal.scopes.includes(tool.scope))
     }
 
-    async function performCallTool(principal: ExternalMcpPrincipal, requestId: string | null, name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<ExternalMcpToolResult | ExternalMcpCallFailure> {
+    async function performCallTool(principal: ExternalMcpPrincipal, suppliedRequestId: string | null, name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<ExternalMcpToolResult | ExternalMcpCallFailure> {
+        // Claude Code, Codex and Cursor cannot set a header per call. A call that names no request id
+        // gets its own: it runs once and is recorded, but sending it again is a new call, as upstream.
+        // A request id that was sent and is malformed is still refused below.
+        const requestId = suppliedRequestId ?? randomUUID()
         let tools: ExternalMcpToolRegistration[]
         try {
             tools = await visibleTools(principal)
@@ -332,13 +348,13 @@ export function createExternalMcpService(deps: {
         if (!principal.scopes.includes(tool.scope)) return { ok: false, status: 403, code: 'scope_missing', message: 'This key does not include that access.' }
         const dispatch = deps.dispatch()
         if (!dispatch) return { ok: false, status: 503, code: 'adapter_missing', message: EXTERNAL_MCP_COPY.adapterMissing }
-        const live = await recheck(checkInput(principal,requestId && /^[0-9a-f-]{36}$/i.test(requestId) ? requestId : randomUUID()))
+        const live = await recheck(checkInput(principal,/^[0-9a-f-]{36}$/i.test(requestId) ? requestId : randomUUID()))
         if (!live.ok) return { ok: false, status: 401, code: live.code, message: live.message }
         if (!tool.effect) {
             const read = await runCall(dispatch, live.principal, name, args, signal, null)
             return read.ok ? read.value : read
         }
-        if (!requestId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) {
             return { ok: false, status: 400, code: 'invalid', message: 'This effect needs a request id. It was not run.' }
         }
         const fingerprint = externalMcpFingerprint({ kind: 'operation', tool: name, arguments: args, keyId: live.principal.keyId, keyRevision: live.principal.keyRevision, workspaceId: live.principal.workspaceId, installId: live.principal.installId })
@@ -504,7 +520,7 @@ export function createExternalMcpService(deps: {
                 return { ok: true, recovered: true, listener: view(), receipt: receiptOf(existing) }
             }
             if (!listener) {
-                const socket = await listen((request, response) => handle(request, response))
+                const socket = await listen((request, response) => handle(request, response), await savedPort(parsed.data.workspaceId))
                 if (!socket.origin.startsWith('http://127.0.0.1:')) {
                     await socket.close().catch(() => undefined)
                     return refusal('forbidden_host', 'This listener only answers its loopback host.')
@@ -515,6 +531,7 @@ export function createExternalMcpService(deps: {
                     return current.ok ? refusal('revision_changed', EXTERNAL_MCP_COPY.changed) : current
                 }
                 listener = { socket, workspaceId: opened.snapshot.workspaceId, installId: opened.snapshot.installId, launchNonce: opened.snapshot.launchNonce }
+                await savePort(parsed.data.workspaceId, socket.origin)
             }
             const receipt = draftReceipt({ requestId: parsed.data.requestId, kind: 'enable', workspaceId: parsed.data.workspaceId, snapshot: opened.snapshot, fingerprint, message: 'Local MCP listener is on for this workspace.' })
             await insertReceipt(receipt, fingerprint)

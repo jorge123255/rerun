@@ -208,10 +208,13 @@ export function createDesktopVoiceService(authorities: DesktopVoiceAuthorities) 
                     if (transcript.length > 20_000) throw new DesktopHttpError(413, 'Voice transcript exceeds its limit.')
                     if (!transcript) return (await persist(scope, record, { phase: 'review', transcript: null, error: 'Couldn’t hear anything in that recording.' }, signal)).draft
                     return (await persist(scope, record, { phase: 'ready', transcript, error: null }, signal)).draft
-                } catch {
+                } catch (error) {
                     await check(scope, signal)
-                    await persist(scope, record, { phase: 'failed', error: 'Transcription failed. Retry the saved recording.' }, signal)
-                    throw new DesktopHttpError(502, 'Transcription failed. Retry the saved recording.')
+                    // A retry cannot shorten a recording, so the length refusal is reported as itself.
+                    const long = error instanceof DesktopHttpError && error.status === 413
+                    const message = long ? 'This recording is too long to send as one message. Record a shorter one.' : 'Transcription failed. Retry the saved recording.'
+                    await persist(scope, record, { phase: 'failed', error: message }, signal)
+                    throw new DesktopHttpError(long ? 413 : 502, message)
                 }
             })
         },
