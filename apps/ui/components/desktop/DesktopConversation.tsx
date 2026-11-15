@@ -1,5 +1,6 @@
 'use client'
 
+import { DESKTOP_PRESET_NOTE_HEADER } from '@rerun/contracts'
 import { useDesktopLocale } from './DesktopLocale'
 import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { CompactionStep } from '@/components/chat/CompactionBlock'
@@ -600,6 +601,8 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
             pendingAttachment.current = null
             pendingQueue.current = null
         }
+        const presetNote = response.ok ? response.headers.get(DESKTOP_PRESET_NOTE_HEADER) : null
+        if (presetNote) { try { toast.info(decodeURIComponent(presetNote), { id: 'preset-fallback', duration: 8000 }) } catch { /* A note that cannot be read is not worth an error. */ } }
         const id = response.headers.get('x-session-id')
         if (alternate && (!id || id === alternate.sessionId)) throw new Error('Could not open the alternate chat. Try again.')
         if (queued && (id !== queued.sessionId || response.headers.get('x-run-id') !== queued.item.id)) throw new Error(queueCopy.confirmFailed)

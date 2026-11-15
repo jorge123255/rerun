@@ -111,3 +111,18 @@ export function desktopPresetUnavailable(tier: DesktopPresetTier, connections: r
     if (out.length) return `${DESKTOP_PRESET_LABELS[tier]} has no plan with usage left (${out.join(', ')}). Choose a model yourself, or wait for the limit to reset.`
     return `${DESKTOP_PRESET_LABELS[tier]} needs a ChatGPT or Claude plan, or an OpenAI, Anthropic or OpenRouter key. Connect one in Settings.`
 }
+
+/**
+ * One line for the person when a preset is not on its first choice: what is answering, and why the
+ * first choice is not. Null when the preset is on its first choice, which needs no saying.
+ */
+export function desktopPresetFallbackNote(found: DesktopPresetResolution | null, modelLabel: string): string | null {
+    if (!found || found.preferred) return null
+    const first = found.skipped[0]
+    const why = !first ? '' : first.reason === 'out-of-usage' ? `${first.name} is out of usage`
+        : first.reason === 'not-connected' ? `${first.name} is not connected` : `${first.name} does not offer its model`
+    return `${DESKTOP_PRESET_LABELS[found.tier]} is answering on ${found.name} · ${modelLabel}${why ? `: ${why}.` : '.'}`
+}
+
+/** The note travels in a response header, which takes plain ASCII only. */
+export const DESKTOP_PRESET_NOTE_HEADER = 'x-rerun-preset-note'

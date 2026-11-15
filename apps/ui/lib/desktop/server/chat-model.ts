@@ -1,8 +1,8 @@
 import 'server-only'
 import { EngineRequestError, getAgent, patchAgent, setModelEffort } from '@/lib/engine/client'
-import { DESKTOP_PRESET_CONNECTION_ID, connectionReasoningOptions, desktopPresetTier, desktopPresetUnavailable, type ConnectionSummary, type DesktopPresetTier } from '@rerun/contracts'
+import { DESKTOP_PRESET_CONNECTION_ID, connectionReasoningOptions, desktopPresetFallbackNote, desktopPresetTier, desktopPresetUnavailable, resolveDesktopPreset, type ConnectionSummary, type DesktopPresetTier } from '@rerun/contracts'
 import type { Client } from '@libsql/client'
-import { buildDesktopModelView, concreteDesktopPick, customReasoningUnavailable, desktopConnections, offeredModelIds, usableConnection, type DesktopModelPick, type DesktopModelSource, type DesktopModelView } from '../chat-model'
+import { buildDesktopModelView, concreteDesktopPick, customReasoningUnavailable, desktopConnectionModelLabel, desktopConnections, offeredModelIds, usableConnection, type DesktopModelPick, type DesktopModelSource, type DesktopModelView } from '../chat-model'
 import { DesktopHttpError } from './auth'
 import { disabledCoworkerMessage } from './coworker-enabled'
 import { openDesktopDatabase } from './database'
@@ -117,7 +117,15 @@ export async function setDesktopConversationModel(runtime: DesktopRuntime, agent
     return readDesktopModelState(runtime, agentId, sessionId, { presets: true })
 }
 
-export async function resolveDesktopChatModel(runtime: DesktopRuntime, agent: DesktopAgent, session: DesktopSession | null, requested?: DesktopModelPick): Promise<{ connectionId: string; model: string; source: DesktopModelSource }> {
+/** What to tell the person when the preset behind this send is not on its first choice. */
+function fallbackNote(connections: ConnectionSummary[], tier: DesktopPresetTier | null): string | undefined {
+    if (!tier) return
+    const usable = desktopConnections(connections)
+    const found = resolveDesktopPreset(tier, usable)
+    return desktopPresetFallbackNote(found, found ? desktopConnectionModelLabel(usable.find(item => item.id === found.connectionId), found.model) : '') ?? undefined
+}
+
+export async function resolveDesktopChatModel(runtime: DesktopRuntime, agent: DesktopAgent, session: DesktopSession | null, requested?: DesktopModelPick): Promise<{ connectionId: string; model: string; source: DesktopModelSource; presetNote?: string }> {
     // A missing workspace default still blocks chat, as it does today. A valid pin or chat
     // override then replaces it for this send without writing the workspace choice back.
     const workspace = await desktopModel(runtime)
@@ -127,6 +135,7 @@ export async function resolveDesktopChatModel(runtime: DesktopRuntime, agent: De
             throw new DesktopHttpError(409, 'The saved reasoning effort needs review. Choose an available effort or Model default in Settings.')
         return { ...pick, source }
     }
+    const noted = <T extends object>(result: T, tier: DesktopPresetTier | null) => { const presetNote = fallbackNote(connections, tier); return presetNote ? { ...result, presetNote } : result }
     // Check the canonical config even for a conversation override. A lost disable reply must
     // not create a first-turn reservation or an alternate-chat intent in the UI database.
     const coworker = await engineCoworker(runtime, agent)
@@ -137,17 +146,17 @@ export async function resolveDesktopChatModel(runtime: DesktopRuntime, agent: De
         const conversation = concrete(connections, chosen, requested ? 400 : 409)
         if (requested) offered(connections, conversation)
         else if (!usableConnection(connections, conversation)) throw new DesktopHttpError(409, 'This conversation’s model is no longer available. Choose another model or follow the coworker default.')
-        return select(conversation, 'conversation')
+        return noted(select(conversation, 'conversation'), desktopPresetTier(chosen))
     }
     const preset = await coworkerPreset(await openDesktopDatabase(runtime.dataRoot), agent.id)
-    if (preset) return select(concrete(connections, { connectionId: DESKTOP_PRESET_CONNECTION_ID, model: preset }, 409), 'coworker')
+    if (preset) return noted(select(concrete(connections, { connectionId: DESKTOP_PRESET_CONNECTION_ID, model: preset }, 409), 'coworker'), preset)
     if (coworker.model) {
         const pick = coworker.connectionId ? { connectionId: coworker.connectionId, model: coworker.model } : null
         if (!usableConnection(connections, pick)) throw new DesktopHttpError(409, 'This coworker’s default model is no longer available. Choose another model or follow the workspace default.')
         return select(pick!, 'coworker')
     }
     if (!offeredModelIds(workspace.connection).includes(workspace.model)) throw new DesktopHttpError(400, WORKSPACE_REQUIRED)
-    return select({ connectionId: workspace.connection.id, model: workspace.model }, 'workspace')
+    return noted(select({ connectionId: workspace.connection.id, model: workspace.model }, 'workspace'), 'preset' in workspace ? workspace.preset ?? null : null)
 }
 
 /** One effort per model: it applies wherever that model runs, the Chief of Staff included. */
