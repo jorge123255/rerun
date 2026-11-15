@@ -29,6 +29,10 @@ export type ConnectorCall = { owner: string; sessionId: string; tool: string; ki
  * An "allow once" is bound to the conversation, the tool and the very arguments that were shown,
  * and is spent by the call it lets through.
  */
+// A held call already has its card. A coworker that also asks through another tool (an approval request, a
+// sign-in request, a question) puts a second, misleading card in the chat.
+const NO_SECOND_ASK = 'The card is the only request needed: do not ask through any other tool, and do not request a sign-in, since the app is already signed in.'
+
 export async function admitConnectorCall(db: Client, call: ConnectorCall, now = new Date()): Promise<string | null> {
     const rule = (await db.execute({ sql: "SELECT id FROM desktop_connector_approval_rules WHERE owner=? AND tool=? AND session_id IN ('',?) LIMIT 1", args: [call.owner, call.tool, call.sessionId] })).rows[0]
     if (rule) return null
@@ -47,7 +51,7 @@ export async function admitConnectorCall(db: Client, call: ConnectorCall, now = 
             await tx.execute({ sql: "UPDATE desktop_connector_approval_requests SET status='refused' WHERE id=? AND status='declined'", args: [row.id] })
             answer = 'The person declined this action. Do not try it again unless they ask for it.'
         } else if (row) {
-            answer = 'This action is still waiting for the person’s answer on the card in this chat. End your turn; do not call it again until they have answered.'
+            answer = 'This action is still waiting for the person’s answer on the card in this chat. End your turn; do not call it again until they have answered. ' + NO_SECOND_ASK
         } else {
             const pending = Number((await tx.execute({ sql: "SELECT COUNT(*) AS n FROM desktop_connector_approval_requests WHERE session_id=? AND status='pending'", args: [call.sessionId] })).rows[0]?.n ?? 0)
             if (pending >= MAX_PENDING) answer = 'Too many actions are already waiting for the person’s answer in this chat. End your turn and let them answer those first.'
@@ -58,7 +62,7 @@ export async function admitConnectorCall(db: Client, call: ConnectorCall, now = 
                     args: [randomUUID(), call.owner, call.sessionId, call.tool, call.kind, digest, text, now.toISOString()],
                 })
                 answer = `Rerun asks the person before a coworker ${WORDS[call.kind]}. This call did not run. A card asking them is now in this chat. `
-                    + 'Tell them in one short sentence what you want to do and why, then end your turn. When they allow it, call this tool again with exactly the same arguments.'
+                    + 'Tell them in one short sentence what you want to do and why, then end your turn. When they allow it, call this tool again with exactly the same arguments. ' + NO_SECOND_ASK
             }
         }
         await tx.commit()

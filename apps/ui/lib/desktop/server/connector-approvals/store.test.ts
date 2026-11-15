@@ -167,3 +167,10 @@ it('remote sandbox code is held under the asking tools it names, and runs freely
     expect(desktopConnectorCall(bench, true, { code_to_execute: 'rows = run_composio_tool("GMAIL_FETCH_EMAILS", {})\nprint(len(rows))' })).toBeNull()
     expect(desktopConnectorCall('composio_COMPOSIO_REMOTE_BASH_TOOL', true, { command: 'wc -l /tmp/out.json' })).toBeNull()
 })
+
+it('a held call tells the coworker the card is the only request, so it asks through no other tool', async () => {
+    for (const answer of [await admitConnectorCall(db, call()), await admitConnectorCall(db, call())]) {
+        expect(answer).toContain('do not ask through any other tool')
+        expect(answer).toContain('do not request a sign-in')
+    }
+})
