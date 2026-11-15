@@ -1,3 +1,6 @@
+import { bindIsolatedScreenSetup } from '../../desktop/isolated-screen/setup.js'
+import { createDockerCli } from '../../desktop/isolated-screen/docker-cli.js'
+import { desktopScreenSetupActionSchema } from '@rerun/contracts'
 import { registerDesktopOpencodeConnection } from '../../desktop/opencode/registry.js'
 import { createDesktopOpencodeConnectionStore } from '../../desktop/opencode/connection-store.js'
 import { desktopOpencodeConnectionRoutes } from '../../desktop/opencode/connection-routes.js'
@@ -178,6 +181,14 @@ export async function desktopRunCommand(): Promise<void> {
         if (!parsed.success) return c.json({ error: 'Invalid update action.' }, 400)
         return c.json(await cliUpdates.action(parsed.data), 200, { 'Cache-Control': 'no-store' })
     })
+    // What the coworker screen still needs on this Mac, and the one-time build of its image.
+    const screenSetup = bindIsolatedScreenSetup({ docker: createDockerCli() })
+    app.get('/desktop/isolated-screen/setup', async c => c.json(await screenSetup.status(), 200, { 'Cache-Control': 'no-store' }))
+    app.post('/desktop/isolated-screen/setup', async c => {
+        const parsed = desktopScreenSetupActionSchema.safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) return c.json({ error: 'Invalid screen setup action.' }, 400)
+        return c.json(await screenSetup.action(parsed.data), 200, { 'Cache-Control': 'no-store' })
+    })
     app.get('/desktop/subscription-providers', c => c.json({
         'grok-build': { runtimeAvailable: desktopSubscriptionRunnerAvailable('grok-build') },
         'kimi-code': { runtimeAvailable: desktopSubscriptionRunnerAvailable('kimi-code') },
@@ -246,6 +257,7 @@ export async function desktopRunCommand(): Promise<void> {
         shutdownActive = true
         stopping = true
         cliUpdates.stop()
+        screenSetup.stop()
         const diagnostic = createDesktopStopDiagnostic(expectedEngineRoot, runtime)
         lifetime.abort()
         stopScheduler?.()

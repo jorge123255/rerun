@@ -15,6 +15,8 @@ export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestIn
     const coworkerVault = /^\/api\/desktop\/coworkers\/([^/]+)\/vault$/.exec(url.pathname)
     if (coworkerVault) return Response.json({ agentId: coworkerVault[1], attached: [], available: [] })
     if (url.pathname === '/api/desktop/workspace-view') return Response.json({ view: null, lastOpened: null })
+    // A coworker's tool permissions ask what its screen still needs on this Mac; here, nothing.
+    if (url.pathname === '/api/desktop/isolated-screen/setup') return Response.json({ need: 'nothing', install: { state: 'idle', step: null, steps: null, error: null } })
     // The header's providers list reads what this Mac ran when it opens.
     // A chat reads the connector actions waiting for an answer in it.
     if (/^\/api\/desktop\/sessions\/[^/]+\/connector-approvals$/.test(url.pathname)) return Response.json({ pending: [], rules: [] })

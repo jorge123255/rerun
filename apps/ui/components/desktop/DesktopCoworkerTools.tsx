@@ -1,5 +1,6 @@
 'use client'
 
+import { DesktopScreenSetupCard } from './isolated-screen/DesktopScreenSetupCard'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -95,6 +96,7 @@ function ToolSections({ agentId, tools, unavailable = false, saving, toggle }: {
         const selfNested = rows.filter(row => row.parent === 'self')
         const grid = rows.filter(row => !row.parent && row.id !== 'self')
         return <PanelSection key={group} label={group === 'rerun' ? 'Rerun tools' : 'Native Codex tools'}>
+            {group === 'rerun' && <DesktopScreenSetupCard className="mb-2" />}
             {group === 'codex' && !unavailable && <p className="text-xs text-muted-foreground">These permissions apply when this coworker uses ChatGPT (Codex).</p>}
             <PanelGrid className="grid-cols-1 sm:grid-cols-2">
                 {grid.map(row => <CapabilityCard key={row.id} agentId={agentId} group={group} row={row} saving={saving} toggle={toggle} />)}
