@@ -7,7 +7,7 @@ import { desktopConnectorActionKind, desktopConnectorCall } from '@rerun/contrac
 
 vi.mock('server-only', () => ({}))
 const { initializeDesktopRound61 } = await import('../round61-schema')
-const { admitConnectorCall, decideConnectorApproval, forgetConnectorRule, forgetConnectorRuleOf, listConnectorRules, pendingConnectorApproval, readConnectorApprovals } = await import('./store')
+const { admitConnectorCall, connectorPreview, decideConnectorApproval, forgetConnectorRule, forgetConnectorRuleOf, listConnectorRules, pendingConnectorApproval, readConnectorApprovals } = await import('./store')
 
 let db: Client, dir: string
 beforeEach(async () => {
@@ -47,9 +47,9 @@ describe('a tool that runs other tools is held for what those tools do', () => {
     it('reads the inner tools out of the arguments', () => {
         const run = 'composio_COMPOSIO_MULTI_EXECUTE_TOOL'
         expect(desktopConnectorCall(run, false, { tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: { query: 'send the report' } }] })).toBeNull()
-        expect(desktopConnectorCall(run, false, { tools: [{ tool_slug: 'GMAIL_SEND_EMAIL', arguments: { to: 'pat@example.test' } }] })).toEqual({ kind: 'send', tool: 'GMAIL_SEND_EMAIL' })
+        expect(desktopConnectorCall(run, false, { tools: [{ tool_slug: 'GMAIL_SEND_EMAIL', arguments: { to: 'pat@example.test' } }] })).toMatchObject({ kind: 'send', tool: 'GMAIL_SEND_EMAIL' })
         expect(desktopConnectorCall(run, false, { tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: {} }, { tool_slug: 'GMAIL_MOVE_TO_TRASH', arguments: {} }, { tool_slug: 'GMAIL_SEND_EMAIL', arguments: {} }] }))
-            .toEqual({ kind: 'delete', tool: 'GMAIL_MOVE_TO_TRASH+GMAIL_SEND_EMAIL' })
+            .toMatchObject({ kind: 'delete', tool: 'GMAIL_MOVE_TO_TRASH+GMAIL_SEND_EMAIL' })
         // What a call carries never makes it ask: only the name of a tool it is about to run does.
         expect(desktopConnectorCall(run, false, { tools: [{ tool_slug: 'NOTION_UPDATE_PAGE', arguments: { title: 'GMAIL_SEND_EMAIL', note: 'delete the old draft' } }] })).toBeNull()
         expect(desktopConnectorCall('composio_COMPOSIO_SEARCH_TOOLS', false, { queries: [{ use_case: 'send an email', tool_slug: 'GMAIL_SEND_EMAIL' }] })).toBeNull()
@@ -155,7 +155,7 @@ it('a manage tool marked destructive asks only for the action a call names', asy
 
 it('a tool that runs other tools and is marked destructive is held under the tools it runs', () => {
     const run = 'composio_COMPOSIO_MULTI_EXECUTE_TOOL'
-    expect(desktopConnectorCall(run, true, { tools: [{ tool_slug: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'pat@example.test' } }], session_id: 'draw' })).toEqual({ kind: 'send', tool: 'GMAIL_SEND_EMAIL' })
+    expect(desktopConnectorCall(run, true, { tools: [{ tool_slug: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'pat@example.test' } }], session_id: 'draw' })).toMatchObject({ kind: 'send', tool: 'GMAIL_SEND_EMAIL' })
     expect(desktopConnectorCall(run, true, { tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: {} }] })).toBeNull()
     // Nothing readable in the call: the mark still holds it.
     expect(desktopConnectorCall(run, true, { payload: 'opaque' })).toEqual({ kind: 'delete', tool: run })
@@ -163,7 +163,7 @@ it('a tool that runs other tools and is marked destructive is held under the too
 
 it('remote sandbox code is held under the asking tools it names, and runs freely when it names none', () => {
     const bench = 'composio_COMPOSIO_REMOTE_WORKBENCH'
-    expect(desktopConnectorCall(bench, false, { code_to_execute: 'res, err = run_composio_tool("GMAIL_SEND_EMAIL", p)' })).toEqual({ kind: 'send', tool: 'GMAIL_SEND_EMAIL' })
+    expect(desktopConnectorCall(bench, false, { code_to_execute: 'res, err = run_composio_tool("GMAIL_SEND_EMAIL", p)' })).toMatchObject({ kind: 'send', tool: 'GMAIL_SEND_EMAIL' })
     expect(desktopConnectorCall(bench, true, { code_to_execute: 'rows = run_composio_tool("GMAIL_FETCH_EMAILS", {})\nprint(len(rows))' })).toBeNull()
     expect(desktopConnectorCall('composio_COMPOSIO_REMOTE_BASH_TOOL', true, { command: 'wc -l /tmp/out.json' })).toBeNull()
 })
@@ -173,4 +173,38 @@ it('a held call tells the coworker the card is the only request, so it asks thro
         expect(answer).toContain('do not ask through any other tool')
         expect(answer).toContain('do not request a sign-in')
     }
+})
+
+it('an allow once covers the inner call, not the wrapper’s changing notes', async () => {
+    const run = 'composio_COMPOSIO_MULTI_EXECUTE_TOOL'
+    const send = { tool_slug: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'pat@example.test', subject: 'Hi', body: 'Hello' } }
+    const first = desktopConnectorCall(run, true, { tools: [send], thought: 'Send the email.', current_step_metric: '0/1', session_id: 'fall' })!
+    const retry = desktopConnectorCall(run, true, { tools: [{ arguments: { body: 'Hello', subject: 'Hi', recipient_email: 'pat@example.test' }, tool_slug: 'GMAIL_SEND_EMAIL' }], thought: 'User approved once; resend.', session_id: 'fall' })!
+    const other = desktopConnectorCall(run, true, { tools: [{ ...send, arguments: { ...send.arguments, recipient_email: 'sam@example.test' } }], thought: 'Send the email.' })!
+    expect(first.subject).toEqual({ tools: [send] })
+    const admit = (held: typeof first) => admitConnectorCall(db, call({ tool: held.tool, arguments: held.subject! }))
+    expect(await admit(first)).toContain('did not run')
+    const pending = (await readConnectorApprovals(db, 'chat-1')).pending[0]!
+    expect(pending.preview).not.toContain('thought')
+    await decideConnectorApproval(db, 'chat-1', pending.id, 'once')
+    // Another recipient is another request; the same email with new notes is the one that was allowed.
+    expect(await admit(other)).toContain('did not run')
+    expect(await admit(retry)).toBeNull()
+    expect(await admit(retry)).toContain('did not run')
+})
+
+it('the card’s preview keeps each inner call’s fields, strikes out credentials and always fits', () => {
+    const preview = JSON.parse(connectorPreview({ tools: [{ tool_slug: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'pat@example.test', subject: 'Hi', body: 'Hello', cc: [], token: 'Bearer abcdefghijklmnopqrstuvwxyz012345' } }] }))
+    expect(preview).toEqual({ v: 1, items: [{ tool: 'GMAIL_SEND_EMAIL', fields: [['recipient_email', 'pat@example.test'], ['subject', 'Hi'], ['body', 'Hello'], ['token', 'Bearer [redacted]']] }] })
+    expect(JSON.parse(connectorPreview({ code: ['run_composio_tool("GMAIL_SEND_EMAIL", p)'] }))).toEqual({ v: 1, items: [{ code: 'run_composio_tool("GMAIL_SEND_EMAIL", p)' }] })
+    expect(JSON.parse(connectorPreview({ to: 'pat@example.test' }))).toEqual({ v: 1, items: [{ fields: [['to', 'pat@example.test']] }] })
+    const huge = connectorPreview({ tools: Array.from({ length: 6 }, () => ({ tool_slug: 'GMAIL_SEND_EMAIL', arguments: { body: 'x'.repeat(5000), subject: 'y'.repeat(900) } })) })
+    expect(huge.length).toBeLessThanOrEqual(3800)
+    expect(JSON.parse(huge).items).toHaveLength(6)
+})
+
+it('a sandbox call’s step label is not read as a tool', () => {
+    expect(desktopConnectorCall('composio_COMPOSIO_REMOTE_WORKBENCH', true, {
+        code_to_execute: 'result, error = run_composio_tool("GMAIL_FETCH_EMAILS", {"query": "in:sent"})', thought: 'Verify the send.', current_step: 'VERIFYING_SEND', session_id: 'cent',
+    })).toBeNull()
 })

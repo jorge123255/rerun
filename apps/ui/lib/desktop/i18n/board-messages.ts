@@ -67,6 +67,7 @@ const en = {
     askScopeAlways: "{tool} · always",
     askTurnOff: "Turn off",
     askFailed: "That did not go through. Try again.",
+    askTo: "To", askCc: "Cc", askBcc: "Bcc", askSubject: "Subject", askMore: "More details", askCode: "Code it would run",
     askAllowedHint: "Connector actions this coworker runs without asking you first.",
 }
 
@@ -139,6 +140,7 @@ export const desktopBoardCopy = {
         askScopeAlways: "{tool} · toujours",
         askTurnOff: "Désactiver",
         askFailed: "L’action n’a pas abouti. Réessayez.",
+        askTo: "À", askCc: "Cc", askBcc: "Cci", askSubject: "Objet", askMore: "Plus de détails", askCode: "Code qui serait exécuté",
         askAllowedHint: "Actions de connecteur que ce collègue exécute sans vous demander.",
     },
     es: {
@@ -208,6 +210,7 @@ export const desktopBoardCopy = {
         askScopeAlways: "{tool} · siempre",
         askTurnOff: "Desactivar",
         askFailed: "No se pudo completar. Inténtalo de nuevo.",
+        askTo: "Para", askCc: "CC", askBcc: "CCO", askSubject: "Asunto", askMore: "Más detalles", askCode: "Código que se ejecutaría",
         askAllowedHint: "Acciones de conector que este compañero ejecuta sin preguntarte.",
     },
     pt: {
@@ -277,6 +280,7 @@ export const desktopBoardCopy = {
         askScopeAlways: "{tool} · sempre",
         askTurnOff: "Desativar",
         askFailed: "Não foi possível concluir. Tente de novo.",
+        askTo: "Para", askCc: "Cc", askBcc: "Cco", askSubject: "Assunto", askMore: "Mais detalhes", askCode: "Código que seria executado",
         askAllowedHint: "Ações de conector que este colega executa sem perguntar a você.",
     },
     de: {
@@ -346,6 +350,7 @@ export const desktopBoardCopy = {
         askScopeAlways: "{tool} · immer",
         askTurnOff: "Ausschalten",
         askFailed: "Das hat nicht geklappt. Versuche es erneut.",
+        askTo: "An", askCc: "Cc", askBcc: "Bcc", askSubject: "Betreff", askMore: "Weitere Details", askCode: "Code, der ausgeführt würde",
         askAllowedHint: "Connector-Aktionen, die dieser Kollege ohne Nachfrage ausführt.",
     },
 } satisfies Record<Locale, typeof en>

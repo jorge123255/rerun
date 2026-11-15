@@ -178,7 +178,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     // Connector actions that delete, send, share, post, pay or change credentials wait for the person's answer.
     const askFirst: DesktopMcpCallAdmission = async call => {
         const held = desktopConnectorCall(call.tool, call.destructive, call.arguments)
-        return held ? admitConnectorCall(db, { owner: call.owner, sessionId: call.sessionId, tool: held.tool, kind: held.kind, arguments: call.arguments }) : null
+        return held ? admitConnectorCall(db, { owner: call.owner, sessionId: call.sessionId, tool: held.tool, kind: held.kind, arguments: held.subject ?? call.arguments }) : null
     }
     const localBridge = stdioEngineBridge(localRuntime, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'localMcpStdio')

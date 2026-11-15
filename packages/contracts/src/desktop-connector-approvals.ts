@@ -77,20 +77,26 @@ const RUNS_OTHER_TOOLS = /(?:^|_)(?:MULTI_)?EXECUTE_TOOLS?$/i
 const INNER_TOOL_KEY = /^(?:tool_?slug|tool_?name|tool|slug|action|name)$/i
 const INNER_TOOL = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/
 
-function innerTools(value: unknown, depth = 0, found: string[] = []): string[] {
+function innerTools(value: unknown, depth = 0, found: string[] = [], entries: unknown[] = []): string[] {
     if (depth > 6 || found.length >= 60 || !value || typeof value !== 'object') return found
     for (const [key, child] of Array.isArray(value) ? value.map((item, index) => [String(index), item] as const) : Object.entries(value)) {
-        if (typeof child === 'string') { if (INNER_TOOL_KEY.test(key) && INNER_TOOL.test(child) && !found.includes(child)) found.push(child) }
-        else innerTools(child, depth + 1, found)
+        if (typeof child === 'string') {
+            if (!INNER_TOOL_KEY.test(key) || !INNER_TOOL.test(child)) continue
+            if (!found.includes(child)) found.push(child)
+            // The object naming the tool is the call itself: the tool and what it is given.
+            if (!entries.includes(value)) entries.push(value)
+        } else innerTools(child, depth + 1, found, entries)
     }
     return found
 }
 
 const RUNS_CODE = /(?:^|_)REMOTE_(?:WORKBENCH|BASH_TOOL)$/i
+// A sandbox call's own notes ("current_step": "VERIFYING_SEND") are labels, not code: they are not read for tool names.
+const NOTE_KEY = /^(?:thought|current_step(?:_metric)?|session_id|step|reason|description)$/i
 function strings(value: unknown, depth = 0, found: string[] = []): string[] {
     if (depth > 4 || found.length >= 40) return found
     if (typeof value === 'string') found.push(value.slice(0, 200_000))
-    else if (value && typeof value === 'object') for (const child of Object.values(value)) strings(child, depth + 1, found)
+    else if (value && typeof value === 'object') for (const [key, child] of Object.entries(value)) { if (Array.isArray(value) || !NOTE_KEY.test(key)) strings(child, depth + 1, found) }
     return found
 }
 
@@ -108,7 +114,9 @@ function namedActions(value: unknown, depth = 0, found: string[] = []): string[]
  * for a call that needs no answer. A tool that runs other tools is held under the inner tools
  * that ask, so the card names what will really happen and an "always allow" covers only that.
  */
-export function desktopConnectorCall(toolName: string, destructive: boolean, args: unknown): { kind: DesktopConnectorActionKind; tool: string } | null {
+// `subject` is what the person is asked about and what an "allow once" covers: the inner calls or the code alone.
+// A wrapper's own notes (its "thought", its step counters) change from one attempt to the next and are left out.
+export function desktopConnectorCall(toolName: string, destructive: boolean, args: unknown): { kind: DesktopConnectorActionKind; tool: string; subject?: Record<string, unknown> } | null {
     const own = desktopConnectorActionKind(toolName, destructive)
     // A tool marked destructive only because one of its actions is (Composio's MANAGE_CONNECTIONS lists, adds and
     // removes) is held for the action a call names: listing or adding asks nothing, removing asks as deleting does.
@@ -122,25 +130,42 @@ export function desktopConnectorCall(toolName: string, destructive: boolean, arg
     // A remote sandbox runs code the coworker wrote, and that code can run other tools by name. It is held
     // under the asking tools its code names; code that names none runs like any other read.
     if (RUNS_CODE.test(toolName) && (!own || hinted)) {
-        const named = [...new Set(strings(args).flatMap(text => text.match(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g) ?? []))].slice(0, 60)
+        const TOOL_NAME = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g
+        const code = strings(args).filter(text => (text.match(TOOL_NAME) ?? []).some(tool => desktopConnectorActionKind(tool)))
+        const named = [...new Set(code.flatMap(text => text.match(TOOL_NAME) ?? []))].slice(0, 60)
         const asking = named.flatMap(tool => { const kind = desktopConnectorActionKind(tool); return kind ? [{ tool, kind }] : [] })
-        return asking.length ? { kind: asking[0]!.kind, tool: asking.map(item => item.tool).sort().join('+').slice(0, 200) } : null
+        return asking.length ? { kind: asking[0]!.kind, tool: asking.map(item => item.tool).sort().join('+').slice(0, 200), subject: { code } } : null
     }
     if (own && !(hinted && RUNS_OTHER_TOOLS.test(toolName))) return { kind: own, tool: toolName }
     if (!RUNS_OTHER_TOOLS.test(toolName)) return null
-    const inner = innerTools(args)
+    const entries: unknown[] = []
+    const inner = innerTools(args, 0, [], entries)
     if (own && !inner.length) return { kind: own, tool: toolName }
     const asking = inner.flatMap(tool => { const kind = desktopConnectorActionKind(tool); return kind ? [{ tool, kind }] : [] })
     if (!asking.length) return null
-    return { kind: asking[0]!.kind, tool: asking.map(item => item.tool).sort().join('+').slice(0, 200) }
+    return { kind: asking[0]!.kind, tool: asking.map(item => item.tool).sort().join('+').slice(0, 200), subject: { tools: entries } }
 }
+
+/**
+ * What a held call's card shows, kept as the request's preview: each inner call with its fields in
+ * the order given, or the code a sandbox would run. Older requests kept the raw arguments as text.
+ */
+export const desktopConnectorPreviewSchema = z.object({
+    v: z.literal(1),
+    items: z.array(z.object({
+        tool: z.string().max(200).optional(),
+        fields: z.array(z.tuple([z.string().max(80), z.string().max(1400)])).max(14).optional(),
+        code: z.string().max(2000).optional(),
+    }).strict()).max(6),
+}).strict()
+export type DesktopConnectorPreview = z.infer<typeof desktopConnectorPreviewSchema>
 
 export const desktopConnectorApprovalDecisionSchema = z.enum(['once', 'conversation', 'always', 'deny'])
 export type DesktopConnectorApprovalDecision = z.infer<typeof desktopConnectorApprovalDecisionSchema>
 
 const kind = z.enum(DESKTOP_CONNECTOR_ACTION_KINDS)
 export const desktopConnectorApprovalViewSchema = z.object({
-    pending: z.array(z.object({ id: z.string().uuid(), tool: z.string().max(200), kind, preview: z.string().max(700), createdAt: z.string() }).strict()).max(20),
+    pending: z.array(z.object({ id: z.string().uuid(), tool: z.string().max(200), kind, preview: z.string().max(4000), createdAt: z.string() }).strict()).max(20),
     rules: z.array(z.object({ id: z.string().uuid(), tool: z.string().max(200), scope: z.enum(['conversation', 'always']) }).strict()).max(200),
 }).strict()
 export type DesktopConnectorApprovalView = z.infer<typeof desktopConnectorApprovalViewSchema>
