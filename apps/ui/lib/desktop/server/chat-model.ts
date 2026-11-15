@@ -87,7 +87,7 @@ export async function setDesktopCoworkerModel(runtime: DesktopRuntime, agentId: 
     const db = await openDesktopDatabase(runtime.dataRoot)
     const tier = desktopPresetTier(pick)
     if (pick && tier) {
-        // The engine keeps its own default for this coworker, which routines still run on.
+        // The engine keeps its own default for this coworker. A routine asks for the preset when it starts.
         offered(connections, pick)
         await db.execute({ sql: 'INSERT INTO desktop_coworker_model_presets(agent_id,tier) VALUES(?,?) ON CONFLICT(agent_id) DO UPDATE SET tier=excluded.tier', args: [agent.id, tier] })
         return readDesktopModelState(runtime, agentId, sessionId, { presets: true })
@@ -157,6 +157,27 @@ export async function resolveDesktopChatModel(runtime: DesktopRuntime, agent: De
     }
     if (!offeredModelIds(workspace.connection).includes(workspace.model)) throw new DesktopHttpError(400, WORKSPACE_REQUIRED)
     return noted(select({ connectionId: workspace.connection.id, model: workspace.model }, 'workspace'), 'preset' in workspace ? workspace.preset ?? null : null)
+}
+
+/**
+ * What a routine of this coworker runs on when a Rerun preset decides it. Null means no preset
+ * applies and the engine's own choice stands. The order is the chat's: the coworker's preset, then
+ * a model saved on the coworker, then a preset chosen as the workspace default.
+ *
+ * A coworker's own preset with no plan left is refused, as it is in chat, so a routine never moves
+ * to a paid key without the owner choosing that. A workspace preset with no plan left gives way to
+ * the saved default model, as it does in chat.
+ */
+export async function resolveDesktopRoutinePreset(runtime: DesktopRuntime, engineAgentId: string): Promise<DesktopModelPick | null> {
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    const row = (await db.execute({ sql: 'SELECT id FROM desktop_agents WHERE workspace_id=1 AND engine_agent_id=?', args: [engineAgentId] })).rows[0]
+    if (!row) return null
+    const own = await coworkerPreset(db, String(row.id))
+    const { connections } = await readDesktopProviders(runtime)
+    if (own) return concrete(connections, { connectionId: DESKTOP_PRESET_CONNECTION_ID, model: own }, 409)
+    if ((await getAgent(engineOf(runtime), engineAgentId)).config.model) return null
+    const tier = await readDesktopWorkspacePreset(runtime).catch(() => null)
+    return tier ? concreteDesktopPick(desktopConnections(connections), { connectionId: DESKTOP_PRESET_CONNECTION_ID, model: tier }) : null
 }
 
 /** One effort per model: it applies wherever that model runs, the Chief of Staff included. */

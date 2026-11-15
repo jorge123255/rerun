@@ -22,3 +22,14 @@ export function assertExactDesktopScheduleModel(requested: ModelOverride | undef
     if (!requested || resolved.connection?.id !== requested.connectionId || resolved.provider !== requested.provider ||
         resolved.model !== requested.model || !isUsable(resolved.connection, resolved.model)) throw unavailable()
 }
+
+/**
+ * The pair a Rerun preset means right now, as the Mac app answered it. Checked like a saved model:
+ * a pair the engine cannot run is dropped, and the routine runs on the coworker's own model.
+ */
+export async function resolveDesktopPresetModel(agent: LoadedAgent, pick: { connectionId: string; model: string } | null | undefined): Promise<ModelOverride | undefined> {
+    if (!pick) return undefined
+    const resolved = await resolveRunModel(agent, pick)
+    if (resolved.connection?.id !== pick.connectionId || resolved.model !== pick.model || !isUsable(resolved.connection, resolved.model)) return undefined
+    return { connectionId: pick.connectionId, provider: resolved.provider, model: pick.model }
+}

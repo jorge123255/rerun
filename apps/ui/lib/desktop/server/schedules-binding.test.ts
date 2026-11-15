@@ -1,14 +1,16 @@
 import type { Client } from '@libsql/client'
 import { beforeEach, expect, test, vi } from 'vitest'
+import { DesktopHttpError } from './auth'
 import type { DesktopRuntime } from './runtime'
 
-const state = vi.hoisted(() => ({ owner: 'local-owner', enabled: 1, deleting: null as null | string, getAgent: vi.fn(), adopt: vi.fn(), execute: vi.fn() }))
+const state = vi.hoisted(() => ({ owner: 'local-owner', enabled: 1, deleting: null as null | string, getAgent: vi.fn(), adopt: vi.fn(), execute: vi.fn(), preset: vi.fn() }))
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/engine/client', () => ({ getAgent: state.getAgent }))
 vi.mock('./database', () => ({ openDesktopDatabase: async () => ({ execute: state.execute }) }))
 vi.mock('./settings', () => ({ engineOf: () => ({ baseUrl: 'http://127.0.0.1:3222', apiKey: 'test' }) }))
 vi.mock('./roster-writes', () => ({ withRosterWrite: (run: () => unknown) => run() }))
 vi.mock('./schedules/adoption', () => ({ adoptDesktopScheduleEvent: state.adopt }))
+vi.mock('./chat-model', () => ({ resolveDesktopRoutinePreset: state.preset }))
 vi.mock('./schedules/api', () => ({ desktopSchedulesApi: vi.fn() }))
 import { authorizeDesktopSchedules, handleDesktopScheduleBridge } from './schedules-binding'
 const db = { execute: state.execute } as unknown as Client
@@ -64,4 +66,22 @@ test('successful adoption acknowledges only a durable, exact owned local chat', 
     expect(await response?.json()).toEqual({ ok: true, persisted: true })
     expect(state.adopt).toHaveBeenCalledWith(expect.anything(), expect.anything(), event)
     expect(state.getAgent).toHaveBeenCalledTimes(2)
+})
+
+test('a routine is told the plan its Rerun preset means now, or nothing when no preset decides it', async () => {
+    state.preset.mockResolvedValueOnce({ connectionId: 'mac-chatgpt', model: 'gpt-6-luna' })
+    const event = { event: 'desktop.schedule.model', agentId: 'engine-owner' }
+    expect(await (await handleDesktopScheduleBridge(runtime, event))?.json()).toEqual({ ok: true, persisted: true, model: { connectionId: 'mac-chatgpt', model: 'gpt-6-luna' } })
+    expect(state.preset).toHaveBeenCalledWith(runtime, 'engine-owner')
+    state.preset.mockResolvedValueOnce(null)
+    expect(await (await handleDesktopScheduleBridge(runtime, event))?.json()).toEqual({ ok: true, persisted: true, model: null })
+})
+
+test('a preset with no plan left is reported in words, and a coworker without the grant is still refused', async () => {
+    state.preset.mockRejectedValueOnce(new DesktopHttpError(409, 'Rerun Fast has no plan with usage left (Claude).'))
+    const event = { event: 'desktop.schedule.model', agentId: 'engine-owner' }
+    expect(await (await handleDesktopScheduleBridge(runtime, event))?.json()).toEqual({ ok: true, persisted: true, model: null, unavailable: 'Rerun Fast has no plan with usage left (Claude).' })
+    state.getAgent.mockResolvedValue({ ...allowed(), config: { enabled: true, tools: { desktopToolGrants: {} } } })
+    await expect(handleDesktopScheduleBridge(runtime, event)).rejects.toThrow()
+    expect(state.preset).toHaveBeenCalledTimes(1)
 })

@@ -4,6 +4,7 @@ import type { Client } from '@libsql/client'
 import { z } from 'zod'
 import { getAgent } from '@/lib/engine/client'
 import { DesktopHttpError } from './auth'
+import { resolveDesktopRoutinePreset } from './chat-model'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { engineOf } from './settings'
@@ -15,6 +16,7 @@ const identity = z.string().min(1).max(200)
 const bridgeSchema = z.discriminatedUnion('event', [
     z.object({ event: z.literal('desktop.schedule.authorize'), agentId: identity }).strict(),
     z.object({ event: z.literal('desktop.schedule.adopt'), agentId: identity, sessionId: identity, runId: identity.nullable(), title: z.string().max(160) }).strict(),
+    z.object({ event: z.literal('desktop.schedule.model'), agentId: identity }).strict(),
     z.object({ event: z.literal('desktop.schedule.shutdown') }).strict(),
 ])
 // Next can load the callback and browser routes in different bundles in the same UI process.
@@ -71,6 +73,19 @@ export async function handleDesktopScheduleBridge(runtime: DesktopRuntime, body:
         const adopted = await adoptDesktopScheduleEvent(db, engineOf(runtime), event)
         if (!adopted) throw new DesktopHttpError(409, 'Scheduled conversation could not be saved')
         await authorizeDesktopSchedules(runtime, db, event.agentId, signal)
+    }
+    if (event.event === 'desktop.schedule.model') {
+        // A Rerun preset is turned into the plan that can answer now, each time a routine starts.
+        let answer: { model: { connectionId: string; model: string } | null; unavailable?: string }
+        try {
+            const pick = await resolveDesktopRoutinePreset(runtime, event.agentId)
+            answer = { model: pick ? { connectionId: pick.connectionId, model: pick.model } : null }
+        } catch (error) {
+            if (!(error instanceof DesktopHttpError) || error.status !== 409) throw error
+            answer = { model: null, unavailable: error.message.slice(0, 500) }
+        }
+        assertActive(runtime, signal)
+        return Response.json({ ok: true, persisted: true, ...answer }, { headers: { 'Cache-Control': 'no-store' } })
     }
     assertActive(runtime, signal)
     return Response.json({ ok: true, persisted: true }, { headers: { 'Cache-Control': 'no-store' } })

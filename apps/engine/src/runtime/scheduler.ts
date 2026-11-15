@@ -1,6 +1,6 @@
 import { hasPendingSetup } from '../agents/setup.js'
 import { desktopScheduleDefinitionRevision } from '../desktop/schedule-tools/revision.js'
-import { resolveDesktopScheduleModel } from '../desktop/schedule-model.js'
+import { resolveDesktopPresetModel, resolveDesktopScheduleModel } from '../desktop/schedule-model.js'
 import { assertDesktopRunAdmission } from '../desktop/workspace-admission.js'
 import { automationModel } from '../agents/availability.js'
 import { listAgentIdsOnDisk } from '../agents/loader.js'
@@ -27,6 +27,8 @@ type DesktopScheduleHooks = {
     authorize: (agentId:string) => Promise<void>
     /** Durable desktop adoption; must validate exact engine/local owner. */
     adopt: (agentId:string,sessionId:string,runId:string|null,title:string) => Promise<void>
+    /** The pair a Rerun preset means for this coworker now; null when no preset decides it. */
+    model?: (agentId:string) => Promise<{connectionId:string;model:string}|null>
 }
 let desktopHooks:DesktopScheduleHooks|undefined
 export function configureDesktopSchedules(hooks:DesktopScheduleHooks) {desktopHooks=hooks}
@@ -113,7 +115,8 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
         // Resolved before markFired so a budget skip leaves the schedule due: it resumes on the first
         // tick after the latch clears, with no session, no run and no notification in the meantime.
         // Only the managed provider burns the workspace budget, so an agent on its own key still fires.
-        const pinned=desktopApp()?await resolveDesktopScheduleModel(agent,schedule):undefined;check()
+        // A model saved on the routine wins. Otherwise a Rerun preset, when one decides this coworker.
+        const pinned=desktopApp()?await resolveDesktopScheduleModel(agent,schedule) ?? await resolveDesktopPresetModel(agent,await desktopHooks?.model?.(agentId)):undefined;check()
         const override = pinned ?? await automationModel(agent, desktopApp() ? {...schedule,connectionId:null,provider:null,model:null} : schedule, 'schedule');check()
         if(desktopApp())assertDesktopProvider(override.provider ?? agent.resolved.provider,override.connectionId ?? agent.resolved.connection?.id)
         await authorize();check()

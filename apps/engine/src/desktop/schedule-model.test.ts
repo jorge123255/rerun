@@ -6,7 +6,7 @@ import type { Schedule } from '../schedules/loader.js'
 const availability = vi.hoisted(() => ({ resolveRunModel: vi.fn(), isUsable: vi.fn() }))
 vi.mock('../agents/availability.js', () => availability)
 
-import { resolveDesktopScheduleModel } from './schedule-model.js'
+import { resolveDesktopPresetModel, resolveDesktopScheduleModel } from './schedule-model.js'
 
 const agent = { id: 'agent-a' } as LoadedAgent
 
@@ -63,5 +63,34 @@ describe('resolveDesktopScheduleModel', () => {
         availability.isUsable.mockReturnValue(false)
         await expect(resolveDesktopScheduleModel(agent, schedule({ connectionId: 'conn-b', provider: 'openai', model: 'gpt-exact' })))
             .rejects.toMatchObject({ status: 409 })
+    })
+})
+
+describe('resolveDesktopPresetModel', () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+        availability.isUsable.mockReturnValue(true)
+        availability.resolveRunModel.mockImplementation(async (_agent, requested: { connectionId: string; model: string }) => ({
+            connection: { id: requested.connectionId }, provider: 'codex', model: requested.model,
+        }))
+    })
+
+    it('leaves the coworker\'s own model in place when no preset decides', async () => {
+        await expect(resolveDesktopPresetModel(agent, null)).resolves.toBeUndefined()
+        await expect(resolveDesktopPresetModel(agent, undefined)).resolves.toBeUndefined()
+        expect(availability.resolveRunModel).not.toHaveBeenCalled()
+    })
+
+    it('runs on the pair the preset means now, with the provider of that connection', async () => {
+        await expect(resolveDesktopPresetModel(agent, { connectionId: 'mac-chatgpt', model: 'gpt-6-luna' }))
+            .resolves.toEqual({ connectionId: 'mac-chatgpt', provider: 'codex', model: 'gpt-6-luna' })
+    })
+
+    it('drops a pair the engine cannot run instead of substituting', async () => {
+        availability.isUsable.mockReturnValue(false)
+        await expect(resolveDesktopPresetModel(agent, { connectionId: 'mac-chatgpt', model: 'gpt-6-luna' })).resolves.toBeUndefined()
+        availability.isUsable.mockReturnValue(true)
+        availability.resolveRunModel.mockResolvedValue({ connection: { id: 'mac-chatgpt' }, provider: 'codex', model: 'gpt-other' })
+        await expect(resolveDesktopPresetModel(agent, { connectionId: 'mac-chatgpt', model: 'gpt-6-luna' })).resolves.toBeUndefined()
     })
 })
