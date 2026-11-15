@@ -12,6 +12,8 @@ type MacSettings = { openAtLogin: boolean | null; version: string | null; update
 type MacSettingsBridge = {
     read: () => Promise<MacSettings>
     openPhonePairing?: () => Promise<void>
+    /** Opens the hosted workspace beside this one. Resolves false when it could not be reached. */
+    openRerunCloud?: () => Promise<boolean>
     setOpenAtLogin: (enabled: boolean) => Promise<MacSettings>
 }
 const updateMessages = {

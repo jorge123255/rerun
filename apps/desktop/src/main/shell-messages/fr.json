@@ -14,7 +14,7 @@
             "newWindow": "Nouvelle fenêtre",
             "connect": "Se connecter à Rerun…",
             "connectPhone": "Connecter l’iPhone…",
-            "openLocal": "Ouvrir le workspace local"
+            "openLocal": "Ouvrir le workspace local", "openCloud": "Ouvrir Rerun Cloud"
         },
         "edit": {
             "title": "Édition",

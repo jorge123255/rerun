@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('desktopApp', {
         macSettings: {
             read: () => ipcRenderer.invoke('desktop:mac-settings'),
             openPhonePairing: () => ipcRenderer.invoke('desktop:mac-open-phone-pairing'),
+            openRerunCloud: () => ipcRenderer.invoke('desktop:mac-open-cloud'),
             setOpenAtLogin: enabled => {
                 if (typeof enabled !== 'boolean') throw new TypeError('Expected an Open at Login preference')
                 return ipcRenderer.invoke('desktop:mac-set-open-at-login', enabled)

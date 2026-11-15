@@ -1,5 +1,6 @@
 'use client'
 
+import { desktopMacSettings } from './DesktopMacSettings'
 import { useDesktopLocale } from './DesktopLocale'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useTheme } from 'next-themes'
@@ -781,6 +782,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setExternalMcpOpen(false); setServersOpen(false); setShareTarget(null); setImportCoworkerOpen(false)
     }
     const openExternalMcp = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) { rememberWorkspaceDialogFocus(); setExternalMcpOpen(true) } }
+    // Only the Mac shell can open the hosted workspace, and only the browser knows whether it is there.
+    const [rerunCloudBridge, setRerunCloudBridge] = useState<(() => Promise<boolean>) | null>(null)
+    useEffect(() => { const open = desktopMacSettings()?.openRerunCloud; setRerunCloudBridge(open ? () => open : null) }, [])
+    const openRerunCloud = rerunCloudBridge ? () => { if (!isDesktopQuitting()) void rerunCloudBridge().catch(() => {}) } : undefined
     const openServers = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) { rememberWorkspaceDialogFocus(); setServersOpen(true) } }
     const openImportCoworker = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) { rememberWorkspaceDialogFocus(); setImportCoworkerOpen(true) } }
     function ownsBoardWorkspace(workspaceId: number | null) {
@@ -928,7 +933,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         onVault={() => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setVaultOpen(true) }}
         onShortcuts={openShortcuts}
         onHelp={openHelp}
-        onExternalMcp={openExternalMcp} onServers={openServers} onImportCoworker={openImportCoworker}
+        onExternalMcp={openExternalMcp} onServers={openServers} onRerunCloud={openRerunCloud} onImportCoworker={openImportCoworker}
         onSharedData={() => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setSharedDataOpen(true) }}
         onSharedFiles={() => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setSharedFilesOpen(true) }}
         onBrain={() => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setBrainOpen(true) }}
