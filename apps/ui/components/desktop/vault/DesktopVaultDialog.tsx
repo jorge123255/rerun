@@ -163,10 +163,10 @@ function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: Sug
                         : listing.entries.length === 0 ? <section className="space-y-2" aria-label="Popular apps">
                             <p className="text-sm text-muted-foreground">Nothing here yet. Sign in to an app once, then pick the coworkers that use it.</p>
                             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                                {POPULAR_APPS.map(app => <button key={app.slug} type="button" disabled={busy} onClick={() => navigate('add-app', app.slug)}
+                                {popularVaultApps(catalog).map(app => <button key={app.slug} type="button" disabled={busy} onClick={() => navigate('add-app', app.slug)}
                                     className={cn('flex items-center gap-2 p-3 text-left text-sm font-medium', PANEL_CARD, PANEL_CARD_INTERACTIVE)}>
-                                    <DesktopAppLogo logo={catalog[app.slug]?.icon} className="size-7" />
-                                    <span className="min-w-0 truncate">{catalog[app.slug]?.name ?? app.name}</span>
+                                    <DesktopAppLogo logo={app.icon} className="size-7" />
+                                    <span className="min-w-0 truncate">{app.name}</span>
                                 </button>)}
                             </div>
                         </section>
@@ -190,11 +190,13 @@ function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: Sug
     </PanelSteps>
 }
 
-// The six apps upstream offers first to an empty Vault. All six are in the Mac's bundled catalog.
-const POPULAR_APPS = [
-    { slug: 'notion', name: 'Notion' }, { slug: 'slack', name: 'Slack' }, { slug: 'hubspot', name: 'HubSpot' },
-    { slug: 'linear', name: 'Linear' }, { slug: 'github', name: 'GitHub' }, { slug: 'airtable', name: 'Airtable' },
-] as const
+// Upstream offers an empty Vault six popular apps. Two of its six (Slack, HubSpot) are not apps this
+// Mac can add from its own catalog, so the list is longer and only the first six the catalog has
+// are shown. An app that is not there would open an empty Add page.
+const POPULAR_APPS = ['notion', 'slack', 'hubspot', 'linear', 'github', 'airtable', 'asana', 'jira', 'intercom', 'dropbox', 'zapier', 'clickup'] as const
+export function popularVaultApps(catalog: Record<string, { name: string; icon?: string | null }>): { slug: string; name: string; icon?: string | null }[] {
+    return POPULAR_APPS.filter(slug => catalog[slug]).slice(0, 6).map(slug => ({ slug, ...catalog[slug] }))
+}
 
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map(word => word[0]?.toUpperCase() ?? '').join('') || '?'
 

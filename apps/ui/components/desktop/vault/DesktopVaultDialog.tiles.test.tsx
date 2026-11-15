@@ -21,13 +21,18 @@ const mount = async (node: React.ReactNode) => {
 const ada = { id: '11111111-1111-4111-8111-111111111111', name: 'Ada Lovelace' }, bo = { id: '22222222-2222-4222-8222-222222222222', name: 'Bo' }
 const entry = (extra: Record<string, unknown>) => ({ id: 'e1', revision: 'r1', name: 'notion', kind: 'mcp', url: 'https://mcp.notion.com/mcp', hasBearer: false, catalog: { slug: 'notion', methodId: 'oauth', name: 'Notion' }, sharedWithAll: false, agentIds: [], ...extra }) as unknown as DesktopVaultEntry
 
-it('an empty Vault offers the six popular apps and opens the Add page on the one chosen', async () => {
+it('an empty Vault offers six popular apps the Mac can add and opens the Add page on the one chosen', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input).includes('/vault/catalog')
-        ? Response.json([{ slug: 'notion', name: 'Notion', icon: '/services/notion.svg?tone=dark' }])
+        ? Response.json([
+            { slug: 'notion', name: 'Notion', icon: '/services/notion.svg?tone=dark' }, { slug: 'linear', name: 'Linear', icon: '/services/linear.svg' },
+            { slug: 'github', name: 'GitHub' }, { slug: 'airtable', name: 'Airtable' }, { slug: 'asana', name: 'Asana' }, { slug: 'jira', name: 'Jira' },
+            { slug: 'intercom', name: 'Intercom' }, { slug: 'context7', name: 'Context7' },
+        ])
         : Response.json({ entries: [], coworkers: [] })))
     await mount(<DesktopVaultDialog onClose={() => {}} />)
     const popular = document.querySelector('[aria-label="Popular apps"]')!
-    expect([...popular.querySelectorAll('button')].map(button => button.textContent)).toEqual(['Notion', 'Slack', 'HubSpot', 'Linear', 'GitHub', 'Airtable'])
+    // Slack and HubSpot are not in this catalog, so they are not offered: each tile must lead somewhere.
+    expect([...popular.querySelectorAll('button')].map(button => button.textContent)).toEqual(['Notion', 'Linear', 'GitHub', 'Airtable', 'Asana', 'Jira'])
     expect(popular.querySelector('img')?.getAttribute('src')).toBe('/services/notion.svg?tone=dark')
     await act(async () => { [...popular.querySelectorAll('button')].find(button => button.textContent === 'Linear')!.click() })
     expect(document.querySelector('[data-testid=catalog]')?.textContent).toBe('linear')
