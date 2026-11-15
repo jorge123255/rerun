@@ -557,6 +557,11 @@ async function launch() {
             const entry = assertBoard(event)
             return openRerunCloud(entry?.window ?? window)
         })
+        // Opens Docker Desktop for the coworker screens. The target is fixed; the page chooses nothing.
+        ipcMain.handle('desktop:mac-open-docker', async event => {
+            assertBoard(event)
+            return await shell.openPath('/Applications/Docker.app') === ''
+        })
         ipcMain.handle('desktop:mac-open-phone-pairing', event => {
             assertBoard(event)
             phonePairingWindow.open()

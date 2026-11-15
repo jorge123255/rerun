@@ -14,6 +14,8 @@ type MacSettingsBridge = {
     openPhonePairing?: () => Promise<void>
     /** Opens the hosted workspace beside this one. Resolves false when it could not be reached. */
     openRerunCloud?: () => Promise<boolean>
+    /** Starts Docker Desktop, which runs the coworker screens. Resolves false when it is not installed. */
+    openDocker?: () => Promise<boolean>
     setOpenAtLogin: (enabled: boolean) => Promise<MacSettings>
 }
 const updateMessages = {

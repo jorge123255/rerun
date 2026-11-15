@@ -136,8 +136,9 @@ test('the preload uses fixed Mac settings channels and forwards only a boolean l
     desktopApp.macSettings.setOpenAtLogin(false)
     desktopApp.macSettings.openPhonePairing()
     desktopApp.macSettings.openRerunCloud()
+    desktopApp.macSettings.openDocker()
     assert.equal(desktopApp.phonePairing, undefined)
-    assert.deepEqual(calls, [['desktop:mac-settings'], ['desktop:mac-set-open-at-login', false], ['desktop:mac-open-phone-pairing'], ['desktop:mac-open-cloud']])
+    assert.deepEqual(calls, [['desktop:mac-settings'], ['desktop:mac-set-open-at-login', false], ['desktop:mac-open-phone-pairing'], ['desktop:mac-open-cloud'], ['desktop:mac-open-docker']])
 })
 
 test('the Mac full-screen subscription reports booleans and never overwrites a newer event', async () => {
