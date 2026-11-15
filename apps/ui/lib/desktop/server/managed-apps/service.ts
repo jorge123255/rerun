@@ -3,8 +3,9 @@ import { randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
 import type { DesktopManagedAppsAction, DesktopManagedAppsResult, DesktopManagedAppsView } from '@rerun/contracts'
 import bundledCatalog from '../services/catalog/bundled-services.json'
+import composioApps from './composio-apps.json'
 import type { DesktopSecretCrypto } from '../secret-requests/crypto'
-import { COMPOSIO_API, managedAppsClient, managedAppsKeyKind, ManagedAppsError, type ManagedAppsFetch, type ManagedAppsKeyKind } from './client'
+import { COMPOSIO_API, managedAppsClient, managedAppsKeyKind, ManagedAppsError, type ManagedAppsConnect, type ManagedAppsFetch, type ManagedAppsKeyKind } from './client'
 
 type CatalogApp = { slug: string; name: string; summary: string; toolkit: string; allowedTools: readonly string[] }
 type BundledService = { slug?: string; name?: string; summary?: string; icon?: string | null; manifest?: { authMethods?: { kind?: string; composio?: { toolkit?: string; allowedTools?: string[] } }[] } }
@@ -30,6 +31,13 @@ for (const service of (bundledCatalog as { services: BundledService[] }).service
 }
 /** Bundled artwork first: it is on the Mac already and matches the rest of the catalog. */
 export const managedAppLogo = (slug: string, remote?: string | null) => bundledLogos.get(slug.toLowerCase().replace(/[-_]/g, '')) ?? remote ?? undefined
+/** The name the Vault keeps a Composio Connect key under. */
+export const COMPOSIO_CONNECT_NAME = 'composio'
+// Every app Composio lists publicly, by its name there, most used first. With a Connect key the
+// person's account cannot be asked for its list, so this one is shown.
+const connectApps: OfferedApp[] = (composioApps as [string, string][]).map(([slug, name]) => ({
+    slug, name, summary: managedAppCatalog.find(app => app.toolkit.toLowerCase() === slug)?.summary ?? '', logo: managedAppLogo(slug, `https://logos.composio.dev/api/${slug}`), noAuth: false,
+}))
 // What each app offers changes rarely; one listing serves every coworker for ten minutes.
 const toolCache = new Map<string, { at: number; tools: Awaited<ReturnType<ReturnType<typeof managedAppsClient>['tools']>> }>()
 const sealContext = (workspaceId: number, revision: string) => ({ domain: 'vault' as const, agentId: 'managed-apps', key: 'composio-key', version: 1, workspaceId, revision })
@@ -39,7 +47,14 @@ type ToolDefinition = {
     execute(args: Record<string, unknown>, signal: AbortSignal, toolCallId: string): Promise<{ source: 'remote_mcp'; untrusted: true; result: Record<string, unknown> }>
 }
 
-export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, options: { network?: ManagedAppsFetch; returnUrl: string; coworkerExists(agentId: string): Promise<boolean> }) {
+export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, options: {
+    network?: ManagedAppsFetch; returnUrl: string; coworkerExists(agentId: string): Promise<boolean>
+    /** Composio Connect opened with the key the Vault keeps as its “composio” connector, or null when there is none. */
+    connect?: () => Promise<ManagedAppsConnect | null>
+}) {
+    const hasKey = async () => (await db.execute('SELECT 1 FROM desktop_managed_app_key WHERE id=1')).rows.length === 1
+    /** Connect is used only while no project key is kept: a project key lists and runs the apps itself. */
+    const connectMode = async () => !await hasKey() && options.connect ? await options.connect() : null
     // The sealed value is the key and which kind Composio accepted it as. A key kept before kinds were told apart is a project key.
     async function key(): Promise<{ value: string; kind: ManagedAppsKeyKind } | null> {
         const row = (await db.execute('SELECT sealed,revision FROM desktop_managed_app_key WHERE id=1')).rows[0]
@@ -74,7 +89,7 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
     async function offered(): Promise<OfferedApp[]> {
         const bundled: OfferedApp[] = managedAppCatalog.map(app => ({ slug: app.toolkit.toLowerCase(), name: app.name, summary: app.summary, logo: managedAppLogo(app.toolkit), noAuth: false }))
         const row = (await db.execute('SELECT revision FROM desktop_managed_app_key WHERE id=1')).rows[0]
-        if (!row) return bundled
+        if (!row) return options.connect && await options.connect() ? connectApps : bundled
         const cached = appCache.get(String(row.revision))
         if (cached && Date.now() - cached.at < 6 * 60 * 60_000) return cached.apps
         const listed = await (await client()).toolkits(AbortSignal.timeout(20_000)).catch(() => null)
@@ -85,18 +100,22 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         return apps
     }
     async function view(): Promise<DesktopManagedAppsView> {
+        const connector = await connectMode() ? COMPOSIO_CONNECT_NAME : undefined
         const [configured, rows, attached] = await Promise.all([
-            db.execute('SELECT 1 FROM desktop_managed_app_key WHERE id=1').then(result => result.rows.length === 1),
+            hasKey().then(kept => kept || !!connector),
             accounts(),
             db.execute('SELECT account_id,agent_id FROM desktop_managed_app_attachments ORDER BY agent_id'),
         ])
         return {
-            configured,
+            configured, ...(connector ? { connector } : {}),
             apps: (await offered()).map(app => ({ slug: app.slug, name: app.name, summary: app.summary, ...(app.logo ? { logo: app.logo } : {}) })),
             accounts: rows.map(row => ({ id: row.id, slug: row.slug, name: row.name, status: row.status, agentIds: attached.rows.filter(link => link.account_id === row.id).map(link => String(link.agent_id)) })),
         }
     }
     async function act(action: DesktopManagedAppsAction, signal?: AbortSignal): Promise<DesktopManagedAppsResult> {
+        const connect = action.action === 'set-key' ? null : await connectMode()
+        // With Connect the key lives in the Vault entry, and every coworker given that entry reaches every signed-in app.
+        if (connect && (action.action === 'remove-key' || action.action === 'attach')) throw new ManagedAppsError(409, 'Composio is kept in the Vault as “composio”. Change its key and its coworkers there.')
         if (action.action === 'set-key') {
             // The key is tried before it is kept, so a mistyped key is heard now and not at a coworker's first call.
             const kind = await managedAppsKeyKind(action.key, options.network, signal)
@@ -118,6 +137,12 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
             const app = (await offered()).find(row => row.slug === action.slug)
             if (!app) throw new ManagedAppsError(400, 'This app is not in the catalog.')
             if ((await accounts()).some(row => row.slug === app.slug)) throw new ManagedAppsError(409, 'This app already has an account in the Vault.')
+            if (connect) {
+                const started = await connect.connect(app.slug, signal)
+                if (started.state === 'pending' && !started.signIn) throw new ManagedAppsError(502, 'Composio did not return a sign-in page.')
+                await db.execute({ sql: 'INSERT INTO desktop_managed_app_accounts(id,slug,toolkit,name,user_id,connected_account_id,status,created_at) VALUES(?,?,?,?,?,?,?,?)', args: [randomUUID(), app.slug, app.slug, app.name, '', '', started.state, new Date().toISOString()] })
+                return { view: await view(), ...(started.signIn ? { signIn: started.signIn } : {}) }
+            }
             const composio = await client()
             const id = randomUUID(), userId = `rerun_mac_${id}`, created = new Date().toISOString()
             const insert = "INSERT INTO desktop_managed_app_accounts(id,slug,toolkit,name,user_id,connected_account_id,status,created_at) VALUES(?,?,?,?,?,?,?,?)"
@@ -132,6 +157,13 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         }
         if (action.action === 'refresh') {
             const row = await account(action.id)
+            if (connect) {
+                // A sign-in page lasts minutes: one still waiting is started again, so the button always leads somewhere.
+                let current = await connect.status(row.toolkit, signal)
+                if (current.state === 'pending' && action.retry) current = await connect.connect(row.toolkit, signal)
+                if (current.state === 'active') await db.execute({ sql: "UPDATE desktop_managed_app_accounts SET status='active' WHERE id=?", args: [row.id] })
+                return { view: await view(), ...(current.state === 'pending' && action.retry && current.signIn ? { signIn: current.signIn } : {}) }
+            }
             if (!row.connectedAccountId) return { view: await view() }
             const remote = await (await client()).account(row.connectedAccountId, signal)
             // Only Composio's own word that this very account, for this very app, is signed in makes it usable.
@@ -142,7 +174,7 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         }
         if (action.action === 'remove') {
             const row = await account(action.id)
-            if (row.connectedAccountId) await (await client()).remove(row.connectedAccountId, signal).catch(error => { if (!(error instanceof ManagedAppsError) || error.status !== 502) throw error })
+            if (row.connectedAccountId && !connect) await (await client()).remove(row.connectedAccountId, signal).catch(error => { if (!(error instanceof ManagedAppsError) || error.status !== 502) throw error })
             await db.batch([{ sql: 'DELETE FROM desktop_managed_app_attachments WHERE account_id=?', args: [row.id] }, { sql: 'DELETE FROM desktop_managed_app_accounts WHERE id=?', args: [row.id] }], 'write')
             return { view: await view() }
         }

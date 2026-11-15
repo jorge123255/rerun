@@ -4,7 +4,8 @@ import { openDesktopDatabase } from '../database'
 import type { DesktopRuntime } from '../runtime'
 import { createDesktopSecretCrypto } from '../secret-requests/crypto'
 import { findDesktopAgent } from '../store'
-import { desktopManagedApps } from './service'
+import { COMPOSIO_CONNECT, COMPOSIO_CONNECT_HEADER, managedAppsConnectClient } from './client'
+import { COMPOSIO_CONNECT_NAME, desktopManagedApps } from './service'
 
 const crypto = createDesktopSecretCrypto(() => {
     const key = process.env.RERUN_DESKTOP_SECRET_KEY ?? ''
@@ -19,5 +20,14 @@ export async function openDesktopManagedApps(runtime: DesktopRuntime) {
     return desktopManagedApps(db, crypto, runtime.workspaceId, {
         returnUrl: runtime.app.origin + DESKTOP_MANAGED_APPS_RETURN_PATH,
         coworkerExists: async agentId => (await findDesktopAgent(db, agentId)) !== null,
+        // The Connect key is the header credential of the Vault's “composio” server. It is opened here for the
+        // one call and sent only to Composio Connect; an entry pointing anywhere else is not used.
+        async connect() {
+            const row = (await db.execute({ sql: 'SELECT id,url,credential_revision,sealed,credential_header FROM desktop_vault_mcp_servers WHERE name=?', args: [COMPOSIO_CONNECT_NAME] })).rows[0]
+            if (!row || row.url !== COMPOSIO_CONNECT || row.credential_header !== COMPOSIO_CONNECT_HEADER || typeof row.sealed !== 'string') return null
+            const opened = await crypto.open({ domain: 'vault', agentId: String(row.id), key: JSON.stringify([COMPOSIO_CONNECT, COMPOSIO_CONNECT_HEADER]), version: 1, workspaceId: runtime.workspaceId, revision: String(row.credential_revision) }, row.sealed).catch(() => null)
+            if (!opened) return null
+            try { return managedAppsConnectClient(Buffer.from(opened).toString('utf8')) } finally { opened.fill(0) }
+        },
     })
 }

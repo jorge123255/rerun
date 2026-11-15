@@ -7,6 +7,9 @@ const id = z.string().uuid()
 
 export const desktopManagedAppsViewSchema = z.object({
     configured: z.boolean(),
+    // Set when the apps are reached through a Composio Connect key kept in the Vault: the name of that Vault entry.
+    // Its coworkers are chosen on the entry, so accounts here carry none.
+    connector: z.string().max(64).optional(),
     // Every app the person's Composio project offers once a key is kept; the bundled ones before that.
     // `logo` is the app's bundled artwork (a /services/ path) or an https picture from the person's Composio listing.
     apps: z.array(z.object({ slug, name: z.string().max(200), summary: z.string().max(600), logo: z.string().max(700).optional() }).strict()).max(5000),
@@ -20,7 +23,7 @@ export const desktopManagedAppsActionSchema = z.discriminatedUnion('action', [
     z.object({ action: z.literal('set-key'), key: z.string().min(8).max(512).regex(/^[!-~]+$/) }).strict(),
     z.object({ action: z.literal('remove-key') }).strict(),
     z.object({ action: z.literal('connect'), slug }).strict(),
-    z.object({ action: z.literal('refresh'), id }).strict(),
+    z.object({ action: z.literal('refresh'), id, retry: z.boolean().optional() }).strict(),
     z.object({ action: z.literal('remove'), id }).strict(),
     z.object({ action: z.literal('attach'), id, agentId: z.string().min(1).max(200), attached: z.boolean() }).strict(),
 ])

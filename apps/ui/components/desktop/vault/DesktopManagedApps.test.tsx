@@ -98,3 +98,21 @@ test('a Composio Connect key becomes a Vault connector and the Vault list is rea
     expect(host.querySelector('[role=status]')!.textContent).toContain('Composio was added to the Vault as “composio”.')
     expect(host.querySelector<HTMLInputElement>('input[aria-label="Composio key"]')!.value).toBe('')
 })
+
+test('with Composio kept in the Vault: apps connect here, coworkers are chosen on the Vault entry', async () => {
+    const view = { configured: true, connector: 'composio', apps, accounts: [{ id: ACCOUNT, slug: 'gmail', name: 'Gmail', status: 'pending', agentIds: [] }] }
+    const { host, posts, opened } = await mount(view, {
+        connect: { body: { view, signIn: 'https://connect.composio.dev/link/lk_1' } },
+        refresh: { body: { view: { ...view, accounts: [{ ...view.accounts[0], status: 'active' }] }, signIn: 'https://connect.composio.dev/link/lk_2' } },
+    })
+    expect(host.textContent).toContain('Coworkers given “composio” in the list above can then use it.')
+    expect(host.textContent).not.toContain('Remove the Composio key')
+    await press(host, 'Connect Outlook')
+    expect(opened).toHaveBeenCalledWith('https://connect.composio.dev/link/lk_1', '_blank', 'noopener,noreferrer')
+    await press(host, 'Open sign-in again')
+    expect(posts.at(-1)).toEqual({ action: 'refresh', id: ACCOUNT, retry: true })
+    // Signed in: no coworker boxes, and removing is only from this list.
+    expect(host.querySelector('input[type="checkbox"]')).toBeNull()
+    expect(host.textContent).toContain('Coworkers given “composio” can use it.')
+    expect(host.textContent).toContain('Remove from list')
+})

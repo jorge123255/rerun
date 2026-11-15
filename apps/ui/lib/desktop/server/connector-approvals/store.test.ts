@@ -142,3 +142,13 @@ describe('holding a connector call until the person answers', () => {
         expect(await admitConnectorCall(db, call({ sessionId: 'chat-5' }))).toMatch(/did not run/)
     })
 })
+
+it('a manage tool marked destructive asks only for the action a call names', async () => {
+    const call = (action: string) => desktopConnectorCall('composio_COMPOSIO_MANAGE_CONNECTIONS', true, { toolkits: [{ name: 'gmail', action }], session_id: 'club' })
+    expect(call('list')).toBeNull()
+    expect(call('add')).toBeNull()
+    expect(call('remove')).toEqual({ kind: 'delete', tool: 'composio_COMPOSIO_MANAGE_CONNECTIONS' })
+    // With no action named, or on a tool that is not a manage tool, the mark still decides.
+    expect(desktopConnectorCall('composio_COMPOSIO_MANAGE_CONNECTIONS', true, {})?.kind).toBe('delete')
+    expect(desktopConnectorCall('files_overwrite_all', true, { action: 'list' })?.kind).toBe('delete')
+})

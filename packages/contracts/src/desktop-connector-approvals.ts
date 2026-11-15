@@ -86,6 +86,15 @@ function innerTools(value: unknown, depth = 0, found: string[] = []): string[] {
     return found
 }
 
+function namedActions(value: unknown, depth = 0, found: string[] = []): string[] {
+    if (depth > 4 || found.length >= 60 || !value || typeof value !== 'object') return found
+    for (const [key, child] of Array.isArray(value) ? value.map((item, index) => [String(index), item] as const) : Object.entries(value)) {
+        if (typeof child === 'string') { if (/^(?:action|operation)$/i.test(key) && /^[a-z][a-z_ -]{0,40}$/i.test(child)) found.push(child) }
+        else namedActions(child, depth + 1, found)
+    }
+    return found
+}
+
 /**
  * What a connector call is held as: the kind of action and the name it is asked about, or null
  * for a call that needs no answer. A tool that runs other tools is held under the inner tools
@@ -93,6 +102,12 @@ function innerTools(value: unknown, depth = 0, found: string[] = []): string[] {
  */
 export function desktopConnectorCall(toolName: string, destructive: boolean, args: unknown): { kind: DesktopConnectorActionKind; tool: string } | null {
     const own = desktopConnectorActionKind(toolName, destructive)
+    // A tool marked destructive only because one of its actions is (Composio's MANAGE_CONNECTIONS lists, adds and
+    // removes) is held for the action a call names: listing or adding asks nothing, removing asks as deleting does.
+    if (own && !desktopConnectorActionKind(toolName) && wordsOf(toolName).includes('manage')) {
+        const named = namedActions(args)
+        if (named.length && !named.some(action => desktopConnectorActionKind(action))) return null
+    }
     if (own) return { kind: own, tool: toolName }
     if (!RUNS_OTHER_TOOLS.test(toolName)) return null
     const asking = innerTools(args).flatMap(tool => { const kind = desktopConnectorActionKind(tool); return kind ? [{ tool, kind }] : [] })
