@@ -1,7 +1,7 @@
 'use client'
 
 import { useDesktopLocale } from './DesktopLocale'
-import { Brain, Database, Folder, Import, KeyRound, Package, Keyboard, LayoutGrid, Search, Server, Settings, UserRound } from 'lucide-react'
+import { Brain, Cloud, Database, Folder, Import, KeyRound, Package, Keyboard, LayoutGrid, Search, Server, Settings, UserRound } from 'lucide-react'
 import { ChromePill } from '@rerun/ui/chrome'
 import { TooltipLabeled } from '@/components/ui/tooltip'
 import { HelpCircleIcon } from '@/lib/icons'
@@ -16,7 +16,7 @@ import { createDesktopWorkspaceClient } from '@/lib/desktop/workspaces'
 import { DesktopWorkspaceSwitcher } from './workspaces/DesktopWorkspaceSwitcher'
 import { DesktopWorkspaceSwitchLoader } from './workspaces/DesktopWorkspaceSwitchLoader'
 
-export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, profilePhoto, agents, selected, providerLabel, modelLabel, connections, workspaceDefault, onBoard, onCoworker, onSettings, onProfile, onWorkspaceSettings, onControlCenter, onShortcuts, onHelp, onSharedData, onSharedFiles, onBrain, onTemplates, onVault, onExternalMcp, onServers, onImportCoworker, viewRow, navigationDisabled = false, settingsDisabled = false }: {
+export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, profilePhoto, agents, selected, providerLabel, modelLabel, connections, workspaceDefault, onBoard, onCoworker, onSettings, onProfile, onWorkspaceSettings, onControlCenter, onShortcuts, onHelp, onSharedData, onSharedFiles, onBrain, onTemplates, onVault, onExternalMcp, onServers, onRerunCloud, onImportCoworker, viewRow, navigationDisabled = false, settingsDisabled = false }: {
     workspaceName: string
     iconCatalogId?: string | null
     iconUploadId?: string | null
@@ -45,6 +45,8 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     viewRow?: ReactNode
     onExternalMcp?: () => void
     onServers?: () => void
+    /** Mac app only: open the owner's Rerun Cloud workspace in its own window. */
+    onRerunCloud?: () => void
     onImportCoworker?: () => void
     navigationDisabled?: boolean
     settingsDisabled?: boolean
@@ -83,6 +85,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
                 <DropdownMenuItem disabled={settingsDisabled} onSelect={onSettings}><Settings /> {t('settings')}</DropdownMenuItem>
                 {onExternalMcp && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onExternalMcp() }}><KeyRound /> {t('controlCenter.commands.api_keys')}</DropdownMenuItem>}
                 {onServers && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onServers() }}><Server /> {t('controlCenter.localCommands.servers')}</DropdownMenuItem>}
+                {onRerunCloud && <DropdownMenuItem disabled={navigationDisabled} onSelect={onRerunCloud}><Cloud /> Rerun Cloud</DropdownMenuItem>}
                 {onWorkspaceSettings && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onWorkspaceSettings() }}><Settings /> {t('workspaceSettings')}</DropdownMenuItem>}
                 {onProfile && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onProfile() }}><UserRound /> {t('localProfile.title')}</DropdownMenuItem>}
                 {onShortcuts && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onShortcuts() }}><Keyboard /> {t('shortcutDialog.title')}</DropdownMenuItem>}

@@ -164,6 +164,16 @@ function selectLocalWorkspace() {
     if (runtimeScope()) void startupWorkspace.remember('local')
     else if (bootStatus.state === 'choose') void openLocalWorkspace()
 }
+// Opens the hosted workspace beside the local one. The local workspace keeps running; File › Open
+// Local Workspace brings it back. When the cloud cannot be reached the server picker says why.
+async function openRerunCloud(owner) {
+    if (quitting || !connectedHubs) return false
+    reopeningHub?.controller.abort()
+    openingStartupCloud?.abort()
+    const result = await connectedHubs.openCloud().catch(() => ({ ok: false }))
+    if (!result.ok && !quitting) connectedHubs.openPicker(owner && !owner.isDestroyed() ? owner : window)
+    return result.ok
+}
 function reopenRememberedHub() {
     if (!reopeningHub) {
         const controller = new AbortController()
@@ -428,6 +438,7 @@ async function launch() {
                 if (connectedHubs.duplicateWindow(target) || !boardContext(target)) return
                 void openAdditionalBoard(cascadeWindowBounds(target, screen)).catch(() => {})
             },
+            openCloud: (_item, candidate) => { void openRerunCloud(workspaceMenuTarget(candidate)) },
             openHubPicker: (_item, candidate) => {
                 reopeningHub?.controller.abort()
                 openingStartupCloud?.abort()
@@ -541,6 +552,10 @@ async function launch() {
             assertBoard(event)
             setMacOpenAtLogin(app, enabled)
             return localMacSettings()
+        })
+        ipcMain.handle('desktop:mac-open-cloud', event => {
+            const entry = assertBoard(event)
+            return openRerunCloud(entry?.window ?? window)
         })
         ipcMain.handle('desktop:mac-open-phone-pairing', event => {
             assertBoard(event)

@@ -31,6 +31,7 @@ test('the Mac Settings item opens only the current desktop frame', () => {
         openNewWindow: () => calls.push('new-window'),
         openLocalWorkspace: () => calls.push('open-local'),
         openHubPicker: () => calls.push('connect-hub'),
+        openCloud: () => calls.push('open-cloud'),
         openPhonePairing: () => calls.push('connect-phone'),
         reloadWindow: (_item, target) => calls.push(['reload', target]),
     })
@@ -74,6 +75,10 @@ test('the Mac Settings item opens only the current desktop frame', () => {
     assert.equal(calls.at(-1), 'open-local')
     menu.find(item => item.role === 'fileMenu').submenu.find(item => item.id === 'rerun-connect-hub').click()
     assert.equal(calls.at(-1), 'connect-hub')
+    const openCloud = menu.find(item => item.role === 'fileMenu').submenu.find(item => item.id === 'rerun-open-cloud')
+    assert.equal(openCloud.label, 'Open Rerun Cloud')
+    openCloud.click()
+    assert.equal(calls.at(-1), 'open-cloud')
     const connectPhone = menu.find(item => item.role === 'fileMenu').submenu.find(item => item.id === 'rerun-connect-phone')
     assert.equal(connectPhone.label, 'Connect iPhone…')
     connectPhone.click()
@@ -130,8 +135,9 @@ test('the preload uses fixed Mac settings channels and forwards only a boolean l
     assert.throws(() => desktopApp.macSettings.setOpenAtLogin({ enabled: true }), /preference/)
     desktopApp.macSettings.setOpenAtLogin(false)
     desktopApp.macSettings.openPhonePairing()
+    desktopApp.macSettings.openRerunCloud()
     assert.equal(desktopApp.phonePairing, undefined)
-    assert.deepEqual(calls, [['desktop:mac-settings'], ['desktop:mac-set-open-at-login', false], ['desktop:mac-open-phone-pairing']])
+    assert.deepEqual(calls, [['desktop:mac-settings'], ['desktop:mac-set-open-at-login', false], ['desktop:mac-open-phone-pairing'], ['desktop:mac-open-cloud']])
 })
 
 test('the Mac full-screen subscription reports booleans and never overwrites a newer event', async () => {

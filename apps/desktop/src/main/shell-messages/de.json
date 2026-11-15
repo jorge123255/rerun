@@ -14,7 +14,7 @@
             "newWindow": "Neues Fenster",
             "connect": "Mit Rerun verbinden…",
             "connectPhone": "iPhone verbinden …",
-            "openLocal": "Lokalen Workspace öffnen"
+            "openLocal": "Lokalen Workspace öffnen", "openCloud": "Rerun Cloud öffnen"
         },
         "edit": {
             "title": "Bearbeiten",
