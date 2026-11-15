@@ -116,6 +116,8 @@ export type IsolatedScreenService = {
     running(owner: ScreenOwner, signal: AbortSignal): Promise<EnsuredScreen>
     navigate(target: ScreenTarget, input: ScreenNavigate, signal: AbortSignal, exports?: ScreenNavigationExport): Promise<ScreenPage>
     act(target: ScreenTarget, input: ScreenComputerInput, signal: AbortSignal): Promise<ScreenShot>
+    /** Holds the screen with the browser in front while `deliver` has the app type a saved secret. */
+    typeSecret(target: ScreenTarget, deliver: (expectedForeground: { app: 'browser'; windowId: string }, signal: AbortSignal) => Promise<void>, signal: AbortSignal): Promise<ScreenShot>
     openBrowser(target: ScreenTarget, signal: AbortSignal): Promise<ScreenShot>
     toolInstall(target: ScreenTarget, body: { mode: 'probe' | 'install' | 'inspect'; operationId?: string; workspaceFingerprint?: string; packages?: string[] }, signal: AbortSignal, authorize: (signal: AbortSignal) => Promise<void>): Promise<Record<string, unknown>>
     guestShell(target: ScreenTarget, body: Record<string, unknown>, signal: AbortSignal, authorize: (signal: AbortSignal) => Promise<void>): Promise<Record<string, unknown>>

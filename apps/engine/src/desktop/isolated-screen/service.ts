@@ -6,7 +6,7 @@ import type { DockerClient, ListedScreen } from './docker-cli.js'
 import { encodeScreenJpeg } from './encode.js'
 import { decodeFrame, encodeFrame } from './frame.js'
 import { assertAgentId, assertLaunchNonce, assertOwner, assertTarget, containerName, LABEL_AGENT, LABEL_GENERATION, LABEL_MANAGED, LABEL_NONCE, LABEL_ROLE, ROLE_SCREEN, sameOwnerContainer, sameOwnerVolume, volumeName } from './identity.js'
-import { HUMAN_DRIVING, planAction, viewOf, type ScreenGeometry } from './input.js'
+import { HUMAN_DRIVING, SETTLE_MS, planAction, viewOf, type ScreenGeometry } from './input.js'
 import { assertHttpUrl, boundPage, publicUrl } from './page.js'
 import { browserMetadataArtifact } from './export-metadata.js'
 import { PAGE_OPTIONS_VERSION, parseGuestNavigation } from './navigation-protocol.js'
@@ -515,6 +515,21 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         })
     }
 
+    // A saved secret is typed by the app, not from here: this side only holds the screen, proves the
+    // browser is in front, and looks at the result. The value never passes through the engine.
+    async function typeSecret(target: ScreenTarget, deliver: (expectedForeground: { app: 'browser'; windowId: string }, signal: AbortSignal) => Promise<void>, signal: AbortSignal): Promise<ScreenShot> {
+        throwIfAborted(signal)
+        return action(target, signal, async (live, signal) => {
+            const front = await foreground(target, signal)
+            // In Terminal the text would land in a shell history the coworker can read back.
+            if (front.app !== 'browser') throw new IsolatedScreenRefusal('A saved secret can only be typed into the browser. Bring the page to the front and click its field first.', 'refused')
+            await deliver({ app: 'browser', windowId: front.windowId }, signal)
+            current(target); throwIfAborted(signal)
+            await sleep(SETTLE_MS, signal)
+            return capture(target, live, signal)
+        })
+    }
+
     async function openBrowser(target: ScreenTarget, signal: AbortSignal): Promise<ScreenShot> {
         return action(target, signal, async (live, linked) => {
             if (!deps.authorizeInput) throw new IsolatedScreenRefusal('Screen input authority is unavailable.', 'refused')
@@ -737,5 +752,5 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         return result
     }
 
-    return { status, ensure, running, navigate, act, openBrowser, toolInstall, guestShell, withLauncherControl, startTakeover, finishTakeover, stop, withViewer, reconcile, shutdown, dispose }
+    return { status, ensure, running, navigate, act, typeSecret, openBrowser, toolInstall, guestShell, withLauncherControl, startTakeover, finishTakeover, stop, withViewer, reconcile, shutdown, dispose }
 }
