@@ -4,6 +4,7 @@ import { getAgent } from '../agents/registry.js'
 import { listAgentIdsOnDisk } from '../agents/loader.js'
 import { dataDir } from '../config/paths.js'
 import { getSystemDb } from '../db/systemDb.js'
+import { HttpError } from '../lib/errors.js'
 import { configureDesktopSchedules } from '../runtime/scheduler.js'
 import { desktopScheduleOccurrenceSchema, recoverDesktopScheduleClaims } from '../runtime/desktop-schedule-state.js'
 import { beginDesktopAgentWork, desktopDeletionPending } from './agent-lifecycle.js'
@@ -30,6 +31,7 @@ export function initializeDesktopScheduleOwner(agentId: string): Promise<void> {
 
 type Runtime = { app: { origin: string }; engine: { apiKey: string } }
 const ack = z.object({ ok: z.literal(true), persisted: z.literal(true) })
+const presetAnswer = z.object({ model: z.object({ connectionId: z.string().min(1).max(200), model: z.string().min(1).max(200) }).nullable(), unavailable: z.string().max(500).optional() })
 const TIMEOUT_MS = 5_000
 const MAX_ACK_BYTES = 4_096
 
@@ -43,7 +45,7 @@ function withSignal<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 /** The same authenticated callback origin as engine notifications; redirects are never followed. */
-async function callback(runtime: Runtime, body: unknown, signal?: AbortSignal): Promise<void> {
+async function callback(runtime: Runtime, body: unknown, signal?: AbortSignal): Promise<unknown> {
     const stop = AbortSignal.any([AbortSignal.timeout(TIMEOUT_MS), ...(signal ? [signal] : [])])
     const response = await withSignal(fetch(`${runtime.app.origin}/api/webhooks/engine`, {
         method: 'POST', redirect: 'error', headers: { Authorization: `Bearer ${runtime.engine.apiKey}`, 'Content-Type': 'application/json' },
@@ -63,7 +65,9 @@ async function callback(runtime: Runtime, body: unknown, signal?: AbortSignal): 
             if (size > MAX_ACK_BYTES) throw new Error('Invalid scheduled task acknowledgement')
             chunks.push(item.value)
         }
-        ack.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+        const reply: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        ack.parse(reply)
+        return reply
     } finally { void reader.cancel().catch(() => {}) }
 }
 
@@ -98,6 +102,15 @@ export async function bindDesktopSchedules(runtime: Runtime) {
     for (const id of await listAgentIdsOnDisk()) if (!desktopDeletionPending(id)) await initializeDesktopScheduleOwner(id)
     const hooks = {
         authorize,
+        // The app holds the Rerun presets. It answers with the plan a preset means right now, or
+        // with nothing when no preset decides this coworker's routines.
+        model: async (agentId: string) => {
+            active()
+            const answer = presetAnswer.parse(await callback(runtime, { event: 'desktop.schedule.model', agentId }, stop.signal))
+            active()
+            if (answer.unavailable) throw new HttpError(409, answer.unavailable)
+            return answer.model
+        },
         adopt: async (agentId: string, sessionId: string, runId: string | null, title: string) => {
             await authorize(agentId)
             await callback(runtime, { event: 'desktop.schedule.adopt', agentId, sessionId, runId, title: title.slice(0, 160) }, stop.signal)

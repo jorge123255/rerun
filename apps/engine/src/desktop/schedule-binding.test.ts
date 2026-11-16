@@ -74,3 +74,18 @@ test('adoption requires an explicit durable acknowledgement before it can finish
     await expect(hooks.adopt('owner', 'engine-session', null, 'Routine result')).rejects.toThrow()
     expect(vi.mocked(fetch).mock.calls.map(call => JSON.parse(String(call[1]?.body)).event)).toEqual(['desktop.schedule.authorize', 'desktop.schedule.adopt'])
 })
+
+test('the preset question returns the app\'s pair, nothing, or the app\'s reason as a refusal', async () => {
+    const binding = await import('./schedule-binding.js')
+    await binding.bindDesktopSchedules(runtime)
+    const hooks = mocks.configure.mock.calls[0]![0] as { model: (id: string) => Promise<unknown> }
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ ok: true, persisted: true, model: { connectionId: 'mac-chatgpt', model: 'gpt-6-luna' } }))
+    await expect(hooks.model('owner')).resolves.toEqual({ connectionId: 'mac-chatgpt', model: 'gpt-6-luna' })
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)![1]!.body))).toEqual({ event: 'desktop.schedule.model', agentId: 'owner' })
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ ok: true, persisted: true, model: null }))
+    await expect(hooks.model('owner')).resolves.toBeNull()
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ ok: true, persisted: true, model: null, unavailable: 'Rerun Fast has no plan with usage left (Claude).' }))
+    await expect(hooks.model('owner')).rejects.toMatchObject({ status: 409, message: 'Rerun Fast has no plan with usage left (Claude).' })
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ ok: true, persisted: true }))
+    await expect(hooks.model('owner')).rejects.toThrow()
+})
