@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import type { UIMessage } from 'ai'
+import { desktopAuxiliaryPurposes } from '@/lib/desktop/auxiliary'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -191,7 +192,8 @@ test('replies offer nothing to read aloud when no key is saved', async () => {
 })
 
 test('Settings names one ElevenLabs key for both directions and shows the voice controls only once a key is saved', async () => {
-    const rows = (configured: boolean) => ['search', 'keirolabs-search', 'browser-use-search', 'keenable-search', 'embedding', 'local-embedding', 'transcription', 'elevenlabs-transcription']
+    // Every tool service the app knows, so a new one cannot make this list fall out of step.
+    const rows = (configured: boolean) => [...desktopAuxiliaryPurposes]
         .map(purpose => ({ purpose, revision: purpose === 'elevenlabs-transcription' && configured ? 'rev-1' : 'unconfigured', configured: purpose === 'elevenlabs-transcription' && configured }))
     let configured = false
     const changes: unknown[] = []
