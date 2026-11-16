@@ -47,7 +47,8 @@ test('upgrades the original chat and dependent rows, then reopens distinct conve
         expect((await db.execute('PRAGMA foreign_key_check')).rows).toEqual([])
         expect(await listForemanConversations(db, '1')).toEqual([
             // Dated by its last saved turn; a conversation nobody has sent anything in has no date.
-            { chat: home, home: true, title: null, updatedAt: '2026-11-06', startedAt: '2026-11-06' },
+            // General still holds the words typed before the upgrade, and the list says so.
+            { chat: home, home: true, title: null, updatedAt: '2026-11-06', startedAt: '2026-11-06', hasDraft: true },
             { chat: other, home: false, title: null },
             { chat, home: false, title: 'Test the separate conversation' },
         ])
