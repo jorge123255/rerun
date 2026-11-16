@@ -272,7 +272,7 @@ export function createConnectedHubs({ app, BrowserWindow, WebContentsView, openL
             webPreferences: { ...preferences(desktopSession), backgroundThrottling: !primary } })
         const contents = window.webContents
         // The cloud page has no control of ours: the way back to this Mac's workspace is laid over it.
-        if (openLocalWorkspace) attachLocalSwitch({ WebContentsView, window, label: shellText(language(origin))('hub.thisMac'), onOpen: () => { if (available()) openLocalWorkspace() } })
+        if (openLocalWorkspace) attachLocalSwitch({ WebContentsView, window, label: shellText(language(origin))('hub.thisMac'), onOpen: () => { if (available()) openLocalWorkspace(window) } })
         usedSessions.add(desktopSession)
         downloads.track(desktopSession)
         const userAgent = contents.getUserAgent().replace(/ Electron\/\S+/, '') + ` RerunDesktop/${version} (mac; dev)`
@@ -677,6 +677,11 @@ export function createConnectedHubs({ app, BrowserWindow, WebContentsView, openL
             return (await connect(origin, { ...options, remember: false, recoverIncompatible: true })).ok
         },
         ownsWindow: window => !!entryFor(window),
+        /** The visible window showing this server, newest first; null when none is open. */
+        windowFor(origin) {
+            const open = [...windows.values()].filter(entry => entry.origin === origin && !entry.window.isDestroyed())
+            return (open.find(entry => entry.window.isVisible()) ?? open.at(-1))?.window ?? null
+        },
         focusWindow(window) {
             if (!available() || !entryFor(window)) return false
             show(window)

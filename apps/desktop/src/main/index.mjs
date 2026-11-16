@@ -7,6 +7,7 @@ import { DesktopSecureStorageError, loadBundle, loadIdentityFromSafeStorage, wor
 import { RuntimeSupervisor } from './supervisor.mjs'
 import { createDesktopNotifications } from './notifications.mjs'
 import { createNotificationClickHandoff, createNotificationClickRouter } from './notification-click-handoff.mjs'
+import { swapWorkspaceWindow } from './window-swap.mjs'
 import { completeDesktopQuit } from './before-quit.mjs'
 import { createDesktopTemplateFiles } from './templates.mjs'
 import { createDesktopCoworkerShareFiles } from './coworker-share-files.mjs'
@@ -28,7 +29,7 @@ import { captureWindowPlacement, createWindowPlacements, macWorkspaceMinimumSize
 import { hideWorkspaceWindow, revealWorkspaceWindow } from './window-visibility.mjs'
 import { createConnectedHubs } from './connected-hubs.mjs'
 import { hubConnectionError } from './connected-hub-messages.mjs'
-import { parseHubLink, registerHubProtocol } from './connected-hub-policy.mjs'
+import { parseHubLink, registerHubProtocol, RERUN_CLOUD_ORIGIN } from './connected-hub-policy.mjs'
 import { configureStartupProfile, hasLocalWorkspace, loadStartupWorkspace } from './startup-workspace.mjs'
 import { createMacPhonePairingService } from './mac-phone-pairing/index.mjs'
 import { pairingQrImage } from './mac-phone-pairing/qr.mjs'
@@ -158,9 +159,13 @@ function showMainWindow() {
     showWindowOnReady = true
     revealWorkspaceWindow(window)
 }
-function selectLocalWorkspace() {
+// `from` is the cloud window the person is leaving, when they left from one: the local window takes
+// its place and the cloud window is hidden, still running.
+function selectLocalWorkspace(from) {
     if (quitting) return
-    showMainWindow()
+    showWindowOnReady = true
+    const leaving = from && connectedHubs?.ownsWindow(from) ? from : null
+    if (!swapWorkspaceWindow(leaving, window)) showMainWindow()
     if (runtimeScope()) void startupWorkspace.remember('local')
     else if (bootStatus.state === 'choose') void openLocalWorkspace()
 }
@@ -172,6 +177,8 @@ async function openRerunCloud(owner) {
     openingStartupCloud?.abort()
     const result = await connectedHubs.openCloud().catch(() => ({ ok: false }))
     if (!result.ok && !quitting) connectedHubs.openPicker(owner && !owner.isDestroyed() ? owner : window)
+    // The cloud window takes the place of the local board the person came from, which stays running, hidden.
+    else if (result.ok && !quitting && owner && boardContext(owner)) swapWorkspaceWindow(owner, connectedHubs.windowFor(RERUN_CLOUD_ORIGIN))
     return result.ok
 }
 function reopenRememberedHub() {
@@ -402,7 +409,7 @@ async function launch() {
         shellLanguage = await loadShellLanguage({ dataRoot,
             systemLanguages: [...app.getPreferredSystemLanguages(), app.getLocale()], currentScope: currentLanguageScope,
             onChange: () => { refreshApplicationMenu(); menuBar?.refresh() } })
-        connectedHubs = createConnectedHubs({ app, BrowserWindow, WebContentsView, openLocalWorkspace: () => selectLocalWorkspace(), Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
+        connectedHubs = createConnectedHubs({ app, BrowserWindow, WebContentsView, openLocalWorkspace: from => selectLocalWorkspace(from), Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
             updates: macUpdates, canRestartForUpdate: () => !transitioning && !changingBoards.size,
             available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate),
             setUnread: count => { hubUnread = count; publishMacUnread() }, desktopSettings, changeDesktopSettings,
@@ -432,7 +439,7 @@ async function launch() {
             openDocumentation: () => openExternal('https://docs.rerun.build'),
             openFind: (_item, candidate) => windowFind.open(workspaceMenuTarget(candidate)),
             openQuickAsk: (_item, candidate) => toggleQuickAsk(candidate),
-            openLocalWorkspace: selectLocalWorkspace,
+            openLocalWorkspace: (_item, candidate) => selectLocalWorkspace(workspaceMenuTarget(candidate)),
             openNewWindow: (_item, candidate) => {
                 const target = workspaceMenuTarget(candidate)
                 if (connectedHubs.duplicateWindow(target) || !boardContext(target)) return
