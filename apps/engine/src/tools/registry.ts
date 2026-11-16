@@ -56,9 +56,9 @@ import { desktopSkillTools } from '../desktop/skill-tools.js'
 import { desktopPrivateFileTools } from '../desktop/private-file-tools.js'
 import { desktopSharedFileTools } from '../desktop/shared-file-tools.js'
 import { desktopSharedMutationTools } from '../desktop/shared-file-mutations/tools.js'
-import { desktopMcpTools } from '../desktop/mcp-tools.js'
-import { desktopStdioTools } from '../desktop/mcp-stdio/client.js'
-import { desktopServiceTools } from '../desktop/service-tools.js'
+import { desktopMcpTools, isDesktopMcpTool } from '../desktop/mcp-tools.js'
+import { desktopStdioTools, isDesktopStdioTool } from '../desktop/mcp-stdio/client.js'
+import { desktopServiceTools, isDesktopServiceTool } from '../desktop/service-tools.js'
 import { desktopSuggestServiceTools } from '../desktop/service-requests/suggest-service.js'
 import { desktopSelfMcpTools } from '../desktop/self-mcp/index.js'
 import { desktopSecretRequestTools } from '../desktop/secret-requests/request-secret.js'
@@ -99,7 +99,14 @@ function ensureDesktopTeamReads() {
     })
 }
 
+/** On the Mac every tool a run is handed leaves a record in the activity trail. */
 export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
+    const built = await buildRunTools(ctx)
+    if (desktopApp()) recordDesktopActivityTools(ctx, built.tools, tool => isDesktopMcpTool(tool) || isDesktopServiceTool(tool) || isDesktopStdioTool(tool))
+    return built
+}
+
+async function buildRunTools(ctx: RunContext): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
     if (desktopApp()) {
         if (ctx.agent.id === FOREMAN_AGENT_ID || ctx.agent.config.kind === 'foreman') return desktopForemanTools(ctx)
         const child = await desktopDelegationChildTools(ctx)
@@ -207,3 +214,4 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
     }
 }
 import { readDesktopGuestShell } from '../desktop/guest-shell/runtime.js'
+import { recordDesktopActivityTools } from '../desktop/activity-trail/recorder.js'

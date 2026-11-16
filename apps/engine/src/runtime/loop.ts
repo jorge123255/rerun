@@ -41,6 +41,7 @@ import { createDesktopNativeWorker, type DesktopNativeWorker } from '../desktop/
 import { partialResultsNote } from './partial-results.js'
 import { persistNativeWriteback } from '../desktop/native-writeback/client.js'
 import { requireDesktopToolGrant } from '../desktop/tool-grants.js'
+import { beginDesktopActivityRun, recordDesktopProviderCalls } from '../desktop/activity-trail/recorder.js'
 import { readAgentConfig } from '../agents/loader.js'
 import { beginDesktopCodexRun, endDesktopCodexRun } from '../desktop/native-grants.js'
 import { registerRunAbort, setRunCancel, unregisterRunAbort } from './run-control.js'
@@ -496,6 +497,8 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
 
         ctx.runId = run.id
         const triggerSlug = 'slug' in trigger ? trigger.slug : null
+        // The activity trail names what started the run on every action it records.
+        if (desktopApp()) beginDesktopActivityRun(ctx, trigger.source === 'schedule' ? 'routine' : trigger.source === 'trigger' ? 'trigger' : agent.config.ephemeral ? 'delegated' : trigger.calledBy ? 'call' : 'chat', triggerSlug)
         void setRunContext(agent.id, run.id, { provider, model, triggerSource: trigger.source, triggerSlug }).catch(() => {})
 
         const subscription = isDesktopSubscriptionProvider(provider)
@@ -652,6 +655,8 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
                     if (stepCostMicros !== null) runCostMicros = (runCostMicros ?? 0) + stepCostMicros
                     await bumpRunStep(agent.id, run.id, steps).catch(() => {})
                     await recordStepTelemetry(agent.id, sessionId, run.id, provider, model, steps, durationMs, step, stepCostMicros).catch(err => logger.warn({ err: String(err), agent: agent.id }, 'record step telemetry failed'))
+                    // A provider's own tools never pass through Rerun's: the step is where they are seen.
+                    if (desktopApp()) recordDesktopProviderCalls(ctx, (step as StepLike).toolCalls ?? [], (step as StepLike).toolResults ?? [], isHitlToolName)
                 } finally { releaseStep() }
             },
             onError: async ({ error }) => {

@@ -1,7 +1,7 @@
 import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
-import { DESKTOP_ALREADY_WAITING, DESKTOP_BROWSER_PRESS_TOOL, DESKTOP_DECLINED_BY_PERSON, type DesktopApprovalKind, type DesktopBrowserPress, type DesktopConnectorActionKind, type DesktopConnectorApprovalDecision, type DesktopConnectorApprovalView, type DesktopConnectorPreview } from '@rerun/contracts'
+import { DESKTOP_ALREADY_WAITING, DESKTOP_BROWSER_PRESS_TOOL, DESKTOP_DECLINED_BY_PERSON, type DesktopActivityDecision, type DesktopApprovalKind, type DesktopBrowserPress, type DesktopConnectorActionKind, type DesktopConnectorApprovalDecision, type DesktopConnectorApprovalView, type DesktopConnectorPreview } from '@rerun/contracts'
 import { redactHistoricalText } from '@/components/desktop/tool-presentations/redact'
 
 const MAX_PENDING = 20
@@ -78,10 +78,20 @@ const NO_SECOND_ASK = 'The card is the only request needed: do not ask through a
 const NO_SECOND_ASK_PRESS = 'The card is the only request needed: do not ask through any other tool, and do not reach the same result another way (another button, a keyboard shortcut, a direct URL or a connector).'
 
 export async function admitConnectorCall(db: Client, call: ConnectorCall, now = new Date()): Promise<string | null> {
+    return (await decideConnectorCall(db, call, now)).answer
+}
+
+/**
+ * The same decision with what the activity trail records of it: how the call ended here (a
+ * standing answer, allowed once, declined, still waiting) and the rule that decided.
+ */
+export async function decideConnectorCall(db: Client, call: ConnectorCall, now = new Date()): Promise<{ answer: string | null; trail: DesktopActivityDecision }> {
+    const said = (outcome: NonNullable<DesktopActivityDecision['outcome']>, rule: string): DesktopActivityDecision => ({ outcome, rule, ...(call.kind !== 'press' && { kind: call.kind }), action: call.tool.slice(0, 200) })
     const press = call.press
     if (!press === (call.tool === DESKTOP_BROWSER_PRESS_TOOL)) throw new Error('A browser press and a connector call are held under different names')
-    const rule = press ? undefined : (await db.execute({ sql: "SELECT id FROM desktop_connector_approval_rules WHERE owner=? AND tool=? AND session_id IN ('',?) LIMIT 1", args: [call.owner, call.tool, call.sessionId] })).rows[0]
-    if (rule) return null
+    // A browser press never has a standing answer: each one is asked about.
+    const rule = press ? undefined : (await db.execute({ sql: "SELECT id,session_id FROM desktop_connector_approval_rules WHERE owner=? AND tool=? AND session_id IN ('',?) ORDER BY session_id DESC LIMIT 1", args: [call.owner, call.tool, call.sessionId] })).rows[0]
+    if (rule) return { answer: null, trail: said('allowed-by-permission', rule.session_id === '' ? 'standing-answer:always' : 'standing-answer:conversation') }
     const digest = digestOf(call.arguments)
     const tx = await db.transaction('write')
     try {
@@ -90,17 +100,20 @@ export async function admitConnectorCall(db: Client, call: ConnectorCall, now = 
             args: [call.owner, call.sessionId, call.tool, digest],
         })).rows[0]
         let answer: string | null
+        let trail = said('asked-person', `ask-first:${call.kind}`)
         if (row?.status === 'allowed') {
             await tx.execute({ sql: "UPDATE desktop_connector_approval_requests SET status='used' WHERE id=? AND status='allowed'", args: [row.id] })
             answer = null
+            trail = said('allowed-once-by-person', `ask-first:${call.kind}`)
         } else if (row?.status === 'declined') {
             await tx.execute({ sql: "UPDATE desktop_connector_approval_requests SET status='refused' WHERE id=? AND status='declined'", args: [row.id] })
             answer = DESKTOP_DECLINED_BY_PERSON
+            trail = said('declined-by-person', `ask-first:${call.kind}`)
         } else if (row) {
             answer = `${DESKTOP_ALREADY_WAITING} ${press ? NO_SECOND_ASK_PRESS : NO_SECOND_ASK}`
         } else {
             const pending = Number((await tx.execute({ sql: "SELECT COUNT(*) AS n FROM desktop_connector_approval_requests WHERE session_id=? AND status='pending'", args: [call.sessionId] })).rows[0]?.n ?? 0)
-            if (pending >= MAX_PENDING) answer = 'Too many actions are already waiting for the person’s answer in this chat. End your turn and let them answer those first.'
+            if (pending >= MAX_PENDING) { answer = 'Too many actions are already waiting for the person’s answer in this chat. End your turn and let them answer those first.'; trail = said('refused-policy', 'policy:too-many-waiting') }
             else {
                 const text = press ? pressPreview(press) : connectorPreview(call.arguments)
                 // An answer given for a control that is no longer the one being pressed is void: it was for another label or site.
@@ -117,7 +130,7 @@ export async function admitConnectorCall(db: Client, call: ConnectorCall, now = 
             }
         }
         await tx.commit()
-        return answer
+        return { answer, trail }
     } finally { tx.close() }
 }
 

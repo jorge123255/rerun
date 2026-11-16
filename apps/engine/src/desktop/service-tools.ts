@@ -6,6 +6,9 @@ import { withAgentLock } from '../agents/lock.js'
 import { readAgentConfig } from '../agents/loader.js'
 import { beginDesktopAgentWork } from './agent-lifecycle.js'
 
+import { desktopActivityDecisionSchema } from '@rerun/contracts'
+import { noteDesktopActivity } from './activity-trail/recorder.js'
+
 const marked = new WeakSet<object>()
 /** Only actual adapter instances may pass the desktop Codex bridge's dynamic-tool allowlist. */
 export function isDesktopServiceTool(value: unknown): boolean { return typeof value === 'object' && value !== null && marked.has(value) }
@@ -88,7 +91,8 @@ export async function desktopServiceTools(ctx: RunContext): Promise<{ tools: Too
                 const current = await readAgentConfig(ctx.agent.id)
                 bounded.throwIfAborted()
                 const grant = current.tools.desktopToolGrants as Record<string, boolean | undefined> | undefined
-                if (!current.enabled || grant?.services !== true) throw new Error('Service is turned off for this coworker')
+                if (!current.enabled || grant?.services !== true) { noteDesktopActivity({ outcome: 'refused-no-permission', rule: 'permission:services' }); throw new Error('Service is turned off for this coworker') }
+                noteDesktopActivity({ outcome: 'allowed-by-permission', rule: 'permission:services' })
             } finally { release() }
         }), bounded)
     }
@@ -120,10 +124,11 @@ export async function desktopServiceTools(ctx: RunContext): Promise<{ tools: Too
                     if (!args || typeof args !== 'object' || Array.isArray(args) || !options.toolCallId) throw new Error('Invalid Service invocation')
                     const release = beginDesktopAgentWork(ctx.agent.id)
                     try {
-                        const result = z.object({ toolCallId: z.string(), result: z.object({ source: z.literal('local_service'), untrusted: z.literal(true), result: z.record(z.string(), z.unknown()) }) }).strict()
+                        const result = z.object({ toolCallId: z.string(), result: z.object({ source: z.literal('local_service'), untrusted: z.literal(true), result: z.record(z.string(), z.unknown()) }), trail: desktopActivityDecisionSchema.optional() }).strict()
                             .parse(await callback({ action: 'call', ...identity, catalogId: catalog.catalogId, capabilityId: definition.capabilityId,
                                 toolCallId: options.toolCallId, arguments: args }, signal, 130_000))
                         await permission(signal)
+                        noteDesktopActivity(result.trail)
                         if (result.toolCallId !== options.toolCallId) throw new Error('Service result belongs to another call')
                         signal.throwIfAborted()
                         // The SDK places this value in the matching tool result. It is never
