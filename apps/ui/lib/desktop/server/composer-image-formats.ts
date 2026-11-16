@@ -2,6 +2,7 @@ import 'server-only'
 import { randomBytes } from 'node:crypto'
 import sharp from 'sharp'
 import { DesktopHttpError } from './auth'
+import { DesktopPreviewImageError, inspectDesktopPreviewImageBytes } from './animated-image'
 import { DESKTOP_IMAGE_MAX_BYTES, DESKTOP_IMAGE_MAX_PIXELS, DesktopImageBytesError, inspectDesktopImageBytes } from './image-bytes'
 import { convertRasterPreviewImage, RasterPreviewError } from './preview-raster-formats'
 import { DesktopSvgError, rasterizeDesktopSvg } from './preview-svg'
@@ -93,6 +94,37 @@ async function validateStaticRaster(kind: DesktopImageKind, bytes: Uint8Array, s
     return inspected
 }
 
+/**
+ * An animated GIF is attached as its first frame. The whole file is first walked by the
+ * bounded animation reader the Files preview already uses (frame count, canvas and aggregate
+ * pixels), then only page 0 is decoded by the decoder a static GIF already uses. Later frames are
+ * never decoded and the source bytes are never stored. Returns undefined for a still image.
+ */
+async function firstAnimationFrame(kind: 'gif', bytes: Uint8Array, signal?: AbortSignal): Promise<{ bytes: Uint8Array; width: number; height: number } | undefined> {
+    checkOpen(signal)
+    try { inspectDesktopImageBytes(kind, bytes); return undefined }
+    catch (error) { if (!(error instanceof DesktopImageBytesError) || error.reason !== 'animation') return undefined }
+    let canvas: { width: number; height: number; animated: boolean }
+    try { canvas = inspectDesktopPreviewImageBytes(kind, bytes) }
+    catch (error) {
+        if (error instanceof DesktopPreviewImageError && ['dimensions', 'frames', 'aggregate'].includes(error.reason)) throw new DesktopHttpError(413, 'This image is too large to attach.')
+        throw new DesktopHttpError(415, 'This image is damaged and can’t be attached.')
+    }
+    if (!canvas.animated) throw new DesktopHttpError(415, 'This image is damaged and can’t be attached.')
+    try {
+        const meta = await sharp(bytes, { ...SHARP_OPTIONS, pages: 1, page: 0 }).timeout({ seconds: 5 }).metadata()
+        checkOpen(signal)
+        if (meta.format !== kind || meta.width !== canvas.width || (meta.pageHeight ?? meta.height) !== canvas.height) {
+            throw new DesktopHttpError(415, 'This image has inconsistent dimensions or format.')
+        }
+    } catch (error) {
+        if (error instanceof DesktopHttpError) throw error
+        checkOpen(signal)
+        throw new DesktopHttpError(415, 'This image is damaged and can’t be attached.')
+    }
+    return { bytes: await encodeGifToPng(bytes, canvas.width, canvas.height, signal), width: canvas.width, height: canvas.height }
+}
+
 async function encodeGifToPng(bytes: Uint8Array, width: number, height: number, signal?: AbortSignal): Promise<Uint8Array> {
     checkOpen(signal)
     const deadline = new AbortController(), timer = setTimeout(() => deadline.abort(), 5_000)
@@ -163,6 +195,12 @@ export async function inspectComposerImageSource(name: string, bytes: Uint8Array
         checkOpen(signal)
         assertConverted(converted.bytes, converted.width, converted.height)
         return { displayName: name, canonicalName: canonicalPngName(name), kind, mediaType: 'image/png', bytes: converted.bytes, width: converted.width, height: converted.height }
+    }
+    // Animated WebP stays refused: a WebP attachment is stored as WebP, never as a converted PNG.
+    if (kind === 'gif') {
+        const frame = await firstAnimationFrame(kind, bytes, signal)
+        checkOpen(signal)
+        if (frame) return { displayName: name, canonicalName: canonicalPngName(name), kind, mediaType: 'image/png', bytes: frame.bytes, width: frame.width, height: frame.height }
     }
     const inspected = await validateStaticRaster(kind, bytes, signal)
     if (kind === 'gif') {

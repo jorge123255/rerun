@@ -3,6 +3,19 @@ import { desktopToolPresentation as show } from './tool-presentation'
 import { desktopRunDetailsView } from './run-details'
 
 describe('public tool activity', () => {
+    it('names what a step was given: a sanitized URL for any tool, another argument only for Rerun\u2019s own tools', () => {
+        expect(show('browser_navigate', { url: 'https://user:pw@example.org/a?api_key=abc' }, undefined).input?.preview).toBe('https://[redacted]@example.org/a?api_key=[redacted]')
+        expect(show('mcp__docs__open', { url: 'https://example.org/doc' }, undefined)).toEqual({ input: { preview: 'https://example.org/doc' } })
+        expect(show('schedule_create', { name: 'Morning digest\nsecond line', cron: '0 9 * * *' }, undefined).input?.preview).toBe('Morning digest')
+        expect(show('mcp__rerun__skill_read', { slug: 'weekly-report' }, undefined).input?.preview).toBe('weekly-report')
+        expect(show('schedule_create', { name: 'x'.repeat(500) }, undefined).input?.preview).toHaveLength(201)
+        // A connector or unknown tool never has an arbitrary argument shown; credential tools show nothing.
+        expect(show('mcp__calendar__find', { calendar: 'Private calendar' }, undefined)).toEqual({})
+        expect(show('some_tool', { anything: 'private' }, undefined)).toEqual({})
+        expect(show('request_secret', { url: 'https://example.org', name: 'key' }, undefined)).toEqual({})
+        // The existing fields keep precedence.
+        expect(show('fs_read', { path: 'notes.md', url: 'https://example.org' }, undefined).input?.preview).toBe('notes.md')
+    })
     it('shows sanitized web fetch URLs and text with the same real failure state after restore', () => {
         expect(show('web_fetch', { url: 'https://example.org/page?token=private-value', headers: { authorization: 'secret' } }, 'Page facts'))
             .toEqual({ input: { preview: 'https://example.org/page?token=[redacted]' }, output: 'Page facts' })

@@ -1,4 +1,4 @@
-import { CARD_MAX_AUDIO_BYTES, CARD_MAX_IMAGE_BYTES, CARD_MAX_VIDEO_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES } from '@rerun/contracts'
+import { CARD_MAX_AUDIO_BYTES, CARD_MAX_IMAGE_BYTES, CARD_MAX_VIDEO_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES, DESKTOP_TEXT_PREVIEW_MAX_BYTES, isDesktopTextPreviewName } from '@rerun/contracts'
 
 /** Download tiles and shared PDFs. Matches the engine card cap. Not part of the shared card schema. */
 export const DESKTOP_RESULT_FILE_BINARY_MAX_BYTES = 16 * 1024 * 1024
@@ -75,12 +75,23 @@ export function parseDesktopResultFileBody(agentId: string, value: unknown): Des
     return { agentId, path: body.path, name, scope: body.scope, identity: body.identity, size: body.size }
 }
 
-export function desktopResultFilePreviewKind(file: { path: string; scope?: string }): 'none' | 'text' | 'image' | 'audio' | 'video' | 'pdf' {
-    if (file.scope !== 'shared') return 'none'
+/**
+ * A download tile whose name says source, data or config text (CSV, JSON, logs, code, HTML source, YAML)
+ * and whose saved size fits the text preview. It stays a download tile: the preview is optional, is
+ * shown as inert text only, and a refusal leaves the download in place.
+ */
+export function desktopResultFileOptionalText(file: { path: string; size?: number }): boolean {
+    return !TEXT.test(file.path) && isDesktopTextPreviewName(file.path)
+        && typeof file.size === 'number' && file.size >= 1 && file.size <= DESKTOP_TEXT_PREVIEW_MAX_BYTES
+}
+
+export function desktopResultFilePreviewKind(file: { path: string; scope?: string; size?: number }): 'none' | 'text' | 'image' | 'audio' | 'video' | 'pdf' {
+    const optionalText = desktopResultFileOptionalText(file)
+    if (file.scope !== 'shared') return optionalText ? 'text' : 'none'
     if (IMAGE.test(file.path)) return 'image'
     if (PDF.test(file.path)) return 'pdf'
     if (AUDIO.test(file.path)) return 'audio'
     if (VIDEO.test(file.path)) return 'video'
     if (TEXT.test(file.path)) return 'text'
-    return 'none'
+    return optionalText ? 'text' : 'none'
 }

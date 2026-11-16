@@ -73,7 +73,7 @@ export function desktopAuxiliaryBackends(store: ReturnType<typeof desktopAuxilia
             return vectors.map(value => value.embedding)
         },
         async transcribe(audio: Uint8Array, format: string, signal: AbortSignal) {
-            if (!audio.length || audio.length > 8 * 1024 * 1024 || !['webm', 'ogg', 'wav', 'mp3', 'mp4', 'm4a'].includes(format)) throw new Error('This recording is unavailable.')
+            if (!audio.length || audio.length > 8 * 1024 * 1024 || !['webm', 'ogg', 'wav', 'mp3', 'mp4', 'm4a', 'flac'].includes(format)) throw new Error('This recording is unavailable.')
             const current = await store.readTranscription()
             if (!current.key) throw new Error('This tool service is not configured or has changed.')
             signal.throwIfAborted()

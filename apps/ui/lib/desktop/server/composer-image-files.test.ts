@@ -105,6 +105,31 @@ test('unsupported names, non-image bytes, and wrong magic are refused', async ()
     expect(wrongMagic.status).toBe(415)
 })
 
+// The static 1x1 GIF with its one frame block repeated: a real two-frame animation.
+const ANIMATED_GIF = new Uint8Array([...STATIC_GIF.slice(0, 19), ...STATIC_GIF.slice(19, 41), ...STATIC_GIF.slice(19, 41), 0x3b])
+
+test('an animated GIF is attached as a PNG of its first frame; the animation bytes are never stored', async () => {
+    const result = await importDesktopComposerImage(runtime, agentId, '', 'spin.gif', ANIMATED_GIF)
+    expect(result.name).toBe('spin.gif')
+    expect(result.image).toMatchObject({ name: 'spin.gif', mediaType: 'image/png', width: 1, height: 1 })
+    expect(result.path.endsWith('.png')).toBe(true)
+    const visible = new Uint8Array(await readFile(join(agentDir(), 'workspace', result.path)))
+    expect(isPng(visible)).toBe(true)
+    expect(result.image.sha256).toBe(sha256(visible))
+    expect(isPng((await readDesktopImageSnapshot(runtime, agentId, result.image)).bytes)).toBe(true)
+    expect((await readdir(join(agentDir(), 'workspace'))).some(name => name.endsWith('.gif'))).toBe(false)
+    // The same first frame as the still image.
+    const still = await importDesktopComposerImage(runtime, agentId, '', 'still.gif', STATIC_GIF)
+    expect(still.image.sha256).toBe(result.image.sha256)
+    // A truncated animation, trailing bytes and an over-long animation are refused before any decode or publication.
+    const before = await readdir(join(agentDir(), 'workspace'))
+    expect((await errorOf(importDesktopComposerImage(runtime, agentId, '', 'cut.gif', ANIMATED_GIF.slice(0, 50)))).status).toBe(415)
+    expect((await errorOf(importDesktopComposerImage(runtime, agentId, '', 'tail.gif', new Uint8Array([...ANIMATED_GIF, 1, 2, 3])))).status).toBe(415)
+    const frames = Array.from({ length: 257 }, () => [...STATIC_GIF.slice(19, 41)]).flat()
+    expect((await errorOf(importDesktopComposerImage(runtime, agentId, '', 'long.gif', new Uint8Array([...STATIC_GIF.slice(0, 19), ...frames, 0x3b])))).status).toBe(413)
+    expect(await readdir(join(agentDir(), 'workspace'))).toEqual(before)
+})
+
 test('static GIF, BMP, ICO and the safe SVG subset publish canonical PNG snapshots with display names', async () => {
     const cases = [
         ['still.gif', STATIC_GIF],
