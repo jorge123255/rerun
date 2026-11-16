@@ -5,6 +5,8 @@ import type { RunContext } from '../runtime/context.js'
 import { withAgentLock } from '../agents/lock.js'
 import { readAgentConfig } from '../agents/loader.js'
 import { beginDesktopAgentWork } from './agent-lifecycle.js'
+import { desktopActivityDecisionSchema } from '@rerun/contracts'
+import { noteDesktopActivity } from './activity-trail/recorder.js'
 
 const marked = new WeakSet<object>()
 /** Only actual adapter instances may pass the desktop Codex bridge's dynamic-tool allowlist. */
@@ -88,7 +90,8 @@ export async function desktopMcpTools(ctx: RunContext): Promise<{ tools: ToolSet
                 const current = await readAgentConfig(ctx.agent.id)
                 bounded.throwIfAborted()
                 const grant = current.tools.desktopToolGrants as Record<string, boolean | undefined> | undefined
-                if (!current.enabled || grant?.mcp !== true) throw new Error('MCP is turned off for this coworker')
+                if (!current.enabled || grant?.mcp !== true) { noteDesktopActivity({ outcome: 'refused-no-permission', rule: 'permission:mcp' }); throw new Error('MCP is turned off for this coworker') }
+                noteDesktopActivity({ outcome: 'allowed-by-permission', rule: 'permission:mcp' })
             } finally { release() }
         }), bounded)
     }
@@ -120,10 +123,12 @@ export async function desktopMcpTools(ctx: RunContext): Promise<{ tools: ToolSet
                     if (!args || typeof args !== 'object' || Array.isArray(args) || !options.toolCallId) throw new Error('Invalid MCP invocation')
                     const release = beginDesktopAgentWork(ctx.agent.id)
                     try {
-                        const result = z.object({ toolCallId: z.string(), result: z.object({ source: z.literal('remote_mcp'), untrusted: z.literal(true), result: z.record(z.string(), z.unknown()) }) }).strict()
+                        const result = z.object({ toolCallId: z.string(), result: z.object({ source: z.literal('remote_mcp'), untrusted: z.literal(true), result: z.record(z.string(), z.unknown()) }), trail: desktopActivityDecisionSchema.optional() }).strict()
                             .parse(await callback({ action: 'call', ...identity, catalogId: catalog.catalogId, capabilityId: definition.capabilityId,
                                 toolCallId: options.toolCallId, arguments: args }, signal, 130_000))
                         await permission(signal)
+                        // What the app decided before the call: asked the person, a standing answer, or declined.
+                        noteDesktopActivity(result.trail)
                         if (result.toolCallId !== options.toolCallId) throw new Error('MCP result belongs to another call')
                         signal.throwIfAborted()
                         // The SDK places this value in the matching tool result. It is never

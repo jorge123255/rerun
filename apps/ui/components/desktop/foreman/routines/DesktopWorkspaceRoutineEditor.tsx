@@ -1,5 +1,6 @@
 'use client'
 
+import { DesktopRoutineNotes, desktopRoutineOutcomeText } from '../../schedules/DesktopRoutineStatus'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
@@ -82,9 +83,11 @@ export function DesktopWorkspaceRoutineEditor({ routine, active, externalChange,
     const savedPinUnavailable = hasSavedPin && !pinChanged && (
         !savedPick.model || !savedPick.connectionId || !routine.provider || Boolean(modelView && selectedGroup?.provider !== routine.provider))
     const status = routine.lastResult?.status
-    const resultLabel = status === 'done' || status === 'error' || status === 'cancelled' || status === 'running'
+    const statusLabel = status === 'done' || status === 'error' || status === 'cancelled' || status === 'running'
         ? t(`routines.status.${status}`)
         : status
+    const outcomeLabel = desktopRoutineOutcomeText(routine.lastResult, t)
+    const resultLabel = statusLabel && outcomeLabel ? `${statusLabel} · ${outcomeLabel}` : statusLabel
 
     async function perform(action: () => Promise<void>) {
         if (!active || externalChange || pending.current) return
@@ -116,6 +119,7 @@ export function DesktopWorkspaceRoutineEditor({ routine, active, externalChange,
                 </div>
             </div>}
             {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+            <DesktopRoutineNotes warnings={routine.warnings} autoDisabledAt={routine.autoDisabledAt} enabled={routine.enabled} />
             <Field label={t('routines.editor.name')}><Input aria-label={t('routines.editor.name')} value={name} onChange={event => setName(event.target.value)} maxLength={120} disabled={busy} /></Field>
             <Field label={t('routines.editor.description')}><Input aria-label={t('routines.editor.description')} value={description} onChange={event => setDescription(event.target.value)} disabled={busy} /></Field>
             <DesktopScheduleDescription mode={mode} cron={cron} runAt={runAt} timezone={timezone}

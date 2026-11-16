@@ -3,14 +3,19 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import { DesktopHttpError } from './auth'
 import type { DesktopRuntime } from './runtime'
 
-const state = vi.hoisted(() => ({ owner: 'local-owner', enabled: 1, deleting: null as null | string, getAgent: vi.fn(), adopt: vi.fn(), execute: vi.fn(), preset: vi.fn() }))
+const state = vi.hoisted(() => ({ owner: 'local-owner', enabled: 1, deleting: null as null | string, getAgent: vi.fn(), adopt: vi.fn(), execute: vi.fn(), preset: vi.fn(), connections: [] as unknown[], backup: null as null | { connection_id: string; model: string },
+    PresetUnavailable: null as unknown as new (message: string, tier: string) => Error }))
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/engine/client', () => ({ getAgent: state.getAgent }))
 vi.mock('./database', () => ({ openDesktopDatabase: async () => ({ execute: state.execute }) }))
-vi.mock('./settings', () => ({ engineOf: () => ({ baseUrl: 'http://127.0.0.1:3222', apiKey: 'test' }) }))
+vi.mock('./settings', () => ({ engineOf: () => ({ baseUrl: 'http://127.0.0.1:3222', apiKey: 'test' }), readDesktopProviders: async () => ({ connections: state.connections }) }))
 vi.mock('./roster-writes', () => ({ withRosterWrite: (run: () => unknown) => run() }))
 vi.mock('./schedules/adoption', () => ({ adoptDesktopScheduleEvent: state.adopt }))
-vi.mock('./chat-model', () => ({ resolveDesktopRoutinePreset: state.preset }))
+vi.mock('./chat-model', async () => {
+    const { DesktopHttpError: HttpError } = await import('./auth')
+    state.PresetUnavailable = class extends HttpError { constructor(message: string, readonly tier: string) { super(409, message) } }
+    return { resolveDesktopRoutinePreset: state.preset, PresetUnavailable: state.PresetUnavailable }
+})
 vi.mock('./schedules/api', () => ({ desktopSchedulesApi: vi.fn() }))
 import { authorizeDesktopSchedules, handleDesktopScheduleBridge } from './schedules-binding'
 const db = { execute: state.execute } as unknown as Client
@@ -22,7 +27,9 @@ beforeEach(() => {
     const globals = globalThis as typeof globalThis & { [key: symbol]: Set<string> | undefined }
     globals[Symbol.for('rerun.desktop.schedule.closed.v1')]?.clear()
     state.owner = 'local-owner'; state.enabled = 1; state.deleting = null
-    state.execute.mockImplementation(async () => ({ rows: [{ id: state.owner, enabled: state.enabled, deleting: state.deleting }] }))
+    state.connections = []; state.backup = null
+    state.execute.mockImplementation(async (query: unknown) => String(typeof query === 'string' ? query : (query as { sql: string }).sql).includes('desktop_usage_backup_model')
+        ? { rows: state.backup ? [state.backup] : [] } : { rows: [{ id: state.owner, enabled: state.enabled, deleting: state.deleting }] })
     state.getAgent.mockImplementation(async () => allowed())
     state.adopt.mockResolvedValue({ sessionId: 'local-session' })
 })
@@ -84,4 +91,33 @@ test('a preset with no plan left is reported in words, and a coworker without th
     state.getAgent.mockResolvedValue({ ...allowed(), config: { enabled: true, tools: { desktopToolGrants: {} } } })
     await expect(handleDesktopScheduleBridge(runtime, event)).rejects.toThrow()
     expect(state.preset).toHaveBeenCalledTimes(1)
+})
+
+const plan = (extra: Record<string, unknown> = {}) => ({ id: 'mac-chatgpt', name: 'ChatGPT', provider: 'codex', connected: true, credentialRejected: false, models: ['gpt-6-sol'], extraModels: [],
+    planLimits: { capturedAt: '2026-11-16T10:00:00.000Z', windows: [{ kind: 'session', label: null, usedPercent: 100, resetsAt: '2999-01-01T00:00:00.000Z' }] }, ...extra })
+const key = { id: 'openai-key', name: 'OpenAI', provider: 'openai', connected: true, credentialRejected: false, models: ['gpt-paid'], extraModels: [], planLimits: null }
+
+test('a preset whose plan is out of usage tells the engine which plan to wait for, and when it resets', async () => {
+    state.connections = [plan(), key]
+    state.preset.mockRejectedValueOnce(new state.PresetUnavailable('Rerun Smart has no plan with usage left (ChatGPT).', 'smart'))
+    const answer = await (await handleDesktopScheduleBridge(runtime, { event: 'desktop.schedule.model', agentId: 'engine-owner' }))?.json()
+    // The key is connected, and is not offered: nothing moves to a paid key on its own.
+    expect(answer).toEqual({ ok: true, persisted: true, model: null, unavailable: 'Rerun Smart has no plan with usage left (ChatGPT).',
+        waiting: { connectionId: 'mac-chatgpt', plan: 'ChatGPT', provider: 'codex', resetsAt: '2999-01-01T00:00:00.000Z' } })
+})
+
+test('the backup model the owner picked runs a routine whose preset or plan is out of usage', async () => {
+    state.connections = [plan(), key]
+    state.backup = { connection_id: 'openai-key', model: 'gpt-paid' }
+    state.preset.mockRejectedValueOnce(new state.PresetUnavailable('Rerun Smart has no plan with usage left (ChatGPT).', 'smart'))
+    expect(await (await handleDesktopScheduleBridge(runtime, { event: 'desktop.schedule.model', agentId: 'engine-owner' }))?.json())
+        .toEqual({ ok: true, persisted: true, model: { connectionId: 'openai-key', model: 'gpt-paid' } })
+    expect(await (await handleDesktopScheduleBridge(runtime, { event: 'desktop.schedule.backup', agentId: 'engine-owner', outConnectionId: 'mac-chatgpt' }))?.json())
+        .toEqual({ ok: true, persisted: true, model: { connectionId: 'openai-key', model: 'gpt-paid', note: 'Backup model is answering on OpenAI · gpt-paid: ChatGPT is out of usage.' } })
+})
+
+test('with no backup picked, the backup question is answered with nothing even when a paid key is connected', async () => {
+    state.connections = [plan(), key]
+    expect(await (await handleDesktopScheduleBridge(runtime, { event: 'desktop.schedule.backup', agentId: 'engine-owner', outConnectionId: 'mac-chatgpt' }))?.json())
+        .toEqual({ ok: true, persisted: true, model: null })
 })

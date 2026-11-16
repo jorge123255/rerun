@@ -9,6 +9,7 @@ import type { DesktopRuntime } from '../runtime'
 import { DesktopHttpError } from '../auth'
 import { authorizeDesktopSchedules } from '../schedules-binding'
 import { adoptDesktopScheduledSession } from '../schedules/adoption'
+import { readDesktopRoutineHealth, routineGuardRefusalOf } from '../schedules/health'
 import { createDesktopWorkspaceRoutinesReader, type DesktopWorkspaceRoutinesAuthority } from './reader'
 import type { DesktopWorkspaceRoutinesMutationAuthority } from './mutations'
 
@@ -60,6 +61,7 @@ export async function desktopWorkspaceRoutinesAuthority(runtime: DesktopRuntime)
             }, { signal }))
         },
         canRename: async () => true,
+        health: (owner, signal) => readDesktopRoutineHealth(engine, owner.engineAgentId, signal),
     }
     async function command(input: DesktopWorkspaceRoutineMutation, operation: 'read' | 'mutate', signal?: AbortSignal) {
         const o = await owner(input.agentId)
@@ -67,6 +69,8 @@ export async function desktopWorkspaceRoutinesAuthority(runtime: DesktopRuntime)
         try {
             result = await engineRequest(engine, `/desktop/workspace-routines/${encodeURIComponent(o.engineAgentId)}`, { method: 'POST', body: JSON.stringify({ operation, input }), signal, cache: 'no-store' }, value => wire.parse(value))
         } catch (error) {
+            const refusal = routineGuardRefusalOf(error)
+            if (refusal) throw refusal
             if (error instanceof EngineRequestError) {
                 const messages: Record<number, string> = {
                     400: 'Check the routine fields before trying again.',

@@ -10,6 +10,7 @@ import { assertDesktopRunAdmission } from '../workspace-admission.js'
 import { openDesktopSubscriptionCatalogRelay, openDesktopSubscriptionTurnRelay } from './device-relay.js'
 import { SubscriptionAcpError } from './peer.js'
 import { openDesktopSubscriptionAcpSession } from './session.js'
+import { killRunnerAgain, recheckUnconfirmedStop, runnerGone } from './stop-recheck.js'
 import { noteDesktopPlanUsage } from '../plan-usage-diagnostic.js'
 import { planLimitWindowsFromGrok, planLimitWindowsFromKimi, recordPlanLimits, type GrokBilling, type KimiUsage } from '../../connections/plan-limits.js'
 
@@ -43,7 +44,16 @@ const runners = {
 const unavailable = () => new Error('The subscription provider runner is unavailable.')
 const shutdownUnconfirmed = () => new Error('The subscription provider runner did not stop cleanly.')
 type Worker = () => Promise<void>
-const workers = new Map<DesktopSubscriptionProvider, { dispose: Worker; turn: boolean }>()
+// `stop` is set once a stop could not be confirmed: 'rechecking' while the background recheck is
+// still looking, 'stuck' once it gave up. Either way the entry stays, so no second runner starts.
+const workers = new Map<DesktopSubscriptionProvider, { dispose: Worker; turn: boolean; stop?: 'rechecking' | 'stuck' }>()
+const stillStopping = () => new Error('The subscription provider runner is still stopping. Try again in a moment.')
+const stuck = () => new Error('The subscription provider runner could not be stopped. Quit and reopen the app to use this provider again.')
+/** Why a new runner cannot start while this provider still has one. */
+function occupied(provider: DesktopSubscriptionProvider) {
+    const stop = workers.get(provider)?.stop
+    return stop === 'stuck' ? stuck() : stop === 'rechecking' ? stillStopping() : unavailable()
+}
 let stopping = false
 
 function ownedFile(path: string | undefined, executable = false) {
@@ -416,7 +426,8 @@ async function openApprovedSession(
         return saved
     }
     assertCurrent()
-    if (!desktopSubscriptionDeviceLoginAvailable(provider) || workers.has(provider)) throw unavailable()
+    if (workers.has(provider)) throw occupied(provider)
+    if (!desktopSubscriptionDeviceLoginAvailable(provider)) throw unavailable()
     if (purpose === 'turn' && !desktopSubscriptionChatAvailable(provider)) throw unavailable()
     const { binary } = bundlePaths(provider)
     const sandbox = ownedFile(process.env.RERUN_DESKTOP_SUBSCRIPTION_LOGIN_SANDBOX)
@@ -498,8 +509,28 @@ function spawnRunner(
     }).catch(error => {
         // Retain failed drains for the next service shutdown attempt.
         draining = undefined
+        recheck()
         throw error
     })
+    // A stop that could not be confirmed used to leave the provider unavailable until a workspace
+    // switch or a quit. The runner is looked at again in the background, killed again while it is
+    // still there, and the provider is freed only once it is confirmed gone.
+    const recheck = () => {
+        const worker = workers.get(provider)
+        if (worker?.dispose !== dispose || worker.stop) return
+        worker.stop = 'rechecking'
+        const current = () => workers.get(provider) === worker
+        void recheckUnconfirmedStop({
+            current,
+            gone: () => runnerGone(child, terminal),
+            killAgain: () => killRunnerAgain(child, terminal),
+            onGone: async () => {
+                await relay?.close?.().catch(() => {})
+                if (current()) workers.delete(provider)
+            },
+            onGiveUp: () => { worker.stop = 'stuck' },
+        }).catch(() => { if (current()) worker.stop = 'stuck' })
+    }
     workers.set(provider, { dispose, turn })
     return { child, dispose }
 }

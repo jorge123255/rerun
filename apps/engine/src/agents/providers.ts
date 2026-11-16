@@ -38,7 +38,8 @@ import { createCardTagGuard } from './card-tag-stream.js'
 import { cardTagStopHook } from './claude-card-nudge.js'
 import { openrouterReasoningMiddleware, reasoningFetch } from './openrouter-reasoning.js'
 import { cacheBreakpointsFetch } from './openrouter-cache.js'
-import { openrouterStreamRetryMiddleware } from './openrouter-stream-retry.js'
+import { createStreamRetryMiddleware, openrouterStreamRetryMiddleware } from './openrouter-stream-retry.js'
+import { createTransientStreamRetryMiddleware, STREAM_STALL_MS, type StreamRetryHooks } from './transient-stream-retry.js'
 import { agentProcessEnv } from './process-env.js'
 import { BRIDGE_SERVER_NAME, CLI_PROVIDERS, type LoadedAgent } from './types.js'
 import { apiCreditsMessage } from '../runtime/provider-errors.js'
@@ -625,8 +626,17 @@ export type ResolvedModel = { model: LanguageModel; close: () => Promise<void>; 
 
 const noClose = async (): Promise<void> => {}
 
-export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: RunMcpServer[], system?: string, screenshots?: ScreenshotLookup, nativeWorker?: DesktopNativeWorker, imageRun?: DesktopCodexImageRun, reasoningEffort?: string, sessionId?: string): ResolvedModel {
+export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: RunMcpServer[], system?: string, screenshots?: ScreenshotLookup, nativeWorker?: DesktopNativeWorker, imageRun?: DesktopCodexImageRun, reasoningEffort?: string, sessionId?: string, streamRetry: StreamRetryHooks = {}): ResolvedModel {
     const { provider, model } = pairFor(agent, override)
+    // Outermost, so it judges the step by what the run is about to receive. A step is sent again
+    // only where sending it again starts from nothing: one HTTP request, one fresh Claude process
+    // on the Mac (the web product's Claude CLI is left as it was), one fresh Kimi, Grok or Devin session. Codex is left out on purpose: its app-server reconnects
+    // a dropped stream itself, and a failed turn is already written to the thread a retry would reuse.
+    // Only the hosted API-key providers get the stall timeout: a local model can take minutes to
+    // load, and a command-line runner is silent for as long as its own tools run.
+    const retry = (stall = false) => createTransientStreamRetryMiddleware({ provider, ...streamRetry, ...(stall ? { stallMs: STREAM_STALL_MS } : {}) })
+    // Rerun, OpenRouter and OpenCode keep the replay they already had; the run only listens in.
+    const cutRetry = createStreamRetryMiddleware(undefined, streamRetry)
     // `wrapLanguageModel` runs the list from the end: the guard sits nearest the model, so no other
     // middleware ever reads a fake tool call, the card tags go next, and the quick replies read the
     // text right after them.
@@ -635,15 +645,15 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
     const guard = createFakeToolCallGuard(agent.id)
     if (provider === 'opencode') {
         const entry = opencodeModel(agent, model, sessionId)
-        return { model: wrapLanguageModel({ model: entry.model, middleware: [replies.middleware, cardTags, ...entry.middleware, guard] }), close: noClose, quickReplies: replies.read }
+        return { model: wrapLanguageModel({ model: entry.model, middleware: [replies.middleware, cardTags, ...entry.middleware.map(item => item === openrouterStreamRetryMiddleware ? cutRetry : item), guard] }), close: noClose, quickReplies: replies.read }
     }
     if (isDesktopSubscriptionProvider(provider)) {
         const subscription = subscriptionModel(agent, model, reasoningEffort)
-        return { model: wrapLanguageModel({ model: subscription.model, middleware: [replies.middleware, cardTags, guard] }), close: subscription.close, quickReplies: replies.read }
+        return { model: wrapLanguageModel({ model: subscription.model, middleware: [retry(), replies.middleware, cardTags, guard] }), close: subscription.close, quickReplies: replies.read }
     }
     if (provider === 'custom') {
         const custom = customInferenceModel(agent.resolved.connection, model, reasoningEffort, sessionId ? { agentId: agent.id, sessionId } : undefined)
-        return { model: wrapLanguageModel({ model: custom.model, middleware: [replies.middleware, cardTags, guard] }), close: custom.close, quickReplies: replies.read }
+        return { model: wrapLanguageModel({ model: custom.model, middleware: [retry(), replies.middleware, cardTags, guard] }), close: custom.close, quickReplies: replies.read }
     }
     if (provider === 'codex') {
         const codex = codexAppServerProvider(agent, tools, mcpServers, { system, screenshots, nativeWorker })
@@ -659,17 +669,19 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
         const capture = claudeContextCapture(agent.resolved.connection?.id)
         const desktopRuntime = desktopApp() ? desktopClaudeRuntime(agent.resolved.connection?.id, connectionEnv(agent).CLAUDE_CODE_OAUTH_TOKEN ?? '', CLAUDE_HARNESS_ENV) : undefined
         const claude = claudeProvider(agent, tools, mcpServers, capture, { system, screenshots, claudeTools: agent.config.tools.web ? CLAUDE_RUN_TOOLS : [], effort: reasoningEffort }, desktopRuntime).languageModel(model)
-        return { model: wrapLanguageModel({ model: claude, middleware: [claudeScreenshotMiddleware, replies.middleware, cardTags, guard] }), close: desktopRuntime?.close ?? noClose, contextUsage: capture.read, quickReplies: replies.read }
+        return { model: wrapLanguageModel({ model: claude, middleware: [...(desktopRuntime ? [retry()] : []), claudeScreenshotMiddleware, replies.middleware, cardTags, guard] }), close: desktopRuntime?.close ?? noClose, contextUsage: capture.read, quickReplies: replies.read }
     }
     // Asking for the reasoning and reading it back are both off the OpenAI chat format, so they are
     // wired here rather than in the registry: the one-shot calls that go through `modelFor`
     // (compaction, curator, vision, memory reconcile) have no one to show a thought to.
     if (provider === 'rerun' || provider === 'openrouter') {
         const openrouter = openaiChat({ ...openrouterCompatibleOptions(agent, provider), fetch: provider === 'openrouter' ? cacheBreakpointsFetch(reasoningFetch) : reasoningFetch })
-        return { model: wrapLanguageModel({ model: openrouter.languageModel(model), middleware: [openrouterStreamRetryMiddleware, openrouterReasoningMiddleware, replies.middleware, cardTags, guard] }), close: noClose, quickReplies: replies.read }
+        return { model: wrapLanguageModel({ model: openrouter.languageModel(model), middleware: [cutRetry, openrouterReasoningMiddleware, replies.middleware, cardTags, guard] }), close: noClose, quickReplies: replies.read }
     }
     const middleware = [replies.middleware, cardTags, guard]
     if (provider === 'google') middleware.unshift(googleToolSchemaMiddleware)
     if (provider === 'openai') middleware.push(openAICreditsMiddleware)
+    // What is left here is one HTTP request per step: Anthropic, OpenAI and Google keys.
+    if (!CLI_PROVIDERS.has(provider)) middleware.unshift(retry(true))
     return { model: wrapLanguageModel({ model: registryFor(agent, tools, mcpServers).languageModel(`${provider}:${model}`), middleware }), close: noClose, quickReplies: replies.read }
 }

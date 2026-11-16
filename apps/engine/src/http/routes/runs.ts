@@ -8,6 +8,7 @@ import { collectAssistantText } from '../../db/repos/messages.js'
 import { resumeStreamResponse } from '../../runtime/stream.js'
 import { cancelOwnedRun } from '../../runtime/cancel-run.js'
 import { desktopApp } from '../../desktop/policy.js'
+import { listUsageSkips, listUsageWaits } from '../../desktop/usage-gate.js'
 import { abortSubRun } from '../../tools/builtin/sub-run-watch.js'
 import { getDesktopForemanQueuedUserMessageId } from '../../db/repos/desktop-queued-turns.js'
 import { listSchedules } from '../../schedules/loader.js'
@@ -77,7 +78,11 @@ runRoutes.get('/', async c => {
 runRoutes.get('/latest-scheduled', async c => {
     const agentId = c.req.param('id')!
     const schedules = await listSchedules(agentId)
-    return c.json({ runs: await listLatestScheduleRuns(agentId, schedules.map(schedule => schedule.slug)) })
+    const runs = await listLatestScheduleRuns(agentId, schedules.map(schedule => schedule.slug))
+    if (!desktopApp()) return c.json({ runs })
+    // Routines parked until their plan resets, and the last one skipped after waiting a day.
+    const [waiting, skipped] = await Promise.all([listUsageWaits(agentId), listUsageSkips(agentId)])
+    return c.json({ runs, waiting: waiting.map(({ slug, plan, parkedAt, resetsAt, nextCheckAt, skippedWhileWaiting }) => ({ slug, plan, parkedAt, resetsAt, nextCheckAt, skippedWhileWaiting })), skipped })
 })
 
 // The desktop completion store reads through this bounded route: terminal identity and time order

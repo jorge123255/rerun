@@ -7,9 +7,10 @@ import { authenticateDesktopRequest, DesktopHttpError } from '../auth'
 import { engineOf } from '../settings'
 import { desktopProvider } from '../../settings'
 import { findDesktopAgent } from '../store'
-import { createSchedule,updateSchedule,deleteSchedule,listSchedules,listRuns,listLatestScheduleRuns,getAgent,EngineRequestError } from '@/lib/engine/client'
+import { createSchedule,updateSchedule,deleteSchedule,listSchedules,listRuns,listLatestScheduleRuns,listScheduleUsageWaits,getAgent,EngineRequestError } from '@/lib/engine/client'
 import { nextRunAt } from '@/lib/schedules/cron'
 import { adoptDesktopScheduledSession } from './adoption'
+import { desktopRoutineHealthFields, readDesktopRoutineHealth, routineGuardRefusalOf } from './health'
 
 const input=z.object({name:z.string().trim().min(1).max(120),description:z.string().max(4000).default(''),body:z.string().trim().min(1).max(64000),cron:z.string().max(120).nullable(),runAt:z.string().datetime({offset:true}).nullable(),timezone:z.string().min(1).max(100),enabled:z.boolean(),
     connectionId:z.string().trim().min(1).max(256).nullable().default(null),provider:desktopProvider.nullable().default(null),model:z.string().trim().min(1).max(256).nullable().default(null),
@@ -91,9 +92,12 @@ export function desktopSchedulesApi(db:Client,authorize:ScheduleAccess) {
                     result = runs.filter(run => run.agentId === owner.engineAgentId && run.triggerSource === 'schedule' && run.triggerSlug === slug)
                         .map(({ id, status, startedAt }) => ({ id, status, startedAt }))
                 } else {
-                    const [schedules, runs] = await Promise.all([
+                    const [schedules, runs, health, usage] = await Promise.all([
                         listSchedules(engine, owner.engineAgentId, { signal: request.signal }),
                         listLatestScheduleRuns(engine, owner.engineAgentId, request.signal),
+                        readDesktopRoutineHealth(engine, owner.engineAgentId, request.signal),
+                        // A routine parked until its plan resets is shown as waiting, not as failed.
+                        listScheduleUsageWaits(engine, owner.engineAgentId, request.signal).catch(() => ({ waiting: [], skipped: [] })),
                     ])
                     await authorize(owner.engineAgentId)
                     request.signal.throwIfAborted()
@@ -101,10 +105,13 @@ export function desktopSchedulesApi(db:Client,authorize:ScheduleAccess) {
                     const setupPending = setup?.required === true && setup.completedAt === null && detail.install.trim().length > 0
                     result=await Promise.all(schedules.map(async schedule=>{
                         const last = runs.find(run => run.agentId === owner.engineAgentId && run.triggerSource === 'schedule' && run.triggerSlug === schedule.slug)
+                        const wait = usage.waiting.find(item => item.slug === schedule.slug), skip = usage.skipped.find(item => item.slug === schedule.slug)
                         const chat = last ? await adoptDesktopScheduledSession(db, engine, {
                             agentId, engineAgentId: owner.engineAgentId, scheduleSlug: schedule.slug, runId: last.id,
                         }, { signal: request.signal }) : null
-                        return { ...schedule, setupPending, nextRunAt: nextRunAt(schedule, new Date()), lastResult: last ? { status: last.status, runId: last.id, chat } : null }
+                        const { outcome, ...limits } = desktopRoutineHealthFields(health, schedule.slug, last?.id)
+                        return { ...schedule, setupPending, nextRunAt: nextRunAt(schedule, new Date()), ...limits, lastResult: last ? { status: last.status, runId: last.id, chat, ...(outcome && { outcome }) } : null,
+                            ...(wait && { usageWait: wait }), ...(skip && { usageSkip: skip }) }
                     }))
                 }
             } else {
@@ -116,7 +123,10 @@ export function desktopSchedulesApi(db:Client,authorize:ScheduleAccess) {
                 const slug=body.slug===undefined ? undefined : scheduleSlug.parse(body.slug)
                 if(request.method==='PUT') {
                     const value=input.parse(body.input)
-                    result=slug ? await updateSchedule(engine,owner.engineAgentId,slug,value as unknown as Parameters<typeof updateSchedule>[3]) : await createSchedule(engine,owner.engineAgentId,{...value,cron:value.cron ?? undefined,runAt:value.runAt ?? undefined})
+                    // The engine holds the routine limits (how often, how many). Its refusal is already plain.
+                    try {
+                        result=slug ? await updateSchedule(engine,owner.engineAgentId,slug,value as unknown as Parameters<typeof updateSchedule>[3]) : await createSchedule(engine,owner.engineAgentId,{...value,cron:value.cron ?? undefined,runAt:value.runAt ?? undefined})
+                    } catch (error) { throw routineGuardRefusalOf(error) ?? error }
                 } else if (request.method === 'DELETE' && slug) {
                     if (body.expectedRevision === undefined) {
                         await deleteSchedule(engine, owner.engineAgentId, slug)

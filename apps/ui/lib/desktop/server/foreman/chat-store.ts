@@ -93,12 +93,15 @@ export async function listForemanConversations(db: Client, workspaceId: string) 
         // The last message sent in it dates a conversation; one nobody wrote in yet has no date.
         // Its first message dates where it branched from General: a task is only saved by that message.
         sql: `SELECT c.chat_id, c.title, c.home, (SELECT MAX(t.created_at) FROM desktop_foreman_turns t WHERE t.chat_id=c.chat_id) AS updated_at,
-                     (SELECT MIN(t.created_at) FROM desktop_foreman_turns t WHERE t.chat_id=c.chat_id) AS started_at
+                     (SELECT MIN(t.created_at) FROM desktop_foreman_turns t WHERE t.chat_id=c.chat_id) AS started_at,
+                     CASE WHEN json_valid(c.ui) AND length(trim(coalesce(json_extract(c.ui,'$.draft'),''))) > 0 THEN 1 ELSE 0 END AS has_draft
               FROM desktop_foreman_chats c WHERE c.workspace_id=? ORDER BY c.home DESC, c.rowid DESC`,
         args: [workspaceId],
     })
     return rows.map(row => ({ chat: { workspaceId, chatId: String(row.chat_id) }, title: row.title === null ? null : String(row.title), home: row.home === 1,
-        ...(typeof row.updated_at === 'string' && { updatedAt: row.updated_at }), ...(typeof row.started_at === 'string' && { startedAt: row.started_at }) }))
+        ...(typeof row.updated_at === 'string' && { updatedAt: row.updated_at }), ...(typeof row.started_at === 'string' && { startedAt: row.started_at }),
+        // Words typed but not sent: the task is listed so they can be found again.
+        ...(Number(row.has_draft) === 1 && { hasDraft: true }) }))
 }
 export async function ownedForemanChat(db: Pick<Client, 'execute'>, chat: DesktopForemanChatRef): Promise<OwnedForemanChat> {
     const row = (await db.execute({ sql: 'SELECT * FROM desktop_foreman_chats WHERE workspace_id=? AND chat_id=?', args: [chat.workspaceId, chat.chatId] })).rows[0]

@@ -36,6 +36,8 @@ import { ArrowUpIcon, ChevronDownIcon, Maximize2Icon, PlusIcon, SendIcon, Square
 import { MarkdownEditorDialog } from '@/components/ui/markdown-editor-dialog'
 import { DesktopConversationFind } from './DesktopConversationFind'
 import { DesktopProviderErrorNotice } from './chat/recovery/DesktopProviderErrorNotice'
+import { DesktopUsageWaitPill } from './chat/recovery/DesktopUsageWaitPill'
+import { useDesktopUsageWait } from '@/lib/desktop/use-usage-wait'
 import { formatFxAttachmentRejections, formatFxDocumentRejections, planFxAttachmentBatch } from '@/lib/desktop/fx-repairs/attachment-overflow'
 import { useDesktopChatRecovery } from '@/lib/desktop/chat-recovery/use-desktop-chat-recovery'
 import { MessageFeedbackDialog } from '@/components/chat/MessageFeedbackDialog'
@@ -44,6 +46,7 @@ import { DesktopComputerPanel } from './computer-panel/DesktopComputerPanel'
 import { DesktopSelectedMentionText } from './mentions/DesktopSelectedMentionText'
 import { DesktopWorkspaceMessage } from './DesktopWorkspaceMessage'
 import { DesktopAssistantReply } from './DesktopAssistantReply'
+import { useDesktopSpokenReplies } from './speech/useDesktopSpokenReplies'
 import { DesktopSavedDecisionReceipt } from './DesktopSavedDecisionReceipt'
 import { desktopSavedChatReceiptOf } from '@/lib/desktop/saved-chat-decision'
 import { DesktopChatActivity } from './DesktopChatActivity'
@@ -88,6 +91,7 @@ import { DesktopSkillProposalDock } from './skills/DesktopSkillProposalDock'
 import { useCoworkerSkillProposals } from '@/lib/desktop/use-coworker-skill-proposals'
 import { desktopSkillProposalIds } from '@/lib/desktop/skill-proposal-source'
 import { DesktopScheduledRunBlock } from './DesktopScheduledRunBlock'
+import { desktopRoutineReplyOf } from '@/lib/desktop/routine-reply'
 import { DesktopCoworkerTools } from './DesktopCoworkerTools'
 import { DesktopNativeWritebackReview } from './DesktopNativeWritebackReview'
 import { DesktopCoworkerMcpDialog } from './DesktopCoworkerMcpDialog'
@@ -811,6 +815,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     // even if its subscription still holds the previous chat's messages.
     const showSaved = ready && (!busy || regenerationSource === sessionId && !!sessionId)
     const transcript = showSaved ? history.transcript ?? messages : busy ? messages : []
+    const routineThread = useMemo(() => transcript.some(message => scheduledRunOf(message) !== null), [transcript])
     const { savedReceipts, answeredCalls } = useMemo(() => {
         const savedReceipts = new Map<string, NonNullable<ReturnType<typeof desktopSavedChatReceiptOf>>>()
         const answeredCalls = new Map<string, Set<string>>()
@@ -826,6 +831,13 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     }, [transcript, agent.id, sessionId])
     const latestAssistant = transcript.findLast(message => message.role === 'assistant')
     const streamingMessage = !showSaved && (status === 'streaming' || serviceStreaming) ? transcript.at(-1) : undefined
+    const speechSession = sessions.find(session => session.id === sessionId)
+    const spokenReplies = useDesktopSpokenReplies({
+        agentId: agent.id, sessionId, liveSessionId, active,
+        streaming: busy && (!sessionId || !liveSessionId || liveSessionId === sessionId),
+        automated: !!speechSession && (!!speechSession.automationName || !!speechSession.source && speechSession.source !== 'dashboard' && speechSession.source !== 'builder'),
+        latestSavedId: showSaved ? transcript.findLast(message => message.role === 'assistant' && message.id.startsWith('engine-') && message.parts.some(part => part.type === 'text' && part.text.trim()))?.id ?? null : null,
+    })
     const chatActivity = active && !reconnecting && !pendingRequest && generating
         ? <DesktopChatActivity agentId={agent.id} message={streamingMessage} />
         : null
@@ -1457,6 +1469,9 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
             reconnectProvider: () => onOpenModelSettings?.(),
         },
     })
+    // A plan that ran out: the message can wait for the reset instead of being retyped.
+    const usageWait = useDesktopUsageWait(agent.id, sessionId ?? null, active, recovery.notice?.kind === 'usage_limit' ? recovery.notice.binding.generation : 0)
+    const usageWaitText = lastUserText(transcript)
     const composerId = !active && tabUid ? `desktop-message-${tabUid}` : 'desktop-message'
     const currentTitle = sessions.find(session => session.id === sessionId)?.title ?? 'New conversation'
     const generalView = tabUid === generalTabUid(agent.id)
@@ -1530,7 +1545,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     if (active && sessionId) {
         // Connector actions that ask first. The answer goes back to the coworker as the next message.
         addRequest(`connector-approvals:${sessionId}`,
-            <DesktopConnectorApprovals sessionId={sessionId} generating={generating || stopping} disabled={draft.quitting || inactive || !ready}
+            <DesktopConnectorApprovals sessionId={sessionId} coworkerName={agent.name} generating={generating || stopping} disabled={draft.quitting || inactive || !ready}
                 onAnswered={text => { void sendMessage({ text }, { body: { agentId: agent.id, sessionId } }) }} />)
     }
     const waitingCard = ready && !generating && !stopping && !draft.quitting
@@ -1681,6 +1696,9 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                         const voiceContext = { workspaceId, sessionId, tabUid, messageId: message.id,
                             active: active && ready && !cardCovers && !detailPanel && !chatsOpen && !draft.quitting }
                         const textParts = message.parts.filter(part => part.type === 'text')
+                        // A routine's reply may carry the "nothing to report" marker. It is never
+                        // drawn, and a reply that was only the marker becomes one muted line.
+                        const routineReply = routineThread ? desktopRoutineReplyOf(message) : null
                         const voicePart = message.role === 'user' && textParts.length === 1 ? textParts[0] : undefined
                         const renderBubble = (voicePlayer?: ReactNode) => {
                             const content = (
@@ -1699,7 +1717,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                                             {images.length > 0 && <MessageAttachments paths={images.map(item => item.path)} rawUrlFor={path => images.find(item => item.path === path)?.url ?? ''} />}</>
                                     })()}
                                     {voicePlayer ?? (message.role === 'assistant'
-                                        ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} createdAt={createdAt} streaming={message === streamingMessage} latest={message === latestAssistant}
+                                        ? <><DesktopAssistantReply agent={agent} message={routineReply?.message ?? message} agentId={agent.id} createdAt={createdAt} streaming={message === streamingMessage} latest={message === latestAssistant}
                                             onOpenWorkspaceFile={onOpenWorkspaceFile}
                                             toolInstall={sessionId ? { sessionId, active: active && ready, disabled: draft.quitting || inactive || generating || stopping } : undefined}
                                             childRuns={sessionId ? { sessionId, active, onOpenTarget: onOpenCoworkerChat } : undefined}
@@ -1708,9 +1726,11 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                                             pendingRequestToolCallId={pendingRequest?.toolCallId} answeredRequestCalls={answeredCalls.get(message.id)}
                                             quickReplies={{ show: messageIndex === transcript.length - 1 && quickRepliesVisible, disabled: !canSendQuickReply,
                                                 pending: quickReplyBusy || queue.pending, onSend: text => sendQuickReply(message.id, text) }}
+                                            readAloud={sessionId && spokenReplies.available ? { sessionId } : undefined}
                                             feedbackRating={feedback.votes.get(message.id)?.rating ?? null}
                                             onRate={message.id.startsWith('engine-') ? rating => feedback.rate(message.id, rating) : undefined}
                                             onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />
+                                            {routineReply?.quiet && <p data-routine-quiet className="text-xs text-muted-foreground">{t('routines.nothingToReport')}</p>}</>
                                         : message.parts.map((part, index) => {
                                             if (part.type !== 'text') return null
                                             const text = message.role === 'user'
@@ -1758,7 +1778,13 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                         }}>Retry conversation</Button>
                     </div>}
                     {!recovery.notice && stopBanner && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{stopBanner}</div>}
+                    {usageWait.status?.wait && <DesktopUsageWaitPill wait={usageWait.status.wait} busy={usageWait.busy} onCancel={() => void usageWait.cancel(usageWait.status!.wait!.id)} />}
                     {recovery.notice && <DesktopProviderErrorNotice
+                        usage={recovery.notice.kind === 'usage_limit' && usageWait.status ? {
+                            plan: usageWait.status.plan, queued: usageWait.status.wait?.state === 'waiting' || usageWait.status.wait?.state === 'sending',
+                            busy: usageWait.busy, error: usageWait.error,
+                            onSendAtReset: usageWaitText.trim() ? () => void usageWait.queue(usageWaitText) : undefined,
+                        } : undefined}
                         kind={recovery.notice.kind}
                         message={recovery.notice.message}
                         onRetry={canRetry ? () => recovery.act('retry') : undefined}

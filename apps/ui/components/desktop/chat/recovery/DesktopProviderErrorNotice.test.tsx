@@ -105,3 +105,30 @@ test('a refused model opens the conversation model picker', async () => {
     await click('Switch model')
     expect(onSwitchModel).toHaveBeenCalledOnce()
 })
+
+test('a plan that ran out shows its reset time and offers to send at reset or choose another model', async () => {
+    const onSendAtReset = vi.fn(), onSwitchModel = vi.fn()
+    await mount('usage_limit', 'ChatGPT usage limit reached. It resets at Mon 3:00 PM.', { onSwitchModel, usage: { plan: { name: 'ChatGPT', resetsAt: '2026-11-16T15:00:00.000Z' }, queued: false, onSendAtReset } })
+    expect(document.querySelector('[data-usage-reset]')?.textContent).toMatch(/^ChatGPT resets at .+\.$/)
+    expect(text()).toContain('sends it once when ChatGPT has usage again')
+    expect(text()).toContain('Nothing moves to a paid key unless you pick it')
+    await click('Send when it resets')
+    expect(onSendAtReset).toHaveBeenCalledTimes(1)
+    await click('Choose another model')
+    expect(onSwitchModel).toHaveBeenCalledTimes(1)
+})
+
+test('once the message is queued the notice says so and does not offer to queue it again', async () => {
+    const onSendAtReset = vi.fn()
+    await mount('usage_limit', 'ChatGPT usage limit reached.', { onSwitchModel: vi.fn(), usage: { plan: { name: 'ChatGPT', resetsAt: null }, queued: true, onSendAtReset } })
+    expect(text()).toContain('checks every 15 minutes, for up to 24 hours')
+    expect(text()).toContain('Your message is set to be sent then.')
+    expect(button('Send when it resets')).toBeUndefined()
+    expect(button('Choose another model')).toBeDefined()
+})
+
+test('a limit on a key billed per token has nothing to wait for and keeps the plain switch', async () => {
+    await mount('usage_limit', 'OpenAI API credits used up', { onSwitchModel: vi.fn(), usage: { plan: null, queued: false, onSendAtReset: vi.fn() } })
+    expect(button('Send when it resets')).toBeUndefined()
+    expect(button('Switch model')).toBeDefined()
+})

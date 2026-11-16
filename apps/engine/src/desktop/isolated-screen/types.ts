@@ -1,6 +1,7 @@
 import type { Duplex } from 'node:stream'
 import type { BotWall } from '../../tools/bot-wall.js'
 import type { LauncherControl } from '../computer-launchers/ports.js'
+import type { DesktopBrowserProbe, DesktopBrowserTrigger } from '@rerun/contracts'
 
 // Resolved by authenticated server code. Never a renderer or model Docker name.
 export type ScreenOwner = { engineAgentId: string; launchNonce: string }
@@ -77,6 +78,13 @@ export type ScreenComputerInput = {
     duration?: number
 }
 
+/**
+ * Asked before a click or a key press lands on a web page. `free` lets it through with nothing
+ * asked; `allowed` means the person allowed exactly this press, and the control is read once more
+ * before it is made. To hold or refuse the press the gate throws a ScreenPressHeld.
+ */
+export type ScreenPressGate = (press: { trigger: DesktopBrowserTrigger; probe: DesktopBrowserProbe }, signal: AbortSignal) => Promise<'free' | 'allowed'>
+
 export type ScreenNavigate = { url: string; links?: boolean; timeoutMs?: number; screenshotPath?: string }
 
 export type ScreenExportArtifact = {
@@ -115,7 +123,7 @@ export type IsolatedScreenService = {
     ensure(owner: ScreenOwner, signal: AbortSignal): Promise<EnsuredScreen>
     running(owner: ScreenOwner, signal: AbortSignal): Promise<EnsuredScreen>
     navigate(target: ScreenTarget, input: ScreenNavigate, signal: AbortSignal, exports?: ScreenNavigationExport): Promise<ScreenPage>
-    act(target: ScreenTarget, input: ScreenComputerInput, signal: AbortSignal): Promise<ScreenShot>
+    act(target: ScreenTarget, input: ScreenComputerInput, signal: AbortSignal, gate?: ScreenPressGate): Promise<ScreenShot>
     /** Holds the screen with the browser in front while `deliver` has the app type a saved secret. */
     typeSecret(target: ScreenTarget, deliver: (expectedForeground: { app: 'browser'; windowId: string }, signal: AbortSignal) => Promise<void>, signal: AbortSignal): Promise<ScreenShot>
     openBrowser(target: ScreenTarget, signal: AbortSignal): Promise<ScreenShot>

@@ -82,7 +82,7 @@ export async function readDesktopForemanState(signal?: AbortSignal, chat?: Deskt
     return state
 }
 const conversationsPath = '/api/desktop/foreman/conversations'
-const conversationSchema = z.strictObject({ chat: foremanChatRefSchema, title: z.string().max(80).nullable(), home: z.boolean(), updatedAt: z.string().max(40).optional(), startedAt: z.string().max(40).optional() })
+const conversationSchema = z.strictObject({ chat: foremanChatRefSchema, title: z.string().max(80).nullable(), home: z.boolean(), updatedAt: z.string().max(40).optional(), startedAt: z.string().max(40).optional(), hasDraft: z.boolean().optional() })
 export async function listDesktopForemanConversations(signal: AbortSignal) {
     return z.strictObject({ conversations: z.array(conversationSchema) }).parse(await json(
         await fetch(conversationsPath, { cache: 'no-store', signal }),

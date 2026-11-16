@@ -12,7 +12,7 @@ afterEach(() => { for (const root of roots.splice(0)) act(() => { root.unmount()
 const ID = '11111111-1111-4111-8111-111111111111', RULE = '22222222-2222-4222-8222-222222222222'
 const pending = [{ id: ID, tool: 'gmail_send_email', kind: 'send', preview: '{"to":"pat@example.test"}', createdAt: '2026-11-14T12:00:00.000Z' }]
 
-async function mount(views: unknown[], generating = false) {
+async function mount(views: unknown[], generating = false, coworkerName?: string) {
     const calls: { url: string; body?: unknown }[] = []
     let view = views[0]
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -20,7 +20,8 @@ async function mount(views: unknown[], generating = false) {
         if (init?.method === 'POST') {
             view = views[Math.min(views.length - 1, 1)]
             const body = JSON.parse(String(init.body))
-            return Response.json(body.action === 'decide' ? { tool: 'gmail_send_email', kind: 'send', decision: body.decision } : { ok: true })
+            const asked = (views[0] as { pending: { tool: string; kind: string }[] }).pending[0]
+            return Response.json(body.action === 'decide' ? { tool: asked?.tool ?? 'gmail_send_email', kind: asked?.kind ?? 'send', decision: body.decision } : { ok: true })
         }
         return Response.json(view)
     }))
@@ -29,7 +30,7 @@ async function mount(views: unknown[], generating = false) {
     const root = createRoot(host)
     roots.push(root)
     const onAnswered = vi.fn()
-    await act(async () => { root.render(<DesktopConnectorApprovals sessionId="chat 1" generating={generating} disabled={false} onAnswered={onAnswered} />) })
+    await act(async () => { root.render(<DesktopConnectorApprovals sessionId="chat 1" generating={generating} disabled={false} onAnswered={onAnswered} coworkerName={coworkerName} />) })
     await act(async () => { await Promise.resolve() })
     return { host, calls, onAnswered }
 }
@@ -68,7 +69,7 @@ test('cannot be answered while the coworker is still replying', async () => {
 })
 
 test('a refusal is worded as a refusal', () => {
-    expect(connectorAnswerText('drive_delete_file', 'deny')).toBe('Declined: Drive Delete File. Do not run it.')
+    expect(connectorAnswerText('drive_delete_file', 'deny')).toBe('Declined: Drive Delete File. I decided not to have this done. Do not do it, or anything equivalent, another way; tell me briefly what you did not do.')
 })
 
 test('a held message is shown as a message: To, Subject and its text, not as JSON', async () => {
@@ -96,4 +97,37 @@ test('another action shows its named values, sandbox code shows as code, and an 
     expect(code.host.querySelector('pre')!.textContent).toBe('run_composio_tool("GMAIL_SEND_EMAIL", p)')
     const old = await mount(shaped('{"to":"pat@example.test"}'))
     expect(old.host.querySelector('pre')!.textContent).toBe('{"to":"pat@example.test"}')
+})
+
+const press = (label: string, host: string, kind = 'pay', via = 'click') => [{ id: ID, tool: 'browser_press', kind, preview: JSON.stringify({ v: 1, items: [], press: { label, host, via } }), createdAt: '2026-11-14T12:00:00.000Z' }]
+
+test('asks about a press in the browser by its label and site, with Allow once and Deny only', async () => {
+    const { host, calls, onAnswered } = await mount([{ pending: press('Pay now', 'checkout.example.test'), rules: [] }, { pending: [], rules: [] }], false, 'Ada')
+    expect(host.querySelector('[data-testid=desktop-browser-press-approval]')!.getAttribute('aria-label')).toBe('Ada wants to press “Pay now” on checkout.example.test')
+    expect(host.textContent).toContain('This pays or moves money.')
+    expect(host.textContent).toContain('Allowing covers this one press.')
+    expect([...host.querySelectorAll('section button')].map(node => node.textContent)).toEqual(['Allow once', 'Deny'])
+    await act(async () => { button(host, 'Allow once').click() })
+    await act(async () => { await Promise.resolve() })
+    expect(calls.find(call => call.body)!.body).toEqual({ action: 'decide', id: ID, decision: 'once' })
+    // The page's words never go into the message the coworker reads as the person's.
+    expect(onAnswered).toHaveBeenCalledWith('Allowed once: the press in the browser you asked about. Make exactly the same press now. It covers that one press only.')
+    expect(onAnswered.mock.calls[0]![0]).not.toContain('Pay now')
+})
+
+test('declining a press tells the coworker not to look for another way', async () => {
+    const { host, onAnswered } = await mount([{ pending: press('Delete account', 'app.example.test', 'delete'), rules: [] }, { pending: [], rules: [] }])
+    expect(host.textContent).toContain('This coworker wants to press “Delete account” on app.example.test')
+    await act(async () => { button(host, 'Deny').click() })
+    await act(async () => { await Promise.resolve() })
+    expect(onAnswered).toHaveBeenCalledWith('Declined: the press in the browser you asked about. I decided not to have this done. Do not do it, or anything equivalent, another way; tell me briefly what you did not do.')
+})
+
+test('names an unlabelled control and a key press honestly, and shows page text as text', async () => {
+    const unlabelled = await mount([{ pending: press('', 'canvas.example.test', 'press'), rules: [] }], false, 'Ada')
+    expect(unlabelled.host.textContent).toContain('Ada wants to press an unlabelled control on canvas.example.test')
+    expect(unlabelled.host.textContent).toContain('Extra vigilant is on for this coworker')
+    const key = await mount([{ pending: press('<img src=x onerror=alert(1)>', '', 'send', 'key'), rules: [] }], false, 'Ada')
+    expect(key.host.textContent).toContain('Ada wants to press Enter for “<img src=x onerror=alert(1)>” on this page')
+    expect(key.host.querySelector('img')).toBeNull()
 })

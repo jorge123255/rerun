@@ -2,6 +2,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { DesktopSpeechSettings } from './speech/DesktopSpeechSettings'
+import { announceDesktopSpeechChange } from '@/lib/desktop/speech-player'
+import { DESKTOP_SPEECH_KEY_PURPOSE } from '@/lib/desktop/speech'
 import { DESKTOP_KEYLESS_SEARCH_ON, DESKTOP_LOCAL_EMBEDDING_DEFAULT, desktopAuxiliarySettingsSchema, desktopLocalEmbeddingModel, desktopLocalEmbeddingStatusSchema, type DesktopAuxiliaryStatus, type DesktopLocalEmbeddingStatus } from '@/lib/desktop/auxiliary'
 
 const labels = {
@@ -12,7 +15,7 @@ const labels = {
     embedding: { title: 'Memory search', provider: 'OpenRouter', description: 'Find related saved notes by meaning, using text-embedding-3-small. Keyword search works without a key.' },
     'local-embedding': { title: 'Memory search on this Mac', provider: 'Ollama', description: 'Find related saved notes by meaning with a model running on this Mac. No key, and the notes never leave the Mac. Used when no OpenRouter memory key is saved.' },
     transcription: { title: 'Voice messages', provider: 'OpenRouter', description: 'Turn recordings into chat text, using Whisper large v3 turbo.' },
-    'elevenlabs-transcription': { title: 'Voice messages with ElevenLabs', provider: 'ElevenLabs', description: 'Turn recordings into chat text, using ElevenLabs Scribe. Rerun uses ElevenLabs when no OpenRouter voice key is saved.' },
+    'elevenlabs-transcription': { title: 'Voice with ElevenLabs', provider: 'ElevenLabs', description: 'One key for both directions: turn recordings into chat text with ElevenLabs Scribe, and have replies read aloud in an ElevenLabs voice. Recordings go to ElevenLabs when no OpenRouter voice key is saved.' },
 }
 
 export function DesktopAuxiliarySettings() {
@@ -47,6 +50,8 @@ function ServiceKey({ row, onSaved }: { row: DesktopAuxiliaryStatus; onSaved: (r
             const response = await fetch('/api/desktop/auxiliary', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ purpose: row.purpose, expectedRevision: row.revision, key: secret }), cache: 'no-store' })
             if (!response.ok) throw new Error()
             const next = desktopAuxiliarySettingsSchema.parse(await response.json())
+            // Open conversations show or hide “Read aloud” as the ElevenLabs key comes and goes.
+            if (row.purpose === DESKTOP_SPEECH_KEY_PURPOSE) announceDesktopSpeechChange()
             if (active.current) { setKey(''); onSaved(next) }
         } catch { if (active.current) { setKey(''); setError('The save could not be confirmed. Reopen Tool services to see the saved state.') } }
         finally { pending.current = false; if (active.current) setBusy(false) }
@@ -65,6 +70,7 @@ function ServiceKey({ row, onSaved }: { row: DesktopAuxiliaryStatus; onSaved: (r
         <div className="flex gap-2"><Input id={`tool-service-${row.purpose}`} type="password" autoComplete="off" disabled={busy} value={key} onChange={event => setKey(event.target.value)}/><Button type="submit" disabled={busy || !key.trim()}>Save key</Button></div>
         {row.configured && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void save('')}>Remove key</Button>}
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+        {row.configured && row.purpose === DESKTOP_SPEECH_KEY_PURPOSE && <DesktopSpeechSettings />}
     </form>
 }
 

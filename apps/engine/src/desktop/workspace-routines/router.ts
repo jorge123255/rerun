@@ -19,6 +19,9 @@ import { assertDesktopRunAdmission } from '../workspace-admission.js'
 import { assertDesktopProvider, desktopApp } from '../policy.js'
 import { desktopBrainRequestBody } from '../brain-pages-router.js'
 import { resolveDesktopScheduleModel } from '../schedule-model.js'
+import { ROUTINE_MAX_ENABLED, type DesktopRoutineHealth } from '@rerun/contracts'
+import { desktopRoutineGuard, desktopRoutineGuardResponse, desktopRoutineWarnings, listEnabledDesktopRoutines } from '../routine-guards.js'
+import { readDesktopRoutineHealth } from '../routine-runs.js'
 
 const directory = () => join(dataDir(), 'desktop-workspace-routine-requests')
 export async function initializeDesktopWorkspaceRoutineRequests() { await mkdir(directory(), { recursive: true, mode: 0o700 }) }
@@ -33,6 +36,20 @@ export function createDesktopWorkspaceRoutineRouter() {
         const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).parse(c.req.param('id'))
         const schedules = await desktopScheduleFiles().list(id)
         return c.json({ schedules: schedules.map(schedule => ({ ...schedule, revision: desktopScheduleDefinitionRevision(schedule) })) })
+    })
+    // What the lists show beside a routine: limits it already breaks, the failure count, whether
+    // repeated failures switched it off, and what its last run reported.
+    router.get('/:id/health', async c => {
+        if (!desktopApp()) throw new HttpError(404, 'Not found')
+        const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).parse(c.req.param('id'))
+        const schedules = await desktopScheduleFiles().list(id)
+        const [enabled, health] = await Promise.all([listEnabledDesktopRoutines(), readDesktopRoutineHealth(id, schedules)])
+        const now = new Date()
+        const view: DesktopRoutineHealth = {
+            limit: ROUTINE_MAX_ENABLED, enabledInWorkspace: enabled.length,
+            routines: schedules.map(schedule => ({ slug: schedule.slug, warnings: desktopRoutineWarnings(schedule, enabled.length, now), ...health.get(schedule.slug)! })),
+        }
+        return c.json(view)
     })
     router.post('/:id', async c => {
         if (!desktopApp()) throw new HttpError(404, 'Not found')
@@ -79,6 +96,10 @@ export function createDesktopWorkspaceRoutineRouter() {
                         Object.assign(desired, modelOverride ?? { connectionId: null, provider: null, model: null })
                     }
                     await checkModel()
+                }
+                if (input.action !== 'rename') {
+                    const refusal = await desktopRoutineGuard(engineAgentId, input.slug, current, desired)
+                    if (refusal) return desktopRoutineGuardResponse(c, refusal)
                 }
                 await check()
                 await replaceOwnJson(directory(), name, { fingerprint, engineAgentId, input, before: old, desired })

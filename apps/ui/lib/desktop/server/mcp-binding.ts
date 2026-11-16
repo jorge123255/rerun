@@ -35,7 +35,7 @@ import { authenticateDesktopEngineRequest, authenticateDesktopRequest, DesktopHt
 import { openDesktopDatabase } from './database'
 import { openDesktopManagedApps } from './managed-apps/binding'
 import { desktopConnectorCall } from '@rerun/contracts'
-import { admitConnectorCall } from './connector-approvals/store'
+import { decideConnectorCall } from './connector-approvals/store'
 import type { DesktopRuntime } from './runtime'
 import { remoteMcpApi } from './mcp/api'
 import { abortable, boundedText, remoteMcpRuntime } from './mcp/remote'
@@ -177,9 +177,13 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     const localRuntime = stdioRuntime(localStore, localAuthority, undefined, material,
         owner => assignedVaultMcpPrograms(db, owner), vaultProgramMaterials(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId))
     // Connector actions that delete, send, share, post, pay or change credentials wait for the person's answer.
-    const askFirst: DesktopMcpCallAdmission = async call => {
+    const askFirst: DesktopMcpCallAdmission = async (call, _signal, note) => {
         const held = desktopConnectorCall(call.tool, call.destructive, call.arguments)
-        return held ? admitConnectorCall(db, { owner: call.owner, sessionId: call.sessionId, tool: held.tool, kind: held.kind, arguments: held.subject ?? call.arguments }) : null
+        if (!held) return null
+        const decided = await decideConnectorCall(db, { owner: call.owner, sessionId: call.sessionId, tool: held.tool, kind: held.kind, arguments: held.subject ?? call.arguments })
+        // The activity trail records the decision where it was made.
+        note?.(decided.trail)
+        return decided.answer
     }
     const localBridge = stdioEngineBridge(localRuntime, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'localMcpStdio')

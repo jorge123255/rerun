@@ -503,6 +503,8 @@ def dispatch(request, client):
         return {'ok': True}, b''
     if op == 'navigate':
         return navigate(request, client)
+    if op == 'probe':
+        return probe(request, client), b''
     raise GuestError('That screen action is not available.', refusal=True)
 
 
@@ -644,28 +646,7 @@ def page_socket():
     url = pages[0].get('webSocketDebuggerUrl')
     if not isinstance(url, str) or not url.startswith(f'ws://127.0.0.1:{CDP_PORT}/'):
         raise GuestError('The guest browser did not answer.')
-    path = url.split(f'127.0.0.1:{CDP_PORT}', 1)[1]
-    sock = socket.create_connection(('127.0.0.1', CDP_PORT), 5)
-    key = base64.b64encode(os.urandom(16)).decode()
-    sock.sendall((
-        f'GET {path} HTTP/1.1\r\n'
-        f'Host: 127.0.0.1:{CDP_PORT}\r\n'
-        'Upgrade: websocket\r\n'
-        'Connection: Upgrade\r\n'
-        f'Sec-WebSocket-Key: {key}\r\n'
-        'Sec-WebSocket-Version: 13\r\n\r\n'
-    ).encode())
-    banner = b''
-    while b'\r\n\r\n' not in banner:
-        chunk = sock.recv(4096)
-        if not chunk:
-            raise GuestError('The guest browser did not answer.')
-        banner += chunk
-        if len(banner) > 8192:
-            raise GuestError('The guest browser did not answer.')
-    if b' 101 ' not in banner.split(b'\r\n', 1)[0]:
-        raise GuestError('The guest browser did not answer.')
-    return sock
+    return open_page_socket(url)
 
 
 def ws_send(sock, payload):
@@ -1012,6 +993,198 @@ def navigate(request, client):
         'screenshotHeight': height,
         'exportErrors': errors,
     }, html_bytes + png
+
+
+# What the control under the pointer (or the one with the keyboard focus) says about itself.
+# Read-only: it moves nothing and changes nothing on the page. Everything it returns is page
+# content, written by the page, and is bounded and typed again in clean_probe.
+PROBE_JS = r"""
+(function (focused) {
+  var out = { readable: true, page: true, role: 'other', label: '', host: '', submits: false, form: '', field: '', fieldLabel: '' };
+  try {
+    out.host = String(location.host || '');
+    var clip = function (value) { return String(value == null ? '' : value).replace(/\s+/g, ' ').trim().slice(0, 160); };
+    var el = null;
+    if (focused) {
+      if (!document.hasFocus()) { out.page = false; return out; }
+      el = document.activeElement;
+    } else {
+      var hovered = document.querySelectorAll(':hover');
+      if (!hovered.length) { out.page = false; return out; }
+      el = hovered[hovered.length - 1];
+    }
+    for (var depth = 0; el && depth < 12; depth++) {
+      var tag = el.tagName;
+      if (tag === 'IFRAME' || tag === 'FRAME') {
+        var inner = null;
+        try { inner = el.contentDocument; } catch (error) { inner = null; }
+        if (!inner) { out.readable = false; return out; }
+        var next = focused ? inner.activeElement : (function (list) { return list.length ? list[list.length - 1] : null; })(inner.querySelectorAll(':hover'));
+        if (!next) { out.readable = false; return out; }
+        el = next; continue;
+      }
+      if (el.shadowRoot) {
+        var deeper = focused ? el.shadowRoot.activeElement : (function (list) { return list.length ? list[list.length - 1] : null; })(el.shadowRoot.querySelectorAll(':hover'));
+        if (deeper) { el = deeper; continue; }
+      }
+      break;
+    }
+    if (!el || !el.tagName) { out.readable = false; return out; }
+    if (el.tagName === 'CANVAS' || el.tagName === 'EMBED' || el.tagName === 'OBJECT') { out.readable = false; return out; }
+    var up = function (node) { return node.parentElement || (node.getRootNode && node.getRootNode().host) || null; };
+    var roleOf = function (node) {
+      var tag = node.tagName, type = String(node.getAttribute('type') || '').toLowerCase(), role = String(node.getAttribute('role') || '').toLowerCase();
+      if (tag === 'BUTTON' || tag === 'SUMMARY' || (tag === 'INPUT' && /^(submit|button|image|reset)$/.test(type))) return 'button';
+      if (/^(button|menuitem|menuitemcheckbox|menuitemradio|option|switch|tab)$/.test(role)) return 'button';
+      if ((tag === 'A' || tag === 'AREA') && node.hasAttribute('href')) return 'link';
+      if (role === 'link') return 'link';
+      if (tag === 'TEXTAREA' || tag === 'SELECT' || (tag === 'INPUT' && !/^(checkbox|radio|file|range|color|hidden)$/.test(type))) return 'field';
+      if (node.isContentEditable || /^(textbox|searchbox|combobox)$/.test(role)) return 'field';
+      return '';
+    };
+    var nameOf = function (node) {
+      var doc = node.ownerDocument, root = node.getRootNode ? node.getRootNode() : doc;
+      var aria = node.getAttribute('aria-label');
+      if (aria && aria.trim()) return clip(aria);
+      var ids = node.getAttribute('aria-labelledby');
+      if (ids) {
+        var text = ids.split(/\s+/).map(function (id) { var found = (root.getElementById ? root.getElementById(id) : null) || doc.getElementById(id); return found ? found.textContent : ''; }).join(' ');
+        if (text.trim()) return clip(text);
+      }
+      if (node.tagName === 'INPUT') return clip(node.value || node.getAttribute('alt') || node.getAttribute('title'));
+      var own = clip(node.innerText || node.textContent);
+      if (own) return own;
+      var image = node.querySelector ? node.querySelector('img[alt]') : null;
+      if (image && image.getAttribute('alt')) return clip(image.getAttribute('alt'));
+      var title = node.querySelector ? node.querySelector('svg title') : null;
+      return clip(node.getAttribute('title') || (title ? title.textContent : ''));
+    };
+    var control = null, role = '';
+    for (var node = el, steps = 0; node && steps < 40; node = up(node), steps++) {
+      role = roleOf(node);
+      if (role) { control = node; break; }
+    }
+    var submitOf = function (form) {
+      if (!form || !form.querySelector) return '';
+      var button = form.querySelector('button:not([type]),button[type=submit],input[type=submit],input[type=image]');
+      return button ? nameOf(button) : '';
+    };
+    if (!control) {
+      // No button, link or field: a plain element with its own short text, which may still be clickable.
+      var view = el.ownerDocument.defaultView, pointer = false;
+      try { pointer = view.getComputedStyle(el).cursor === 'pointer'; } catch (error) { pointer = false; }
+      var words = clip(el.innerText || el.textContent);
+      out.role = pointer ? 'button' : 'other';
+      out.label = words.length <= 80 ? (clip(el.getAttribute('aria-label')) || words) : clip(el.getAttribute('aria-label'));
+      return out;
+    }
+    out.role = role;
+    if (role === 'field') {
+      var multiline = control.tagName === 'TEXTAREA' || (control.tagName !== 'INPUT' && control.tagName !== 'SELECT');
+      out.field = multiline ? 'multiline' : 'text';
+      var labelled = control.labels && control.labels.length ? control.labels[0].innerText : '';
+      out.fieldLabel = clip(control.getAttribute('aria-label') || control.getAttribute('placeholder') || control.getAttribute('aria-placeholder') || labelled || control.getAttribute('title'));
+      var owner = control.form || (control.closest ? control.closest('form') : null);
+      out.submits = !!owner;
+      out.form = submitOf(owner);
+      return out;
+    }
+    out.label = nameOf(control);
+    var kind = String(control.getAttribute('type') || '').toLowerCase();
+    var inForm = control.form || null;
+    out.submits = !!inForm && ((control.tagName === 'BUTTON' && kind !== 'button' && kind !== 'reset') || (control.tagName === 'INPUT' && (kind === 'submit' || kind === 'image')));
+    return out;
+  } catch (error) {
+    out.readable = false;
+    return out;
+  }
+})(%s)
+"""
+
+PROBE_HOST = re.compile(r'^[a-z0-9.\-\[\]:]{1,255}$')
+
+
+def clean_probe(value):
+    # The page wrote every field. Keep only the shapes the engine expects, bounded.
+    if not isinstance(value, dict):
+        return {'readable': False, 'page': True, 'role': 'other', 'label': '', 'host': '', 'submits': False, 'form': '', 'field': '', 'fieldLabel': ''}
+
+    def text(key):
+        raw = value.get(key)
+        if not isinstance(raw, str):
+            return ''
+        return ' '.join(''.join(ch if ch.isprintable() else ' ' for ch in raw).split())[:160]
+
+    host = value.get('host')
+    host = host.lower() if isinstance(host, str) and PROBE_HOST.match(host.lower()) else ''
+    role = value.get('role') if value.get('role') in ('button', 'link', 'field', 'other') else 'other'
+    field = value.get('field') if value.get('field') in ('', 'text', 'multiline') else ''
+    return {
+        'readable': value.get('readable') is True,
+        'page': value.get('page') is True,
+        'role': role,
+        'label': text('label'),
+        'host': host,
+        'submits': value.get('submits') is True,
+        'form': text('form'),
+        'field': field,
+        'fieldLabel': text('fieldLabel'),
+    }
+
+
+def visible_page_sockets():
+    targets = http_json('GET', '/json/list')
+    urls = []
+    for item in targets if isinstance(targets, list) else []:
+        url = item.get('webSocketDebuggerUrl') if isinstance(item, dict) and item.get('type') == 'page' else None
+        if isinstance(url, str) and url.startswith(f'ws://127.0.0.1:{CDP_PORT}/'):
+            urls.append(url)
+    return urls[:12]
+
+
+def open_page_socket(url):
+    path = url.split(f'127.0.0.1:{CDP_PORT}', 1)[1]
+    sock = socket.create_connection(('127.0.0.1', CDP_PORT), 5)
+    key = base64.b64encode(os.urandom(16)).decode()
+    sock.sendall((
+        f'GET {path} HTTP/1.1\r\n'
+        f'Host: 127.0.0.1:{CDP_PORT}\r\n'
+        'Upgrade: websocket\r\n'
+        'Connection: Upgrade\r\n'
+        f'Sec-WebSocket-Key: {key}\r\n'
+        'Sec-WebSocket-Version: 13\r\n\r\n'
+    ).encode())
+    banner = b''
+    while b'\r\n\r\n' not in banner:
+        chunk = sock.recv(4096)
+        if not chunk:
+            raise GuestError('The guest browser did not answer.')
+        banner += chunk
+        if len(banner) > 8192:
+            raise GuestError('The guest browser did not answer.')
+    if b' 101 ' not in banner.split(b'\r\n', 1)[0]:
+        raise GuestError('The guest browser did not answer.')
+    return sock
+
+
+def probe(request, client):
+    focused = request.get('focused') is True
+    if not focused and request.get('hover') is not True:
+        raise GuestError('Name what to read: hover or focused.', refusal=True)
+    # The tab the person and the coworker see is the visible one; a background tab is never read.
+    for url in visible_page_sockets():
+        sock = open_page_socket(url)
+        try:
+            cdp = Cdp(sock, client, time.monotonic() + 8)
+            if evaluate(cdp, 'document.visibilityState') != 'visible':
+                continue
+            return {'ok': True, **clean_probe(evaluate(cdp, PROBE_JS.replace('%s', 'true' if focused else 'false')))}
+        except GuestError:
+            continue
+        finally:
+            sock.close()
+    # No visible page could be read: a browser page of its own (settings, a PDF viewer) or a busy tab.
+    return {'ok': True, **clean_probe(None)}
 
 
 def current_url():

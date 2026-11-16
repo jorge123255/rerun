@@ -159,3 +159,75 @@ export function classifyProviderError(provider: Provider, error: unknown): RunEr
     if (APICallError.isInstance(error) && error.statusCode === 400) return RUN_ERROR_CODES.refused
     return null
 }
+
+// A model stream that produced nothing for longer than the stall timeout. Thrown by the retry
+// middleware itself, so it is transient by construction.
+export class ProviderStreamStalledError extends Error {
+    constructor() {
+        super('the provider ended the turn without a result: its stream went silent')
+        this.name = 'ProviderStreamStalledError'
+    }
+}
+
+export type TransientStreamKind = 'connection' | 'overloaded' | 'stalled'
+
+// What the network says when a connection dies under a stream. A refused connection and a name
+// that does not resolve are left out on purpose: a local model that is not running, or a mistyped
+// endpoint, fails the same way on every attempt.
+const TRANSIENT_ERRNO = new Set(['ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ECONNABORTED', 'ENETRESET', 'ENETDOWN', 'ENETUNREACH', 'EHOSTUNREACH', 'EAI_AGAIN', 'UND_ERR_SOCKET', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_CONNECT_TIMEOUT'])
+const PERMANENT_ERRNO = new Set(['ECONNREFUSED', 'ENOTFOUND', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'ERR_TLS_CERT_ALTNAME_INVALID'])
+const TRANSIENT_STATUS = new Set([502, 503, 504, 529])
+const DROPPED_CONNECTION = /socket hang up|premature close|other side closed|fetch failed|network error|econnreset|connection (?:was )?(?:reset|closed|terminated|lost|error)|stream (?:was )?(?:closed|ended|terminated) (?:unexpectedly|prematurely|early)|bad gateway|gateway time-?out/i
+const NO_ROOM_RIGHT_NOW = /overloaded|at capacity|high demand|service unavailable/i
+// Left to the notices that already explain them: waiting a few seconds changes none of these.
+const RATE_OR_POLICY = /rate.?limit|too many requests|content.?(?:policy|filter)|policy violation|safety|moderation/i
+
+type ErrorLink = { name?: unknown; code?: unknown; message?: unknown; statusCode?: unknown; status?: unknown; cause?: unknown; lastError?: unknown; errors?: unknown }
+
+// The error, what it wraps and what the SDK's own retries last saw. Bounded, and safe on a cycle.
+function errorChain(error: unknown): ErrorLink[] {
+    const chain: ErrorLink[] = []
+    const seen = new Set<unknown>()
+    const visit = (value: unknown): void => {
+        if (typeof value !== 'object' || value === null || seen.has(value) || chain.length >= 12) return
+        seen.add(value)
+        const link = value as ErrorLink
+        chain.push(link)
+        visit(link.cause)
+        visit(link.lastError)
+        if (Array.isArray(link.errors)) link.errors.forEach(visit)
+    }
+    visit(error)
+    return chain
+}
+
+/**
+ * Whether a failed model stream is worth sending again: a dropped connection, a gateway that
+ * answered 502/503/504/529, a provider with no room right now, or a stream that went silent.
+ * Anything the run already has a notice for (sign-in, credits, a spent plan, a full context, a
+ * refusal, a rate limit, a policy refusal) is never transient, whatever else the message says.
+ * It says nothing about whether the step can be replayed: the caller knows what the step already did.
+ */
+export function transientStreamFailure(provider: Provider, error: unknown): TransientStreamKind | null {
+    if (error instanceof ProviderStreamStalledError) return 'stalled'
+    const chain = errorChain(error)
+    if (chain.some(link => link.name === 'AbortError')) return null
+    // Kimi, Grok and Devin fail with a fixed code. Only a runner that went away mid-turn is retried:
+    // a timeout already took minutes, and the others are answers.
+    const subscription = chain.find(link => link.name === 'SubscriptionAcpError')
+    if (subscription) return subscription.code === 'closed' ? 'connection' : null
+    const code = classifyProviderError(provider, error)
+    if (code !== null && code !== RUN_ERROR_CODES.overloaded) return null
+    const text = `${typeof error === 'string' ? error : ''} ${chain.map(link => (typeof link.message === 'string' ? link.message : '')).join(' ')} ${upstreamReason(error) ?? ''}`
+    if (RATE_OR_POLICY.test(text)) return null
+    const statuses = chain.flatMap(link => [link.statusCode, link.status]).filter((status): status is number => typeof status === 'number')
+    if (statuses.some(status => status >= 400 && status < 500)) return null
+    const codes = chain.map(link => (typeof link.code === 'string' ? link.code.toUpperCase() : ''))
+    if (codes.some(errno => PERMANENT_ERRNO.has(errno))) return null
+    if (statuses.some(status => TRANSIENT_STATUS.has(status))) return statuses.includes(529) ? 'overloaded' : 'connection'
+    if (code === RUN_ERROR_CODES.overloaded || NO_ROOM_RIGHT_NOW.test(text)) return NO_ROOM_RIGHT_NOW.test(text) ? 'overloaded' : null
+    if (codes.some(errno => TRANSIENT_ERRNO.has(errno))) return 'connection'
+    // Undici reports a body cut mid-stream as the bare word.
+    if (chain.some(link => typeof link.message === 'string' && link.message.trim().toLowerCase() === 'terminated')) return 'connection'
+    return DROPPED_CONNECTION.test(text) ? 'connection' : null
+}

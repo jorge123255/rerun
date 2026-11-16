@@ -13,6 +13,7 @@ import type { DesktopForemanLiveReply } from '@/lib/desktop/foreman/live-reply'
 import { DesktopForemanChatLayer, type DesktopForemanMessage } from './DesktopForemanChatLayer'
 import type { DesktopForemanGeneralThread } from './DesktopForemanConversations'
 import { useDesktopForemanFeedback } from '@/lib/desktop/use-foreman-feedback'
+import { desktopForemanSpeechScope, desktopSpeechKey, desktopSpeechPlayer, useDesktopSpeechSettings } from '@/lib/desktop/speech-player'
 import { DesktopForemanComposer } from './DesktopForemanComposer'
 import { DesktopForemanTeamWelcome } from './DesktopForemanTeamWelcome'
 import { DesktopForemanHeader } from './DesktopForemanHeader'
@@ -156,6 +157,13 @@ export function DesktopForemanColumn({
         if (openOnMount && foreman.restored && !opened.current) { opened.current = true; foreman.setOpen(true) }
     }, [openOnMount, foreman.restored, foreman.setOpen])
     const { ui } = foreman
+    // Replies read aloud: offered when an ElevenLabs key is saved; the voice stops when this conversation is left or closed.
+    const speech = useDesktopSpeechSettings(!hidden)
+    useEffect(() => {
+        if (hidden || !ui.open) return
+        const prefix = desktopSpeechKey(desktopForemanSpeechScope(chat.workspaceId), chat.chatId, '')
+        return () => desktopSpeechPlayer.stopWithin(prefix)
+    }, [chat.workspaceId, chat.chatId, hidden, ui.open])
     const composerScope = useRef({ chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft, mentions: ui.draftCoworkerMentions })
     composerScope.current = { chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft, mentions: ui.draftCoworkerMentions }
     const pendingStarter = !!starter && !starter.decision?.settled
@@ -225,11 +233,18 @@ export function DesktopForemanColumn({
     const sendRef = useRef(send)
     sendRef.current = send
     const firstSent = useRef<string | undefined>(undefined)
+    const firstDrafted = useRef<string | undefined>(undefined)
     useEffect(() => {
-        if (!firstSend || !foreman.restored || firstSent.current === firstSend.id) return
+        if (!firstSend || !foreman.restored) return
+        // The text is put in the composer as soon as it arrives, so it is saved as the draft even if
+        // the send has to wait (for the task's model to be saved) and the person leaves meanwhile.
+        if (firstDrafted.current !== firstSend.id) {
+            firstDrafted.current = firstSend.id
+            foreman.setDraft(firstSend.text, firstSend.coworkerMentions ?? [])
+        }
+        if (!firstSend.send || firstSent.current === firstSend.id) return
         firstSent.current = firstSend.id
-        foreman.setDraft(firstSend.text, firstSend.coworkerMentions ?? [])
-        if (firstSend.send) sendRef.current(firstSend.text)
+        sendRef.current(firstSend.text)
     }, [firstSend, foreman.restored, foreman.setDraft])
     async function retrySend() {
         if (!pendingSend || !onRetryPendingSend || retryDisabled || retryInFlight.current) return
@@ -376,6 +391,7 @@ export function DesktopForemanColumn({
                         onOpenCoworker={input => foreman.navigate({ kind: 'open_coworker', agentId: input.agentId, sessionId: input.sessionId })}
                         onOpenBox={spaceId => foreman.navigate({ kind: 'open_box', spaceId })}
                         answerFeedback={{ ratingOf: answerFeedback.ratingOf, onRate: answerFeedback.rate, disabled: hidden }}
+                        readAloud={speech?.configured && !hidden ? chat : undefined}
                         threads={intake ? undefined : threads} onOpenThread={onOpenThread}
                         replyRetry={retrySnapshot ? { review: id => void alternates.reviewReply(id),
                             disabled: !!streaming || pendingRequest || pendingStarter || !!foreman.blocked || alternates.busy || ui.decision.status === 'pending' } : undefined}

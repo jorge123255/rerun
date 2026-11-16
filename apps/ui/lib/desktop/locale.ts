@@ -19,6 +19,7 @@ import { macSettingsCopy } from './i18n/mac-settings-messages'
 import { desktopBoardCopy } from './i18n/board-messages'
 import { desktopWorkspaceViewCopy } from './i18n/workspace-view-messages'
 import { desktopQueueCopy } from './i18n/queue-messages'
+import { desktopStreamRetryCopy } from './i18n/stream-retry-messages'
 import dialogs from '@rerun/i18n/messages/en/dialogs.json'
 import type { Locale } from '@rerun/i18n'
 import { createTranslator } from 'use-intl/core'
@@ -520,6 +521,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         stoppingRun: source.chat.queued.stopping,
         queuedMessage: source.chat.queued,
         queue: desktopQueueCopy[locale],
+        streamRetry: desktopStreamRetryCopy[locale],
         chatStart: source.mobileChat.empty,
         composerEditor: { ...source.chat.composer.editor, open: source.chat.composer.openEditor },
         chatActivity: source.chat.activity,

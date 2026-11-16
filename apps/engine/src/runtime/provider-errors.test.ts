@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { APICallError, LoadAPIKeyError, RetryError } from 'ai'
-import { apiCreditsMessage, classifyFinishReason, classifyProviderError, isFailedFinish, ProviderRefusedError, refusalReason, RUN_ERROR_CODES, STREAM_CUT_RAW_REASON, upstreamReason } from './provider-errors.js'
+import { apiCreditsMessage, classifyFinishReason, classifyProviderError, isFailedFinish, ProviderRefusedError, refusalReason, ProviderStreamStalledError, RUN_ERROR_CODES, STREAM_CUT_RAW_REASON, transientStreamFailure, upstreamReason } from './provider-errors.js'
 import { RERUN_BUDGET_ERROR_CODE } from './budget-latch.js'
 
 const apiError = (init: { statusCode?: number; message?: string; data?: unknown; isRetryable?: boolean; responseBody?: string }) =>
@@ -186,5 +186,74 @@ describe('ProviderRefusedError', () => {
     it('keeps the words the chat classifies, with the reason after them', () => {
         expect(new ProviderRefusedError(SCHEMA_REFUSAL).message).toBe(`Provider returned error: ${SCHEMA_REFUSAL}`)
         expect(new ProviderRefusedError(null).message).toBe('Provider returned error')
+    })
+})
+
+describe('transientStreamFailure', () => {
+    const errno = (code: string, message = 'read failed') => Object.assign(new Error(message), { code })
+
+    it('reads a dropped connection as transient, wherever in the error it is', () => {
+        for (const error of [
+            errno('ECONNRESET'),
+            new Error('socket hang up'),
+            new Error('Premature close'),
+            new TypeError('terminated'),
+            new TypeError('fetch failed', { cause: errno('UND_ERR_SOCKET', 'other side closed') }),
+            new RetryError({ message: 'Failed after 3 attempts', reason: 'maxRetriesExceeded', errors: [apiError({ statusCode: 502, message: 'Bad Gateway', isRetryable: true })] }),
+            apiError({ statusCode: 503, message: 'upstream connect error', isRetryable: true }),
+            apiError({ statusCode: 504, message: 'Gateway Timeout', isRetryable: true }),
+            'connection reset by peer',
+        ]) expect(transientStreamFailure('anthropic', error), String(error)).toBe('connection')
+    })
+
+    it('reads a provider with no room right now as overloaded, but not a rate limit', () => {
+        expect(transientStreamFailure('anthropic', apiError({ statusCode: 529, message: 'Overloaded', isRetryable: true }))).toBe('overloaded')
+        expect(transientStreamFailure('anthropic', new Error('{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}'))).toBe('overloaded')
+        expect(transientStreamFailure('google', new Error('This model is currently experiencing high demand.'))).toBe('overloaded')
+        expect(transientStreamFailure('openai', apiError({ statusCode: 429, message: 'Rate limit reached', isRetryable: true }))).toBeNull()
+        expect(transientStreamFailure('openai', new Error('Too many requests, slow down'))).toBeNull()
+    })
+
+    it('reads a silent stream as stalled', () => {
+        expect(transientStreamFailure('openai', new ProviderStreamStalledError())).toBe('stalled')
+    })
+
+    it('never calls sign-in, credits, a spent plan, a full context, a refusal or a policy answer transient', () => {
+        for (const error of [
+            apiError({ statusCode: 401, message: 'socket hang up' }),
+            new Error('Failed to authenticate. API Error: 401 Invalid bearer token'),
+            new LoadAPIKeyError({ message: 'missing key' }),
+            new Error("You've hit your session limit · resets 3pm (connection reset)"),
+            apiError({ statusCode: 503, message: 'You have no credits remaining.', isRetryable: true }),
+            apiError({ statusCode: 429, message: 'quota', responseBody: JSON.stringify({ error: { code: 'insufficient_quota' } }) }),
+            new Error('prompt is too long: 250000 tokens, connection closed'),
+            apiError({ statusCode: 400, message: 'invalid request' }),
+            apiError({ statusCode: 403, message: 'service unavailable in your region' }),
+            new Error('Request blocked by content policy; connection closed'),
+            Object.assign(new Error(RERUN_BUDGET_ERROR_CODE), { statusCode: 402 }),
+        ]) expect(transientStreamFailure('anthropic', error), String(error)).toBeNull()
+    })
+
+    it('does not retry a stop, a server that is not there, or an unknown failure', () => {
+        expect(transientStreamFailure('custom', Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }))).toBeNull()
+        expect(transientStreamFailure('custom', new TypeError('fetch failed', { cause: errno('ECONNREFUSED', 'connect ECONNREFUSED 127.0.0.1:11434') }))).toBeNull()
+        expect(transientStreamFailure('custom', new TypeError('fetch failed', { cause: errno('ENOTFOUND') }))).toBeNull()
+        expect(transientStreamFailure('openai', new Error('Something unexpected happened'))).toBeNull()
+        expect(transientStreamFailure('openai', apiError({ statusCode: 500, message: 'Internal error' }))).toBeNull()
+        expect(transientStreamFailure('openai', null)).toBeNull()
+    })
+
+    it('retries Kimi, Grok and Devin only when the runner went away', () => {
+        const acp = (code: string, message: string) => Object.assign(new Error(message), { name: 'SubscriptionAcpError', code })
+        expect(transientStreamFailure('kimi-code', acp('closed', 'The subscription provider connection closed.'))).toBe('connection')
+        for (const code of ['timeout', 'rejected', 'auth-required', 'protocol', 'busy', 'cancelled', 'shutdown-unconfirmed', 'selection-unavailable']) {
+            expect(transientStreamFailure('grok-build', acp(code, 'The subscription provider connection closed.')), code).toBeNull()
+        }
+    })
+
+    it('survives an error that wraps itself', () => {
+        const loop: { message: string; cause?: unknown } = { message: 'socket hang up' }
+        loop.cause = loop
+        expect(transientStreamFailure('openai', loop)).toBe('connection')
     })
 })

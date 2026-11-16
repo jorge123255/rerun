@@ -1,7 +1,7 @@
 import { assertDesktopRunAdmission } from '../desktop/workspace-admission.js'
 import { desktopDocumentContextParts } from '@rerun/contracts'
 import { streamText, type LanguageModelUsage, type ModelMessage, type StepResult, type StreamTextResult, type ToolSet, type UIMessageStreamWriter } from 'ai'
-import { FOREMAN_AGENT_ID, RERUN_CONNECTION_ID, desktopCoworkerMentionContextParts, contextTextPart, workspaceAttachmentParts, desktopResolvedAttachmentParts, isDesktopSubscriptionProvider, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, PROVIDER_LABELS, RERUN_CONNECTION_ID, STREAM_RETRY_PART, desktopCoworkerMentionContextParts, contextTextPart, workspaceAttachmentParts, desktopResolvedAttachmentParts, isDesktopSubscriptionProvider, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
 import { applyCaching, withTailBreakpoint } from '../agents/caching.js'
 import { desktopClaudeEffort, desktopCodexEffort, desktopCustomEffort, desktopSubscriptionEffort, mergeProviderOptions, reasoningProviderOptions } from '../agents/reasoning.js'
 import { prepareRunHistory } from './compaction/compact.js'
@@ -17,6 +17,7 @@ import { ensureCliAuth } from '../connections/cli-auth.js'
 import { syncCodexAuth } from '../connections/codex-auth.js'
 import { forgetCredentialRejected, recordCredentialRejected } from '../connections/credential-rejections.js'
 import { refreshCodexPlanLimits } from '../connections/codex-plan-limits.js'
+import { parkRefusedScheduledRun } from '../desktop/usage-gate.js'
 import { buildSystemPrompt, nowBlock, recallMemories, recallSection, systemPromptText, userLanguageBlock } from '../agents/systemPrompt.js'
 import type { LoadedAgent } from '../agents/types.js'
 import { turnOrder } from '../agents/turn-order.js'
@@ -41,6 +42,7 @@ import { createDesktopNativeWorker, type DesktopNativeWorker } from '../desktop/
 import { partialResultsNote } from './partial-results.js'
 import { persistNativeWriteback } from '../desktop/native-writeback/client.js'
 import { requireDesktopToolGrant } from '../desktop/tool-grants.js'
+import { beginDesktopActivityRun, recordDesktopProviderCalls } from '../desktop/activity-trail/recorder.js'
 import { readAgentConfig } from '../agents/loader.js'
 import { beginDesktopCodexRun, endDesktopCodexRun } from '../desktop/native-grants.js'
 import { registerRunAbort, setRunCancel, unregisterRunAbort } from './run-control.js'
@@ -55,6 +57,8 @@ import { authorMetadata, sendNotification, type NotificationKind } from './notif
 import { emitRunTerminal } from './run-events.js'
 import { apiCreditsMessage, ClaudeSignInRenewedError, classifyFinishReason, classifyProviderError, isFailedFinish, ProviderRefusedError, ProviderStreamCutError, RUN_ERROR_CODES, refusalReason, type RunErrorCode } from './provider-errors.js'
 import { armBudgetLatch, clearBudgetLatch, RERUN_BUDGET_ERROR_CODE } from './budget-latch.js'
+import { closedInTime } from './teardown.js'
+import type { StreamRetryNotice } from '../agents/transient-stream-retry.js'
 
 export type RunOutcome = { kind: 'done' | 'error' | 'cancelled'; error?: string; errorCode?: RunErrorCode | null; pendingToolCallId?: string }
 
@@ -265,6 +269,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     let codexToolAccess: string | undefined
     let codexThreadId: string | undefined
     let steps = 0
+    let decisionSaved = false
     let sourceSteps: StepResult<ToolSet>[] = []
     const partialResults: PartialResult[] = []
     const skillProposals: SkillProposalNotice[] = []
@@ -272,11 +277,14 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     // The CLI process owns the bridged MCP server that calls back into `tools`, so it goes down
     // first. Codex's own token refresh only lands in auth.json once it has exited, hence the sync
     // last. Every teardown path below funnels through this.
-    const close = async (): Promise<void> => {
+    // Answers whether the model process is confirmed down: a close that threw is not a close.
+    const close = async (): Promise<boolean> => {
+        let modelClosed = true
         try {
             try { await closeModel() } finally { await nativeWorker?.close() }
             endDesktopCodexRun(agent.id, run.id)
         } catch (err) {
+            modelClosed = false
             logger.warn({ err: String(err), agent: agent.id }, 'close model or command worker failed')
         }
         await closeTools().catch(err => logger.warn({ err: String(err), agent: agent.id }, 'close tools failed'))
@@ -284,20 +292,11 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             await syncCodexAuth(connection).catch(() => {})
             void refreshCodexPlanLimits(connection)
         }
+        return modelClosed
     }
 
-    const closeSafely = async (): Promise<boolean> => {
-        let timer: ReturnType<typeof setTimeout> | undefined
-        const guard = new Promise<false>(resolve => {
-            timer = setTimeout(() => {
-                logger.warn({ agent: agent.id, run: run.id, provider }, 'run teardown timed out')
-                resolve(false)
-            }, CLOSE_TIMEOUT_MS)
-        })
-        const closedInTime = await Promise.race([close().then(() => true, () => true), guard])
-        if (timer) clearTimeout(timer)
-        return closedInTime
-    }
+    const closeSafely = (): Promise<boolean> =>
+        closedInTime(close, CLOSE_TIMEOUT_MS, () => logger.warn({ agent: agent.id, run: run.id, provider }, 'run teardown timed out'))
 
     let settled = false
     let resolveSettled!: (outcome: RunOutcome) => void
@@ -378,8 +377,18 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             // The token is still on file, so the connection would keep reading "Ready" while every
             // run on it fails. The keyless Rerun connection answers for the hub's key, not the user's.
             if (errorCode === RUN_ERROR_CODES.unauthorized && connection && connection.id !== RERUN_CONNECTION_ID) recordCredentialRejected(connection.id)
-            await failRun(agent.id, run.id, errorMessage).catch(() => {})
-            outcome = { kind: 'error', error: errorMessage, errorCode }
+            // A routine whose plan ran out waits for the plan: the run is stopped, not failed, and
+            // its conversation says what it is waiting for. The scheduler runs it again at reset.
+            const parked = desktopApp() && trigger.source === 'schedule' && trigger.usageGate && errorCode === RUN_ERROR_CODES.usageLimit
+                ? await parkRefusedScheduledRun({ agentId: agent.id, slug: trigger.slug, target: trigger.usageGate, error: errorMessage }).catch(() => null) : null
+            if (parked) {
+                await appendMessage(agent.id, sessionId, { role: 'assistant', content: parked }).catch(() => {})
+                await cancelRun(agent.id, run.id).catch(() => {})
+                outcome = { kind: 'cancelled' }
+            } else {
+                await failRun(agent.id, run.id, errorMessage).catch(() => {})
+                outcome = { kind: 'error', error: errorMessage, errorCode }
+            }
         }
 
         if (!foremanAlternate) await setAgentStatus(agent.id, 'idle').catch(() => {})
@@ -499,6 +508,8 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
 
         ctx.runId = run.id
         const triggerSlug = 'slug' in trigger ? trigger.slug : null
+        // The activity trail names what started the run on every action it records.
+        if (desktopApp()) beginDesktopActivityRun(ctx, trigger.source === 'schedule' ? 'routine' : trigger.source === 'trigger' ? 'trigger' : agent.config.ephemeral ? 'delegated' : trigger.calledBy ? 'call' : 'chat', triggerSlug)
         void setRunContext(agent.id, run.id, { provider, model, triggerSource: trigger.source, triggerSlug }).catch(() => {})
 
         const subscription = isDesktopSubscriptionProvider(provider)
@@ -601,7 +612,17 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             ? { runId: ctx.runId, sessionId, abortSignal: controller.signal, runRoot: nativeWorker?.root }
             : undefined
         const reasoningEffort = subscription ? await desktopSubscriptionEffort(resolved) : provider === 'claude' ? await desktopClaudeEffort(resolved) : await desktopCustomEffort(resolved)
-        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker, imageRun, reasoningEffort, sessionId)
+        // A step whose stream dropped before it did anything is sent again by the model's own
+        // middleware; the run only says when that must not happen and shows that it is happening.
+        // A Chief of Staff run that has already called a tool has saved a decision: nothing of it is repeated.
+        const streamRetry = {
+            canRetry: () => !settled && !controller.signal.aborted && !decisionSaved,
+            notify: (notice: StreamRetryNotice) => {
+                logger.info({ agent: agent.id, run: run.id, provider, ...notice }, 'model stream retry')
+                if (desktopApp() && !settled) writer?.write({ type: STREAM_RETRY_PART, id: `stream-retry-${run.id}`, data: { ...notice, provider: (provider === 'custom' && connection?.config.name.trim().slice(0, 80)) || PROVIDER_LABELS[provider] } })
+            },
+        }
+        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker, imageRun, reasoningEffort, sessionId, streamRetry)
         closeModel = resolvedModel.close
         contextUsage = resolvedModel.contextUsage
         // Cut out of the text whoever wrote it; only a coworker that offers replies gets the buttons.
@@ -637,6 +658,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
                 const releaseStep = beginDesktopAgentWork(agent.id)
                 try {
                     steps += 1
+                    if (agent.config.kind === 'foreman' && step.toolCalls.length > 0) decisionSaved = true
                     const now = Date.now()
                     const durationMs = now - lastStepAt
                     lastStepAt = now
@@ -644,6 +666,8 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
                     if (stepCostMicros !== null) runCostMicros = (runCostMicros ?? 0) + stepCostMicros
                     await bumpRunStep(agent.id, run.id, steps).catch(() => {})
                     await recordStepTelemetry(agent.id, sessionId, run.id, provider, model, steps, durationMs, step, stepCostMicros).catch(err => logger.warn({ err: String(err), agent: agent.id }, 'record step telemetry failed'))
+                    // A provider's own tools never pass through Rerun's: the step is where they are seen.
+                    if (desktopApp()) recordDesktopProviderCalls(ctx, (step as StepLike).toolCalls ?? [], (step as StepLike).toolResults ?? [], isHitlToolName)
                 } finally { releaseStep() }
             },
             onError: async ({ error }) => {

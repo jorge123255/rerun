@@ -1,4 +1,5 @@
 import type { Client } from '@libsql/client'
+import type { DesktopRoutineGuard } from '../routine-guards.js'
 import { createDesktopScheduleLifecycle, type DesktopScheduleLifecycle } from './lifecycle.js'
 import { createDesktopScheduleIntentStore } from './intents.js'
 import { desktopScheduleFiles } from './files.js'
@@ -31,12 +32,13 @@ export function bindDesktopScheduleTools(input: {
     files?: DesktopScheduleFilePort
     store?: DesktopScheduleIntentStore
     now?: () => Date
+    guard?: DesktopRoutineGuard
 }): DesktopScheduleToolBinding {
     if (!input.authority) throw new Error('Desktop schedule tool authority is required')
     const files = input.files ?? desktopScheduleFiles()
     const store = input.store ?? (input.getSystemClient ? createDesktopScheduleIntentStore(input.getSystemClient) : undefined)
     if (!store) throw new Error('Desktop schedule tool receipts require the system database')
-    const lifecycle = createDesktopScheduleLifecycle({ authority: input.authority, files, store, now: input.now })
+    const lifecycle = createDesktopScheduleLifecycle({ authority: input.authority, files, store, now: input.now, guard: input.guard })
     const factory = createDesktopScheduleToolFactory({ authority: input.authority, lifecycle, store })
     current = { store, files, lifecycle, authority: input.authority, tools: factory.tools, projection: factory.projection, recover: lifecycle.recover }
     return current
