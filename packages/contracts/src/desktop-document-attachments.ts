@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CHAT_ATTACHMENTS_DIR } from './chat-attachments.js'
 
 export const DESKTOP_DOCUMENT_MAX_BYTES = 16 * 1024 * 1024
 export const DESKTOP_DOCUMENT_TOTAL_MAX_BYTES = 48 * 1024 * 1024
@@ -97,9 +98,35 @@ export const desktopDocumentReferenceSchema = z.object({
 }).strict()
 export type DesktopDocumentReference = z.infer<typeof desktopDocumentReferenceSchema>
 
+/** Where an attachment the Mac cannot convert is kept: one visible file directly inside the
+ * coworker's own `chat-uploads` folder, never a nested, hidden or control-character name. */
+export const desktopStagedDocumentPathSchema = z.string().min(1).max(500).refine(isDesktopStagedDocumentPath)
+export function isDesktopStagedDocumentPath(path: string): boolean {
+    if (!path.startsWith(`${CHAT_ATTACHMENTS_DIR}/`)) return false
+    const name = path.slice(CHAT_ATTACHMENTS_DIR.length + 1)
+    return !!name && !name.startsWith('.') && !/[/\\]|\p{Cc}/u.test(name) && new TextEncoder().encode(name).length <= 255
+}
+/** Deterministic per attachment, so a replayed upload finds its own file and two attachments that
+ * share a name never share a path. The prefix has the shape `attachmentDisplayName` strips. */
+export function desktopStagedDocumentPath(attachmentId: string, name: string): string {
+    const token = attachmentId.replace(/-/g, '').toLowerCase()
+    const prefix = `${token.slice(0, 8)}-${token.slice(8, 14)}-`
+    const dot = name.lastIndexOf('.')
+    const extension = dot > 0 && name.length - dot <= 16 ? name.slice(dot) : ''
+    let stem = extension ? name.slice(0, dot) : name
+    const size = (value: string) => new TextEncoder().encode(value).length
+    while (stem.length > 1 && size(prefix + stem + extension) > 255) stem = [...stem].slice(0, -1).join('')
+    return `${CHAT_ATTACHMENTS_DIR}/${prefix}${stem}${extension}`
+}
+/** The kinds no Mac reader converts. They reach a coworker only as a file in its own Files. */
+export function isDesktopStagedDocumentKind(kind: DesktopDocumentKind): boolean {
+    return kind === 'video' || kind === 'binary'
+}
+
 export const desktopDocumentModelInputSchema = z.discriminatedUnion('mode', [
     z.object({ mode: z.literal('text'), text: z.string().min(1).max(DESKTOP_DOCUMENT_TEXT_MAX_CHARS) }).strict(),
     z.object({ mode: z.literal('file'), reference: desktopDocumentReferenceSchema }).strict(),
+    z.object({ mode: z.literal('staged-file'), reference: desktopDocumentReferenceSchema, path: desktopStagedDocumentPathSchema }).strict(),
 ])
 export type DesktopDocumentModelInput = z.infer<typeof desktopDocumentModelInputSchema>
 
@@ -166,6 +193,7 @@ const imageBase64 = z.string().min(4).max(4 * Math.ceil(DESKTOP_DOCUMENT_IMAGE_M
     .regex(/^[A-Za-z0-9+/]+={0,2}$/).refine(value => value.length % 4 === 0)
 export const desktopResolvedDocumentSchema = z.union([
     z.strictObject({ reference: desktopDocumentReferenceSchema.refine(ref => ref.kind !== 'image'), text: z.string().min(1).max(DESKTOP_DOCUMENT_TEXT_MAX_CHARS) }),
+    z.strictObject({ reference: desktopDocumentReferenceSchema.refine(ref => isDesktopStagedDocumentKind(ref.kind)), stagedPath: desktopStagedDocumentPathSchema }),
     z.strictObject({ reference: directImageReference, dataBase64: imageBase64 }),
     z.strictObject({ reference: convertedImageReference, dataBase64: imageBase64, renderedImage: desktopDocumentRenderedImageSchema }),
 ])
@@ -177,9 +205,16 @@ export const desktopResolvedDocumentsSchema = z.array(desktopResolvedDocumentSch
         const images = items.filter(item => 'dataBase64' in item)
         return images.length <= DESKTOP_DOCUMENT_IMAGE_MAX_FILES && images.reduce((total, image) => total + ('renderedImage' in image ? image.renderedImage.byteLength : image.reference.byteLength), 0) <= DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES
     })
+/** One plain line: the name, the type and the path. It never says the coworker can open the format. */
+export function desktopStagedDocumentLine(reference: Pick<DesktopDocumentReference, 'name' | 'mimeType'>, path: string): string {
+    const type = /^[\w.+-]{1,60}\/[\w.+-]{1,60}$/.test(reference.mimeType) ? reference.mimeType : 'application/octet-stream'
+    return `Attached file ${JSON.stringify(reference.name)} (${type}) is in your Files at ${JSON.stringify(path)}.`
+}
 export function desktopDocumentContextParts(documents: readonly DesktopResolvedDocument[]) {
     return documents.map(item => {
         const { reference } = item
+        if ('stagedPath' in item) return { type: 'text' as const, text: desktopStagedDocumentLine(reference, item.stagedPath),
+            providerOptions: { rerun: { context: true, desktopDocument: reference } } }
         return 'dataBase64' in item
             ? { type: 'file' as const, data: item.dataBase64, mediaType: 'renderedImage' in item ? item.renderedImage.mimeType : reference.mimeType, filename: reference.name,
                 providerOptions: { rerun: { desktopDocument: reference } } }

@@ -32,6 +32,10 @@ export async function materializeDesktopChatDocuments(runtime: DesktopRuntime, d
                 ...(renderedImage && { renderedImage }) })
             if (!image.success) throw new DesktopHttpError(409, 'The selected image is no longer available.')
             resolved.push(image.data)
+        } else if (content?.mode === 'staged-file') {
+            const staged = desktopResolvedDocumentSchema.safeParse({ reference, stagedPath: content.path })
+            if (!staged.success) throw new DesktopHttpError(409, 'The selected file is no longer available.')
+            resolved.push(staged.data)
         } else throw new DesktopHttpError(409, 'Prepare this document before sending.')
     }
     if (resolved.length !== documents.attachmentIds.length || resolved.some((item, index) => item.reference.attachmentId !== documents.attachmentIds[index])) throw new DesktopHttpError(409, 'The document selection changed.')
