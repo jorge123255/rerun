@@ -88,6 +88,8 @@ export type DesktopIntakeGithubController = Snapshot & {
     /** Reads only when the field changed since the last read: what Next does. */
     commit(): void
     edit(edit: DesktopGithubProjectsEdit): void
+    /** Shows what is saved now: a message that linked repositories had them read on the server side. */
+    reload(): void
 }
 
 export function useDesktopIntakeGithub({ chat, active = true, ports = desktopIntakeGithubClient }: {
@@ -157,5 +159,16 @@ export function useDesktopIntakeGithub({ chat, active = true, ports = desktopInt
             if (state.open && !sameSet(state.text, state.record)) analyze()
         }, [entry, analyze]),
         edit,
+        reload: useCallback(() => {
+            if (!active || entry.snapshot.reading) return
+            const run = entry.run
+            ports.read(ref).then(answer => {
+                // A read or an edit that started meanwhile is newer than this answer.
+                if (entry.run !== run || entry.snapshot.reading || !answer.record) return
+                const known = entry.snapshot.record
+                if (known && known.key === answer.record.key && known.revision >= answer.record.revision) return
+                publish(entry, { loaded: true, record: answer.record, text: answer.record.projects.map(project => project.url).join('\n') })
+            }).catch(() => {})
+        }, [entry, ports, ref, active]),
     }
 }

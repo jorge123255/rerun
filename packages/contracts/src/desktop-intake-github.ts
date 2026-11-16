@@ -86,6 +86,24 @@ export function readGithubRepositoryLink(value: string): DesktopGithubRepository
     return { id: `${owner}/${name}`.toLowerCase(), owner, name, url: `https://github.com/${owner}/${name}` }
 }
 
+// Paths under github.com that are GitHub's own pages, not somebody's repositories.
+const NOT_OWNERS = new Set(['orgs', 'settings', 'features', 'marketplace', 'sponsors', 'topics', 'about', 'login', 'apps', 'collections', 'explore', 'pricing', 'enterprise', 'notifications', 'pulls', 'issues', 'search'])
+
+/**
+ * The GitHub repositories linked in a chat message, in the order written, without repeats. Only a
+ * full github.com link counts: a bare `owner/name` in a sentence is not read as a repository.
+ */
+export function githubRepositoryLinksInText(text: string): DesktopGithubRepositoryRef[] {
+    const found: DesktopGithubRepositoryRef[] = []
+    for (const match of text.slice(0, 20_000).matchAll(/https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+/gi)) {
+        const repository = readGithubRepositoryLink(match[0].replace(/[.,;:!?'"]+$/, ''))
+        if (!repository || NOT_OWNERS.has(repository.owner.toLowerCase()) || found.some(known => known.id === repository.id)) continue
+        found.push(repository)
+        if (found.length >= DESKTOP_GITHUB_PROJECT_LIMITS.maxRepositories) break
+    }
+    return found
+}
+
 export type DesktopGithubLinksReading = {
     repositories: DesktopGithubRepositoryRef[]
     /** Entries that are not a github.com repository link, as typed (cut short). */

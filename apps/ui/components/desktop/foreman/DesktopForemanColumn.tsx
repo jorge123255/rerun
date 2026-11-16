@@ -30,6 +30,7 @@ import { useDesktopForemanUi } from './useDesktopForemanUi'
 import type { DesktopForemanIntakeController } from '@/lib/desktop/foreman-intake'
 import { DesktopForemanIntakeCard, DesktopForemanIntakeHeader, DesktopIntakeGithubProjects, DesktopIntakeSiteProfile } from './intake'
 import { useDesktopIntakeGithub } from '@/lib/desktop/foreman-intake/use-desktop-intake-github'
+import { DesktopForemanGithubProjects } from './DesktopForemanGithubProjects'
 import { DesktopStarterPack } from './starter-pack'
 import { DesktopStarterOfferCard } from './starter-pack/DesktopStarterOfferCard'
 import type { DesktopLocalStarterDecision, DesktopStarterView } from '@/lib/desktop/foreman-client/starter'
@@ -44,7 +45,7 @@ import { useDesktopLocale } from '../DesktopLocale'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { DesktopForemanAlternateReview, DesktopForemanAlternates } from './DesktopForemanAlternates'
 import { useDesktopForemanAlternates } from './useDesktopForemanAlternates'
-import { FOREMAN_AGENT_ID, foremanDocumentScope, trimDesktopCoworkerMentions, type DesktopCoworkerCallTarget, type DesktopCoworkerMention, type TeamAgent } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, foremanDocumentScope, githubRepositoryLinksInText, trimDesktopCoworkerMentions, type DesktopCoworkerCallTarget, type DesktopCoworkerMention, type TeamAgent } from '@rerun/contracts'
 import type { DesktopForemanPersistedUi } from '@/lib/desktop/foreman-client/persistence'
 import type { MentionSkill } from '@/components/chat/MentionAutocomplete'
 import { useDesktopMentionAutocomplete } from '../mentions/useDesktopMentionAutocomplete'
@@ -159,7 +160,12 @@ export function DesktopForemanColumn({
     const opened = useRef(false)
     const column = useRef<HTMLDivElement>(null)
     // The owner's GitHub projects, asked beside the website in the first intake question. Nothing is read while the questions are closed or hidden.
-    const github = useDesktopIntakeGithub({ chat, active: !!intake && foreman.ui.open && !hidden })
+    // In the conversation itself they are the repositories linked in its messages, read on the server side when a message is sent.
+    // Nothing is asked for a conversation that linked none, so an unsaved new task stays unsaved.
+    const linkedMessages = intake ? 0 : messages.reduce((count, message) => count + (message.role === 'user' && githubRepositoryLinksInText(message.text).length ? 1 : 0), 0)
+    const github = useDesktopIntakeGithub({ chat, active: (!!intake || linkedMessages > 0) && foreman.ui.open && !hidden })
+    const reloadGithub = github.reload
+    useEffect(() => { if (linkedMessages > 0) reloadGithub() }, [linkedMessages, streaming, reloadGithub])
     useEffect(() => {
         if (openOnMount && foreman.restored && !opened.current) { opened.current = true; foreman.setOpen(true) }
     }, [openOnMount, foreman.restored, foreman.setOpen])
@@ -451,6 +457,7 @@ export function DesktopForemanColumn({
                             loading={retryingSend} onClick={() => void retrySend()}>{t('foreman.pendingSend.retry')}</Button>
                         {retrySendError?.requestId === pendingSend.requestId && <p className="basis-full text-destructive" role="alert">{retrySendError.text}</p>}
                     </div>}
+                    {!intake && !pendingStarter && <DesktopForemanGithubProjects github={github} />}
                     <DesktopForemanComposer
                         mentions={mentions}
                         trailing={intake || pendingStarter ? undefined : composerTrailing}
