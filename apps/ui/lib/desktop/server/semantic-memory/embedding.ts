@@ -5,6 +5,7 @@ import { openDesktopDatabase } from '../database'
 import { boundedText } from '../mcp/remote'
 import { desktopAuxiliaryStore } from '../auxiliary/store'
 import { DESKTOP_EMBEDDING_IDENTITY, desktopAuxiliaryBackends } from '../auxiliary/backends'
+import { desktopLocalEmbeddingIdentity, embedDesktopLocally } from '../auxiliary/local-embedding'
 
 const owner = { engineAgentId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/) }
 const inputSchema = z.discriminatedUnion('operation', [
@@ -16,7 +17,8 @@ export async function handleDesktopMemoryEmbedding(request: Request) {
     const headers = { 'Cache-Control': 'no-store' }
     try {
         const runtime = await authenticateDesktopEngineRequest(request)
-        const signal = AbortSignal.any([request.signal, AbortSignal.timeout(5_000)])
+        // A model on this Mac may have to load before its first answer, so it is given longer than a hosted one.
+        const signal = AbortSignal.any([request.signal, AbortSignal.timeout(20_000)])
         const input = inputSchema.parse(JSON.parse(await boundedText(new Response(request.body), signal, 200_000)))
         const db = await openDesktopDatabase(runtime.dataRoot)
         async function requireOwner() {
@@ -29,14 +31,29 @@ export async function handleDesktopMemoryEmbedding(request: Request) {
             return { id: String(rows.rows[0]!.id), enabled: Number(rows.rows[0]!.enabled) !== 0 }
         }
         const before = await requireOwner(), credentials = desktopAuxiliaryStore(db)
-        const configuration = (await credentials.list()).find(value => value.purpose === 'embedding')!
+        // OpenRouter when it has a key; else the model named for this Mac's Ollama. The hosted key is
+        // never read here: only the local setting, which is a model name, is.
+        const saved = await credentials.list()
+        const hosted = saved.find(value => value.purpose === 'embedding')!
+        const onMac = saved.find(value => value.purpose === 'local-embedding')
+        const local = !hosted.configured && !!onMac?.configured
+        const configuration = local ? onMac! : hosted
+        const localModel = async () => {
+            const setting = await credentials.read('local-embedding')
+            if (!setting.key || setting.revision !== configuration.revision) throw new Error('Embedding configuration changed')
+            return setting.key
+        }
         if (input.operation === 'configuration') {
             const after = await requireOwner()
             if (after.id !== before.id) throw new Error('Coworker changed')
-            return Response.json({ identity: after.enabled && configuration.configured ? DESKTOP_EMBEDDING_IDENTITY : null, revision: configuration.revision }, { headers })
+            // A local model that cannot answer now (Ollama closed, model not pulled) reads as not set up.
+            const identity = !after.enabled || !configuration.configured ? null
+                : local ? await localModel().then(model => desktopLocalEmbeddingIdentity(model, configuration.revision, signal)).catch(() => null) : DESKTOP_EMBEDDING_IDENTITY
+            return Response.json({ identity, revision: configuration.revision }, { headers })
         }
         if (!before.enabled || !configuration.configured || configuration.revision !== input.revision) throw new Error('Embedding configuration changed')
-        const vectors = await desktopAuxiliaryBackends(credentials).embed(input.texts, signal, input.revision)
+        const vectors = local ? await embedDesktopLocally(await localModel(), input.texts, signal) : await desktopAuxiliaryBackends(credentials).embed(input.texts, signal, input.revision)
+        if (local) await localModel()
         const after = await requireOwner()
         if (after.id !== before.id || !after.enabled) throw new Error('Coworker changed')
         return Response.json({ vectors }, { headers })

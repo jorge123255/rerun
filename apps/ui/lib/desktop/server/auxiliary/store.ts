@@ -4,7 +4,7 @@ import type { Client, Row } from '@libsql/client'
 import { desktopAuxiliaryChangeSchema, desktopAuxiliaryPurposes, type DesktopAuxiliaryPurpose, type DesktopAuxiliaryStatus } from '../../auxiliary'
 
 export const desktopAuxiliarySchema = `CREATE TABLE IF NOT EXISTS desktop_auxiliary_credentials (
- purpose TEXT PRIMARY KEY CHECK(purpose IN ('search','keirolabs-search','keenable-search','embedding','transcription','elevenlabs-transcription')),
+ purpose TEXT PRIMARY KEY CHECK(purpose IN ('search','keirolabs-search','keenable-search','embedding','local-embedding','transcription','elevenlabs-transcription')),
  revision TEXT NOT NULL, ciphertext TEXT);
 CREATE TABLE IF NOT EXISTS desktop_search_outcomes (
  identity TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
@@ -58,6 +58,14 @@ export function desktopAuxiliaryStore(db: Client, key = desktopAuxiliaryMasterKe
             if (!credential.key) throw new Error('Credential is unavailable')
             const provider = purpose === 'search' ? 'brave' as const : purpose === 'keirolabs-search' ? 'keirolabs' as const : 'keenable' as const
             return { generation, credential: { provider, key: credential.key } }
+        },
+        /** The embedding service in use: OpenRouter when it has a key, else the model named for this Mac's Ollama. */
+        async readEmbedding() {
+            const { rows } = await db.execute(`SELECT purpose,revision,ciphertext FROM desktop_auxiliary_credentials
+                WHERE purpose IN ('embedding','local-embedding')`)
+            const openrouter = rows.find(row => row.purpose === 'embedding')
+            const purpose = openrouter?.ciphertext ? 'embedding' as const : 'local-embedding' as const
+            return { purpose, ...read(purpose, rows.find(row => row.purpose === purpose)) }
         },
         /** The transcription service in use: OpenRouter when it has a key, else ElevenLabs. */
         async readTranscription() {
