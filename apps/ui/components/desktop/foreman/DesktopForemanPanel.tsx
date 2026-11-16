@@ -38,6 +38,8 @@ export type DesktopForemanPanelProps = {
     nextRoutine?: { name: string; at: number }
     routineNow?: number
     command?: DesktopForemanCommand | null
+    /** Command-K: a new value moves the caret to the composer, as a settled command does. */
+    composerFocusRequest?: number
     onOpenCoworker: (target: { agentId: string; sessionId?: string }) => void | Promise<void>
     onOpenCalledChat: (target: { agentId: string; sessionId: string }) => Promise<void>
     onOpenBox: (spaceId: string) => void | Promise<void>
@@ -169,6 +171,12 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     }, [initial])
     const consumed = useRef(new Set<string>())
     const [focusRequest, setFocusRequest] = useState<string>()
+    const seenComposerFocus = useRef(props.composerFocusRequest)
+    useEffect(() => {
+        if (seenComposerFocus.current === props.composerFocusRequest) return
+        seenComposerFocus.current = props.composerFocusRequest
+        setFocusRequest(`key:${props.composerFocusRequest}`)
+    }, [props.composerFocusRequest])
     useEffect(() => {
         const command = props.command
         if (!client || !command || consumed.current.has(command.id) || intakeEligible && !intake.restored) return
