@@ -49,4 +49,23 @@ describe('Mac coworker chat activity', () => {
         expect(html).toContain('role="status" class="sr-only">Waiting on Reviewer</span>')
         expect(renderToStaticMarkup(activity(call, { type: 'data-call-agent', id: 'child', data: null }))).toBe('')
     })
+
+    it('says it is reconnecting to the provider, only while the engine says so', async () => {
+        const reconnecting = { type: 'data-stream-retry', id: 'stream-retry-run', data: { status: 'reconnecting', provider: 'Anthropic', attempt: 1, of: 3 } } as const
+        const thought = { type: 'reasoning', state: 'done', text: 'private provider text' } as const
+        const html = renderToStaticMarkup(activity(thought, reconnecting))
+        expect(html).toContain('role="status" class="sr-only">Reconnecting to Anthropic…</span>')
+        expect(html).not.toContain('Thinking...')
+        expect(html).not.toContain(thought.text)
+        for (const status of ['resumed', 'failed'] as const) {
+            const settled = renderToStaticMarkup(activity(thought, reconnecting, { type: 'data-stream-retry', id: 'stream-retry-run', data: { status, provider: 'Anthropic' } }))
+            expect(settled).not.toContain('Reconnecting')
+            expect(settled).toContain('Thinking...')
+        }
+        // A part the engine does not write is not shown, whatever it claims.
+        expect(renderToStaticMarkup(activity({ type: 'data-stream-retry', data: { status: 'reconnecting', provider: '<b>x</b>'.repeat(40), attempt: 1, of: 3 } }))).not.toContain('Reconnecting')
+        const source = await loadMessages('de')
+        const german = renderToStaticMarkup(<DesktopLocale initial={{ preference: 'de', locale: 'de', messages: desktopMessages('de', source) }}>{activity(reconnecting)}</DesktopLocale>)
+        expect(german).toContain('Verbindung zu Anthropic wird wiederhergestellt…')
+    })
 })

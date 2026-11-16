@@ -1,6 +1,6 @@
 'use client'
 
-import { QUICK_REPLIES_TOOL, stripBridgePrefix, toolLabelOf } from '@rerun/contracts'
+import { QUICK_REPLIES_TOOL, reconnectingProvider, stripBridgePrefix, toolLabelOf } from '@rerun/contracts'
 import { AgentBuddy } from '@rerun/ui/iso-grid'
 import { getToolName, isToolUIPart, type UIMessage } from 'ai'
 
@@ -23,6 +23,9 @@ export function DesktopChatActivity({ agentId, message, stopping = false }: {
 
     let activity: string | null = null
     if (message?.role === 'assistant') {
+        // The engine is sending a step again after a dropped model stream: say so instead of "Thinking".
+        const reconnecting = reconnectingProvider(message.parts)
+        if (reconnecting) return <ChatActivityPresentation activity={t('streamRetry.reconnecting', { provider: reconnecting })} labels={labels} indicator={indicator} announce />
         const compactions = desktopCompactionSteps(message.parts, true)
         if ([...compactions.values()].some(step => step.data.status === 'running')) return null
         const last = message.parts.findLast(part => !part.type.startsWith('data-'))

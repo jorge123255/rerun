@@ -1,7 +1,7 @@
 import { assertDesktopRunAdmission } from '../desktop/workspace-admission.js'
 import { desktopDocumentContextParts } from '@rerun/contracts'
 import { streamText, type LanguageModelUsage, type ModelMessage, type StepResult, type StreamTextResult, type ToolSet, type UIMessageStreamWriter } from 'ai'
-import { FOREMAN_AGENT_ID, RERUN_CONNECTION_ID, desktopCoworkerMentionContextParts, contextTextPart, workspaceAttachmentParts, desktopResolvedAttachmentParts, isDesktopSubscriptionProvider, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, PROVIDER_LABELS, RERUN_CONNECTION_ID, STREAM_RETRY_PART, desktopCoworkerMentionContextParts, contextTextPart, workspaceAttachmentParts, desktopResolvedAttachmentParts, isDesktopSubscriptionProvider, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
 import { applyCaching, withTailBreakpoint } from '../agents/caching.js'
 import { desktopClaudeEffort, desktopCodexEffort, desktopCustomEffort, desktopSubscriptionEffort, mergeProviderOptions, reasoningProviderOptions } from '../agents/reasoning.js'
 import { prepareRunHistory } from './compaction/compact.js'
@@ -55,6 +55,8 @@ import { authorMetadata, sendNotification, type NotificationKind } from './notif
 import { emitRunTerminal } from './run-events.js'
 import { apiCreditsMessage, ClaudeSignInRenewedError, classifyFinishReason, classifyProviderError, isFailedFinish, ProviderRefusedError, ProviderStreamCutError, RUN_ERROR_CODES, refusalReason, type RunErrorCode } from './provider-errors.js'
 import { armBudgetLatch, clearBudgetLatch, RERUN_BUDGET_ERROR_CODE } from './budget-latch.js'
+import { closedInTime } from './teardown.js'
+import type { StreamRetryNotice } from '../agents/transient-stream-retry.js'
 
 export type RunOutcome = { kind: 'done' | 'error' | 'cancelled'; error?: string; errorCode?: RunErrorCode | null; pendingToolCallId?: string }
 
@@ -265,6 +267,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     let codexToolAccess: string | undefined
     let codexThreadId: string | undefined
     let steps = 0
+    let decisionSaved = false
     let sourceSteps: StepResult<ToolSet>[] = []
     const partialResults: PartialResult[] = []
     const skillProposals: SkillProposalNotice[] = []
@@ -272,11 +275,14 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     // The CLI process owns the bridged MCP server that calls back into `tools`, so it goes down
     // first. Codex's own token refresh only lands in auth.json once it has exited, hence the sync
     // last. Every teardown path below funnels through this.
-    const close = async (): Promise<void> => {
+    // Answers whether the model process is confirmed down: a close that threw is not a close.
+    const close = async (): Promise<boolean> => {
+        let modelClosed = true
         try {
             try { await closeModel() } finally { await nativeWorker?.close() }
             endDesktopCodexRun(agent.id, run.id)
         } catch (err) {
+            modelClosed = false
             logger.warn({ err: String(err), agent: agent.id }, 'close model or command worker failed')
         }
         await closeTools().catch(err => logger.warn({ err: String(err), agent: agent.id }, 'close tools failed'))
@@ -284,20 +290,11 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             await syncCodexAuth(connection).catch(() => {})
             void refreshCodexPlanLimits(connection)
         }
+        return modelClosed
     }
 
-    const closeSafely = async (): Promise<boolean> => {
-        let timer: ReturnType<typeof setTimeout> | undefined
-        const guard = new Promise<false>(resolve => {
-            timer = setTimeout(() => {
-                logger.warn({ agent: agent.id, run: run.id, provider }, 'run teardown timed out')
-                resolve(false)
-            }, CLOSE_TIMEOUT_MS)
-        })
-        const closedInTime = await Promise.race([close().then(() => true, () => true), guard])
-        if (timer) clearTimeout(timer)
-        return closedInTime
-    }
+    const closeSafely = (): Promise<boolean> =>
+        closedInTime(close, CLOSE_TIMEOUT_MS, () => logger.warn({ agent: agent.id, run: run.id, provider }, 'run teardown timed out'))
 
     let settled = false
     let resolveSettled!: (outcome: RunOutcome) => void
@@ -601,7 +598,17 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             ? { runId: ctx.runId, sessionId, abortSignal: controller.signal, runRoot: nativeWorker?.root }
             : undefined
         const reasoningEffort = subscription ? await desktopSubscriptionEffort(resolved) : provider === 'claude' ? await desktopClaudeEffort(resolved) : await desktopCustomEffort(resolved)
-        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker, imageRun, reasoningEffort, sessionId)
+        // A step whose stream dropped before it did anything is sent again by the model's own
+        // middleware; the run only says when that must not happen and shows that it is happening.
+        // A Chief of Staff run that has already called a tool has saved a decision: nothing of it is repeated.
+        const streamRetry = {
+            canRetry: () => !settled && !controller.signal.aborted && !decisionSaved,
+            notify: (notice: StreamRetryNotice) => {
+                logger.info({ agent: agent.id, run: run.id, provider, ...notice }, 'model stream retry')
+                if (desktopApp() && !settled) writer?.write({ type: STREAM_RETRY_PART, id: `stream-retry-${run.id}`, data: { ...notice, provider: (provider === 'custom' && connection?.config.name.trim().slice(0, 80)) || PROVIDER_LABELS[provider] } })
+            },
+        }
+        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker, imageRun, reasoningEffort, sessionId, streamRetry)
         closeModel = resolvedModel.close
         contextUsage = resolvedModel.contextUsage
         // Cut out of the text whoever wrote it; only a coworker that offers replies gets the buttons.
@@ -637,6 +644,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
                 const releaseStep = beginDesktopAgentWork(agent.id)
                 try {
                     steps += 1
+                    if (agent.config.kind === 'foreman' && step.toolCalls.length > 0) decisionSaved = true
                     const now = Date.now()
                     const durationMs = now - lastStepAt
                     lastStepAt = now
