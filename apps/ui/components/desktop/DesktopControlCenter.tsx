@@ -7,7 +7,7 @@ import { DesktopControlCenterParityView } from './control-center-parity/DesktopC
 import { useDesktopControlParity, type DesktopParityCallbacks } from './control-center-parity/useDesktopControlParity'
 import type { ControlRow, ControlSection } from '@/components/control-center/types'
 import { useModKeyLabel } from '@/hooks/useModKeyLabel'
-import { BrainIcon, BellIcon, FolderIcon, BoxIcon, CirclePlusIcon, FocusCenterIcon, HelpCircleIcon, KeyboardIcon, LayoutGridIcon, ListChecksIcon, LockKeyholeIcon, MegaphoneIcon, MessageCircle, MessagesSquare, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from '@/lib/icons'
+import { BrainIcon, BellIcon, FolderIcon, BoxIcon, CirclePlusIcon, FocusCenterIcon, HelpCircleIcon, KeyboardIcon, LayoutGridIcon, ListChecksIcon, LockKeyholeIcon, MegaphoneIcon, MessageCircle, MessagesSquare, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon, UserRoundIcon } from '@/lib/icons'
 import { parseQuery, searchItems } from '@/lib/control-center/search'
 import { buildDesktopControlCommands, buildDesktopControlCoworkerTabs, useDesktopConversationSearch, useDesktopControlCenterKeys, type DesktopControlCommand, type DesktopControlCommandId } from '@/lib/desktop/control-center'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
@@ -46,6 +46,7 @@ const COMMAND_ICONS: Record<DesktopControlCommandId, ComponentType<{ className?:
     getting_started: ListChecksIcon,
     help: HelpCircleIcon,
     whats_new: MegaphoneIcon,
+    account: UserRoundIcon,
     notifications: BellIcon,
 }
 
@@ -81,6 +82,10 @@ export type DesktopControlCenterProps = DesktopParityCallbacks & {
     onGettingStarted?: () => void
     onHelp?: () => void
     onChangelog?: () => void
+    /** The local profile dialog: the Mac's destination for the original Account command. */
+    onAccount?: () => void
+    /** Present only while the Chief of Staff's column is on screen: Command-K then goes to its composer. */
+    onFocusAssistant?: () => void
     onNotifications?: (agentId?: string) => void
     onWorkspaceSettings?: () => void
     onRecenterBoard?: () => void
@@ -89,7 +94,7 @@ export type DesktopControlCenterProps = DesktopParityCallbacks & {
     darkTheme?: boolean
 }
 
-export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, runtimeWorkspaceId, runtimeLaunchNonce, onOpenDesktop, onAskAssistant, open: controlledOpen, onOpenChange, disabled = false, anchorToOrb = false, initialRecent, activity, onRefreshActivity, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onGettingStarted, onHelp, onChangelog, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
+export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, runtimeWorkspaceId, runtimeLaunchNonce, onOpenDesktop, onAskAssistant, open: controlledOpen, onOpenChange, disabled = false, anchorToOrb = false, initialRecent, activity, onRefreshActivity, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onGettingStarted, onHelp, onChangelog, onAccount, onFocusAssistant, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
     const { language, t } = useDesktopLocale()
     const copy = language.messages.controlCenter
     const details = copy.details
@@ -124,7 +129,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
     }, [requestedOpen, disabled, setOpen])
 
     // The component owns its shortcut like the original: mounting it is the whole patch.
-    useDesktopControlCenterKeys({ open, setOpen, conversationOpen: !!selectedCoworkerId, disabled })
+    useDesktopControlCenterKeys({ open, setOpen, conversationOpen: !!selectedCoworkerId, disabled, focusAssistant: onFocusAssistant })
 
     const mod = useModKeyLabel()
     const page = pages[pages.length - 1]
@@ -143,8 +148,8 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
     const [attentionNotice, setAttentionNotice] = useState<ScopedNotice | null>(null)
     const selectingAttention = useRef<{ scope: string } | null>(null)
     const selectingChat = useRef<{ scope: string } | null>(null)
-    const latest = useRef({ open, disabled, selectionScope, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onGettingStarted, onHelp, onChangelog, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
-    latest.current = { open, disabled, selectionScope, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onGettingStarted, onHelp, onChangelog, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
+    const latest = useRef({ open, disabled, selectionScope, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onGettingStarted, onHelp, onChangelog, onAccount, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
+    latest.current = { open, disabled, selectionScope, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onGettingStarted, onHelp, onChangelog, onAccount, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
     const available = () => latest.current.open && !latest.current.disabled && !isDesktopQuitting() && latest.current.selectionScope === selectionScope
     const sameBoard = () => !!board && latest.current.board?.revision === board.revision
 
@@ -349,7 +354,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
             const action = {
                 add_coworker: current.onAddCoworker, team_board: current.onBackToBoard, model_settings: current.onModelSettings,
                 new_box: current.onAddBox, shared_files: current.onSharedFiles, company_brain: current.onBrain,
-                shortcuts: current.onShortcuts, getting_started: current.onGettingStarted, help: current.onHelp, whats_new: current.onChangelog, notifications: current.onNotifications, workspace_settings: current.onWorkspaceSettings, recenter_board: current.onRecenterBoard, toggle_theme: current.onToggleTheme,
+                shortcuts: current.onShortcuts, getting_started: current.onGettingStarted, help: current.onHelp, whats_new: current.onChangelog, account: current.onAccount, notifications: current.onNotifications, workspace_settings: current.onWorkspaceSettings, recenter_board: current.onRecenterBoard, toggle_theme: current.onToggleTheme,
             }[command.id]
             // A retained row cannot dismiss the center when its action was removed, or invoke
             // the opposite of the theme choice the user saw before the appearance changed.
@@ -467,7 +472,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
                 : conversationSection('coworker-conversations', 'Conversations', page.coworkerId))]
         }
 
-        const commands = buildDesktopControlCommands({ brain: !!onBrain, sharedFiles: !!onSharedFiles, addBox: !!board && !!onAddBox, shortcuts: !!onShortcuts, gettingStarted: !!onGettingStarted, help: !!onHelp, changelog: !!onChangelog, notifications: !!onNotifications, workspaceSettings: !!onWorkspaceSettings, recenterBoard: !!onRecenterBoard, toggleTheme: !!onToggleTheme, darkTheme }).map(command => {
+        const commands = buildDesktopControlCommands({ brain: !!onBrain, sharedFiles: !!onSharedFiles, addBox: !!board && !!onAddBox, shortcuts: !!onShortcuts, gettingStarted: !!onGettingStarted, help: !!onHelp, changelog: !!onChangelog, account: !!onAccount, notifications: !!onNotifications, workspaceSettings: !!onWorkspaceSettings, recenterBoard: !!onRecenterBoard, toggleTheme: !!onToggleTheme, darkTheme }).map(command => {
             const label = localizedControlLabel(`command-${command.id}`, command.label, darkTheme, translated)
             return label === command.label ? command : { ...command, label, keywords: [...command.keywords, command.label] }
         })

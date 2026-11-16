@@ -141,6 +141,19 @@ export function desktopDocumentKindForName(name: string): DesktopDocumentKind {
     return 'binary'
 }
 
+// Source, data and config names. The name alone proves nothing: the server keeps such a file as a
+// download-only binary unless its bytes are bounded UTF-8 text. `.ts` may be a transport stream.
+const TEXT_LIKE_DOCUMENT = /\.(?:tsv|jsonl|ndjson|ya?ml|toml|ini|xml|html?|css|scss|js|jsx|mjs|cjs|ts|tsx|py|rb|go|rs|java|kt|c|h|cpp|cs|php|swift|sh|bash|zsh|sql|markdown|mdx|rst|tex|srt|vtt|diff|patch)$/i
+/** A name whose contents may be sent to the model as plain text after the server has read them as UTF-8. */
+export function isDesktopTextLikeDocumentName(name: string): boolean {
+    return TEXT_LIKE_DOCUMENT.test(name)
+}
+/** A result or attachment name the text preview may show: the plain-text names plus the text-like ones. */
+export function isDesktopTextPreviewName(name: string): boolean {
+    return /\.(?:csv|json|log)$/i.test(name) || TEXT_LIKE_DOCUMENT.test(name)
+}
+export const DESKTOP_TEXT_PREVIEW_MAX_BYTES = 256 * 1024
+
 const directImageMime = z.enum(['image/png', 'image/jpeg', 'image/webp'])
 const convertedImageMime = z.enum(['image/gif', 'image/avif', 'image/x-icon', 'image/bmp', 'image/svg+xml'])
 const imageReference = desktopDocumentReferenceSchema.extend({

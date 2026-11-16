@@ -209,6 +209,60 @@ test('Chief of Staff reconnect opens the failed connection even after opening tr
     }
 })
 
+test('Command-K moves the caret to the open Chief of Staff composer, also from the open Control Center', async () => {
+    vi.stubGlobal('EventSource', class { close() {} })
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)')
+    const container = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(container)
+    const chat = { workspaceId: '1', chatId: 'fmc_command-k' }
+    mockDesktopFetch((url, init) => {
+        const method = init?.method ?? 'GET'
+        if (url === settingsUrl && method === 'GET') return Response.json({ default: null, connections: [] })
+        if (url === '/api/desktop/foreman' && method === 'GET') return Response.json({
+            chat, sessionId: 'chief-command-k', model: null, runFailure: null,
+            messages: [{ id: 'saved-user', role: 'user', parts: [{ type: 'text', text: 'An existing question' }] }],
+            view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
+            ui: { revision: 0, snapshot: null },
+        })
+        if (url === '/api/desktop/foreman' && method === 'POST') return Response.json({ revision: JSON.parse(String(init?.body)).expectedRevision + 1 })
+        if (url === '/api/desktop/auxiliary' && method === 'GET') return Response.json([])
+        if (url.startsWith('/api/desktop/foreman/') || url.startsWith('/api/desktop/agents/foreman/')) return new Response(null, { status: 404 })
+    })
+    const composer = () => container.querySelector<HTMLTextAreaElement>('textarea[data-desktop-foreman-composer]')
+    const center = () => document.querySelector<HTMLInputElement>('[cmdk-input]')
+    const key = (name: string) => act(async () => {
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: name, metaKey: true, bubbles: true, cancelable: true }))
+        await new Promise(resolve => setTimeout(resolve, 30))
+    })
+    try {
+        await act(async () => root.render(<DesktopApp initialData={{ default: null, connections: [], theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />))
+        // Parked orb: there is no field to write in, so Command-K still opens the Control Center.
+        await key('k')
+        expect(center()).not.toBeNull()
+        await key('k')
+        expect(center()).toBeNull()
+
+        await act(async () => container.querySelector<HTMLButtonElement>('[data-foreman-orb] button')!.click())
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)) })
+        expect(composer()).not.toBeNull()
+        await act(async () => { (document.activeElement as HTMLElement | null)?.blur() })
+        expect(document.activeElement).not.toBe(composer())
+        await key('k')
+        expect(center()).toBeNull()
+        expect(document.activeElement).toBe(composer())
+
+        await act(async () => { composer()!.blur() })
+        await key('f')
+        expect(center()).not.toBeNull()
+        await key('k')
+        expect(center()).toBeNull()
+        expect(document.activeElement).toBe(composer())
+    } finally {
+        await act(async () => root.unmount())
+        container.remove()
+    }
+})
+
 test('a reopened workspace can replace a saved key and recover after a failed save', async () => {
     const container = document.createElement('div')
     document.body.append(container)

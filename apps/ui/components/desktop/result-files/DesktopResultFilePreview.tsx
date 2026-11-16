@@ -3,7 +3,7 @@
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import type { FileCardEntry } from '@rerun/contracts'
-import { desktopResultFileName, desktopResultFilePreviewKind, desktopResultFileRoute } from '@/lib/desktop/server/result-files/contract'
+import { desktopResultFileName, desktopResultFileOptionalText, desktopResultFilePreviewKind, desktopResultFileRoute } from '@/lib/desktop/server/result-files/contract'
 import { DownloadIcon, FileIcon } from '@/lib/icons'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { DesktopFilePdfPreview } from '../DesktopFilePdfPreview'
@@ -107,6 +107,7 @@ export function DesktopResultFilePreview(props: { agentId: string; file: FileCar
 
 function OwnedResultFilePreview({ agentId, file, saveResultFile, onClose }: { agentId: string; file: FileCardEntry; saveResultFile?: SaveResultFile; onClose: () => void }) {
     const previewKind = desktopResultFilePreviewKind(file)
+    const optionalText = previewKind === 'text' && desktopResultFileOptionalText(file)
     const safeName = desktopResultFileName(file.name)
     const ticket = resultFileTicketKey(agentId, file)
     const [attempt, setAttempt] = useState(0)
@@ -147,12 +148,18 @@ function OwnedResultFilePreview({ agentId, file, saveResultFile, onClose }: { ag
                     && Number(loaded.response.headers.get('x-rerun-result-size')) === file.size
                     && loaded.response.headers.get('x-rerun-preview-kind') === previewKind
                     && declared !== null && Number(declared) === loaded.bytes.byteLength
+                // An optional text preview the server refused (not text after all, or too large)
+                // leaves the download tile exactly as it was before previews existed.
+                if (optionalText && (loaded.response.status === 413 || loaded.response.status === 415)) {
+                    setPhase({ status: 'ready', preview: none })
+                    return
+                }
                 if (!loaded.response.ok || !accepted) {
                     setPhase({ status: 'unavailable', message: loaded.response.ok ? changed : failureMessage(loaded.response) })
                     return
                 }
                 if (previewKind === 'text') {
-                    const content = textOf(loaded.bytes)
+                    const content = loaded.bytes.byteLength > 256 * 1024 ? undefined : textOf(loaded.bytes)
                     setPhase({ status: 'ready', preview: content === undefined ? none : { kind: 'text', content } })
                     return
                 }
@@ -170,7 +177,7 @@ function OwnedResultFilePreview({ agentId, file, saveResultFile, onClose }: { ag
             release(urlRef.current)
             urlRef.current = null
         }
-    }, [agentId, attempt, file, previewKind, ticket])
+    }, [agentId, attempt, file, optionalText, previewKind, ticket])
 
     function currentPreview(): Preview {
         if (phase.status === 'loading' || phase.status === 'unavailable') return none

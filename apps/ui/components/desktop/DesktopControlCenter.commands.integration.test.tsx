@@ -94,6 +94,7 @@ const composer = () => document.querySelector<HTMLTextAreaElement>('[data-deskto
 const commandField = () => document.querySelector<HTMLInputElement>('[cmdk-input]')
 const workspaceDialog = () => [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find(dialog => dialog.querySelector('#workspace-settings-name'))
 const shortcutsDialog = () => [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find(dialog => dialog.querySelector('h2')?.textContent === 'Keyboard shortcuts')
+const profileDialog = () => [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find(dialog => dialog.querySelector('h2')?.textContent === 'Profile')
 const workspacePill = () => document.querySelector<HTMLButtonElement>('[aria-label="Workspace menu, Command studio"]')!
 const openTabButtons = () => [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Open conversations"] button[aria-pressed]')]
 const settle = (ms = 0) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)) })
@@ -383,6 +384,28 @@ test('Recenter the board applies the existing canvas framing without replacing t
     expect(commandField()).toBeNull()
     expect(world.isConnected).toBe(true)
     view.unchanged()
+    expect(app.reads).toEqual(readsBefore)
+    expect(app.writes).toEqual([])
+})
+
+test('the /profile command lists only Account and opens the local profile over the retained chat and draft', async () => {
+    const app = fixture()
+    const mounted = await app.mount()
+    const view = await openChat(mounted.container)
+    const readsBefore = [...app.reads]
+    const field = await openCommands()
+    await enter(field, '/profile')
+    const matches = await until(() => {
+        const rows = [...document.querySelectorAll<HTMLElement>('[cmdk-item]')]
+        return rows.some(row => row.textContent?.trim() === 'Account') ? rows : null
+    })
+    expect(matches.map(row => row.textContent?.trim())).toEqual(['Account'])
+    await runCommand('Account')
+    const dialog = await until(profileDialog)
+    expect(commandField()).toBeNull()
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+    expect(dialog.querySelector<HTMLInputElement>('input[type="text"], input:not([type])')!.value).toBe('Local')
+    view.unchanged(true)
     expect(app.reads).toEqual(readsBefore)
     expect(app.writes).toEqual([])
 })

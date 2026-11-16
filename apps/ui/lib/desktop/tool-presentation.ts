@@ -1,4 +1,4 @@
-import { desktopRerunToolCatalog, stripBridgePrefix } from '@rerun/contracts'
+import { desktopRerunToolCatalog, stripBridgePrefix, toolHeadline } from '@rerun/contracts'
 
 // The model and engine retain their protocol messages. Chat and Run Details show only
 // public fields of an actual tool result, never a serialization of the transport envelope.
@@ -42,6 +42,12 @@ function changes(value: unknown): string | undefined {
     return paths.length ? paths.join('\n') : undefined
 }
 
+function headline(input: Record<string, unknown>): string | undefined {
+    const line = text(toolHeadline(input))?.split(/\r?\n/, 1)[0]?.trim()
+    if (!line) return
+    return line.length > 200 ? line.slice(0, 200) + '…' : line
+}
+
 export type DesktopToolPresentation = { input?: { preview: string }; output?: string; errorText?: string }
 
 export function desktopToolPresentation(name: string, rawInput: unknown, rawOutput: unknown, rawError?: string): DesktopToolPresentation {
@@ -67,6 +73,9 @@ export function desktopToolPresentation(name: string, rawInput: unknown, rawOutp
     if (tool === 'memory_write') preview = text(input.content)
     if (tool === 'memory_delete') preview = text(input.id)
     if (tool === 'web_fetch') preview = text(input.url)
+    // The original step row says what a call was given. A URL is public once sanitized; any other
+    // argument is named only for Rerun's own non-credential tools, never for a connector's.
+    if (!preview && !fileChange) preview = text(input.url) ?? (rerunTools.has(tool) ? headline(input) : undefined)
     const result: DesktopToolPresentation = preview ? { input: { preview } } : {}
     if (tool === 'functions.exec') {
         const code = text(typeof rawInput === 'string' ? rawInput : input.code)

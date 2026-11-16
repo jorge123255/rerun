@@ -1,5 +1,6 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
+import { DESKTOP_TEXT_PREVIEW_MAX_BYTES, isDesktopTextPreviewName } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { desktopRasterKind } from '../image-bytes'
 import { inspectDesktopPreviewImageBytes } from '../animated-image'
@@ -43,6 +44,14 @@ export async function previewResultBytes(name: string, bytes: Uint8Array, option
                 'page-width': raster.pageWidth, 'page-height': raster.pageHeight, sha256: createHash('sha256').update(bytes).digest('hex') })) headers.set(`x-pdf-${key}`, String(value))
         } else if (extension === 'txt' || extension === 'md') {
             if (bytes.byteLength > 32 * 1024) throw new DesktopHttpError(413, 'This text file is too large to preview.')
+            new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+            headers.set('content-type', 'text/plain; charset=utf-8')
+            headers.set('x-rerun-preview-kind', 'text')
+        } else if (isDesktopTextPreviewName(name)) {
+            // Source, data and config text is shown as inert text/plain, never rendered or executed.
+            // The name is only a hint: the bytes must be bounded UTF-8 without control bytes.
+            if (bytes.byteLength > DESKTOP_TEXT_PREVIEW_MAX_BYTES) throw new DesktopHttpError(413, 'This text file is too large to preview.')
+            if (bytes.some(byte => (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) || byte === 127)) throw new DesktopHttpError(415, 'No preview is available for this file type.')
             new TextDecoder('utf-8', { fatal: true }).decode(bytes)
             headers.set('content-type', 'text/plain; charset=utf-8')
             headers.set('x-rerun-preview-kind', 'text')
