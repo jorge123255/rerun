@@ -5,10 +5,11 @@ import { vi } from 'vitest'
 
 process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-codex-thread-'))
 
-const { calls, prompts, turn, lifecycle, improvement } = vi.hoisted(() => ({
+const { calls, prompts, turn, lifecycle, improvement, retry } = vi.hoisted(() => ({
+    retry: { hooks: undefined as undefined | { canRetry: () => boolean; notify: (notice: unknown) => void }, during: [] as boolean[], reconnects: false },
     calls: [] as Array<Record<string, unknown> | undefined>,
     prompts: [] as unknown[],
-    turn: { threadId: 'thread-1', fail: false, closeHangs: false },
+    turn: { threadId: 'thread-1', fail: false, closeHangs: false, closeFails: false },
     lifecycle: [] as string[],
     improvement: [] as boolean[],
 }))
@@ -38,9 +39,14 @@ vi.mock('../agents/providers.js', async importOriginal => {
     const { MockLanguageModelV3 } = await import('ai/test')
     return {
         ...actual,
-        resolveModel: () => ({
+        resolveModel: (...args: unknown[]) => ({
             model: new MockLanguageModelV3({
                 doStream: async (options: { prompt: unknown; providerOptions?: Record<string, Record<string, unknown>> }) => {
+                    retry.hooks = args[10] as typeof retry.hooks
+                    if (retry.reconnects) {
+                        retry.during.push(retry.hooks!.canRetry())
+                        retry.hooks!.notify({ status: 'reconnecting', attempt: 1, of: 3 })
+                    }
                     calls.push(options.providerOptions?.['codex-app-server'])
                     prompts.push(options.prompt)
                     if (turn.fail) throw new Error('codex crashed')
@@ -63,7 +69,7 @@ vi.mock('../agents/providers.js', async importOriginal => {
                     }
                 },
             }),
-            close: () => { lifecycle.push('model-close'); return turn.closeHangs ? new Promise<void>(() => {}) : Promise.resolve() },
+            close: () => { lifecycle.push('model-close'); return turn.closeHangs ? new Promise<void>(() => {}) : turn.closeFails ? Promise.reject(new Error('app-server close failed')) : Promise.resolve() },
         }),
     }
 })
@@ -105,6 +111,7 @@ describe('a Codex conversation keeps its thread', () => {
         turn.threadId = 'thread-1'
         turn.fail = false
         turn.closeHangs = false
+        turn.closeFails = false
         forgetCodexThreadsOf('mac-chatgpt')
     })
 
@@ -255,6 +262,48 @@ describe('a Codex conversation keeps its thread', () => {
         await teardownTimesOut(session.id)
         await send(session.id, 'and then?')
         expect(calls).toEqual([undefined, undefined])
+    })
+
+    // What the model's retry middleware is handed: a veto that closes with the run, and a status
+    // that reaches the Mac conversation as one live part carrying no error text.
+    it('lets a step be retried only while the run is open and shows the reconnect in the Mac conversation', async () => {
+        const written: Array<Record<string, unknown>> = []
+        const writer = { write: (part: Record<string, unknown>) => { written.push(part) } } as never
+        retry.reconnects = true
+        try {
+            const session = await createSession(id, 'hello')
+            await (await runAgent(await getAgent(id), session.id, 'web run', undefined, writer)).settled
+            expect(written).toEqual([])
+            vi.stubEnv('RERUN_DESKTOP_APP', '1')
+            vi.stubEnv('RERUN_DESKTOP_CODEX_RUNNER', '/test/codex')
+            const run = await runAgent(await getAgent(id), session.id, 'mac run', undefined, writer)
+            await run.settled
+            expect(written.filter(part => part.type === 'data-stream-retry')).toEqual([
+                { type: 'data-stream-retry', id: `stream-retry-${run.runId}`, data: { status: 'reconnecting', attempt: 1, of: 3, provider: 'Codex' } },
+            ])
+            expect(retry.during).toEqual([true, true])
+            // Settled: nothing is sent again and nothing more is shown.
+            expect(retry.hooks!.canRetry()).toBe(false)
+            retry.hooks!.notify({ status: 'resumed' })
+            expect(written.filter(part => part.type === 'data-stream-retry')).toHaveLength(1)
+        } finally {
+            retry.reconnects = false
+            retry.during.length = 0
+            vi.unstubAllEnvs()
+        }
+    })
+
+    // A close that rejects leaves the app-server possibly up, holding the thread's writer lock.
+    it('starts a new thread after a turn whose teardown failed', async () => {
+        const session = await createSession(id, 'hello')
+        await send(session.id, 'hello')
+        await send(session.id, 'resumed')
+        expect(calls).toEqual([undefined, { threadId: 'thread-1' }])
+        turn.closeFails = true
+        await send(session.id, 'its close rejects')
+        turn.closeFails = false
+        await send(session.id, 'and then?')
+        expect(calls.slice(2)).toEqual([{ threadId: 'thread-1' }, undefined])
     })
 
     // The Mac's coworkers run on the same loop with the desktop runner.
