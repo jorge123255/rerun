@@ -57,6 +57,9 @@ export type ForemanCreationAuthority = {
     // Adds each target to its caller's allowed coworkers, both named by the request ids that created them.
     // Adds to the list only: the Call coworkers permission is never switched on here.
     allowCalls?(input: { pairs: { callerRequestId: string; targetRequestId: string }[] }): Promise<void>
+    // Switches on coworkers a build just created, named by the request ids that created them, so the team can be
+    // talked to and can call each other. The same switch the board has; a coworker the person turned off later stays off.
+    switchOn?(input: { requestIds: string[] }): Promise<void>
     assertTemplateRevision?(templateId: string, revision: string): Promise<void>
     installTemplate(input: { requestId: string; templateId: string; templateRevision?: string; spaceId: string; focus?: string }): Promise<{ agentIds: string[] }>
     lookupTemplateInstall(requestId: string): Promise<ForemanReceipt<{ agentIds: string[]; spaceId: string }>>

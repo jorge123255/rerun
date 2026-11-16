@@ -297,8 +297,15 @@ async function createBinding(runtime: DesktopRuntime) {
         if (linked.length) {
             try {
                 await ownedForemanChat(db, chat)
-                const noModel = async (): Promise<CompanyBriefModelRef> => { throw new DesktopHttpError(409, 'No model is used for this read.') }
-                stillReading = (await desktopGithubProjects(runtime, { db, modelChoice: noModel }, chat).mention(chat, linked, GITHUB_MENTION_WAIT_MS)).pending
+                // The description pass uses the model this conversation already answers with, and no other account.
+                const modelOf = async (current: DesktopForemanChatRef): Promise<CompanyBriefModelRef> => {
+                    const fallback = await desktopModel(runtime).catch(() => null)
+                    const pair = (await ownedForemanChat(db, current)).model ?? requested ?? (fallback && { connectionId: fallback.connection.id, model: fallback.model })
+                    const connection = pair && usableConnection((await readDesktopProviders(runtime)).connections, pair)
+                    if (!pair || !connection || !(COMPANY_BRIEF_MODEL_PROVIDERS as readonly string[]).includes(connection.provider)) throw new DesktopHttpError(409, 'This model does not support the read.')
+                    return { ...pair, provider: connection.provider as CompanyBriefModelRef['provider'], source: 'conversation', agentId: 'foreman', foremanChat: current }
+                }
+                stillReading = (await desktopGithubProjects(runtime, { db, modelChoice: modelOf }, chat).mention(chat, linked, GITHUB_MENTION_WAIT_MS)).pending
             } catch { /* the message goes without them */ }
         }
         return withForemanChatWrite(db, async () => {

@@ -345,6 +345,14 @@ export async function createDesktopForemanCreationAuthority(runtime: DesktopRunt
                 if (next.length !== saved.length) await replaceDesktopCoworkerCallAllows(db,caller,next)
             })
         },
+        async switchOn(input) {
+            await current()
+            for (const requestId of new Set(input.requestIds)) {
+                const found = await lookupCoworker(requestId)
+                // One coworker that cannot be switched on does not hold back the others: the board's switch is still there.
+                if (found.state === 'present') await setDesktopCoworkerEnabled(db,engine,found.value.agentId,true).catch(() => {})
+            }
+        },
         installTemplate: raw => exclusive(runtime.dataRoot,raw.requestId,async () => {
             await current(); const body = templateBody.parse(raw), row = await reserve(db,'template',body)
             if (row.state === 'complete') {

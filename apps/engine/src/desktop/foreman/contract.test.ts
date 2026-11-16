@@ -8,7 +8,9 @@ test('show_plan refuses duplicate Boxes, duplicate names, unknown Boxes and over
     expect(foremanShowPlanInputSchema.safeParse({ title: 'T', boxes: [{ name: 'Sales' }, { name: 'sales' }], items: [agent('A')] }).success).toBe(false)
     expect(foremanShowPlanInputSchema.safeParse({ title: 'T', items: [agent('A'), agent('a')] }).success).toBe(false)
     expect(foremanShowPlanInputSchema.safeParse({ title: 'T', boxes: [{ name: 'Sales' }], items: [agent('A', 'Ops')] }).success).toBe(false)
-    expect(foremanShowPlanInputSchema.safeParse({ title: 'T', items: Array.from({ length: 9 }, (_, index) => agent(`A${index}`)) }).success).toBe(false)
+    expect(foremanShowPlanInputSchema.safeParse({ title: 'T', items: Array.from({ length: 17 }, (_, index) => agent(`A${index}`)) }).success).toBe(false)
+    // A team built from GitHub projects fits one card: sixteen coworkers.
+    expect(foremanShowPlanInputSchema.safeParse({ title: 'T', items: Array.from({ length: 16 }, (_, index) => agent(`A${index}`)) }).success).toBe(true)
     expect(foremanShowPlanInputSchema.safeParse({ title: 'T', items: [{ ...agent('A'), approved: true }] }).success).toBe(false)
 })
 

@@ -89,11 +89,12 @@ it('tells the Chief of Staff how to name each coworker\'s repository and what to
     // The repository travels in its own field, and the app is the one that decides whether it is kept.
     expect(rules).toContain('set `repository` to that project\'s repository as owner/name and `projectRole` to its role')
     expect(rules).toContain('never set it to any other repository')
-    // One line per project on what the coworkers can do at first: read only, and only after the owner acts.
-    expect(rules).toContain('write one line per project saying what its proposed coworkers will be able to do at first')
-    expect(rules).toContain('cannot read the repository until the user attaches a GitHub account to each of them from the Vault')
-    expect(rules).toContain('read only until the user also turns on Change GitHub repositories')
-    expect(rules).toContain('merging a pull request or deleting a branch or a file asks every time')
+    // Said once and briefly: how the team gets GitHub, and that every change asks first.
+    expect(rules).toContain('write one short line per project naming its coworkers')
+    expect(rules).toContain('Give GitHub to the team')
+    expect(rules).toContain('every change to a repository asks the user first')
+    expect(rules).toContain('do not repeat those two sentences')
+    expect(rules).toContain('at most 12 Boxes and 16 coworkers')
     // Nothing is promised or attached, and the intake token stays with the intake.
     expect(rules).toContain('Do not attach GitHub or promise repository access')
     expect(rules).toContain('the read-only token the intake used is never given to a coworker')
