@@ -21,7 +21,7 @@ import {
     type DesktopForemanRevision,
 } from '@rerun/contracts'
 import { ForemanRefusal, requireAuthorities, type ForemanAuthorities, type ForemanReceipt } from './authority'
-import { digestOf, firstInstall, firstSoul, sealShownPlan, titleOf, type AcceptedGithubProjects, type SealedAgentItem } from './seal'
+import { digestOf, firstInstall, firstSoul, sealShownPlan, titleOf, type AcceptedGithubProjects, type PlanModelOption, type SealedAgentItem } from './seal'
 import type { ForemanBuildIntents, ForemanStore, ForemanTx } from './store'
 
 export class ForemanError extends Error {
@@ -50,6 +50,8 @@ export function createForemanRuntime(input: {
     store: ForemanStore; authorities: Partial<ForemanAuthorities>; companyName: () => Promise<string>
     /** The GitHub repositories the owner accepted in a conversation's intake. Absent or failing means none: no coworker gets a repository. */
     githubProjects?: (chat: DesktopForemanChatRef) => Promise<AcceptedGithubProjects | null>
+    /** The connected providers and their models, for a coworker whose model the person chose. Absent or failing means the plan's model for everyone. */
+    planModels?: () => Promise<readonly PlanModelOption[]>
 }) {
     const store = input.store
     const auth = requireAuthorities(input.authorities)
@@ -83,7 +85,7 @@ export function createForemanRuntime(input: {
         const chat = { workspaceId: binding.workspaceId, chatId: binding.chatId }
         // A coworker keeps the repository the model named only when the owner accepted it in this conversation's intake.
         const accepted = await input.githubProjects?.(chat).catch(() => null) ?? null
-        const sealed = sealShownPlan(raw, accepted)
+        const sealed = sealShownPlan(raw, accepted, await input.planModels?.().catch(() => []) ?? [])
         if (!sealed.ok) throw new ForemanError('invalid_plan', sealed.message)
         const revision = await tx(async db => {
             const existing = await db.revisionByCall(binding.chatId, binding.runId, toolCallId)
@@ -377,7 +379,9 @@ export function createForemanRuntime(input: {
                 item.kind === 'agent'
                     ? await attempt(async () => {
                           if (!model) throw new ForemanRefusal('model_unavailable', 'This plan needs a connected model.')
-                          const created = await auth.creation.createCoworker({ requestId, spaceId: space.spaceId!, name: item.name, description: item.role, soulMd: firstSoul(item as SealedAgentItem, revision.plan, company, asked), installMd: firstInstall(item as SealedAgentItem, asked), model,
+                          const created = await auth.creation.createCoworker({ requestId, spaceId: space.spaceId!, name: item.name, description: item.role, soulMd: firstSoul(item as SealedAgentItem, revision.plan, company, asked), installMd: firstInstall(item as SealedAgentItem, asked),
+                              // The model the person chose for this coworker, when the app accepted one; the creation step checks again that it is usable.
+                              model: (item as SealedAgentItem).chosenModel ? { connectionId: (item as SealedAgentItem).chosenModel!.connectionId, model: (item as SealedAgentItem).chosenModel!.model } : model,
                               ...((item as SealedAgentItem).github && { repository: (item as SealedAgentItem).github!.repository }) })
                           return { agentIds: [created.agentId], spaceId: space.spaceId!, sessionId: null }
                       })

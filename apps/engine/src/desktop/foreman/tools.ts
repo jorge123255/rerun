@@ -1,4 +1,4 @@
-import { foremanNavigationIntentSchema, foremanShowPlanInputSchema, type DesktopForemanBinding } from '@rerun/contracts'
+import { DESKTOP_TEAM_CHANGES_DESCRIPTION, DESKTOP_TEAM_CHANGES_TOOL, desktopTeamChangesInputSchema, foremanNavigationIntentSchema, foremanShowPlanInputSchema, type DesktopForemanBinding } from '@rerun/contracts'
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
 
@@ -10,6 +10,8 @@ export type ForemanToolPorts = {
     reportShownPlan(input: { binding: DesktopForemanBinding; toolCallId: string; input: unknown }): Promise<unknown>
     navigate(input: { binding: DesktopForemanBinding; intent: unknown; eventId: string }): Promise<{ ok: boolean; error?: string }>
     discover: ((input: { binding: DesktopForemanBinding; url: string }) => Promise<unknown>) | null
+    /** Hands a proposal of team changes to the app, which checks it and shows the person a card. It changes nothing. */
+    proposeTeamChanges?: ((input: { binding: DesktopForemanBinding; toolCallId: string; input: unknown }) => Promise<unknown>) | null
 }
 
 export const FOREMAN_FORBIDDEN_TOOL_NAMES = ['confirm_plan', 'build_team', 'approve_plan', 'start_agent_setup', 'grant_tools'] as const
@@ -31,6 +33,15 @@ export function foremanTools(ports: ForemanToolPorts): ToolSet {
             inputSchema: foremanNavigationIntentSchema,
             execute: async (intent, options) => ports.navigate({ binding, intent, eventId: options.toolCallId }),
         }),
+    }
+    if (ports.proposeTeamChanges) {
+        const propose = ports.proposeTeamChanges
+        // A proposal only: the person's click on the card is what applies it, in the app.
+        tools[DESKTOP_TEAM_CHANGES_TOOL] = tool({
+            description: DESKTOP_TEAM_CHANGES_DESCRIPTION,
+            inputSchema: desktopTeamChangesInputSchema,
+            execute: async (input, options) => propose({ binding, toolCallId: options.toolCallId, input }),
+        })
     }
     if (ports.discover) {
         const discover = ports.discover

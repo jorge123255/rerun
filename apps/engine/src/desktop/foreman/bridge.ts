@@ -10,6 +10,7 @@ export type ForemanBridgeBody =
     | { action: 'admit' | 'documents'; turn: ForemanTurn }
     | { action: 'alternate'; operation: 'prepare' | 'lookup' | 'start' | 'stop'; target: ForemanAlternateRequest }
     | { action: 'show_plan'; binding: DesktopForemanBinding; toolCallId: string; input: unknown }
+    | { action: 'team_changes'; binding: DesktopForemanBinding; toolCallId: string; input: unknown }
     | { action: 'navigate'; binding: DesktopForemanBinding; eventId: string; intent: unknown }
     | { action: 'discover'; binding: DesktopForemanBinding; url: string }
 const bindingResponse = z.strictObject({ binding: foremanBindingSchema, discovery: z.boolean() })

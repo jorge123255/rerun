@@ -155,10 +155,15 @@ export const foremanAgentItemSchema = z.strictObject({
     // Only for a coworker proposed from one of the user's GitHub projects. Both are requests: the
     // app keeps them only when the user accepted that repository in the intake, and drops them otherwise.
     repository: z.string().trim().min(1).max(300).optional().describe('For a coworker proposed from a GitHub project: that project\'s repository as owner/name. Leave out otherwise.'),
+    // The model this coworker should answer with, when the user chose one. Both are requests: the app
+    // keeps them only when that provider is connected and offers that model, and uses the plan's model otherwise.
+    provider: z.string().trim().min(1).max(120).optional().describe('Only when the user chose a model for this coworker: the name of the connected provider, as listed to you. Leave out otherwise.'),
+    model: z.string().trim().min(1).max(200).optional().describe('Only with `provider`: a model that provider offers, as listed to you.'),
     projectRole: z.string().trim().min(1).max(40).optional().describe('For a coworker proposed from a GitHub project: its role, one of developer, qa-tester, release-manager, code-reviewer, docs-writer, support-triage.'),
 })
 // The item as the app sealed it: `github` is written by the app, never by the model.
-export const foremanSealedAgentItemSchema = foremanAgentItemSchema.extend({ github: desktopGithubPlanItemSchema.optional() })
+// `chosenModel` is the connection and model the app accepted for this coworker; `provider` and `model` as the model wrote them are dropped.
+export const foremanSealedAgentItemSchema = foremanAgentItemSchema.omit({ provider: true, model: true }).extend({ github: desktopGithubPlanItemSchema.optional(), chosenModel: z.strictObject({ connectionId: z.string().max(256), model: z.string().max(256), name: z.string().max(200) }).optional() })
 export const foremanTemplateItemSchema = z.strictObject({
     kind: z.literal('template'),
     templateId: z.string().min(1).max(128),
