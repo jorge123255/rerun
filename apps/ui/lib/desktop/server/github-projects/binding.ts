@@ -11,9 +11,11 @@ import { confinedGithubReader } from '../../../../../engine/src/desktop/github-p
 import { DesktopHttpError } from '../auth'
 import { desktopAuxiliaryStore } from '../auxiliary/store'
 import { ownedForemanChat } from '../foreman/chat-store'
+import { openDesktopManagedApps } from '../managed-apps/binding'
 import type { DesktopRuntime } from '../runtime'
 import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 import { createDesktopGithubProjectsService, type DesktopGithubProjectsService } from './service'
+import { githubReaderWithSignIn } from './sign-in-reader'
 import { createDesktopGithubProjectsStore } from './store'
 
 type App = { db: Client; modelChoice(chat: DesktopForemanChatRef): Promise<CompanyBriefModelRef> }
@@ -36,11 +38,12 @@ async function understand(runtime: DesktopRuntime, input: DesktopGithubProjectsE
 }
 
 /**
- * GitHub projects for one conversation. Public repositories are read without a credential. Private
- * ones are read with the owner's read-only token from Settings, Tool services, when one is saved.
- * The token is read here, in the app, for each request and sent to api.github.com only: it is not
- * the Vault's GitHub sign-in (that one belongs to coworkers), and it never reaches the engine, a
- * coworker or a model. A repository the token cannot see is reported and the others carry on.
+ * GitHub projects for one conversation. Public repositories are read without a credential. A
+ * private one is read with the owner's read-only token from Settings, Tool services, when one is
+ * saved, and otherwise through the GitHub account the owner signed in to in the Vault (held at
+ * Composio), which is asked only for a repository the plain read could not see. Both are used
+ * here, in the app, for the read alone: neither the token nor the Composio key reaches the engine,
+ * a coworker or a model. A repository neither can see is reported and the others carry on.
  */
 export function desktopGithubProjects(runtime: DesktopRuntime, app: App, chat: DesktopForemanChatRef): DesktopGithubProjectsService {
     const permitted = async () => {
@@ -50,7 +53,11 @@ export function desktopGithubProjects(runtime: DesktopRuntime, app: App, chat: D
     }
     return createDesktopGithubProjectsService({
         store: createDesktopGithubProjectsStore(app.db),
-        read: confinedGithubReader(permitted, async () => (await desktopAuxiliaryStore(app.db).read('github-read')).key),
+        read: githubReaderWithSignIn(
+            confinedGithubReader(permitted, async () => (await desktopAuxiliaryStore(app.db).read('github-read')).key),
+            async () => (await openDesktopManagedApps(runtime)).githubReader(),
+            permitted,
+        ),
         model: async current => {
             try { return await app.modelChoice(current) }
             catch (error) {

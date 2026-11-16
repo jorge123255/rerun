@@ -55,6 +55,28 @@ function httpsPicture(value: unknown): string | null {
     try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null } catch { return null }
 }
 
+/** What an app's own API answered through Composio: its HTTP status and its data. */
+export type ManagedProxyAnswer = { status: number; data: unknown }
+
+/**
+ * Reads the app's answer out of what Composio returned for a proxied request. Composio wraps it a
+ * level or two deep depending on the door used, so the first object carrying an HTTP status beside
+ * the app's data is taken. Anything else is not an answer.
+ */
+export function managedProxyAnswer(value: unknown, depth = 0): ManagedProxyAnswer | null {
+    if (depth > 3 || !value || typeof value !== 'object' || Array.isArray(value)) return null
+    const row = value as Record<string, unknown>
+    const status = typeof row.status === 'number' ? row.status : typeof row.status_code === 'number' ? row.status_code : null
+    if (status !== null && Number.isInteger(status) && status >= 100 && status <= 599 && ('data' in row || 'body' in row)) return { status, data: 'data' in row ? row.data : row.body }
+    for (const name of ['data', 'response', 'result']) {
+        const found = managedProxyAnswer(row[name], depth + 1)
+        if (found) return found
+    }
+    return null
+}
+// Only a plain read of one path is ever proxied: no query, no fragment, no other host.
+const PROXY_PATH = /^\/[A-Za-z0-9._~%\/-]{1,600}$/
+
 export function managedAppsClient(key: string, network: ManagedAppsFetch = fetch, base = COMPOSIO_API, kind: ManagedAppsKeyKind = 'project') {
     async function call<T>(path: string, init: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
         let response: Response
@@ -150,6 +172,13 @@ export function managedAppsClient(key: string, network: ManagedAppsFetch = fetch
             const data = await call<{ successful?: boolean; data?: unknown; error?: string | null }>(`/tools/execute/${encodeURIComponent(tool)}`, { method: 'POST', signal, body: { user_id: userId, arguments: args } })
             return { successful: data.successful === true, data: data.data ?? null, error: typeof data.error === 'string' ? data.error : null }
         },
+        /** A GET of one path of the app's own API, signed by Composio with one connected account. Nothing is changed there. */
+        async proxyGet(connectedAccountId: string, path: string, signal?: AbortSignal): Promise<ManagedProxyAnswer> {
+            if (!PROXY_PATH.test(path)) throw new ManagedAppsError(400, 'This path cannot be read.')
+            const answer = managedProxyAnswer(await call('/tools/execute/proxy', { method: 'POST', signal, body: { connected_account_id: connectedAccountId, endpoint: path, method: 'GET' } }))
+            if (!answer) throw new ManagedAppsError(502, 'Composio sent an answer that could not be read.')
+            return answer
+        },
     }
 }
 
@@ -240,6 +269,13 @@ export function managedAppsConnectClient(key: string, network: ManagedAppsFetch 
         return parsed.data
     }
     return {
+        /** A GET of one path of the app's own API, signed by Composio with the account signed in for that app. Nothing is changed there. */
+        async proxyGet(toolkit: string, path: string, signal?: AbortSignal): Promise<ManagedProxyAnswer> {
+            if (!PROXY_PATH.test(path)) throw new ManagedAppsError(400, 'This path cannot be read.')
+            const answer = managedProxyAnswer(await call('COMPOSIO_PROXY_EXECUTE', { toolkit_slug: toolkit, endpoint: path, method: 'GET' }, signal))
+            if (!answer) throw new ManagedAppsError(502, 'Composio sent an answer that could not be read.')
+            return answer
+        },
         /** Starts the sign-in to one app, or says it is signed in already. */
         async connect(toolkit: string, signal?: AbortSignal) { return managedConnectionOf(await call('COMPOSIO_MANAGE_CONNECTIONS', { toolkits: [{ name: toolkit, action: 'add' }] }, signal), toolkit) },
         /** Whether one app is signed in. Nothing is started. */
