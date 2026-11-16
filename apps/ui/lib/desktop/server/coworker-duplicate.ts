@@ -19,6 +19,26 @@ export class PositionOccupied extends DesktopHttpError {
 const engineIndex = z.object({ agents: z.array(z.object({ id: z.string(), name: z.string() })) })
 const unavailable = 'Could not confirm the coworker copy. Retry this placement.'
 
+/**
+ * A copy made in the same workspace holds every Vault entry its source held one by one (upstream
+ * #187). The copy already carries the source's permissions, so this gives it nothing the source
+ * could not reach. Entries shared with every coworker need no row. An entry at its assignment
+ * limit is left out. Each entry that gains the copy gets a new revision, as any other change to
+ * who holds it does. No value is read or copied: the rows only name the entry and the coworker.
+ */
+const VAULT_ASSIGNMENTS = [
+    ['desktop_vault_secrets', 'desktop_vault_attachments'],
+    ['desktop_vault_mcp_servers', 'desktop_vault_mcp_attachments'],
+    ['desktop_vault_mcp_programs', 'desktop_vault_mcp_program_attachments'],
+] as const
+export function inheritVaultAssignments(sourceId: string, copyId: string) {
+    const held = (attachments: string) => `SELECT a.item_id FROM ${attachments} a WHERE a.agent_id=? AND (SELECT COUNT(*) FROM ${attachments} n WHERE n.item_id=a.item_id) < 250`
+    return VAULT_ASSIGNMENTS.flatMap(([entries, attachments]) => [
+        { sql: `UPDATE ${entries} SET revision=? WHERE id IN (${held(attachments)})`, args: [crypto.randomUUID(), sourceId] },
+        { sql: `INSERT OR IGNORE INTO ${attachments}(item_id,agent_id) SELECT item_id, ? FROM (${held(attachments)})`, args: [copyId, sourceId] },
+    ])
+}
+
 async function publishCopy(db: Client, engine: EngineConnection, source: DesktopAgent, receipt: Row) {
     const copyId = String(receipt.agent_id)
     const existing = await findDesktopAgent(db, copyId)
@@ -50,6 +70,7 @@ async function publishCopy(db: Client, engine: EngineConnection, source: Desktop
     await db.batch([
         { sql: 'INSERT INTO desktop_agents (id,workspace_id,engine_agent_id,name,description,enabled,created_at,updated_at) VALUES (?,1,?,?,?,?,?,?)',
           args: [copyId, copy.id, name, copy.description || source.description, Number(detail.config.enabled), now, now] },
+        ...inheritVaultAssignments(source.id, copyId),
         { sql: 'UPDATE desktop_duplicates SET completed = 1 WHERE request_id = ?', args: [requestId] },
         desktopPlacementInsert({ agentId: copyId, spaceId: String(receipt.space_id), col: Number(receipt.board_col), row: Number(receipt.board_row) }),
         desktopBoardRevisionWrite,
