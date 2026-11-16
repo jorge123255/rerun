@@ -45,6 +45,20 @@ describe('bounded transport with mocked sockets, no network', () => {
         reply(200, { 'content-type': 'application/json; charset=utf-8' }, [Buffer.from('{}')])
         expect((await readPublicPage('https://api.github.com/repos/a/b', signal(), async () => {}, { allowHost })).url).toBe('https://api.github.com/repositories/42')
     })
+    it('sends extra headers only on a read pinned to named hosts, and never to a redirect that leaves them', async () => {
+        const headers = { Authorization: 'Bearer synthetic-token-not-a-secret' }
+        await expect(readPublicPage('https://api.github.com/repos/a/b', signal(), async () => {}, { headers })).rejects.toThrow('pinned host')
+        expect(mocks.request).not.toHaveBeenCalled()
+        const allowHost = (host: string) => host === 'api.github.com'
+        reply(302, { location: 'https://evil.example/steal' })
+        await expect(readPublicPage('https://api.github.com/repos/a/b', signal(), async () => {}, { allowHost, headers })).rejects.toThrow('allowed to reach')
+        // The one request that left went to the pinned host; nothing was sent to the redirect target.
+        expect(mocks.request).toHaveBeenCalledTimes(1)
+        const sent = mocks.request.mock.calls[0]![0] as { headers: Record<string, string>; servername?: string }
+        expect(sent.headers.Authorization).toBe('Bearer synthetic-token-not-a-secret')
+        expect(sent.headers.Host).toBe('api.github.com')
+        expect(sent.servername).toBe('api.github.com')
+    })
     it('rejects mixed DNS answers', async () => {
         mocks.lookup.mockResolvedValue([{ address: '8.8.8.8', family: 4 }, { address: '10.0.0.1', family: 4 }])
         await expect(readPublicPage('https://example.com/', signal(), async () => {})).rejects.toThrow()

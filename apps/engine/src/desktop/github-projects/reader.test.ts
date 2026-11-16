@@ -143,3 +143,39 @@ describe('the production reader', () => {
 it('the fixture encodes files the way the contents API does', () => {
     expect(JSON.parse(file('hello')).encoding).toBe('base64')
 })
+
+describe('the read-only token of the owner', () => {
+    const answered = (body: unknown, status = 200) => ({ status, body: JSON.stringify(body), url: 'https://api.github.com/', contentType: 'application/json' })
+    it('is sent to api.github.com only, read fresh for each request, and not sent when none is saved', async () => {
+        page.readPublicPage.mockReset()
+        page.readPublicPage.mockResolvedValue(answered({ private: true }))
+        let saved: string | null = 'github_pat_synthetic_token_0123456789'
+        const read = confinedGithubReader(async () => {}, async () => saved)
+        const first = await read('/repos/acme/secret', signal())
+        expect(first).toMatchObject({ ok: true, withToken: true })
+        const options = page.readPublicPage.mock.calls[0]![3] as { allowHost: (host: string) => boolean; headers?: Record<string, string> }
+        expect(options.headers).toEqual({ Authorization: 'Bearer github_pat_synthetic_token_0123456789', 'X-GitHub-Api-Version': '2022-11-28' })
+        expect(options.allowHost('api.github.com')).toBe(true)
+        expect(options.allowHost('github.com.evil.example')).toBe(false)
+        // Removed in Settings: the very next read carries nothing.
+        saved = null
+        const second = await read('/repos/acme/secret', signal())
+        expect(second).toMatchObject({ ok: true })
+        expect('withToken' in second && second.withToken).toBeFalsy()
+        expect((page.readPublicPage.mock.calls[1]![3] as { headers?: unknown }).headers).toBeUndefined()
+        // A value that is not a plausible token is never put in a header.
+        saved = 'bad token\r\nX-Injected: 1'
+        await read('/repos/acme/secret', signal())
+        expect((page.readPublicPage.mock.calls[2]![3] as { headers?: unknown }).headers).toBeUndefined()
+    })
+
+    it('reads a private repository only when the token was sent, and reports a refused token', async () => {
+        const github = fakeGithub({ 'acme/secret': { meta: { private: true, description: 'Internal tuner' }, files: { 'go.mod': 'module tuner' }, readme: '# Tuner' } })
+        const without = await readGithubRepository(ref('acme', 'secret'), github.read, signal())
+        expect(without).toMatchObject({ ok: false, failure: 'not_found' })
+        const withToken = await readGithubRepository(ref('acme', 'secret'), async (path, stop) => { const read = await github.read(path, stop); return read.ok ? { ...read, withToken: true } : read }, signal())
+        expect(withToken).toMatchObject({ ok: true, data: { id: 'acme/secret', description: 'Internal tuner' } })
+        const refused = await readGithubRepository(ref('acme', 'secret'), async () => ({ ok: true, status: 401, body: '{"message":"Bad credentials"}', withToken: true }), signal())
+        expect(refused).toMatchObject({ ok: false, failure: 'token_refused' })
+    })
+})

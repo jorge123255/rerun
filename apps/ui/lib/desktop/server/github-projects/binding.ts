@@ -9,6 +9,7 @@ import {
 } from '@rerun/contracts'
 import { confinedGithubReader } from '../../../../../engine/src/desktop/github-projects/index.ts'
 import { DesktopHttpError } from '../auth'
+import { desktopAuxiliaryStore } from '../auxiliary/store'
 import { ownedForemanChat } from '../foreman/chat-store'
 import type { DesktopRuntime } from '../runtime'
 import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
@@ -35,9 +36,11 @@ async function understand(runtime: DesktopRuntime, input: DesktopGithubProjectsE
 }
 
 /**
- * GitHub projects for one conversation. Only public repositories are read, without a credential:
- * the Vault attaches GitHub to coworkers, and has no path that makes a request on the owner's
- * behalf here, so none is invented. A private repository is reported and the others carry on.
+ * GitHub projects for one conversation. Public repositories are read without a credential. Private
+ * ones are read with the owner's read-only token from Settings, Tool services, when one is saved.
+ * The token is read here, in the app, for each request and sent to api.github.com only: it is not
+ * the Vault's GitHub sign-in (that one belongs to coworkers), and it never reaches the engine, a
+ * coworker or a model. A repository the token cannot see is reported and the others carry on.
  */
 export function desktopGithubProjects(runtime: DesktopRuntime, app: App, chat: DesktopForemanChatRef): DesktopGithubProjectsService {
     const permitted = async () => {
@@ -47,7 +50,7 @@ export function desktopGithubProjects(runtime: DesktopRuntime, app: App, chat: D
     }
     return createDesktopGithubProjectsService({
         store: createDesktopGithubProjectsStore(app.db),
-        read: confinedGithubReader(permitted),
+        read: confinedGithubReader(permitted, async () => (await desktopAuxiliaryStore(app.db).read('github-read')).key),
         model: async current => {
             try { return await app.modelChoice(current) }
             catch (error) {

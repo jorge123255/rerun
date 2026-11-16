@@ -6,24 +6,31 @@ import {
 } from '@rerun/contracts'
 import { readPublicPage } from '../web-fetch/transport.ts'
 
-// Reads public repositories from api.github.com as data. No credential is ever sent: a private
-// repository answers "not found" and is reported as such. Nothing is cloned, installed or run.
+// Reads repositories from api.github.com as data. Without a token only public repositories answer.
+// With the owner's read-only token (Settings, Tool services) the ones that token can see answer too.
+// The token is sent to api.github.com and nowhere else. Nothing is cloned, installed or run.
 
 export const GITHUB_API_HOST = 'api.github.com'
 
-export type GithubApiRead = { ok: true; status: number; body: string } | { ok: false; reason: 'timeout' | 'failed' | 'cancelled' }
+export type GithubApiRead = { ok: true; status: number; body: string; /** The owner's token was sent with this read. */ withToken?: boolean } | { ok: false; reason: 'timeout' | 'failed' | 'cancelled' }
 /** `path` always starts with `/repos/`. Tests supply this port and never open a socket. */
 export type GithubApiReader = (path: string, signal: AbortSignal) => Promise<GithubApiRead>
 
 /** The production reader: the app's guarded public fetch, pinned to api.github.com on every hop. */
-export function confinedGithubReader(assertPermission: () => Promise<void>): GithubApiReader {
+export function confinedGithubReader(assertPermission: () => Promise<void>, token?: () => Promise<string | null>): GithubApiReader {
     return async (path, parent) => {
         if (!path.startsWith('/repos/')) return { ok: false, reason: 'failed' }
         const timeout = AbortSignal.timeout(DESKTOP_GITHUB_PROJECT_LIMITS.requestDeadlineMs)
         const signal = AbortSignal.any([parent, timeout])
         try {
-            const page = await readPublicPage(`https://${GITHUB_API_HOST}${path}`, signal, assertPermission, { allowHost: host => host === GITHUB_API_HOST })
-            return { ok: true, status: page.status, body: page.body }
+            // Read fresh each time, so a token removed in Settings stops being sent at once.
+            const secret = token ? await token().catch(() => null) : null
+            const usable = secret && /^[\x21-\x7e]{20,400}$/.test(secret) ? secret : null
+            const page = await readPublicPage(`https://${GITHUB_API_HOST}${path}`, signal, assertPermission, {
+                allowHost: host => host === GITHUB_API_HOST,
+                ...(usable && { headers: { Authorization: `Bearer ${usable}`, 'X-GitHub-Api-Version': '2022-11-28' } }),
+            })
+            return { ok: true, status: page.status, body: page.body, ...(usable && { withToken: true }) }
         } catch {
             if (parent.aborted) return { ok: false, reason: 'cancelled' }
             return { ok: false, reason: timeout.aborted ? 'timeout' : 'failed' }
@@ -72,6 +79,7 @@ function fileText(body: string, max: number): string | null {
 
 function failureOf(read: GithubApiRead): DesktopGithubReadFailure | null {
     if (!read.ok) return read.reason === 'timeout' ? 'timeout' : 'failed'
+    if (read.status === 401) return 'token_refused'
     if (read.status === 404 || read.status === 451) return 'not_found'
     if (read.status === 403 || read.status === 429) return 'rate_limited'
     return read.status === 200 ? null : 'failed'
@@ -98,8 +106,8 @@ export async function readGithubRepository(
     if (failed || !meta.ok) return { ref, ok: false, failure: failed ?? 'failed' }
     const repository = json(meta.body) as Record<string, unknown> | null
     if (!repository || Array.isArray(repository) || typeof repository !== 'object') return { ref, ok: false, failure: 'failed' }
-    // No credential is sent, so this cannot be a private repository; if it ever says so it is not read.
-    if (repository.private === true) return { ref, ok: false, failure: 'not_found' }
+    // Without the owner's token this cannot be a private repository; if it ever says so it is not read.
+    if (repository.private === true && !meta.withToken) return { ref, ok: false, failure: 'not_found' }
 
     const listing = await request('/contents/')
     const entries = listing.ok && listing.status === 200 ? json(listing.body) : null

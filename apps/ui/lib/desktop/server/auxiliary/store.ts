@@ -4,7 +4,7 @@ import type { Client, Row } from '@libsql/client'
 import { desktopAuxiliaryChangeSchema, desktopAuxiliaryPurposes, type DesktopAuxiliaryPurpose, type DesktopAuxiliaryStatus } from '../../auxiliary'
 
 export const desktopAuxiliarySchema = `CREATE TABLE IF NOT EXISTS desktop_auxiliary_credentials (
- purpose TEXT PRIMARY KEY CHECK(purpose IN ('search','keirolabs-search','browser-use-search','keenable-search','embedding','local-embedding','transcription','elevenlabs-transcription')),
+ purpose TEXT PRIMARY KEY CHECK(purpose IN ('search','keirolabs-search','browser-use-search','keenable-search','embedding','local-embedding','transcription','elevenlabs-transcription','github-read')),
  revision TEXT NOT NULL, ciphertext TEXT);
 CREATE TABLE IF NOT EXISTS desktop_search_outcomes (
  identity TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
