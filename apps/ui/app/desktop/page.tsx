@@ -11,6 +11,7 @@ import { DesktopSpeechPrime } from '@/components/desktop/speech/DesktopSpeechPri
 import { desktopAuxiliaryStore } from '@/lib/desktop/server/auxiliary/store'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { readDesktopSpeechSettings } from '@/lib/desktop/server/speech'
+import { listDesktopUsageWaitKeys } from '@/lib/desktop/server/usage-waits'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,6 +26,8 @@ async function readPageData() {
             /(?:^| )RerunLocalDesktopMac\/1$/.test(requestHeaders.get('user-agent') ?? ''),
             // Whether replies can be read aloud, the voice and the automatic switch. Never the key.
             openDesktopDatabase(runtime.dataRoot).then(db => readDesktopSpeechSettings(db, desktopAuxiliaryStore(db))).catch(() => null),
+            // Messages kept from before a restart, waiting for their plan to reset.
+            listDesktopUsageWaitKeys(runtime).catch(() => []),
         ])
     } catch (error) {
         if (error instanceof DesktopHttpError) notFound()
@@ -33,6 +36,6 @@ async function readPageData() {
 }
 
 export default async function DesktopPage() {
-    const [bootstrap, language, mac, speech] = await readPageData()
-    return <>{mac && <DesktopMacTitleBar />}<DesktopSpeechPrime settings={speech} /><DesktopLocale initial={language}><DesktopApp initialData={bootstrap} /></DesktopLocale></>
+    const [bootstrap, language, mac, speech, usageWaits] = await readPageData()
+    return <>{mac && <DesktopMacTitleBar />}<DesktopSpeechPrime settings={speech} /><DesktopLocale initial={language}><DesktopApp initialData={bootstrap} usageWaits={usageWaits} /></DesktopLocale></>
 }

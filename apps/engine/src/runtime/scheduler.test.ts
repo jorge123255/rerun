@@ -32,6 +32,8 @@ const state = vi.hoisted(() => ({
     sessions: 0,
 }))
 
+// The usage gate keeps its rows in the coworker's database; these tests have none, which reads as nothing parked.
+vi.mock('../db/systemDb.js',()=>({getSystemDb:async()=>{throw new Error('no such table: desktop_schedule_usage_waits')}}))
 vi.mock('../desktop/policy.js',()=>({desktopApp:()=>state.desktop,assertDesktopProvider:()=>{}}))
 vi.mock('./desktop-schedule-state.js',()=>({replayDesktopSchedule:async(a:string,s:string,id:string)=>{const receipt=state.receipts[`${a}/${s}/${id}`];if(receipt==='incomplete')throw new Error('reconciliation required');return receipt ?? null},claimDesktopSchedule:async()=>true,recordDesktopSchedule:async(a:string,s:{slug:string},id:string,sessionId:string,runId:string)=>{state.receipts[`${a}/${s.slug}/${id}`]={sessionId,runId}},finishDesktopSchedule:async()=>{}}))
 vi.mock('../agents/availability.js', () => ({

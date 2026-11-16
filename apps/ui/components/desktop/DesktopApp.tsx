@@ -57,6 +57,8 @@ import type { DesktopCreationIntent } from '@/lib/desktop/new-agent'
 import type { DesktopBoardState } from '@/lib/desktop/spaces'
 import { useBoardActivity } from './useBoardActivity'
 import { useDesktopUpcomingRoutines } from './useDesktopUpcomingRoutines'
+import { useDesktopUsageWaitClock } from '@/lib/desktop/use-usage-wait'
+import type { DesktopUsageWaitKey } from '@/lib/desktop/server/usage-waits'
 import type { DesktopAttention } from '@/lib/desktop/attention'
 import { DesktopTemplateNavigation } from './templates/DesktopTemplateNavigation'
 import { DesktopControlCenter } from './DesktopControlCenter'
@@ -117,7 +119,7 @@ async function json<T>(response: Response): Promise<T> {
 
 const brainActions = createDesktopBrainPagesActions(countDesktopBrainProposals)
 
-export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
+export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBootstrap; usageWaits?: DesktopUsageWaitKey[] }) {
     const { t } = useDesktopLocale()
     const boardState = useDesktopBoardState(initialData.board)
     const [boardInteraction, setBoardInteraction] = useState(false)
@@ -146,6 +148,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     workspaceDialogLease.current = { active: workspaceDialogActive, workspaceId: runtimeWorkspaceId }
     const workspaceMounted = useRef(true)
     const importedCoworkerReads = useRef(new Map<string, Promise<{ agents: DesktopAgentView[]; imported: DesktopAgentView } | null>>())
+    // Messages waiting for a plan to reset are sent by the app's server; this is its clock.
+    useDesktopUsageWaitClock(usageWaits)
     useEffect(() => { workspaceMounted.current = true; return () => { workspaceMounted.current = false } }, [])
     useEffect(() => () => { workspaceDialogEpoch.current++; workspaceDialogLease.current.active = false }, [])
     useEffect(() => {

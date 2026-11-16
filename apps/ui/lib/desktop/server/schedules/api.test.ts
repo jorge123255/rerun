@@ -5,6 +5,7 @@ const engine = vi.hoisted(() => ({
     request: vi.fn(async (_engine: unknown, _path: string, _init: unknown, _parse: (value: unknown) => unknown): Promise<unknown> => { throw new Error('health unavailable') }),
     EngineRequestError: class EngineRequestError extends Error { constructor(message: string, readonly status: number) { super(message) } },
     createSchedule: vi.fn(), updateSchedule: vi.fn(), deleteSchedule: vi.fn(), listSchedules: vi.fn(), listRuns: vi.fn(), listLatestScheduleRuns: vi.fn(),
+    listScheduleUsageWaits: vi.fn(async () => ({ waiting: [] as unknown[], skipped: [] as unknown[] })),
     getAgent: vi.fn(async () => ({ id: 'engine-owner', config: { setup: { required: false, completedAt: null as string | null } }, install: '' })),
 }))
 vi.mock('server-only', () => ({}))
@@ -298,4 +299,34 @@ test('keeps the routine list when its health cannot be read', async () => {
     const response = await handle(new Request('http://localhost/schedules'))
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject([{ slug: 'daily', warnings: [], autoDisabledAt: null, lastResult: null }])
+})
+
+test('a routine parked until its plan resets is listed as waiting, and a skipped one with its reason', async () => {
+    engine.listSchedules.mockResolvedValueOnce([{ ...valid.input, slug: 'daily' }, { ...valid.input, slug: 'weekly' }, { ...valid.input, slug: 'plain' }])
+    engine.listLatestScheduleRuns.mockResolvedValueOnce([])
+    const wait = { slug: 'daily', plan: 'ChatGPT', parkedAt: '2026-11-16T10:00:00.000Z', resetsAt: '2026-11-16T15:00:00.000Z', nextCheckAt: '2026-11-16T15:00:30.000Z', skippedWhileWaiting: 1 }
+    const skip = { slug: 'weekly', at: '2026-11-16T10:00:00.000Z', reason: 'Skipped: ChatGPT was still out of usage after 24 hours.' }
+    engine.listScheduleUsageWaits.mockResolvedValueOnce({ waiting: [wait], skipped: [skip] })
+    const listed = await (await handle(new Request('http://localhost/api/desktop/coworkers/local-owner/schedules'))).json()
+    expect(listed).toMatchObject([{ slug: 'daily', usageWait: wait, lastResult: null }, { slug: 'weekly', usageSkip: skip }, { slug: 'plain' }])
+    expect(listed[2]).not.toHaveProperty('usageWait')
+})
+
+test('a parked routine keeps its limit warning, and an auto-disabled one its note, beside the waiting line', async () => {
+    vi.useRealTimers()
+    const run = { id: 'run-daily', agentId: 'engine-owner', triggerSlug: 'daily', triggerSource: 'schedule', status: 'done', startedAt: '2026-01-01' }
+    engine.listSchedules.mockResolvedValueOnce([{ ...valid.input, slug: 'daily' }, { ...valid.input, slug: 'broken', enabled: false }])
+    engine.listLatestScheduleRuns.mockResolvedValueOnce([run])
+    const wait = { slug: 'daily', plan: 'ChatGPT', parkedAt: '2026-11-16T10:00:00.000Z', resetsAt: '2026-11-16T15:00:00.000Z', nextCheckAt: '2026-11-16T15:00:30.000Z', skippedWhileWaiting: 0 }
+    engine.listScheduleUsageWaits.mockResolvedValueOnce({ waiting: [wait], skipped: [] })
+    engine.request.mockImplementationOnce(async (_engine: unknown, _path: string, _init: unknown, parse: (value: unknown) => unknown) => parse({ limit: 20, enabledInWorkspace: 21, routines: [
+        { slug: 'daily', warnings: ['cap'], consecutiveFailures: 3, autoDisabledAt: null, lastOutcome: { runId: 'run-daily', quiet: true, test: false, checklist: null } },
+        { slug: 'broken', warnings: [], consecutiveFailures: 0, autoDisabledAt: '2026-11-10T08:00:00.000Z', lastOutcome: null },
+    ] }))
+    vi.mocked(adoptDesktopScheduledSession).mockResolvedValue(null as never)
+    const rows = await (await handle(new Request('http://localhost/schedules'))).json() as Array<Record<string, unknown>>
+    // The waiting line replaces the last result on screen; the result itself and the warning are still sent.
+    expect(rows[0]).toMatchObject({ slug: 'daily', usageWait: wait, warnings: ['cap'], autoDisabledAt: null, lastResult: { runId: 'run-daily', outcome: { quiet: true } } })
+    expect(rows[1]).toMatchObject({ slug: 'broken', enabled: false, autoDisabledAt: '2026-11-10T08:00:00.000Z' })
+    expect(rows[1]).not.toHaveProperty('usageWait')
 })

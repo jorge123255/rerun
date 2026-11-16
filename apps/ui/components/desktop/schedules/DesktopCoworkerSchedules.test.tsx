@@ -362,6 +362,25 @@ test('warns about saved routines over a limit and says how a failing routine was
     expect(container.querySelector('[data-routine-auto-off]')).toBeNull()
 })
 
+test('a parked routine shows the waiting line in place of its last result, and keeps its warning', async () => {
+    const wait = { slug: 'parked', plan: 'ChatGPT', parkedAt: '2026-11-16T10:00:00.000Z', resetsAt: '2026-11-16T15:00:00.000Z', nextCheckAt: '2026-11-16T15:00:30.000Z', skippedWhileWaiting: 0 }
+    respond = async url => url.endsWith('/model') ? Response.json(modelView) : Response.json([
+        task('parked', { warnings: ['cap'], usageWait: wait, lastResult: resultOf({ quiet: true }) }),
+        task('quiet', { lastResult: resultOf({ quiet: true }) }),
+        task('broken', { enabled: false, autoDisabledAt: '2026-11-10T08:00:00.000Z' }),
+    ])
+    await render()
+    expect(row('Saved parked').textContent).toContain('Waiting for ChatGPT to reset at ')
+    expect(row('Saved parked').textContent).not.toContain('Last result')
+    expect(row('Saved parked').textContent).not.toContain('Nothing to report')
+    expect(row('Saved parked').textContent).toContain('Over limit')
+    // The rows beside it are as they were.
+    expect(row('Saved quiet').textContent).toContain('Last result: Done · Nothing to report')
+    expect(row('Saved broken').textContent).toContain('Turned off after failures')
+    await act(async () => { row('Saved parked').click() })
+    expect(container.querySelector('[data-routine-warning="cap"]')?.textContent).toContain('more than 20 routines turned on')
+})
+
 test('says in the editor how a routine switched off after failures is turned back on', async () => {
     respond = async url => url.endsWith('/model') ? Response.json(modelView) : Response.json([task('broken', { enabled: false, autoDisabledAt: '2026-11-10T08:00:00.000Z' })])
     await render()

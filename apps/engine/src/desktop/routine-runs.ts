@@ -122,6 +122,18 @@ export async function settleDesktopRoutineRun(terminal: DesktopRoutineTerminal):
     })
 }
 
+/**
+ * Whether repeated failures switched this routine off at or after `since`. The usage gate asks
+ * before it runs a parked routine again; an older stamp is from before the routine was turned back on.
+ * Reads only: the failure count and the stamp are left as they are.
+ */
+export async function desktopRoutineAutoDisabledSince(agentId: string, slug: string, since: string): Promise<boolean> {
+    const client = await db(agentId)
+    const row = (await client.execute({ sql: 'SELECT auto_disabled_at FROM desktop_routine_health WHERE schedule_slug = ?', args: [slug] })).rows[0]
+    const at = typeof row?.auto_disabled_at === 'string' ? Date.parse(row.auto_disabled_at) : NaN
+    return at >= Date.parse(since)
+}
+
 export type DesktopRoutineHealthRow = { consecutiveFailures: number; autoDisabledAt: string | null; lastOutcome: (DesktopRoutineRunOutcome & { runId: string }) | null }
 
 /** Health of each named routine. `enabled` clears a stale "switched off" stamp once the person turns it back on. */

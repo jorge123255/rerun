@@ -22,6 +22,9 @@ import { logger } from '../lib/logger.js'
 
 import { desktopApp, assertDesktopProvider } from '../desktop/policy.js'
 import { claimDesktopSchedule, recordDesktopSchedule, finishDesktopSchedule, replayDesktopSchedule } from './desktop-schedule-state.js'
+import { DesktopPlanOutError, UsageWaitError, clearUsageWait, gateScheduledStart, listUsageWaits, markUsageWaitRunning, noteStillWaiting, parkSchedule, settleUsageWait, usageWaitDue, type UsageGateTarget, type UsageWait } from '../desktop/usage-gate.js'
+import { resolveRunModel } from '../agents/availability.js'
+import { desktopRoutineAutoDisabledSince } from '../desktop/routine-runs.js'
 
 type DesktopScheduleHooks = {
     /** Read CURRENT coworker identity, enabled state and explicit schedule grant; throw if unavailable. */
@@ -30,6 +33,8 @@ type DesktopScheduleHooks = {
     adopt: (agentId:string,sessionId:string,runId:string|null,title:string) => Promise<void>
     /** The pair a Rerun preset means for this coworker now; null when no preset decides it. */
     model?: (agentId:string) => Promise<{connectionId:string;model:string}|null>
+    /** The owner's backup model, when it may run work whose plan is out of usage; else null. */
+    backup?: (agentId:string,outConnectionId:string) => Promise<{connectionId:string;model:string;note:string}|null>
 }
 let desktopHooks:DesktopScheduleHooks|undefined
 export function configureDesktopSchedules(hooks:DesktopScheduleHooks) {desktopHooks=hooks}
@@ -40,7 +45,9 @@ export async function stopScheduledAdmissions():Promise<void> {
     stopped=true;generation++
     await Promise.allSettled([...preparing])
 }
-type FireOptions={markFired?:boolean;ignoreBudgetLatch?:boolean;manualId?:string;assertActive?:()=>void}
+type FireOptions={markFired?:boolean;ignoreBudgetLatch?:boolean;manualId?:string;assertActive?:()=>void
+    /** A parked routine being run again by the usage gate. Carries its own occurrence identity. */
+    usageResume?:boolean}
 const TICK_MS = 30_000
 
 const inFlight = new Map<string, Promise<{ runId: string; sessionId: string }>>()
@@ -85,8 +92,11 @@ export function fireSchedule(agentId: string, schedule: Schedule, opts?: FireOpt
 }
 
 async function launchScheduledRun(agentId: string, schedule: Schedule, key: string, opts?: FireOptions): Promise<{ runId: string; sessionId: string }> {
-    let claimed=false, launched=false
+    let claimed=false, launched=false, resuming=false
     const manualId=opts?.markFired===false ? opts.manualId : undefined
+    // A run the owner starts by hand is theirs to watch: it is never parked.
+    const gated=desktopApp() && (opts?.markFired!==false || opts.usageResume===true)
+    let gateTarget:UsageGateTarget|null=null
     try {
         const check=()=>opts?.assertActive?.()
         const authorize=async()=>{
@@ -117,9 +127,39 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
         // tick after the latch clears, with no session, no run and no notification in the meantime.
         // Only the managed provider burns the workspace budget, so an agent on its own key still fires.
         // A model saved on the routine wins. Otherwise a Rerun preset, when one decides this coworker.
-        const pinned=desktopApp()?await resolveDesktopScheduleModel(agent,schedule) ?? await resolveDesktopPresetModel(agent,await desktopHooks?.model?.(agentId)):undefined;check()
-        const override = pinned ?? await automationModel(agent, desktopApp() ? {...schedule,connectionId:null,provider:null,model:null} : schedule, 'schedule');check()
+        const presetPick=async()=>{
+            try {return await desktopHooks?.model?.(agentId)}
+            catch(error) {
+                // A Rerun preset with no plan left: the routine waits for the plan instead of failing.
+                if(!gated || !(error instanceof DesktopPlanOutError))throw error
+                check()
+                const parked=await parkSchedule(agentId,schedule.slug,error.target,error.resetsAt,new Date());check()
+                if(opts?.markFired!==false)await consumeDesktopSchedule(agentId,schedule,nowIso())
+                throw new UsageWaitError(parked.text)
+            }
+        }
+        let pinned=desktopApp()?await resolveDesktopScheduleModel(agent,schedule) ?? await resolveDesktopPresetModel(agent,await presetPick()):undefined;check()
+        let override = pinned ?? await automationModel(agent, desktopApp() ? {...schedule,connectionId:null,provider:null,model:null} : schedule, 'schedule');check()
         if(desktopApp())assertDesktopProvider(override.provider ?? agent.resolved.provider,override.connectionId ?? agent.resolved.connection?.id)
+        if(gated) {
+            const target=await resolveRunModel(agent,override);check()
+            gateTarget=target.connection ? {connectionId:target.connection.id,plan:target.connection.config?.name ?? target.provider,provider:target.provider} : null
+            const gate=await gateScheduledStart({agentId,slug:schedule.slug,target:gateTarget,now:new Date(),backup:async out=>{
+                const pick=await desktopHooks?.backup?.(agentId,out.connectionId)
+                const backup=await resolveDesktopPresetModel(agent,pick)
+                return backup?.connectionId && backup.provider && backup.model ? {override:{connectionId:backup.connectionId,provider:backup.provider,model:backup.model},note:pick!.note} : null
+            }});check()
+            if(gate.kind==='backup') {
+                // The owner's backup answers. It is the exact pair they picked, so it is held to it.
+                override=pinned=gate.override as typeof override
+                assertDesktopProvider(override.provider ?? agent.resolved.provider,override.connectionId)
+                gateTarget=null
+                logger.info({agent:agentId,schedule:schedule.slug,note:gate.note},'scheduled run on the backup model')
+            } else if(gate.kind!=='run') {
+                if(opts?.markFired!==false)await consumeDesktopSchedule(agentId,schedule,nowIso())
+                throw new UsageWaitError(gate.text)
+            }
+        }
         await authorize();check()
         const latest=await readSchedule(agentId,schedule.slug);check()
         if(JSON.stringify(latest)!==JSON.stringify(schedule))throw new Error('Task changed during preparation')
@@ -145,6 +185,7 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
             else {await markFired(agentId,schedule.slug,nowIso());expectedSchedule=await readSchedule(agentId,schedule.slug)}
         }
         check();await authorize();check()
+        if(opts?.usageResume) {await markUsageWaitRunning(agentId,schedule.slug);resuming=true;check()}
         const session = await createSession(agentId, `schedule: ${schedule.slug}`, undefined, 'schedule')
         check()
         if(desktopApp()) {await desktopHooks!.adopt(agentId,session.id,null,schedule.name);check()}
@@ -167,16 +208,17 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
         }
         await beforeLaunch();check()
         // On the Mac the saved text goes to the model inside the firing frame, and Run now is marked a test.
-        const firing = desktopApp() ? { test: opts?.markFired === false } : undefined
+        // A parked routine run again at reset is its scheduled firing, not a test: it reports and counts as one.
+        const firing = desktopApp() ? { test: opts?.markFired === false && opts.usageResume !== true } : undefined
         const routine = firing && { parts: routineParts(schedule.body.trim()), test: firing.test }
-        const { runId, settled } = await startHeadlessRun(agent, session.id, buildScheduledRunMessage(schedule, firing), override, { source: 'schedule', slug: schedule.slug, name: schedule.name, ...(pinned && { requireExactModel: true }), ...(routine && { routine }) }, {beforeLaunch,assertActive:check})
+        const { runId, settled } = await startHeadlessRun(agent, session.id, buildScheduledRunMessage(schedule, firing), override, { source: 'schedule', slug: schedule.slug, name: schedule.name, ...(pinned && { requireExactModel: true }), ...(gateTarget && { usageGate: gateTarget }), ...(routine && { routine }) }, {beforeLaunch,assertActive:check})
 
         launched=true
         // Install settlement tracking BEFORE post-launch callbacks, so failures cannot strand admission.
         void settled.then(outcome => {
             if (outcome.kind === 'error') logger.error({ agent: agentId, schedule: schedule.slug, err: String(outcome.error) }, 'scheduled run failed')
         }).finally(async () => {
-            try { if (desktopApp()) await finishDesktopSchedule(agentId, schedule, manualId) }
+            try { if (desktopApp()) { await finishDesktopSchedule(agentId, schedule, manualId); if(gated) await settleUsageWait(agentId, schedule.slug) } }
             finally { inFlight.delete(key) }
         }).catch(error => logger.error({ agent: agentId, schedule: schedule.slug, err: String(error) }, 'schedule settlement persistence failed'))
         check()
@@ -188,9 +230,55 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
     } catch (err) {
         if(!launched) {
             if(claimed)await finishDesktopSchedule(agentId,schedule,manualId)
+            // A resumed run that could not start goes back to waiting, inside the same 24 hours.
+            if(resuming) {
+                const wait=await readUsageWaitQuietly(agentId,schedule.slug)
+                if(wait)await parkSchedule(agentId,schedule.slug,wait,wait.resetsAt,new Date()).catch(()=>{})
+            }
             inFlight.delete(key)
         }
         throw err
+    }
+}
+
+const BACKUP_ASK_MS=5*60_000
+const backupAsked=new Map<string,number>()
+async function readUsageWaitQuietly(agentId:string,slug:string):Promise<UsageWait|null> {
+    return (await listUsageWaits(agentId).catch(()=>[])).find(wait=>wait.slug===slug) ?? null
+}
+
+/** One look at a parked routine: skip a new firing, or run it again when its plan may answer. */
+async function attendUsageWait(agentId:string,schedule:Schedule,wait:UsageWait,now:Date,assertActive:()=>void):Promise<void> {
+    try {
+        // Ten failed runs in a row switched this routine off after it was parked: the owner turns it
+        // back on, the gate never does. Nothing is left waiting, and the failure count is not touched.
+        if(!schedule.enabled && await desktopRoutineAutoDisabledSince(agentId,schedule.slug,wait.parkedAt)) {
+            await clearUsageWait(agentId,schedule.slug)
+            logger.info({agent:agentId,schedule:schedule.slug},'parked scheduled run dropped: routine switched off after repeated failures')
+            return
+        }
+        if(isDue(schedule,now)) {
+            await consumeDesktopSchedule(agentId,schedule,nowIso())
+            logger.info({agent:agentId,schedule:schedule.slug},await noteStillWaiting(agentId,schedule.slug))
+            return
+        }
+        const key=`${agentId}/${schedule.slug}`
+        if(wait.state!=='waiting' || inFlight.has(key))return
+        if(!usageWaitDue(wait,now)) {
+            // Not time yet. Every few minutes, see whether the owner's backup model can run it now.
+            if(now.getTime()-(backupAsked.get(key) ?? 0)<BACKUP_ASK_MS)return
+            backupAsked.set(key,now.getTime())
+            if(!await desktopHooks?.backup?.(agentId,wait.connectionId))return
+        }
+        await fireSchedule(agentId,schedule,{markFired:false,usageResume:true,manualId:`usage:${wait.parkedAt}:${now.getTime()}`,assertActive})
+    } catch(err) {
+        if(err instanceof UsageWaitError)logger.info({agent:agentId,schedule:schedule.slug,reason:err.message},'scheduled run still waiting for its plan')
+        else {
+            // It could not even start (the routine changed, the grant is gone). Look again later,
+            // inside the same 24 hours, rather than on every tick.
+            logger.error({agent:agentId,schedule:schedule.slug,err:String(err)},'parked scheduled run could not resume')
+            await parkSchedule(agentId,schedule.slug,wait,wait.resetsAt,new Date()).catch(()=>{})
+        }
     }
 }
 
@@ -198,6 +286,10 @@ async function fire(agentId: string, schedule: Schedule, assertActive:()=>void):
     try {
         await fireSchedule(agentId, schedule,{assertActive})
     } catch (err) {
+        if (err instanceof UsageWaitError) {
+            logger.info({ agent: agentId, schedule: schedule.slug, reason: err.message }, 'scheduled run parked: plan out of usage')
+            return
+        }
         if (err instanceof HttpError && err.status === 402) {
             logger.debug({ agent: agentId, schedule: schedule.slug }, 'scheduled run skipped: rerun budget latched')
             return
@@ -240,8 +332,18 @@ async function tick(assertActive:()=>void): Promise<void> {
             continue
         }
         assertActive()
+        const waits = desktopApp() ? await listUsageWaits(agentId).catch(() => []) : []
+        // A routine the owner deleted or paused is no longer waiting for anything. A one-shot
+        // routine switches itself off when it fires, so it stays parked.
+        for (const wait of waits) {
+            const owner = schedules.find(schedule => schedule.slug === wait.slug)
+            if (!owner || (!owner.enabled && !owner.runAt)) await clearUsageWait(agentId, wait.slug).catch(() => {})
+        }
+        assertActive()
         for (const schedule of schedules) {
-            if (isDue(schedule, now)) void fire(agentId, schedule,assertActive)
+            const wait = waits.find(item => item.slug === schedule.slug)
+            if (wait && (schedule.enabled || schedule.runAt)) void attendUsageWait(agentId, schedule, wait, now, assertActive)
+            else if (isDue(schedule, now)) void fire(agentId, schedule,assertActive)
         }
     }
 }

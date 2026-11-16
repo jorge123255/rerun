@@ -17,6 +17,7 @@ import { ensureCliAuth } from '../connections/cli-auth.js'
 import { syncCodexAuth } from '../connections/codex-auth.js'
 import { forgetCredentialRejected, recordCredentialRejected } from '../connections/credential-rejections.js'
 import { refreshCodexPlanLimits } from '../connections/codex-plan-limits.js'
+import { parkRefusedScheduledRun } from '../desktop/usage-gate.js'
 import { buildSystemPrompt, nowBlock, recallMemories, recallSection, systemPromptText, userLanguageBlock } from '../agents/systemPrompt.js'
 import type { LoadedAgent } from '../agents/types.js'
 import { turnOrder } from '../agents/turn-order.js'
@@ -376,8 +377,18 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             // The token is still on file, so the connection would keep reading "Ready" while every
             // run on it fails. The keyless Rerun connection answers for the hub's key, not the user's.
             if (errorCode === RUN_ERROR_CODES.unauthorized && connection && connection.id !== RERUN_CONNECTION_ID) recordCredentialRejected(connection.id)
-            await failRun(agent.id, run.id, errorMessage).catch(() => {})
-            outcome = { kind: 'error', error: errorMessage, errorCode }
+            // A routine whose plan ran out waits for the plan: the run is stopped, not failed, and
+            // its conversation says what it is waiting for. The scheduler runs it again at reset.
+            const parked = desktopApp() && trigger.source === 'schedule' && trigger.usageGate && errorCode === RUN_ERROR_CODES.usageLimit
+                ? await parkRefusedScheduledRun({ agentId: agent.id, slug: trigger.slug, target: trigger.usageGate, error: errorMessage }).catch(() => null) : null
+            if (parked) {
+                await appendMessage(agent.id, sessionId, { role: 'assistant', content: parked }).catch(() => {})
+                await cancelRun(agent.id, run.id).catch(() => {})
+                outcome = { kind: 'cancelled' }
+            } else {
+                await failRun(agent.id, run.id, errorMessage).catch(() => {})
+                outcome = { kind: 'error', error: errorMessage, errorCode }
+            }
         }
 
         if (!foremanAlternate) await setAgentStatus(agent.id, 'idle').catch(() => {})
