@@ -29,6 +29,8 @@ const target = { id: z.uuid(), revision: z.uuid() }
 export const desktopVaultHealthTarget = z.strictObject(target)
 export const desktopVaultHealthReceipt = desktopServiceHealthSchema.extend({ state: z.enum(['healthy', 'error', 'disconnected']), checkedAt: z.iso.datetime(), credentialExpiresAt: z.iso.datetime().optional(), credentialRejected: z.literal(true).optional() })
 export type DesktopVaultHealthReceipt = z.infer<typeof desktopVaultHealthReceipt>
+/** What a connection check says when the saved browser sign-in has run out. The Vault's badge reads it. */
+export const desktopVaultSignInExpiredMessage = 'The saved sign-in expired. Reconnect to check this account.'
 const sharing = { agentIds: z.array(z.uuid()).max(250), sharedWithAll: z.boolean() }
 
 export const desktopVaultMutation = z.discriminatedUnion('operation', [
