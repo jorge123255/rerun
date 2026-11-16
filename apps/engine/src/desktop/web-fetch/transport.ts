@@ -64,9 +64,14 @@ function connect(url: URL, destination: { address: string; family: number }, sig
     })
 }
 
-export async function readPublicPage(value: string, signal: AbortSignal, assertPermission: () => Promise<void>): Promise<PublicPage> {
+/**
+ * `allowHost` pins every hop, redirects included, to hosts the caller names: a read that is meant
+ * for one service is refused before any request leaves for another.
+ */
+export async function readPublicPage(value: string, signal: AbortSignal, assertPermission: () => Promise<void>, options?: { allowHost?: (hostname: string) => boolean }): Promise<PublicPage> {
     let url = publicUrl(value)
     for (let hop = 0; ; hop++) {
+        if (options?.allowHost && !(url.protocol === 'https:' && options.allowHost(url.hostname.toLowerCase()))) throw new Error('Not a public host this read is allowed to reach')
         await abortable(assertPermission(), signal)
         const destination = await abortable(publicDestination(url), signal)
         await abortable(assertPermission(), signal)

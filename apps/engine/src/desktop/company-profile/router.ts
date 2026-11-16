@@ -1,11 +1,12 @@
 import { Hono } from 'hono'
 import { ZodError } from 'zod'
-import { desktopCompanyProfileEngineDecideInputSchema, desktopCompanyProfileEngineEnrichInputSchema } from '@rerun/contracts'
+import { desktopCompanyProfileEngineDecideInputSchema, desktopCompanyProfileEngineEnrichInputSchema, desktopGithubProjectsEngineInputSchema } from '@rerun/contracts'
 import { HttpError } from '../../lib/errors.js'
 import { desktopApp } from '../policy.js'
 import { decideCompanyIndustry } from './classifier.ts'
 import { openDesktopCompanyProfileInferenceAdapter, type CompanyProfileInferenceAdapter } from './model.ts'
 import { inferCompanyProfile } from './profile.ts'
+import { understandGithubProjects } from '../github-projects/understand.ts'
 
 export function createDesktopCompanyProfileRouter(adapter: CompanyProfileInferenceAdapter = openDesktopCompanyProfileInferenceAdapter()): Hono {
     const app = new Hono()
@@ -26,6 +27,12 @@ export function createDesktopCompanyProfileRouter(adapter: CompanyProfileInferen
     )))
     app.post('/enrich', async c => c.json(await inferCompanyProfile(
         desktopCompanyProfileEngineEnrichInputSchema.parse(await readBody(c.req.raw)),
+        adapter,
+        { signal: c.req.raw.signal },
+    )))
+    // The intake's GitHub projects: the same model, the same rules, repository text as data only.
+    app.post('/projects', async c => c.json(await understandGithubProjects(
+        desktopGithubProjectsEngineInputSchema.parse(await readBody(c.req.raw)),
         adapter,
         { signal: c.req.raw.signal },
     )))

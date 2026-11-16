@@ -33,6 +33,18 @@ describe('bounded transport with mocked sockets, no network', () => {
         await expect(readPublicPage('https://example.com/', signal(), async () => {})).rejects.toThrow('public addresses')
         expect(mocks.request).toHaveBeenCalledTimes(1)
     })
+    it('a host pin refuses another host before any request, on the first hop and on a redirect', async () => {
+        const allowHost = (host: string) => host === 'api.github.com'
+        await expect(readPublicPage('https://example.com/', signal(), async () => {}, { allowHost })).rejects.toThrow('allowed to reach')
+        await expect(readPublicPage('http://api.github.com/repos/a/b', signal(), async () => {}, { allowHost })).rejects.toThrow('allowed to reach')
+        expect(mocks.request).not.toHaveBeenCalled()
+        reply(302, { location: 'https://evil.example/steal' })
+        await expect(readPublicPage('https://api.github.com/repos/a/b', signal(), async () => {}, { allowHost })).rejects.toThrow('allowed to reach')
+        expect(mocks.request).toHaveBeenCalledTimes(1)
+        reply(301, { location: '/repositories/42' })
+        reply(200, { 'content-type': 'application/json; charset=utf-8' }, [Buffer.from('{}')])
+        expect((await readPublicPage('https://api.github.com/repos/a/b', signal(), async () => {}, { allowHost })).url).toBe('https://api.github.com/repositories/42')
+    })
     it('rejects mixed DNS answers', async () => {
         mocks.lookup.mockResolvedValue([{ address: '8.8.8.8', family: 4 }, { address: '10.0.0.1', family: 4 }])
         await expect(readPublicPage('https://example.com/', signal(), async () => {})).rejects.toThrow()

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { TooltipDisabledReason } from '@/components/ui/tooltip'
 import { ArrowRight } from '@/lib/icons'
 import type { DesktopForemanIntakeController } from '@/lib/desktop/foreman-intake'
+import type { DesktopIntakeGithubController } from '@/lib/desktop/foreman-intake/use-desktop-intake-github'
 import { cn } from '@/lib/utils'
 import { DesktopAnimatedHeight } from './DesktopAnimatedHeight'
 import { DesktopIntakeChoiceStep } from './DesktopIntakeChoiceStep'
@@ -28,10 +29,13 @@ const STEP_MOTION = {
  */
 export function DesktopForemanIntakeCard({
     intake,
+    github,
     autoFocus = true,
     className,
 }: {
     intake: DesktopForemanIntakeController
+    /** GitHub projects as a second answer to the first question; absent where it is not offered. */
+    github?: DesktopIntakeGithubController
     autoFocus?: boolean
     className?: string
 }) {
@@ -68,7 +72,12 @@ export function DesktopForemanIntakeCard({
     const busy = submitting || finished || quitting
     const fieldsDisabled = busy || locked
     const platform = platformHost(draft.companyUrl)
-    const skippable = step === 'company' && (!draft.companyUrl.trim() || !!platform)
+    const withoutSite = step === 'company' && (!draft.companyUrl.trim() || !!platform)
+    // GitHub projects answer the first question on their own: the website is passed over, as Skip
+    // does, and the projects in the field are read if they have not been yet.
+    const projectsOnly = withoutSite && !!github?.open && github.count > 0
+    const skippable = withoutSite && !projectsOnly
+    const leaveCompany = (go: () => void) => () => { if (step === 'company') github?.commit(); go() }
     const motionProps = still
         ? { initial: false, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: 0 } }
         : STEP_MOTION
@@ -88,7 +97,7 @@ export function DesktopForemanIntakeCard({
                 <AnimatePresence mode="popLayout" initial={false}>
                     <motion.div key={step} {...motionProps}>
                         {step === 'company' && (
-                            <DesktopIntakeCompanyStep draft={draft} siteRead={siteRead} platform={platform} disabled={fieldsDisabled} autoFocus={autoFocus} onChange={set} onEnter={next} />
+                            <DesktopIntakeCompanyStep draft={draft} siteRead={siteRead} platform={platform} disabled={fieldsDisabled} autoFocus={autoFocus} onChange={set} onEnter={leaveCompany(projectsOnly ? skipWebsite : next)} github={github} />
                         )}
                         {step === 'industry' && (
                             <DesktopIntakeIndustryStep draft={draft} disabled={fieldsDisabled} autoFocus={autoFocus} onChange={set} onChoose={chooseIndustry} onEnter={next} />
@@ -128,12 +137,12 @@ export function DesktopForemanIntakeCard({
             <div className="flex shrink-0 items-center justify-between gap-2 px-1">
                 <StepDots count={steps.length} current={index} answered={answered} reachable={reachable} onSelect={goTo} disabled={fieldsDisabled} />
                 {skippable && !canRetry ? (
-                    <Button size="sm" disabled={fieldsDisabled} onClick={skipWebsite} data-intake="skip" className="max-sm:h-9 max-sm:px-3 max-sm:text-sm">
+                    <Button size="sm" disabled={fieldsDisabled} onClick={leaveCompany(skipWebsite)} data-intake="skip" className="max-sm:h-9 max-sm:px-3 max-sm:text-sm">
                         Skip
                     </Button>
                 ) : (
-                    <TooltipDisabledReason reason={!busy && !canAdvance && !canRetry ? 'Answer this step to continue' : undefined}>
-                        <Button size="sm" disabled={busy || !canRetry && !canAdvance} onClick={next} data-intake="next" className="max-sm:h-9 max-sm:px-3 max-sm:text-sm">
+                    <TooltipDisabledReason reason={!busy && !canAdvance && !canRetry && !projectsOnly ? 'Answer this step to continue' : undefined}>
+                        <Button size="sm" disabled={busy || !canRetry && !canAdvance && !projectsOnly} onClick={leaveCompany(projectsOnly && !canRetry ? skipWebsite : next)} data-intake="next" className="max-sm:h-9 max-sm:px-3 max-sm:text-sm">
                             {canRetry ? 'Retry' : 'Next'}
                             <ArrowRight data-icon="inline-end" className="size-4" />
                         </Button>
