@@ -222,7 +222,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     }
     // Existing chats resolve their own saved model. Only a first send carries an unsaved choice.
     const firstChoice = !regenerate && !existing ? input.modelChoice : undefined
-    const { connectionId, model, presetNote } = replay ? {} as { connectionId?: string; model?: string; presetNote?: string } : await resolveDesktopChatModel(runtime, agent, existing, firstChoice)
+    const { connectionId, model, presetNote } = replay ? {} as { connectionId?: string; model?: string; presetNote?: string } : await resolveDesktopChatModel(runtime, agent, existing, firstChoice, { usageGate: true })
     const images = attachmentPaths.filter((item): item is Exclude<typeof item, string> => typeof item !== 'string')
     const files = !replay && !regenerate ? await readDesktopAttachments(runtime, agent.id,
         attachmentPaths.filter((item): item is string => typeof item === 'string')) : []

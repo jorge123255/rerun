@@ -8,6 +8,7 @@ import { HttpError } from '../lib/errors.js'
 import { configureDesktopSchedules } from '../runtime/scheduler.js'
 import { desktopScheduleOccurrenceSchema, recoverDesktopScheduleClaims } from '../runtime/desktop-schedule-state.js'
 import { beginDesktopAgentWork, desktopDeletionPending } from './agent-lifecycle.js'
+import { DesktopPlanOutError, initializeUsageGate } from './usage-gate.js'
 
 const initialized = new Map<string, Promise<void>>()
 
@@ -23,6 +24,7 @@ export function initializeDesktopScheduleOwner(agentId: string): Promise<void> {
             const { client } = await getSystemDb(agentId)
             await client.executeMultiple(desktopScheduleOccurrenceSchema)
             await recoverDesktopScheduleClaims(agentId)
+            await initializeUsageGate(agentId)
         } finally { release() }
     })().catch(error => { initialized.delete(key); throw error })
     initialized.set(key, opening)
@@ -31,7 +33,13 @@ export function initializeDesktopScheduleOwner(agentId: string): Promise<void> {
 
 type Runtime = { app: { origin: string }; engine: { apiKey: string } }
 const ack = z.object({ ok: z.literal(true), persisted: z.literal(true) })
-const presetAnswer = z.object({ model: z.object({ connectionId: z.string().min(1).max(200), model: z.string().min(1).max(200) }).nullable(), unavailable: z.string().max(500).optional() })
+const pick = z.object({ connectionId: z.string().min(1).max(200), model: z.string().min(1).max(200) })
+const presetAnswer = z.object({
+    model: pick.nullable(), unavailable: z.string().max(500).optional(),
+    // Set when the preset has nothing to run on only because its plan is out of usage.
+    waiting: z.object({ connectionId: z.string().min(1).max(200), plan: z.string().min(1).max(200), provider: z.string().min(1).max(100), resetsAt: z.string().max(64).nullable() }).optional(),
+})
+const backupAnswer = z.object({ model: pick.extend({ note: z.string().max(500) }).nullable() })
 const TIMEOUT_MS = 5_000
 const MAX_ACK_BYTES = 4_096
 
@@ -108,7 +116,16 @@ export async function bindDesktopSchedules(runtime: Runtime) {
             active()
             const answer = presetAnswer.parse(await callback(runtime, { event: 'desktop.schedule.model', agentId }, stop.signal))
             active()
+            if (answer.unavailable && answer.waiting) throw new DesktopPlanOutError(answer.unavailable, answer.waiting, answer.waiting.resetsAt)
             if (answer.unavailable) throw new HttpError(409, answer.unavailable)
+            return answer.model
+        },
+        // The backup model lives in the app's settings. It answers only with the pair the owner
+        // picked, and only when that pair may run now.
+        backup: async (agentId: string, outConnectionId: string) => {
+            active()
+            const answer = backupAnswer.parse(await callback(runtime, { event: 'desktop.schedule.backup', agentId, outConnectionId }, stop.signal))
+            active()
             return answer.model
         },
         adopt: async (agentId: string, sessionId: string, runId: string | null, title: string) => {

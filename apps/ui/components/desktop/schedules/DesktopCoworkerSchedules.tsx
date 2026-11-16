@@ -1,7 +1,7 @@
 'use client'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { EngineSchedule } from '@/lib/engine/types'
-import type { DesktopWorkspaceRoutineChat } from '@rerun/contracts'
+import { desktopUsageWaitText, type DesktopRoutineUsageSkip, type DesktopRoutineUsageWait, type DesktopWorkspaceRoutineChat } from '@rerun/contracts'
 import { formatDate } from '@rerun/i18n/format'
 import { ScheduleRequestError, scheduleRequest } from '@/lib/desktop/schedules/client'
 import { DesktopScheduleHistory } from './DesktopScheduleHistory'
@@ -33,7 +33,12 @@ import { DesktopTaskNotifyField } from '../DesktopTaskNotifyField'
 import { useDesktopLocale } from '../DesktopLocale'
 
 type Chat = DesktopWorkspaceRoutineChat
-type Task=EngineSchedule & {setupPending:boolean;nextRunAt:string|null;lastResult:{status:string;runId:string;chat:Chat}|null}
+type Task=EngineSchedule & {setupPending:boolean;nextRunAt:string|null;lastResult:{status:string;runId:string;chat:Chat}|null;usageWait?:DesktopRoutineUsageWait|null;usageSkip?:DesktopRoutineUsageSkip|null}
+/** A routine parked because its plan ran out says what it waits for; one skipped after a day says why. */
+export function usageLine(task:Pick<Task,'usageWait'|'usageSkip'>,format:(iso:string)=>string):string|null {
+    if(task.usageWait)return desktopUsageWaitText(task.usageWait.plan,task.usageWait.resetsAt,format)+(task.usageWait.skippedWhileWaiting ? ` · ${task.usageWait.skippedWhileWaiting} later ${task.usageWait.skippedWhileWaiting===1 ? 'run' : 'runs'} skipped while waiting` : '')
+    return task.usageSkip ? task.usageSkip.reason : null
+}
 function resultLabel(status: string | undefined, t: ReturnType<typeof useDesktopLocale>['t']) {
     if (!status) return t('routines.coworker.notRun')
     if (status === 'running' || status === 'done' || status === 'error' || status === 'cancelled') return t(`routines.status.${status}`)
@@ -85,7 +90,7 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
             {tasks && tasks.length > 0 && <PanelScroller><PanelList>{tasks.map(task => <div key={task.slug}>
                 <PanelRow onClick={() => navigate(task)} title={task.name} description={desktopScheduleSummary(task, t, locale)}
                     meta={!task.enabled ? <Badge size="xs" tone="neutral" glow={false}>{t('routines.coworker.paused')}</Badge> : undefined}
-                    footer={<span>{t('routines.coworker.nextRun', { date: task.nextRunAt ? formatDate(task.nextRunAt, locale) : '—' })} · {t('routines.lastResult', { status: resultLabel(task.lastResult?.status, t) })}</span>} />
+                    footer={<span>{t('routines.coworker.nextRun', { date: task.nextRunAt ? formatDate(task.nextRunAt, locale) : '—' })} · {usageLine(task, iso => formatDate(iso, locale)) ?? t('routines.lastResult', { status: resultLabel(task.lastResult?.status, t) })}</span>} />
                 {task.lastResult?.chat && <Button size="sm" variant="ghost" onClick={() => onOpenSession(task.lastResult!.chat)}>{t('routines.openResult')}</Button>}
             </div>)}</PanelList></PanelScroller>}
             <p className="p-3 text-xs text-muted-foreground">{t('routines.coworker.scheduleHelp')}</p>

@@ -36,6 +36,8 @@ import { ArrowUpIcon, ChevronDownIcon, Maximize2Icon, PlusIcon, SendIcon, Square
 import { MarkdownEditorDialog } from '@/components/ui/markdown-editor-dialog'
 import { DesktopConversationFind } from './DesktopConversationFind'
 import { DesktopProviderErrorNotice } from './chat/recovery/DesktopProviderErrorNotice'
+import { DesktopUsageWaitPill } from './chat/recovery/DesktopUsageWaitPill'
+import { useDesktopUsageWait } from '@/lib/desktop/use-usage-wait'
 import { formatFxAttachmentRejections, formatFxDocumentRejections, planFxAttachmentBatch } from '@/lib/desktop/fx-repairs/attachment-overflow'
 import { useDesktopChatRecovery } from '@/lib/desktop/chat-recovery/use-desktop-chat-recovery'
 import { MessageFeedbackDialog } from '@/components/chat/MessageFeedbackDialog'
@@ -1457,6 +1459,9 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
             reconnectProvider: () => onOpenModelSettings?.(),
         },
     })
+    // A plan that ran out: the message can wait for the reset instead of being retyped.
+    const usageWait = useDesktopUsageWait(agent.id, sessionId ?? null, active, recovery.notice?.kind === 'usage_limit' ? recovery.notice.binding.generation : 0)
+    const usageWaitText = lastUserText(transcript)
     const composerId = !active && tabUid ? `desktop-message-${tabUid}` : 'desktop-message'
     const currentTitle = sessions.find(session => session.id === sessionId)?.title ?? 'New conversation'
     const generalView = tabUid === generalTabUid(agent.id)
@@ -1758,7 +1763,13 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                         }}>Retry conversation</Button>
                     </div>}
                     {!recovery.notice && stopBanner && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{stopBanner}</div>}
+                    {usageWait.status?.wait && <DesktopUsageWaitPill wait={usageWait.status.wait} busy={usageWait.busy} onCancel={() => void usageWait.cancel(usageWait.status!.wait!.id)} />}
                     {recovery.notice && <DesktopProviderErrorNotice
+                        usage={recovery.notice.kind === 'usage_limit' && usageWait.status ? {
+                            plan: usageWait.status.plan, queued: usageWait.status.wait?.state === 'waiting' || usageWait.status.wait?.state === 'sending',
+                            busy: usageWait.busy, error: usageWait.error,
+                            onSendAtReset: usageWaitText.trim() ? () => void usageWait.queue(usageWaitText) : undefined,
+                        } : undefined}
                         kind={recovery.notice.kind}
                         message={recovery.notice.message}
                         onRetry={canRetry ? () => recovery.act('retry') : undefined}

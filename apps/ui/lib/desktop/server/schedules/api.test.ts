@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 const engine = vi.hoisted(() => ({
     createSchedule: vi.fn(), updateSchedule: vi.fn(), deleteSchedule: vi.fn(), listSchedules: vi.fn(), listRuns: vi.fn(), listLatestScheduleRuns: vi.fn(),
+    listScheduleUsageWaits: vi.fn(async () => ({ waiting: [] as unknown[], skipped: [] as unknown[] })),
     getAgent: vi.fn(async () => ({ id: 'engine-owner', config: { setup: { required: false, completedAt: null as string | null } }, install: '' })),
 }))
 vi.mock('server-only', () => ({}))
@@ -220,4 +221,15 @@ test.each([
     expect(response.status).toBe(400)
     expect(engine.createSchedule).not.toHaveBeenCalled()
     expect(engine.updateSchedule).not.toHaveBeenCalled()
+})
+
+test('a routine parked until its plan resets is listed as waiting, and a skipped one with its reason', async () => {
+    engine.listSchedules.mockResolvedValueOnce([{ ...valid.input, slug: 'daily' }, { ...valid.input, slug: 'weekly' }, { ...valid.input, slug: 'plain' }])
+    engine.listLatestScheduleRuns.mockResolvedValueOnce([])
+    const wait = { slug: 'daily', plan: 'ChatGPT', parkedAt: '2026-11-16T10:00:00.000Z', resetsAt: '2026-11-16T15:00:00.000Z', nextCheckAt: '2026-11-16T15:00:30.000Z', skippedWhileWaiting: 1 }
+    const skip = { slug: 'weekly', at: '2026-11-16T10:00:00.000Z', reason: 'Skipped: ChatGPT was still out of usage after 24 hours.' }
+    engine.listScheduleUsageWaits.mockResolvedValueOnce({ waiting: [wait], skipped: [skip] })
+    const listed = await (await handle(new Request('http://localhost/api/desktop/coworkers/local-owner/schedules'))).json()
+    expect(listed).toMatchObject([{ slug: 'daily', usageWait: wait, lastResult: null }, { slug: 'weekly', usageSkip: skip }, { slug: 'plain' }])
+    expect(listed[2]).not.toHaveProperty('usageWait')
 })

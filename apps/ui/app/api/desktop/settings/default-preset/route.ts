@@ -5,6 +5,7 @@ import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { readDesktopProviders, readDesktopWorkspacePreset, saveDesktopWorkspacePreset } from '@/lib/desktop/server/settings'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
+import { readDesktopBackupModelView } from '@/lib/desktop/server/usage-gate-model'
 
 export const dynamic = 'force-dynamic'
 const headers = { 'Cache-Control': 'no-store' }
@@ -14,6 +15,8 @@ const change = z.object({ tier: z.enum(DESKTOP_PRESET_TIERS).nullable() }).stric
 async function view(runtime: DesktopRuntime) {
     const [{ connections }, tier] = await Promise.all([readDesktopProviders(runtime), readDesktopWorkspacePreset(runtime)])
     return {
+        // The backup model sits under the preset in Settings and is read with it.
+        backup: await readDesktopBackupModelView(runtime, connections).catch(() => undefined),
         tier,
         presets: DESKTOP_PRESET_TIERS.map(id => {
             const found = resolveDesktopPreset(id, connections)

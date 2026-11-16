@@ -7,6 +7,7 @@ import { readDesktopLanguage } from '@/lib/desktop/server/language'
 import { authenticateDesktopRequest, DesktopHttpError } from '@/lib/desktop/server/auth'
 import { readDesktopRuntime } from '@/lib/desktop/server/runtime'
 import { readDesktopWorkspace } from '@/lib/desktop/server/settings'
+import { listDesktopUsageWaitKeys } from '@/lib/desktop/server/usage-waits'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,6 +20,8 @@ async function readPageData() {
             readDesktopWorkspace(runtime),
             readDesktopLanguage(runtime, requestHeaders.get('accept-language')),
             /(?:^| )RerunLocalDesktopMac\/1$/.test(requestHeaders.get('user-agent') ?? ''),
+            // Messages kept from before a restart, waiting for their plan to reset.
+            listDesktopUsageWaitKeys(runtime).catch(() => []),
         ])
     } catch (error) {
         if (error instanceof DesktopHttpError) notFound()
@@ -27,6 +30,6 @@ async function readPageData() {
 }
 
 export default async function DesktopPage() {
-    const [bootstrap, language, mac] = await readPageData()
-    return <>{mac && <DesktopMacTitleBar />}<DesktopLocale initial={language}><DesktopApp initialData={bootstrap} /></DesktopLocale></>
+    const [bootstrap, language, mac, usageWaits] = await readPageData()
+    return <>{mac && <DesktopMacTitleBar />}<DesktopLocale initial={language}><DesktopApp initialData={bootstrap} usageWaits={usageWaits} /></DesktopLocale></>
 }

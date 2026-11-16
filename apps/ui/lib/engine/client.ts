@@ -878,6 +878,16 @@ export async function listLatestScheduleRuns(conn: EngineConnection, agentId: st
         data => z.object({ runs: z.array(desktopScheduledRunSchema) }).parse(data).runs)
 }
 
+const usageWaitState = z.object({
+    waiting: z.array(z.object({ slug: z.string(), plan: z.string(), parkedAt: z.string(), resetsAt: z.string().nullable(), nextCheckAt: z.string(), skippedWhileWaiting: z.number() })).default([]),
+    skipped: z.array(z.object({ slug: z.string(), at: z.string(), reason: z.string() })).default([]),
+})
+
+/** Routines parked until their plan has usage again, and those skipped after waiting a day (Mac app). */
+export async function listScheduleUsageWaits(conn: EngineConnection, agentId: string, signal?: AbortSignal) {
+    return request(conn, `/agents/${encodeURIComponent(agentId)}/runs/latest-scheduled`, { method: 'GET', signal }, data => usageWaitState.parse(data))
+}
+
 // An engine that predates a filter ignores it and returns its most recent runs, so
 // callers keep filtering what comes back.
 export async function listRuns(conn: EngineConnection, agentId: string, { limit, sessionId, status, scheduleSlug }: RunFilter = {}, options: { signal?: AbortSignal } = {}): Promise<EngineRun[]> {
