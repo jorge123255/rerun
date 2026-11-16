@@ -68,6 +68,8 @@ export function managedAppsClient(key: string, network: ManagedAppsFetch = fetch
         } catch { throw new ManagedAppsError(503, 'Composio could not be reached. Check the connection and try again.') }
         if (response.status === 401) { await response.body?.cancel(); throw new ManagedAppsError(401, 'Composio did not recognize this key. Copy the API key from your Composio project’s settings and paste it again.') }
         if (response.status === 403) { await response.body?.cancel(); throw new ManagedAppsError(403, 'Composio recognized this key but it is not allowed to do this. Use the API key of the project you want to use, not an organization key.') }
+        // Told apart from the other refusals: an account Composio no longer has is gone, not out of reach.
+        if (response.status === 404) { await response.body?.cancel(); throw new ManagedAppsError(404, 'Composio no longer has this.') }
         if (!response.ok) { await response.body?.cancel(); throw new ManagedAppsError(502, `Composio answered ${response.status}.`) }
         const text = await response.text()
         if (text.length > 4_000_000) throw new ManagedAppsError(502, 'Composio sent too much data.')
@@ -89,7 +91,7 @@ export function managedAppsClient(key: string, network: ManagedAppsFetch = fetch
             let made: { auth_config?: { id?: string } }
             try { made = await call('/auth_configs', { method: 'POST', signal, body: { toolkit: { slug: toolkit }, auth_config: { type: 'use_composio_managed_auth', credentials: {} } } }) }
             catch (error) {
-                if (error instanceof ManagedAppsError && error.status === 502) throw new ManagedAppsError(409, 'Composio has no ready-made sign-in for this app. Set one up for it in your Composio dashboard, then press Connect again.')
+                if (error instanceof ManagedAppsError && (error.status === 502 || error.status === 404)) throw new ManagedAppsError(409, 'Composio has no ready-made sign-in for this app. Set one up for it in your Composio dashboard, then press Connect again.')
                 throw error
             }
             if (!made.auth_config?.id) throw new ManagedAppsError(502, 'Composio did not set up the sign-in for this app.')

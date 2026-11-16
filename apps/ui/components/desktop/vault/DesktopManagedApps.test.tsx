@@ -117,3 +117,35 @@ test('with Composio kept in the Vault: apps connect here, coworkers are chosen o
     await press(host, 'Find apps already signed in at Composio')
     expect(posts.at(-1)).toEqual({ action: 'find' })
 })
+
+test('a second account of one app is added with a label, and the two are told apart', async () => {
+    const SECOND = '22222222-2222-4222-8222-222222222222'
+    const one = { configured: true, apps, accounts: [{ id: ACCOUNT, slug: 'gmail', name: 'Gmail', status: 'active', agentIds: [] }] }
+    const two = { ...one, accounts: [...one.accounts, { id: SECOND, slug: 'gmail', name: 'Gmail', label: 'Work', status: 'pending', agentIds: [] }] }
+    const { host, posts, opened } = await mount(one, { connect: { body: { view: two, signIn: 'https://connect.composio.example/link/ca_2' } } })
+    await press(host, 'Add another Gmail account')
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Label for another Gmail account"]')!
+    const connect = () => [...host.querySelectorAll<HTMLButtonElement>('form button[type="submit"]')].find(node => node.textContent === 'Connect')!
+    expect(connect().disabled).toBe(true)
+    await act(async () => { type(input, ' Work ') })
+    await act(async () => { connect().click() })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(posts).toEqual([{ action: 'connect', slug: 'gmail', label: 'Work' }])
+    expect(opened).toHaveBeenCalledWith('https://connect.composio.example/link/ca_2', '_blank', 'noopener,noreferrer')
+    expect([...host.querySelectorAll('[data-managed-account="gmail"] p.font-medium')].map(node => node.textContent)).toEqual(['Gmail', 'Gmail · Work'])
+    expect(host.querySelector('button[aria-label="Remove Gmail · Work"]')).not.toBeNull()
+    expect(host.querySelector('input[aria-label="Label for another Gmail account"]')).toBeNull()
+})
+
+test('an expired account says so and is signed in again from its row, keeping its coworkers', async () => {
+    const expired = { configured: true, apps, accounts: [{ id: ACCOUNT, slug: 'gmail', name: 'Gmail', status: 'expired', agentIds: ['c1'] }] }
+    const pending = { ...expired, accounts: [{ ...expired.accounts[0], status: 'pending' }] }
+    const { host, posts, opened } = await mount(expired, { refresh: { body: { view: pending, signIn: 'https://connect.composio.example/link/ca_2' } } })
+    expect(host.textContent).toContain('The sign-in has expired.')
+    // Its coworkers are not offered while it is expired.
+    expect(host.querySelector('fieldset')).toBeNull()
+    await press(host, 'Sign in again')
+    expect(posts).toEqual([{ action: 'refresh', id: ACCOUNT, retry: true }])
+    expect(opened).toHaveBeenCalledWith('https://connect.composio.example/link/ca_2', '_blank', 'noopener,noreferrer')
+    expect(host.textContent).toContain('Waiting for you to finish signing in')
+})

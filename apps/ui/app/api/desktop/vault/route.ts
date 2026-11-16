@@ -4,6 +4,9 @@ import { desktopRoute } from '@/lib/desktop/server/http'
 import { readDesktopJson } from '@/lib/desktop/server/request-json'
 import { getDesktopRemoteMcpService } from '@/lib/desktop/server/mcp-binding'
 import { openDesktopVault } from '@/lib/desktop/server/vault/binding'
+import { openDesktopManagedApps } from '@/lib/desktop/server/managed-apps/binding'
+import { COMPOSIO_CONNECT } from '@/lib/desktop/server/managed-apps/client'
+import { COMPOSIO_CONNECT_NAME } from '@/lib/desktop/server/managed-apps/service'
 import { assertDesktopWorkspaceAdmission } from '@/lib/desktop/server/workspace-admission'
 
 export const dynamic = 'force-dynamic'
@@ -23,7 +26,14 @@ export function POST(request: Request) {
             assertDesktopWorkspaceAdmission(runtime)
         }
         const before = parsed.data.operation === 'add-app' ? new Set((await vault.list()).entries.map(entry => entry.id)) : null
+        const removedId = parsed.data.operation === 'delete' ? parsed.data.id : null
+        const removed = removedId ? (await vault.list()).entries.find(entry => entry.id === removedId) : null
         const listing = await vault.mutate(parsed.data, guard)
+        // The Composio Connect entry is the key to every app listed under Managed apps: once it is gone
+        // those apps cannot be reached from here, so they leave the list with it.
+        if (removed && 'kind' in removed && removed.kind === 'mcp' && removed.name === COMPOSIO_CONNECT_NAME && removed.url === COMPOSIO_CONNECT) {
+            await (await openDesktopManagedApps(runtime)).forgetConnect()
+        }
         // An app refuses a wrong key only when it is called: the account just added is dialed once,
         // so the person who typed the key hears it now instead of the coworker at its first run.
         // Only a refusal undoes the account. An app that is down or slow says nothing about the key.

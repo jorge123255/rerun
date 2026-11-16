@@ -43,7 +43,15 @@ const connectApps: OfferedApp[] = (composioApps as [string, string][]).map(([slu
 // What each app offers changes rarely; one listing serves every coworker for ten minutes.
 const toolCache = new Map<string, { at: number; tools: Awaited<ReturnType<ReturnType<typeof managedAppsClient>['tools']>> }>()
 const sealContext = (workspaceId: number, revision: string) => ({ domain: 'vault' as const, agentId: 'managed-apps', key: 'composio-key', version: 1, workspaceId, revision })
-type Account = { id: string; slug: string; toolkit: string; name: string; userId: string; connectedAccountId: string; status: 'pending' | 'active' }
+type Account = { id: string; slug: string; toolkit: string; name: string; label: string; userId: string; connectedAccountId: string; status: 'pending' | 'active' | 'expired' }
+/**
+ * The Composio user one account lives under: this workspace's, and this account's alone. It is
+ * built from the two ids and never read back as the truth, so a row carried in from another
+ * workspace, or pointed at another user, names nobody.
+ */
+export const managedAppUserId = (workspaceId: number, accountId: string) => `rerun_mac_w${workspaceId}_${accountId}`
+// What Composio calls a sign-in it no longer holds in working order.
+const LAPSED = /^(EXPIRED|INACTIVE|FAILED|REVOKED)$/i
 type ToolDefinition = {
     name: string; description: string; inputSchema: Record<string, unknown>; destructive: boolean
     execute(args: Record<string, unknown>, signal: AbortSignal, toolCallId: string): Promise<{ source: 'remote_mcp'; untrusted: true; result: Record<string, unknown> }>
@@ -74,11 +82,40 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         return managedAppsClient(kept.value, options.network, COMPOSIO_API, kept.kind)
     }
     async function accounts(): Promise<Account[]> {
-        return (await db.execute('SELECT id,slug,toolkit,name,user_id,connected_account_id,status FROM desktop_managed_app_accounts ORDER BY name')).rows.map(row => ({
-            id: String(row.id), slug: String(row.slug), toolkit: String(row.toolkit), name: String(row.name), userId: String(row.user_id),
-            connectedAccountId: String(row.connected_account_id), status: row.status === 'active' ? 'active' : 'pending',
+        return (await db.execute('SELECT id,slug,toolkit,name,label,user_id,connected_account_id,status FROM desktop_managed_app_accounts ORDER BY name,label')).rows.map(row => ({
+            id: String(row.id), slug: String(row.slug), toolkit: String(row.toolkit), name: String(row.name), label: String(row.label), userId: String(row.user_id),
+            connectedAccountId: String(row.connected_account_id), status: row.status === 'active' ? 'active' : row.status === 'expired' ? 'expired' : 'pending',
         }))
     }
+    // An account made before users carried the workspace keeps its user, so nobody signs in again.
+    const ownUser = (row: { id: string; userId: string }) => row.userId === managedAppUserId(workspaceId, row.id) || row.userId === `rerun_mac_${row.id}`
+    /**
+     * What Composio says of one account, once it is proven to be this account: the id kept beside a
+     * row is not enough, the account must live under the row's own user and belong to the row's app.
+     * `gone` is an account Composio no longer has; `foreign` is one that is not this row's.
+     */
+    async function remoteState(composio: Awaited<ReturnType<typeof client>>, row: Account, signal?: AbortSignal): Promise<'active' | 'waiting' | 'lapsed' | 'gone' | 'foreign'> {
+        if (!ownUser(row)) return 'foreign'
+        let remote: Awaited<ReturnType<typeof composio.account>>
+        try { remote = await composio.account(row.connectedAccountId, signal) }
+        catch (error) { if (error instanceof ManagedAppsError && error.status === 404) return 'gone'; throw error }
+        if (remote.userId !== row.userId || remote.toolkit && remote.toolkit.toLowerCase() !== row.toolkit.toLowerCase()) return 'foreign'
+        return remote.status === 'ACTIVE' ? 'active' : LAPSED.test(remote.status) ? 'lapsed' : 'waiting'
+    }
+    /**
+     * Removes the sign-in Composio holds for an account that is leaving the Vault. Only an account
+     * proven to be the row's own is removed: anything else is left as it is at Composio. An answer
+     * Composio could not give (502) does not hold the removal back; a Composio that cannot be
+     * reached, or a key it refuses, does, so no sign-in is left behind unseen.
+     */
+    async function revoke(composio: Awaited<ReturnType<typeof client>>, row: Account, signal?: AbortSignal) {
+        if (!row.connectedAccountId) return
+        try {
+            const state = await remoteState(composio, row, signal)
+            if (state !== 'gone' && state !== 'foreign') await composio.remove(row.connectedAccountId, signal)
+        } catch (error) { if (!(error instanceof ManagedAppsError) || error.status !== 502 && error.status !== 404) throw error }
+    }
+    const setStatus = (id: string, status: Account['status']) => db.execute({ sql: 'UPDATE desktop_managed_app_accounts SET status=? WHERE id=?', args: [status, id] })
     async function account(id: string): Promise<Account> {
         const found = (await accounts()).find(row => row.id === id)
         if (!found) throw new ManagedAppsError(409, 'This account is no longer in the Vault.')
@@ -111,7 +148,7 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         return {
             configured, ...(connector ? { connector } : {}),
             apps: (await offered()).map(app => ({ slug: app.slug, name: app.name, summary: app.summary, ...(app.logo ? { logo: app.logo } : {}) })),
-            accounts: rows.map(row => ({ id: row.id, slug: row.slug, name: row.name, status: row.status, agentIds: attached.rows.filter(link => link.account_id === row.id).map(link => String(link.agent_id)) })),
+            accounts: rows.map(row => ({ id: row.id, slug: row.slug, name: row.name, ...(row.label ? { label: row.label } : {}), status: row.status, agentIds: attached.rows.filter(link => link.account_id === row.id).map(link => String(link.agent_id)) })),
         }
     }
     async function act(action: DesktopManagedAppsAction, signal?: AbortSignal): Promise<DesktopManagedAppsResult> {
@@ -130,7 +167,7 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         if (action.action === 'remove-key') {
             // The accounts belong to that key's project: without it they cannot be used or cleaned up, so they go with it.
             const composio = await client().catch(() => null)
-            for (const row of await accounts()) if (row.connectedAccountId) await composio?.remove(row.connectedAccountId, signal).catch(() => {})
+            if (composio) for (const row of await accounts()) await revoke(composio, row, signal).catch(() => {})
             await db.batch(['DELETE FROM desktop_managed_app_attachments', 'DELETE FROM desktop_managed_app_accounts', 'DELETE FROM desktop_managed_app_key'], 'write')
             toolCache.clear()
             return { view: await view() }
@@ -153,23 +190,27 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         if (action.action === 'connect') {
             const app = (await offered()).find(row => row.slug === action.slug)
             if (!app) throw new ManagedAppsError(400, 'This app is not in the catalog.')
-            if ((await accounts()).some(row => row.slug === app.slug)) throw new ManagedAppsError(409, 'This app already has an account in the Vault.')
+            // A second account of one app is told apart by its label. Composio Connect keeps one sign-in per app for the key.
+            const label = action.label ?? ''
+            const same = (await accounts()).filter(row => row.slug === app.slug)
+            if (same.length && (connect || !label)) throw new ManagedAppsError(409, connect ? 'This app already has an account in the Vault.' : 'This app already has an account in the Vault. Give another one a label to tell them apart.')
+            if (same.some(row => row.label.toLowerCase() === label.toLowerCase())) throw new ManagedAppsError(409, 'This app already has an account with this label.')
             if (connect) {
                 const started = await connect.connect(app.slug, signal)
                 if (started.state === 'pending' && !started.signIn) throw new ManagedAppsError(502, 'Composio did not return a sign-in page.')
-                await db.execute({ sql: 'INSERT INTO desktop_managed_app_accounts(id,slug,toolkit,name,user_id,connected_account_id,status,created_at) VALUES(?,?,?,?,?,?,?,?)', args: [randomUUID(), app.slug, app.slug, app.name, '', '', started.state, new Date().toISOString()] })
+                await db.execute({ sql: 'INSERT INTO desktop_managed_app_accounts(id,slug,toolkit,name,label,user_id,connected_account_id,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)', args: [randomUUID(), app.slug, app.slug, app.name, label, '', '', started.state, new Date().toISOString()] })
                 return { view: await view(), ...(started.signIn ? { signIn: started.signIn } : {}) }
             }
             const composio = await client()
-            const id = randomUUID(), userId = `rerun_mac_${id}`, created = new Date().toISOString()
-            const insert = "INSERT INTO desktop_managed_app_accounts(id,slug,toolkit,name,user_id,connected_account_id,status,created_at) VALUES(?,?,?,?,?,?,?,?)"
+            const id = randomUUID(), userId = managedAppUserId(workspaceId, id), created = new Date().toISOString()
+            const insert = "INSERT INTO desktop_managed_app_accounts(id,slug,toolkit,name,label,user_id,connected_account_id,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)"
             // An app that needs no sign-in is ready at once: there is nothing to link.
             if (app.noAuth) {
-                await db.execute({ sql: insert, args: [id, app.slug, app.slug, app.name, userId, '', 'active', created] })
+                await db.execute({ sql: insert, args: [id, app.slug, app.slug, app.name, label, userId, '', 'active', created] })
                 return { view: await view() }
             }
             const link = await composio.link(userId, await composio.authConfig(app.slug, signal), options.returnUrl, signal)
-            await db.execute({ sql: insert, args: [id, app.slug, app.slug, app.name, userId, link.connectedAccountId, 'pending', created] })
+            await db.execute({ sql: insert, args: [id, app.slug, app.slug, app.name, label, userId, link.connectedAccountId, 'pending', created] })
             return { view: await view(), signIn: link.redirectUrl }
         }
         if (action.action === 'refresh') {
@@ -178,29 +219,42 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
                 // A sign-in page lasts minutes: one still waiting is started again, so the button always leads somewhere.
                 let current = await connect.status(row.toolkit, signal)
                 if (current.state === 'pending' && action.retry) current = await connect.connect(row.toolkit, signal)
-                if (current.state === 'active') await db.execute({ sql: "UPDATE desktop_managed_app_accounts SET status='active' WHERE id=?", args: [row.id] })
-                return { view: await view(), ...(current.state === 'pending' && action.retry && current.signIn ? { signIn: current.signIn } : {}) }
+                const signIn = current.state === 'pending' && action.retry ? current.signIn : undefined
+                // An app that was signed in and no longer is has expired; a fresh page puts it back to waiting.
+                if (current.state === 'active') await setStatus(row.id, 'active')
+                else if (signIn) await setStatus(row.id, 'pending')
+                else if (row.status === 'active') await setStatus(row.id, 'expired')
+                return { view: await view(), ...(signIn ? { signIn } : {}) }
             }
             if (!row.connectedAccountId) return { view: await view() }
-            const remote = await (await client()).account(row.connectedAccountId, signal)
+            const composio = await client()
             // Only Composio's own word that this very account, for this very app, is signed in makes it usable.
-            if (remote.status === 'ACTIVE' && remote.userId === row.userId && (!remote.toolkit || remote.toolkit.toLowerCase() === row.toolkit.toLowerCase())) {
-                await db.execute({ sql: "UPDATE desktop_managed_app_accounts SET status='active' WHERE id=?", args: [row.id] })
-            }
-            return { view: await view() }
+            const state = await remoteState(composio, row, signal)
+            if (state === 'active') await setStatus(row.id, 'active')
+            else if (state === 'lapsed' || state === 'gone') await setStatus(row.id, 'expired')
+            // An account that is not this row's own is never marked usable, and no sign-in is started under its user.
+            if (state === 'active' || state === 'foreign' || !action.retry) return { view: await view() }
+            // Signing in again: a fresh page under the same user, so the account keeps its coworkers. The sign-in it replaces is removed.
+            const link = await composio.link(row.userId, await composio.authConfig(row.toolkit, signal), options.returnUrl, signal)
+            await db.execute({ sql: "UPDATE desktop_managed_app_accounts SET connected_account_id=?, status='pending' WHERE id=?", args: [link.connectedAccountId, row.id] })
+            if (state !== 'gone' && link.connectedAccountId !== row.connectedAccountId) await composio.remove(row.connectedAccountId, signal).catch(() => {})
+            return { view: await view(), signIn: link.redirectUrl }
         }
         if (action.action === 'remove') {
             const row = await account(action.id)
             // With Connect the app is signed out at Composio first; if that fails the row stays, so nothing is left signed in unseen.
             if (connect) await connect.remove(row.toolkit, signal)
-            if (row.connectedAccountId && !connect) await (await client()).remove(row.connectedAccountId, signal).catch(error => { if (!(error instanceof ManagedAppsError) || error.status !== 502) throw error })
+            if (row.connectedAccountId && !connect) await revoke(await client(), row, signal)
             await db.batch([{ sql: 'DELETE FROM desktop_managed_app_attachments WHERE account_id=?', args: [row.id] }, { sql: 'DELETE FROM desktop_managed_app_accounts WHERE id=?', args: [row.id] }], 'write')
             return { view: await view() }
         }
         const row = await account(action.id)
         if (action.attached) {
-            if (row.status !== 'active') throw new ManagedAppsError(409, 'Finish signing in to this app first.')
+            if (row.status !== 'active') throw new ManagedAppsError(409, row.status === 'expired' ? 'Sign in to this app again first.' : 'Finish signing in to this app first.')
             if (!await options.coworkerExists(action.agentId)) throw new ManagedAppsError(409, 'This coworker is no longer available.')
+            // Two accounts of one app offer the same tools under the same names: a coworker holds one of them.
+            const other = (await db.execute({ sql: 'SELECT 1 FROM desktop_managed_app_attachments t JOIN desktop_managed_app_accounts a ON a.id=t.account_id WHERE t.agent_id=? AND a.slug=? AND a.id<>?', args: [action.agentId, row.slug, row.id] })).rows.length > 0
+            if (other) throw new ManagedAppsError(409, 'This coworker already uses another account of this app. Take that one away first.')
             await db.execute({ sql: 'INSERT OR IGNORE INTO desktop_managed_app_attachments(account_id,agent_id) VALUES(?,?)', args: [row.id, action.agentId] })
         } else await db.execute({ sql: 'DELETE FROM desktop_managed_app_attachments WHERE account_id=? AND agent_id=?', args: [row.id, action.agentId] })
         return { view: await view() }
@@ -216,6 +270,8 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         const definitions: ToolDefinition[] = []
         for (const id of held) {
             const row = await account(id)
+            // An account whose user is not this workspace's own is never used.
+            if (!ownUser(row)) continue
             // An app the bundled catalog knows keeps its chosen tools; any other app gives the ones Composio features.
             const chosen = managedAppCatalog.find(entry => entry.toolkit.toLowerCase() === row.toolkit.toLowerCase())?.allowedTools ?? []
             let cached = toolCache.get(row.toolkit)
@@ -237,9 +293,16 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
                         const current = (await db.execute({
                             sql: "SELECT a.user_id FROM desktop_managed_app_accounts a JOIN desktop_managed_app_attachments t ON t.account_id=a.id WHERE a.id=? AND t.agent_id=? AND a.status='active'", args: [id, agentId],
                         })).rows[0]
-                        if (!current) throw new Error('This app is no longer attached to this coworker.')
-                        const outcome = await (await client()).execute(tool.slug, String(current.user_id), args, stop)
-                        const text = JSON.stringify(outcome.successful ? outcome.data : { error: outcome.error ?? 'The app refused this call.' }).slice(0, 900_000)
+                        if (!current || !ownUser({ id, userId: String(current.user_id) })) throw new Error('This app is no longer attached to this coworker.')
+                        const live = await client()
+                        const outcome = await live.execute(tool.slug, String(current.user_id), args, stop)
+                        // A refused call may mean the sign-in ran out: Composio is asked, and an expired account says so in the Vault.
+                        let expired = false
+                        if (!outcome.successful && row.connectedAccountId) {
+                            const state = await remoteState(live, await account(id), stop).catch(() => null)
+                            if (state === 'lapsed' || state === 'gone') { expired = true; await db.execute({ sql: "UPDATE desktop_managed_app_accounts SET status='expired' WHERE id=? AND status='active'", args: [id] }) }
+                        }
+                        const text = JSON.stringify(outcome.successful ? outcome.data : { error: expired ? 'The sign-in to this app has expired. Ask the person to sign in to it again in the Vault.' : outcome.error ?? 'The app refused this call.' }).slice(0, 900_000)
                         return { source: 'remote_mcp', untrusted: true, result: { content: [{ type: 'text', text }], ...(outcome.successful ? {} : { isError: true }) } }
                     },
                 })
@@ -247,5 +310,9 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         }
         return definitions
     }
-    return { view, act, tools }
+    /** The Vault's Connect entry is gone: the apps listed through it are no longer reachable from here, so they leave the list. Their sign-ins stay with Composio. */
+    async function forgetConnect() {
+        await db.batch(["DELETE FROM desktop_managed_app_attachments WHERE account_id IN (SELECT id FROM desktop_managed_app_accounts WHERE user_id='')", "DELETE FROM desktop_managed_app_accounts WHERE user_id=''"], 'write')
+    }
+    return { view, act, tools, forgetConnect }
 }

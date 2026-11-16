@@ -22,6 +22,8 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
     const [query, setQuery] = useState('')
     const [removeKey, setRemoveKey] = useState(false)
     const [added, setAdded] = useState('')
+    // The account another one is being added beside, and the label typed for it.
+    const [another, setAnother] = useState<{ id: string; label: string } | null>(null)
 
     const read = useCallback(async () => {
         try {
@@ -84,18 +86,22 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
                 </form>
             ) : (
                 <>
-                    {view.accounts.map(account => (
+                    {view.accounts.map(account => {
+                        // Two accounts of one app are told apart by the label given to the second.
+                        const title = account.label ? `${account.name} · ${account.label}` : account.name
+                        const waiting = account.status !== 'active'
+                        return (
                         <div key={account.id} className="space-y-2 rounded-md border border-border p-2.5" data-managed-account={account.slug}>
                             <div className="flex flex-wrap items-center gap-2">
                                 <DesktopAppLogo logo={view.apps.find(app => app.slug === account.slug)?.logo} />
                                 <div className="min-w-0 flex-1">
-                                    <p className="truncate text-sm font-medium">{account.name}</p>
-                                    <p className="text-xs text-muted-foreground">{account.status === 'active' ? 'Signed in' : 'Waiting for you to finish signing in in your browser'}</p>
+                                    <p className="truncate text-sm font-medium">{title}</p>
+                                    <p className={account.status === 'expired' ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>{account.status === 'active' ? 'Signed in' : account.status === 'expired' ? 'The sign-in has expired. Sign in again to give it back to its coworkers.' : 'Waiting for you to finish signing in in your browser'}</p>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
-                                    {account.status === 'pending' && <Button type="button" variant="outline" size="sm" disabled={locked} onClick={() => { void act({ action: 'refresh', id: account.id }) }}>Check sign-in</Button>}
-                                    {account.status === 'pending' && view.connector && <Button type="button" variant="outline" size="sm" disabled={locked} onClick={() => { void act({ action: 'refresh', id: account.id, retry: true }) }}>Open sign-in again</Button>}
-                                    <Button type="button" variant="ghost" size="sm" disabled={locked} aria-label={`Remove ${account.name}`} onClick={() => { void act({ action: 'remove', id: account.id }) }}>Remove</Button>
+                                    {waiting && <Button type="button" variant="outline" size="sm" disabled={locked} onClick={() => { void act({ action: 'refresh', id: account.id }) }}>Check sign-in</Button>}
+                                    {waiting && <Button type="button" variant="outline" size="sm" disabled={locked} onClick={() => { void act({ action: 'refresh', id: account.id, retry: true }) }}>{account.status === 'expired' ? 'Sign in again' : 'Open sign-in again'}</Button>}
+                                    <Button type="button" variant="ghost" size="sm" disabled={locked} aria-label={`Remove ${title}`} onClick={() => { void act({ action: 'remove', id: account.id }) }}>Remove</Button>
                                 </div>
                             </div>
                             {account.status === 'active' && view.connector && <p className="text-xs text-muted-foreground">Coworkers given “{view.connector}” can use it. Removing it signs it out at Composio too.</p>}
@@ -111,8 +117,19 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
                                         </label>
                                     ))}
                                 </fieldset>)}
+                            {!view.connector && (another?.id === account.id
+                                ? <form className="flex flex-wrap gap-2" onSubmit={(event: FormEvent) => { event.preventDefault(); void act({ action: 'connect', slug: account.slug, label: another.label.trim() }).then(done => { if (done) setAnother(null) }) }}>
+                                    <Input aria-label={`Label for another ${account.name} account`} placeholder="Label, such as Work or Personal" maxLength={40} className="min-w-0 flex-1"
+                                        value={another.label} disabled={locked} onChange={event => setAnother({ id: account.id, label: event.target.value })} />
+                                    <Button type="submit" size="sm" disabled={locked || !another.label.trim()}>Connect</Button>
+                                    <Button type="button" variant="ghost" size="sm" disabled={locked} onClick={() => setAnother(null)}>Cancel</Button>
+                                </form>
+                                : <button type="button" className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={locked} aria-label={`Add another ${account.name} account`} onClick={() => setAnother({ id: account.id, label: '' })}>
+                                    Add another account of this app
+                                </button>)}
                         </div>
-                    ))}
+                        )
+                    })}
                     <div className="space-y-2">
                         <Input aria-label="Search managed apps" placeholder="Search managed apps" value={query} onChange={event => setQuery(event.target.value)} />
                         <ul className="max-h-56 divide-y divide-border overflow-auto rounded-md border border-border">

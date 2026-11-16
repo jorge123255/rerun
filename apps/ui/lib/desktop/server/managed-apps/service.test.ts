@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
 const { createDesktopSecretCrypto } = await import('../secret-requests/crypto')
 const { initializeDesktopRound62 } = await import('../round62-schema')
+const { initializeDesktopRound66 } = await import('../round66-schema')
 const { desktopManagedApps, managedAppCatalog } = await import('./service')
 const { COMPOSIO_API, COMPOSIO_CONNECT, managedAppsConnectAccepts } = await import('./client')
 
@@ -18,6 +19,8 @@ beforeEach(async () => {
     await db.execute('CREATE TABLE desktop_schema_migrations(version INTEGER PRIMARY KEY, id TEXT NOT NULL)')
     await initializeDesktopRound62(db)
     await initializeDesktopRound62(db)
+    await initializeDesktopRound66(db)
+    await initializeDesktopRound66(db)
 })
 afterEach(async () => { db.close(); await rm(dir, { recursive: true, force: true }) })
 
@@ -120,7 +123,7 @@ test('connect, sign in, attach to a coworker, call, detach and remove', async ()
     const sent = await tools[0]!.execute({ to: 'pat@example.test' }, signal, 'call-1')
     expect(sent).toEqual({ source: 'remote_mcp', untrusted: true, result: { content: [{ type: 'text', text: '{"id":"msg_1"}' }] } })
     expect(fake.state.executed).toEqual([{ user_id: fake.state.user, arguments: { to: 'pat@example.test' } }])
-    expect(fake.state.user).toMatch(/^rerun_mac_[0-9a-f-]{36}$/)
+    expect(fake.state.user).toMatch(/^rerun_mac_w1_[0-9a-f-]{36}$/)
     expect((await tools[1]!.execute({}, signal, 'call-2')).result).toEqual({ content: [{ type: 'text', text: '{"error":"quota"}' }], isError: true })
     expect(fake.seen.filter(call => call.path.startsWith('/tools?')).length).toBe(1)
 
