@@ -1,5 +1,5 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 45ed4bd..d62433b 100644
+index 45ed4bd..8b5b194 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
 @@ -226,7 +226,7 @@ var appServerSettingsSchema = zod.z.object({
@@ -327,7 +327,53 @@ index 45ed4bd..d62433b 100644
    }).passthrough(),
    willRetry: zod.z.boolean(),
    threadId: zod.z.string(),
-@@ -5902,9 +5994,9 @@ function tool(definition) {
+@@ -4766,12 +4858,21 @@ var AppServerRpcClient = class extends events.EventEmitter {
+     this.activeRequestContextsByTurn.clear();
+     this.completedTurnIds.clear();
+     this.serverCapabilities = void 0;
++    const child = this.child;
+     if (this.child) {
+       this.expectedExitSignal = "SIGTERM";
++      // rerun patch: a refused signal (kill EACCES) leaves the app-server running with its thread writer lock;
++      // at EOF on stdin it exits on its own, so the next turn can resume the thread.
++      this.child.stdin?.end();
+       this.child.kill("SIGTERM");
+       this.child = void 0;
+     }
+     this.writeQueue = Promise.resolve();
++    // rerun patch: resolves once the app-server is gone. One still running holds its thread's writer lock, and the
++    // engine only resumes that thread when this returns in time.
++    if (child && child.exitCode === null && child.signalCode === null) {
++      await new Promise((resolve) => child.once("exit", resolve));
++    }
+   }
+   async dispose() {
+     await this.close();
+@@ -4931,6 +5032,7 @@ var AppServerRpcClient = class extends events.EventEmitter {
+     this.serverCapabilities = void 0;
+     if (this.child) {
+       this.expectedExitSignal = "SIGTERM";
++      this.child.stdin?.end();
+       this.child.kill("SIGTERM");
+       this.child = void 0;
+     }
+@@ -4944,6 +5046,7 @@ var AppServerRpcClient = class extends events.EventEmitter {
+     this.stdoutReader = void 0;
+     if (this.child) {
+       this.expectedExitSignal = "SIGTERM";
++      this.child.stdin?.end();
+       this.child.kill("SIGTERM");
+       this.child = void 0;
+     }
+@@ -5340,6 +5443,7 @@ var AppServerRpcClient = class extends events.EventEmitter {
+           `[codex-app-server] Closing idle app-server process after ${idleTimeoutMs}ms inactivity.`
+         );
+         this.expectedExitSignal = "SIGTERM";
++        this.child.stdin?.end();
+         this.child.kill("SIGTERM");
+         this.child = void 0;
+       }
+@@ -5902,9 +6006,9 @@ function tool(definition) {
      name,
      description,
      inputSchema: toJsonSchema(parameters),
@@ -434,7 +480,7 @@ index 14e99bf..b6b3ade 100644
      approvalPolicy?: AppServerApprovalPolicy;
      sandboxPolicy?: AppServerSandboxPolicy;
 diff --git a/dist/index.js b/dist/index.js
-index 0e2c370..b46f1ac 100644
+index 0e2c370..24177a7 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -218,7 +218,7 @@ var appServerSettingsSchema = z.object({
@@ -762,7 +808,53 @@ index 0e2c370..b46f1ac 100644
    }).passthrough(),
    willRetry: z.boolean(),
    threadId: z.string(),
-@@ -5894,9 +5986,9 @@ function tool(definition) {
+@@ -4758,12 +4850,21 @@ var AppServerRpcClient = class extends EventEmitter {
+     this.activeRequestContextsByTurn.clear();
+     this.completedTurnIds.clear();
+     this.serverCapabilities = void 0;
++    const child = this.child;
+     if (this.child) {
+       this.expectedExitSignal = "SIGTERM";
++      // rerun patch: a refused signal (kill EACCES) leaves the app-server running with its thread writer lock;
++      // at EOF on stdin it exits on its own, so the next turn can resume the thread.
++      this.child.stdin?.end();
+       this.child.kill("SIGTERM");
+       this.child = void 0;
+     }
+     this.writeQueue = Promise.resolve();
++    // rerun patch: resolves once the app-server is gone. One still running holds its thread's writer lock, and the
++    // engine only resumes that thread when this returns in time.
++    if (child && child.exitCode === null && child.signalCode === null) {
++      await new Promise((resolve) => child.once("exit", resolve));
++    }
+   }
+   async dispose() {
+     await this.close();
+@@ -4923,6 +5024,7 @@ var AppServerRpcClient = class extends EventEmitter {
+     this.serverCapabilities = void 0;
+     if (this.child) {
+       this.expectedExitSignal = "SIGTERM";
++      this.child.stdin?.end();
+       this.child.kill("SIGTERM");
+       this.child = void 0;
+     }
+@@ -4936,6 +5038,7 @@ var AppServerRpcClient = class extends EventEmitter {
+     this.stdoutReader = void 0;
+     if (this.child) {
+       this.expectedExitSignal = "SIGTERM";
++      this.child.stdin?.end();
+       this.child.kill("SIGTERM");
+       this.child = void 0;
+     }
+@@ -5332,6 +5435,7 @@ var AppServerRpcClient = class extends EventEmitter {
+           `[codex-app-server] Closing idle app-server process after ${idleTimeoutMs}ms inactivity.`
+         );
+         this.expectedExitSignal = "SIGTERM";
++        this.child.stdin?.end();
+         this.child.kill("SIGTERM");
+         this.child = void 0;
+       }
+@@ -5894,9 +5998,9 @@ function tool(definition) {
      name,
      description,
      inputSchema: toJsonSchema(parameters),

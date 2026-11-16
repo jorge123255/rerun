@@ -8,7 +8,7 @@ process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-codex-thread-'
 const { calls, prompts, turn, lifecycle, improvement } = vi.hoisted(() => ({
     calls: [] as Array<Record<string, unknown> | undefined>,
     prompts: [] as unknown[],
-    turn: { threadId: 'thread-1', fail: false },
+    turn: { threadId: 'thread-1', fail: false, closeHangs: false },
     lifecycle: [] as string[],
     improvement: [] as boolean[],
 }))
@@ -23,6 +23,8 @@ vi.mock('../desktop/native-worker.js',()=>({createDesktopNativeWorker:async()=>(
     finish:async()=>{lifecycle.push('worker-finish');throw new Error('review acknowledgement lost')},
     close:async()=>{lifecycle.push('worker-close')},
 })}))
+// The real curator spawns the Codex CLI after each turn and logs once the file is torn down.
+vi.mock('./curator.js', () => ({ runCurator: async () => {} }))
 vi.mock('../agents/availability.js', async importOriginal => ({
     ...(await importOriginal<typeof import('../agents/availability.js')>()),
     resolveRunModel: async () => ({
@@ -61,12 +63,12 @@ vi.mock('../agents/providers.js', async importOriginal => {
                     }
                 },
             }),
-            close: async () => {lifecycle.push('model-close')},
+            close: () => { lifecycle.push('model-close'); return turn.closeHangs ? new Promise<void>(() => {}) : Promise.resolve() },
         }),
     }
 })
 
-const { beforeAll, beforeEach, describe, expect, it } = await import('vitest')
+const { afterEach, beforeAll, beforeEach, describe, expect, it } = await import('vitest')
 const { mkdir } = await import('node:fs/promises')
 const { migrate } = await import('../db/migrate.js')
 const { agentConfigSchema } = await import('../agents/types.js')
@@ -102,7 +104,12 @@ describe('a Codex conversation keeps its thread', () => {
         improvement.length = 0
         turn.threadId = 'thread-1'
         turn.fail = false
+        turn.closeHangs = false
         forgetCodexThreadsOf('mac-chatgpt')
+    })
+
+    afterEach(() => {
+        vi.useRealTimers()
     })
 
     it('starts a thread on the first message and resumes it on the next', async () => {
@@ -226,5 +233,45 @@ describe('a Codex conversation keeps its thread', () => {
         await send(second.id, 'two')
         await send(first.id, 'one again')
         expect(calls).toEqual([undefined, undefined, { threadId: 'thread-1' }])
+    })
+    // An app-server that did not go down in time still holds the thread's writer lock: resuming it
+    // would be refused with "already has an active writer" (upstream #253, RER-128).
+    async function teardownTimesOut(sessionId: string) {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+        turn.closeHangs = true
+        let settled = false
+        void send(sessionId, 'hello').then(() => (settled = true))
+        for (let tick = 0; tick < 300 && !settled; tick++) {
+            await new Promise(resolve => setImmediate(resolve))
+            await vi.advanceTimersByTimeAsync(100)
+        }
+        expect(settled).toBe(true)
+        vi.useRealTimers()
+        turn.closeHangs = false
+    }
+
+    it('starts a new thread after a turn whose teardown timed out', async () => {
+        const session = await createSession(id, 'hello')
+        await teardownTimesOut(session.id)
+        await send(session.id, 'and then?')
+        expect(calls).toEqual([undefined, undefined])
+    })
+
+    // The Mac's coworkers run on the same loop with the desktop runner.
+    it('starts a new thread after a timed-out teardown on the Mac runner too', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        vi.stubEnv('RERUN_DESKTOP_CODEX_RUNNER', '/test/codex')
+        try {
+            const session = await createSession(id, 'hello mac')
+            await send(session.id, 'first')
+            await send(session.id, 'second')
+            expect(calls.at(-1)).toMatchObject({ threadId: 'thread-1' })
+            calls.length = 0
+            await teardownTimesOut(session.id)
+            await send(session.id, 'and then?')
+            expect(calls).toHaveLength(2)
+            expect(calls[0]).toMatchObject({ threadId: 'thread-1' })
+            expect(calls[1]?.threadId).toBeUndefined()
+        } finally { vi.unstubAllEnvs() }
     })
 })

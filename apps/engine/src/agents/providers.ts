@@ -543,6 +543,8 @@ function opencodeModel(agent: LoadedAgent, model: string, sessionId?: string) {
     })
 }
 
+const CODEX_ONE_SHOT_CLOSE_MS = 15_000
+
 // For one-shot calls with no tools. Codex resolves to the exec transport here, which spawns per call
 // and exits — nothing to dispose. A run that streams must use `resolveModel` instead.
 export function modelFor(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: McpServer[], options?: CliModelOptions): LanguageModel {
@@ -571,7 +573,9 @@ export function modelFor(agent: LoadedAgent, override?: ModelOverride, tools?: T
                         baseInstructions: CODEX_ONE_SHOT_INSTRUCTIONS,
                     } })
                     try { return await codex(model).doGenerate(params) }
-                    finally { await codex.close() }
+                    // close() now waits for the app-server to exit (upstream #253). A one-shot has no
+                    // thread to protect, so one that will not go down must not hold the caller.
+                    finally { await Promise.race([codex.close().catch(() => {}), new Promise<void>(done => setTimeout(done, CODEX_ONE_SHOT_CLOSE_MS).unref())]) }
                 },
             },
         })
