@@ -167,13 +167,16 @@ export const desktopConnectorPreviewSchema = z.object({
         fields: z.array(z.tuple([z.string().max(80), z.string().max(1400)])).max(14).optional(),
         code: z.string().max(2000).optional(),
     }).strict()).max(6),
+    // A press in the coworker's browser (desktop-browser-approvals.ts): the control's own label and the page's host.
+    press: z.object({ label: z.string().max(80), host: z.string().max(260), via: z.enum(['click', 'key']) }).strict().optional(),
 }).strict()
 export type DesktopConnectorPreview = z.infer<typeof desktopConnectorPreviewSchema>
 
 export const desktopConnectorApprovalDecisionSchema = z.enum(['once', 'conversation', 'always', 'deny'])
 export type DesktopConnectorApprovalDecision = z.infer<typeof desktopConnectorApprovalDecisionSchema>
 
-const kind = z.enum(DESKTOP_CONNECTOR_ACTION_KINDS)
+// `press` is a browser button held only because Extra vigilant is on.
+const kind = z.enum([...DESKTOP_CONNECTOR_ACTION_KINDS, 'press'])
 export const desktopConnectorApprovalViewSchema = z.object({
     pending: z.array(z.object({ id: z.string().uuid(), tool: z.string().max(200), kind, preview: z.string().max(4000), createdAt: z.string() }).strict()).max(20),
     rules: z.array(z.object({ id: z.string().uuid(), tool: z.string().max(200), scope: z.enum(['conversation', 'always']) }).strict()).max(200),

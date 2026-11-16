@@ -42,4 +42,15 @@ describe('guest image source', () => {
         expect(guest).toContain("BANNED_MOUNT = ('docker.sock', '/Users/'")
         expect(read('Dockerfile')).not.toContain('/Users/')
     })
+
+    it('reads the control under a press without touching the page', () => {
+        const guest = read('guest.py')
+        expect(guest).toContain("if op == 'probe':")
+        const script = guest.slice(guest.indexOf('PROBE_JS = r"""'), guest.indexOf('PROBE_HOST'))
+        expect(script.length).toBeGreaterThan(500)
+        for (const banned of ['.click(', '.submit(', '.focus(', 'dispatchEvent', '.value =', 'innerHTML =', 'fetch(', 'XMLHttpRequest', 'navigator.sendBeacon']) expect(script).not.toContain(banned)
+        // Only the visible tab is read, and what the page answers is typed and bounded before it leaves the guest.
+        expect(guest).toContain("evaluate(cdp, 'document.visibilityState') != 'visible'")
+        expect(guest).toContain('clean_probe(evaluate(cdp, PROBE_JS')
+    })
 })

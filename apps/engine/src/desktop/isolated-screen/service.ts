@@ -6,22 +6,29 @@ import type { DockerClient, ListedScreen } from './docker-cli.js'
 import { encodeScreenJpeg } from './encode.js'
 import { decodeFrame, encodeFrame } from './frame.js'
 import { assertAgentId, assertLaunchNonce, assertOwner, assertTarget, containerName, LABEL_AGENT, LABEL_GENERATION, LABEL_MANAGED, LABEL_NONCE, LABEL_ROLE, ROLE_SCREEN, sameOwnerContainer, sameOwnerVolume, volumeName } from './identity.js'
-import { HUMAN_DRIVING, SETTLE_MS, planAction, viewOf, type ScreenGeometry } from './input.js'
+import { HUMAN_DRIVING, SETTLE_MS, keyCombos, planAction, viewOf, type ActionPlan, type ScreenGeometry } from './input.js'
 import { assertHttpUrl, boundPage, publicUrl } from './page.js'
 import { browserMetadataArtifact } from './export-metadata.js'
 import { PAGE_OPTIONS_VERSION, parseGuestNavigation } from './navigation-protocol.js'
 import { screenExportFailure, validateScreenExportResult } from './transport.js'
 import { decodePageExports, exportPath, navigationOptions } from './exports.js'
 import { abortable } from '../web-fetch/transport.js'
-import { abortError, isAbortError, IsolatedScreenRefusal, throwIfAborted } from './refusal.js'
+import { abortError, isAbortError, IsolatedScreenRefusal, ScreenPressHeld, throwIfAborted } from './refusal.js'
 import { guardedRfbInput } from './rfb-input.js'
 import type { ScreenForeground } from './permissions.js'
-import { desktopGuestShellResultSchema, desktopToolInstallInputSchema } from '@rerun/contracts'
+import { DESKTOP_PRESS_CHANGED, desktopBrowserKeyTrigger, desktopBrowserProbeSchema, desktopGuestShellResultSchema, desktopToolInstallInputSchema, type DesktopBrowserProbe, type DesktopBrowserTrigger } from '@rerun/contracts'
 import type { LauncherControl } from '../computer-launchers/ports.js'
 import { launcherRequestSchema } from '../computer-launchers/contract.js'
-import type { EnsuredScreen, IsolatedScreenService, ScreenComputerInput, ScreenLease, ScreenNavigate, ScreenNavigationExport, ScreenOwner, ScreenPage, ScreenPrerequisite, ScreenReconcile, ScreenRunState, ScreenShot, ScreenStatus, ScreenTakeover, ScreenTarget, ViewerMode } from './types.js'
+import type { EnsuredScreen, IsolatedScreenService, ScreenComputerInput, ScreenLease, ScreenNavigate, ScreenNavigationExport, ScreenOwner, ScreenPage, ScreenPressGate, ScreenPrerequisite, ScreenReconcile, ScreenRunState, ScreenShot, ScreenStatus, ScreenTakeover, ScreenTarget, ViewerMode } from './types.js'
 
 const READY_ATTEMPTS = 150
+// The page marks what is under the pointer a moment after the pointer arrives.
+const PROBE_SETTLE_MS = 150
+const UNREADABLE: DesktopBrowserProbe = { readable: false, page: true, role: 'other', label: '', host: '', submits: false, form: '', field: '', fieldLabel: '' }
+const withoutOk = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'ok'))
+/** The same control on the same site: what an "allow once" was given for. */
+const samePress = (a: DesktopBrowserProbe, b: DesktopBrowserProbe) =>
+    a.page === b.page && a.readable === b.readable && a.role === b.role && a.label === b.label && a.host === b.host && a.form === b.form && a.fieldLabel === b.fieldLabel
 const guestShellSavedResultSchema = desktopGuestShellResultSchema.omit({ requestId: true })
 const READY_PAUSE_MS = 200
 const CONFLICT = 'A container or volume already uses this screen name without Rerun labels.'
@@ -497,10 +504,59 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         })
     }
 
-    async function act(target: ScreenTarget, input: ScreenComputerInput, signal: AbortSignal): Promise<ScreenShot> {
+    // What the control a press would land on says about itself. A guest that cannot answer (an older
+    // screen image, a browser page of its own) reads as a control that cannot be read.
+    async function probe(target: ScreenTarget, how: 'hover' | 'focused', signal: AbortSignal): Promise<DesktopBrowserProbe> {
+        try {
+            const parsed = desktopBrowserProbeSchema.safeParse(withoutOk((await guestCall(target, { op: 'probe', [how]: true }, signal)).value))
+            if (parsed.success) return parsed.data
+        } catch (error) {
+            throwIfAborted(signal)
+            if (!(error instanceof IsolatedScreenRefusal) || error.kind === 'stale' || error.message === HUMAN_DRIVING) throw error
+        }
+        return UNREADABLE
+    }
+
+    // A click or an activating key in the browser is read before it is made, and held when the gate says so.
+    async function gatePress(target: ScreenTarget, input: ScreenComputerInput, plan: ActionPlan, gate: ScreenPressGate, signal: AbortSignal): Promise<void> {
+        const first = plan.calls.find(call => call.kind === 'input')
+        if (!first || first.kind !== 'input') return
+        let trigger: DesktopBrowserTrigger | null = null
+        // A drag lets go of the button where it ends: on the same control that is a click, and on another it is a drop.
+        if (input.action === 'left_click' || input.action === 'double_click' || input.action === 'left_click_drag') trigger = 'click'
+        else if (input.action === 'key') {
+            const triggers = keyCombos(input.text ?? '').map(desktopBrowserKeyTrigger)
+            if (!triggers.some(Boolean)) return
+            trigger = triggers[0] ?? null
+        } else if (input.action === 'type' && /[\r\n]/.test(input.text ?? '')) trigger = 'enter'
+        else return
+        const front = await foreground(target, signal)
+        // Terminal and Files have no pages; their own permissions cover them.
+        if (front.app !== 'browser') return
+        // What Enter activates depends on where the focus is when it is pressed, so it is pressed on its own.
+        if (!trigger || (input.action === 'key' && keyCombos(input.text ?? '').length > 1)) throw new ScreenPressHeld('In the browser, press Return, Enter or space on its own, not together with other keys, so Rerun can check what it activates before it is pressed. Nothing was pressed.')
+        const read = async () => {
+            if (trigger === 'click') {
+                // The pointer goes where the click will land; the page then says what is under it.
+                await guestCall(target, { op: 'input', action: 'mousemove', x: first.body.x ?? first.body.x2, y: first.body.y ?? first.body.y2, expectedForeground: front }, signal)
+                await sleep(PROBE_SETTLE_MS, signal)
+                return probe(target, 'hover', signal)
+            }
+            return probe(target, 'focused', signal)
+        }
+        const before = await read()
+        if (await gate({ trigger, probe: before }, signal) !== 'allowed') return
+        // The person allowed one press on one control. It is read again right before the press: an
+        // answer given for another label or another site does not carry over.
+        const now = await read()
+        if (!samePress(before, now)) throw new ScreenPressHeld(DESKTOP_PRESS_CHANGED)
+    }
+
+    async function act(target: ScreenTarget, input: ScreenComputerInput, signal: AbortSignal, gate?: ScreenPressGate): Promise<ScreenShot> {
         throwIfAborted(signal)
         return action(target, signal, async (live, signal) => {
         const plan = planAction(input, live.screen)
+        if (gate) await gatePress(target, input, plan, gate, signal)
         for (const call of plan.calls) {
             throwIfAborted(signal)
             if (live.lease || live.takingOver) throw new IsolatedScreenRefusal(HUMAN_DRIVING, 'refused')

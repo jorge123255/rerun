@@ -69,6 +69,12 @@ const en = {
     askFailed: "That did not go through. Try again.",
     askTo: "To", askCc: "Cc", askBcc: "Bcc", askSubject: "Subject", askMore: "More details", askCode: "Code it would run",
     askAllowedHint: "Connector actions this coworker runs without asking you first.",
+    askPressTitle: "{name} wants to press “{label}” on {host}",
+    askPressKey: "{name} wants to press Enter for “{label}” on {host}",
+    askPressUnlabelled: "{name} wants to press an unlabelled control on {host}",
+    askPressAny: "Extra vigilant is on for this coworker, so every button on a web page asks.",
+    askPressNote: "Allowing covers this one press. If the button or the site changes first, nothing is pressed.",
+    askPressHere: "this page", askPressCoworker: "This coworker",
 }
 
 export const desktopBoardCopy = {
@@ -142,6 +148,12 @@ export const desktopBoardCopy = {
         askFailed: "L’action n’a pas abouti. Réessayez.",
         askTo: "À", askCc: "Cc", askBcc: "Cci", askSubject: "Objet", askMore: "Plus de détails", askCode: "Code qui serait exécuté",
         askAllowedHint: "Actions de connecteur que ce collègue exécute sans vous demander.",
+        askPressTitle: "{name} veut appuyer sur « {label} » sur {host}",
+        askPressKey: "{name} veut appuyer sur Entrée pour « {label} » sur {host}",
+        askPressUnlabelled: "{name} veut appuyer sur un élément sans libellé sur {host}",
+        askPressAny: "La vigilance renforcée est activée pour ce collègue : chaque bouton d’une page web demande votre accord.",
+        askPressNote: "L’autorisation vaut pour cet appui seulement. Si le bouton ou le site change avant, rien n’est pressé.",
+        askPressHere: "cette page", askPressCoworker: "Ce collègue",
     },
     es: {
         title: "Buscar conversación",
@@ -212,6 +224,12 @@ export const desktopBoardCopy = {
         askFailed: "No se pudo completar. Inténtalo de nuevo.",
         askTo: "Para", askCc: "CC", askBcc: "CCO", askSubject: "Asunto", askMore: "Más detalles", askCode: "Código que se ejecutaría",
         askAllowedHint: "Acciones de conector que este compañero ejecuta sin preguntarte.",
+        askPressTitle: "{name} quiere pulsar «{label}» en {host}",
+        askPressKey: "{name} quiere pulsar Intro para «{label}» en {host}",
+        askPressUnlabelled: "{name} quiere pulsar un control sin etiqueta en {host}",
+        askPressAny: "La vigilancia extra está activada para este compañero: cada botón de una página web pregunta antes.",
+        askPressNote: "El permiso vale solo para esta pulsación. Si el botón o el sitio cambian antes, no se pulsa nada.",
+        askPressHere: "esta página", askPressCoworker: "Este compañero",
     },
     pt: {
         title: "Buscar conversa",
@@ -282,6 +300,12 @@ export const desktopBoardCopy = {
         askFailed: "Não foi possível concluir. Tente de novo.",
         askTo: "Para", askCc: "Cc", askBcc: "Cco", askSubject: "Assunto", askMore: "Mais detalhes", askCode: "Código que seria executado",
         askAllowedHint: "Ações de conector que este colega executa sem perguntar a você.",
+        askPressTitle: "{name} quer pressionar “{label}” em {host}",
+        askPressKey: "{name} quer pressionar Enter para “{label}” em {host}",
+        askPressUnlabelled: "{name} quer pressionar um controle sem rótulo em {host}",
+        askPressAny: "A vigilância extra está ativada para este colega: cada botão de uma página web pergunta antes.",
+        askPressNote: "A permissão vale só para este toque. Se o botão ou o site mudar antes, nada é pressionado.",
+        askPressHere: "esta página", askPressCoworker: "Este colega",
     },
     de: {
         title: "Unterhaltung suchen",
@@ -352,5 +376,11 @@ export const desktopBoardCopy = {
         askFailed: "Das hat nicht geklappt. Versuche es erneut.",
         askTo: "An", askCc: "Cc", askBcc: "Bcc", askSubject: "Betreff", askMore: "Weitere Details", askCode: "Code, der ausgeführt würde",
         askAllowedHint: "Connector-Aktionen, die dieser Kollege ohne Nachfrage ausführt.",
+        askPressTitle: "{name} möchte auf {host} „{label}“ drücken",
+        askPressKey: "{name} möchte auf {host} die Eingabetaste für „{label}“ drücken",
+        askPressUnlabelled: "{name} möchte auf {host} ein unbeschriftetes Element drücken",
+        askPressAny: "Für diesen Kollegen ist die erhöhte Wachsamkeit aktiv: Jede Schaltfläche auf einer Webseite fragt nach.",
+        askPressNote: "Die Erlaubnis gilt nur für diesen einen Druck. Ändert sich vorher die Schaltfläche oder die Website, wird nichts gedrückt.",
+        askPressHere: "dieser Seite", askPressCoworker: "Dieser Kollege",
     },
 } satisfies Record<Locale, typeof en>

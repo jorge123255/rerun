@@ -5,6 +5,9 @@ import type { DockerClient, DockerImage, DockerVersion, ListedScreen } from './d
 import { decodeFrame } from './frame.js'
 import { containerLabels, containerName, LABEL_GENERATION, volumeLabels, volumeName } from './identity.js'
 import { HUMAN_DRIVING } from './input.js'
+import { ScreenPressHeld } from './refusal.js'
+import { createPressGate, PRESS_NEEDS_RUN, PRESS_UNCHECKED, type PressAsk } from './press-gate.js'
+import { DESKTOP_DECLINED_BY_PERSON, DESKTOP_PRESS_CHANGED, type DesktopBrowserPress } from '@rerun/contracts'
 import { createIsolatedScreenService, type IsolatedScreenDeps } from './service.js'
 import type { IsolatedScreenService, ScreenOwner, ScreenTarget, ViewerMode } from './types.js'
 import { createDesktopGuestShellService } from '../guest-shell/service.js'
@@ -54,6 +57,8 @@ class FakeDocker implements DockerClient {
     afterRun: ((name: string) => void) | null = null
     execHook: ((body: Record<string, unknown>) => void) | null = null
     guestShellCancelReply: Record<string, unknown> | undefined
+    /** What the guest says about the control under the pointer or with the focus; `null` is an older guest with no probe. One answer per read, the last one repeating. */
+    probes: Array<Record<string, unknown> | null> = []
     guestShellInspectReply: Record<string, unknown> | undefined
     bytes = 0
 
@@ -172,6 +177,10 @@ class FakeDocker implements DockerClient {
             return encodeOk({ ready: true, width: this.width, height: this.height, ...(this.launchers ? { launchers: this.launchers } : {}) })
         }
         if (body.op === 'foreground') return encodeOk(this.foreground)
+        if (body.op === 'probe') {
+            const next = this.probes.length > 1 ? this.probes.shift()! : this.probes[0]
+            return next ? encodeOk(next) : encodeFailure('That screen action is not available.', true)
+        }
         if (body.op === 'focus-browser') { this.foreground = { app: 'browser', windowId: '123' }; return encodeOk({}) }
         if (body.op === 'screenshot') {
             if (this.badGeometry) return encodeOk({ width: 'wide' }, Buffer.from([1]))
@@ -1063,5 +1072,201 @@ describe('isolated command native authority and drain', () => {
         await expect(box.service.guestShell(box.target, { op: 'guest-shell-cancel', commandId: command.commandId, workspaceFingerprint: command.workspaceFingerprint }, box.signal, async () => {})).rejects.toThrow()
         expect(box.docker.execs.filter(item => item.body.op === 'guest-shell-cancel')).toHaveLength(0)
         expect((await box.service.running(owner, box.signal)).target).toEqual(replacement.target)
+    })
+})
+
+describe('a press on a web page asks first', () => {
+    const control = (overrides: Record<string, unknown> = {}) => ({ readable: true, page: true, role: 'button', label: 'Pay now', host: 'checkout.example.test', submits: true, form: '', field: '', fieldLabel: '', ...overrides })
+    const identity = { engineAgentId: owner.engineAgentId, sessionId: 'chat-1', runId: 'run-1' }
+    /** The app's side of the flow: one request per press, answered by the person, spent by the press it lets through. */
+    function person() {
+        const requests = new Map<string, 'pending' | 'allowed' | 'declined'>()
+        const asked: DesktopBrowserPress[] = []
+        const ask: PressAsk = async ({ press }) => {
+            asked.push(press)
+            const key = JSON.stringify(press), state = requests.get(key)
+            if (state === 'allowed') { requests.delete(key); return { ok: true } }
+            if (state === 'declined') { requests.delete(key); return { ok: false, reason: DESKTOP_DECLINED_BY_PERSON } }
+            requests.set(key, 'pending')
+            return { ok: false, reason: state ? 'Still waiting.' : 'A card asking them is now in this chat.' }
+        }
+        const answer = (decision: 'allowed' | 'declined') => { for (const key of requests.keys()) requests.set(key, decision) }
+        return { ask, asked, answer }
+    }
+    const pressed = (box: Awaited<ReturnType<typeof boot>>) => box.docker.execs.map(call => call.body).filter(body => body.op === 'input' && (body.action === 'click' || body.action === 'key' || body.action === 'type'))
+    const click = { action: 'left_click', coordinate: [10, 20] } as const
+
+    it('holds a recognised button, presses it once after an allow, and asks again for the next press', async () => {
+        const box = await boot(), who = person()
+        box.docker.probes = [control()]
+        const gate = createPressGate({ identity, vigilant: async () => false, ask: who.ask })
+        await expect(box.service.act(box.target, click, box.signal, gate)).rejects.toBeInstanceOf(ScreenPressHeld)
+        expect(pressed(box)).toEqual([])
+        expect(who.asked).toEqual([{ kind: 'pay', label: 'Pay now', host: 'checkout.example.test', via: 'click' }])
+        // The pointer went to the control so the page could say what is under it. Nothing was clicked.
+        expect(box.docker.execs.map(call => call.body).filter(body => body.action === 'mousemove')).toHaveLength(1)
+        // Asked again before the person answers: still nothing.
+        await expect(box.service.act(box.target, click, box.signal, gate)).rejects.toThrow('Still waiting.')
+        expect(pressed(box)).toEqual([])
+        who.answer('allowed')
+        await box.service.act(box.target, click, box.signal, gate)
+        expect(pressed(box)).toHaveLength(1)
+        expect(pressed(box)[0]).toMatchObject({ action: 'click', button: 'left', x: 15, y: 30 })
+        // Allow once is spent: the same press asks again.
+        await expect(box.service.act(box.target, click, box.signal, gate)).rejects.toBeInstanceOf(ScreenPressHeld)
+        expect(pressed(box)).toHaveLength(1)
+    })
+
+    it('never makes a press the person declined', async () => {
+        const box = await boot(), who = person()
+        box.docker.probes = [control({ label: 'Delete account' })]
+        const gate = createPressGate({ identity, vigilant: async () => false, ask: who.ask })
+        await expect(box.service.act(box.target, click, box.signal, gate)).rejects.toBeInstanceOf(ScreenPressHeld)
+        who.answer('declined')
+        await expect(box.service.act(box.target, click, box.signal, gate)).rejects.toThrow(DESKTOP_DECLINED_BY_PERSON)
+        expect(pressed(box)).toEqual([])
+    })
+
+    it('voids an allow when the control under the pointer changed before the press', async () => {
+        for (const changed of [{ label: 'Pay $900 now' }, { host: 'evil.example.test' }, { readable: false, label: '' }]) {
+            const box = await boot(), who = person()
+            box.docker.probes = [control()]
+            const gate = createPressGate({ identity, vigilant: async () => false, ask: who.ask })
+            await expect(box.service.act(box.target, click, box.signal, gate)).rejects.toBeInstanceOf(ScreenPressHeld)
+            who.answer('allowed')
+            // The first read still shows the allowed button; the read right before the press does not.
+            box.docker.probes = [control(), control(changed)]
+            await expect(box.service.act(box.target, click, box.signal, gate)).rejects.toThrow(DESKTOP_PRESS_CHANGED)
+            expect(pressed(box)).toEqual([])
+            // The answer was spent on the press that was not made: the new control asks for itself.
+            box.docker.probes = [control()]
+            await expect(box.service.act(box.target, click, box.signal, gate)).rejects.toBeInstanceOf(ScreenPressHeld)
+            expect(pressed(box)).toEqual([])
+        }
+    })
+
+    it('lets ordinary clicks through without asking', async () => {
+        const box = await boot(), who = person()
+        const gate = createPressGate({ identity, vigilant: async () => false, ask: who.ask })
+        for (const ordinary of [control({ label: 'Save draft' }), control({ role: 'link', label: 'Next', submits: false }), control({ role: 'field', label: '', field: 'text', fieldLabel: 'Search' }), control({ page: false }), control({ readable: false, label: '' })]) {
+            box.docker.probes = [ordinary]
+            await box.service.act(box.target, click, box.signal, gate)
+        }
+        expect(pressed(box)).toHaveLength(5)
+        expect(who.asked).toEqual([])
+        // Moving, scrolling and looking are never read or held.
+        box.docker.probes = [control()]
+        const probesBefore = box.docker.execs.filter(call => call.body.op === 'probe').length
+        await box.service.act(box.target, { action: 'mouse_move', coordinate: [10, 20] }, box.signal, gate)
+        await box.service.act(box.target, { action: 'scroll', coordinate: [10, 20], scroll_direction: 'down' }, box.signal, gate)
+        await box.service.act(box.target, { action: 'key', text: 'ctrl+a' }, box.signal, gate)
+        await box.service.act(box.target, { action: 'type', text: 'hello' }, box.signal, gate)
+        expect(box.docker.execs.filter(call => call.body.op === 'probe').length).toBe(probesBefore)
+    })
+
+    it('with Extra vigilant on, holds every button and anything it cannot read', async () => {
+        const box = await boot(), who = person()
+        let vigilant = true
+        const gate = createPressGate({ identity, vigilant: async () => vigilant, ask: who.ask })
+        box.docker.probes = [control({ label: 'Next' })]
+        await expect(box.service.act(box.target, click, box.signal, gate)).rejects.toBeInstanceOf(ScreenPressHeld)
+        box.docker.probes = [control({ readable: false, label: '' })]
+        await expect(box.service.act(box.target, click, box.signal, gate)).rejects.toBeInstanceOf(ScreenPressHeld)
+        // A screen image built before the probe existed cannot be read at all.
+        box.docker.probes = [null]
+        await expect(box.service.act(box.target, click, box.signal, gate)).rejects.toBeInstanceOf(ScreenPressHeld)
+        expect(who.asked).toEqual([
+            { kind: 'press', label: 'Next', host: 'checkout.example.test', via: 'click' },
+            { kind: 'press', label: '', host: 'checkout.example.test', via: 'click' },
+            { kind: 'press', label: '', host: '', via: 'click' },
+        ])
+        expect(pressed(box)).toEqual([])
+        // Plain links and text fields still go through.
+        box.docker.probes = [control({ role: 'link', label: 'Pricing', submits: false })]
+        await box.service.act(box.target, click, box.signal, gate)
+        expect(pressed(box)).toHaveLength(1)
+        // The switch is read at every press: off again, an unreadable control goes through. That is the stated limit.
+        vigilant = false
+        box.docker.probes = [null]
+        await box.service.act(box.target, click, box.signal, gate)
+        expect(pressed(box)).toHaveLength(2)
+    })
+
+    it('reads the focused control before Enter, Ctrl+Enter or a typed line break', async () => {
+        const box = await boot(), who = person()
+        const gate = createPressGate({ identity, vigilant: async () => false, ask: who.ask })
+        box.docker.probes = [control({ role: 'field', label: '', field: 'text', fieldLabel: 'Card number', form: 'Place order' })]
+        await expect(box.service.act(box.target, { action: 'key', text: 'Return' }, box.signal, gate)).rejects.toBeInstanceOf(ScreenPressHeld)
+        await expect(box.service.act(box.target, { action: 'type', text: '4242\n' }, box.signal, gate)).rejects.toBeInstanceOf(ScreenPressHeld)
+        box.docker.probes = [control({ role: 'field', label: '', submits: false, field: 'multiline', fieldLabel: 'Notes' })]
+        await expect(box.service.act(box.target, { action: 'key', text: 'ctrl+Return' }, box.signal, gate)).rejects.toBeInstanceOf(ScreenPressHeld)
+        expect(who.asked.map(press => [press.kind, press.label, press.via])).toEqual([['pay', 'Place order', 'key'], ['pay', 'Place order', 'key'], ['send', 'Notes', 'key']])
+        expect(pressed(box)).toEqual([])
+        expect(box.docker.execs.some(call => call.body.op === 'probe' && call.body.focused === true)).toBe(true)
+        // Enter in a search box is ordinary.
+        box.docker.probes = [control({ role: 'field', label: '', field: 'text', fieldLabel: 'Search', form: 'Search' })]
+        await box.service.act(box.target, { action: 'key', text: 'Return' }, box.signal, gate)
+        expect(pressed(box)).toHaveLength(1)
+    })
+
+    it('refuses Enter inside a run of keys, where the focus cannot be known beforehand', async () => {
+        const box = await boot(), who = person()
+        const gate = createPressGate({ identity, vigilant: async () => false, ask: who.ask })
+        box.docker.probes = [control({ label: 'Save draft' })]
+        await expect(box.service.act(box.target, { action: 'key', text: 'Tab Tab Return' }, box.signal, gate)).rejects.toThrow('on its own')
+        expect(pressed(box)).toEqual([])
+        expect(who.asked).toEqual([])
+        // Keys that activate nothing still go together.
+        await box.service.act(box.target, { action: 'key', text: 'ctrl+a BackSpace' }, box.signal, gate)
+        expect(pressed(box)).toHaveLength(1)
+    })
+
+    it('holds a drag that lets go on a recognised button', async () => {
+        const box = await boot(), who = person()
+        const gate = createPressGate({ identity, vigilant: async () => false, ask: who.ask })
+        box.docker.probes = [control({ label: 'Delete' })]
+        await expect(box.service.act(box.target, { action: 'left_click_drag', start_coordinate: [10, 20], coordinate: [12, 22] }, box.signal, gate)).rejects.toBeInstanceOf(ScreenPressHeld)
+        expect(box.docker.execs.map(call => call.body).filter(body => body.action === 'drag')).toEqual([])
+        expect(box.docker.execs.map(call => call.body).find(body => body.action === 'mousemove')).toMatchObject({ x: 18, y: 33 })
+        box.docker.probes = [control({ role: 'other', label: '', submits: false })]
+        await box.service.act(box.target, { action: 'left_click_drag', start_coordinate: [10, 20], coordinate: [300, 22] }, box.signal, gate)
+        expect(box.docker.execs.map(call => call.body).filter(body => body.action === 'drag')).toHaveLength(1)
+    })
+
+    it('leaves Terminal and Files to their own permissions', async () => {
+        const box = await boot(), who = person()
+        const gate = createPressGate({ identity, vigilant: async () => true, ask: who.ask })
+        box.docker.foreground = { app: 'terminal', windowId: '456' }
+        box.docker.probes = [control()]
+        await box.service.act(box.target, { action: 'key', text: 'Return' }, box.signal, gate)
+        await box.service.act(box.target, click, box.signal, gate)
+        expect(pressed(box)).toHaveLength(2)
+        expect(box.docker.execs.some(call => call.body.op === 'probe')).toBe(false)
+    })
+
+    it('does not press when the person cannot be asked', async () => {
+        const box = await boot()
+        box.docker.probes = [control()]
+        const down = createPressGate({ identity, vigilant: async () => false, ask: async () => { throw new Error('app is restarting') } })
+        await expect(box.service.act(box.target, click, box.signal, down)).rejects.toThrow(PRESS_UNCHECKED)
+        const noRun = createPressGate({ identity: null, vigilant: async () => false, ask: async () => ({ ok: true }) })
+        await expect(box.service.act(box.target, click, box.signal, noRun)).rejects.toThrow(PRESS_NEEDS_RUN)
+        expect(pressed(box)).toEqual([])
+    })
+
+    it('still honours an answer after the engine restarts with the request pending', async () => {
+        const who = person()
+        const first = await boot()
+        first.docker.probes = [control()]
+        await expect(first.service.act(first.target, click, first.signal, createPressGate({ identity, vigilant: async () => false, ask: who.ask }))).rejects.toBeInstanceOf(ScreenPressHeld)
+        // A new engine process: a new screen service, a new run, a new gate. The request lives in the app.
+        const second = await boot()
+        second.docker.probes = [control()]
+        const gate = createPressGate({ identity: { ...identity, runId: 'run-2' }, vigilant: async () => false, ask: who.ask })
+        await expect(second.service.act(second.target, click, second.signal, gate)).rejects.toThrow('Still waiting.')
+        expect(pressed(second)).toEqual([])
+        who.answer('allowed')
+        await second.service.act(second.target, click, second.signal, gate)
+        expect(pressed(second)).toHaveLength(1)
     })
 })
