@@ -44,3 +44,41 @@ it('uses OpenRouter when it has a key, else the model named for this Mac', async
     await store.change({ purpose: 'embedding', expectedRevision: 'unconfigured', key: 'router-key' })
     expect(await store.readEmbedding()).toMatchObject({ purpose: 'embedding', key: 'router-key' })
 })
+
+import { desktopLocalEmbeddingDownload, resetDesktopLocalEmbeddingDownload, startDesktopLocalEmbeddingDownload } from './local-embedding'
+
+const streaming = (lines: unknown[], status = 200) => vi.fn(async () => new Response(lines.map(line => JSON.stringify(line) + '\n').join(''), { status })) as unknown as typeof fetch
+
+it('downloads an offered model through Ollama and reports how far it has come', async () => {
+    resetDesktopLocalEmbeddingDownload()
+    const fetcher = streaming([{ status: 'pulling manifest' }, { status: 'pulling abc', total: 200, completed: 50 }, { status: 'pulling abc', total: 200, completed: 200 }, { status: 'pulling def', total: 10, completed: 1 }, { status: 'success' }])
+    const run = startDesktopLocalEmbeddingDownload('nomic-embed-text', fetcher)
+    expect(run.started).toBe(true)
+    expect(desktopLocalEmbeddingDownload()).toMatchObject({ model: 'nomic-embed-text', state: 'downloading' })
+    await run.finished
+    expect(desktopLocalEmbeddingDownload()).toEqual({ model: 'nomic-embed-text', state: 'done', percent: 100, message: 'Downloaded' })
+    const call = vi.mocked(fetcher).mock.calls[0]!
+    expect(String(call[0])).toBe('http://127.0.0.1:11434/api/pull')
+    expect(JSON.parse(String(call[1]!.body))).toEqual({ model: 'nomic-embed-text', stream: true })
+})
+
+it('refuses a model that is not on the offered list, and never runs two downloads at once', async () => {
+    resetDesktopLocalEmbeddingDownload()
+    expect(() => startDesktopLocalEmbeddingDownload('some-huge-model', streaming([]))).toThrow('cannot be downloaded')
+    let release!: () => void
+    const waiting = vi.fn(() => new Promise<Response>(resolve => { release = () => resolve(new Response(JSON.stringify({ status: 'success' }) + '\n')) })) as unknown as typeof fetch
+    const first = startDesktopLocalEmbeddingDownload('nomic-embed-text', waiting)
+    expect(startDesktopLocalEmbeddingDownload('all-minilm', streaming([])).started).toBe(false)
+    release(); await first.finished
+    expect(desktopLocalEmbeddingDownload()?.state).toBe('done')
+})
+
+it('says so when Ollama reports an error, stops early, or cannot be reached', async () => {
+    resetDesktopLocalEmbeddingDownload()
+    await startDesktopLocalEmbeddingDownload('nomic-embed-text', streaming([{ error: 'no space left on device' }])).finished
+    expect(desktopLocalEmbeddingDownload()).toMatchObject({ state: 'failed', message: 'no space left on device' })
+    await startDesktopLocalEmbeddingDownload('nomic-embed-text', streaming([{ status: 'pulling abc', total: 10, completed: 4 }])).finished
+    expect(desktopLocalEmbeddingDownload()).toMatchObject({ state: 'failed', message: 'The download stopped before it finished.' })
+    await startDesktopLocalEmbeddingDownload('nomic-embed-text', vi.fn(async () => { throw new Error('refused') }) as unknown as typeof fetch).finished
+    expect(desktopLocalEmbeddingDownload()).toMatchObject({ state: 'failed', message: 'Ollama could not be reached. Open Ollama and try again.' })
+})

@@ -1,7 +1,7 @@
 import 'server-only'
 import { z } from 'zod'
 import { DESKTOP_SEMANTIC_DIMENSIONS_MAX } from '@rerun/contracts'
-import { desktopLocalEmbeddingModel, type DesktopLocalEmbeddingStatus } from '../../auxiliary'
+import { DESKTOP_LOCAL_EMBEDDING_DOWNLOADS, desktopLocalEmbeddingModel, type DesktopLocalEmbeddingDownload, type DesktopLocalEmbeddingStatus } from '../../auxiliary'
 import { boundedText } from '../mcp/remote'
 
 /**
@@ -46,4 +46,51 @@ export async function desktopLocalEmbeddingIdentity(model: string, revision: str
         sizes.set(key, dimensions)
     }
     return { backendId: 'ollama', model: model.slice(0, 128), version: '1', dimensions } as const
+}
+
+// One download at a time, for this app launch. Ollama does the downloading and keeps the file; the
+// app only asks it to, and repeats what Ollama says about how far along it is.
+const KEY = Symbol.for('rerun.desktop.local-embedding.download.v1')
+const slot = globalThis as typeof globalThis & { [KEY]?: { download: DesktopLocalEmbeddingDownload | null } }
+const held = slot[KEY] ??= { download: null }
+const progress = z.object({ status: z.string().max(400).optional(), total: z.number().nonnegative().optional(), completed: z.number().nonnegative().optional(), error: z.string().max(400).optional() })
+
+export function desktopLocalEmbeddingDownload(): DesktopLocalEmbeddingDownload | null { return held.download }
+export function resetDesktopLocalEmbeddingDownload() { held.download = null }
+
+/** Asks Ollama to download one of the offered embedding models. Returns at once; progress is read with the status. */
+export function startDesktopLocalEmbeddingDownload(model: string, fetcher: typeof fetch = fetch): { started: boolean; finished: Promise<void> } {
+    if (!(DESKTOP_LOCAL_EMBEDDING_DOWNLOADS as readonly string[]).includes(model)) throw new Error('This model cannot be downloaded through Rerun.')
+    if (held.download?.state === 'downloading') return { started: false, finished: Promise.resolve() }
+    const current: DesktopLocalEmbeddingDownload = { model: model as DesktopLocalEmbeddingDownload['model'], state: 'downloading', percent: 0, message: 'Starting the download' }
+    held.download = current
+    const fail = (message: string) => { if (held.download === current) held.download = { ...current, state: 'failed', message: message.slice(0, 200) } }
+    const finished = (async () => {
+        const signal = AbortSignal.timeout(30 * 60_000)
+        const response = await fetcher(`${DESKTOP_OLLAMA_ORIGIN}/api/pull`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model, stream: true }), signal, redirect: 'error' })
+        if (!response.ok || !response.body) { void response.body?.cancel().catch(() => {}); return fail('Ollama did not start the download.') }
+        const reader = response.body.getReader(), decoder = new TextDecoder()
+        let pending = '', succeeded = false
+        for (;;) {
+            const chunk = await reader.read()
+            if (chunk.done) break
+            pending += decoder.decode(chunk.value, { stream: true })
+            if (pending.length > 200_000) { void reader.cancel().catch(() => {}); return fail('Ollama sent an answer Rerun could not read.') }
+            const lines = pending.split('\n'); pending = lines.pop() ?? ''
+            for (const line of lines) {
+                if (!line.trim()) continue
+                const step = progress.safeParse(JSON.parse(line))
+                if (!step.success) continue
+                if (step.data.error) { void reader.cancel().catch(() => {}); return fail(step.data.error) }
+                if (step.data.status === 'success') succeeded = true
+                const percent = step.data.total ? Math.min(100, Math.floor((step.data.completed ?? 0) / step.data.total * 100)) : current.percent
+                // The download comes in several files; the bar never runs backwards between them.
+                current.percent = Math.max(current.percent, percent)
+                current.message = (step.data.status ?? current.message).slice(0, 200)
+            }
+        }
+        if (held.download !== current) return
+        held.download = succeeded ? { ...current, state: 'done', percent: 100, message: 'Downloaded' } : { ...current, state: 'failed', message: 'The download stopped before it finished.' }
+    })().catch(() => fail('Ollama could not be reached. Open Ollama and try again.'))
+    return { started: true, finished }
 }

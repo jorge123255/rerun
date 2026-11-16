@@ -20,5 +20,12 @@ export const desktopAuxiliaryChangeSchema = z.object({
 /** Memory search on this Mac: the saved value is the name of an embedding model in Ollama, never a key. */
 export const DESKTOP_LOCAL_EMBEDDING_DEFAULT = 'nomic-embed-text'
 export const desktopLocalEmbeddingModel = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/)
-export const desktopLocalEmbeddingStatusSchema = z.strictObject({ running: z.boolean(), models: z.array(z.string().max(160)).max(200), embeddingModels: z.array(z.string().max(160)).max(200) })
+/** The embedding models Rerun will download for the person. Nothing else can be pulled through the app. */
+export const DESKTOP_LOCAL_EMBEDDING_DOWNLOADS = ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm'] as const
+export const desktopLocalEmbeddingDownloadSchema = z.strictObject({
+    model: z.enum(DESKTOP_LOCAL_EMBEDDING_DOWNLOADS), state: z.enum(['downloading', 'done', 'failed']),
+    percent: z.number().int().min(0).max(100), message: z.string().max(200),
+})
+export type DesktopLocalEmbeddingDownload = z.infer<typeof desktopLocalEmbeddingDownloadSchema>
+export const desktopLocalEmbeddingStatusSchema = z.strictObject({ running: z.boolean(), models: z.array(z.string().max(160)).max(200), embeddingModels: z.array(z.string().max(160)).max(200), download: desktopLocalEmbeddingDownloadSchema.nullable().optional() })
 export type DesktopLocalEmbeddingStatus = z.infer<typeof desktopLocalEmbeddingStatusSchema>

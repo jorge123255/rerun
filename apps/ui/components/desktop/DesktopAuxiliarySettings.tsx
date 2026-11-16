@@ -72,26 +72,53 @@ function LocalEmbedding({ row, busy, error, onSave }: { row: DesktopAuxiliarySta
     const label = labels['local-embedding']
     const [status, setStatus] = useState<DesktopLocalEmbeddingStatus | null>(null)
     const [model, setModel] = useState('')
+    const [tick, setTick] = useState(0)
+    const downloading = status?.download?.state === 'downloading'
     useEffect(() => {
         const controller = new AbortController()
         void fetch('/api/desktop/auxiliary/local-embedding', { cache: 'no-store', signal: controller.signal })
             .then(async response => { if (response.ok && !controller.signal.aborted) setStatus(desktopLocalEmbeddingStatusSchema.parse(await response.json())) })
             .catch(() => { if (!controller.signal.aborted) setStatus({ running: false, models: [], embeddingModels: [] }) })
         return () => controller.abort()
-    }, [row.revision])
+    }, [row.revision, tick])
+    // While Ollama downloads, ask how far it has come once a second.
+    useEffect(() => {
+        if (!downloading) return
+        const timer = setTimeout(() => setTick(value => value + 1), 1_000)
+        return () => clearTimeout(timer)
+    }, [downloading, status])
+    async function download() {
+        const response = await fetch('/api/desktop/auxiliary/local-embedding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'download', model: DESKTOP_LOCAL_EMBEDDING_DEFAULT }), cache: 'no-store' }).catch(() => null)
+        if (response?.ok) setStatus(desktopLocalEmbeddingStatusSchema.parse(await response.json()))
+        else setStatus(current => current && { ...current, download: { model: DESKTOP_LOCAL_EMBEDDING_DEFAULT, state: 'failed', percent: 0, message: 'The download could not be started.' } })
+    }
     const suggested = status?.embeddingModels[0] ?? DESKTOP_LOCAL_EMBEDDING_DEFAULT
     const chosen = model.trim() || suggested
     const valid = desktopLocalEmbeddingModel.safeParse(chosen).success
+    const needsModel = !!status?.running && status.embeddingModels.length === 0
     const hint = !status ? 'Looking for Ollama on this Mac…'
-        : !status.running ? 'Ollama is not running on this Mac. Install and open Ollama, then come back.'
-        : status.embeddingModels.length ? `Ollama is running. Embedding models found: ${status.embeddingModels.join(', ')}.`
-        : `Ollama is running, but it has no embedding model yet. In Terminal, run: ollama pull ${DESKTOP_LOCAL_EMBEDDING_DEFAULT}`
+        : !status.running ? 'Ollama is not running on this Mac. Ollama is a free app that runs models on your own computer.'
+        : needsModel ? 'Ollama is running, but it has no model for memory search yet. Rerun can download one for you (about 270 MB).'
+        : `Ollama is running. Models for memory search: ${status.embeddingModels.join(', ')}.`
     return <form className="space-y-3 rounded-xl border p-4" onSubmit={event => { event.preventDefault(); if (valid) void onSave(chosen) }}>
         <div className="flex items-center justify-between"><h2 className="font-semibold">{label.title}</h2><span className="text-xs text-muted-foreground">{row.configured ? 'On' : 'Off'}</span></div>
         <p className="text-sm text-muted-foreground">{label.description}</p>
         <p role="status" className="text-xs text-muted-foreground">{hint}</p>
+        {status && !status.running && <div className="flex flex-wrap items-center gap-2">
+            <a className="text-sm font-medium underline" href="https://ollama.com/download" target="_blank" rel="noreferrer">Install Ollama</a>
+            <Button type="button" size="sm" variant="outline" onClick={() => setTick(value => value + 1)}>Check again</Button>
+        </div>}
+        {needsModel && !downloading && <Button type="button" size="sm" onClick={() => void download()}>Download model</Button>}
+        {status?.download && status.download.state !== 'done' && <div className="space-y-1">
+            {downloading && <div role="progressbar" aria-label="Model download" aria-valuemin={0} aria-valuemax={100} aria-valuenow={status.download.percent} className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-foreground transition-[width]" style={{ width: `${status.download.percent}%` }} />
+            </div>}
+            <p role={status.download.state === 'failed' ? 'alert' : 'status'} className={status.download.state === 'failed' ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
+                {downloading ? `Downloading ${status.download.model}: ${status.download.percent}%` : `The download did not finish: ${status.download.message}`}
+            </p>
+        </div>}
         <label className="text-sm font-medium" htmlFor="tool-service-local-embedding">Ollama embedding model</label>
-        <div className="flex gap-2"><Input id="tool-service-local-embedding" autoComplete="off" spellCheck={false} disabled={busy} placeholder={suggested} value={model} onChange={event => setModel(event.target.value)}/><Button type="submit" disabled={busy || !valid || !status?.running}>{row.configured ? 'Change model' : 'Turn on'}</Button></div>
+        <div className="flex gap-2"><Input id="tool-service-local-embedding" autoComplete="off" spellCheck={false} disabled={busy} placeholder={suggested} value={model} onChange={event => setModel(event.target.value)}/><Button type="submit" disabled={busy || !valid || !status?.running || needsModel}>{row.configured ? 'Change model' : 'Turn on'}</Button></div>
         {row.configured && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void onSave('')}>Turn off</Button>}
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
     </form>

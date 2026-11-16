@@ -220,6 +220,8 @@ export function DesktopCoworkerMemoriesBody({ agent, registerCloseGuard, inDialo
                 </form>
                 {indexStatus && <div className="flex flex-wrap items-center gap-2">
                     <p role="status" className="min-w-0 flex-1 text-xs text-muted-foreground">{settledRecall?.detail || indexStatus.detail}</p>
+                    {indexStatus.backend === null && (indexStatus.mode === 'keyword-only' || indexStatus.mode === 'unavailable') && <Button type="button" size="sm" variant="outline"
+                        onClick={() => window.dispatchEvent(new CustomEvent('rerun-desktop-open-settings', { detail: { tab: 'Tool services' } }))}>Set up search by meaning</Button>}
                     {indexStatus.backend && indexStatus.mode !== 'ready' && <Button type="button" size="sm" variant="outline" disabled={indexBusy} loading={indexBusy} onClick={() => void retryIndex()}>Retry indexing</Button>}
                 </div>}
                 {settledRecall && <p role="status" className="text-xs text-muted-foreground">{settledRecall.memories.length} recalled for “{activeQuery}”</p>}
