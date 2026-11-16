@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest'
 import { createDesktopWorkspaceRoutinesReader, type DesktopWorkspaceRoutinesAuthority } from './reader'
-import type { DesktopScheduleRecord } from '@rerun/contracts'
+import { desktopWorkspaceRoutinesViewSchema, type DesktopScheduleRecord } from '@rerun/contracts'
 
 const schedule = (agentId: string, slug: string, patch: Partial<DesktopScheduleRecord> = {}) => ({
     agentId, slug, name: slug, description: '', body: 'Do work', cron: '0 8 * * *', runAt: null, timezone: 'UTC', enabled: true, revision: `${agentId}-${slug}-v1`, lastRunAt: null, ...patch,
@@ -83,4 +83,27 @@ test('projects only the next future routine for each eligible owner without adop
     } finally {
         clock.mockRestore()
     }
+})
+
+test('adds limit warnings, auto-off and the last run’s checklist to a routine, only for the run they belong to', async () => {
+    const checklist = { reported: true, parts: [{ number: 1, text: 'Read', status: 'done' as const, reason: null }, { number: 2, text: 'File', status: 'skipped' as const, reason: 'nothing new' }] }
+    const authority: DesktopWorkspaceRoutinesAuthority = {
+        listOwners: vi.fn(async () => [owners[0]]),
+        listSchedules: vi.fn(async () => [schedule('agent-a', 'daily'), schedule('agent-a', 'broken', { enabled: false }), schedule('agent-a', 'plain')]),
+        listLatestRuns: vi.fn(async () => [run('agent-a', 'daily', { id: 'latest', status: 'done' }), run('agent-a', 'plain', { id: 'plain-latest', status: 'done' })]),
+        adopt: vi.fn(async (_owner, run) => ({ agentId: run.agentId, sessionId: run.sessionId, engineSessionId: run.sessionId, tabUid: `schedule:${run.sessionId}`, title: 'Result', runId: run.id })),
+        canRename: vi.fn(async () => true),
+        health: vi.fn(async () => ({ limit: 20, enabledInWorkspace: 22, routines: [
+            { slug: 'daily', warnings: ['interval' as const, 'cap' as const], consecutiveFailures: 0, autoDisabledAt: null, lastOutcome: { runId: 'latest', quiet: false, test: false, checklist } },
+            { slug: 'broken', warnings: [], consecutiveFailures: 0, autoDisabledAt: '2026-11-10T08:00:00.000Z', lastOutcome: null },
+            { slug: 'plain', warnings: [], consecutiveFailures: 0, autoDisabledAt: null, lastOutcome: { runId: 'older', quiet: true, test: false, checklist: null } },
+        ] })),
+    }
+    const { routines } = await createDesktopWorkspaceRoutinesReader(authority).list()
+    const by = (slug: string) => routines.find(routine => routine.slug === slug)!
+    expect(by('daily')).toMatchObject({ warnings: ['interval', 'cap'], lastResult: { runId: 'latest', outcome: { quiet: false, checklist } } })
+    expect(by('broken')).toMatchObject({ enabled: false, autoDisabledAt: '2026-11-10T08:00:00.000Z' })
+    expect(by('plain').lastResult).not.toHaveProperty('outcome')
+    expect(by('plain')).not.toHaveProperty('warnings')
+    expect(() => desktopWorkspaceRoutinesViewSchema.parse({ routines, canRename: true })).not.toThrow()
 })

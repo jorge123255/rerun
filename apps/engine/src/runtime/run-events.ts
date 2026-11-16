@@ -1,5 +1,7 @@
 import { recordRunCompletion } from '../db/completed-runs.js'
 import { desktopApp } from '../desktop/policy.js'
+import { settleDesktopRoutineRun, type DesktopRoutineSettlement } from '../desktop/routine-runs.js'
+import { logger } from '../lib/logger.js'
 import { sendNotification, type NotificationEvent, type NotificationKind } from './notify.js'
 import type { RunErrorCode } from './provider-errors.js'
 import type { RunTrigger } from './context.js'
@@ -59,8 +61,18 @@ function describe(terminal: RunTerminal): { event: NotificationEvent; message: s
 // The one place a run announces it is over. Every terminal path goes through it: the run loop's
 // settle, the cancel route when it finds an orphan, and the boot reconciliation.
 export async function emitRunTerminal(terminal: RunTerminal): Promise<void> {
-    const { event, message } = describe(terminal)
     const { trigger } = terminal
+    // A routine run on the Mac settles first: its reply may be the "nothing to report" marker, its
+    // checklist is recorded, and the tenth failure in a row switches the routine off.
+    let routine: DesktopRoutineSettlement | null = null
+    if (desktopApp() && trigger.source === 'schedule') {
+        routine = await settleDesktopRoutineRun({
+            agentId: terminal.agentId, runId: terminal.runId, slug: trigger.slug, name: trigger.name,
+            kind: terminal.kind, cancelled: terminal.cancelled, text: terminal.text, routine: trigger.routine,
+        }).catch(error => { logger.error({ err: String(error), agent: terminal.agentId, schedule: trigger.slug }, 'routine run outcome could not be recorded'); return null })
+        if (routine) terminal = { ...terminal, text: routine.text, ...(routine.autoDisabled && { error: `${routine.autoDisabled} Last error: ${terminal.error ?? 'unknown error'}` }) }
+    }
+    const { event, message } = describe(terminal)
     const metadata: Record<string, unknown> = {
         source: trigger.source,
         status: terminal.cancelled ? 'cancelled' : terminal.kind,
@@ -80,6 +92,8 @@ export async function emitRunTerminal(terminal: RunTerminal): Promise<void> {
     // Who sent the message, so the hub credits the run to that member rather than to the owner.
     if (trigger.source === 'chat' && trigger.author) metadata.authorId = trigger.author.id
     if (terminal.error) metadata.error = terminal.error
+    if (routine?.quiet) metadata.quiet = true
+    if (routine?.autoDisabled) metadata.routineAutoDisabled = true
     if (terminal.errorCode) metadata.errorCode = terminal.errorCode
     // The hub classifies a notification as interactive or scheduled from the top-level `source`,
     // and without it every failing cron was read as an interactive run: the "Scheduled tasks"
@@ -93,7 +107,9 @@ export async function emitRunTerminal(terminal: RunTerminal): Promise<void> {
     // here (the loop sends a HITL event instead), and cancelled/error terminals never record a
     // success. Await local persistence before the caller releases its run/work lease. Failure
     // propagates to settlement's logger instead of silently discarding an untracked background write.
-    if (desktopApp() && terminal.kind === 'done' && !terminal.cancelled) {
+    // A quiet routine run is done and stays out of the completion store, which is what feeds the
+    // notification, the unread mark and the inbox card. Its conversation is still there to open.
+    if (desktopApp() && terminal.kind === 'done' && !terminal.cancelled && !routine?.quiet) {
         await recordRunCompletion({
             agentId: terminal.agentId,
             sessionId: terminal.sessionId,

@@ -31,13 +31,19 @@ import { useDesktopScheduleToolNotices } from '@/lib/desktop/use-schedule-tool-n
 import { DesktopScheduleToolNotice } from '../schedule-tools/DesktopScheduleToolNotice'
 import { DesktopTaskNotifyField } from '../DesktopTaskNotifyField'
 import { useDesktopLocale } from '../DesktopLocale'
+import { DesktopRoutineNotes, desktopRoutineOutcomeText } from './DesktopRoutineStatus'
+import type { DesktopRoutineRunOutcome, DesktopRoutineWarning } from '@rerun/contracts'
 
 type Chat = DesktopWorkspaceRoutineChat
-type Task=EngineSchedule & {setupPending:boolean;nextRunAt:string|null;lastResult:{status:string;runId:string;chat:Chat}|null}
-function resultLabel(status: string | undefined, t: ReturnType<typeof useDesktopLocale>['t']) {
+type Task=EngineSchedule & {setupPending:boolean;nextRunAt:string|null;lastResult:{status:string;runId:string;chat:Chat;outcome?:DesktopRoutineRunOutcome}|null;warnings?:DesktopRoutineWarning[];autoDisabledAt?:string|null}
+function statusLabel(status: string | undefined, t: ReturnType<typeof useDesktopLocale>['t']) {
     if (!status) return t('routines.coworker.notRun')
     if (status === 'running' || status === 'done' || status === 'error' || status === 'cancelled') return t(`routines.status.${status}`)
     return status
+}
+function resultLabel(result: Task['lastResult'] | undefined, t: ReturnType<typeof useDesktopLocale>['t']) {
+    const outcome = desktopRoutineOutcomeText(result, t)
+    return outcome ? `${statusLabel(result?.status, t)} · ${outcome}` : statusLabel(result?.status, t)
 }
 
 export function DesktopCoworkerSchedules(props:{agentId:string;onOpenSession:(chat:Chat)=>void}) {return <Schedules key={props.agentId} {...props}/>}
@@ -84,8 +90,8 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
             {!loading && !error && tasks?.length === 0 && <EmptyState icon={CalendarClockIcon} title={t('routines.coworker.emptyTitle')} description={t('routines.coworker.emptyDescription')} />}
             {tasks && tasks.length > 0 && <PanelScroller><PanelList>{tasks.map(task => <div key={task.slug}>
                 <PanelRow onClick={() => navigate(task)} title={task.name} description={desktopScheduleSummary(task, t, locale)}
-                    meta={!task.enabled ? <Badge size="xs" tone="neutral" glow={false}>{t('routines.coworker.paused')}</Badge> : undefined}
-                    footer={<span>{t('routines.coworker.nextRun', { date: task.nextRunAt ? formatDate(task.nextRunAt, locale) : '—' })} · {t('routines.lastResult', { status: resultLabel(task.lastResult?.status, t) })}</span>} />
+                    meta={!task.enabled ? <Badge size="xs" tone="neutral" glow={false}>{t(task.autoDisabledAt ? 'routines.autoOffBadge' : 'routines.coworker.paused')}</Badge> : task.warnings?.length ? <Badge size="xs" tone="neutral" glow={false}>{t('routines.warningBadge')}</Badge> : undefined}
+                    footer={<span>{t('routines.coworker.nextRun', { date: task.nextRunAt ? formatDate(task.nextRunAt, locale) : '—' })} · {t('routines.lastResult', { status: resultLabel(task.lastResult, t) })}</span>} />
                 {task.lastResult?.chat && <Button size="sm" variant="ghost" onClick={() => onOpenSession(task.lastResult!.chat)}>{t('routines.openResult')}</Button>}
             </div>)}</PanelList></PanelScroller>}
             <p className="p-3 text-xs text-muted-foreground">{t('routines.coworker.scheduleHelp')}</p>
@@ -135,6 +141,7 @@ function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,onOpenSession
     </PanelEditorHeader><PanelEditorBody>
         {stale && <p role="alert" className="text-xs text-destructive">{t('routines.coworker.conflict')}</p>}
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+        {task && <DesktopRoutineNotes warnings={task.warnings} autoDisabledAt={task.autoDisabledAt} enabled={task.enabled} />}
         <Field label={t('routines.editor.name')}><Input aria-label={t('routines.editor.name')} value={name} onChange={e=>setName(e.target.value)} maxLength={120} disabled={busy}/></Field><Field label={t('routines.editor.description')}><Input aria-label={t('routines.editor.description')} value={description} onChange={e=>setDescription(e.target.value)} disabled={busy}/></Field>
         <DesktopScheduleDescription mode={mode} cron={cron} runAt={runAt} timezone={timezone} agentId={agentId} connectionId={pick.connectionId} provider={provider} model={pick.model} disabled={busy} onChange={next=>{setMode(next.mode);setCron(next.cron ?? '');setRunAt(next.runAt ?? '');setTimezone(next.timezone)}}/>
         <Field label={t('routines.scheduleType')}><select aria-label={t('routines.scheduleType')} value={mode} disabled={busy} onChange={e=>setMode(e.target.value as 'cron'|'runAt')}><option value="cron">{t('routines.recurring')}</option><option value="runAt">{t('routines.once')}</option></select></Field>
@@ -162,7 +169,7 @@ function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,onOpenSession
         <MarkdownTextarea label={t('routines.editor.prompt')} dialogTitle={t('routines.editor.promptDialogTitle')} value={body} onChange={setBody} disabled={busy}/>
         {waitingForSetup && <p className="text-xs text-muted-foreground">{t('routines.editor.setupPendingStart')}</p>}
         {task && !task.revision && <p className="text-xs text-muted-foreground">{t('routines.loadFailed')}</p>}
-        {task?.lastResult?.chat && <p className="text-xs">{t('routines.lastResult', { status: resultLabel(task.lastResult.status, t) })}</p>}
+        {task?.lastResult?.chat && <p className="text-xs">{t('routines.lastResult', { status: resultLabel(task.lastResult, t) })}</p>}
     </PanelEditorBody><PanelEditorFooter>
         {onDelete && task && <PanelDeleteButton label={t('routines.editor.delete')} busy={busy} disabled={busy || stale || !task?.revision} onClick={()=>perform(onDelete)} confirmTitle={t('routines.editor.deleteConfirm', { name: task.name })}
             confirmDescription={t('routines.editor.deleteDescription')} confirmLabel={t('routines.editor.delete')} cancelLabel={t('cancel')}/>}

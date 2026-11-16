@@ -2,6 +2,8 @@
 // install. Each one is a marker in the run's first user message; every client draws a divider for it
 // instead of a bubble.
 
+import { readRoutineFiring } from './desktop-routine-firing.js'
+
 export type TriggerPayload = {
     prompt: string
     slug: string
@@ -51,7 +53,7 @@ export function parseTriggerPayload(text: string): TriggerPayload | null {
     }
 }
 
-export type ScheduledRun = { slug: string; name: string; prompt: string }
+export type ScheduledRun = { slug: string; name: string; prompt: string; test?: boolean }
 
 // Mirrors buildScheduledRunMessage in apps/engine/src/schedules/message.ts. The block is the entire
 // message, so a user who merely quotes the tag is never mistaken for a scheduled run. A run fired
@@ -68,10 +70,14 @@ export function parseScheduledRun(text: string): ScheduledRun | null {
     const match = SCHEDULED_BLOCK.exec(text.trim())
     if (!match) return null
     const slug = unescapeScheduledAttribute(match[1])
+    const prompt = match[3].replaceAll(ESCAPED_SCHEDULED_CLOSING_TAG, SCHEDULED_CLOSING_TAG)
+    // The Mac wraps the saved text in a firing frame for the model. The chat shows the saved text.
+    const firing = readRoutineFiring(prompt)
     return {
         slug,
         name: unescapeScheduledAttribute(match[2]) || slug,
-        prompt: match[3].replaceAll(ESCAPED_SCHEDULED_CLOSING_TAG, SCHEDULED_CLOSING_TAG),
+        prompt: firing ? firing.instruction : prompt,
+        ...(firing?.test ? { test: true } : {}),
     }
 }
 

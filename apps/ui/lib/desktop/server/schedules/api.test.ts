@@ -2,6 +2,8 @@ import type { Client } from '@libsql/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 const engine = vi.hoisted(() => ({
+    request: vi.fn(async (_engine: unknown, _path: string, _init: unknown, _parse: (value: unknown) => unknown): Promise<unknown> => { throw new Error('health unavailable') }),
+    EngineRequestError: class EngineRequestError extends Error { constructor(message: string, readonly status: number) { super(message) } },
     createSchedule: vi.fn(), updateSchedule: vi.fn(), deleteSchedule: vi.fn(), listSchedules: vi.fn(), listRuns: vi.fn(), listLatestScheduleRuns: vi.fn(),
     getAgent: vi.fn(async () => ({ id: 'engine-owner', config: { setup: { required: false, completedAt: null as string | null } }, install: '' })),
 }))
@@ -14,6 +16,7 @@ vi.mock('./adoption', () => ({ adoptDesktopScheduledSession: vi.fn() }))
 import { desktopSchedulesApi, SCHEDULE_BODY_CLEANUP_MS, SCHEDULE_BODY_TIMEOUT_MS } from './api'
 import { DesktopHttpError } from '../auth'
 import { adoptDesktopScheduledSession } from './adoption'
+import { ROUTINE_GUARD_MESSAGES } from '@rerun/contracts'
 
 const valid = { input: { name: 'Task', body: 'Read notes', description: '', cron: null, runAt: '2030-01-01T12:00:00Z', timezone: 'UTC', enabled: true } }
 function deferred<T>() {
@@ -220,4 +223,79 @@ test.each([
     expect(response.status).toBe(400)
     expect(engine.createSchedule).not.toHaveBeenCalled()
     expect(engine.updateSchedule).not.toHaveBeenCalled()
+})
+
+
+// ---- Routine limits, checklist and quiet runs ----
+const put = (body: unknown) => handle(new Request('http://localhost/schedules', { method: 'PUT', body: JSON.stringify(body) }))
+const refusal = (message: string) => new engine.EngineRequestError(`rerun-engine POST /agents/engine-owner/schedules failed: 422 ${JSON.stringify({ error: message, code: 'routine_guard' })}`, 422)
+const recurring = { ...valid.input, runAt: null, cron: '*/5 * * * *' }
+
+test('refuses to create a routine that fires too often, with the plain message', async () => {
+    vi.useRealTimers()
+    engine.createSchedule.mockRejectedValueOnce(refusal(ROUTINE_GUARD_MESSAGES.interval))
+    const response = await put({ input: recurring })
+    expect(response.status).toBe(422)
+    expect(await response.json()).toEqual({ error: ROUTINE_GUARD_MESSAGES.interval })
+    expect(engine.createSchedule).toHaveBeenCalledExactlyOnceWith(expect.anything(), 'engine-owner', expect.objectContaining({ cron: '*/5 * * * *' }))
+})
+
+test('refuses an edit to a faster schedule and enabling a twenty-first routine, with the plain message', async () => {
+    vi.useRealTimers()
+    engine.updateSchedule.mockRejectedValueOnce(refusal(ROUTINE_GUARD_MESSAGES.interval))
+    const edited = await put({ slug: 'daily', input: recurring })
+    expect(edited.status).toBe(422)
+    expect(await edited.json()).toEqual({ error: ROUTINE_GUARD_MESSAGES.interval })
+    engine.updateSchedule.mockRejectedValueOnce(refusal(ROUTINE_GUARD_MESSAGES.cap))
+    const enabled = await put({ slug: 'daily', input: { ...valid.input, enabled: true } })
+    expect(enabled.status).toBe(422)
+    expect(await enabled.json()).toEqual({ error: ROUTINE_GUARD_MESSAGES.cap })
+    engine.createSchedule.mockRejectedValueOnce(refusal(ROUTINE_GUARD_MESSAGES.cap))
+    const created = await put(valid)
+    expect(created.status).toBe(422)
+    expect(await created.json()).toEqual({ error: ROUTINE_GUARD_MESSAGES.cap })
+})
+
+test('does not pass an unrelated engine failure through as a routine refusal', async () => {
+    vi.useRealTimers()
+    engine.createSchedule.mockRejectedValueOnce(new engine.EngineRequestError('rerun-engine POST failed: 422 {"error":"private diagnostic"}', 422))
+    const response = await put(valid)
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'Schedule request failed' })
+})
+
+test('shows the last run’s checklist, a quiet run, limit warnings and an auto-off beside each routine', async () => {
+    vi.useRealTimers()
+    const run = (slug: string) => ({ id: `run-${slug}`, agentId: 'engine-owner', triggerSlug: slug, triggerSource: 'schedule', status: 'done', startedAt: '2026-01-01' })
+    engine.listSchedules.mockResolvedValueOnce(['steps', 'quiet', 'stale', 'broken'].map(slug => ({ ...valid.input, slug, enabled: slug !== 'broken' })))
+    engine.listLatestScheduleRuns.mockResolvedValueOnce(['steps', 'quiet', 'stale'].map(run))
+    const checklist = { reported: true, parts: [
+        { number: 1, text: 'Read', status: 'done', reason: null }, { number: 2, text: 'File', status: 'blocked', reason: 'the folder is locked' },
+    ] }
+    engine.request.mockImplementationOnce(async (_engine: unknown, path: string, _init: unknown, parse: (value: unknown) => unknown) => {
+        expect(path).toBe('/desktop/workspace-routines/engine-owner/health')
+        return parse({ limit: 20, enabledInWorkspace: 21, routines: [
+            { slug: 'steps', warnings: ['interval', 'cap'], consecutiveFailures: 0, autoDisabledAt: null, lastOutcome: { runId: 'run-steps', quiet: false, test: false, checklist } },
+            { slug: 'quiet', warnings: ['cap'], consecutiveFailures: 0, autoDisabledAt: null, lastOutcome: { runId: 'run-quiet', quiet: true, test: false, checklist: null } },
+            { slug: 'stale', warnings: [], consecutiveFailures: 2, autoDisabledAt: null, lastOutcome: { runId: 'an-older-run', quiet: true, test: false, checklist: null } },
+            { slug: 'broken', warnings: [], consecutiveFailures: 0, autoDisabledAt: '2026-11-10T08:00:00.000Z', lastOutcome: null },
+        ] })
+    })
+    vi.mocked(adoptDesktopScheduledSession).mockResolvedValue(null as never)
+    const rows = await (await handle(new Request('http://localhost/schedules'))).json() as Array<Record<string, unknown> & { lastResult: Record<string, unknown> | null }>
+    expect(rows.map(row => row.slug)).toEqual(['steps', 'quiet', 'stale', 'broken'])
+    expect(rows[0]).toMatchObject({ warnings: ['interval', 'cap'], autoDisabledAt: null, lastResult: { runId: 'run-steps', outcome: { quiet: false, test: false, checklist } } })
+    expect(rows[1]).toMatchObject({ warnings: ['cap'], lastResult: { outcome: { quiet: true } } })
+    // An outcome recorded for an older run is never shown against the latest one.
+    expect(rows[2].lastResult).not.toHaveProperty('outcome')
+    expect(rows[3]).toMatchObject({ enabled: false, autoDisabledAt: '2026-11-10T08:00:00.000Z', lastResult: null })
+})
+
+test('keeps the routine list when its health cannot be read', async () => {
+    vi.useRealTimers()
+    engine.listSchedules.mockResolvedValueOnce([{ ...valid.input, slug: 'daily' }])
+    engine.listLatestScheduleRuns.mockResolvedValueOnce([])
+    const response = await handle(new Request('http://localhost/schedules'))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject([{ slug: 'daily', warnings: [], autoDisabledAt: null, lastResult: null }])
 })

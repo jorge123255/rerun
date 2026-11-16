@@ -123,6 +123,9 @@ export * from './desktop-company-discovery.js'
 export * from './desktop-company-brief.js'
 
 export * from './desktop-workspace-routines.js'
+export * from './desktop-routine-firing.js'
+export * from './desktop-routine-checklist.js'
+export * from './desktop-routine-guards.js'
 
 export * from './desktop-brain-semantic.js'
 

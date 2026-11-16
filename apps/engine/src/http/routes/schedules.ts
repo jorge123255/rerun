@@ -14,6 +14,8 @@ import { describeDesktopSchedule, desktopScheduleDescriptionInputSchema } from '
 import { DesktopScheduleFileConflict, desktopScheduleFiles } from '../../desktop/schedule-tools/files.js'
 import { desktopScheduleDefinitionRevision } from '../../desktop/schedule-tools/revision.js'
 import { assertDesktopRunAdmission } from '../../desktop/workspace-admission.js'
+import { desktopRoutineGuard, desktopRoutineGuardResponse } from '../../desktop/routine-guards.js'
+import { slugify } from '../../lib/ids.js'
 
 export const scheduleRoutes = new Hono()
 const authorize = async (agentId: string) => { if (desktopApp()) await authorizeDesktopSchedule(agentId) }
@@ -56,6 +58,14 @@ scheduleRoutes.post('/', async c => {
     const agentId = c.req.param('id')!
     const body = createSchema.parse(await c.req.json())
     await authorize(agentId)
+    if (desktopApp()) {
+        // `writeSchedule` overwrites a routine of the same name, so that one is the "before".
+        const slug = slugify(body.name)
+        const before = scheduleExists(agentId, slug) ? await readSchedule(agentId, slug) : null
+        const after = { enabled: body.enabled ?? before?.enabled ?? true, cron: body.cron ?? before?.cron ?? null, timezone: body.timezone ?? before?.timezone ?? null }
+        const refusal = await desktopRoutineGuard(agentId, slug, before, after)
+        if (refusal) return desktopRoutineGuardResponse(c, refusal)
+    }
     try {
         const schedule = await writeSchedule(agentId, body)
         return c.json(schedule, 201)
@@ -98,6 +108,11 @@ scheduleRoutes.patch('/:slug', async c => {
     if(desktopApp() && Boolean(merged.cron)===Boolean(merged.runAt))return c.json({error:'Provide exactly one of cron or runAt'},400)
     if(body.timezone) {try {new Intl.DateTimeFormat('en',{timeZone:body.timezone})}catch{return c.json({error:'Invalid timezone'},400)}}
     await authorize(agentId)
+    if (desktopApp()) {
+        const defined = Object.fromEntries(Object.entries(body).filter(([, value]) => value !== undefined))
+        const refusal = await desktopRoutineGuard(agentId, slug, before, { ...before, ...defined })
+        if (refusal) return desktopRoutineGuardResponse(c, refusal)
+    }
     try {
         const schedule = await updateScheduleAt(agentId, slug, body)
         return c.json(schedule)

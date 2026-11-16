@@ -4,6 +4,8 @@ import { DESKTOP_SCHEDULE_TOOL_MESSAGES as M, type DesktopScheduleToolNotice, ty
 import { slugify } from '../../lib/ids.js'
 import { withAgentLock } from '../../agents/lock.js'
 import { desktopScheduleModelDecision } from './model.js'
+import { ROUTINE_GUARD_MESSAGES } from '@rerun/contracts'
+import type { DesktopRoutineGuard } from '../routine-guards.js'
 import { desktopScheduleDefinitionRevision } from './revision.js'
 import { projectScheduleGet, projectScheduleList } from './project.js'
 import type { DesktopScheduleDefinition, DesktopScheduleFilePort, DesktopScheduleIntent, DesktopScheduleIntentStore, DesktopScheduleOwner, DesktopScheduleReceipt, DesktopScheduleToolAuthority } from './types.js'
@@ -74,6 +76,8 @@ export function createDesktopScheduleLifecycle(input: {
     files: DesktopScheduleFilePort
     store: DesktopScheduleIntentStore
     now?: () => Date
+    /** The Mac's save-time limits. A refusal is a plain message and nothing is written. */
+    guard?: DesktopRoutineGuard
 }) {
     const now = input.now ?? (() => new Date())
     const projections = new Map<string, DesktopScheduleToolProjection>()
@@ -149,6 +153,8 @@ export function createDesktopScheduleLifecycle(input: {
                 const prepared = prepare(current)
                 const after = prepared ? { ...prepared, body: prepared.body.trim() } : null
                 assertRunnable(await owner(engineAgentId), after)
+                const refusal = await input.guard?.(engineAgentId, slug, current, after)
+                if (refusal) throw reject(ROUTINE_GUARD_MESSAGES[refusal])
                 const text = textFor(current)
                 intent = {
                     requestId: raw.requestId,

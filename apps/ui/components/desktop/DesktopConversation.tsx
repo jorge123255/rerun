@@ -89,6 +89,7 @@ import { DesktopSkillProposalDock } from './skills/DesktopSkillProposalDock'
 import { useCoworkerSkillProposals } from '@/lib/desktop/use-coworker-skill-proposals'
 import { desktopSkillProposalIds } from '@/lib/desktop/skill-proposal-source'
 import { DesktopScheduledRunBlock } from './DesktopScheduledRunBlock'
+import { desktopRoutineReplyOf } from '@/lib/desktop/routine-reply'
 import { DesktopCoworkerTools } from './DesktopCoworkerTools'
 import { DesktopNativeWritebackReview } from './DesktopNativeWritebackReview'
 import { DesktopCoworkerMcpDialog } from './DesktopCoworkerMcpDialog'
@@ -812,6 +813,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     // even if its subscription still holds the previous chat's messages.
     const showSaved = ready && (!busy || regenerationSource === sessionId && !!sessionId)
     const transcript = showSaved ? history.transcript ?? messages : busy ? messages : []
+    const routineThread = useMemo(() => transcript.some(message => scheduledRunOf(message) !== null), [transcript])
     const { savedReceipts, answeredCalls } = useMemo(() => {
         const savedReceipts = new Map<string, NonNullable<ReturnType<typeof desktopSavedChatReceiptOf>>>()
         const answeredCalls = new Map<string, Set<string>>()
@@ -1689,6 +1691,9 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                         const voiceContext = { workspaceId, sessionId, tabUid, messageId: message.id,
                             active: active && ready && !cardCovers && !detailPanel && !chatsOpen && !draft.quitting }
                         const textParts = message.parts.filter(part => part.type === 'text')
+                        // A routine's reply may carry the "nothing to report" marker. It is never
+                        // drawn, and a reply that was only the marker becomes one muted line.
+                        const routineReply = routineThread ? desktopRoutineReplyOf(message) : null
                         const voicePart = message.role === 'user' && textParts.length === 1 ? textParts[0] : undefined
                         const renderBubble = (voicePlayer?: ReactNode) => {
                             const content = (
@@ -1707,7 +1712,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                                             {images.length > 0 && <MessageAttachments paths={images.map(item => item.path)} rawUrlFor={path => images.find(item => item.path === path)?.url ?? ''} />}</>
                                     })()}
                                     {voicePlayer ?? (message.role === 'assistant'
-                                        ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} createdAt={createdAt} streaming={message === streamingMessage} latest={message === latestAssistant}
+                                        ? <><DesktopAssistantReply agent={agent} message={routineReply?.message ?? message} agentId={agent.id} createdAt={createdAt} streaming={message === streamingMessage} latest={message === latestAssistant}
                                             onOpenWorkspaceFile={onOpenWorkspaceFile}
                                             toolInstall={sessionId ? { sessionId, active: active && ready, disabled: draft.quitting || inactive || generating || stopping } : undefined}
                                             childRuns={sessionId ? { sessionId, active, onOpenTarget: onOpenCoworkerChat } : undefined}
@@ -1720,6 +1725,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                                             feedbackRating={feedback.votes.get(message.id)?.rating ?? null}
                                             onRate={message.id.startsWith('engine-') ? rating => feedback.rate(message.id, rating) : undefined}
                                             onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />
+                                            {routineReply?.quiet && <p data-routine-quiet className="text-xs text-muted-foreground">{t('routines.nothingToReport')}</p>}</>
                                         : message.parts.map((part, index) => {
                                             if (part.type !== 'text') return null
                                             const text = message.role === 'user'

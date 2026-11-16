@@ -79,7 +79,7 @@ export function createDesktopScheduleToolFactory(deps: {
                     }),
                 }),
                 schedule_create: tool({
-                    description: 'Schedule a task to run later without a user message. Provide a cron expression for a recurring task OR runAt (ISO 8601) for a one-shot, plus an IANA timezone. The body is the instruction you will execute when it fires. Creating does not run the task. Natural-language times are refused. On this Mac the task follows the coworker’s connected model.',
+                    description: 'Schedule a task to run later without a user message. Provide a cron expression for a recurring task OR runAt (ISO 8601) for a one-shot, plus an IANA timezone. The body is the instruction you will execute when it fires. Creating does not run the task. Natural-language times are refused. A recurring task can run at most once every 15 minutes, and a workspace holds at most 20 enabled tasks. On this Mac the task follows the coworker’s connected model.',
                     inputSchema: z.object({
                         name: z.string().trim().min(1).max(120),
                         description: z.string().trim().max(4000).default(''),

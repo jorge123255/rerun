@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { frameRoutineFiring } from '@rerun/contracts'
 import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { act, useEffect, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -143,6 +144,8 @@ async function invoke(callback: (text: string) => Promise<boolean>, text: string
     return accepted
 }
 
+const buildFramedRun = (body: string) => `<scheduled_run schedule="daily-notes" name="Daily notes">\n${frameRoutineFiring(body)}\n</scheduled_run>`
+
 test('renders a recovered routine as the original Scheduled run divider and keeps its prompt behind View prompt', async () => {
     histories.set('one', [{ id: 'engine-scheduled-input', role: 'user', parts: [{ type: 'text', text: 'Read the daily notes and summarize them.' }], metadata: { scheduledRun: { slug: 'daily-notes', name: 'Daily notes' } } }, reply('engine-answer')])
     await render({ draft: { text: 'Keep my independent draft' } })
@@ -168,6 +171,39 @@ test('raw engine scheduled history uses the same divider after restart and does 
     await click('View prompt')
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Read the saved notes before replying.')
     expect(field.value).toBe('Keep draft beside routine')
+})
+
+test('a framed routine firing shows only its saved text, a marker-only reply as one muted line, and a mixed reply without the marker', async () => {
+    const raw = buildFramedRun('Read the saved notes before replying.')
+    const saved = publicDesktopHistory(transformEngineMessages([{ id: 'scheduled-user', sessionId: 'engine-one', role: 'user', contentJson: JSON.stringify(raw), toolCallsJson: null, createdAt: '2026-11-04T00:00:00Z' }], { desktopSummaries: true }))
+    const answer = (id: string, text: string): UIMessage => ({ id, role: 'assistant', parts: [{ type: 'text', text }] })
+    histories.set('one', [...saved as UIMessage[], answer('engine-quiet', '[[no-update]]')])
+    await render()
+    expect(container.textContent).toContain('Scheduled run')
+    expect(container.textContent).not.toContain('One of your routines is firing right now')
+    expect(container.textContent).not.toContain('[[no-update]]')
+    expect(container.querySelector('[data-routine-quiet]')?.textContent).toBe('Nothing to report')
+    expect(container.querySelector('[data-routine-quiet]')?.className).toContain('text-muted-foreground')
+    await click('View prompt')
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Read the saved notes before replying.')
+    expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain('routine_instruction')
+})
+
+test('a routine reply with the marker beside other text is drawn as a normal reply', async () => {
+    const raw = buildFramedRun('Check the invoices.')
+    const saved = publicDesktopHistory(transformEngineMessages([{ id: 'scheduled-user', sessionId: 'engine-one', role: 'user', contentJson: JSON.stringify(raw), toolCallsJson: null, createdAt: '2026-11-04T00:00:00Z' }], { desktopSummaries: true }))
+    histories.set('one', [...saved as UIMessage[], { id: 'engine-mixed', role: 'assistant', parts: [{ type: 'text', text: 'Two invoices are overdue.\n\n[[no-update]]' }] }])
+    await render()
+    expect(container.textContent).toContain('Two invoices are overdue.')
+    expect(container.textContent).not.toContain('[[no-update]]')
+    expect(container.querySelector('[data-routine-quiet]')).toBeNull()
+})
+
+test('an ordinary chat that mentions the marker keeps it', async () => {
+    histories.set('one', [{ id: 'engine-user', role: 'user', parts: [{ type: 'text', text: 'What does the marker mean?' }] }, { id: 'engine-explain', role: 'assistant', parts: [{ type: 'text', text: 'A routine replies [[no-update]] when nothing changed.' }] }])
+    await render()
+    expect(container.textContent).toContain('[[no-update]]')
+    expect(container.querySelector('[data-routine-quiet]')).toBeNull()
 })
 
 test('reviews only this chat’s source proposal once, keeps its draft, and restores the applied transcript card', async () => {

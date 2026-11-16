@@ -482,3 +482,30 @@ it('refuses a substituted manual desktop pin before consuming or launching', asy
     expect(state.runs).toHaveLength(0)
     await stop.drain()
 })
+
+describe('the Mac’s firing frame', () => {
+    const steps = 'Each morning:\n1. Read the inbox\n2. File what is new\n3. Post the summary'
+    it('puts a manual Run now to the model as a test firing, with the saved text as data and the checklist to close', async () => {
+        const stop = desktopRoutineScheduler()
+        const task = schedule('framed', { body: steps })
+        state.provider = 'openai'
+        await fireSchedule('on', task, { markFired: false, manualId: 'frame-probe' })
+        const run = state.runs.at(-1)!
+        expect(run.message).toContain('This is a test run of one of your routines')
+        expect(run.message).toContain('Do not create, list, edit or delete any routine unless the instruction itself asks you to.')
+        expect(run.message).toContain('reply with exactly [[no-update]]')
+        expect(run.message).toContain('The instruction has 3 numbered parts')
+        expect(run.message).toContain(`<routine_instruction>\n${steps}\n</routine_instruction>\n</scheduled_run>`)
+        expect(run.trigger).toMatchObject({ source: 'schedule', slug: 'framed', routine: { test: true, parts: ['Read the inbox', 'File what is new', 'Post the summary'] } })
+        await stop.drain()
+    })
+    it('leaves the hosted scheduled message as the bare saved text', async () => {
+        state.agentIds = []
+        const stop = startScheduler()
+        await fireSchedule('on', schedule('bare', { body: steps }), { markFired: false })
+        const run = state.runs.at(-1)!
+        expect(run.message).toBe(`<scheduled_run schedule="bare" name="Name bare">\n${steps}\n</scheduled_run>`)
+        expect((run.trigger as { routine?: unknown }).routine).toBeUndefined()
+        await stop.drain()
+    })
+})
