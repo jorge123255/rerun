@@ -3,8 +3,6 @@
 import { createTriggerAction, deleteTriggerAction, getTriggerAction, rotateTriggerTokenAction, updateTriggerAction } from '@/app/api/_actions/agent.actions'
 import { PanelDeleteButton, PanelEditorBody, PanelEditorFooter, PanelEditorHeader, PanelEditorShell } from '@/components/ui/panel-editor'
 import { TaskNotifyField } from '@/components/agent/TaskNotifyField'
-import { TemplateContentLock } from '@/components/agent/TemplateContentLock'
-import { useTemplateContentLock } from '@/hooks/useTemplateContentLock'
 import { RunModelField, useRunModel } from '@/components/agent/RunModelField'
 import { TriggerUrlField } from '@/components/agent/TriggerUrlField'
 import { Button } from '@/components/ui/button'
@@ -32,8 +30,6 @@ type TriggerEditorProps = {
 export function TriggerEditor({ agentId, slug, onDone, onBack, onShowHistory }: TriggerEditorProps) {
     const isEdit = !!slug
     const { pick, setPick, availableGroups, providerFor, agentModel } = useRunModel(agentId)
-    // Only the prompt is sealed: the URL, the methods and the on/off switch stay available.
-    const promptLocked = useTemplateContentLock(agentId) && isEdit
     const [loading, setLoading] = useState(isEdit)
     const [trigger, setTrigger] = useState<EngineTrigger | null>(null)
     const [name, setName] = useState('')
@@ -148,18 +144,15 @@ export function TriggerEditor({ agentId, slug, onDone, onBack, onShowHistory }: 
 
                 {slug && <TaskNotifyField agentId={agentId} source="trigger" slug={slug} />}
 
-                <TemplateContentLock locked={promptLocked} subject="trigger prompts">
-                    <MarkdownTextarea
-                        label="Trigger prompt"
-                        dialogTitle="Edit the trigger prompt"
-                        helperText="What the coworker runs when the URL is called (a fresh session each time). The caller payload is attached below it."
-                        value={body}
-                        onChange={setBody}
-                        disabled={promptLocked}
-                        className="text-xs min-h-32 font-mono"
-                        placeholder="A commit just landed. Review the diff in the payload and post a summary to Slack."
-                    />
-                </TemplateContentLock>
+                <MarkdownTextarea
+                    label="Trigger prompt"
+                    dialogTitle="Edit the trigger prompt"
+                    helperText="What the coworker runs when the URL is called (a fresh session each time). The caller payload is attached below it."
+                    value={body}
+                    onChange={setBody}
+                    className="text-xs min-h-32 font-mono"
+                    placeholder="A commit just landed. Review the diff in the payload and post a summary to Slack."
+                />
 
             </PanelEditorBody>
             <PanelEditorFooter>

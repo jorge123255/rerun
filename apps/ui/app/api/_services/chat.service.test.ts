@@ -61,7 +61,7 @@ beforeEach(() => {
 
 describe('resolveAgentTarget', () => {
     it('resolves the engine agent of the session workspace', async () => {
-        await expect(resolveAgentTarget('a1')).resolves.toEqual({ engineAgentId: 'e1', conn, contentLocked: false })
+        await expect(resolveAgentTarget('a1')).resolves.toEqual({ engineAgentId: 'e1', conn })
         expect(mocks.selectMaybeSingleWithJoins.mock.calls[0][4]).toEqual({ id: 'a1' })
         expect(mocks.findWorkspaceEngine).toHaveBeenCalledWith(1)
     })
@@ -111,25 +111,12 @@ describe('resolveAgentTarget', () => {
         row = { ...row!, engine_agent_id: null }
         await expect(resolveAgentTarget('a1', 1)).rejects.toThrow('Coworker not configured or not found')
     })
-
-    it('seals the content of a template agent on an unpaid workspace', async () => {
-        row = { ...row!, template_id: 't1', workspaces: { subscription_status: 'trialing', is_sandbox: false } }
-        await expect(resolveAgentTarget('a1', 1)).resolves.toMatchObject({ contentLocked: true })
-    })
-
-    it('leaves a template agent open on a paid workspace and in a sandbox', async () => {
-        row = { ...row!, template_id: 't1', workspaces: { subscription_status: 'active', is_sandbox: false } }
-        await expect(resolveAgentTarget('a1', 1)).resolves.toMatchObject({ contentLocked: false })
-
-        row = { ...row, workspaces: { subscription_status: null, is_sandbox: true } }
-        await expect(resolveAgentTarget('a1', 1)).resolves.toMatchObject({ contentLocked: false })
-    })
 })
 
 describe('resolveAgentTargetForTrigger', () => {
     it('resolves any agent without comparing workspaces, since the token is the authorization', async () => {
         row = { ...row!, workspace_id: 42 }
-        await expect(resolveAgentTargetForTrigger('a1')).resolves.toEqual({ engineAgentId: 'e1', conn, contentLocked: false })
+        await expect(resolveAgentTargetForTrigger('a1')).resolves.toEqual({ engineAgentId: 'e1', conn })
         expect(mocks.requireWorkspaceId).not.toHaveBeenCalled()
         expect(mocks.findWorkspaceEngine).toHaveBeenCalledWith(42)
     })

@@ -9,9 +9,7 @@ import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/deskto
 import { DesktopCoworkerTriggers } from './DesktopCoworkerTriggers'
 import {
     unavailableTriggerRunModelCatalog,
-    desktopTriggerPromptLock,
     type DesktopTriggerRunModelCatalog,
-    type DesktopTriggerTemplateLockState,
 } from '@/lib/desktop/triggers'
 
 /** B5 wrapper matching DesktopCoworkerRoutines — root mounts beside Routines / Control Center Open → Triggers. */
@@ -21,14 +19,12 @@ export function DesktopCoworkerTriggersPanel({
     onOpenChat,
     ingressAvailable = false,
     modelCatalog = unavailableTriggerRunModelCatalog(),
-    templateLock = desktopTriggerPromptLock(false),
 }: {
     agent: { id: string; name: string }
     dialogControl?: DesktopDialogControl
     onOpenChat: (id: string, title?: string) => void
     ingressAvailable?: boolean
     modelCatalog?: DesktopTriggerRunModelCatalog
-    templateLock?: DesktopTriggerTemplateLockState
 }) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     const editing = useRef({ dirty: false, busy: false })
@@ -55,7 +51,6 @@ export function DesktopCoworkerTriggersPanel({
                         onEditStateChange={state => { editing.current = state }}
                         ingressAvailable={ingressAvailable}
                         modelCatalog={modelCatalog}
-                        templateLock={templateLock}
                         onOpenSession={chat => {
                             if (cycle.current !== captured || !open || !chat.sessionId) return
                             cycle.current = { scope: '' }

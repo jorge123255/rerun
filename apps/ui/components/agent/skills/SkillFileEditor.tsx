@@ -2,10 +2,6 @@
 
 import { deleteSkillFileAction, readSkillFileAction, writeSkillFileAction } from '@/app/api/_actions/agent.actions'
 import { PanelDeleteButton, PanelEditorBody, PanelEditorFooter, PanelEditorHeader, PanelEditorShell } from '@/components/ui/panel-editor'
-import { TemplateContentLock } from '@/components/agent/TemplateContentLock'
-import { templateLockTooltip } from '@/lib/templates/content-lock'
-import { useTemplateContentLock } from '@/hooks/useTemplateContentLock'
-import { TooltipDisabledReason } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { SkeletonRows } from '@/components/ui/skeleton'
@@ -20,8 +16,7 @@ type SkillFileEditorProps = {
 }
 
 export function SkillFileEditor({ agentId, slug, path, readOnly: readOnlyProp, onBack }: SkillFileEditorProps) {
-    const locked = useTemplateContentLock(agentId)
-    const readOnly = readOnlyProp || locked
+    const readOnly = !!readOnlyProp
     const [loading, setLoading] = useState(true)
     const [content, setContent] = useState('')
     const [truncated, setTruncated] = useState(false)
@@ -70,28 +65,21 @@ export function SkillFileEditor({ agentId, slug, path, readOnly: readOnlyProp, o
                 {loading ? (
                     <SkeletonRows rows={8} />
                 ) : (
-                    <TemplateContentLock locked={locked} subject="reference files">
-                        <Textarea value={content} onChange={e => setContent(e.target.value)} disabled={readOnly || truncated} className="text-xs min-h-96 font-mono" />
-                    </TemplateContentLock>
+                    <Textarea value={content} onChange={e => setContent(e.target.value)} disabled={readOnly || truncated} className="text-xs min-h-96 font-mono" />
                 )}
             </PanelEditorBody>
             {!readOnlyProp && (
                 <PanelEditorFooter>
-                    <TooltipDisabledReason reason={locked ? templateLockTooltip('Deleting this file') : undefined}>
-                        <PanelDeleteButton
-                            label="Delete file"
-                            busy={deleting}
-                            disabled={locked}
-                            onClick={handleDelete}
-                            confirmTitle={`Delete ${path}?`}
-                            confirmDescription="The file is removed from the skill. This cannot be undone."
-                        />
-                    </TooltipDisabledReason>
-                    <TooltipDisabledReason reason={locked ? templateLockTooltip('Editing this file') : undefined} className="flex-1">
-                        <Button size="sm" className="flex-1" loading={saving} onClick={handleSave} disabled={locked || loading || truncated}>
-                            Save changes
-                        </Button>
-                    </TooltipDisabledReason>
+                    <PanelDeleteButton
+                        label="Delete file"
+                        busy={deleting}
+                        onClick={handleDelete}
+                        confirmTitle={`Delete ${path}?`}
+                        confirmDescription="The file is removed from the skill. This cannot be undone."
+                    />
+                    <Button size="sm" className="flex-1" loading={saving} onClick={handleSave} disabled={loading || truncated}>
+                        Save changes
+                    </Button>
                 </PanelEditorFooter>
             )}
         </PanelEditorShell>

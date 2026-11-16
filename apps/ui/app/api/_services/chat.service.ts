@@ -6,16 +6,12 @@ import type { EngineConnection, EngineRun, SessionSource } from '@/lib/engine/ty
 import { FOREMAN_AGENT_ID, type Usage } from '@rerun/contracts'
 import { createServiceRoleClient } from '@/supabase/serviceRole'
 import { selectMany, selectManyWithJoins, selectMaybeSingle, selectMaybeSingleWithJoins } from '@/supabase/supabase-helpers'
-import { isTemplateContentLocked } from '@/lib/templates/content-lock'
 import { isPlanLimited } from './capacity.service'
 import { findWorkspaceEngine, NoEngineError, type WorkspaceEngine } from './workspace-engine.service'
 
 export type AgentChatTarget = {
     engineAgentId: string
     conn: EngineConnection
-    // Whether the content this agent inherited from a template has to stay sealed. Resolved here
-    // because this is the one place every read of an agent already goes through.
-    contentLocked: boolean
 }
 
 // Ownership gate. This is the single chokepoint for ~25 agent server actions, /api/chat and
@@ -45,10 +41,12 @@ export async function resolveRunTarget(agentId: string): Promise<AgentChatTarget
     if (ctx.authUser.is_anonymous) throw new AuthorizationError('Coworker not found')
     const engine = await findWorkspaceEngine(ctx.workspace.id)
     if (!engine) throw new NoEngineError()
-    return { conn: engine.conn, engineAgentId: FOREMAN_AGENT_ID, contentLocked: false }
+    return { conn: engine.conn, engineAgentId: FOREMAN_AGENT_ID }
 }
 
 async function fetchAgentRow(agentId: string) {
+    // `template_id` and the workspace join fed the template content lock (removed, upstream #252). The
+    // query is left as it was: the hosted read path is not exercised by the Mac app's tests.
     const { data } = await selectMaybeSingleWithJoins(
         createServiceRoleClient(),
         'agents',
@@ -76,7 +74,7 @@ function buildTarget(row: Awaited<ReturnType<typeof fetchAgentRow>>, workspaceId
 
     if (!engine) throw new NoEngineError()
 
-    return { engineAgentId: row.engine_agent_id, conn: engine.conn, contentLocked: isTemplateContentLocked({ templateId: row.template_id }, row.workspaces) }
+    return { engineAgentId: row.engine_agent_id, conn: engine.conn }
 }
 
 // A webhook trigger has no session and no API key: its authorization IS the secret token in the
@@ -88,12 +86,7 @@ export async function resolveAgentTargetForTrigger(agentId: string): Promise<Age
     if (!row || row.disabled_at || !row.engine_agent_id) return null
     const engine = await findWorkspaceEngine(row.workspace_id)
     if (!engine) return null
-    return {
-        engineAgentId: row.engine_agent_id,
-        conn: engine.conn,
-        // A webhook renders nothing to a human: there is no payload here to seal.
-        contentLocked: false,
-    }
+    return { engineAgentId: row.engine_agent_id, conn: engine.conn }
 }
 
 // Resolve an existing Supabase session row to its engine session id.

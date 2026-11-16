@@ -73,7 +73,6 @@ import { type ParsedSchedule, parseSchedule } from '@/lib/ai/parse-schedule'
 import type { EngineConnection, EngineAgentConfigPatch, EngineAgentDetail, EngineMcpServer, EngineDbRows, EngineDbTable, EngineMemory, EngineRun, EngineRunDetail, EngineRunStep, EngineSchedule, EngineTrigger, EngineSkill, EngineSkillFilePayload, EngineSkillSummary, EngineSkillWithSource, EngineToolCall, EngineToolFamily, EngineUsageBucket, EngineStatsPoint } from '@/lib/engine/types'
 import type { StatsQuery, UsageTimeRange } from '@rerun/contracts'
 import { FOREMAN_AGENT_ID, statsQuerySchema } from '@rerun/contracts'
-import { LOCKED_DOWNLOAD_ERROR, LOCKED_WRITE_ERROR, sealAgentDetail, sealSchedule, sealSkill, sealSkillFile, sealTrigger } from '@/app/api/_services/agent-content.service'
 import { connectorMcpServerNames, connectorSkillOwners, connectorSkillSlugs, readRegistry } from '@/lib/services/registry'
 import { TEXT_FILE_PAGE_CHARS, connectorSkillReadOnlyError } from '@rerun/contracts'
 import { nextRunAt } from '@/lib/schedules/cron'
@@ -148,8 +147,8 @@ export async function renameAgentAction(agentId: string, newName: string): Promi
 
 export async function getAgentDetailAction(agentId: string): Promise<EngineAgentDetail | null> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
-        return sealAgentDetail(await engineGetAgent(conn, engineAgentId), contentLocked)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
+        return await engineGetAgent(conn, engineAgentId)
     } catch {
         return null
     }
@@ -176,10 +175,9 @@ export async function activateAgentAutomationsAction(agentId: string): Promise<v
 
 export async function updateAgentConfigAction(agentId: string, patch: EngineAgentConfigPatch & { soul?: string; install?: string }): Promise<{ success: boolean; error?: string }> {
     try {
-        const { conn, engineAgentId, contentLocked } = await resolveRunTarget(agentId)
+        const { conn, engineAgentId } = await resolveRunTarget(agentId)
         await assertModelEntitled(patch.model)
-        // Same reason as the skill body: a sealed soul is dropped from the patch, not written back.
-        await enginePatchAgent(conn, engineAgentId, contentLocked ? { ...patch, soul: undefined } : patch)
+        await enginePatchAgent(conn, engineAgentId, patch)
         return { success: true }
     } catch (err) {
         return { success: false, error: err instanceof Error ? err.message : 'Failed to update coworker' }
@@ -352,19 +350,16 @@ async function connectorSkillError(conn: EngineConnection, engineAgentId: string
 
 export async function listSkillsAction(agentId: string): Promise<EngineSkillWithSource[]> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
         const [skills, registry] = await Promise.all([engineListSkills(conn, engineAgentId), readRegistry(conn, engineAgentId)])
         const fromConnector = connectorSkillSlugs(registry)
-        // The listing carries every body, so it is sealed like the editor is: what stays readable
-        // here is the shelf (names and descriptions), not what is written on the pages.
-        return skills.map(s => ({ ...sealSkill(s, contentLocked), fromConnector: fromConnector.has(s.slug) }))
+        return skills.map(s => ({ ...s, fromConnector: fromConnector.has(s.slug) }))
     } catch {
         return []
     }
 }
 
-// The shelf alone, for the `/` menu of the composer: no body, no file list, no registry read. Names
-// and descriptions stay readable on a sealed agent, so there is nothing to seal here.
+// The shelf alone, for the `/` menu of the composer: no body, no file list, no registry read.
 export async function listSkillSummariesAction(agentId: string): Promise<EngineSkillSummary[]> {
     try {
         const { conn, engineAgentId } = await getAgentChatTarget(agentId)
@@ -374,10 +369,10 @@ export async function listSkillSummariesAction(agentId: string): Promise<EngineS
     }
 }
 
-export async function getSkillAction(agentId: string, slug: string): Promise<(EngineSkill & { locked: boolean }) | null> {
+export async function getSkillAction(agentId: string, slug: string): Promise<EngineSkill | null> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
-        return sealSkill(await engineGetSkill(conn, engineAgentId, slug), contentLocked)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
+        return await engineGetSkill(conn, engineAgentId, slug)
     } catch {
         return null
     }
@@ -403,11 +398,11 @@ export async function importSkillAction(agentId: string, content: string, files:
     }
 }
 
-export async function readSkillFileAction(agentId: string, slug: string, path: string): Promise<{ content: string; truncated: boolean; locked: boolean } | null> {
+export async function readSkillFileAction(agentId: string, slug: string, path: string): Promise<{ content: string; truncated: boolean } | null> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
         const page = await engineReadFileText(conn, skillFilesBase(engineAgentId, slug), path)
-        return sealSkillFile({ content: page.content, truncated: page.truncated ?? page.content.length >= TEXT_FILE_PAGE_CHARS }, contentLocked)
+        return { content: page.content, truncated: page.truncated ?? page.content.length >= TEXT_FILE_PAGE_CHARS }
     } catch {
         return null
     }
@@ -415,10 +410,9 @@ export async function readSkillFileAction(agentId: string, slug: string, path: s
 
 export async function writeSkillFileAction(agentId: string, slug: string, path: string, content: string): Promise<{ success: boolean; error?: string }> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
         // The editor showed filler, so a save here would write that filler over the real file.
         // Deleting is left alone: it destroys nothing the user could not already destroy.
-        if (contentLocked) return { success: false, error: LOCKED_WRITE_ERROR }
         const readOnly = await connectorSkillError(conn, engineAgentId, slug)
         if (readOnly) return { success: false, error: readOnly }
         await engineWriteFileText(conn, skillFilesBase(engineAgentId, slug), path, content)
@@ -442,8 +436,7 @@ export async function deleteSkillFileAction(agentId: string, slug: string, path:
 
 export async function downloadSkillArchiveAction(agentId: string, slug: string): Promise<{ success: boolean; error?: string; base64?: string }> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
-        if (contentLocked) return { success: false, error: LOCKED_DOWNLOAD_ERROR }
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
         const buffer = await engineFetchSkillArchive(conn, engineAgentId, slug)
         return { success: true, base64: Buffer.from(buffer).toString('base64') }
     } catch (err) {
@@ -453,12 +446,10 @@ export async function downloadSkillArchiveAction(agentId: string, slug: string):
 
 export async function updateSkillAction(agentId: string, slug: string, patch: { description?: string; body?: string }): Promise<{ success: boolean; error?: string; skill?: EngineSkill }> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
         const readOnly = await connectorSkillError(conn, engineAgentId, slug)
         if (readOnly) return { success: false, error: readOnly }
-        // The body in a sealed form is the filler the server sent, so it is dropped rather than
-        // saved back over the real procedure. Everything else about the skill stays editable.
-        const skill = await engineUpdateSkill(conn, engineAgentId, slug, contentLocked ? { ...patch, body: undefined } : patch)
+        const skill = await engineUpdateSkill(conn, engineAgentId, slug, patch)
         return { success: true, skill }
     } catch (err) {
         return { success: false, error: err instanceof Error ? err.message : 'Failed to update skill' }
@@ -534,8 +525,8 @@ export async function clearMemoriesAction(agentId: string): Promise<{ success: b
 
 export async function listSchedulesAction(agentId: string): Promise<EngineSchedule[]> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
-        return (await engineListSchedules(conn, engineAgentId)).map(schedule => sealSchedule(schedule, contentLocked))
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
+        return await engineListSchedules(conn, engineAgentId)
     } catch {
         return []
     }
@@ -601,9 +592,9 @@ function byNextRun(a: WorkspaceRoutine, b: WorkspaceRoutine): number {
 
 export async function getScheduleAction(agentId: string, slug: string): Promise<{ schedule: EngineSchedule; canRename: boolean } | null> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
         const [schedule, canRename] = await Promise.all([engineGetSchedule(conn, engineAgentId, slug), supportsScheduleRename(conn)])
-        return { schedule: sealSchedule(schedule, contentLocked), canRename }
+        return { schedule, canRename }
     } catch {
         return null
     }
@@ -623,10 +614,9 @@ export async function createScheduleAction(agentId: string, params: ScheduleCrea
 
 export async function updateScheduleAction(agentId: string, slug: string, patch: ScheduleUpdateParams): Promise<{ success: boolean; error?: string; schedule?: EngineSchedule }> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
         await assertModelEntitled(patch.model)
-        // Pausing or rescheduling a sealed task is ordinary use; only its prompt is held back.
-        const schedule = await engineUpdateSchedule(conn, engineAgentId, slug, contentLocked ? { ...patch, body: undefined } : patch)
+        const schedule = await engineUpdateSchedule(conn, engineAgentId, slug, patch)
         // A box that predates renaming drops the unknown field and still answers 200.
         if (patch.name !== undefined && schedule.name !== patch.name.trim()) return { success: false, error: 'Update this coworker to rename its routines' }
         return { success: true, schedule }
@@ -670,8 +660,8 @@ export async function deleteScheduleAction(agentId: string, slug: string): Promi
 
 export async function listTriggersAction(agentId: string): Promise<EngineTrigger[]> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
-        return (await engineListTriggers(conn, engineAgentId)).map(trigger => sealTrigger(trigger, contentLocked))
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
+        return await engineListTriggers(conn, engineAgentId)
     } catch {
         return []
     }
@@ -691,8 +681,8 @@ export async function listTaskOutcomesAction(agentId: string): Promise<Record<st
 
 export async function getTriggerAction(agentId: string, slug: string): Promise<EngineTrigger | null> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
-        return sealTrigger(await engineGetTrigger(conn, engineAgentId, slug), contentLocked)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
+        return await engineGetTrigger(conn, engineAgentId, slug)
     } catch {
         return null
     }
@@ -712,9 +702,9 @@ export async function createTriggerAction(agentId: string, params: TriggerCreate
 
 export async function updateTriggerAction(agentId: string, slug: string, patch: TriggerUpdateParams): Promise<{ success: boolean; error?: string; trigger?: EngineTrigger }> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
         await assertModelEntitled(patch.model)
-        const trigger = await engineUpdateTrigger(conn, engineAgentId, slug, contentLocked ? { ...patch, body: undefined } : patch)
+        const trigger = await engineUpdateTrigger(conn, engineAgentId, slug, patch)
         return { success: true, trigger }
     } catch (err) {
         return { success: false, error: err instanceof Error ? err.message : 'Failed to update trigger' }

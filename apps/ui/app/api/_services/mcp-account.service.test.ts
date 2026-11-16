@@ -8,7 +8,6 @@ import type { ServiceManifest } from '@/lib/services/manifest'
 import type { InstalledService } from '@/lib/services/types'
 
 import { createAgent, deleteAgent, renameAgent } from './agent.service'
-import { LOCKED_WRITE_ERROR } from './agent-content.service'
 import { declareService } from './agent-setup.service'
 import { resolveAgentTarget } from './chat.service'
 import { dispatchAccountTool } from './mcp-account.service'
@@ -185,61 +184,6 @@ describe('dispatchAccountTool', () => {
             await expect(dispatchAccountTool(WORKSPACE_ID, 'detach_connector', { agentId: 'agent-own', slug: 'gmail', confirm: true })).resolves.toEqual({ key: 'gmail', detached: true })
 
             expect(uninstallService).toHaveBeenCalledWith('agent-own', 'gmail', WORKSPACE_ID)
-        })
-    })
-
-    describe('template content lock', () => {
-        beforeEach(() => {
-            vi.mocked(resolveAgentTarget).mockResolvedValue({ conn: { url: 'https://engine.test', apiKey: 'key' }, engineAgentId: 'engine-sealed', contentLocked: true } as never)
-        })
-
-        it('refuses update_agent writing the soul of an agent whose template content is locked', async () => {
-            await expect(dispatchAccountTool(WORKSPACE_ID, 'update_agent', { agentId: 'agent-sealed', soul: 'New soul', name: 'Renamed' })).rejects.toThrow(LOCKED_WRITE_ERROR)
-
-            expect(patchAgent).not.toHaveBeenCalled()
-            expect(renameAgent).not.toHaveBeenCalled()
-        })
-
-        it('lets update_agent change the rest of a locked agent', async () => {
-            await expect(dispatchAccountTool(WORKSPACE_ID, 'update_agent', { agentId: 'agent-sealed', description: 'Finds leads' })).resolves.toMatchObject({ updated: ['description'] })
-
-            expect(patchAgent).toHaveBeenCalledWith(expect.anything(), 'engine-sealed', { description: 'Finds leads' })
-        })
-
-        it('refuses upsert_skill writing a skill on an agent whose template content is locked', async () => {
-            await expect(dispatchAccountTool(WORKSPACE_ID, 'upsert_skill', { agentId: 'agent-sealed', name: 'Outreach', body: 'Rewritten' })).rejects.toThrow(LOCKED_WRITE_ERROR)
-
-            expect(importSkill).not.toHaveBeenCalled()
-        })
-
-        it('refuses upsert_schedule writing the body of a scheduled task on an agent whose template content is locked', async () => {
-            await expect(dispatchAccountTool(WORKSPACE_ID, 'upsert_schedule', { agentId: 'agent-sealed', slug: 'daily', body: 'Rewritten' })).rejects.toThrow(LOCKED_WRITE_ERROR)
-            await expect(dispatchAccountTool(WORKSPACE_ID, 'upsert_schedule', { agentId: 'agent-sealed', name: 'Daily', cron: '0 9 * * *', body: 'New' })).rejects.toThrow(LOCKED_WRITE_ERROR)
-
-            expect(updateSchedule).not.toHaveBeenCalled()
-            expect(createSchedule).not.toHaveBeenCalled()
-        })
-
-        it('lets upsert_schedule pause a scheduled task of a locked agent', async () => {
-            await dispatchAccountTool(WORKSPACE_ID, 'upsert_schedule', { agentId: 'agent-sealed', slug: 'daily', enabled: false })
-
-            expect(updateSchedule).toHaveBeenCalledWith(expect.anything(), 'engine-sealed', 'daily', expect.objectContaining({ enabled: false, body: undefined }))
-        })
-
-        it('refuses upsert_trigger writing the body of a trigger on an agent whose template content is locked', async () => {
-            await expect(dispatchAccountTool(WORKSPACE_ID, 'upsert_trigger', { agentId: 'agent-sealed', slug: 'inbound', body: 'Rewritten' })).rejects.toThrow(LOCKED_WRITE_ERROR)
-            await expect(dispatchAccountTool(WORKSPACE_ID, 'upsert_trigger', { agentId: 'agent-sealed', name: 'Inbound', body: 'New' })).rejects.toThrow(LOCKED_WRITE_ERROR)
-
-            expect(updateTrigger).not.toHaveBeenCalled()
-            expect(createTrigger).not.toHaveBeenCalled()
-        })
-
-        it('lets upsert_trigger disable a trigger of a locked agent', async () => {
-            vi.mocked(updateTrigger).mockResolvedValue({ slug: 'inbound', name: 'Inbound', enabled: false, token: null } as never)
-
-            await expect(dispatchAccountTool(WORKSPACE_ID, 'upsert_trigger', { agentId: 'agent-sealed', slug: 'inbound', enabled: false })).resolves.toMatchObject({ slug: 'inbound', enabled: false })
-
-            expect(updateTrigger).toHaveBeenCalledWith(expect.anything(), 'engine-sealed', 'inbound', expect.objectContaining({ enabled: false, body: undefined }))
         })
     })
 })

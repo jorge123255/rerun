@@ -2,7 +2,6 @@
 
 import { DesktopTriggerUrlField } from '@/components/desktop/triggers/DesktopTriggerUrlField'
 import { DesktopTriggerRunModelField } from '@/components/desktop/triggers/DesktopTriggerRunModelField'
-import { DesktopTriggerTemplateLock } from '@/components/desktop/triggers/DesktopTriggerTemplateLock'
 import { DesktopTaskNotifyField } from '@/components/desktop/DesktopTaskNotifyField'
 import { PanelDeleteButton, PanelEditorBody, PanelEditorFooter, PanelEditorHeader, PanelEditorShell } from '@/components/ui/panel-editor'
 import { Button } from '@/components/ui/button'
@@ -22,10 +21,8 @@ import {
     TriggerRequestError,
     providerForTriggerPick,
     unavailableTriggerRunModelCatalog,
-    desktopTriggerPromptLock,
     type DesktopTriggerRunModelCatalog,
     type DesktopTriggerRunModelPick,
-    type DesktopTriggerTemplateLockState,
 } from '@/lib/desktop/triggers'
 import type { DesktopTrigger, DesktopTriggerMethod } from '@rerun/contracts'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -43,8 +40,6 @@ type Props = {
     ingressAvailable?: boolean
     /** Injected local model catalog. Defaults to honest unavailable (follow coworker). */
     modelCatalog?: DesktopTriggerRunModelCatalog
-    /** Injected template lock state. Defaults to unlocked. */
-    templateLock?: DesktopTriggerTemplateLockState
 }
 
 export function DesktopTriggerEditor({
@@ -56,7 +51,6 @@ export function DesktopTriggerEditor({
     onEditStateChange,
     ingressAvailable = false,
     modelCatalog = unavailableTriggerRunModelCatalog(),
-    templateLock = desktopTriggerPromptLock(false),
 }: Props) {
     const isEdit = !!slug
     const [loading, setLoading] = useState(isEdit)
@@ -227,7 +221,6 @@ export function DesktopTriggerEditor({
     }
 
     const canSave = name.trim() && body.trim() && methods.length > 0
-    const promptLocked = templateLock.locked && isEdit
 
     return (
         <PanelEditorShell>
@@ -298,18 +291,16 @@ export function DesktopTriggerEditor({
 
                 {slug && <DesktopTaskNotifyField agentId={agentId} source="trigger" slug={slug} disabled={saving || deleting || rotating} />}
 
-                <DesktopTriggerTemplateLock state={{ ...templateLock, locked: promptLocked }}>
-                    <MarkdownTextarea
-                        label="Trigger prompt"
-                        dialogTitle="Edit the trigger prompt"
-                        helperText="What the coworker runs when the URL is called (a fresh session each time). The caller payload is attached below it."
-                        value={body}
-                        onChange={value => { setDirty(true); setBody(value) }}
-                        disabled={saving || deleting || rotating || promptLocked}
-                        className="text-xs min-h-32 font-mono"
-                        placeholder="A commit just landed. Review the diff in the payload and post a summary to Slack."
-                    />
-                </DesktopTriggerTemplateLock>
+                <MarkdownTextarea
+                    label="Trigger prompt"
+                    dialogTitle="Edit the trigger prompt"
+                    helperText="What the coworker runs when the URL is called (a fresh session each time). The caller payload is attached below it."
+                    value={body}
+                    onChange={value => { setDirty(true); setBody(value) }}
+                    disabled={saving || deleting || rotating}
+                    className="text-xs min-h-32 font-mono"
+                    placeholder="A commit just landed. Review the diff in the payload and post a summary to Slack."
+                />
             </PanelEditorBody>
             <PanelEditorFooter>
                 {isEdit && (
@@ -322,7 +313,7 @@ export function DesktopTriggerEditor({
                     />
                 )}
                 <Button size="sm" variant="outline" disabled={saving || deleting || rotating} onClick={handleBack}>Cancel</Button>
-                <Button size="sm" className="flex-1" loading={saving} onClick={handleSave} disabled={!canSave || saving || deleting || rotating || promptLocked}>
+                <Button size="sm" className="flex-1" loading={saving} onClick={handleSave} disabled={!canSave || saving || deleting || rotating}>
                     {isEdit ? 'Save changes' : 'Create trigger'}
                 </Button>
             </PanelEditorFooter>
