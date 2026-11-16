@@ -18,6 +18,7 @@ import type { DesktopRuntime } from '../runtime'
 import { DesktopHttpError } from '../auth'
 import { foremanVoiceStore, voiceScope, voiceTargetJson } from './store'
 import { assertForemanVoiceAdmission } from './admission'
+import { desktopTranscriptionConfigured } from '@/lib/desktop/auxiliary'
 
 export type ForemanVoiceTurnInput = {
     target: ForemanVoiceTarget; attemptId: string; text: string
@@ -83,7 +84,7 @@ export function createForemanVoiceRuntime(runtime: DesktopRuntime, db: Client, p
             catch { draft = { ...draft, phase: 'failed', error: 'Saved audio is unavailable. Retry Save recording with this same take.' } }
         }
         const receipt = await accepted(t, id, signal)
-        const setup = (await aux.list()).some(x => x.purpose === 'transcription' && x.configured) ? null : 'transcription' as const
+        const setup = desktopTranscriptionConfigured(await aux.list()) ? null : 'transcription' as const
         await owner(t, signal, false)
         return foremanVoiceSnapshotSchema.parse({ target: t, attempt: draft ? {
             attemptId: draft.attemptId, phase: draft.phase, revision: draft.revision, recording: draft.recording,
@@ -130,7 +131,7 @@ export function createForemanVoiceRuntime(runtime: DesktopRuntime, db: Client, p
         const service = createDesktopVoiceService({
             store: storage.store, blobs: storage.blobs,
             owner: async scope => { if (JSON.stringify(scope) !== JSON.stringify(voiceScope(t))) throw changed(); await guard() },
-            transcriptionAvailable: async () => (await aux.list()).some(x => x.purpose === 'transcription' && x.configured),
+            transcriptionAvailable: async () => desktopTranscriptionConfigured(await aux.list()),
             transcribe: ({ bytes, format, signal }) => backends.transcribe(bytes, format, signal),
             references: async () => { const row = await storage.row(id); return !!row?.send_requested || !!row?.accepted_run },
             send: async () => {

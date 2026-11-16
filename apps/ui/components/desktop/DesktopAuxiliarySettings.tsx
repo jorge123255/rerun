@@ -2,13 +2,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { desktopAuxiliarySettingsSchema, type DesktopAuxiliaryStatus } from '@/lib/desktop/auxiliary'
+import { DESKTOP_KEYLESS_SEARCH_ON, desktopAuxiliarySettingsSchema, type DesktopAuxiliaryStatus } from '@/lib/desktop/auxiliary'
 
 const labels = {
     search: { title: 'Web search', provider: 'Brave Search', description: 'Find web results with Rerun’s web_search tool.' },
     'keirolabs-search': { title: 'Keirolabs web search', provider: 'Keirolabs', description: 'Rerun uses Keirolabs when no Brave Search key is saved.' },
+    'keenable-search': { title: 'Web search without a key', provider: 'Keenable', description: 'Search the web through Keenable with no key. Off by default: when it is on, your coworkers’ search queries are sent to Keenable. A saved Brave Search or Keirolabs key is used first.' },
     embedding: { title: 'Memory search', provider: 'OpenRouter', description: 'Find related saved notes by meaning, using text-embedding-3-small. Keyword search works without a key.' },
     transcription: { title: 'Voice messages', provider: 'OpenRouter', description: 'Turn recordings into chat text, using Whisper large v3 turbo.' },
+    'elevenlabs-transcription': { title: 'Voice messages with ElevenLabs', provider: 'ElevenLabs', description: 'Turn recordings into chat text, using ElevenLabs Scribe. Rerun uses ElevenLabs when no OpenRouter voice key is saved.' },
 }
 
 export function DesktopAuxiliarySettings() {
@@ -47,6 +49,12 @@ function ServiceKey({ row, onSaved }: { row: DesktopAuxiliaryStatus; onSaved: (r
         } catch { if (active.current) { setKey(''); setError('The save could not be confirmed. Reopen Tool services to see the saved state.') } }
         finally { pending.current = false; if (active.current) setBusy(false) }
     }
+    if (row.purpose === 'keenable-search') return <div className="space-y-3 rounded-xl border p-4">
+        <div className="flex items-center justify-between"><h2 className="font-semibold">{label.title}</h2><span className="text-xs text-muted-foreground">{row.configured ? 'On' : 'Off'}</span></div>
+        <p className="text-sm text-muted-foreground">{label.description}</p>
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void save(row.configured ? '' : DESKTOP_KEYLESS_SEARCH_ON)}>{row.configured ? 'Turn off keyless search' : 'Turn on keyless search'}</Button>
+        {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+    </div>
     return <form className="space-y-3 rounded-xl border p-4" onSubmit={event => { event.preventDefault(); if (key.trim()) void save(key.trim()) }}>
         <div className="flex items-center justify-between"><h2 className="font-semibold">{label.title}</h2><span className="text-xs text-muted-foreground">{row.configured ? 'Key saved' : 'Not configured'}</span></div>
         <p className="text-sm text-muted-foreground">{label.description}</p>

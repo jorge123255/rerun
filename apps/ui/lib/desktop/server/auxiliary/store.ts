@@ -4,7 +4,7 @@ import type { Client, Row } from '@libsql/client'
 import { desktopAuxiliaryChangeSchema, desktopAuxiliaryPurposes, type DesktopAuxiliaryPurpose, type DesktopAuxiliaryStatus } from '../../auxiliary'
 
 export const desktopAuxiliarySchema = `CREATE TABLE IF NOT EXISTS desktop_auxiliary_credentials (
- purpose TEXT PRIMARY KEY CHECK(purpose IN ('search','embedding','transcription')),
+ purpose TEXT PRIMARY KEY CHECK(purpose IN ('search','keirolabs-search','keenable-search','embedding','transcription','elevenlabs-transcription')),
  revision TEXT NOT NULL, ciphertext TEXT);
 CREATE TABLE IF NOT EXISTS desktop_search_outcomes (
  identity TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
@@ -41,19 +41,31 @@ export function desktopAuxiliaryStore(db: Client, key = desktopAuxiliaryMasterKe
         },
         async readSearch() {
             const { rows } = await db.execute(`SELECT purpose,revision,ciphertext FROM desktop_auxiliary_credentials
-                WHERE purpose IN ('search','keirolabs-search')`)
+                WHERE purpose IN ('search','keirolabs-search','keenable-search')`)
             const brave = rows.find(row => row.purpose === 'search')
             const keiro = rows.find(row => row.purpose === 'keirolabs-search')
+            const keen = rows.find(row => row.purpose === 'keenable-search')
             const braveRevision = String(brave?.revision ?? 'unconfigured')
-            // Preserve legacy Brave receipts. Retain both revisions after key removal
+            // Preserve legacy Brave receipts. Retain every revision after key removal
             // so a previous authorization cannot revive when the preferred provider switches back.
-            const generation = keiro ? JSON.stringify([braveRevision, String(keiro.revision)]) : braveRevision
-            const purpose = brave?.ciphertext ? 'search' : 'keirolabs-search'
-            const saved = purpose === 'search' ? brave : keiro
+            const generation = keen ? JSON.stringify([braveRevision, String(keiro?.revision ?? 'unconfigured'), String(keen.revision)])
+                : keiro ? JSON.stringify([braveRevision, String(keiro.revision)]) : braveRevision
+            // A saved key answers first. Keyless search answers only when the owner turned it on and no key is saved.
+            const purpose = brave?.ciphertext ? 'search' : keiro?.ciphertext ? 'keirolabs-search' : 'keenable-search'
+            const saved = purpose === 'search' ? brave : purpose === 'keirolabs-search' ? keiro : keen
             if (!saved?.ciphertext) return { generation, credential: null }
             const credential = read(purpose, saved)
             if (!credential.key) throw new Error('Credential is unavailable')
-            return { generation, credential: { provider: purpose === 'search' ? 'brave' as const : 'keirolabs' as const, key: credential.key } }
+            const provider = purpose === 'search' ? 'brave' as const : purpose === 'keirolabs-search' ? 'keirolabs' as const : 'keenable' as const
+            return { generation, credential: { provider, key: credential.key } }
+        },
+        /** The transcription service in use: OpenRouter when it has a key, else ElevenLabs. */
+        async readTranscription() {
+            const { rows } = await db.execute(`SELECT purpose,revision,ciphertext FROM desktop_auxiliary_credentials
+                WHERE purpose IN ('transcription','elevenlabs-transcription')`)
+            const openrouter = rows.find(row => row.purpose === 'transcription')
+            const purpose = openrouter?.ciphertext ? 'transcription' as const : 'elevenlabs-transcription' as const
+            return { purpose, ...read(purpose, rows.find(row => row.purpose === purpose)) }
         },
         async change(input: unknown) {
             const change = desktopAuxiliaryChangeSchema.parse(input), revision = randomUUID()

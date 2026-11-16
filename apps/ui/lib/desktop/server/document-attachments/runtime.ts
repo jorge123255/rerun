@@ -17,6 +17,7 @@ import { desktopDocumentBlobs } from './storage'
 import { questionDocumentId } from '../../question-documents'
 import { ownedForemanChat } from '../foreman/chat-store'
 import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
+import { desktopTranscriptionConfigured } from '../../auxiliary'
 
 export async function createDesktopDocumentRuntime(runtime: DesktopRuntime, db: Client, ports: {
     isCurrent: () => boolean
@@ -117,7 +118,7 @@ export async function createDesktopDocumentRuntime(runtime: DesktopRuntime, db: 
             if (extract.truncated) throw new DesktopHttpError(413, 'This PDF contains more text than the app can send. Use a shorter document.')
             return extract.pages.map(page => page.text).join('\n\n')
         },
-        transcriptionAvailable: async attachment => attachment.byteLength <= 8 * 1024 * 1024 && /\.(?:wav|mp3|m4a|ogg)$/i.test(attachment.name) && (await auxiliary.list()).some(item => item.purpose === 'transcription' && item.configured),
+        transcriptionAvailable: async attachment => attachment.byteLength <= 8 * 1024 * 1024 && /\.(?:wav|mp3|m4a|ogg)$/i.test(attachment.name) && desktopTranscriptionConfigured(await auxiliary.list()),
         transcribeAudio: ({ bytes, name, signal }) => backends.transcribe(bytes, name.split('.').at(-1)!.toLowerCase(), signal),
     })
 }

@@ -9,6 +9,7 @@ import { isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-w
 import { encodeDesktopVoiceRecording } from '@/lib/desktop/voice/client'
 import { useDesktopVoiceRecorder } from '@/lib/desktop/voice/useDesktopVoiceRecorder'
 import { DesktopVoiceRecorderBar } from './DesktopVoiceRecorderBar'
+import { desktopTranscriptionConfigured } from '@/lib/desktop/auxiliary'
 
 type Capture = {
     controller: AbortController
@@ -72,7 +73,7 @@ export function useDesktopQuestionVoice(target: DesktopQuestionVoiceTarget | und
                 if (!response.ok) throw new Error('Could not check voice transcription. Try again.')
                 const settings = desktopAuxiliarySettingsSchema.parse(await response.json())
                 if (!stillCurrent(current)) return
-                if (!settings.some(item => item.purpose === 'transcription' && item.configured)) {
+                if (!desktopTranscriptionConfigured(settings)) {
                     throw new Error('Configure voice transcription in Settings to use a voice answer.')
                 }
                 if (!await recorder.start() || !stillCurrent(current)) return
