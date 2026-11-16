@@ -8,6 +8,7 @@ import { getAgent } from '../agents/registry.js'
 import { createSession } from '../db/repos/sessions.js'
 import { listSchedules, readSchedule, consumeDesktopSchedule, markFired, type Schedule } from '../schedules/loader.js'
 import { buildScheduledRunMessage } from '../schedules/message.js'
+import { routineParts } from '@rerun/contracts'
 import { isDue } from '../schedules/cron.js'
 import { sweepMemoriesIfDue } from '../memory/maintenance.js'
 import { maintainBrainIfDue } from '../brain/maintenance.js'
@@ -165,7 +166,10 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
             if(JSON.stringify(current)!==JSON.stringify(expectedSchedule) || JSON.stringify(currentAgent.config)!==JSON.stringify(agent.config))throw new Error('Task or coworker changed during preparation')
         }
         await beforeLaunch();check()
-        const { runId, settled } = await startHeadlessRun(agent, session.id, buildScheduledRunMessage(schedule), override, { source: 'schedule', slug: schedule.slug, name: schedule.name, ...(pinned && { requireExactModel: true }) }, {beforeLaunch,assertActive:check})
+        // On the Mac the saved text goes to the model inside the firing frame, and Run now is marked a test.
+        const firing = desktopApp() ? { test: opts?.markFired === false } : undefined
+        const routine = firing && { parts: routineParts(schedule.body.trim()), test: firing.test }
+        const { runId, settled } = await startHeadlessRun(agent, session.id, buildScheduledRunMessage(schedule, firing), override, { source: 'schedule', slug: schedule.slug, name: schedule.name, ...(pinned && { requireExactModel: true }), ...(routine && { routine }) }, {beforeLaunch,assertActive:check})
 
         launched=true
         // Install settlement tracking BEFORE post-launch callbacks, so failures cannot strand admission.

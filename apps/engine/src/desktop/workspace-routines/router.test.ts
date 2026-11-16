@@ -8,7 +8,11 @@ vi.mock('../schedule-tools/files.js', () => ({ desktopScheduleFiles: () => ({ li
 vi.mock('../schedule-binding.js', () => ({ authorizeDesktopSchedule: async () => {} }))
 vi.mock('../../runtime/scheduler.js', () => ({ fireSchedule: async () => { state.runs++; return { runId: `run-${state.runs}`, sessionId: `session-${state.runs}` } } }))
 vi.mock('../workspace-admission.js', () => ({ assertDesktopRunAdmission: () => 0 }))
+const limits = vi.hoisted(() => ({ enabledElsewhere: 0 }))
+vi.mock('../../agents/loader.js', () => ({ listAgentIdsOnDisk: async () => ['engine-b'] }))
+vi.mock('../../schedules/loader.js', () => ({ listSchedules: async () => Array.from({ length: limits.enabledElsewhere }, (_, index) => ({ slug: `routine-${index}`, enabled: true })), scheduleExists: () => true, setScheduleEnabled: async () => {} }))
 import { createDesktopWorkspaceRoutineRouter } from './router.js'
+import { ROUTINE_GUARD_MESSAGES } from '@rerun/contracts'
 import { desktopScheduleDefinitionRevision } from '../schedule-tools/revision.js'
 const id = '00000000-0000-4000-8000-000000000001'
 const revision = () => desktopScheduleDefinitionRevision(state.schedule as never)
@@ -99,4 +103,33 @@ it('refuses a model that becomes unavailable before the schedule is published', 
     expect((await call(request)).status).toBe(409)
     expect(state.writes).toBe(0)
     expect(state.schedule).toMatchObject({ connectionId: null, provider: null, model: null })
+})
+
+
+// ---- Routine limits ----
+const limitEdit = (patch = {}) => ({ action: 'edit', agentId: 'local-a', slug: 'daily', expectedRevision: revision(), requestId: id, input: { name: 'Daily', description: '', body: 'Work', cron: '0 8 * * *', runAt: null, timezone: 'UTC', enabled: true, ...patch } })
+beforeEach(() => { limits.enabledElsewhere = 0 })
+it('refuses an edit to a schedule faster than every fifteen minutes and writes nothing', async () => {
+    const response = await call(limitEdit({ cron: '*/5 * * * *' }))
+    expect(response.status).toBe(422)
+    expect(await response.json()).toEqual({ error: ROUTINE_GUARD_MESSAGES.interval, code: 'routine_guard' })
+    expect(state.writes).toBe(0)
+    expect(state.rows.size).toBe(0)
+    expect((await call(limitEdit({ cron: '*/15 * * * *' }))).status).toBe(200)
+})
+it('refuses to switch on a routine past twenty enabled in the workspace', async () => {
+    limits.enabledElsewhere = 20
+    state.schedule.enabled = false
+    const response = await call(input({ enabled: true }))
+    expect(response.status).toBe(422)
+    expect(await response.json()).toEqual({ error: ROUTINE_GUARD_MESSAGES.cap, code: 'routine_guard' })
+    expect(state.writes).toBe(0)
+    limits.enabledElsewhere = 19
+    expect((await call(input({ enabled: true, requestId: '00000000-0000-4000-8000-000000000003' }))).status).toBe(200)
+})
+it('still pauses, renames and edits a routine that already breaks a limit', async () => {
+    limits.enabledElsewhere = 25
+    state.schedule.cron = '*/5 * * * *'
+    expect((await call(limitEdit({ cron: '*/5 * * * *', body: 'Work harder' }))).status).toBe(200)
+    expect((await call(input({ enabled: false, requestId: '00000000-0000-4000-8000-000000000004' }))).status).toBe(200)
 })

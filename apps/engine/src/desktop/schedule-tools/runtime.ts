@@ -4,6 +4,7 @@ import { getSystemDb } from '../../db/systemDb.js'
 import { listAgentIdsOnDisk } from '../../agents/loader.js'
 import { desktopDeletionActive } from '../agent-lifecycle.js'
 import { bindDesktopScheduleTools } from './binding.js'
+import { desktopRoutineGuard } from '../routine-guards.js'
 const ownerSchema = z.strictObject({ localAgentId: z.string(), engineAgentId: z.string(), enabled: z.boolean(), deleting: z.boolean(), setupPending: z.boolean(), scheduleManage: z.boolean(), connectedModel: z.object({ provider: z.string(), model: z.string() }).nullable() })
 export async function createDesktopScheduleToolRuntime(runtime: { launchNonce: string; app: { origin: string }; engine: { apiKey: string } }) {
  const closing = new AbortController(), pending = new Set<Promise<unknown>>()
@@ -16,7 +17,7 @@ export async function createDesktopScheduleToolRuntime(runtime: { launchNonce: s
   try { while (true) { signal.throwIfAborted(); const part = await reader.read(); signal.throwIfAborted(); if (part.done) break; size += part.value.length; if (size > 16000) throw new Error('Routine authority response too large'); chunks.push(part.value) } if (!response.ok) throw new Error('Routine authority refused'); return JSON.parse(Buffer.concat(chunks).toString('utf8')) }
   finally { signal.removeEventListener('abort', cancel); void reader.cancel().catch(() => {}) }
  }
- const binding = bindDesktopScheduleTools({ getSystemClient: async id => (await getSystemDb(id)).client, authority: {
+ const binding = bindDesktopScheduleTools({ guard: desktopRoutineGuard, getSystemClient: async id => (await getSystemDb(id)).client, authority: {
   assertActive: () => closing.signal.throwIfAborted(),
   resolveOwner: async id => {
    if (desktopDeletionActive(id)) throw new Error('Coworker is being deleted')

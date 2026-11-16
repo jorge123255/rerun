@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { providerSchema } from './agent.js'
+import { desktopRoutineRunOutcomeSchema } from './desktop-routine-checklist.js'
+import { desktopRoutineWarningSchema } from './desktop-routine-guards.js'
 
 const id = z.string().min(1).max(160)
 const revision = z.string().min(1).max(256)
@@ -56,7 +58,11 @@ export const desktopWorkspaceRoutineSchema = desktopScheduleRecordSchema.extend(
     runningSince: z.string().nullable(),
     setupPending: z.boolean(),
     lastRunAt: z.string().nullable().optional(),
-    lastResult: z.object({ status: z.string().max(64), runId: id, chat: desktopWorkspaceRoutineChatSchema }).strict().optional(),
+    lastResult: z.object({ status: z.string().max(64), runId: id, chat: desktopWorkspaceRoutineChatSchema, outcome: desktopRoutineRunOutcomeSchema.optional() }).strict().optional(),
+    /** Saved limits this routine already breaks. It keeps running; the list shows a warning. */
+    warnings: z.array(desktopRoutineWarningSchema).max(2).optional(),
+    /** When repeated failures switched this routine off. */
+    autoDisabledAt: z.string().max(64).nullable().optional(),
 }).strict()
 export type DesktopWorkspaceRoutine = z.infer<typeof desktopWorkspaceRoutineSchema>
 

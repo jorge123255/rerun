@@ -4,23 +4,25 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import type { DesktopScheduleDefinition, DesktopScheduleFilePort } from '../../desktop/schedule-tools/types.js'
 const state = vi.hoisted(() => ({
     desktop: false, update: vi.fn(), authorize: vi.fn(), describe: vi.fn(), fire: vi.fn(), legacyDelete: vi.fn(),
-    read: vi.fn(), list: vi.fn(), getAgent: vi.fn(),
+    read: vi.fn(), list: vi.fn(), getAgent: vi.fn(), write: vi.fn(), exists: true,
     files: null as DesktopScheduleFilePort | null,
 }))
 vi.mock('../../desktop/policy.js', () => ({ desktopApp: () => state.desktop }))
 vi.mock('../../desktop/schedule-binding.js', () => ({ authorizeDesktopSchedule: state.authorize }))
 vi.mock('../../desktop/schedule-description.js', async importOriginal => ({ ...await importOriginal<typeof import('../../desktop/schedule-description.js')>(), describeDesktopSchedule: state.describe }))
 vi.mock('../../schedules/loader.js', () => ({
-    scheduleExists: () => true, readSchedule: state.read, updateScheduleAt: state.update,
-    deleteSchedule: state.legacyDelete, listSchedules: state.list, writeSchedule: vi.fn(),
+    scheduleExists: () => state.exists, readSchedule: state.read, updateScheduleAt: state.update,
+    deleteSchedule: state.legacyDelete, listSchedules: state.list, writeSchedule: state.write,
 }))
 vi.mock('../../desktop/schedule-tools/files.js', async original => ({
     ...await original<typeof import('../../desktop/schedule-tools/files.js')>(),
     desktopScheduleFiles: () => state.files,
 }))
 vi.mock('../../runtime/scheduler.js', () => ({ fireSchedule: state.fire }))
+vi.mock('../../agents/loader.js', async original => ({ ...await original<typeof import('../../agents/loader.js')>(), listAgentIdsOnDisk: async () => ['owner', 'other'] }))
 vi.mock('../../agents/registry.js', () => ({ getAgent: state.getAgent }))
 import { scheduleRoutes } from './schedules.js'
+import { ROUTINE_GUARD_MESSAGES } from '@rerun/contracts'
 import { memoryScheduleFiles } from '../../desktop/schedule-tools/files.js'
 import { desktopScheduleDefinitionRevision } from '../../desktop/schedule-tools/revision.js'
 const app = new Hono().route('/agents/:id/schedules', scheduleRoutes)
@@ -29,6 +31,8 @@ const patch = (body: unknown) => app.request('/agents/owner/schedules/daily', { 
 beforeEach(() => {
     vi.clearAllMocks()
     state.desktop = false
+    state.exists = true
+    state.write.mockImplementation(async (_owner, body) => body)
     state.update.mockImplementation(async (_owner, _slug, body) => body)
     state.authorize.mockResolvedValue(undefined)
     state.read.mockResolvedValue(daily)
@@ -159,4 +163,51 @@ test('a reviewed paused schedule can run once after setup but stays gated during
     state.fire.mockResolvedValueOnce({ runId: 'paused-run', sessionId: 'paused-chat' })
     expect((await testRun()).status).toBe(202)
     expect(state.fire).toHaveBeenCalledExactlyOnceWith('owner', paused, { markFired: false, ignoreBudgetLatch: true, manualId })
+})
+
+
+// ---- Routine limits on the Mac ----
+const create = (body: unknown) => app.request('/agents/owner/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+const twenty = Array.from({ length: 10 }, (_, index) => ({ ...daily, slug: `routine-${index}` }))
+test('refuses to create or edit a recurring routine that fires more often than every fifteen minutes', async () => {
+    state.desktop = true
+    state.exists = false
+    const created = await create({ name: 'Fast', body: 'Poll', cron: '*/5 * * * *', timezone: 'UTC' })
+    expect(created.status).toBe(422)
+    expect(await created.json()).toEqual({ error: ROUTINE_GUARD_MESSAGES.interval, code: 'routine_guard' })
+    expect(state.write).not.toHaveBeenCalled()
+    expect((await create({ name: 'Fine', body: 'Poll', cron: '*/15 * * * *', timezone: 'UTC' })).status).toBe(201)
+    state.exists = true
+    const edited = await patch({ cron: '*/5 * * * *' })
+    expect(edited.status).toBe(422)
+    expect(await edited.json()).toEqual({ error: ROUTINE_GUARD_MESSAGES.interval, code: 'routine_guard' })
+    expect(state.update).not.toHaveBeenCalled()
+})
+test('refuses to create or switch on a routine past twenty enabled in the workspace', async () => {
+    state.desktop = true
+    // Two coworkers on disk, ten enabled routines each.
+    state.list.mockResolvedValue(twenty)
+    state.exists = false
+    const created = await create({ name: 'One more', body: 'Poll', cron: '0 9 * * *', timezone: 'UTC' })
+    expect(created.status).toBe(422)
+    expect(await created.json()).toEqual({ error: ROUTINE_GUARD_MESSAGES.cap, code: 'routine_guard' })
+    expect((await create({ name: 'Kept off', body: 'Poll', cron: '0 9 * * *', timezone: 'UTC', enabled: false })).status).toBe(201)
+    state.exists = true
+    state.read.mockResolvedValue({ ...daily, enabled: false })
+    const enabled = await patch({ enabled: true })
+    expect(enabled.status).toBe(422)
+    expect(await enabled.json()).toMatchObject({ error: ROUTINE_GUARD_MESSAGES.cap })
+    expect(state.update).not.toHaveBeenCalled()
+})
+test('lets a routine that already breaks a limit keep running: other edits and pausing still save', async () => {
+    state.desktop = true
+    state.list.mockResolvedValue([...twenty, { ...daily, slug: 'extra' }])
+    state.read.mockResolvedValue({ ...daily, cron: '*/5 * * * *' })
+    expect((await patch({ body: 'Poll twice' })).status).toBe(200)
+    expect((await patch({ enabled: false })).status).toBe(200)
+    expect(state.update).toHaveBeenCalledTimes(2)
+})
+test('does not apply the Mac limits to the hosted engine', async () => {
+    state.exists = false
+    expect((await create({ name: 'Fast', body: 'Poll', cron: '*/5 * * * *', timezone: 'UTC' })).status).toBe(201)
 })
