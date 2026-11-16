@@ -1,6 +1,6 @@
 import 'server-only'
 import type { Client } from '@libsql/client'
-import type { DesktopVaultHealthReceipt } from '../../vault'
+import { desktopVaultSignInExpiredMessage, type DesktopVaultHealthReceipt } from '../../vault'
 import { DesktopHttpError } from '../auth'
 import { withRosterWrite } from '../roster-writes'
 
@@ -38,7 +38,7 @@ export function vaultCatalogHealth(
             if (observed === 'signed-out') {
                 health = { state: 'disconnected', checkedAt, message: 'Sign in to this account before checking its connection.' }
             } else if (observed === 'expired') {
-                health = { state: 'error', checkedAt, message: 'The saved sign-in expired. Reconnect to check this account.' }
+                health = { state: 'error', checkedAt, message: desktopVaultSignInExpiredMessage }
             } else if (observed === 'rejected') {
                 // The app answered and refused the saved key: a different failure from an app that did not answer.
                 health = { state: 'error', checkedAt, message: 'The app refused the saved key.', credentialRejected: true }

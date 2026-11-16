@@ -1,26 +1,27 @@
 'use client'
 
-import { vaultAccountHealthText } from './vault-account-health'
-import { DesktopVaultCatalog } from './DesktopVaultCatalog'
-import { DesktopManagedApps } from './DesktopManagedApps'
-import { DesktopMcpOAuthAuthorize } from '../mcp/DesktopMcpOAuthAuthorize'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { ArrowLeft, ChevronRight, KeyRound, Plug, Plus } from 'lucide-react'
-import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { useEffect, useRef, useState } from 'react'
+import { Plus, Search } from 'lucide-react'
 import { PanelDialogContent } from '@/components/dialogs/PanelDialogContent'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { LockKeyholeIcon } from '@/lib/icons'
 import { Input } from '@/components/ui/input'
-import { PANEL_CARD, PANEL_CARD_INTERACTIVE, PanelRow } from '@/components/ui/panel-row'
-import { cn } from '@/lib/utils'
-import { DesktopAppLogo } from './DesktopAppLogo'
+import { PanelRow } from '@/components/ui/panel-row'
 import { PanelSteps } from '@/components/ui/panel-steps'
 import { PanelScroller } from '@/components/ui/panel-list'
-import { desktopVaultListing, desktopVaultProgramCredentialLimit, type DesktopVaultEntry, type DesktopVaultListing, type DesktopVaultMutation } from '@/lib/desktop/vault'
+import { Skeleton } from '@/components/ui/skeleton'
+import { desktopVaultListing, type DesktopVaultEntry, type DesktopVaultListing } from '@/lib/desktop/vault'
+import { DesktopManagedApps } from './DesktopManagedApps'
+import { DesktopVaultAdd, type VaultAddKind } from './DesktopVaultAdd'
+import { DesktopVaultDetail, type VaultDestination, type VaultRequest } from './DesktopVaultDetail'
+import { DesktopVaultEmpty, popularVaultApps } from './DesktopVaultEmpty'
+import { VaultAppTile, VaultCoworkerFaces, VaultEntryIcon, VaultStatusBadge } from './DesktopVaultTile'
+import { entryGroup, entryName, entrySubtitle, entryTitle, VAULT_GROUP_LABEL, type VaultEntryGroup } from './vault-account-health'
 
-type VaultRequest = DesktopVaultMutation | { operation: 'check-health'; id: string; revision: string }
+export { popularVaultApps } from './DesktopVaultEmpty'
+export { VaultAppTile } from './DesktopVaultTile'
 
 async function requestVault(signal: AbortSignal, input?: VaultRequest) {
     const health = input?.operation === 'check-health'
@@ -38,6 +39,9 @@ async function requestVault(signal: AbortSignal, input?: VaultRequest) {
 
 type SuggestedApp = { slug: string; onUse: (account: { key: string; revision: string }) => void }
 
+// Past this many entries the list gets a search field: a handful is read at a glance.
+const SEARCH_FROM = 8
+
 export function DesktopVaultDialog({ onClose, suggestedApp, coworkerApp }: { onClose: () => void; suggestedApp?: SuggestedApp; coworkerApp?: string }) {
     const opener = useRef<HTMLElement | null>(typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null)
     return <Dialog open onOpenChange={open => { if (!open) onClose() }}>
@@ -48,17 +52,19 @@ export function DesktopVaultDialog({ onClose, suggestedApp, coworkerApp }: { onC
                     : document.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                 target?.focus({ preventScroll: true })
             }}>
-            <DialogHeaderBar icon={LockKeyholeIcon} title={suggestedApp ? 'Add account to Vault' : coworkerApp ? 'Manage app in Vault' : 'Vault'} description="Store apps, MCP servers, and secrets for this workspace and choose their coworkers." />
             <VaultPanel suggestedApp={suggestedApp} coworkerApp={coworkerApp} onClose={onClose} />
         </PanelDialogContent>
     </Dialog>
 }
 
-type VaultDestination = string | ((listing: DesktopVaultListing) => string)
-
+/**
+ * The Vault, laid out as upstream VaultPanel.tsx: one header with one Add button, the apps as
+ * tiles, the MCP servers, local programs and secrets as rows under them, and the Mac's managed
+ * (Composio) apps as their own section at the bottom.
+ */
 function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: SuggestedApp; coworkerApp?: string; onClose: () => void }) {
     const [listing, setListing] = useState<DesktopVaultListing | null>(null)
-    const [page, setPage] = useState(suggestedApp ? 'add-app' : 'list')
+    const [page, setPage] = useState(suggestedApp ? 'add' : 'list')
     const [query, setQuery] = useState('')
     const [error, setError] = useState('')
     const [busy, setBusy] = useState(true)
@@ -106,368 +112,100 @@ function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: Sug
         if ('kind' in item && item.kind === 'mcp' && item.catalog) (accounts[item.catalog.slug] ??= []).push(entryTitle(item))
     }
     const entry = listing?.entries.find(item => item.id === page)
-    // Which app the Add page opens on, when the person came from one of the suggested tiles.
+    // What the Add page opens on: one of its four kinds, or the app of a popular tile.
+    const [addKind, setAddKind] = useState<VaultAddKind>('app')
     const [addSlug, setAddSlug] = useState<string | undefined>(undefined)
-    const navigate = (next: string, slug?: string) => { setError(''); setAddSlug(next === 'add-app' ? slug : undefined); setPage(next) }
-    // Logos and names come from the app catalog; a Vault entry only keeps the app's id.
-    const [catalog, setCatalog] = useState<Record<string, { name: string; icon?: string | null }>>({})
+    const navigate = (next: string) => { setError(''); setPage(next) }
+    const add = (kind: VaultAddKind = 'app', slug?: string) => { setAddKind(kind); setAddSlug(slug); navigate('add') }
+    // Logos and names come from the app catalog; a Vault entry only keeps the app's id. Null until it is read.
+    const [catalog, setCatalog] = useState<Record<string, { name: string; icon?: string | null }> | null>(null)
     useEffect(() => {
         const controller = new AbortController()
         void fetch('/api/desktop/vault/catalog', { cache: 'no-store', signal: controller.signal }).then(async response => {
-            if (!response.ok) return
-            const apps = await response.json() as Array<{ slug: string; name: string; icon?: string | null }>
-            if (!controller.signal.aborted && Array.isArray(apps)) setCatalog(Object.fromEntries(apps.map(app => [app.slug, { name: app.name, icon: app.icon }])))
-        }).catch(() => { /* Tiles fall back to the plain connector mark. */ })
+            const apps = response.ok ? await response.json() as Array<{ slug: string; name: string; icon?: string | null }> : []
+            if (!controller.signal.aborted) setCatalog(Array.isArray(apps) ? Object.fromEntries(apps.map(app => [app.slug, { name: app.name, icon: app.icon }])) : {})
+        }).catch(() => { if (!controller.signal.aborted) setCatalog({}) /* Tiles fall back to the plain connector mark. */ })
         return () => controller.abort()
     }, [])
+    const logoOf = (item: DesktopVaultEntry) => 'kind' in item && item.kind === 'mcp' ? catalog?.[item.catalog?.slug ?? '']?.icon : undefined
     const stepKey = entry?.id ?? page
-    const filtered = listing?.entries.filter(item => (
+    const search = query.trim().toLowerCase()
+    const filtered = (listing?.entries ?? []).filter(item => (
         !coworkerApp || 'kind' in item && item.kind === 'mcp' && item.catalog?.slug === coworkerApp
-    ) && `${entryTitle(item)} ${entrySubtitle(item)}`.toLowerCase().includes(query.trim().toLowerCase()))
+    ) && `${entryName(item)} ${entryTitle(item)} ${entrySubtitle(item)}`.toLowerCase().includes(search))
+    const apps = filtered.filter(item => entryGroup(item) === 'app')
+    const order: VaultEntryGroup[] = ['mcp', 'program', 'secret']
+    const others = order.flatMap(group => filtered.filter(item => entryGroup(item) === group))
+    const empty = !coworkerApp && listing?.entries.length === 0
     const alert = error && <p className="text-sm text-destructive" role="alert">{error}</p>
-    return <PanelSteps stepKey={stepKey} depth={stepKey === 'list' ? 0 : 1}>
-        <PanelScroller className="space-y-4 p-4">
-            {!suggestedApp && stepKey !== 'list' && <Button variant="ghost" size="sm" disabled={busy} onClick={() => navigate('list')}><ArrowLeft />Back</Button>}
-            {alert}
-            {!listing ? (error ? <Button variant="outline" disabled={busy} onClick={() => void run()}>Try again</Button> : <p role="status">Loading Vault…</p>)
-                : page === 'add' ? <SecretForm busy={busy} onSubmit={fields => void run({ operation: 'create', ...fields }, 'list')} />
-                : page === 'add-app' ? <DesktopVaultCatalog slug={suggestedApp?.slug ?? coworkerApp ?? addSlug} busy={busy} existingAccounts={accounts} onCancel={suggestedApp ? onClose : () => navigate('list')}
-                    onSave={async (slug, methodId, values, account) => {
-                        const previousIds = new Set(listing.entries.map(item => item.id))
-                        const failure = await run({ operation: 'add-app', slug, methodId, values, ...account }, saved => {
-                            const added = saved.entries.filter(item => !previousIds.has(item.id)
-                                && 'kind' in item && item.kind === 'mcp' && item.catalog?.slug === slug)
-                            return added.length === 1 ? added[0].id : 'list'
-                        }, false)
-                        if (failure) throw failure
-                    }} />
-                : page === 'add-server' ? <ServerForm busy={busy} onSubmit={fields => void run({ operation: 'create-server', ...fields }, 'list')} />
-                : page === 'add-program' ? <ProgramForm busy={busy} onSave={fields => void run({ operation: 'create-program', ...fields }, 'list')} />
-                : entry ? <VaultDetail key={entry.revision} entry={entry} coworkers={listing.coworkers} busy={busy} onSubmit={run}
-                    onUseInChat={suggestedApp && (() => suggestedApp.onUse({ key: 'vault:' + entry.id, revision: entry.revision }))} />
-                : suggestedApp ? <Button variant="outline" onClick={onClose}>Return to chat</Button>
-                : <>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="font-medium">{coworkerApp ? 'App accounts' : 'Vault entries'}</h3>
-                        <div className="flex flex-wrap gap-2">
-                            <Button variant="outline" size="sm" disabled={busy} onClick={() => navigate('add-app')}><Plus />{coworkerApp ? 'Add account' : 'Add app'}</Button>
-                            {!coworkerApp && <>
-                                <Button variant="outline" size="sm" disabled={busy} onClick={() => navigate('add')}><Plus />Add secret</Button>
-                                <Button variant="outline" size="sm" disabled={busy} onClick={() => navigate('add-server')}><Plus />Add MCP server</Button>
-                                <Button variant="outline" size="sm" disabled={busy} onClick={() => navigate('add-program')}><Plus />Add local program</Button>
+    return <>
+        <DialogHeaderBar icon={LockKeyholeIcon} title={suggestedApp ? 'Add account to Vault' : coworkerApp ? 'Manage app in Vault' : 'Vault'}
+            description="Sign in to an app once, then pick the coworkers that use it."
+            actions={stepKey === 'list' && listing && !empty && !suggestedApp
+                && <Button size="xs" variant="secondary" disabled={busy} onClick={() => add('app', coworkerApp)}><Plus className="size-3" />{coworkerApp ? 'Add account' : 'Add'}</Button>} />
+        <div className="flex min-h-0 flex-1 flex-col">
+            <PanelSteps stepKey={stepKey} depth={stepKey === 'list' ? 0 : 1}>
+                {!listing ? (error ? <div className="space-y-4 p-4">{alert}<Button variant="outline" disabled={busy} onClick={() => void run()}>Try again</Button></div> : <VaultSkeleton />)
+                    : page === 'add' ? <DesktopVaultAdd kind={addKind} onKind={kind => { setError(''); setAddKind(kind) }} slug={suggestedApp?.slug ?? coworkerApp ?? addSlug}
+                        busy={busy} alert={alert} existingAccounts={accounts}
+                        onBack={suggestedApp ? undefined : () => navigate('list')} onCancel={suggestedApp ? onClose : () => navigate('list')}
+                        onCreate={input => void run(input, 'list')}
+                        onSaveApp={async (slug, methodId, values, account) => {
+                            const previousIds = new Set(listing.entries.map(item => item.id))
+                            const failure = await run({ operation: 'add-app', slug, methodId, values, ...account }, saved => {
+                                const added = saved.entries.filter(item => !previousIds.has(item.id)
+                                    && 'kind' in item && item.kind === 'mcp' && item.catalog?.slug === slug)
+                                return added.length === 1 ? added[0].id : 'list'
+                            }, false)
+                            if (failure) throw failure
+                        }} />
+                    : entry ? <DesktopVaultDetail key={entry.revision} entry={entry} icon={logoOf(entry)} coworkers={listing.coworkers} busy={busy} alert={alert} onSubmit={run}
+                        onBack={suggestedApp ? undefined : () => navigate('list')}
+                        onUseInChat={suggestedApp && (() => suggestedApp.onUse({ key: 'vault:' + entry.id, revision: entry.revision }))} />
+                    : suggestedApp ? <div className="space-y-4 p-4">{alert}<Button variant="outline" onClick={onClose}>Return to chat</Button></div>
+                    : <PanelScroller className={empty ? 'flex flex-col gap-4 p-4' : 'space-y-4 p-4'}>
+                        {alert}
+                        {empty ? <DesktopVaultEmpty apps={catalog && popularVaultApps(catalog)} busy={busy} onPick={slug => add('app', slug)} onAdd={kind => add(kind)} />
+                            : <>
+                                {!coworkerApp && listing.entries.length >= SEARCH_FROM && <div className="relative">
+                                    <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                                    <Input aria-label="Search Vault" placeholder="Search Vault" className="pl-8" value={query} onChange={event => setQuery(event.target.value)} />
+                                </div>}
+                                {filtered.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">{coworkerApp ? 'No accounts for this app in the Vault.' : 'No matching entries.'}</p>}
+                                {apps.length > 0 && <div className="@container">
+                                    <div className="grid grid-cols-2 gap-2 @md:grid-cols-3" data-vault-apps>
+                                        {apps.map(item => <VaultAppTile key={item.id} entry={item} icon={logoOf(item)} coworkers={listing.coworkers} onOpen={() => navigate(item.id)} />)}
+                                    </div>
+                                </div>}
+                                {others.length > 0 && <div className="space-y-1.5" data-vault-rows>
+                                    {others.map(item => <PanelRow key={item.id} onClick={() => navigate(item.id)} leading={<VaultEntryIcon entry={item} />}
+                                        title={item.name} description={VAULT_GROUP_LABEL[entryGroup(item)]}
+                                        actions={<><VaultStatusBadge entry={item} /><VaultCoworkerFaces usage={item} coworkers={listing.coworkers} /></>} />)}
+                                </div>}
                             </>}
-                        </div>
-                    </div>
-                    {!coworkerApp && listing.entries.length >= 8 && <Input aria-label="Search Vault" placeholder="Search Vault" value={query} onChange={event => setQuery(event.target.value)} />}
-                    {coworkerApp && filtered?.length === 0 ? <p className="text-sm text-muted-foreground">No accounts for this app in the Vault.</p>
-                        : listing.entries.length === 0 ? <section className="space-y-2" aria-label="Popular apps">
-                            <p className="text-sm text-muted-foreground">Nothing here yet. Sign in to an app once, then pick the coworkers that use it.</p>
-                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                                {popularVaultApps(catalog).map(app => <button key={app.slug} type="button" disabled={busy} onClick={() => navigate('add-app', app.slug)}
-                                    className={cn('flex items-center gap-2 p-3 text-left text-sm font-medium', PANEL_CARD, PANEL_CARD_INTERACTIVE)}>
-                                    <DesktopAppLogo logo={app.icon} className="size-7" />
-                                    <span className="min-w-0 truncate">{app.name}</span>
-                                </button>)}
-                            </div>
-                        </section>
-                        : filtered?.length === 0 ? <p className="text-sm text-muted-foreground">No matching entries.</p>
-                        : (['Apps', 'MCP servers', 'Secrets'] as const).map(label => {
-                            const items = filtered?.filter(item => entryGroup(item) === label)
-                            return !!items?.length && <section key={label} className="space-y-2">
-                                <h4 className="text-xs font-medium uppercase text-muted-foreground">{label}</h4>
-                                {label === 'Apps' ? <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                                    {items.map(item => <VaultAppTile key={item.id} entry={item} icon={'kind' in item && item.kind === 'mcp' ? catalog[item.catalog?.slug ?? '']?.icon : undefined}
-                                        coworkers={listing.coworkers} onOpen={() => navigate(item.id)} />)}
-                                </div> : items.map(item => <PanelRow key={item.id} leading={'kind' in item ? <Plug className="size-4" /> : <KeyRound className="size-4" />} title={entryTitle(item)}
-                                    description={`${entrySubtitle(item)} · ${item.sharedWithAll ? 'Every coworker' : item.agentIds.length ? `${item.agentIds.length} assigned` : 'Unassigned'}`}
-                                    footer={'kind' in item && item.kind === 'mcp' && item.catalog ? vaultAccountHealthText(item.catalog.health, item.signedOut) : undefined}
-                                    actions={<ChevronRight className="size-4" />} onClick={() => navigate(item.id)} />)}
-                            </section>
-                        })}
-                    {!coworkerApp && <DesktopManagedApps coworkers={listing.coworkers} disabled={busy} onVaultChanged={() => { void run() }} />}
-                </>}
-        </PanelScroller>
-    </PanelSteps>
-}
-
-// Upstream offers an empty Vault six popular apps. Two of its six (Slack, HubSpot) are not apps this
-// Mac can add from its own catalog, so the list is longer and only the first six the catalog has
-// are shown. An app that is not there would open an empty Add page.
-const POPULAR_APPS = ['notion', 'slack', 'hubspot', 'linear', 'github', 'airtable', 'asana', 'jira', 'intercom', 'dropbox', 'zapier', 'clickup'] as const
-export function popularVaultApps(catalog: Record<string, { name: string; icon?: string | null }>): { slug: string; name: string; icon?: string | null }[] {
-    return POPULAR_APPS.filter(slug => catalog[slug]).slice(0, 6).map(slug => ({ slug, ...catalog[slug] }))
-}
-
-const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map(word => word[0]?.toUpperCase() ?? '').join('') || '?'
-
-/** One app account as a tile: its logo, whose it is, and the coworkers that use it. */
-export function VaultAppTile({ entry, icon, coworkers, onOpen }: { entry: DesktopVaultEntry; icon?: string | null; coworkers: { id: string; name: string }[]; onOpen: () => void }) {
-    const assigned = entry.agentIds.map(id => coworkers.find(coworker => coworker.id === id)).filter((coworker): coworker is { id: string; name: string } => !!coworker)
-    const health = 'kind' in entry && entry.kind === 'mcp' && entry.catalog ? vaultAccountHealthText(entry.catalog.health, entry.signedOut) : undefined
-    return <button type="button" onClick={onOpen} className={cn('flex min-w-0 items-start gap-3 p-3 text-left', PANEL_CARD, PANEL_CARD_INTERACTIVE)}>
-        <DesktopAppLogo logo={icon} className="size-8" />
-        <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium">{entryTitle(entry)}</span>
-            <span className="block truncate text-xs text-muted-foreground">{entrySubtitle(entry)}</span>
-            {health && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{health}</span>}
-        </span>
-        <span className="flex shrink-0 items-center" aria-label={entry.sharedWithAll ? 'Every coworker' : assigned.length ? `Used by ${assigned.map(coworker => coworker.name).join(', ')}` : 'Unassigned'}>
-            {entry.sharedWithAll ? <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium">All</span>
-                : assigned.length ? <>
-                    {assigned.slice(0, 3).map(coworker => <span key={coworker.id} title={coworker.name} aria-hidden
-                        className="-ml-1 flex size-6 items-center justify-center rounded-full border bg-background text-[10px] font-medium first:ml-0">{initials(coworker.name)}</span>)}
-                    {assigned.length > 3 && <span aria-hidden className="ml-1 text-[11px] text-muted-foreground">+{assigned.length - 3}</span>}
-                </>
-                : <span className="text-[11px] text-muted-foreground">Unassigned</span>}
-        </span>
-    </button>
-}
-
-function entryTitle(entry: DesktopVaultEntry) {
-    return 'kind' in entry && entry.kind === 'mcp' ? entry.catalog?.label ?? entry.catalog?.name ?? entry.name : entry.name
-}
-
-function entrySubtitle(entry: DesktopVaultEntry) {
-    if (!('kind' in entry)) return entry.variable
-    if (entry.kind === 'program') return entry.executable
-    return entry.catalog?.label ? entry.catalog.name + ' · ' + entry.url : entry.url
-}
-
-function entryGroup(entry: DesktopVaultEntry) {
-    if (!('kind' in entry)) return 'Secrets'
-    return entry.kind === 'mcp' && entry.catalog ? 'Apps' : 'MCP servers'
-}
-
-function SecretForm({ busy, onSubmit }: { busy: boolean; onSubmit: (input: { name: string; variable: string; value: string }) => void }) {
-    function submit(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault()
-        const form = event.currentTarget
-        const data = new FormData(form)
-        onSubmit({ name: String(data.get('name')), variable: String(data.get('variable')), value: String(data.get('value')) })
-        const field = form.elements.namedItem('value')
-        if (field instanceof HTMLInputElement) field.value = ''
-    }
-    return <form onSubmit={submit} className="space-y-4">
-        <h3 className="font-medium">Add secret</h3>
-        <label className="block space-y-1 text-sm">Name<Input name="name" required maxLength={120} disabled={busy} /></label>
-        <label className="block space-y-1 text-sm">Variable name<Input name="variable" placeholder="EXAMPLE_API_KEY" required maxLength={128} pattern="[A-Za-z_][A-Za-z0-9_]*" disabled={busy} /></label>
-        <label className="block space-y-1 text-sm">Secret value<Input name="value" type="password" autoComplete="new-password" required maxLength={16384} disabled={busy} /></label>
-        <Button type="submit" disabled={busy}>Save secret</Button>
-    </form>
-}
-
-type ServerCredential = { bearer: string; browserSignIn?: true; header?: { name: string; value: string } }
-
-function readServerCredential(form: HTMLFormElement, data: FormData): ServerCredential {
-    const value = String(data.get('credential') ?? '')
-    const field = form.elements.namedItem('credential')
-    if (field instanceof HTMLInputElement) field.value = ''
-    if (data.get('authentication') === 'browser') return { bearer: '', browserSignIn: true }
-    return data.get('authentication') === 'header'
-        ? { bearer: '', header: { name: String(data.get('headerName')), value } }
-        : { bearer: data.get('authentication') === 'bearer' ? value : '' }
-}
-
-function ServerCredentialFields({ busy, initial = 'none', headerName }: { busy: boolean; initial?: string; headerName?: string }) {
-    const [mode, setMode] = useState(initial)
-    return <fieldset disabled={busy} className="space-y-3">
-        <label className="block space-y-1 text-sm">Authentication
-            <select name="authentication" className="block h-9 w-full rounded-md border bg-background px-2 text-sm" value={mode} onChange={event => setMode(event.target.value)}>
-                <option value="none">None</option>
-                <option value="bearer">Bearer token</option>
-                <option value="browser">Browser sign-in</option>
-                <option value="header">Custom header</option>
-            </select>
-        </label>
-        {mode === 'header' && <label className="block space-y-1 text-sm">Header name<Input name="headerName" placeholder="X-API-Key" required maxLength={128} defaultValue={headerName} /></label>}
-        {(mode === 'header' || mode === 'bearer') && <label className="block space-y-1 text-sm">{mode === 'header' ? 'Header value' : 'Bearer token'}
-            <Input key={mode} name="credential" type="password" autoComplete="new-password" required maxLength={8192} />
-        </label>}
-    </fieldset>
-}
-
-function ServerForm({ busy, onSubmit }: { busy: boolean; onSubmit: (input: { name: string; url: string } & ServerCredential) => void }) {
-    function submit(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault()
-        const form = event.currentTarget
-        const data = new FormData(form)
-        onSubmit({ name: String(data.get('name')), url: String(data.get('url')), ...readServerCredential(form, data) })
-    }
-    return <form onSubmit={submit} className="space-y-4">
-        <h3 className="font-medium">Add MCP server</h3>
-        <label className="block space-y-1 text-sm">Name<Input name="name" required maxLength={64} pattern="[A-Za-z0-9_\-]+" disabled={busy} /></label>
-        <label className="block space-y-1 text-sm">HTTPS endpoint<Input name="url" type="url" required maxLength={2048} disabled={busy} /></label>
-        <ServerCredentialFields busy={busy} />
-        <Button type="submit" disabled={busy}>Save MCP server</Button>
-    </form>
-}
-
-type ProgramFields = { name: string; executable: string; args: string[] }
-
-function ProgramForm({ busy, entry, onSave }: {
-    busy: boolean; entry?: Extract<DesktopVaultEntry, { kind: 'program' }>; onSave: (input: ProgramFields) => void
-}) {
-    function submit(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault()
-        const data = new FormData(event.currentTarget)
-        onSave({
-            name: entry?.name ?? String(data.get('name')),
-            executable: String(data.get('executable')),
-            args: String(data.get('arguments')).split('\n').filter(Boolean),
-        })
-    }
-    return <form onSubmit={submit} className="space-y-4">
-        <h3 className="font-medium">{entry ? 'Review local program' : 'Add local program'}</h3>
-        {!entry && <label className="block space-y-1 text-sm">Name<Input name="name" required maxLength={64} pattern="[A-Za-z0-9_\-]+" disabled={busy} /></label>}
-        <label className="block space-y-1 text-sm">Executable path<Input name="executable" defaultValue={entry?.executable} required maxLength={4096} placeholder="/absolute/path/to/installed-server" disabled={busy} /></label>
-        <label className="block space-y-1 text-sm">Arguments, one per line
-            <textarea name="arguments" defaultValue={entry?.args.join('\n')} disabled={busy} className="block min-h-20 w-full rounded-md border bg-background p-2 font-mono text-sm" />
-        </label>
-        <p className="text-xs text-muted-foreground">Choose a program you trust. It runs with your Mac user’s access. Keep secrets out of arguments. Coworkers also need the Local MCP programs permission.</p>
-        {!!entry?.credentialNames.length && <p className="text-xs text-muted-foreground">Changing the executable or its arguments clears saved credentials. Re-enter them after reviewing the program.</p>}
-        <Button type="submit" disabled={busy}>{entry ? 'Save reviewed program' : 'Save local program'}</Button>
-    </form>
-}
-
-function ProgramCredentials({ entry, busy, onSubmit }: {
-    entry: Extract<DesktopVaultEntry, { kind: 'program' }>
-    busy: boolean
-    onSubmit: (input: DesktopVaultMutation) => void
-}) {
-    const [edit, setEdit] = useState<string | null>(null)
-    const target = { id: entry.id, revision: entry.revision }
-    function submit(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault()
-        const form = event.currentTarget
-        const data = new FormData(form)
-        const field = form.elements.namedItem('credential')
-        if (field instanceof HTMLInputElement) field.value = ''
-        onSubmit({ operation: 'set-program-credential', ...target, variable: edit || String(data.get('variable')), value: String(data.get('credential')) })
-    }
-    return <section className="space-y-3 border-t pt-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-            <h4 className="text-sm font-medium">Program credentials</h4>
-            <Button size="sm" variant="outline" disabled={busy || entry.credentialNames.length >= desktopVaultProgramCredentialLimit} onClick={() => setEdit('')}>Add credential</Button>
+                        {/* The Mac's own: apps signed in through the person's Composio account. Last, so the top reads as the cloud's Vault. */}
+                        {!coworkerApp && <DesktopManagedApps coworkers={listing.coworkers} disabled={busy} onVaultChanged={() => { void run() }} />}
+                    </PanelScroller>}
+            </PanelSteps>
         </div>
-        <p className="text-xs text-muted-foreground">These values are available only to this program when it runs for an assigned coworker.</p>
-        {entry.credentialNames.map(variable => <div key={variable} className="flex flex-wrap items-center justify-between gap-2">
-            <span className="break-all font-mono text-sm">{variable}</span>
-            <div className="flex gap-2">
-                <Button size="sm" variant="outline" disabled={busy} aria-label={`Replace ${variable}`} onClick={() => setEdit(variable)}>Replace</Button>
-                <ConfirmDialog title={`Remove ${variable}?`} description="The program will no longer receive this credential." confirmLabel="Remove credential"
-                    pending={busy} onConfirm={() => onSubmit({ operation: 'remove-program-credential', ...target, variable })}>
-                    <Button size="sm" variant="outline" disabled={busy} aria-label={`Remove ${variable}`}>Remove</Button>
-                </ConfirmDialog>
-            </div>
-        </div>)}
-        {edit !== null && <form key={edit} onSubmit={submit} className="space-y-3">
-            {edit ? <p className="font-mono text-sm">{edit}</p>
-                : <label className="block space-y-1 text-sm">Variable name<Input name="variable" required maxLength={128} pattern="[A-Za-z_][A-Za-z0-9_]*" placeholder="SERVICE_API_KEY" disabled={busy} /></label>}
-            <label className="block space-y-1 text-sm">Credential value<Input name="credential" type="password" autoComplete="new-password" required maxLength={8192} disabled={busy} /></label>
-            <div className="flex gap-2">
-                <Button size="sm" type="submit" disabled={busy}>Save credential</Button>
-                <Button size="sm" type="button" variant="outline" disabled={busy} onClick={() => setEdit(null)}>Cancel</Button>
-            </div>
-        </form>}
-    </section>
+    </>
 }
 
-function VaultDetail({ entry, coworkers, busy, onSubmit, onUseInChat }: {
-    entry: DesktopVaultEntry
-    coworkers: DesktopVaultListing['coworkers']
-    onUseInChat?: () => void
-    busy: boolean
-    onSubmit: (input: VaultRequest, next?: VaultDestination, showError?: boolean) => Promise<Error | null>
-}) {
-    const [agentIds, setAgentIds] = useState(entry.agentIds)
-    const [sharedWithAll, setSharedWithAll] = useState(entry.sharedWithAll)
-    const [replace, setReplace] = useState(false)
-    const [renaming, setRenaming] = useState(false)
-    const server = 'kind' in entry && entry.kind === 'mcp' ? entry : null
-    const program = 'kind' in entry && entry.kind === 'program' ? entry : null
-    const target = { id: entry.id, revision: entry.revision }
-    const deleteLabel = program ? 'Delete local program' : server?.catalog ? 'Delete app' : server ? 'Delete MCP server' : 'Delete secret'
-    const changed = sharedWithAll !== entry.sharedWithAll || agentIds.length !== entry.agentIds.length || agentIds.some(id => !entry.agentIds.includes(id))
-    const users = entry.sharedWithAll ? 'every coworker' : coworkers.filter(coworker => entry.agentIds.includes(coworker.id)).map(coworker => coworker.name).join(', ')
-    return <div className="space-y-5">
-        <header>
-            <h3 className="font-medium">{entryTitle(entry)}</h3>
-            <p className="font-mono text-sm text-muted-foreground">{entrySubtitle(entry)}</p>
-            {server && <p className="text-sm text-muted-foreground">{server.headerName ? `Header configured: ${server.headerName}` : server.hasBearer ? 'Bearer token configured' : server.browserSignIn ? 'Browser sign-in' : 'No authentication configured'}</p>}
-        </header>
-        {server?.catalog && <section className="space-y-2 border-t pt-4" aria-label="Account connection">
-            <p role="status" className="text-sm">{vaultAccountHealthText(server.catalog.health, server.signedOut)}</p>
-            {server.catalog.health?.message && <p className="text-sm text-muted-foreground">{server.catalog.health.message}</p>}
-            <Button size="sm" variant="outline" disabled={busy || replace || renaming}
-                onClick={() => void onSubmit({ operation: 'check-health', ...target })}>Check connection</Button>
-            {onUseInChat && server.catalog.health?.state === 'healthy' && !!server.catalog.health.toolCount
-                && <Button size="sm" disabled={busy} onClick={onUseInChat}>Use in chat</Button>}
-        </section>}
-        {!onUseInChat && <fieldset disabled={busy} className="space-y-3 border-t pt-4">
-            <legend className="text-sm font-medium">Coworkers</legend>
-            <p className="text-sm text-muted-foreground">{program ? 'Assigned coworkers can run this program when their Local MCP programs permission is on.' : server?.catalog ? 'Assigned coworkers can use this app when their Apps permission is on.' : server ? 'Assigned coworkers can use this server when their MCP permission is on.' : 'Assigned coworkers can use this variable in approved MCP credential references.'}</p>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sharedWithAll} onChange={event => setSharedWithAll(event.target.checked)} />Every coworker</label>
-            {coworkers.map(coworker => <label key={coworker.id} className="flex items-center gap-2 text-sm">
-                <input type="checkbox" disabled={sharedWithAll} checked={sharedWithAll || agentIds.includes(coworker.id)}
-                    onChange={event => setAgentIds(ids => event.target.checked ? [...ids, coworker.id] : ids.filter(id => id !== coworker.id))} />
-                {coworker.name}
-            </label>)}
-            <Button size="sm" disabled={busy || !changed} onClick={() => onSubmit({ operation: 'share', ...target, agentIds, sharedWithAll })}>Save assignments</Button>
-        </fieldset>}
-        {server?.browserSignIn && <div className="space-y-2 border-t pt-4">
-            <DesktopMcpOAuthAuthorize vaultId={server.id} name={server.name} revision={server.revision} active={!busy && !replace && !renaming} />
-            <ConfirmDialog title="Disconnect browser sign-in?" description="Coworkers will need you to sign in again before using this connection."
-                confirmLabel="Disconnect" pending={busy} onConfirm={() => onSubmit({ operation: 'clear-server-oauth', ...target })}>
-                <Button size="sm" variant="outline" disabled={busy}>Disconnect browser sign-in</Button>
-            </ConfirmDialog>
-        </div>}
-        {program && <ProgramCredentials entry={program} busy={busy} onSubmit={onSubmit} />}
-        <div className="flex flex-wrap gap-2 border-t pt-4">
-            {server?.catalog && <Button variant="outline" size="sm" disabled={busy} onClick={() => { setReplace(false); setRenaming(!renaming) }}>Rename account</Button>}
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => { setRenaming(false); setReplace(!replace) }}>{program ? 'Review program' : server ? 'Change authentication' : 'Replace value'}</Button>
-            <ConfirmDialog title={`Delete “${entryTitle(entry)}”?`} description={users ? `This removes the entry and its assignment for ${users}.` : 'This removes the entry from this workspace.'}
-                confirmLabel={deleteLabel} pending={busy} onConfirm={() => onSubmit({ operation: 'delete', ...target }, 'list')}>
-                <Button variant="outline" size="sm" disabled={busy}>{deleteLabel}</Button>
-            </ConfirmDialog>
+/** The list's shape while it is read: six tiles and a row. From upstream VaultPanel.tsx (VaultSkeleton). */
+function VaultSkeleton() {
+    return <div className="space-y-4 p-4" role="status" aria-label="Loading Vault">
+        <div className="@container">
+            <div className="grid grid-cols-2 gap-2 @md:grid-cols-3">
+                {Array.from({ length: 6 }, (_, index) => <div key={index} className="flex flex-col gap-3 rounded-md border p-3">
+                    <Skeleton className="size-10 rounded-lg" />
+                    <div className="space-y-1.5"><Skeleton className="h-3.5 w-20" /><Skeleton className="h-2.5 w-28 max-w-full" /></div>
+                    <Skeleton className="h-6 w-14" />
+                </div>)}
+            </div>
         </div>
-        {renaming && server?.catalog && <form className="space-y-2" onSubmit={event => {
-            event.preventDefault()
-            const label = String(new FormData(event.currentTarget).get('label')).trim()
-            if (label) void onSubmit({ operation: 'rename-app', ...target, label })
-        }}>
-            <label className="block space-y-1 text-sm">Account name
-                <Input name="label" defaultValue={entryTitle(entry)} required maxLength={120} disabled={busy} />
-            </label>
-            <Button type="submit" size="sm" disabled={busy}>Save account name</Button>
-        </form>}
-        {replace && program && <ProgramForm busy={busy} entry={program} onSave={fields => onSubmit({ operation: 'replace-program', ...target, executable: fields.executable, args: fields.args })} />}
-        {replace && server?.catalog && <DesktopVaultCatalog slug={server.catalog.slug} editing busy={busy}
-            replacesSignIn={server.browserSignIn}
-            onCancel={() => setReplace(false)} onSave={async (_slug, methodId, values) => {
-                const failure = await onSubmit({ operation: 'configure-app', ...target, methodId, values }, undefined, false)
-                if (failure) throw failure
-            }} />}
-        {replace && !program && !server?.catalog && <form className="space-y-3" onSubmit={event => {
-            event.preventDefault()
-            const form = event.currentTarget
-            if (server) {
-                const credential = readServerCredential(form, new FormData(form))
-                if (credential.browserSignIn) {
-                    if (server.browserSignIn) setReplace(false)
-                    else onSubmit({ operation: 'enable-server-oauth', ...target })
-                } else onSubmit(credential.header ? { operation: 'replace-server-header', ...target, header: credential.header }
-                    : { operation: 'replace-server-bearer', ...target, bearer: credential.bearer })
-            } else {
-                const field = form.elements.namedItem('value')
-                if (field instanceof HTMLInputElement) {
-                    onSubmit({ operation: 'replace', ...target, value: field.value })
-                    field.value = ''
-                }
-            }
-        }}>
-            {server ? <ServerCredentialFields busy={busy} headerName={server.headerName} initial={server.headerName ? 'header' : server.hasBearer ? 'bearer' : server.browserSignIn ? 'browser' : 'none'} />
-                : <label className="block space-y-1 text-sm">New secret value<Input name="value" type="password" autoComplete="new-password" required maxLength={16384} disabled={busy} /></label>}
-            <Button type="submit" size="sm" disabled={busy}>{server ? 'Save authentication' : 'Save new value'}</Button>
-        </form>}
+        <div className="flex items-center gap-3 rounded-md border p-3">
+            <Skeleton className="size-8 rounded-md" />
+            <div className="flex-1 space-y-1.5"><Skeleton className="h-3.5 w-28" /><Skeleton className="h-2.5 w-20" /></div>
+        </div>
     </div>
 }

@@ -2,29 +2,49 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { DesktopForemanChatRef } from '@rerun/contracts'
-import { ChevronLeft, History, MessagesSquare, Plus } from 'lucide-react'
+import { ChevronLeft, History, MessageCircle, MessagesSquare, Plus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { TooltipLabeled } from '@/components/ui/tooltip'
 import { createDesktopForemanConversation, listDesktopForemanConversations } from '@/lib/desktop/foreman-client/runtime-client'
+import { messageDayLabel, messageTime } from '@rerun/i18n/format'
+import { cn } from '@/lib/utils'
 import { useDesktopLocale } from '../DesktopLocale'
 
+type Conversation = Awaited<ReturnType<typeof listDesktopForemanConversations>>[number]
+/** Where the thread on screen stands: answering, waiting for the person, or at rest. */
+export type DesktopForemanThreadState = 'live' | 'needs' | 'quiet'
+
+// The task « New task » just opened: its panel mounts after this one is gone, and takes the caret.
+let newTaskFocus: string | null = null
+/** True once, for the conversation « New task » just opened. */
+export function takeDesktopForemanNewTaskFocus(chatId: string) {
+    if (newTaskFocus !== chatId) return false
+    newTaskFocus = null
+    return true
+}
+
 /**
- * Every conversation with the Chief of Staff behind the clock: General, the one that never closes,
- * pinned on top, then its threads. While a thread is on screen, a crumb names it and leads back.
+ * Every conversation with the Chief of Staff: General, the one that never closes, and its threads.
+ * One owner for the list, the way into a conversation and « New task », shared by the header's
+ * button, the list behind the clock and the crumb under the tabs.
  */
-export function DesktopForemanConversations({ chat, thread = false, disabled, onSelect }: {
+export function useDesktopForemanConversations({ chat, thread = false, emptyThread = false, onSelect, onFocusComposer }: {
     chat: DesktopForemanChatRef
     // The conversation on screen is a thread rather than General.
     thread?: boolean
-    disabled: boolean
-    onSelect: (chat: DesktopForemanChatRef | null) => Promise<void>
+    // That thread has no message yet: « New task » returns to it rather than opening another.
+    emptyThread?: boolean
+    onSelect?: (chat: DesktopForemanChatRef | null) => Promise<void>
+    onFocusComposer?: () => void
 }) {
     const { t } = useDesktopLocale()
     const lifetime = useRef<AbortController | null>(null)
     const newRequest = useRef<string | null>(null)
     const [busy, setBusy] = useState(false)
-    const [conversations, setConversations] = useState<Awaited<ReturnType<typeof listDesktopForemanConversations>>>([])
+    const [conversations, setConversations] = useState<Conversation[]>([])
     const [error, setError] = useState<string | null>(null)
+    const enabled = !!onSelect
 
     async function load() {
         const lifetimeSignal = lifetime.current?.signal
@@ -41,13 +61,14 @@ export function DesktopForemanConversations({ chat, thread = false, disabled, on
         const controller = new AbortController()
         lifetime.current = controller
         // General needs no list until the clock opens. A thread reads it once, for its own title.
-        if (thread) void loadRef.current()
+        if (thread && enabled) void loadRef.current()
         return () => controller.abort()
-    }, [thread, chat.chatId])
+    }, [thread, enabled, chat.chatId])
 
     async function open(target?: DesktopForemanChatRef | null) {
         const lifetimeSignal = lifetime.current?.signal
-        if (!lifetimeSignal || lifetimeSignal.aborted || busy) return
+        if (!onSelect || !lifetimeSignal || lifetimeSignal.aborted || busy) return
+        if (target === undefined && thread && emptyThread) { onFocusComposer?.(); return }
         setBusy(true)
         setError(null)
         try {
@@ -56,44 +77,138 @@ export function DesktopForemanConversations({ chat, thread = false, disabled, on
                     AbortSignal.any([lifetimeSignal, AbortSignal.timeout(10_000)]))
                 : target
             if (lifetimeSignal.aborted) return
+            if (target === undefined && next) newTaskFocus = next.chatId
             await onSelect(next)
             if (target === undefined) newRequest.current = null
-        } catch { if (!lifetimeSignal.aborted) setError(t('foreman.conversationUnavailable')) }
+        } catch {
+            if (target === undefined) newTaskFocus = null
+            if (!lifetimeSignal.aborted) setError(t('foreman.conversationUnavailable'))
+        }
         finally { if (!lifetimeSignal.aborted) setBusy(false) }
     }
 
     const threads = conversations.filter(row => !row.home)
-    const current = threads.find(row => row.chat.chatId === chat.chatId)
-    return <>
-        {thread && <span data-foreman-thread-crumb className="flex min-w-0 items-center gap-1">
-            <Button type="button" variant="ghost" size="xs" className="shrink-0 px-1 text-muted-foreground" disabled={disabled || busy}
-                aria-label={t('foreman.backToGeneral')} onClick={() => { void open(null) }}>
-                <ChevronLeft className="size-4" />{t('foreman.mainConversation')}
-            </Button>
-            <span aria-hidden className="text-muted-foreground/50">/</span>
-            <span className="max-w-32 min-w-0 truncate text-sm font-medium">{current?.title ?? t('foreman.newConversation')}</span>
+    return {
+        chat, thread, enabled, busy, error, threads, load,
+        title: threads.find(row => row.chat.chatId === chat.chatId)?.title ?? null,
+        newTask: () => open(),
+        openGeneral: () => open(null),
+        openThread: (target: DesktopForemanChatRef) => target.chatId === chat.chatId ? Promise.resolve() : open(target),
+    }
+}
+export type DesktopForemanConversationsController = ReturnType<typeof useDesktopForemanConversations>
+
+/** « New task » in the header, as upstream ForemanHeader has it. */
+export function DesktopForemanNewTask({ conversations, disabled }: { conversations: DesktopForemanConversationsController; disabled: boolean }) {
+    const { t } = useDesktopLocale()
+    return <Button type="button" size="sm" data-foreman-new-task disabled={disabled || conversations.busy} onClick={() => { void conversations.newTask() }}>
+        <Plus />{t('foreman.newTask')}
+    </Button>
+}
+
+/**
+ * Under the tabs while a thread is on screen: where it hangs, and the way back to General.
+ * Markup from upstream apps/ui/components/foreman/ForemanThreadCrumb.tsx, the state dot from
+ * apps/ui/components/agent/sheet/OpenChatsTabs.tsx.
+ */
+export function DesktopForemanThreadCrumb({ conversations, state, disabled }: {
+    conversations: DesktopForemanConversationsController; state: DesktopForemanThreadState; disabled: boolean
+}) {
+    const { t } = useDesktopLocale()
+    return <div data-foreman-thread-crumb className="flex h-10 min-w-0 items-center gap-1 px-2">
+        <Button type="button" variant="ghost" size="sm" className="shrink-0 px-1.5 text-muted-foreground" disabled={disabled || conversations.busy}
+            aria-label={t('foreman.backToGeneral')} onClick={() => { void conversations.openGeneral() }}>
+            <ChevronLeft className="size-4" />{t('foreman.mainConversation')}
+        </Button>
+        <span aria-hidden className="text-muted-foreground/50">/</span>
+        {state !== 'quiet' && <span data-foreman-thread-state={state} className="relative ml-1 flex size-1.5 shrink-0">
+            {state === 'live' && <span className="absolute inset-0 animate-ping rounded-full bg-emerald-400/70" />}
+            <span className={cn('relative size-1.5 rounded-full', state === 'live' ? 'bg-emerald-400' : 'bg-amber-400')} />
         </span>}
-        <DropdownMenu onOpenChange={open => { if (open) void load() }}>
-            <DropdownMenuTrigger asChild>
-                <Button type="button" variant="ghost" size="icon-xs" disabled={disabled || busy}
-                    aria-label={t('foreman.conversations')} title={t('foreman.conversations')}><History /></Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-60">
-                <DropdownMenuLabel className="flex items-center justify-between gap-2">
-                    {t('foreman.conversations')}
-                    <Button type="button" variant="outline" size="xs" disabled={busy} onClick={() => { void open() }}><Plus className="size-3.5" />{t('foreman.newConversation')}</Button>
-                </DropdownMenuLabel>
-                <DropdownMenuItem aria-current={!thread ? 'true' : undefined} className="gap-2 font-medium" onSelect={() => { void open(null) }}>
-                    <MessagesSquare className="size-3.5" />{t('foreman.mainConversation')}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                {threads.length === 0 && <p className="px-2 py-3 text-center text-xs text-muted-foreground">{t('foreman.noThreads')}</p>}
-                {threads.map(row => <DropdownMenuItem key={row.chat.chatId} aria-current={row.chat.chatId === chat.chatId ? 'true' : undefined}
-                    onSelect={() => { if (row.chat.chatId !== chat.chatId) void open(row.chat) }}>
-                    <span className="truncate">{row.title ?? t('foreman.newConversation')}</span>
-                </DropdownMenuItem>)}
-            </DropdownMenuContent>
-        </DropdownMenu>
-        {error && <span role="alert" className="max-w-40 truncate text-xs text-destructive" title={error}>{error}</span>}
+        <span className="min-w-0 truncate text-sm font-medium">{conversations.title ?? t('foreman.newConversation')}</span>
+    </div>
+}
+
+/**
+ * Behind the clock: General pinned on top, then the threads by the day of their last message.
+ * Markup from upstream apps/ui/components/foreman/ForemanHistory.tsx; its rows from ChatRow in
+ * apps/ui/components/agent/sheet/AgentChatsList.tsx.
+ */
+export function DesktopForemanHistory({ conversations, waiting = false, disabled }: {
+    conversations: DesktopForemanConversationsController
+    // The conversation on screen waits on the person: the dot on the button and on its row.
+    waiting?: boolean
+    disabled: boolean
+}) {
+    const { t, language: { locale } } = useDesktopLocale()
+    const [open, setOpen] = useState(false)
+    const { chat, thread, threads, busy } = conversations
+    const pick = (action: () => Promise<void>) => () => { setOpen(false); void action() }
+    // A thread nobody wrote in yet has no day: it stays first, right under General.
+    const undated = threads.filter(row => !row.updatedAt)
+    const dated = threads.filter(row => row.updatedAt).sort((a, b) => b.updatedAt!.localeCompare(a.updatedAt!))
+    const now = new Date()
+    const days: { day: string; rows: Conversation[] }[] = []
+    for (const row of dated) {
+        const day = messageDayLabel(row.updatedAt!, locale, now)
+        const last = days.at(-1)
+        if (last?.day === day) last.rows.push(row)
+        else days.push({ day, rows: [row] })
+    }
+    const rowOf = (row: Conversation) => {
+        const active = row.chat.chatId === chat.chatId
+        return <button key={row.chat.chatId} type="button" data-foreman-history-row aria-current={active ? 'true' : undefined} disabled={busy}
+            onClick={pick(() => conversations.openThread(row.chat))}
+            className={cn('flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors disabled:opacity-50', active ? 'bg-muted/60' : 'hover:bg-muted/40')}>
+            <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                {active && waiting && <span aria-hidden data-foreman-waiting className="size-1.5 shrink-0 rounded-full bg-amber-400" />}
+                <span className="truncate text-sm font-medium">{row.title ?? t('foreman.newConversation')}</span>
+            </span>
+            {row.updatedAt && <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{messageTime(row.updatedAt, locale)}</span>}
+        </button>
+    }
+    return <>
+        <Popover open={open} onOpenChange={next => { setOpen(next); if (next) void conversations.load() }}>
+            <TooltipLabeled label={t('foreman.conversations')} side="bottom">
+                <PopoverTrigger asChild>
+                    <Button type="button" variant="ghost" size="icon-sm" disabled={disabled || busy} aria-label={t('foreman.conversations')} className="relative">
+                        <History className="size-3.5" />
+                        {waiting && <span aria-hidden data-foreman-waiting className="absolute top-1 right-1 size-1.5 rounded-full bg-amber-400" />}
+                    </Button>
+                </PopoverTrigger>
+            </TooltipLabeled>
+            {/* A child of the header, whose pointer down drags the column: a press in the list stops here. */}
+            <PopoverContent align="end" data-foreman-history onPointerDown={event => event.stopPropagation()}
+                className="max-h-[min(32rem,var(--radix-popover-content-available-height))] w-[min(360px,calc(100vw-1.5rem))] gap-0 overflow-hidden p-0">
+                <div className="flex min-h-0 flex-col">
+                    <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-3 pt-3 pb-1">
+                        <span className="flex items-center gap-2 pl-1 text-sm font-semibold">
+                            <MessageCircle className="size-4 text-muted-foreground" />{t('foreman.conversations')}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                            <Button type="button" variant="outline" size="sm" disabled={busy} onClick={pick(conversations.newTask)}>
+                                <Plus className="size-3.5" />{t('foreman.newTask')}
+                            </Button>
+                            <Button type="button" aria-label={t('foreman.close')} variant="ghost" size="icon-sm" onClick={() => setOpen(false)}><X className="size-4" /></Button>
+                        </div>
+                    </div>
+                    <div className="min-h-0 space-y-0.5 overflow-y-auto px-2 pb-2">
+                        <button type="button" data-foreman-history-row aria-current={!thread ? 'true' : undefined} disabled={busy} onClick={pick(conversations.openGeneral)}
+                            className={cn('flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors', !thread ? 'bg-muted/60' : 'hover:bg-muted/40')}>
+                            <MessagesSquare className="size-3.5 text-brand-text" />
+                            <span className="min-w-0 flex-1 truncate">{t('foreman.mainConversation')}</span>
+                            {!thread && waiting && <span aria-hidden data-foreman-waiting className="size-1.5 shrink-0 rounded-full bg-amber-400" />}
+                        </button>
+                        {undated.map(rowOf)}
+                        {days.map(({ day, rows }) => <div key={day} className="pb-1">
+                            <p data-foreman-history-day className="px-2.5 pt-2 pb-1 text-[11px] font-medium text-muted-foreground">{day}</p>
+                            {rows.map(rowOf)}
+                        </div>)}
+                        {threads.length === 0 && <p className="px-3 py-6 text-center text-xs text-muted-foreground">{t('foreman.noThreads')}</p>}
+                    </div>
+                </div>
+            </PopoverContent>
+        </Popover>
+        {conversations.error && <span role="alert" className="max-w-40 truncate text-xs text-destructive" title={conversations.error}>{conversations.error}</span>}
     </>
 }

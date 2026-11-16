@@ -24,6 +24,8 @@ const en = {
     decisionUncertain: 'Decision acknowledgement is uncertain.',
     modelUnavailable: 'The saved model is unavailable.',
     contextEstimate: 'Estimated context',
+    more: 'More',
+    permissions: 'Permissions',
 }
 
 const mac = {
@@ -48,6 +50,8 @@ const mac = {
         decisionUncertain: 'La réception de votre décision n’a pas pu être confirmée.',
         modelUnavailable: 'Le modèle enregistré est indisponible.',
         contextEstimate: 'Contexte estimé',
+        more: 'Plus',
+        permissions: 'Autorisations',
     },
     es: {
         conversation: 'Conversación con el Chief of Staff',
@@ -69,6 +73,8 @@ const mac = {
         decisionUncertain: 'No se pudo confirmar la recepción de tu decisión.',
         modelUnavailable: 'El modelo guardado no está disponible.',
         contextEstimate: 'Contexto estimado',
+        more: 'Más',
+        permissions: 'Permisos',
     },
     pt: {
         conversation: 'Conversa com o Chief of Staff',
@@ -90,6 +96,8 @@ const mac = {
         decisionUncertain: 'Não foi possível confirmar o recebimento da sua decisão.',
         modelUnavailable: 'O modelo salvo não está disponível.',
         contextEstimate: 'Contexto estimado',
+        more: 'Mais',
+        permissions: 'Permissões',
     },
     de: {
         conversation: 'Unterhaltung mit dem Chief of Staff',
@@ -111,6 +119,8 @@ const mac = {
         decisionUncertain: 'Der Eingang deiner Entscheidung konnte nicht bestätigt werden.',
         modelUnavailable: 'Das gespeicherte Modell ist nicht verfügbar.',
         contextEstimate: 'Geschätzter Kontext',
+        more: 'Mehr',
+        permissions: 'Berechtigungen',
     },
 } satisfies Record<Locale, typeof en>
 
@@ -149,14 +159,22 @@ export function desktopForemanMessages(locale: Locale, source: Source) {
         intake: source.foreman.intake,
         pendingSend: pendingSendCopy[locale],
         ask: source.kit.foreman.orbLabel,
-        placeholder: `${source.foreman.pill.ask}…`,
+        // The cloud's own composer line and header labels, in the cloud's words.
+        placeholder: source.chat.composer.placeholder,
+        newTask: source.foreman.header.newTask,
+        move: source.foreman.header.move,
+        moveChat: source.foreman.header.moveChat,
+        position: source.foreman.header.position,
+        teamWelcome: source.foreman.teamEmptyState,
+        voice: { record: source.chat.voice.record, discard: source.chat.voice.discard, play: source.chat.voice.play, pause: source.chat.voice.pause, send: source.chat.voice.send },
         ownEntryPlaceholder: source.foreman.ownEntryPlaceholder,
         modelPicker: source.agent.modelSelector,
         context: source.chat.context,
         copy: source.chat.actions.copy,
         copied: source.chat.actions.copiedExclaim,
         name: source.kit.foreman.tabsLabel,
-        tabs: { ...source.kit.foreman.tabs, assistant: source.kit.foreman.tabsLabel },
+        // The first tab reads « Ask », as on the cloud; the product keeps its name everywhere else.
+        tabs: source.kit.foreman.tabs,
         close: source.kit.close,
         closeChat: source.kit.foreman.header.closeChat,
         resize: source.foreman.resize,

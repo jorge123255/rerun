@@ -2,19 +2,20 @@
 
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import type { ForemanAnchor, OrbActivity } from '@rerun/ui/foreman'
+import type { OrbActivity } from '@rerun/ui/foreman'
 import { DesktopForemanDockLayout, DesktopParkedForeman, useDesktopForemanDockBinding } from './dock'
 import { DEFAULT_DOCK_EXTRAS } from '@/lib/desktop/foreman-dock'
 import type { ExactDockFeed } from '@/lib/desktop/foreman-dock/feed'
 import type { ForemanPlacement } from '@/lib/foreman-layout'
 import { useIsMobile as useMediaQuery } from '@rerun/ui/primitives/use-is-mobile'
-import type { DesktopForemanActionPorts, DesktopForemanChatRef, DesktopForemanPlacement } from '@/lib/desktop/foreman-client'
+import type { DesktopForemanActionPorts, DesktopForemanChatRef } from '@/lib/desktop/foreman-client'
 import type { DesktopForemanLiveReply } from '@/lib/desktop/foreman/live-reply'
 import { DesktopForemanChatLayer, type DesktopForemanMessage } from './DesktopForemanChatLayer'
 import { useDesktopForemanFeedback } from '@/lib/desktop/use-foreman-feedback'
 import { DesktopForemanComposer } from './DesktopForemanComposer'
 import { DesktopForemanTeamWelcome } from './DesktopForemanTeamWelcome'
 import { DesktopForemanHeader } from './DesktopForemanHeader'
+import { DesktopForemanMove, desktopForemanAnchorOf } from './DesktopForemanMove'
 import { DesktopForemanRoutines } from './DesktopForemanRoutines'
 import { DesktopWorkspaceRoutines } from './routines/DesktopWorkspaceRoutines'
 import { createDesktopWorkspaceRoutinesClient } from '@/lib/desktop/workspace-routines/client'
@@ -49,10 +50,6 @@ import { DesktopDelegationMount } from '../delegation/DesktopDelegationMount'
 import { DesktopCoworkerCalls } from '../coworker-calls/DesktopCoworkerCalls'
 import type { DesktopCoworkerCallOpenTarget } from '@/lib/desktop/coworker-calls-client'
 
-function anchorOf(placement: DesktopForemanPlacement): ForemanAnchor {
-    if (placement.mode === 'float') return 'float'
-    return placement.side === 'left' ? 'dock-left' : 'dock-right'
-}
 const NO_MENTION_TARGETS: DesktopCoworkerCallTarget[] = []
 const NO_SKILLS: MentionSkill[] = []
 const NO_MENTIONS: DesktopCoworkerMention[] = []
@@ -83,6 +80,8 @@ export type DesktopForemanColumnProps = {
     agentNameOf: (agentId: string) => string
     orbState?: OrbActivity
     headerActions?: ReactNode
+    /** The thread on screen, on its own row under the tabs. */
+    headerCrumb?: ReactNode
     runNotice?: ReactNode
     /** Root mounts discoveries on the board; receives live overlay state. */
     renderBoardOverlay?: (input: { discoveries: import('@/lib/desktop/foreman-client').DesktopDiscoveriesState; live: boolean }) => ReactNode
@@ -100,6 +99,8 @@ export type DesktopForemanColumnProps = {
     findEnabled?: boolean
     dockFeed?: ExactDockFeed | null
     voiceSlot?: ReactNode
+    /** The voice slot shows its microphone: it stands where the send button is while the composer is empty. */
+    voiceMic?: boolean
     intake?: DesktopForemanIntakeController
     intakeFinished?: boolean
     separateConversation?: boolean
@@ -134,9 +135,10 @@ export function DesktopForemanColumn({
     agentNameOf,
     orbState = 'idle',
     headerActions,
+    headerCrumb,
     runNotice,
     renderBoardOverlay,
-    className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, controlledOpen, hidden, fill, centerOpen, findEnabled, dockFeed, voiceSlot, intake, intakeFinished, separateConversation, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
+    className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, controlledOpen, hidden, fill, centerOpen, findEnabled, dockFeed, voiceSlot, voiceMic, intake, intakeFinished, separateConversation, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
     const { t } = useDesktopLocale()
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
@@ -283,13 +285,16 @@ export function DesktopForemanColumn({
             {header => <div ref={column} className="relative flex h-full min-h-0 flex-col">
                 <DesktopForemanHeader
                     onDragPointerDown={header.onPointerDown}
-                    anchor={anchorOf(dockBinding.placement)}
+                    anchor={desktopForemanAnchorOf(dockBinding.placement)}
+                    crumb={intake ? undefined : headerCrumb}
                     orbState={orbState}
                     open={ui.open}
                     tab={ui.tab}
                     onTabChange={foreman.setTab}
                     onClose={() => changeOpen(false)}
                     actions={<>
+                        {/* Its place is fixed in the middle of the Simple view: nothing to move there. */}
+                        {!fill && <DesktopForemanMove placement={dockBinding.placement} onPlacement={dockBinding.onPlacement} disabled={hidden} />}
                         {headerActions}
                         {retrySnapshot && !onRoutines && !intake && alternates.items.length > 0 && !alternates.open &&
                             <Button type="button" size="icon-xs" variant="ghost" aria-label={t('foreman.alternates.title')}
@@ -324,6 +329,7 @@ export function DesktopForemanColumn({
                                 onAnswer={onAnswerQuestion} />}
                             {approval && onDecideApproval && <DesktopApprovalCard approval={approval} disabled={hidden || !!foreman.blocked} onDecide={onDecideApproval} />}
                         </> : null}
+                        underCrumb={!!headerCrumb}
                         emptyWelcome={!starterPack && !pendingStarter}
                         emptyContent={team && !starterPack && !pendingStarter && !starter && <DesktopForemanTeamWelcome
                             agents={team} firstName={firstName} nextRoutine={nextRoutine} now={routineNow}
@@ -400,6 +406,7 @@ export function DesktopForemanColumn({
                             {attachmentComposer && <DesktopDocumentPicker disabled={!editAttachments || !documents.loaded} onFiles={documents.add} />}
                             {voiceSlot}
                         </>}
+                        micReplacesSend={!!voiceMic && !!voiceSlot && !intake && !pendingStarter && ui.open}
                         attachments={attachmentComposer && (documents.attachments.length > 0 || documents.error)
                             ? <DesktopDocumentAttachmentControls controller={documents} disabled={!editAttachments} /> : undefined}
                         hasAttachments={attachmentComposer && documents.attachments.length > 0}

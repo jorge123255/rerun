@@ -13,26 +13,27 @@ export function DesktopForemanTeamWelcome({ agents, firstName, nextRoutine, now,
     onAction: (text: string, mentions: DesktopCoworkerMention[], submit: boolean) => void
 }) {
     const { t, language } = useDesktopLocale()
-    const team = language.messages.chatStart.team
+    // The cloud's own words for this welcome (« I'm your Chief of Staff »), not the phone app's.
+    const team = language.messages.foreman.teamWelcome
     const model = teamEmptyStateOf({ agents, firstName, nextRoutine: nextRoutine ?? null, copy: {
-        greeting: name => name ? t('chatStart.team.greetingNamed', { firstName: name }) : team.greeting,
-        greetingWithTeam: greeting => t('chatStart.team.greetingWithTeam', { greeting }),
+        greeting: name => name ? t('foreman.teamWelcome.greetingNamed', { firstName: name }) : team.greeting,
+        greetingWithTeam: greeting => t('foreman.teamWelcome.greetingWithTeam', { greeting }),
         emptySubtitle: team.emptySubtitle,
         buildPrompt: team.buildPrompt,
         buildFirst: team.buildFirst,
         template: team.template,
         guide: team.guide,
         checkWorking: (name, mention) => ({
-            title: t('chatStart.team.checkWorking.title', { name }), description: team.checkWorking.description,
-            send: t('chatStart.team.checkWorking.send', { mention }),
+            title: t('foreman.teamWelcome.checkWorking.title', { name }), description: team.checkWorking.description,
+            send: t('foreman.teamWelcome.checkWorking.send', { mention }),
         }),
         checkIdle: (name, mention) => ({
-            title: t('chatStart.team.checkIdle.title', { name }), description: team.checkIdle.description,
-            send: t('chatStart.team.checkIdle.send', { mention }),
+            title: t('foreman.teamWelcome.checkIdle.title', { name }), description: team.checkIdle.description,
+            send: t('foreman.teamWelcome.checkIdle.send', { mention }),
         }),
         handOff: (name, mention) => ({
-            title: t('chatStart.team.handOff.title', { name }), description: team.handOff.description,
-            prefill: t('chatStart.team.handOff.prefill', { mention }),
+            title: t('foreman.teamWelcome.handOff.title', { name }), description: team.handOff.description,
+            prefill: t('foreman.teamWelcome.handOff.prefill', { mention }),
         }),
         build: team.build,
     } })
