@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AGENT_TABS, type Tab } from '@/components/agent/agent-tabs'
 import { desktopChatSearchSchema, type DesktopConversationHit } from './chat-search'
 import { isDesktopCoworkerPanel, type DesktopCoworkerPanel } from './coworker-panel'
@@ -20,7 +20,7 @@ export function buildDesktopControlCoworkerTabs({ panels, setup, actions }: {
         : panels && isDesktopCoworkerPanel(tab.id) && (tab.id !== 'actions' || actions)).map(tab => tab.id === 'triggers' ? { ...tab, description: 'URLs that start a run when called on this Mac' } : tab)
 }
 
-export const DESKTOP_CONTROL_COMMAND_IDS = ['add_coworker', 'new_box', 'shared_files', 'company_brain', 'team_board', 'model_settings', 'workspace_settings', 'recenter_board', 'toggle_theme', 'notifications', 'shortcuts', 'getting_started', 'help', 'whats_new'] as const
+export const DESKTOP_CONTROL_COMMAND_IDS = ['add_coworker', 'new_box', 'shared_files', 'company_brain', 'team_board', 'model_settings', 'workspace_settings', 'recenter_board', 'toggle_theme', 'account', 'notifications', 'shortcuts', 'getting_started', 'help', 'whats_new'] as const
 
 export type DesktopControlCommandId = (typeof DESKTOP_CONTROL_COMMAND_IDS)[number]
 
@@ -43,6 +43,7 @@ export type DesktopControlCommandOptions = {
     shortcuts?: boolean
     help?: boolean
     changelog?: boolean
+    account?: boolean
     notifications?: boolean
     workspaceSettings?: boolean
     recenterBoard?: boolean
@@ -63,6 +64,8 @@ export function buildDesktopControlCommands(options: DesktopControlCommandOption
     if (options.recenterBoard) commands.push({ id: 'recenter_board', group: 'actions', label: 'Recenter the board', keywords: ['camera', 'zoom', 'fit', 'reset view'] })
     if (options.toggleTheme) commands.push({ id: 'toggle_theme', group: 'actions', label: options.darkTheme ? 'Switch to light theme' : 'Switch to dark theme', keywords: ['appearance', 'mode', 'dark', 'light'] })
     if (options.workspaceSettings) commands.push({ id: 'workspace_settings', group: 'settings', label: 'Workspace settings', keywords: ['name', 'logo', 'rename'] })
+    // The original Account command; on the Mac it is the local profile (name and photo), with no sign-in.
+    if (options.account) commands.push({ id: 'account', group: 'settings', label: 'Account', keywords: ['profile', 'name', 'photo', 'avatar'] })
     if (options.notifications) commands.push({ id: 'notifications', group: 'settings', label: 'Notifications', keywords: ['alerts', 'push', 'sound'] })
     if (options.shortcuts) commands.push({ id: 'shortcuts', group: 'settings', label: 'Keyboard shortcuts', keywords: ['keys', 'hotkeys'] })
     if (options.help) commands.push({ id: 'help', group: 'settings', label: 'Help', keywords: ['docs', 'documentation', 'community', 'getting started', 'checklist'] })
@@ -155,13 +158,21 @@ function editingFieldFocused(): boolean {
 // ⌘F on a Mac, Ctrl+F elsewhere opens the center. Pressed while the center is open it closes
 // the center and opens Find in the active conversation or the Mac page. ⌘K
 // toggles the center where nothing else holds it — never from an open coworker chat or from an
-// editing field. The capture listener precedes every local handler, like the original's.
-export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen, disabled = false }: {
+// editing field. While the Chief of Staff's column is on screen ⌘K goes to its composer instead,
+// closing the center first, like the original; the Mac's parked orb has no field to write in, so
+// there ⌘K keeps toggling the center. The capture listener precedes every local handler, like
+// the original's.
+export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen, disabled = false, focusAssistant }: {
     open: boolean
     setOpen: (open: boolean) => void
     conversationOpen: boolean
     disabled?: boolean
+    // Supplied only while the Chief of Staff's composer is on screen.
+    focusAssistant?: () => void
 }): void {
+    const assistant = useRef(focusAssistant)
+    assistant.current = focusAssistant
+    const assistantReady = !!focusAssistant
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
             if (disabled || isDesktopQuitting() || event.defaultPrevented) return
@@ -175,6 +186,11 @@ export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen, d
                 if (!open && (conversationOpen || editingFieldFocused())) return
                 event.preventDefault()
                 event.stopPropagation()
+                if (assistant.current) {
+                    if (open) setOpen(false)
+                    assistant.current()
+                    return
+                }
                 setOpen(!open)
                 return
             }
@@ -191,7 +207,7 @@ export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen, d
         }
         window.addEventListener('keydown', onKey, true)
         return () => window.removeEventListener('keydown', onKey, true)
-    }, [open, setOpen, conversationOpen, disabled])
+    }, [open, setOpen, conversationOpen, disabled, assistantReady])
     useEffect(() => {
         const openFind = (window as Window & { desktopApp?: { openFind?: () => void } }).desktopApp?.openFind
         if (!openFind) return

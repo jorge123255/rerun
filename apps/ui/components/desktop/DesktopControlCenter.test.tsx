@@ -73,7 +73,7 @@ const clickRow = async (text: string) => {
 
 const settle = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 350)) })
 
-type Overrides = {
+type Overrides = Pick<Parameters<typeof DesktopControlCenter>[0], 'onAccount' | 'onNotifications' | 'onShortcuts' | 'onFocusAssistant'> & {
     initialRecent?: DesktopRecentCoworkers
     open?: boolean
     onOpenChange?: (open: boolean) => void
@@ -142,6 +142,10 @@ const render = (root: ReturnType<typeof createRoot>, overrides: Overrides = {}) 
         onWorkspaceSettings={overrides.onWorkspaceSettings}
         onRecenterBoard={overrides.onRecenterBoard}
         onToggleTheme={overrides.onToggleTheme}
+        onAccount={overrides.onAccount}
+        onFocusAssistant={overrides.onFocusAssistant}
+        onNotifications={overrides.onNotifications}
+        onShortcuts={overrides.onShortcuts}
         darkTheme={overrides.darkTheme} />)
 })
 
@@ -197,6 +201,39 @@ test('⌘F opens and closes the center and claims nothing else, ⌘K toggles whe
     expect(dialog()).not.toBeNull()
     await press('k', { metaKey: true })
     expect(dialog()).toBeNull()
+})
+
+test('⌘K goes to the Chief of Staff composer while its column is on screen, closing the center first', async () => {
+    const { root } = mount()
+    const onFocusAssistant = vi.fn()
+    await render(root, { onFocusAssistant })
+    // Closed center: the key goes straight to the composer and the center stays closed.
+    const closed = new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true, cancelable: true })
+    await act(async () => { document.body.dispatchEvent(closed) })
+    expect(closed.defaultPrevented).toBe(true)
+    expect(onFocusAssistant).toHaveBeenCalledTimes(1)
+    expect(dialog()).toBeNull()
+    // Open center: ⌘K closes it and hands the caret to the composer.
+    await press('f', { metaKey: true })
+    expect(dialog()).not.toBeNull()
+    await press('k', { metaKey: true })
+    expect(dialog()).toBeNull()
+    expect(onFocusAssistant).toHaveBeenCalledTimes(2)
+    // A field the user is typing in and an open coworker chat keep their own ⌘K.
+    const other = document.createElement('input')
+    document.body.append(other)
+    other.focus()
+    await press('k', { metaKey: true })
+    other.remove()
+    await render(root, { onFocusAssistant, selectedCoworkerId: 'ada' })
+    await press('k', { metaKey: true })
+    expect(onFocusAssistant).toHaveBeenCalledTimes(2)
+    expect(dialog()).toBeNull()
+    // With the column gone (the parked orb has no field) ⌘K toggles the center again.
+    await render(root)
+    await press('k', { metaKey: true })
+    expect(dialog()).not.toBeNull()
+    expect(onFocusAssistant).toHaveBeenCalledTimes(2)
 })
 
 test('an open coworker chat and an editing field keep ⌘K, while ⌘F still opens from a field', async () => {
@@ -284,6 +321,37 @@ test('supported workspace, recenter and appearance commands use original labels 
     await type('/delete')
     expect(rows()).toHaveLength(0)
     expect(actions.onWorkspaceSettings).toHaveBeenCalledTimes(1)
+})
+
+test('the original Account command sits in Settings in upstream order and opens the local profile', async () => {
+    const { root } = mount()
+    const actions = { onAccount: vi.fn(), onWorkspaceSettings: vi.fn(), onNotifications: vi.fn(), onShortcuts: vi.fn() }
+    await render(root, actions)
+    await press('f', { metaKey: true })
+    await type('/')
+    const labels = rows().map(row => row.textContent?.trim())
+    expect(labels.filter(label => ['Workspace settings', 'AI providers', 'Account', 'Notifications', 'Keyboard shortcuts'].includes(label!)))
+        .toEqual(['Workspace settings', 'AI providers', 'Account', 'Notifications', 'Keyboard shortcuts'])
+    for (const hosted of ['Members', 'Billing', 'Contact Support']) expect(labels).not.toContain(hosted)
+
+    await type('/avatar')
+    expect(rows().map(row => row.textContent?.trim())).toEqual(['Account'])
+    // The Mac profile has no sign-in, so the hosted account keywords find nothing.
+    await type('/password')
+    expect(rows()).toHaveLength(0)
+    await type('/profile')
+    expect(rows()).toHaveLength(1)
+    await clickRow('Account')
+    expect(actions.onAccount).toHaveBeenCalledTimes(1)
+    expect(actions.onWorkspaceSettings).not.toHaveBeenCalled()
+    expect(actions.onNotifications).not.toHaveBeenCalled()
+    expect(dialog()).toBeNull()
+
+    // Without a profile destination the command is not listed at all.
+    await render(root, { onWorkspaceSettings: actions.onWorkspaceSettings })
+    await press('f', { metaKey: true })
+    await type('/')
+    expect(rows().map(row => row.textContent?.trim())).not.toContain('Account')
 })
 
 test('finds a French command and its English alias and invokes the same model settings action', async () => {

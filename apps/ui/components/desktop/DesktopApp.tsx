@@ -336,6 +336,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const foremanLeftTrack = foremanLayout?.open && !foremanLayout.dragging && !foremanLayout.mobile && foremanLayout.placement.mode === 'dock' && foremanLayout.placement.side === 'left' ? foremanLayout.placement.dockWidth : 0
     const foremanRightTrack = foremanLayout?.open && !foremanLayout.dragging && !foremanLayout.mobile && foremanLayout.placement.mode === 'dock' && foremanLayout.placement.side === 'right' ? foremanLayout.placement.dockWidth : 0
     const [foremanCommand, setForemanCommand] = useState<DesktopForemanCommand | null>(null)
+    const [foremanFocusRequest, setForemanFocusRequest] = useState(0)
     const [foremanTarget, setForemanTarget] = useState<DesktopForemanCommand['chat'] | null>(null)
     const [visibleSession, setVisibleSession] = useState<{ agentId: string; sessionId: string | null } | null>(null)
     const reportVisibleSession = useCallback((agentId: string, sessionId: string | null) => {
@@ -1006,7 +1007,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                         controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout} mentionTargets={foremanMentionTargets} team={foremanTeam} firstName={foremanFirstName} nextRoutine={nextRoutine} routineNow={upcoming?.now}
                         hidden={controlCenterDisabled || (controlCenterOpen && foremanOpen) || panelOpen || settings || workspaceSettings || profileOpen || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
                         findEnabled={foremanOpen && !panelOpen && !controlCenterDisabled}
-                        centerOpen={controlCenterOpen} onOpenTranscriptionSettings={openTranscriptionSettings} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('The Chief of Staff chat was closed.')); setForemanOpen(false) }}
+                        centerOpen={controlCenterOpen} onOpenTranscriptionSettings={openTranscriptionSettings} command={foremanCommand} composerFocusRequest={foremanFocusRequest} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('The Chief of Staff chat was closed.')); setForemanOpen(false) }}
                         onOpenCoworker={openForemanCoworker} onOpenCalledChat={openCoworkerChat} onOpenBox={openForemanBox} onBuildCompleted={refreshForemanBoard}
                         onReviewTemplate={reviewTemplate} providers={providers} onOpenModelSettings={openSettings}
                         onReconnectConnection={connectionId => openSettingsAt('AI providers', connectionId)}
@@ -1129,6 +1130,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 onShortcuts={openShortcuts} onHelp={openHelp}
                 onChangelog={initialData.runtimeLaunchNonce ? () => { if (!controlCenterDisabled && !isDesktopQuitting()) changelog.show() } : undefined}
                 onNotifications={openNotifications}
+                onFocusAssistant={foremanEngaged && foremanOpen && !panelOpen ? () => { if (!isDesktopQuitting()) setForemanFocusRequest(request => request + 1) } : undefined}
+                onAccount={() => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setProfileOpen(true) }}
                 onGettingStarted={runtimeWorkspaceId !== null && initialData.runtimeLaunchNonce ? () => {
                     showBoard()
                     requestDesktopGettingStartedReopen()
