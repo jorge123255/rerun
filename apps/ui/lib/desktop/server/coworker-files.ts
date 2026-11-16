@@ -1,6 +1,6 @@
 import { canonicalDesktopEngineRoot } from './runtime'
 import 'server-only'
-import { DESKTOP_ATTACHMENT_MAX_BYTES, MAX_UPLOAD_FILE_BYTES, isDesktopAttachmentPath } from '@rerun/contracts'
+import { CHAT_ATTACHMENTS_DIR, DESKTOP_ATTACHMENT_MAX_BYTES, DESKTOP_DOCUMENT_MAX_BYTES, MAX_UPLOAD_FILE_BYTES, isDesktopAttachmentPath, isDesktopStagedDocumentPath } from '@rerun/contracts'
 import { constants, type BigIntStats } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
@@ -681,9 +681,92 @@ export async function importCoworkerRasterFile(runtime: DesktopRuntime, agentId:
     return withCoworkerFiles(runtime, agentId, () => importFile(runtime, agentId, folder, name, bytes, undefined, beforePublish))
 }
 
-async function importFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array, publication?: PrivateToolPublication, beforeRasterPublish?: (workspace: string) => Promise<void>): Promise<{ path: string; name: string }> {
+/** Chat attachment the Mac cannot convert, saved as one file in the coworker's own `chat-uploads`
+ * folder. Uses the import's pinned staging and create-only publication: an existing name is never
+ * replaced. `beforePublish` is the caller's ownership check, repeated just before the visible link.
+ * The bytes are only written; nothing here opens, unpacks or runs them. */
+export async function stageCoworkerAttachmentFile(runtime: DesktopRuntime, agentId: string, path: string, bytes: Uint8Array, beforePublish: () => Promise<void>): Promise<{ path: string; name: string }> {
+    const name = stagedAttachmentName(path)
+    return withCoworkerFiles(runtime, agentId, async () => {
+        await beforePublish()
+        await ensureStagedAttachmentFolder(runtime, await coworkerWorkspace(runtime, agentId))
+        return importFile(runtime, agentId, CHAT_ATTACHMENTS_DIR, name, bytes, undefined, beforePublish, true)
+    })
+}
+
+function stagedAttachmentName(path: string): string {
+    if (!isDesktopStagedDocumentPath(path)) throw new DesktopHttpError(400, 'That attachment path is outside this coworker’s chat uploads.')
+    const name = path.slice(CHAT_ATTACHMENTS_DIR.length + 1)
+    if (reservedName(name)) throw new DesktopHttpError(400, 'That file name can’t be imported.')
+    return name
+}
+
+async function ensureStagedAttachmentFolder(runtime: DesktopRuntime, workspace: string): Promise<void> {
+    let located = await containedPath(workspace, '')
+    if (!located.root) {
+        await createWorkspace(runtime, workspace)
+        located = await containedPath(workspace, '')
+    }
+    if (!located.root) throw new DesktopHttpError(404, 'Folder not found')
+    const uid = currentUid('Attachments are only available on this Mac.')
+    const root = await openResolved(located.root, true)
+    try {
+        const opened = await root.stat({ bigint: true })
+        if (opened.uid !== uid) throw new DesktopHttpError(403, 'This folder belongs to another user. Nothing was saved.')
+        // Create through the pinned workspace, so a swapped ancestor cannot redirect the new folder.
+        const child = join(/* turbopackIgnore: true */ await pinnedDirectory(root), CHAT_ATTACHMENTS_DIR)
+        await mkdir(child).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error })
+        const info = await fileStat(child)
+        if (!info?.isDirectory() || info.isSymbolicLink() || info.uid !== uid) throw new DesktopHttpError(400, 'The chat uploads folder in Files is not a regular folder. Nothing was saved.')
+    } finally { await root.close() }
+}
+
+type StagedAttachmentFile = { state: 'missing' | 'changed' } | { state: 'same'; folder: string; identity: FileIdentity }
+async function inspectStagedAttachmentFile(runtime: DesktopRuntime, agentId: string, path: string, sha256: string): Promise<StagedAttachmentFile> {
+    const name = stagedAttachmentName(path)
+    const located = await containedPath(await coworkerWorkspace(runtime, agentId), CHAT_ATTACHMENTS_DIR)
+    if (!located.root || !located.target) return { state: 'missing' }
+    // The folder must be the workspace's own directory, not a link to another place.
+    if (located.target !== join(/* turbopackIgnore: true */ located.root, CHAT_ATTACHMENTS_DIR)) return { state: 'changed' }
+    const uid = currentUid('Attachments are only available on this Mac.')
+    await assertCoworkerDirectories(located.root, [CHAT_ATTACHMENTS_DIR], uid, name, 'file')
+    const listed = await fileStat(join(/* turbopackIgnore: true */ located.target, name))
+    if (!listed) return { state: 'missing' }
+    if (!listed.isFile() || listed.uid !== uid || listed.size < BigInt(1) || listed.size > BigInt(DESKTOP_DOCUMENT_MAX_BYTES)) return { state: 'changed' }
+    const handle = await openResolved(join(/* turbopackIgnore: true */ located.target, name)).catch(() => null)
+    if (!handle) return { state: 'changed' }
+    try {
+        const opened = await handle.stat({ bigint: true })
+        if (!opened.isFile() || !sameFile(opened, listed) || opened.size !== listed.size) return { state: 'changed' }
+        const bytes = await handle.readFile()
+        if (BigInt(bytes.byteLength) !== opened.size || createHash('sha256').update(bytes).digest('hex') !== sha256) return { state: 'changed' }
+        return { state: 'same', folder: located.target, identity: { dev: opened.dev, ino: opened.ino } }
+    } finally { await handle.close() }
+}
+
+/** Whether the file a chat attachment was saved as is still there with the same bytes. */
+export function coworkerStagedAttachmentState(runtime: DesktopRuntime, agentId: string, path: string, sha256: string): Promise<'missing' | 'changed' | 'same'> {
+    return withCoworkerFiles(runtime, agentId, async () => (await inspectStagedAttachmentFile(runtime, agentId, path, sha256)).state)
+}
+
+/** Removes the file of an attachment that was never sent. Only the exact bytes that were saved are
+ * removed: a file that is gone, replaced or edited since is left alone. */
+export function removeCoworkerStagedAttachmentFile(runtime: DesktopRuntime, agentId: string, path: string, sha256: string): Promise<'removed' | 'kept'> {
+    return withCoworkerFiles(runtime, agentId, async () => {
+        const found = await inspectStagedAttachmentFile(runtime, agentId, path, sha256)
+        if (found.state !== 'same') return 'kept'
+        const name = stagedAttachmentName(path)
+        if (claimed(found.folder, name)) return 'kept'
+        // Moves the name aside, checks it is still the inspected file, and puts back anything else.
+        return await retireName(join(/* turbopackIgnore: true */ found.folder, name), found.identity) ? 'removed' : 'kept'
+    })
+}
+
+async function importFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array, publication?: PrivateToolPublication, beforeRasterPublish?: (workspace: string) => Promise<void>, stagedAttachment = false): Promise<{ path: string; name: string }> {
     if (!name || name.includes('/') || name.includes('\\') || name.includes('\0') || name.startsWith('.')) throw new DesktopHttpError(400, 'That file name can’t be imported.')
-    if (beforeRasterPublish) {
+    if (stagedAttachment) {
+        if (bytes.byteLength < 1 || bytes.byteLength > DESKTOP_DOCUMENT_MAX_BYTES) throw new DesktopHttpError(413, 'Documents can be up to 16 MB.')
+    } else if (beforeRasterPublish) {
         const kind = desktopRasterKind(name)
         if (!kind || kind === 'gif' || bytes.byteLength < 1 || bytes.byteLength > DESKTOP_IMAGE_MAX_BYTES) throw new DesktopHttpError(415, 'Choose a supported static image.')
         try { inspectDesktopImageBytes(kind, bytes) } catch { throw new DesktopHttpError(415, 'Choose a supported static image.') }

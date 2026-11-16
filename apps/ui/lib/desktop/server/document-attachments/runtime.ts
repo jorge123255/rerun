@@ -8,6 +8,7 @@ import { engineOf } from '../settings'
 import { findDesktopAgent, findDesktopSession } from '../store'
 import { readDesktopChats } from '../session-tabs'
 import { assertCoworkerNotDeleting } from '../coworker-delete'
+import { coworkerStagedAttachmentState, removeCoworkerStagedAttachmentFile, stageCoworkerAttachmentFile } from '../coworker-files'
 import { desktopAuxiliaryStore } from '../auxiliary/store'
 import { desktopAuxiliaryBackends } from '../auxiliary/backends'
 import { extractDesktopPdfText } from '../pdf-text'
@@ -87,6 +88,30 @@ export async function createDesktopDocumentRuntime(runtime: DesktopRuntime, db: 
     return createDesktopDocumentAttachmentService({
         store, blobs: desktopDocumentBlobs(db, kind),
         allowChatImages: kind === 'foreman',
+        // Only a coworker has Files. Each call re-proves the conversation's owner, and the Files
+        // code resolves the workspace from the same local coworker row.
+        stagedFiles: kind === 'foreman' ? undefined : {
+            async put(scope, path, bytes, sha256, signal) {
+                await owner(scope, signal)
+                try { await stageCoworkerAttachmentFile(runtime, scope.agentId, path, bytes, () => owner(scope, signal)) }
+                catch (error) {
+                    // A replayed upload finds the file it already saved. Any other file is kept.
+                    if (!(error instanceof DesktopHttpError) || error.status !== 409 || await coworkerStagedAttachmentState(runtime, scope.agentId, path, sha256) !== 'same') throw error
+                }
+                current(signal)
+            },
+            async state(scope, path, sha256, signal) {
+                await owner(scope, signal)
+                const state = await coworkerStagedAttachmentState(runtime, scope.agentId, path, sha256)
+                current(signal)
+                return state
+            },
+            async remove(scope, path, sha256, signal) {
+                await owner(scope, signal)
+                await removeCoworkerStagedAttachmentFile(runtime, scope.agentId, path, sha256)
+                current(signal)
+            },
+        },
         owner: kind === 'foreman' ? async (scope, signal) => {
             assertDesktopWorkspaceAdmission(runtime)
             await foremanOwner(scope, signal)

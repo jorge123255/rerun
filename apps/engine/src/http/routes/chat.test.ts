@@ -720,6 +720,35 @@ describe('POST /agents/:id/chat', () => {
         } finally { resolveModel.mockRestore(); vi.unstubAllEnvs() }
     })
 
+    it('saves a staged file as one path line on a text-only model and refuses a path outside chat-uploads', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const availability = await import('../../agents/availability.js')
+        const resolveModel = vi.spyOn(availability, 'resolveRunModel').mockResolvedValue({ provider: 'openrouter', model: 'text-fixture', connection: null })
+        const { listMessages } = await import('../../db/repos/messages.js')
+        const { desktopStagedDocumentPath, desktopStoredDocumentReferences } = await import('@rerun/contracts')
+        try {
+            const session = await createSession(id)
+            const reference = {
+                attachmentId: crypto.randomUUID(), scope: { agentId: 'desktop-agent', sessionId: 'local-chat', tabUid: 'tab' },
+                name: 'Q3 plan.docx', mimeType: 'application/zip', kind: 'binary', byteLength: 12, sha256: 'b'.repeat(64),
+            }
+            const stagedPath = desktopStagedDocumentPath(reference.attachmentId, reference.name)
+            const documents = { scope: reference.scope, attachmentIds: [reference.attachmentId], admissionId: crypto.randomUUID() }
+            const turn = { runId: crypto.randomUUID(), documents }
+            const body = { sessionId: session.id, message: 'Please look at the plan.', desktopQueuedTurn: turn, desktopDocuments: [{ reference, stagedPath }] }
+            expect((await chat(id, { ...body, desktopDocuments: [{ reference, stagedPath: '../../other-agent/workspace/plan.docx' }] })).status).toBe(400)
+            expect((await chat(id, { ...body, desktopDocuments: [{ reference: { ...reference, kind: 'pdf' }, stagedPath }] })).status).toBe(400)
+            expect(await getRun(id, turn.runId)).toBeUndefined()
+            const response = await chat(id, body)
+            expect(response.status).toBe(200)
+            await response.text()
+            const content = JSON.parse((await listMessages(id, session.id)).find(row => row.role === 'user')!.contentJson)
+            expect(content).toContainEqual({ type: 'text', text: `Attached file "Q3 plan.docx" (application/zip) is in your Files at ${JSON.stringify(stagedPath)}.`,
+                providerOptions: { rerun: { context: true, desktopDocument: reference } } })
+            expect(desktopStoredDocumentReferences(content)).toEqual([reference])
+        } finally { resolveModel.mockRestore(); vi.unstubAllEnvs() }
+    })
+
     it('rejects empty desktop runs and unresolved attachment identities, but permits read-only reconciliation', async () => {
         vi.stubEnv('RERUN_DESKTOP_APP', '1')
         try {

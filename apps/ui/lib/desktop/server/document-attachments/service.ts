@@ -1,6 +1,6 @@
 import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
-import { documentScopeKey as scopeKey, desktopDocumentScopeSchema, desktopDocumentSelectionSchema, desktopDocumentRevisionActionSchema, desktopDocumentUploadSchema, DESKTOP_DOCUMENT_IMAGE_MAX_FILES, DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES, DESKTOP_DOCUMENT_TEXT_MAX_CHARS, DESKTOP_DOCUMENT_INPUT_MAX_BYTES, type DesktopDocumentAdmission, type DesktopDocumentAttachment, type DesktopDocumentConversion, type DesktopDocumentReference, type DesktopDocumentScope, type DesktopDocumentSelection } from '@rerun/contracts'
+import { documentScopeKey as scopeKey, desktopDocumentScopeSchema, desktopDocumentSelectionSchema, desktopDocumentRevisionActionSchema, desktopDocumentUploadSchema, DESKTOP_DOCUMENT_IMAGE_MAX_FILES, DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES, DESKTOP_DOCUMENT_TEXT_MAX_CHARS, DESKTOP_DOCUMENT_INPUT_MAX_BYTES, desktopStagedDocumentPath, isDesktopStagedDocumentKind, type DesktopDocumentAdmission, type DesktopDocumentAttachment, type DesktopDocumentConversion, type DesktopDocumentReference, type DesktopDocumentScope, type DesktopDocumentSelection } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { inspectComposerImageSource } from '../composer-image-formats'
 import { questionDocumentId } from '../../question-documents'
@@ -59,6 +59,15 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
         ? { mode: 'pdf-text', state: 'pending' }
         : kind === 'audio' ? { mode: 'voice-transcript', state: 'pending' }
             : { mode: 'unsupported', state: 'unsupported', error: 'This file can be downloaded, but this Mac app cannot send its contents to the selected model.' }
+    // Files the Mac cannot convert go to the coworker's own Files. A question's upload answers one
+    // request and is not saved there.
+    const staged = (scope: DesktopDocumentScope, kind: DesktopDocumentAttachment['kind']) => !!authorities.stagedFiles && isDesktopStagedDocumentKind(kind) && !scope.questionId && !questionDocumentId(scope.tabUid)
+    const stagedPath = (a: DesktopDocumentAttachment) => a.conversion.mode === 'staged-file' ? a.conversion.stagedRef ?? desktopStagedDocumentPath(a.attachmentId, a.name) : undefined
+    /** An unsent attachment owns its file: nothing else is given this path. */
+    async function removeStaged(scope: DesktopDocumentScope, attachment: DesktopDocumentAttachment, signal: AbortSignal) {
+        const path = stagedPath(attachment)
+        if (path && authorities.stagedFiles) await authorities.stagedFiles.remove(scope, path, attachment.sha256, signal)
+    }
     async function scopes(scope: DesktopDocumentScope, signal: AbortSignal) {
         await owner(scope, signal)
         const result = authorities.readScopes ? await authorities.readScopes(scope, signal) : [scope]
@@ -86,7 +95,7 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
                     : inspected.kind === 'image' ? {
                         mode: 'image', state: 'ready',
                         ...(rendered && { renderedImage: { mimeType: 'image/png', sha256: digest(rendered), byteLength: rendered.byteLength } }),
-                    } : initialConversion(inspected.kind)
+                    } : staged(scope, inspected.kind) ? { mode: 'staged-file', state: 'pending' } : initialConversion(inspected.kind)
                 const initial: DesktopDocumentAttachmentRecord = { fingerprint, attachment: { ...inspected, scope, attachmentId: input.attachmentId, name: input.name, position: input.position, uploaded: false, selected: true, admitted: false, conversion, revision: randomUUID(), createdAt: now, updatedAt: now } }
                 await owner(scope, signal)
                 let record = (await store.reserve(initial)).record
@@ -95,7 +104,13 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
                 if (!record.attachment.uploaded) {
                     await blobs.put(scope, record.attachment, bytes, signal, rendered)
                     await owner(scope, signal)
-                    record = await save(record, { uploaded: true })
+                    const path = stagedPath(record.attachment)
+                    if (path) {
+                        if (!authorities.stagedFiles) throw documentConflict()
+                        await authorities.stagedFiles.put(scope, path, bytes, record.attachment.sha256, signal)
+                        await owner(scope, signal)
+                    }
+                    record = await save(record, { uploaded: true, ...(path && { conversion: { mode: 'staged-file', state: 'ready', stagedRef: path } }) })
                 } else await verifyPrepared(scope, record.attachment, signal)
                 await owner(scope, signal)
                 return record.attachment
@@ -171,6 +186,17 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
                     records.push(record)
                     continue
                 }
+                if (a.conversion.mode === 'staged-file' && a.conversion.state === 'ready' && a.conversion.stagedRef && isDesktopStagedDocumentKind(a.kind)) {
+                    // The coworker is only told about a file that is really in its Files with these bytes.
+                    if (await authorities.stagedFiles?.state(a.scope, a.conversion.stagedRef, a.sha256, signal) !== 'same') {
+                        return { allowed: false, reason: `The copy of ${JSON.stringify(a.name)} in this coworker’s Files was changed or removed. Remove the attachment and attach the file again.`, references: [], inputs: [] }
+                    }
+                    await owner(a.scope, signal)
+                    references.push(reference)
+                    inputs.push({ mode: 'staged-file', reference, path: a.conversion.stagedRef })
+                    records.push(record)
+                    continue
+                }
                 if (a.conversion.state !== 'ready' || !a.conversion.text || !['pdf-text', 'voice-transcript', 'plain-text'].includes(a.conversion.mode)) return { allowed: false, reason: a.conversion.error ?? 'Prepare every selected attachment, or remove unsupported files before sending.', references: [], inputs: [] }
                 textBytes += new TextEncoder().encode(a.conversion.text).byteLength
                 if (textBytes > DESKTOP_DOCUMENT_INPUT_MAX_BYTES) return { allowed: false, reason: 'The selected documents contain more than 128 KiB of text. Choose fewer or shorter documents.', references: [], inputs: [] }
@@ -193,11 +219,14 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
                     if (await authorities.references(scope, attachmentId)) throw documentConflict()
                     await owner(scope, signal)
                     await store.reserveDiscard(scope, attachmentId, record.attachment.revision)
+                    await removeStaged(scope, record.attachment, signal)
                     await blobs.delete(scope, record.attachment, signal)
                     await owner(scope, signal)
                     await store.discard(scope, attachmentId)
                 } else {
                     await owner(scope, signal)
+                    // An interrupted upload may have saved its file before the record was completed.
+                    if (record && !record.attachment.admitted && scopeKey(record.attachment.scope) === scopeKey(scope)) await removeStaged(scope, record.attachment, signal)
                     await store.cancelUpload(scope, attachmentId)
                 }
                 await owner(scope, signal)
@@ -231,6 +260,7 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
                 if (!record.deletion && record.attachment.conversion.state === 'converting') record = await save(record, { conversion: { ...record.attachment.conversion, state: 'failed' } })
                 await store.reserveDiscard(scope, input.attachmentId, record.attachment.revision)
                 await owner(scope, signal)
+                await removeStaged(scope, record.attachment, signal)
                 await blobs.delete(scope, record.attachment, signal)
                 await owner(scope, signal)
                 await store.discard(scope, input.attachmentId)

@@ -18,6 +18,11 @@ const STATUS: Record<DesktopDocumentAttachment['conversion']['state'], string> =
     unsupported: 'Not supported by this model',
 }
 
+/** A file the Mac cannot convert is ready once it is saved in the coworker's Files. */
+export function desktopDocumentChipStatus(conversion: DesktopDocumentAttachment['conversion']): string {
+    return conversion.mode === 'staged-file' && conversion.state === 'ready' ? 'Ready · saved to Files' : STATUS[conversion.state]
+}
+
 export function DesktopDocumentChips({ attachments, onRetry, onRemove, disabled = false }: {
     attachments: DesktopDocumentAttachment[]
     onRetry: (attachmentId: string) => void
@@ -44,7 +49,7 @@ export function DesktopDocumentChips({ attachments, onRetry, onRemove, disabled 
                         {attachment.name}
                     </button>
                     : <span className="max-w-48 truncate font-medium text-foreground" title={attachment.name}>{attachment.name}</span>}
-                <span className="shrink-0 text-[10px]">{formatBytes(attachment.byteLength)} · {busy && !attachment.uploaded ? 'Saving' : STATUS[state]}</span>
+                <span className="shrink-0 text-[10px]">{formatBytes(attachment.byteLength)} · {busy && !attachment.uploaded ? 'Saving' : desktopDocumentChipStatus(attachment.conversion)}</span>
                 {(!busy && state !== 'ready' && state !== 'unsupported') && <Button type="button" disabled={disabled} variant="ghost" size="sm" aria-label={`${attachment.kind === 'audio' && attachment.uploaded ? 'Transcribe' : attachment.uploaded ? 'Prepare' : 'Retry'} ${attachment.name}`} onClick={() => onRetry(attachment.attachmentId)}><RefreshCcwIcon className="size-3" />{attachment.kind === 'audio' && attachment.uploaded ? 'Transcribe' : attachment.uploaded ? 'Prepare' : 'Retry'}</Button>}
                 <Button type="button" disabled={disabled || busy} variant="ghost" size="icon-xs" aria-label={`Remove ${attachment.name}`} onClick={() => onRemove(attachment.attachmentId)}><XIcon className="size-3" /></Button>
             </div>
