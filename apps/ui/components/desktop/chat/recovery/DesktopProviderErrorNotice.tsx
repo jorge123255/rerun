@@ -6,12 +6,13 @@ import { ProviderIcon } from '@/lib/engine/provider-icons'
 import { BorderBeam } from '@rerun/ui'
 import { AlertTriangleIcon, GaugeIcon, MessageSquareIcon, PlugIcon, RotateCwIcon, ScrollTextIcon, ServerIcon, SquareIcon, UnplugIcon } from '@/lib/icons'
 import { MessageSquarePlus } from 'lucide-react'
-import { chatErrorTitle, describeSubscriptionLimit, friendlyError, type ChatErrorKind } from '@/lib/chat-error'
+import { chatErrorTitle, describeSubscriptionLimit, friendlyError, isAnthropicKeyNotScoped, type ChatErrorKind } from '@/lib/chat-error'
 import type { ComponentType } from 'react'
 
 type NoticeKind = ChatErrorKind
 
 const ClaudeGlyph = ({ className }: { className?: string }) => <ProviderIcon provider="claude" className={className} />
+const AnthropicGlyph = ({ className }: { className?: string }) => <ProviderIcon provider="anthropic" className={className} />
 const OpenAIGlyph = ({ className }: { className?: string }) => <ProviderIcon provider="openai" className={className} />
 const OpencodeGlyph = ({ className }: { className?: string }) => <ProviderIcon provider="opencode" className={className} />
 
@@ -34,7 +35,7 @@ function header(kind: NoticeKind, message: string): { title: string; icon: Compo
     if (kind !== 'usage_limit') return { title, icon: ICONS[kind] }
     const plan = describeSubscriptionLimit(message).plan
     if (!plan) return { title, icon: ICONS.usage_limit }
-    return { title, icon: plan === 'claude' ? ClaudeGlyph : plan === 'opencode' ? OpencodeGlyph : OpenAIGlyph }
+    return { title, icon: plan === 'claude' ? ClaudeGlyph : plan === 'anthropic' ? AnthropicGlyph : plan === 'opencode' ? OpencodeGlyph : OpenAIGlyph }
 }
 
 export function DesktopProviderErrorNotice({ kind, message, onRetry, onContinue, onStopRun, onNewConversation, onReconnect, onSwitchModel }: {
@@ -106,7 +107,7 @@ export function DesktopProviderErrorNotice({ kind, message, onRetry, onContinue,
             leading: <Icon icon={PlugIcon} size="sm" />,
             title: 'Reconnect',
             cta: 'Reconnect',
-            description: 'Sign in again on the connection this coworker runs on.',
+            description: isAnthropicKeyNotScoped(kind, message) ? 'Paste the new key on the connection this coworker runs on.' : 'Sign in again on the connection this coworker runs on.',
             onClick: onReconnect,
         })
     }

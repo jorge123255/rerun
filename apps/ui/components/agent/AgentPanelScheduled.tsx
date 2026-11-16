@@ -6,8 +6,6 @@ import { PanelDeleteButton, PanelEditorBody, PanelEditorFooter, PanelEditorHeade
 import { RunModelField, useRunModel } from '@/components/agent/RunModelField'
 import { TaskNotifyField } from '@/components/agent/TaskNotifyField'
 import { TaskOutcomeFooter } from '@/components/agent/TaskOutcomeFooter'
-import { TemplateContentLock } from '@/components/agent/TemplateContentLock'
-import { useTemplateContentLock } from '@/hooks/useTemplateContentLock'
 import { useAgentSetup } from '@/hooks/useAgentSetup'
 import { installSessionTitle } from '@/lib/chat/install-marker'
 import { TimezoneCombobox } from '@/components/agent/TimezoneCombobox'
@@ -240,8 +238,6 @@ function SchedulePicker({ mode, cron, runAtLocal, onChange }: { mode: 'cron' | '
 function ScheduleEditor({ agentId, agentName, slug, onDone, onBack, onShowHistory, onOpenSession }: { agentId: string; agentName: string; slug?: string; onDone: () => void; onBack: () => void; onShowHistory?: () => void; onOpenSession?: (sessionId: string, title: string, runId: string | null) => void }) {
     const isEdit = !!slug
     const { pick, setPick, availableGroups, providerFor, agentModel } = useRunModel(agentId)
-    // Only the prompt is sealed: pausing a task or moving its hour stays available.
-    const promptLocked = useTemplateContentLock(agentId) && isEdit
     const [loading, setLoading] = useState(isEdit)
     const [name, setName] = useState('')
     const [description, setDescription] = useState('')
@@ -388,9 +384,7 @@ function ScheduleEditor({ agentId, agentName, slug, onDone, onBack, onShowHistor
 
                 {slug && <TaskNotifyField agentId={agentId} source="schedule" slug={slug} />}
 
-                <TemplateContentLock locked={promptLocked} subject="task prompts">
-                    <MarkdownTextarea label="Task prompt" dialogTitle="Edit the task prompt" helperText="The prompt the coworker runs when the task fires (a fresh session each time)." value={body} onChange={setBody} disabled={promptLocked} className="text-xs min-h-32 font-mono" placeholder="Summarize yesterday's notes and email me a digest." />
-                </TemplateContentLock>
+                <MarkdownTextarea label="Task prompt" dialogTitle="Edit the task prompt" helperText="The prompt the coworker runs when the task fires (a fresh session each time)." value={body} onChange={setBody} className="text-xs min-h-32 font-mono" placeholder="Summarize yesterday's notes and email me a digest." />
 
                 {isEdit && waitingForSetup && (
                     <p className="text-xs text-muted-foreground">

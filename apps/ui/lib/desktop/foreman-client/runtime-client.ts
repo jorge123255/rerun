@@ -45,6 +45,8 @@ const stateSchema = z.strictObject({
         metadata: z.object({
             documents: z.array(desktopDocumentReferenceSchema).max(DESKTOP_DOCUMENT_MAX_FILES).optional(),
             coworkerMentions: desktopCoworkerMentionsSchema.optional(),
+            // When the message was saved: places a task's branch under the General message it followed.
+            createdAt: z.string().max(64).optional().catch(undefined),
             savedDecision: z.unknown().optional(),
             compactionReceipt: z.unknown().optional(),
         }).optional(),
@@ -80,7 +82,7 @@ export async function readDesktopForemanState(signal?: AbortSignal, chat?: Deskt
     return state
 }
 const conversationsPath = '/api/desktop/foreman/conversations'
-const conversationSchema = z.strictObject({ chat: foremanChatRefSchema, title: z.string().max(80).nullable(), home: z.boolean(), updatedAt: z.string().max(40).optional() })
+const conversationSchema = z.strictObject({ chat: foremanChatRefSchema, title: z.string().max(80).nullable(), home: z.boolean(), updatedAt: z.string().max(40).optional(), startedAt: z.string().max(40).optional() })
 export async function listDesktopForemanConversations(signal: AbortSignal) {
     return z.strictObject({ conversations: z.array(conversationSchema) }).parse(await json(
         await fetch(conversationsPath, { cache: 'no-store', signal }),
@@ -115,6 +117,7 @@ export function desktopForemanMessages(state: DesktopForemanClientState) {
         return {
             id,
             role,
+            ...(metadata?.createdAt && { createdAt: metadata.createdAt }),
             ...(role === 'user' && sourceByMessage.has(id) && { sourceRunId: sourceByMessage.get(id) }),
             history: foremanHistoryParts(id, parts, answeredCalls.get(id)),
             ...(documents?.length && { documents }),

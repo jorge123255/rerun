@@ -12,6 +12,8 @@ import { cn } from '@/lib/utils'
 import { useDesktopLocale } from '../DesktopLocale'
 
 type Conversation = Awaited<ReturnType<typeof listDesktopForemanConversations>>[number]
+/** A saved task as General shows it: under the message it started after, as Rerun Cloud does (upstream #201-#203). */
+export type DesktopForemanGeneralThread = { chat: DesktopForemanChatRef; title: string | null; createdAt: string; updatedAt: string }
 /** Where the thread on screen stands: answering, waiting for the person, or at rest. */
 export type DesktopForemanThreadState = 'live' | 'needs' | 'quiet'
 
@@ -51,22 +53,23 @@ export function useDesktopForemanConversations({ chat, thread = false, emptyThre
     const [error, setError] = useState<string | null>(null)
     const enabled = !!onSelect
 
-    async function load() {
+    // `quiet` is the read General makes for its branches: nobody asked for it, so a failure says nothing.
+    async function load(quiet = false) {
         const lifetimeSignal = lifetime.current?.signal
         if (!lifetimeSignal || lifetimeSignal.aborted) return
-        setError(null)
+        if (!quiet) setError(null)
         try {
             const rows = await listDesktopForemanConversations(AbortSignal.any([lifetimeSignal, AbortSignal.timeout(10_000)]))
             if (!lifetimeSignal.aborted) setConversations(rows.filter(row => row.chat.workspaceId === chat.workspaceId))
-        } catch { if (!lifetimeSignal.aborted) setError(t('foreman.conversationsUnavailable')) }
+        } catch { if (!quiet && !lifetimeSignal.aborted) setError(t('foreman.conversationsUnavailable')) }
     }
     const loadRef = useRef(load)
     loadRef.current = load
     useEffect(() => {
         const controller = new AbortController()
         lifetime.current = controller
-        // General needs no list until the clock opens. A thread reads it once, for its own title.
-        if (thread && !draft && enabled) void loadRef.current()
+        // A thread reads the list once, for its own title; General reads it for the branches of its tasks.
+        if (!draft && enabled) void loadRef.current(!thread)
         return () => controller.abort()
     }, [thread, draft, enabled, chat.chatId])
 
@@ -89,8 +92,12 @@ export function useDesktopForemanConversations({ chat, thread = false, emptyThre
     // A task nobody ever wrote in (left behind before « New task » became a draft) stays out of the
     // list unless it is the one on screen. Nothing is deleted.
     const threads = conversations.filter(row => !row.home && (!!row.updatedAt || row.title !== null || row.chat.chatId === chat.chatId))
+    // What General shows under the message each task started after: saved tasks only. A task nobody
+    // wrote in has no first message to date it, and the unsaved draft has no row at all.
+    const branches: DesktopForemanGeneralThread[] = thread ? [] : threads.flatMap(row => row.startedAt && row.chat.chatId !== chat.chatId
+        ? [{ chat: row.chat, title: row.title, createdAt: row.startedAt, updatedAt: row.updatedAt ?? row.startedAt }] : [])
     return {
-        chat, thread, draft, enabled, busy, error, threads, load, focusComposer: () => onFocusComposer?.(),
+        chat, thread, draft, enabled, busy, error, threads, branches, load: () => load(), focusComposer: () => onFocusComposer?.(),
         title: threads.find(row => row.chat.chatId === chat.chatId)?.title ?? null,
         newTask: async () => newTask(),
         openGeneral: () => open(null),

@@ -11,6 +11,7 @@ import { useIsMobile as useMediaQuery } from '@rerun/ui/primitives/use-is-mobile
 import type { DesktopForemanActionPorts, DesktopForemanChatRef } from '@/lib/desktop/foreman-client'
 import type { DesktopForemanLiveReply } from '@/lib/desktop/foreman/live-reply'
 import { DesktopForemanChatLayer, type DesktopForemanMessage } from './DesktopForemanChatLayer'
+import type { DesktopForemanGeneralThread } from './DesktopForemanConversations'
 import { useDesktopForemanFeedback } from '@/lib/desktop/use-foreman-feedback'
 import { DesktopForemanComposer } from './DesktopForemanComposer'
 import { DesktopForemanTeamWelcome } from './DesktopForemanTeamWelcome'
@@ -82,6 +83,9 @@ export type DesktopForemanColumnProps = {
     headerActions?: ReactNode
     /** The thread on screen, on its own row under the tabs. */
     headerCrumb?: ReactNode
+    /** General's saved tasks and the way into one, drawn as branches in the transcript. */
+    threads?: readonly DesktopForemanGeneralThread[]
+    onOpenThread?: (thread: DesktopForemanGeneralThread) => void
     runNotice?: ReactNode
     /** Root mounts discoveries on the board; receives live overlay state. */
     renderBoardOverlay?: (input: { discoveries: import('@/lib/desktop/foreman-client').DesktopDiscoveriesState; live: boolean }) => ReactNode
@@ -137,7 +141,7 @@ export function DesktopForemanColumn({
     agentNameOf,
     orbState = 'idle',
     headerActions,
-    headerCrumb,
+    headerCrumb, threads, onOpenThread,
     runNotice,
     renderBoardOverlay,
     className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, firstSend, controlledOpen, hidden, fill, centerOpen, findEnabled, dockFeed, voiceSlot, voiceMic, intake, intakeFinished, separateConversation, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
@@ -372,6 +376,7 @@ export function DesktopForemanColumn({
                         onOpenCoworker={input => foreman.navigate({ kind: 'open_coworker', agentId: input.agentId, sessionId: input.sessionId })}
                         onOpenBox={spaceId => foreman.navigate({ kind: 'open_box', spaceId })}
                         answerFeedback={{ ratingOf: answerFeedback.ratingOf, onRate: answerFeedback.rate, disabled: hidden }}
+                        threads={intake ? undefined : threads} onOpenThread={onOpenThread}
                         replyRetry={retrySnapshot ? { review: id => void alternates.reviewReply(id),
                             disabled: !!streaming || pendingRequest || pendingStarter || !!foreman.blocked || alternates.busy || ui.decision.status === 'pending' } : undefined}
                         renderChildWork={sessionId && ui.open && !hidden && !onRoutines && !alternates.open && foreman.restored

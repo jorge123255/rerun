@@ -4,7 +4,7 @@ import type { WorkspaceContext } from '@/app/api/_auth/ownership'
 
 vi.mock('server-only', () => ({}))
 const mocks = vi.hoisted(() => ({ getAgent: vi.fn(), listConnections: vi.fn(), patchAgent: vi.fn(), assertModelEntitled: vi.fn() }))
-vi.mock('@/app/api/_services/chat.service', () => ({ resolveAgentTarget: async () => ({ conn: { host: 'box' }, engineAgentId: 'eng-1', contentLocked: false }) }))
+vi.mock('@/app/api/_services/chat.service', () => ({ resolveAgentTarget: async () => ({ conn: { host: 'box' }, engineAgentId: 'eng-1' }) }))
 vi.mock('@/app/api/_services/engine-plan.service', () => ({ assertModelEntitled: mocks.assertModelEntitled }))
 vi.mock('@/lib/engine/client', () => ({ getAgent: mocks.getAgent, listConnections: mocks.listConnections, patchAgent: mocks.patchAgent }))
 

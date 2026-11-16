@@ -17,10 +17,8 @@ import {
     triggerOutcomeKey,
     TriggerRequestError,
     unavailableTriggerRunModelCatalog,
-    desktopTriggerPromptLock,
     type DesktopTriggerOutcome,
     type DesktopTriggerRunModelCatalog,
-    type DesktopTriggerTemplateLockState,
 } from '@/lib/desktop/triggers'
 import type { DesktopTrigger, DesktopTriggerHistoryItem } from '@rerun/contracts'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -41,14 +39,12 @@ export function DesktopCoworkerTriggers({
     onEditStateChange,
     ingressAvailable = false,
     modelCatalog = unavailableTriggerRunModelCatalog(),
-    templateLock = desktopTriggerPromptLock(false),
 }: {
     agentId: string
     onOpenSession: (chat: ChatOpen) => void
     onEditStateChange?: (state: { dirty: boolean; busy: boolean }) => void
     ingressAvailable?: boolean
     modelCatalog?: DesktopTriggerRunModelCatalog
-    templateLock?: DesktopTriggerTemplateLockState
 }) {
     return (
         <Triggers
@@ -58,7 +54,6 @@ export function DesktopCoworkerTriggers({
             onEditStateChange={onEditStateChange}
             ingressAvailable={ingressAvailable}
             modelCatalog={modelCatalog}
-            templateLock={templateLock}
         />
     )
 }
@@ -69,14 +64,12 @@ function Triggers({
     onEditStateChange,
     ingressAvailable,
     modelCatalog,
-    templateLock,
 }: {
     agentId: string
     onOpenSession: (chat: ChatOpen) => void
     onEditStateChange?: (state: { dirty: boolean; busy: boolean }) => void
     ingressAvailable: boolean
     modelCatalog: DesktopTriggerRunModelCatalog
-    templateLock: DesktopTriggerTemplateLockState
 }) {
     const [triggers, setTriggers] = useState<DesktopTrigger[] | null>(null)
     const [outcomes, setOutcomes] = useState<Record<string, DesktopTriggerOutcome>>({})
@@ -142,7 +135,6 @@ function Triggers({
                     agentId={agentId}
                     ingressAvailable={ingressAvailable}
                     modelCatalog={modelCatalog}
-                    templateLock={templateLock}
                     onDone={() => { setView({ mode: 'list' }); void load() }}
                     onBack={() => setView({ mode: 'list' })}
                 />
@@ -159,7 +151,6 @@ function Triggers({
                     slug={view.slug}
                     ingressAvailable={ingressAvailable}
                     modelCatalog={modelCatalog}
-                    templateLock={templateLock}
                     onDone={() => { setView({ mode: 'list' }); void load() }}
                     onBack={() => setView({ mode: 'list' })}
                     onShowHistory={() => setView({ mode: 'runs', slug: view.slug })}

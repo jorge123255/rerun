@@ -12,7 +12,6 @@ describe('readFileAction', () => {
         vi.mocked(resolveRunTarget).mockResolvedValue({
             engineAgentId: 'engine-agent',
             conn: { baseUrl: 'https://engine.test', apiKey: null },
-            contentLocked: true,
         })
     })
 

@@ -5,12 +5,13 @@ import { Icon } from '@/components/ui/icon'
 import { ProviderIcon } from '@/lib/engine/provider-icons'
 import { BorderBeam } from '@rerun/ui'
 import { AlertTriangleIcon, GaugeIcon, PlugIcon, RotateCwIcon, ScrollTextIcon, ServerIcon, SquareIcon, UnplugIcon } from '@/lib/icons'
-import { chatErrorTitle, describeSubscriptionLimit, friendlyError, type ChatErrorKind } from '@/lib/chat-error'
+import { chatErrorTitle, describeSubscriptionLimit, friendlyError, isAnthropicKeyNotScoped, type ChatErrorKind } from '@/lib/chat-error'
 import type { ComponentType } from 'react'
 
 type NoticeKind = Exclude<ChatErrorKind, 'budget'>
 
 const ClaudeGlyph = ({ className }: { className?: string }) => <ProviderIcon provider="claude" className={className} />
+const AnthropicGlyph = ({ className }: { className?: string }) => <ProviderIcon provider="anthropic" className={className} />
 const OpenAIGlyph = ({ className }: { className?: string }) => <ProviderIcon provider="openai" className={className} />
 
 const ICONS: Record<NoticeKind, ComponentType<{ className?: string }>> = {
@@ -35,7 +36,7 @@ function header(kind: NoticeKind, message: string): { title: string; icon: Compo
     if (kind !== 'usage_limit') return { title, icon: ICONS[kind] }
     const plan = describeSubscriptionLimit(message).plan
     if (!plan) return { title, icon: ICONS.usage_limit }
-    return { title, icon: plan === 'claude' ? ClaudeGlyph : OpenAIGlyph }
+    return { title, icon: plan === 'claude' ? ClaudeGlyph : plan === 'anthropic' ? AnthropicGlyph : OpenAIGlyph }
 }
 
 // The dead end this replaces: a raw provider stack, or "A run is already in flight on this
@@ -93,7 +94,7 @@ export function ProviderErrorNotice({ kind, message = '', onSwitchModel, onOpenC
             leading: <Icon icon={PlugIcon} size="sm" />,
             title: 'Reconnect',
             cta: 'Reconnect',
-            description: 'Sign in again on the connection this coworker runs on.',
+            description: isAnthropicKeyNotScoped(kind, message) ? 'Paste the new key on the connection this coworker runs on.' : 'Sign in again on the connection this coworker runs on.',
             onClick: onReconnect,
         })
     }

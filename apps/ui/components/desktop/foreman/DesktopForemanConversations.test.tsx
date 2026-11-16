@@ -15,8 +15,8 @@ const today = new Date().toISOString()
 const rows = [
     { chat: home, title: null, home: true },
     { chat: blank, title: null, home: false },
-    { chat: launch, title: 'Launch plan', home: false, updatedAt: '2020-01-02T10:00:00.000Z' },
-    { chat: pricing, title: 'Pricing page', home: false, updatedAt: today },
+    { chat: launch, title: 'Launch plan', home: false, updatedAt: '2020-01-02T10:00:00.000Z', startedAt: '2020-01-01T09:00:00.000Z' },
+    { chat: pricing, title: 'Pricing page', home: false, updatedAt: today, startedAt: today },
     { chat: { workspaceId: '2', chatId: 'fmc_00000000-0000-4000-8000-000000000002' }, title: 'Other workspace', home: false },
 ]
 const roots: Root[] = []
@@ -49,15 +49,15 @@ const openClock = async (host: HTMLElement) => {
     return [...document.querySelectorAll<HTMLButtonElement>('[data-foreman-history] [data-foreman-history-row]')]
 }
 
-test('General reads nothing until the clock opens, then pins General and groups this workspace\'s threads by day', async () => {
+test('General reads the list once for its branches, again when the clock opens, then pins General and groups this workspace\'s threads by day', async () => {
     const fetched = vi.fn(async () => Response.json({ conversations: rows }))
     vi.stubGlobal('fetch', fetched)
     const onSelect = vi.fn(async () => {})
     const host = await mount(<Header chat={home} onSelect={onSelect} />)
-    expect(fetched).not.toHaveBeenCalled()
+    expect(fetched).toHaveBeenCalledOnce()
     expect(host.querySelector('[data-foreman-thread-crumb]')).toBeNull()
     const items = await openClock(host)
-    expect(fetched).toHaveBeenCalledOnce()
+    expect(fetched).toHaveBeenCalledTimes(2)
     const popover = document.querySelector<HTMLElement>('[data-foreman-history]')!
     expect(popover.className).toContain('w-[min(360px,calc(100vw-1.5rem))]')
     expect(popover.textContent).toContain('Conversations')
@@ -108,7 +108,8 @@ test('New task in the header saves nothing: it asks for the draft, and creates n
     await settle()
     expect(onNewTask).toHaveBeenCalledOnce()
     expect(onSelect).not.toHaveBeenCalled()
-    expect(fetched).not.toHaveBeenCalled()
+    // General's own read of the list is the only request: nothing is written.
+    expect((fetched.mock.calls as unknown as [string, RequestInit?][]).every(([, init]) => !init?.method && !init?.body)).toBe(true)
     // The same from the list behind the clock.
     await openClock(host)
     await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[data-foreman-history] button')].find(item => item.textContent?.trim() === 'New task')!.click() })
@@ -175,4 +176,33 @@ test('a workspace with only General says there is no thread yet', async () => {
     const host = await mount(<Header chat={home} onSelect={vi.fn(async () => {})} />)
     await openClock(host)
     expect(document.body.textContent).toContain('No thread yet.')
+})
+
+function Branches({ chat, thread = false, draft = false, seen }: { chat: DesktopForemanChatRef; thread?: boolean; draft?: boolean; seen: (value: ReturnType<typeof useDesktopForemanConversations>) => void }) {
+    const conversations = useDesktopForemanConversations({ chat, thread, draft, onSelect: async () => {} })
+    seen(conversations)
+    return <DesktopForemanHistory conversations={conversations} disabled={false} />
+}
+
+test('General lists its saved tasks as branches: none without a message, none from another workspace, none for a thread or a draft', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ conversations: rows })))
+    let last!: ReturnType<typeof useDesktopForemanConversations>
+    await mount(<Branches chat={home} seen={value => { last = value }} />)
+    expect(last.branches).toEqual([
+        { chat: launch, title: 'Launch plan', createdAt: '2020-01-01T09:00:00.000Z', updatedAt: '2020-01-02T10:00:00.000Z' },
+        { chat: pricing, title: 'Pricing page', createdAt: today, updatedAt: today },
+    ])
+    await mount(<Branches chat={pricing} thread seen={value => { last = value }} />)
+    expect(last.branches).toEqual([])
+    await mount(<Branches chat={blank} thread draft seen={value => { last = value }} />)
+    expect(last.branches).toEqual([])
+})
+
+test('a failed read for the branches says nothing in the header', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })))
+    let last!: ReturnType<typeof useDesktopForemanConversations>
+    const host = await mount(<Branches chat={home} seen={value => { last = value }} />)
+    expect(last.branches).toEqual([])
+    expect(last.error).toBeNull()
+    expect(host.querySelector('[role="alert"]')).toBeNull()
 })

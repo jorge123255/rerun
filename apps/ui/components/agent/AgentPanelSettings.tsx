@@ -3,8 +3,6 @@
 import { getAgentDetailAction, updateAgentConfigAction } from '@/app/api/_actions/agent.actions'
 import { PanelDeleteButton, PanelEditorBody, PanelEditorFooter, PanelEditorShell } from '@/components/ui/panel-editor'
 import { SharedLinksSection } from '@/components/agent/share/SharedLinksSection'
-import { TemplateContentLock } from '@/components/agent/TemplateContentLock'
-import { useTemplateContentLock } from '@/hooks/useTemplateContentLock'
 import { DeleteAgentDialog } from '@/components/dialogs/DeleteAgentDialog'
 import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
@@ -38,7 +36,6 @@ const SETTINGS_FORM_ID = 'agent-settings-form'
 export function AgentPanelSettings({ agent }: AgentPanelSettingsProps) {
     const renameAgent = useBoardStore(s => s.renameAgent)
     const openNotifications = useNotificationsStore(s => s.openNotifications)
-    const soulLocked = useTemplateContentLock(agent.id)
     const [name, setName] = useState(agent.name)
     const [loading, setLoading] = useState(true)
     const [saved, setSaved] = useState(false)
@@ -135,11 +132,9 @@ export function AgentPanelSettings({ agent }: AgentPanelSettingsProps) {
                             name="soul"
                             render={({ field }) => (
                                 <FormItem className="space-y-1">
-                                    <TemplateContentLock locked={soulLocked} subject="system prompt">
-                                        <FormControl>
-                                            <MarkdownTextarea label="Soul (system prompt)" dialogTitle="Edit the system prompt" className="text-xs min-h-32 font-mono" placeholder="You are..." {...field} disabled={soulLocked} />
-                                        </FormControl>
-                                    </TemplateContentLock>
+                                    <FormControl>
+                                        <MarkdownTextarea label="Soul (system prompt)" dialogTitle="Edit the system prompt" className="text-xs min-h-32 font-mono" placeholder="You are..." {...field} />
+                                    </FormControl>
                                 </FormItem>
                             )}
                         />

@@ -35,7 +35,3 @@ export {
     type DesktopTriggerModelOption,
     type DesktopTriggerRunModelCatalog,
 } from './run-model'
-export {
-    desktopTriggerPromptLock,
-    type DesktopTriggerTemplateLockState,
-} from './template-lock'

@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/supabase/supabase-helpers', () => ({ selectMaybeSingle: mocks.selectMaybeSingle }))
 vi.mock('@/app/api/_services/agent.service', () => ({ renameAgent: mocks.renameAgent, deleteAgent: mocks.deleteAgent }))
 vi.mock('@/app/api/_services/notification-prefs.service', () => ({ patchNotificationPrefs: mocks.patchNotificationPrefs, readNotificationPrefs: mocks.readNotificationPrefs }))
-vi.mock('@/app/api/_services/chat.service', () => ({ resolveAgentTarget: async () => ({ conn: { host: 'box' }, engineAgentId: 'eng-1', contentLocked: false }) }))
+vi.mock('@/app/api/_services/chat.service', () => ({ resolveAgentTarget: async () => ({ conn: { host: 'box' }, engineAgentId: 'eng-1' }) }))
 vi.mock('@/lib/engine/client', () => ({ listFiles: mocks.listFiles, listSchedules: mocks.listSchedules, listTriggers: mocks.listTriggers, updateSchedule: mocks.updateSchedule, updateTrigger: mocks.updateTrigger }))
 
 const { deleteCoworker, listCoworkerFiles, listCoworkerRoutines, readCoworkerNotifications, renameCoworker, setCoworkerNotifications, setCoworkerRoutineEnabled } = await import('./coworker-details.service')
