@@ -2,14 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-    DESKTOP_BROWSER_PRESS_TOOL, desktopConnectorApprovalResultSchema, desktopConnectorApprovalViewSchema, desktopConnectorPreviewSchema, toolLabelOf,
+    DESKTOP_BROWSER_PRESS_TOOL, desktopConnectorApprovalResultSchema, desktopGithubAlwaysAsks, desktopConnectorApprovalViewSchema, desktopConnectorPreviewSchema, toolLabelOf,
     type DesktopApprovalKind, type DesktopConnectorPreview, type DesktopConnectorApprovalAction, type DesktopConnectorApprovalDecision, type DesktopConnectorApprovalView,
 } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 import { useDesktopLocale } from '../DesktopLocale'
 
 const KIND = {
-    delete: 'boardUI.askDelete', send: 'boardUI.askSend', share: 'boardUI.askShare', post: 'boardUI.askPost', pay: 'boardUI.askPay', credential: 'boardUI.askCredential', press: 'boardUI.askPressAny',
+    delete: 'boardUI.askDelete', send: 'boardUI.askSend', share: 'boardUI.askShare', post: 'boardUI.askPost', pay: 'boardUI.askPay', credential: 'boardUI.askCredential', repository: 'boardUI.askRepository', press: 'boardUI.askPressAny',
 } as const satisfies Record<DesktopApprovalKind, string>
 const ANSWERS = [
     ['once', 'boardUI.askOnce'], ['conversation', 'boardUI.askConversation'], ['always', 'boardUI.askAlways'], ['deny', 'boardUI.askDeny'],
@@ -173,7 +173,7 @@ export function DesktopConnectorApprovals({ sessionId, generating, disabled, onA
                     {press ? <p className="mt-0.5 text-xs text-muted-foreground">{t('boardUI.askPressNote')}</p>
                         : <ConnectorPreview preview={waiting.preview} showTool={waiting.tool.includes('+')} />}
                     <div className="mt-3 flex flex-wrap gap-2">
-                        {ANSWERS.filter(([decision]) => !press || decision === 'once' || decision === 'deny').map(([decision, label]) => (
+                        {ANSWERS.filter(([decision]) => !(press || desktopGithubAlwaysAsks(waiting.tool)) || decision === 'once' || decision === 'deny').map(([decision, label]) => (
                             <Button key={decision} type="button" size="sm" variant={decision === 'once' ? 'default' : decision === 'deny' ? 'ghost' : 'outline'}
                                 disabled={busy || disabled || generating} onClick={() => { void send({ action: 'decide', id: waiting.id, decision }) }}>
                                 {t(label)}

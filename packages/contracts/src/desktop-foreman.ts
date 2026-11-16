@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { desktopTemplateRevisionSchema } from './desktop-templates.js'
 import { desktopDocumentSendSelectionSchema, type DesktopDocumentScope } from './desktop-document-attachments.js'
 import { FOREMAN_AGENT_ID, foremanBriefSchema } from './foreman.js'
+import { desktopGithubPlanItemSchema } from './desktop-github-repository.js'
 import { desktopCoworkerMentionsSchema, validDesktopCoworkerMentionFields } from './desktop-coworker-calls.js'
 
 // Local Foreman (E11). Renderer DTOs carry opaque local identities only: no engine ids, provider
@@ -150,7 +151,13 @@ export const foremanAgentItemSchema = z.strictObject({
     beats: foremanPlanBeatsSchema.optional(),
     gets: z.array(line(DESKTOP_FOREMAN_LIMITS.maxLine)).max(DESKTOP_FOREMAN_LIMITS.maxGets).optional(),
     box: line(DESKTOP_FOREMAN_LIMITS.maxName).optional(),
+    // Only for a coworker proposed from one of the user's GitHub projects. Both are requests: the
+    // app keeps them only when the user accepted that repository in the intake, and drops them otherwise.
+    repository: z.string().trim().min(1).max(300).optional().describe('For a coworker proposed from a GitHub project: that project\'s repository as owner/name. Leave out otherwise.'),
+    projectRole: z.string().trim().min(1).max(40).optional().describe('For a coworker proposed from a GitHub project: its role, one of developer, qa-tester, release-manager, code-reviewer, docs-writer, support-triage.'),
 })
+// The item as the app sealed it: `github` is written by the app, never by the model.
+export const foremanSealedAgentItemSchema = foremanAgentItemSchema.extend({ github: desktopGithubPlanItemSchema.optional() })
 export const foremanTemplateItemSchema = z.strictObject({
     kind: z.literal('template'),
     templateId: z.string().min(1).max(128),
@@ -191,7 +198,7 @@ export const foremanSealedPlanSchema = z.strictObject({
     title: z.string(),
     boxes: z.array(foremanPlanBoxSchema.extend({ key: foremanBoxKeySchema })),
     items: z.array(z.intersection(z.discriminatedUnion('kind', [
-        foremanAgentItemSchema,
+        foremanSealedAgentItemSchema,
         foremanTemplateItemSchema.extend({ templateRevision: desktopTemplateRevisionSchema.optional() }),
     ]), z.object({ key: foremanItemKeySchema, boxKey: foremanBoxKeySchema }))),
 })

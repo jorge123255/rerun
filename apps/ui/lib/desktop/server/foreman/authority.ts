@@ -39,6 +39,8 @@ export type ForemanCoworkerSpec = {
     soulMd: string
     installMd: string
     model: DesktopForemanModelRef
+    /** The GitHub repository the owner accepted for this coworker's project. A fact only: no account, no permission. */
+    repository?: { owner: string; name: string }
 }
 
 // Root binds these onto the accepted Box/creation/template/setup operations with their own
@@ -52,6 +54,9 @@ export type ForemanCreationAuthority = {
     lookupBox(requestId: string): Promise<ForemanReceipt<{ spaceId: string }>>
     createCoworker(spec: ForemanCoworkerSpec): Promise<{ agentId: string }>
     lookupCoworker(requestId: string): Promise<ForemanReceipt<{ agentId: string; spaceId: string }>>
+    // Adds each target to its caller's allowed coworkers, both named by the request ids that created them.
+    // Adds to the list only: the Call coworkers permission is never switched on here.
+    allowCalls?(input: { pairs: { callerRequestId: string; targetRequestId: string }[] }): Promise<void>
     assertTemplateRevision?(templateId: string, revision: string): Promise<void>
     installTemplate(input: { requestId: string; templateId: string; templateRevision?: string; spaceId: string; focus?: string }): Promise<{ agentIds: string[] }>
     lookupTemplateInstall(requestId: string): Promise<ForemanReceipt<{ agentIds: string[]; spaceId: string }>>

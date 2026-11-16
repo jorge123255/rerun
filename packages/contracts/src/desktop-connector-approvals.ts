@@ -4,7 +4,9 @@ import { z } from 'zod'
 // sending to other people, sharing, posting, paying, and changing credentials. They are recognized
 // by what the tool is called, never by what a call carries. The kinds and the recognition rules
 // follow CopilotKit/OpenBot's docs/approvals.md (MIT).
-export const DESKTOP_CONNECTOR_ACTION_KINDS = ['delete', 'send', 'share', 'post', 'pay', 'credential'] as const
+// `repository` is a change to a GitHub repository (desktop-github-tools.ts): it is never read off a
+// tool's name here, only set by the GitHub check, which runs before this one.
+export const DESKTOP_CONNECTOR_ACTION_KINDS = ['delete', 'send', 'share', 'post', 'pay', 'credential', 'repository'] as const
 export type DesktopConnectorActionKind = (typeof DESKTOP_CONNECTOR_ACTION_KINDS)[number]
 
 const VERBS: Record<string, DesktopConnectorActionKind> = {
@@ -108,6 +110,18 @@ function strings(value: unknown, depth = 0, found: string[] = []): string[] {
     if (typeof value === 'string') found.push(value.slice(0, 200_000))
     else if (value && typeof value === 'object') for (const [key, child] of Object.entries(value)) { if (Array.isArray(value) || !NOTE_KEY.test(key)) strings(child, depth + 1, found) }
     return found
+}
+
+/**
+ * The tool names a remote sandbox call's code mentions (Composio's REMOTE_WORKBENCH and
+ * REMOTE_BASH_TOOL run code that can run other tools by name), with the code itself. Empty for
+ * any other tool.
+ */
+export function desktopConnectorCodeCalls(toolName: string, args: unknown): { tools: string[]; code: string[] } {
+    if (!RUNS_CODE.test(toolName)) return { tools: [], code: [] }
+    const TOOL_NAME = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g
+    const code = strings(args).filter(text => (text.match(TOOL_NAME) ?? []).length > 0)
+    return { tools: [...new Set(code.flatMap(text => text.match(TOOL_NAME) ?? []))].slice(0, 60), code }
 }
 
 function namedActions(value: unknown, depth = 0, found: string[] = []): string[] {

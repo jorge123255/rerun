@@ -12,7 +12,7 @@ import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 
 const coworker = { id: 'archivist', name: 'Archivist', description: '', createdAt: '', updatedAt: '' }
 let root: Root
-const settings: Settings = { soul: 'Check facts.', verbosity: 'normal', soulEditable: true, suggestedReplies: true, workspaceReadEnabled: false, memoryEnabled: true, autoMemory: true, selfImprovementEnabled: true }
+const settings: Settings = { soul: 'Check facts.', verbosity: 'normal', soulEditable: true, suggestedReplies: true, workspaceReadEnabled: false, memoryEnabled: true, autoMemory: true, selfImprovementEnabled: true, repository: null }
 const button = (text: string) => [...document.querySelectorAll('button')].find(node => node.textContent?.trim() === text)!
 const toggle = (label: string) => {
     const field = [...document.querySelectorAll('label')].find(node => node.textContent === label)
@@ -122,4 +122,42 @@ test('French reply-length labels save canonical values and a cancelled memory ed
     await click(button(t('coworker.edit')))
     expect(toggle(t('coworker.recall')).getAttribute('aria-checked')).toBe('true')
     expect(patches).toEqual([{ verbosity: 'concise' }])
+})
+
+const saveButton = () => document.querySelector('button[type=submit]') as HTMLButtonElement
+const repositoryField = () => document.querySelector('[data-testid=desktop-coworker-repository]') as HTMLInputElement
+const typeRepository = (value: string) => act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(repositoryField(), value)
+    repositoryField().dispatchEvent(new Event('input', { bubbles: true }))
+})
+
+test('shows the coworker\'s repository with a link, and lets the owner change or remove it', async () => {
+    const patches = await mount({ ...settings, repository: { owner: 'acme', name: 'openflix', url: 'https://github.com/acme/openflix' } })
+    expect(repositoryField().value).toBe('acme/openflix')
+    const link = document.querySelector('[data-testid=desktop-coworker-repository-link]') as HTMLAnchorElement
+    expect(link.getAttribute('href')).toBe('https://github.com/acme/openflix')
+    expect(link.getAttribute('rel')).toContain('noopener')
+    expect(document.body.textContent).toContain('attaches no GitHub account and grants no permission')
+    // Something that is not a repository cannot be saved.
+    await typeRepository('not a repository')
+    expect(document.body.textContent).toContain('Use owner/name or a link like https://github.com/owner/name.')
+    expect(saveButton().disabled).toBe(true)
+    // A link is accepted as typed; the server stores owner/name.
+    await typeRepository('https://github.com/acme/dvr-tuner')
+    expect(saveButton().disabled).toBe(false)
+    await click(saveButton())
+    expect(patches).toEqual([{ repository: 'https://github.com/acme/dvr-tuner' }])
+})
+
+test('emptying the repository field removes it', async () => {
+    const patches = await mount({ ...settings, repository: { owner: 'acme', name: 'openflix', url: 'https://github.com/acme/openflix' } })
+    await typeRepository('  ')
+    await click(saveButton())
+    expect(patches).toEqual([{ repository: null }])
+})
+
+test('a coworker without a repository shows an empty field and no link', async () => {
+    await mount(settings)
+    expect(repositoryField().value).toBe('')
+    expect(document.querySelector('[data-testid=desktop-coworker-repository-link]')).toBeNull()
 })

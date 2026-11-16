@@ -36,6 +36,7 @@ import { openDesktopDatabase } from './database'
 import { openDesktopManagedApps } from './managed-apps/binding'
 import { desktopConnectorCall } from '@rerun/contracts'
 import { decideConnectorCall } from './connector-approvals/store'
+import { admitGithubCall } from './connector-approvals/github-gate'
 import type { DesktopRuntime } from './runtime'
 import { remoteMcpApi } from './mcp/api'
 import { abortable, boundedText, remoteMcpRuntime } from './mcp/remote'
@@ -177,7 +178,14 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     const localRuntime = stdioRuntime(localStore, localAuthority, undefined, material,
         owner => assignedVaultMcpPrograms(db, owner), vaultProgramMaterials(db, createDesktopSecretCrypto(masterKey), runtime.workspaceId))
     // Connector actions that delete, send, share, post, pay or change credentials wait for the person's answer.
-    const askFirst: DesktopMcpCallAdmission = async (call, _signal, note) => {
+    const askFirst: DesktopMcpCallAdmission = async (call, signal, note) => {
+        // A change to a GitHub repository is decided first: refused while Change GitHub repositories is off for
+        // this coworker (read when the call is made), asked about when it is on. Reads go on as before.
+        const github = await admitGithubCall(call, {
+            granted: async owner => { const current = await currentOwner(owner, AbortSignal.any([signal, entry.shutdown.signal])); return current.config.enabled && current.config.tools.desktopToolGrants?.githubWrite === true },
+            decide: held => decideConnectorCall(db, held),
+        })
+        if (github.handled) { note?.(github.trail); return github.answer }
         const held = desktopConnectorCall(call.tool, call.destructive, call.arguments)
         if (!held) return null
         const decided = await decideConnectorCall(db, { owner: call.owner, sessionId: call.sessionId, tool: held.tool, kind: held.kind, arguments: held.subject ?? call.arguments })

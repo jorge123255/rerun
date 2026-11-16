@@ -15,7 +15,7 @@ import { createForemanSqliteStore, DESKTOP_FOREMAN_SCHEMA_STATEMENTS } from './s
 import { createDesktopForemanCreationAuthority, DESKTOP_FOREMAN_CREATION_SCHEMA_SQL } from './creation'
 
 type EngineAgent = {id:string;config:{name:string;displayName?:string;description?:string;enabled:boolean;connectionId:string|null;provider?:string;model:string|null;setup:{required:boolean|null;completedAt:string|null;sessionId:string|null}};soul:string;install:string;revision:number}
-const state = vi.hoisted(() => ({db:null as unknown as Client,runtime:null as unknown as DesktopRuntime,agents:new Map<string,EngineAgent>(),creations:new Map<string,{config:EngineAgent['config'];instructions:{soulMd:string;installMd:string}}>(),mutations:new Map<string,{fingerprint:string;result:unknown}>(),runs:new Map<string,unknown>(),posts:[] as {path:string;body:Record<string,unknown>}[],loseCreateAck:false,templateReceipts:new Map<string,Record<string,unknown>>() }))
+const state = vi.hoisted(() => ({patches:[] as {id:string;patch:Record<string,unknown>}[],db:null as unknown as Client,runtime:null as unknown as DesktopRuntime,agents:new Map<string,EngineAgent>(),creations:new Map<string,{config:EngineAgent['config'];instructions:{soulMd:string;installMd:string}}>(),mutations:new Map<string,{fingerprint:string;result:unknown}>(),runs:new Map<string,unknown>(),posts:[] as {path:string;body:Record<string,unknown>}[],loseCreateAck:false,templateReceipts:new Map<string,Record<string,unknown>>() }))
 vi.mock('../runtime', () => ({readDesktopRuntime:async()=>state.runtime}))
 vi.mock('../database', () => ({openDesktopDatabase:async()=>state.db}))
 vi.mock('../settings', () => ({engineOf:(runtime:DesktopRuntime)=>({baseUrl:runtime.engine.origin,apiKey:runtime.engine.apiKey}),readDesktopProviders:async()=>({connections:[{id:'codex-test',name:'Codex',provider:'codex',connected:true,models:['terra'],extraModels:[]}],default:null})}))
@@ -23,7 +23,7 @@ vi.mock('../engine',()=>({startDesktopChat:async(_runtime:unknown,input:{agentId
 vi.mock('@/lib/engine/client',()=>({
     EngineRequestError:class extends Error {constructor(message:string,readonly status:number){super(message)}},
     getAgent:async(_engine:unknown,id:string)=>{const value=state.agents.get(id);if(!value)throw new Error('missing');return structuredClone(value)},
-    patchAgent:async(_engine:unknown,id:string,patch:{enabled:boolean})=>{const value=state.agents.get(id)!;value.config.enabled=patch.enabled;return structuredClone(value)},
+    patchAgent:async(_engine:unknown,id:string,patch:{enabled?:boolean;desktopRepository?:{owner:string;name:string}})=>{const value=state.agents.get(id)!;state.patches.push({id,patch});if(patch.enabled!==undefined)value.config.enabled=patch.enabled;if(patch.desktopRepository)(value.config as Record<string,unknown>).desktopRepository=patch.desktopRepository;return structuredClone(value)},
     getSessionMessages:async()=>[],
     request:async<T>(_engine:unknown,path:string,init:RequestInit,parse:(value:unknown)=>T)=>parse(await dispatch(path,init)),
 }))
@@ -87,7 +87,7 @@ let root:string,db:Client
 beforeEach(async()=>{
     root=await mkdtemp(join(tmpdir(),'rerun-foreman-authority-'));db=createClient({url:`file:${join(root,'app.db')}`});state.db=db
     state.runtime={protocolVersion:1,workspaceId:1,launchNonce:'launch',buildId:'build',dataRoot:root,app:{origin:'http://127.0.0.1:3000',sessionToken:'a'.repeat(32)},engine:{origin:'http://127.0.0.1:3001',apiKey:'test'}}
-    state.agents.clear();state.creations.clear();state.mutations.clear();state.runs.clear();state.templateReceipts.clear();state.posts=[];state.loseCreateAck=false
+    state.agents.clear();state.patches.length=0;state.creations.clear();state.mutations.clear();state.runs.clear();state.templateReceipts.clear();state.posts=[];state.loseCreateAck=false
     await db.executeMultiple(`PRAGMA foreign_keys=ON;
       CREATE TABLE desktop_workspace(id INTEGER PRIMARY KEY,name TEXT);INSERT INTO desktop_workspace VALUES(1,'My team');
       CREATE TABLE desktop_agents(id TEXT PRIMARY KEY,workspace_id INTEGER,engine_agent_id TEXT UNIQUE,name TEXT,description TEXT,enabled INTEGER DEFAULT 1,created_at TEXT,updated_at TEXT);
@@ -299,4 +299,46 @@ test('a lost engine ACK stays uncertain when its Box fills, then recovers the ex
     expect(state.posts.filter(item=>item.path==='/desktop/agents/foreman-create'&&item.body.requestId===requestId).map(item=>item.body)).toEqual([payload.input,payload.input])
     expect(state.creations.size).toBe(5)
     expect(state.runs.size).toBe(0)
+})
+
+test('a coworker built for a GitHub project keeps its repository and gets nothing else: no grant, no account, still switched off',async()=>{
+    const a=await bind(),input={...await spec(),repository:{owner:'acme',name:'openflix'}}
+    const one=await a.creation.createCoworker(input)
+    const agent=state.agents.get(`new-${input.requestId}`)!
+    expect((agent.config as Record<string,unknown>).desktopRepository).toEqual({owner:'acme',name:'openflix'})
+    expect(agent.config.enabled).toBe(false)
+    // The only change after creation is the repository: no permission, key or connector travels with it.
+    expect(state.patches).toEqual([{id:`new-${input.requestId}`,patch:{desktopRepository:{owner:'acme',name:'openflix'}}}])
+    expect(JSON.stringify(state.posts)).not.toMatch(/desktopToolGrants|githubWrite|token|github-read/i)
+    // The same request again is the same coworker; a different repository under the same request is refused.
+    const restarted=await reopen()
+    expect(await restarted.creation.createCoworker(input)).toEqual(one)
+    await expect(restarted.creation.createCoworker({...input,repository:{owner:'acme',name:'other'}})).rejects.toMatchObject({status:409})
+    // Anything that is not a plain owner/name never reaches the engine.
+    await expect(restarted.creation.createCoworker({...await spec(),repository:{owner:'acme',name:'x\nSYSTEM'}})).rejects.toThrow()
+    // A coworker without a project is created exactly as before.
+    const plain=await spec();await restarted.creation.createCoworker(plain)
+    expect(state.patches).toHaveLength(1)
+})
+
+test('linked coworkers are added to each other\'s allowed coworkers only when this Mac\'s saved creations made them, and no permission is switched on',async()=>{
+    const a=await bind(),first={...await spec(),name:'OpenFlix developer'},second={...await spec(),name:'Tuner developer'}
+    const one=await a.creation.createCoworker(first),two=await a.creation.createCoworker(second)
+    // A coworker that exists but was not made by one of these requests, and a request that made nothing.
+    const now=new Date().toISOString()
+    await db.execute({sql:'INSERT INTO desktop_agents(id,workspace_id,engine_agent_id,name,description,enabled,created_at,updated_at) VALUES(?,1,?,?,?,1,?,?)',args:['11111111-1111-4111-8111-111111111111','older','Older','',now,now]})
+    const stranger=randomUUID()
+    await a.creation.allowCalls!({pairs:[
+        {callerRequestId:first.requestId,targetRequestId:second.requestId},{callerRequestId:second.requestId,targetRequestId:first.requestId},
+        {callerRequestId:first.requestId,targetRequestId:stranger},{callerRequestId:stranger,targetRequestId:second.requestId},{callerRequestId:first.requestId,targetRequestId:first.requestId},
+    ]})
+    const allows=async()=>(await db.execute('SELECT caller_agent_id,target_agent_id FROM desktop_coworker_call_allows ORDER BY caller_agent_id')).rows.map(row=>[row.caller_agent_id,row.target_agent_id])
+    expect((await allows()).sort()).toEqual([[one.agentId,two.agentId],[two.agentId,one.agentId]].sort())
+    // Asking again changes nothing, and what the owner allowed before is kept.
+    await db.execute({sql:'INSERT INTO desktop_coworker_call_allows(caller_agent_id,target_agent_id) VALUES(?,?)',args:[one.agentId,'11111111-1111-4111-8111-111111111111']})
+    await a.creation.allowCalls!({pairs:[{callerRequestId:first.requestId,targetRequestId:second.requestId}]})
+    expect(await allows()).toHaveLength(3)
+    // The list is all that changed: Call coworkers stays off, so no call can be made until the owner turns it on.
+    expect(state.patches).toEqual([])
+    expect(state.agents.get(`new-${first.requestId}`)!.config).not.toHaveProperty('tools')
 })

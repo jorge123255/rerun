@@ -131,3 +131,18 @@ test('names an unlabelled control and a key press honestly, and shows page text 
     expect(key.host.textContent).toContain('Ada wants to press Enter for “<img src=x onerror=alert(1)>” on this page')
     expect(key.host.querySelector('img')).toBeNull()
 })
+
+const github = (tool: string) => [{ id: ID, tool, kind: 'repository', preview: JSON.stringify({ v: 1, items: [{ fields: [['owner', 'acme'], ['repo', 'openflix']] }] }), createdAt: '2026-11-16T12:00:00.000Z' }]
+
+test('a change to a GitHub repository says so and may get a standing answer', async () => {
+    const { host } = await mount([{ pending: github('github_create_pull_request'), rules: [] }])
+    expect(host.textContent).toContain('This changes a GitHub repository.')
+    expect([...host.querySelectorAll('section button')].map(node => node.textContent)).toEqual(['Allow once', 'Allow for this conversation', 'Always allow', 'Deny'])
+})
+
+test('merging a pull request or deleting a file offers Allow once and Deny only', async () => {
+    for (const tool of ['github_merge_pull_request', 'GITHUB_DELETE_A_FILE', 'GITHUB_DELETE_A_REFERENCE+GITHUB_CREATE_AN_ISSUE']) {
+        const { host } = await mount([{ pending: github(tool), rules: [] }])
+        expect([...host.querySelectorAll('section button')].map(node => node.textContent), tool).toEqual(['Allow once', 'Deny'])
+    }
+})

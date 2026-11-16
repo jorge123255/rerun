@@ -1,7 +1,7 @@
 import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
-import { DESKTOP_ALREADY_WAITING, DESKTOP_BROWSER_PRESS_TOOL, DESKTOP_DECLINED_BY_PERSON, type DesktopActivityDecision, type DesktopApprovalKind, type DesktopBrowserPress, type DesktopConnectorActionKind, type DesktopConnectorApprovalDecision, type DesktopConnectorApprovalView, type DesktopConnectorPreview } from '@rerun/contracts'
+import { desktopGithubAlwaysAsks, DESKTOP_ALREADY_WAITING, DESKTOP_BROWSER_PRESS_TOOL, DESKTOP_DECLINED_BY_PERSON, type DesktopActivityDecision, type DesktopApprovalKind, type DesktopBrowserPress, type DesktopConnectorActionKind, type DesktopConnectorApprovalDecision, type DesktopConnectorApprovalView, type DesktopConnectorPreview } from '@rerun/contracts'
 import { redactHistoricalText } from '@/components/desktop/tool-presentations/redact'
 
 const MAX_PENDING = 20
@@ -35,6 +35,7 @@ export function connectorPreview(args: Record<string, unknown>): string {
 const WORDS: Record<DesktopApprovalKind, string> = {
     delete: 'deletes something', send: 'sends something to other people', share: 'shares something with other people',
     post: 'posts or publishes something', pay: 'pays or moves money', credential: 'changes a password or other credential',
+    repository: 'changes a GitHub repository',
     press: 'presses a button on a web page while Extra vigilant is on',
 }
 
@@ -89,8 +90,9 @@ export async function decideConnectorCall(db: Client, call: ConnectorCall, now =
     const said = (outcome: NonNullable<DesktopActivityDecision['outcome']>, rule: string): DesktopActivityDecision => ({ outcome, rule, ...(call.kind !== 'press' && { kind: call.kind }), action: call.tool.slice(0, 200) })
     const press = call.press
     if (!press === (call.tool === DESKTOP_BROWSER_PRESS_TOOL)) throw new Error('A browser press and a connector call are held under different names')
-    // A browser press never has a standing answer: each one is asked about.
-    const rule = press ? undefined : (await db.execute({ sql: "SELECT id,session_id FROM desktop_connector_approval_rules WHERE owner=? AND tool=? AND session_id IN ('',?) ORDER BY session_id DESC LIMIT 1", args: [call.owner, call.tool, call.sessionId] })).rows[0]
+    // A browser press never has a standing answer: each one is asked about. Neither does merging a pull
+    // request or deleting a branch or a file on GitHub, whatever answer was saved before.
+    const rule = press || desktopGithubAlwaysAsks(call.tool) ? undefined : (await db.execute({ sql: "SELECT id,session_id FROM desktop_connector_approval_rules WHERE owner=? AND tool=? AND session_id IN ('',?) ORDER BY session_id DESC LIMIT 1", args: [call.owner, call.tool, call.sessionId] })).rows[0]
     if (rule) return { answer: null, trail: said('allowed-by-permission', rule.session_id === '' ? 'standing-answer:always' : 'standing-answer:conversation') }
     const digest = digestOf(call.arguments)
     const tx = await db.transaction('write')
@@ -154,7 +156,7 @@ export async function decideConnectorApproval(db: Client, sessionId: string, id:
         const row = (await tx.execute({ sql: "SELECT owner,tool,kind FROM desktop_connector_approval_requests WHERE id=? AND session_id=? AND status='pending'", args: [id, sessionId] })).rows[0]
         if (!row) { await tx.rollback(); return null }
         // A press is allowed once or declined. It never gets a standing answer.
-        if (row.tool === DESKTOP_BROWSER_PRESS_TOOL && decision !== 'once' && decision !== 'deny') { await tx.rollback(); return null }
+        if ((row.tool === DESKTOP_BROWSER_PRESS_TOOL || desktopGithubAlwaysAsks(String(row.tool))) && decision !== 'once' && decision !== 'deny') { await tx.rollback(); return null }
         await tx.execute({ sql: 'UPDATE desktop_connector_approval_requests SET status=?, decided_at=? WHERE id=?', args: [decision === 'deny' ? 'declined' : 'allowed', now.toISOString(), id] })
         if (decision === 'conversation' || decision === 'always') {
             await tx.execute({

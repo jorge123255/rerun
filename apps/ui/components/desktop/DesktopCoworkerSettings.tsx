@@ -2,7 +2,7 @@
 
 import { useDesktopLocale } from './DesktopLocale'
 import type { desktopTranslator } from '@/lib/desktop/locale'
-import { VERBOSITY_LEVELS } from '@rerun/contracts'
+import { readDesktopGithubRepository, VERBOSITY_LEVELS } from '@rerun/contracts'
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogFooter, DialogTrigger } from '@/components
 import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import { SettingsIcon } from '@/lib/icons'
 import { Field } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import { MarkdownTextarea } from '@/components/ui/markdown-textarea'
 import { Segmented } from '@/components/ui/segmented'
 import { Switch } from '@/components/ui/switch'
@@ -125,6 +126,8 @@ export function DesktopCoworkerSettingsBody({ agent, authority, disabled, regist
     const [saving, setSaving] = useState(false)
     const [pendingClose, setPendingClose] = useState<{ close: () => void; tab: HTMLElement | null } | null>(null)
     const [attempt, setAttempt] = useState(0)
+    // The repository field as typed; null until the person edits it.
+    const [repositoryDraft, setRepositoryDraft] = useState<string | null>(null)
 
     useEffect(() => {
         const controller = new AbortController()
@@ -144,8 +147,11 @@ export function DesktopCoworkerSettingsBody({ agent, authority, disabled, regist
     const suggestionsChanged = draft?.suggestedReplies !== settings?.suggestedReplies
     const memoryChanged = draft?.memoryEnabled !== settings?.memoryEnabled
     const learningChanged = draft?.autoMemory !== settings?.autoMemory
-    const dirty = !!draft && (lengthChanged || instructionsChanged || memoryChanged || learningChanged || suggestionsChanged)
-    const canSave = !disabled && dirty && (!instructionsChanged || !!draft.soul.trim())
+    const repositoryText = (value: Settings['repository'] | undefined) => value ? `${value.owner}/${value.name}` : ''
+    const repositoryChanged = repositoryDraft !== null && repositoryDraft.trim() !== repositoryText(settings?.repository)
+    const repositoryValid = !repositoryChanged || !repositoryDraft!.trim() || !!readDesktopGithubRepository(repositoryDraft!)
+    const dirty = !!draft && (lengthChanged || instructionsChanged || memoryChanged || learningChanged || suggestionsChanged || repositoryChanged)
+    const canSave = !disabled && dirty && (!instructionsChanged || !!draft.soul.trim()) && repositoryValid
     useFileUnloadGuard(dirty, desktopFileDraftHost())
     const guardClose = useCallback((close: () => void) => {
         if (savingNow.current) return
@@ -176,10 +182,12 @@ export function DesktopCoworkerSettingsBody({ agent, authority, disabled, regist
                     ...(memoryChanged && { memoryEnabled: draft.memoryEnabled }),
                     ...(learningChanged && { autoMemory: draft.autoMemory }),
                     ...(suggestionsChanged && { suggestedReplies: draft.suggestedReplies }),
+                    ...(repositoryChanged && { repository: repositoryDraft!.trim() || null }),
                 }),
             }, t('coworker.saveFailed'))
             setSettings(saved)
             setDraft(saved)
+            setRepositoryDraft(null)
             onDone?.()
             toast.success(t('coworker.saved'))
         } catch (cause) {
@@ -198,6 +206,13 @@ export function DesktopCoworkerSettingsBody({ agent, authority, disabled, regist
                     {settings.soulEditable ? <MarkdownTextarea label={t('coworker.instructions')} dialogTitle={t('coworker.instructionsEditor')} hideRequired
                         className="min-h-36 font-mono text-xs" disabled={saving || disabled} value={draft.soul} onChange={soul => setDraft({ ...draft, soul })} required />
                         : <p className="text-sm text-muted-foreground">{t('coworker.instructionsLocked')}</p>}
+                    <Field label={t('coworker.repository')} htmlFor={fieldId + '-repository'} helperText={t('coworker.repositoryHelp')}
+                        error={repositoryValid ? undefined : t('coworker.repositoryInvalid')}>
+                        <Input id={fieldId + '-repository'} data-testid="desktop-coworker-repository" inputMode="url" autoComplete="off" spellCheck={false} placeholder="owner/name"
+                            value={repositoryDraft ?? repositoryText(settings.repository)} onChange={event => setRepositoryDraft(event.target.value)} />
+                        {settings.repository && !repositoryChanged && <a className="text-xs text-primary underline-offset-2 hover:underline" href={settings.repository.url} target="_blank" rel="noreferrer noopener"
+                            data-testid="desktop-coworker-repository-link">{t('coworker.repositoryOpen', { name: repositoryText(settings.repository) })}</a>}
+                    </Field>
                     <fieldset className="min-w-0 space-y-2">
                         <legend className="text-sm font-medium">{t('coworker.replyLength')}</legend>
                         <Segmented options={replyLengths} value={draft.verbosity} onChange={verbosity => setDraft({ ...draft, verbosity })} />
@@ -221,7 +236,7 @@ export function DesktopCoworkerSettingsBody({ agent, authority, disabled, regist
                 <DialogFooter>
                     {(onDone || dirty) && <Button type="button" variant="outline" disabled={saving} onClick={() => {
                         if (onDone) onDone()
-                        else { setDraft(settings); setError('') }
+                        else { setDraft(settings); setRepositoryDraft(null); setError('') }
                     }}>{t('cancel')}</Button>}
                     {error && !draft ? <Button type="button" onClick={() => { setError(''); setAttempt(n => n + 1) }}>{t('coworker.retry')}</Button>
                         : <Button type="submit" disabled={!canSave || saving}>{t(saving ? 'coworker.saving' : 'coworker.save')}</Button>}

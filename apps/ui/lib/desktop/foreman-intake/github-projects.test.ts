@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest'
 import { DESKTOP_GITHUB_PROJECT_LIMITS, githubRepositoryLinksMessage, parseGithubRepositoryLinks, type DesktopGithubProject, type DesktopGithubProjectsRecord } from '@rerun/contracts'
 
 vi.mock('server-only', () => ({}))
-import { acceptedGithubProjects, desktopGithubProjectsData, desktopGithubProjectsInstruction } from './github-projects'
+import { acceptedGithubProjects, desktopGithubProjectsData, desktopGithubProjectsInstruction, DESKTOP_GITHUB_PROJECTS_PROPOSAL_RULES } from './github-projects'
 import { createDesktopGithubProjectsStore, readDesktopGithubProjects } from '../server/github-projects/store'
 
 const project = (name: string, patch: Partial<DesktopGithubProject> = {}): DesktopGithubProject => ({
@@ -82,4 +82,22 @@ it('keeps the reviewed set for a conversation, survives a reopen, and passes not
     expect(await store.current(other)).toBeNull()
     await store.clear(chat)
     expect(await readDesktopGithubProjects(db, chat)).toBeNull()
+})
+
+it('tells the Chief of Staff how to name each coworker\'s repository and what to tell the owner about what it can do at first', () => {
+    const rules = DESKTOP_GITHUB_PROJECTS_PROPOSAL_RULES
+    // The repository travels in its own field, and the app is the one that decides whether it is kept.
+    expect(rules).toContain('set `repository` to that project\'s repository as owner/name and `projectRole` to its role')
+    expect(rules).toContain('never set it to any other repository')
+    // One line per project on what the coworkers can do at first: read only, and only after the owner acts.
+    expect(rules).toContain('write one line per project saying what its proposed coworkers will be able to do at first')
+    expect(rules).toContain('cannot read the repository until the user attaches a GitHub account to each of them from the Vault')
+    expect(rules).toContain('read only until the user also turns on Change GitHub repositories')
+    expect(rules).toContain('merging a pull request or deleting a branch or a file asks every time')
+    // Nothing is promised or attached, and the intake token stays with the intake.
+    expect(rules).toContain('Do not attach GitHub or promise repository access')
+    expect(rules).toContain('the read-only token the intake used is never given to a coworker')
+    expect(rules).toContain('calling still needs the Call coworkers permission')
+    // The rules are the app's own text and ride along with the data line.
+    expect(desktopGithubProjectsInstruction(record([project('openflix')]))!.endsWith(rules)).toBe(true)
 })
