@@ -282,3 +282,31 @@ it('opens the exact chat model picker from a settled failure and saves only an e
     expect(onOpenModelSettings).toHaveBeenCalledOnce()
     expect(changes).toHaveLength(1)
 })
+
+it('puts the company profile over the visible board only while the company questions are open and a board is behind them', async () => {
+    cancelDraftShutdown(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', { randomUUID }); vi.stubGlobal('EventSource', Source)
+    const chat = { workspaceId: '1', chatId: 'fmc_overlay01' }
+    const server = { chat, sessionId: 'session', model: null, messages: [] as unknown[], view: { contractVersion: 1, chat, phase: 'discover', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null }, ui: { revision: 0, snapshot: null } }
+    const requests: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => { requests.push(String(url)); return Response.json(server) }))
+    const panel = (fill = false) => <DesktopForemanPanel key={`${fill}:${server.messages.length}`} fill={fill} controlledOpen onClose={vi.fn()} onOpenCoworker={vi.fn()} onOpenCalledChat={vi.fn()} onOpenBox={vi.fn()} agentNameOf={id => id} />
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(panel()))
+    expect(column.intake).toBeDefined()
+    const overlay = column.renderBoardOverlay?.({ discoveries: undefined as never, live: false }) as { props: { style: unknown; 'data-desktop-company-profile-overlay': boolean; children: { props: Record<string, unknown> } } }
+    // The middle track of the Chief of Staff grid: beside a docked column, never under it.
+    expect(overlay.props.style).toEqual({ gridColumn: 2, gridRow: 1 })
+    expect(overlay.props['data-desktop-company-profile-overlay']).toBe(true)
+    expect(overlay.props.children.props).toMatchObject({ chat, active: true, emptyWorkspace: false, onboarding: false })
+    // Mounting the overlay host starts no industry suggestion and no website read.
+    expect(requests.some(url => url.includes('company-profile'))).toBe(false)
+
+    await act(async () => root!.render(panel(true)))
+    expect(column.intake).toBeDefined()
+    expect(column.renderBoardOverlay).toBeUndefined()
+
+    server.messages = [{ id: 'message', role: 'user', parts: [{ type: 'text', text: 'A saved message' }] }]
+    await act(async () => root!.render(panel()))
+    expect(column.intake).toBeUndefined()
+    expect(column.renderBoardOverlay).toBeUndefined()
+})

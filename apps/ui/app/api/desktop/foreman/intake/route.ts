@@ -6,6 +6,7 @@ import { desktopForeman } from '@/lib/desktop/server/foreman/binding'
 import { ownedForemanChat } from '@/lib/desktop/server/foreman/chat-store'
 import { createDesktopForemanIntakeBinding } from '@/lib/desktop/server/foreman/intake'
 import { desktopCompanyProfile } from '@/lib/desktop/server/company-profile/binding'
+import { readDesktopSiteProfile } from '@/lib/desktop/server/company-profile/site-profile'
 import { assertDesktopCompanyProfileIntakeHints } from '@/lib/desktop/server/company-profile/intake-hints'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { DesktopForemanIntakeConflictError, DesktopForemanIntakeRefusal } from '@/lib/desktop/server/foreman-intake/store'
@@ -19,6 +20,7 @@ const inputSchema = z.discriminatedUnion('action', [
     z.strictObject({ action: z.literal('lookup'), chat: foremanChatRefSchema, requestId: z.uuid() }),
     z.strictObject({ action: z.literal('decide-industry'), chat: foremanChatRefSchema, hint: z.string().trim().min(1).max(500) }),
     z.strictObject({ action: z.literal('analyze-site'), chat: foremanChatRefSchema, hint: z.string().trim().min(1).max(500) }),
+    z.strictObject({ action: z.literal('site-profile'), chat: foremanChatRefSchema }),
 ])
 
 /** The intake with its optional helpers for this chat: industry suggestion, website read, and the first name saved on this Mac. */
@@ -56,6 +58,12 @@ export async function POST(request: Request) {
         const { profile, service } = await intakeFor(runtime, app, chat)
         try {
             if (input.action === 'lookup') return Response.json({ completion: await service.lookupCompletion(chat, input.requestId) })
+            if (input.action === 'site-profile') {
+                // What the finished website read found, for the website in the saved answers. Reading it starts nothing.
+                const saved = (await service.read(chat)).session
+                const website = saved.draft.websiteSkipped ? null : saved.draft.companyUrl.trim() || null
+                return Response.json({ profile: await readDesktopSiteProfile(app.db, chat, website) }, { headers: { 'cache-control': 'no-store' } })
+            }
             if (input.action === 'save') {
                 // An automatic value is accepted only when it is the current suggestion for these exact
                 // saved answers, or the first name saved on this Mac. Anything else is refused.

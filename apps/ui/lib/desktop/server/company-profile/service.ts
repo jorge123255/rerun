@@ -264,10 +264,17 @@ export function createDesktopCompanyProfileService(ports: DesktopCompanyProfileS
             readActor(chat, context),
         ])
         const decision = savedDecision && identities.decision && sameIdentity(savedDecision.identity, identities.decision) ? savedDecision : null
-        const enrichment = savedEnrichment && identities.enrichment && sameIdentity(savedEnrichment.identity, identities.enrichment) ? savedEnrichment : null
+        const exact = savedEnrichment && identities.enrichment && sameIdentity(savedEnrichment.identity, identities.enrichment) ? savedEnrichment : null
+        // A finished read of the same website stays true when later answers (industry, role, name)
+        // move the draft on. It is kept on show; only what the page said is carried over, and
+        // everything the person answers is read fresh.
+        const carried = !exact && savedEnrichment && identities.enrichment && savedEnrichment.status === 'succeeded'
+            && savedEnrichment.identity.chat.workspaceId === identities.enrichment.chat.workspaceId && savedEnrichment.identity.chat.chatId === identities.enrichment.chat.chatId
+            && savedEnrichment.identity.inputDigest === identities.enrichment.inputDigest ? savedEnrichment : null
+        const enrichment = exact ?? carried
         const decisionResult = decision?.status === 'succeeded' && decision.outcome?.status === 'succeeded' ? decision.outcome.decision : null
         const enrichedProfile = enrichment?.status === 'succeeded' && enrichment.outcome?.status === 'succeeded' ? enrichment.outcome.profile : null
-        const profile = enrichedProfile ?? projectDesktopCompanyProfile({
+        const current = () => projectDesktopCompanyProfile({
             session: context.session,
             accepted: context.accepted,
             evidence: context.discovery ? companyProfileEvidenceFromDiscovery(context.discovery) : [],
@@ -275,6 +282,16 @@ export function createDesktopCompanyProfileService(ports: DesktopCompanyProfileS
             decision: decisionResult,
             knownFirstName: actorName,
         })
+        const fromPage = (field: DesktopCompanyProfileProjection['name'], fallback: DesktopCompanyProfileProjection['name']) =>
+            field.origin === 'inference' || field.origin === 'discovery' ? field : fallback
+        let profile = exact && enrichedProfile ? enrichedProfile : current()
+        if (carried && enrichedProfile) profile = {
+            ...profile,
+            name: fromPage(enrichedProfile.name, profile.name),
+            description: fromPage(enrichedProfile.description, profile.description),
+            offering: fromPage(enrichedProfile.offering, profile.offering),
+            audience: fromPage(enrichedProfile.audience, profile.audience),
+        }
         const knownFirstName: DesktopCompanyProfileKnownName = actorName || context.session.knownFirstName
             ? { status: 'known', firstName: actorName ?? context.session.knownFirstName!, source: 'local_profile' }
             : { status: 'unavailable', question: INTAKE_COPY.name.title }

@@ -27,6 +27,11 @@ vi.mock('@/lib/desktop/server/foreman/binding', () => ({ desktopForeman: async (
     },
 }) }))
 import { GET, POST } from './route'
+import { profileAttempt } from '@/lib/desktop/company-profile/test-fixtures'
+import { desktopCompanyProfileInputDigest } from '@/lib/desktop/server/company-profile/identity'
+import { ensureDesktopCompanyProfileSchema } from '@/lib/desktop/server/company-profile/schema'
+import { createSqliteDesktopCompanyProfileStore } from '@/lib/desktop/server/company-profile/store'
+import { readDesktopIntakeSiteProfile } from '@/lib/desktop/foreman-intake/client'
 
 const chat = { workspaceId: '1', chatId: 'fmc_intakehttp001' }
 const origin = 'http://127.0.0.1:43100', token = 's'.repeat(48)
@@ -140,4 +145,29 @@ it('asks the caller to wait while the typed company answer is still being saved,
     const none = await POST(request({ action: 'decide-industry', chat, hint: 'linkedin.com/company/example' }))
     expect(none.status).toBe(200)
     expect(await none.json()).toEqual({ industry: null })
+})
+
+it('site-profile returns the finished read for the saved website only, and starts nothing', async () => {
+    await ensureDesktopCompanyProfileSchema(active.db!)
+    const store = createSqliteDesktopCompanyProfileStore(active.db!, { schemaReady: true })
+    const attempt = (site: string) => ({ ...profileAttempt('enrich'), requestId: randomUUID(), identity: { chat, draftRevision: 0, inputDigest: desktopCompanyProfileInputDigest('enrich', site) } })
+    await store.insert(attempt('example.com'))
+    // Nothing saved yet: no website to match, so nothing is returned.
+    const before = await POST(request({ action: 'site-profile', chat }))
+    expect(before.status).toBe(200)
+    expect(await before.json()).toEqual({ profile: null })
+    await save()
+    const response = await POST(request({ action: 'site-profile', chat }))
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(await response.json()).toEqual({ profile: {
+        website: 'example.com', readAt: '2026-11-06T00:00:00.000Z', name: 'Retalk', description: 'Customer research software', offering: 'Research interviews and analysis', audience: 'Support teams',
+    } })
+    expect((await POST(request({ action: 'site-profile', chat: { ...chat, chatId: 'fmc_someoneelse001' } }))).status).toBe(404)
+    expect((await POST(request({ action: 'site-profile', chat, extra: true }))).status).toBe(400)
+    expect(active.sends).toBe(0)
+    expect((await active.db!.execute('SELECT COUNT(*) AS n FROM desktop_company_profile_attempts')).rows[0]!.n).toBe(1)
+
+    // The renderer client reads the same answer through the same route.
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => POST(request(JSON.parse(String(init.body))))))
+    expect((await readDesktopIntakeSiteProfile(chat))?.name).toBe('Retalk')
 })

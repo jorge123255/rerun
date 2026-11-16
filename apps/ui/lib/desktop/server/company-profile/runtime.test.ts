@@ -94,6 +94,39 @@ describe('company profile runtime identity and replay', () => {
         expect((await service.read(chat)).decision).toEqual(first)
     })
 
+    it('keeps what the page said on show after later answers move the draft on, and drops it when the website changes', async () => {
+        const { service, context } = fixture()
+        const identity = desktopCompanyProfileIdentities(baseSession).enrichment!
+        const attempt = await service.enrich({ requestId: randomUUID(), identity, collect: true })
+        expect(attempt.status).toBe('succeeded')
+        // The person answers the next questions: the saved read was made against revision 1.
+        context.session = { ...baseSession, revision: 4, draft: { ...baseSession.draft, industry: 'legal', position: 'Partner', firstName: 'Grace' } }
+        const later = await service.read(chat)
+        expect(later.enrichmentIdentity?.draftRevision).toBe(4)
+        expect(later.enrichment?.requestId).toBe(attempt.requestId)
+        expect(later.profile).toMatchObject({
+            name: { value: 'Acme', origin: 'inference' }, description: { value: 'Quiet kettles for hotels.' }, offering: { value: 'Quiet kettles' }, audience: { value: 'Small hotels' },
+            // What the person answered since is read fresh, not from the saved read.
+            industry: { value: 'legal', origin: 'manual' }, role: { value: 'Partner' }, firstName: { value: 'Grace' },
+        })
+        // A different website, or none, is not the page that was read.
+        context.session = { ...context.session, draft: { ...context.session.draft, companyUrl: 'other.example' } }
+        const changed = await service.read(chat)
+        expect(changed.enrichment).toBeNull()
+        expect(changed.profile.name.value).toBeNull()
+        context.session = { ...context.session, draft: { ...context.session.draft, companyUrl: 'acme.example', websiteSkipped: true } }
+        expect((await service.read(chat)).enrichment).toBeNull()
+    })
+
+    it('a read that did not finish is not carried past the answers it was made for', async () => {
+        const { service, context } = fixture({ enrich: async () => ({ status: 'error', reason: 'model_failed' }) })
+        const attempt = await service.enrich({ requestId: randomUUID(), identity: desktopCompanyProfileIdentities(baseSession).enrichment!, collect: true })
+        expect(attempt.status).toBe('error')
+        expect((await service.read(chat)).enrichment?.requestId).toBe(attempt.requestId)
+        context.session = { ...baseSession, revision: 2 }
+        expect((await service.read(chat)).enrichment).toBeNull()
+    })
+
     it('does not call inference when a manual industry already wins', async () => {
         const session = { ...baseSession, draft: { ...baseSession.draft, industry: 'legal' as const } }
         const { service, calls } = fixture({ session })
