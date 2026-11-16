@@ -140,8 +140,81 @@ test('removing the key revokes its own accounts and never one that is not', asyn
     await apps.act({ action: 'connect', slug: 'gmail', label: 'Work' })
     fake.state.accounts.set('ca_other', { user: 'someone_else', toolkit: 'gmail', status: 'ACTIVE' })
     await db.execute({ sql: "UPDATE desktop_managed_app_accounts SET connected_account_id='ca_other' WHERE id=?", args: [first.id] })
-    expect((await apps.act({ action: 'remove-key' })).view).toMatchObject({ configured: false, accounts: [] })
+    // The confirm text counts the accounts this Mac made, whatever Composio later says of them.
+    expect((await apps.view()).keyRemovalSignsOut).toBe(2)
+    const cleared = await apps.act({ action: 'remove-key' })
+    expect(cleared.view).toMatchObject({ configured: false, accounts: [] })
+    expect(cleared.notSignedOut).toBeUndefined()
+    expect(cleared.view.keyRemovalSignsOut).toBeUndefined()
     expect(fake.state.removed).toEqual(['ca_2'])
+    expect(fake.state.accounts.has('ca_other')).toBe(true)
+})
+
+test('removing the key never asks Composio about a row that does not carry this Mac’s user naming', async () => {
+    const fake = composio(), apps = await service(fake.network)
+    const account = (await apps.act({ action: 'connect', slug: 'gmail' })).view.accounts[0]!
+    // The row was pointed at another user and at that user's real account: nothing of it is read or removed.
+    fake.state.accounts.set('ca_theirs', { user: 'someone_else', toolkit: 'gmail', status: 'ACTIVE' })
+    await db.execute({ sql: "UPDATE desktop_managed_app_accounts SET user_id='someone_else', connected_account_id='ca_theirs' WHERE id=?", args: [account.id] })
+    expect((await apps.view()).keyRemovalSignsOut).toBe(0)
+    const asked: string[] = []
+    const watched = (async (input: RequestInfo | URL, init?: RequestInit) => { asked.push(`${init?.method ?? 'GET'} ${new URL(String(input)).pathname}`); return fake.network(input, init) }) as typeof fetch
+    const again = desktopManagedApps(db, crypto, 1, { network: watched, returnUrl: RETURN, coworkerExists: async () => true })
+    expect((await again.act({ action: 'remove-key' })).view).toMatchObject({ configured: false, accounts: [] })
+    expect(asked.filter(line => line.includes('connected_accounts'))).toEqual([])
+    expect(fake.state.removed).toEqual([])
+    expect([...fake.state.accounts.keys()].sort()).toEqual(['ca_1', 'ca_theirs'])
+})
+
+test('a Composio that cannot be reached keeps the key and names the accounts still signed in; removing anyway is a second choice', async () => {
+    const fake = composio(), apps = await service(fake.network)
+    const first = (await apps.act({ action: 'connect', slug: 'gmail' })).view.accounts[0]!
+    await apps.act({ action: 'connect', slug: 'gmail', label: 'Work' })
+    await db.execute({ sql: "UPDATE desktop_managed_app_accounts SET status='active' WHERE id=?", args: [first.id] })
+    await apps.act({ action: 'attach', id: first.id, agentId: 'coworker-1', attached: true })
+    fake.state.down = true
+    const held = await apps.act({ action: 'remove-key' })
+    expect(held.notSignedOut).toEqual(['Gmail', 'Gmail · Work'])
+    expect(held.view).toMatchObject({ configured: true, keyRemovalSignsOut: 2 })
+    expect(held.view.accounts.map(row => row.agentIds)).toEqual([['coworker-1'], []])
+    expect((await db.execute('SELECT COUNT(*) AS n FROM desktop_managed_app_key')).rows[0]!.n).toBe(1)
+
+    // Reachable again: asking once more signs both out and drops the key.
+    fake.state.down = false
+    const cleared = await apps.act({ action: 'remove-key' })
+    expect(cleared.notSignedOut).toBeUndefined()
+    expect(cleared.view).toMatchObject({ configured: false, accounts: [] })
+    expect(fake.state.removed).toEqual(['ca_1', 'ca_2'])
+
+    // The explicit second choice: the key and the rows go, and the sign-ins are left at Composio.
+    await apps.act({ action: 'set-key', key: KEY })
+    await apps.act({ action: 'connect', slug: 'gmail' })
+    fake.state.down = true
+    expect((await apps.act({ action: 'remove-key' })).notSignedOut).toEqual(['Gmail'])
+    const forced = await apps.act({ action: 'remove-key', leaveSignedIn: true })
+    expect(forced.notSignedOut).toBeUndefined()
+    expect(forced.view).toMatchObject({ configured: false, accounts: [] })
+    expect((await db.execute('SELECT COUNT(*) AS n FROM desktop_managed_app_key')).rows[0]!.n).toBe(0)
+    expect(fake.state.accounts.has('ca_3')).toBe(true)
+})
+
+test('an account signed out before Composio went away leaves the Vault, and only the rest is named', async () => {
+    const fake = composio(), apps = await service(fake.network)
+    await apps.act({ action: 'connect', slug: 'gmail' })
+    await apps.act({ action: 'connect', slug: 'gmail', label: 'Work' })
+    // Composio answers for the first account and is gone before the second.
+    let deletes = 0
+    const flaky = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const answer = await fake.network(input, init)
+        if (init?.method === 'DELETE' && ++deletes === 1) fake.state.down = true
+        return answer
+    }) as typeof fetch
+    const again = desktopManagedApps(db, crypto, 1, { network: flaky, returnUrl: RETURN, coworkerExists: async () => true })
+    const held = await again.act({ action: 'remove-key' })
+    expect(held.notSignedOut).toEqual(['Gmail · Work'])
+    expect(held.view.accounts.map(row => row.label)).toEqual(['Work'])
+    expect(held.view).toMatchObject({ configured: true, keyRemovalSignsOut: 1 })
+    expect(fake.state.removed).toEqual(['ca_1'])
 })
 
 test('an account whose user is not this workspace’s own is never used, checked or revoked', async () => {

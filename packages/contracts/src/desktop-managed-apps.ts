@@ -19,12 +19,17 @@ export const desktopManagedAppsViewSchema = z.object({
         // `expired`: Composio no longer holds a working sign-in for it; the person signs in again and its coworkers keep it.
         id, slug, name: z.string().max(200), label: label.optional(), status: z.enum(['pending', 'active', 'expired']), agentIds: z.array(z.string().max(200)).max(250),
     }).strict()).max(200),
+    // How many sign-ins removing the key will try to sign out at Composio: the accounts this Mac made under its own
+    // Composio users. Absent when there is no project key to remove.
+    keyRemovalSignsOut: z.number().int().min(0).max(200).optional(),
 }).strict()
 export type DesktopManagedAppsView = z.infer<typeof desktopManagedAppsViewSchema>
 
 export const desktopManagedAppsActionSchema = z.discriminatedUnion('action', [
     z.object({ action: z.literal('set-key'), key: z.string().min(8).max(512).regex(/^[!-~]+$/) }).strict(),
-    z.object({ action: z.literal('remove-key') }).strict(),
+    // Removing the key first signs out, at Composio, the accounts this Mac made. `leaveSignedIn` is the person's
+    // explicit second choice once they were told which accounts could not be signed out: the key goes anyway.
+    z.object({ action: z.literal('remove-key'), leaveSignedIn: z.boolean().optional() }).strict(),
     z.object({ action: z.literal('connect'), slug, label: label.optional() }).strict(),
     z.object({ action: z.literal('refresh'), id, retry: z.boolean().optional() }).strict(),
     z.object({ action: z.literal('remove'), id }).strict(),
@@ -37,5 +42,10 @@ export type DesktopManagedAppsAction = z.infer<typeof desktopManagedAppsActionSc
 /** `signIn` is the page to open in the browser after `connect`; it is returned once. */
 // `addedToVault` names the Vault entry made for a Composio Connect key: that key opens one connector for every app,
 // so it is kept as a Vault MCP server rather than as a managed-apps key.
-export const desktopManagedAppsResultSchema = z.object({ view: desktopManagedAppsViewSchema, signIn: z.string().url().optional(), addedToVault: z.string().max(64).optional() }).strict()
+// `notSignedOut` answers `remove-key` when Composio could not be asked: the key and these accounts were kept,
+// named the way the Vault shows them ("Gmail", "Gmail · Work").
+export const desktopManagedAppsResultSchema = z.object({
+    view: desktopManagedAppsViewSchema, signIn: z.string().url().optional(), addedToVault: z.string().max(64).optional(),
+    notSignedOut: z.array(z.string().max(260)).max(200).optional(),
+}).strict()
 export type DesktopManagedAppsResult = z.infer<typeof desktopManagedAppsResultSchema>

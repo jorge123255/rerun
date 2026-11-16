@@ -21,6 +21,15 @@ export interface DesktopDocumentBlobStore {
     readRenderedImage(scope: DesktopDocumentScope, attachment: DesktopDocumentAttachment, image: DesktopDocumentRenderedImage, signal: AbortSignal): Promise<Uint8Array>
     delete(scope: DesktopDocumentScope, attachment: DesktopDocumentAttachment, signal: AbortSignal): Promise<void>
 }
+/** The coworker's own Files. Paths are the contract's `chat-uploads/<name>` form; every call
+ * repeats the workspace, ownership and symlink checks of the Files code it is built on. */
+export interface DesktopDocumentStagedFiles {
+    /** Create-only. Returns once `path` holds exactly these bytes, also when a replay finds its own file. */
+    put(scope: DesktopDocumentScope, path: string, bytes: Uint8Array, sha256: string, signal: AbortSignal): Promise<void>
+    state(scope: DesktopDocumentScope, path: string, sha256: string, signal: AbortSignal): Promise<'missing' | 'changed' | 'same'>
+    /** Removes the file only while it still holds the saved bytes. */
+    remove(scope: DesktopDocumentScope, path: string, sha256: string, signal: AbortSignal): Promise<void>
+}
 export type DesktopDocumentAuthorities = {
     store: DesktopDocumentStore
     blobs: DesktopDocumentBlobStore
@@ -29,6 +38,8 @@ export type DesktopDocumentAuthorities = {
     readScopes?: (scope: DesktopDocumentScope, signal: AbortSignal) => Promise<DesktopDocumentScope[]>
     references: (scope: DesktopDocumentScope, attachmentId: string) => Promise<boolean>
     allowChatImages?: boolean
+    /** Absent where there is no coworker Files to save into (Chief of Staff): such files stay download-only. */
+    stagedFiles?: DesktopDocumentStagedFiles
     extractPdfText?: (bytes: Uint8Array, signal: AbortSignal) => Promise<string>
     transcriptionAvailable?: (attachment: DesktopDocumentAttachment) => Promise<boolean>
     transcribeAudio?: (input: { bytes: Uint8Array; mimeType: string; name: string; signal: AbortSignal }) => Promise<string>

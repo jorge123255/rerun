@@ -5,6 +5,7 @@ import { desktopManagedAppsResultSchema, desktopManagedAppsViewSchema, type Desk
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { invalidateDesktopConnectorApps } from '@/lib/desktop/use-connector-apps'
 import { DesktopAppLogo } from './DesktopAppLogo'
 
 const URL_PATH = '/api/desktop/managed-apps'
@@ -21,6 +22,8 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
     const [key, setKey] = useState('')
     const [query, setQuery] = useState('')
     const [removeKey, setRemoveKey] = useState(false)
+    // The accounts Composio could not be asked to sign out when the key was last removed: the key was kept for them.
+    const [notSignedOut, setNotSignedOut] = useState<readonly string[]>([])
     const [added, setAdded] = useState('')
     // The account another one is being added beside, and the label typed for it.
     const [another, setAnother] = useState<{ id: string; label: string } | null>(null)
@@ -34,25 +37,30 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
     useEffect(() => { void read() }, [read])
 
     async function act(action: DesktopManagedAppsAction): Promise<boolean> {
+        return (await send(action)) !== null
+    }
+    async function send(action: DesktopManagedAppsAction) {
         setBusy(true); setError('')
         try {
             const response = await fetch(URL_PATH, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(action) })
             const body = await response.json().catch(() => null)
-            if (!response.ok) { setError(typeof body?.error === 'string' ? body.error : 'That did not go through. Try again.'); return false }
+            if (!response.ok) { setError(typeof body?.error === 'string' ? body.error : 'That did not go through. Try again.'); return null }
             const result = desktopManagedAppsResultSchema.parse(body)
             setView(result.view)
+            if (action.action === 'attach') invalidateDesktopConnectorApps(action.agentId)
             // A Composio Connect key became a Vault connector: the Vault list above is read again to show it.
             if (result.addedToVault) { setAdded(result.addedToVault); onVaultChanged?.() }
             // The sign-in page opens in the browser; the app only ever asks Composio whether it finished.
             if (result.signIn) window.open(result.signIn, '_blank', 'noopener,noreferrer')
-            return true
-        } catch { setError('That did not go through. Try again.'); return false }
+            return result
+        } catch { setError('That did not go through. Try again.'); return null }
         finally { setBusy(false) }
     }
 
     if (!view) return null
     const locked = busy || disabled
     const taken = new Set(view.accounts.map(account => account.slug))
+    const signsOut = view.keyRemovalSignsOut ?? 0
     // A project can offer more than a thousand apps: the list shows the first matches and search finds the rest.
     const SHOWN = 40
     const matches = view.apps.filter(app => !taken.has(app.slug) && `${app.name} ${app.slug} ${app.summary}`.toLowerCase().includes(query.trim().toLowerCase()))
@@ -153,9 +161,20 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
                     {!view.connector && <button type="button" className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={locked} onClick={() => setRemoveKey(true)}>
                         Remove the Composio key
                     </button>}
-                    <ConfirmDialog open={removeKey} onOpenChange={setRemoveKey} title="Remove the Composio key?"
-                        description="Every managed app account in this Vault is removed with it, and coworkers lose those apps."
-                        confirmLabel="Remove key" pending={busy} onConfirm={() => { void act({ action: 'remove-key' }).then(() => setRemoveKey(false)) }} />
+                    <ConfirmDialog open={removeKey} onOpenChange={open => { setRemoveKey(open); if (!open) setNotSignedOut([]) }}
+                        title={notSignedOut.length ? 'The key was kept' : 'Remove the Composio key?'}
+                        description={notSignedOut.length
+                            ? `Composio could not be reached or refused the key, so ${notSignedOut.length === 1 ? 'this account is' : 'these accounts are'} still signed in there: ${notSignedOut.join(', ')}. Cancel and try again later, or remove the key anyway and leave ${notSignedOut.length === 1 ? 'that sign-in' : 'those sign-ins'} at Composio. Without the key this Mac cannot sign them out later; you would do that in your Composio account.`
+                            : `Every managed app account in this Vault is removed with it, and coworkers lose those apps. ${signsOut === 0 ? 'No account here has a sign-in at Composio to sign out.' : `${signsOut === 1 ? '1 account this Mac signed in is' : `${signsOut} accounts this Mac signed in are`} signed out at Composio first.`} Nothing else in your Composio account is touched.`}
+                        confirmLabel={notSignedOut.length ? 'Remove key anyway' : 'Remove key'} pending={busy}
+                        onConfirm={event => {
+                            // The dialog stays open until Composio has answered: it either closes or says what was left.
+                            event.preventDefault()
+                            void send({ action: 'remove-key', ...(notSignedOut.length ? { leaveSignedIn: true } : {}) }).then(result => {
+                                if (result?.notSignedOut?.length) setNotSignedOut(result.notSignedOut)
+                                else { setRemoveKey(false); setNotSignedOut([]) }
+                            })
+                        }} />
                 </>
             )}
         </section>

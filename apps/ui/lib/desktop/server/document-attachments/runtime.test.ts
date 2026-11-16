@@ -37,7 +37,7 @@ async function fixture(workspaceId = 1) {
     let current = true, mutate: (() => Promise<void>) | undefined
     const service = await createDesktopDocumentRuntime(runtime, db, { isCurrent: () => current, agent: async id => { if (mutate) await mutate(); return { id, enabled: true } } })
     const signal = new AbortController().signal
-    const upload = () => service.upload(scope, { ...scope, attachmentId: randomUUID(), name: 'archive.zip', mimeType: 'application/octet-stream', position: 0 }, new Uint8Array([1, 2, 3]), signal)
+    const upload = () => service.upload(scope, { ...scope, attachmentId: randomUUID(), name: 'notes.txt', mimeType: 'text/plain', position: 0 }, new Uint8Array([97, 98, 99]), signal)
     return { db, url, runtime, service, scope, signal, layout, upload, invalidate: () => { current = false }, mutate: (callback: () => Promise<void>) => { mutate = callback } }
 }
 it.each([1, 2])('accepts the assigned database local owner row in runtime workspace %i', async workspaceId => {
@@ -45,7 +45,7 @@ it.each([1, 2])('accepts the assigned database local owner row in runtime worksp
     expect(await f.service.list(f.scope, f.signal)).toEqual([])
     const attachment = await f.upload()
     expect((await f.service.list(f.scope, f.signal)).map(item => item.attachmentId)).toEqual([attachment.attachmentId])
-    expect((await f.service.read(f.scope, attachment.attachmentId, attachment.sha256, f.signal)).bytes).toEqual(new Uint8Array([1, 2, 3]))
+    expect((await f.service.read(f.scope, attachment.attachmentId, attachment.sha256, f.signal)).bytes).toEqual(new Uint8Array([97, 98, 99]))
     await expect(f.service.list({ ...f.scope, agentId: 'sibling' }, f.signal)).rejects.toThrow()
 })
 it('rejects a row stored under another workspace id even when that id equals the runtime', async () => {
@@ -66,7 +66,7 @@ it('restores only the authenticated first-turn alias and keeps immutable read sc
     await f.db.execute("INSERT INTO desktop_tab_starts VALUES('owner','tab','engine-session','first-run')")
     await f.layout('first-session')
     expect((await f.service.list({ ...f.scope, sessionId: 'first-session' }, f.signal))[0]?.scope).toEqual(f.scope)
-    expect((await f.service.read(f.scope, a.attachmentId, a.sha256, f.signal)).bytes).toEqual(new Uint8Array([1, 2, 3]))
+    expect((await f.service.read(f.scope, a.attachmentId, a.sha256, f.signal)).bytes).toEqual(new Uint8Array([97, 98, 99]))
     await f.layout('other-session')
     expect(await f.service.list({ ...f.scope, sessionId: 'other-session' }, f.signal)).toEqual([])
     await expect(f.service.read(f.scope, a.attachmentId, a.sha256, f.signal)).rejects.toThrow('no longer available')
