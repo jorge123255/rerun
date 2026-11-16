@@ -58,7 +58,10 @@ function githubOf(items: readonly (DesktopForemanPlanItem & { key: string })[], 
     return found
 }
 
-export function sealShownPlan(raw: unknown, accepted?: AcceptedGithubProjects | null): SealResult {
+/** The connected providers a plan item's model may be chosen from. */
+export type PlanModelOption = { connectionId: string; name: string; models: readonly string[] }
+
+export function sealShownPlan(raw: unknown, accepted?: AcceptedGithubProjects | null, models: readonly PlanModelOption[] = []): SealResult {
     const parsed = foremanShowPlanInputSchema.safeParse(raw)
     if (!parsed.success) return { ok: false, message: parsed.error.issues.map(issue => issue.message).join(' ') }
     const input = parsed.data
@@ -73,9 +76,12 @@ export function sealShownPlan(raw: unknown, accepted?: AcceptedGithubProjects | 
     const plan: DesktopForemanSealedPlan = { title: input.title, boxes, items: keyed.map(item => {
         if (item.kind !== 'agent') return item
         // What the model asked for is never kept as such: only what the app accepted, under `github`.
-        const { repository: _repository, projectRole: _projectRole, ...rest } = item
+        const { repository: _repository, projectRole: _projectRole, provider, model, ...rest } = item
         const own = github.get(item.key)
-        return own ? { ...rest, github: own } : rest
+        // A model is kept only when that provider is connected and offers it: anything else falls back to the plan's model.
+        const connection = provider && model ? models.find(option => option.name.trim().toLowerCase() === provider.trim().toLowerCase() || option.connectionId === provider) : undefined
+        const chosenModel = connection && connection.models.includes(model!) ? { connectionId: connection.connectionId, model: model!, name: connection.name } : undefined
+        return { ...rest, ...(own && { github: own }), ...(chosenModel && { chosenModel }) }
     }) }
     return { ok: true, plan, digest: digestOf(plan) }
 }

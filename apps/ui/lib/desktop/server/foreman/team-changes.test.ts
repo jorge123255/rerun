@@ -1,0 +1,110 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createClient, type Client } from '@libsql/client'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+
+vi.mock('server-only', () => ({}))
+const { readDesktopTeamChanges, recordDesktopTeamChanges, sealTeamChanges, settleDesktopTeamChanges, teamModelOptions } = await import('./team-changes')
+const { sealShownPlan } = await import('./seal')
+import type { TeamChangeWorkspace } from './team-changes'
+
+const workspace: TeamChangeWorkspace = {
+    coworkers: [{ id: 'a1', name: 'Tuner Developer' }, { id: 'a2', name: 'Server Developer' }, { id: 'a3', name: 'Twin' }, { id: 'a4', name: 'twin' }],
+    connections: [
+        { id: 'mac-chatgpt', name: 'ChatGPT (Codex)', provider: 'codex', connected: true, models: ['gpt-6-sol', 'gpt-6-luna'], extraModels: [], codexReasoning: { 'gpt-6-sol': { supported: ['low', 'high'], default: 'low' } } },
+        { id: 'off', name: 'Claude', provider: 'claude', connected: false, models: ['claude-opus-5-5'], extraModels: [] },
+    ] as never,
+    github: { connect: true, alsoGives: ['Gmail'] },
+}
+const line = (action: string, extra: Record<string, unknown> = {}) => ({ action, ...extra })
+
+test('each line is resolved to a real coworker, permission and model, in the app\'s own words', () => {
+    const sealed = sealTeamChanges({ summary: 'Get the team ready', changes: [
+        line('switch_on', { coworker: 'tuner developer' }), line('allow', { coworker: 'Tuner Developer', permission: 'callAgent' }),
+        line('give_github', { coworker: 'Server Developer' }), line('start_setup', { coworker: 'Server Developer' }),
+        line('set_model', { coworker: 'Server Developer', connection: 'chatgpt (codex)', model: 'gpt-6-luna' }),
+        line('set_effort', { connection: 'ChatGPT (Codex)', model: 'gpt-6-sol', effort: 'high' }),
+        line('allow', { coworker: 'Tuner Developer', permission: 'githubWrite' }),
+        // The same line twice is one line.
+        line('switch_on', { coworker: 'Tuner Developer' }),
+    ] }, workspace)
+    if (!sealed.ok) throw new Error(sealed.message)
+    expect(sealed.refused).toEqual([])
+    expect(sealed.changes.map(change => [change.key, change.agentId, change.label])).toEqual([
+        ['change-0', 'a1', 'Switch on Tuner Developer'], ['change-1', 'a1', 'Allow Tuner Developer: Call coworkers'],
+        ['change-2', 'a2', 'Give Server Developer your GitHub sign-in'], ['change-3', 'a2', 'Start Server Developer\'s setup'],
+        ['change-4', 'a2', 'Set Server Developer to answer with ChatGPT (Codex) · gpt-6-luna'], ['change-5', null, 'Set ChatGPT (Codex) · gpt-6-sol to high effort'],
+        ['change-6', 'a1', 'Allow Tuner Developer: Change GitHub repositories'],
+    ])
+    // What reaches further than its words is said under the line.
+    expect(sealed.changes[2]!.caution).toContain('It also reaches Gmail')
+    expect(sealed.changes[5]!.caution).toContain('wherever this model runs')
+    expect(sealed.changes[6]!.caution).toContain('still asks you first')
+    expect(sealed.changes[4]).toMatchObject({ connectionId: 'mac-chatgpt', model: 'gpt-6-luna' })
+})
+
+test('a line that names nobody real, an unconnected provider, an unknown model or effort, or a permission outside the list is refused', () => {
+    const sealed = sealTeamChanges({ summary: 'x', changes: [
+        line('switch_on', { coworker: 'Nobody' }), line('switch_on', { coworker: 'Twin' }), line('switch_on'),
+        line('set_model', { coworker: 'Tuner Developer', connection: 'Claude', model: 'claude-opus-5-5' }),
+        line('set_model', { coworker: 'Tuner Developer', connection: 'ChatGPT (Codex)', model: 'gpt-9' }),
+        line('set_effort', { connection: 'ChatGPT (Codex)', model: 'gpt-6-sol', effort: 'ultra' }),
+        line('allow', { coworker: 'Tuner Developer' }), line('switch_off', { coworker: 'Server Developer' }),
+    ] }, workspace)
+    if (!sealed.ok) throw new Error(sealed.message)
+    expect(sealed.changes.map(change => change.label)).toEqual(['Switch off Server Developer'])
+    expect(sealed.refused).toEqual([
+        'switch_on for "Nobody": no coworker has this name', 'switch_on for "Twin": more than one coworker has this name', 'switch_on: name the coworker',
+        'set_model for "Tuner Developer": that provider is not connected', 'set_model for "Tuner Developer": that provider does not offer this model',
+        'set_effort: that model does not offer this effort', 'allow for "Tuner Developer": name the permission',
+    ])
+    // A permission that reaches the Mac itself cannot even be named.
+    expect(sealTeamChanges({ summary: 'x', changes: [line('allow', { coworker: 'Tuner Developer', permission: 'localMcpStdio' })] }, workspace).ok).toBe(false)
+    expect(sealTeamChanges({ summary: 'x', changes: [line('give_github', { coworker: 'Tuner Developer' })] }, { ...workspace, github: null })).toMatchObject({ changes: [], refused: ['give_github for "Tuner Developer": GitHub is not signed in in the Vault'] })
+})
+
+test('only connected providers, their models and efforts are offered, with no address or key', () => {
+    expect(teamModelOptions(workspace.connections)).toEqual([{ connectionId: 'mac-chatgpt', name: 'ChatGPT (Codex)', models: [{ id: 'gpt-6-sol', efforts: ['low', 'high'] }, { id: 'gpt-6-luna', efforts: [] }] }])
+})
+
+let db: Client, dir: string
+beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'team-changes-')); db = createClient({ url: `file:${join(dir, 'app.db')}` }) })
+afterEach(async () => { db.close(); await rm(dir, { recursive: true, force: true }) })
+const chat = { workspaceId: '1', chatId: 'fmc_teamchanges0001' }
+const binding = { ...chat, runId: '11111111-1111-4111-8111-111111111111', model: { connectionId: 'mac-chatgpt', model: 'gpt-6-sol' } } as never
+
+test('a proposal is kept once for the card, tells the model nothing has changed, and is settled once by the person', async () => {
+    const input = { summary: 'Switch the developer on', changes: [line('switch_on', { coworker: 'Tuner Developer' }), line('switch_on', { coworker: 'Nobody' })] }
+    const first = await recordDesktopTeamChanges(db, binding, 'call-1', input, workspace)
+    expect(first).toMatchObject({ shown: 1, refused: ['switch_on for "Nobody": no coworker has this name'] })
+    expect(first.note).toContain('Nothing has changed yet')
+    // The same tool call again shows the same card, not a second one.
+    await recordDesktopTeamChanges(db, binding, 'call-1', input, workspace)
+    expect((await db.execute('SELECT count(*) AS n FROM desktop_foreman_team_changes')).rows[0]!.n).toBe(1)
+    const card = (await readDesktopTeamChanges(db, chat))!
+    expect([card.state, card.changes.length, card.changes[0]!.result]).toEqual(['shown', 1, null])
+
+    const applied = (await settleDesktopTeamChanges(db, chat, { id: card.id, state: 'applied', results: [{ key: 'change-0', ok: false, message: 'Coworker not found' }] }))!
+    expect([applied.state, applied.changes[0]!.result]).toEqual(['applied', { ok: false, message: 'Coworker not found' }])
+    // A settled card stays as it was settled, and another conversation cannot settle it.
+    expect((await settleDesktopTeamChanges(db, chat, { id: card.id, state: 'dismissed', results: [] }))!.state).toBe('applied')
+    expect(await settleDesktopTeamChanges(db, { ...chat, chatId: 'fmc_someoneelse0001' }, { id: card.id, state: 'dismissed', results: [] })).toBeNull()
+    // A proposal with nothing usable shows no card.
+    expect(await recordDesktopTeamChanges(db, binding, 'call-2', { summary: 'x', changes: [line('switch_on', { coworker: 'Nobody' })] }, workspace)).toMatchObject({ shown: 0 })
+    expect((await readDesktopTeamChanges(db, chat))!.id).toBe(card.id)
+})
+
+test('a plan item keeps the model the person chose only when that provider is connected and offers it', () => {
+    const agent = (name: string, extra = {}) => ({ kind: 'agent', name, role: 'Does the work', ...extra })
+    const models = [{ connectionId: 'mac-chatgpt', name: 'ChatGPT (Codex)', models: ['gpt-6-sol'] }]
+    const sealed = sealShownPlan({ title: 'More developers', items: [
+        agent('Dev one', { provider: 'chatgpt (codex)', model: 'gpt-6-sol' }), agent('Dev two', { provider: 'ChatGPT (Codex)', model: 'gpt-9' }),
+        agent('Dev three', { provider: 'Claude', model: 'claude-opus-5-5' }), agent('Dev four'),
+    ] }, null, models)
+    if (!sealed.ok) throw new Error(sealed.message)
+    const items = sealed.plan.items as { name: string; chosenModel?: unknown; provider?: unknown; model?: unknown }[]
+    expect(items.map(item => item.chosenModel ?? null)).toEqual([{ connectionId: 'mac-chatgpt', model: 'gpt-6-sol', name: 'ChatGPT (Codex)' }, null, null, null])
+    // What the model wrote is never kept as such.
+    for (const item of items) { expect(item.provider).toBeUndefined(); expect(item.model).toBeUndefined() }
+})

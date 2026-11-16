@@ -4,6 +4,7 @@ import { ZodError } from 'zod'
 import type { ForemanAuthorities } from './authority'
 import { createForemanRuntime, ForemanError, type ForemanRuntime } from './runtime'
 import { createForemanSqliteStore } from './store'
+import type { PlanModelOption } from './seal'
 import { acceptedGithubProjects } from '../../foreman-intake/github-projects'
 import { readDesktopGithubProjects } from '../github-projects/store'
 
@@ -13,9 +14,9 @@ export { ForemanError, type ForemanRuntime } from './runtime'
 
 // Root opens the runtime once per launch on its own desktop database, after applying the schema
 // step, then calls reconcile() at startup before serving Foreman routes.
-export function openForemanRuntime(db: Client, authorities: Partial<ForemanAuthorities>, companyName: () => Promise<string>): ForemanRuntime {
+export function openForemanRuntime(db: Client, authorities: Partial<ForemanAuthorities>, companyName: () => Promise<string>, planModels?: () => Promise<readonly PlanModelOption[]>): ForemanRuntime {
     return createForemanRuntime({
-        store: createForemanSqliteStore(db), authorities, companyName,
+        store: createForemanSqliteStore(db), authorities, companyName, planModels,
         // The repositories the owner kept in this conversation's intake review, and nothing else.
         githubProjects: async chat => acceptedGithubProjects(await readDesktopGithubProjects(db, chat)),
     })

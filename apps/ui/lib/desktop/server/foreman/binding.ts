@@ -30,6 +30,7 @@ import { desktopSiteProfileInstruction } from '../../foreman-intake/site-profile
 import { desktopGithubProjectsInstruction, desktopGithubProjectsPendingInstruction } from '../../foreman-intake/github-projects'
 import { readDesktopGithubProjects } from '../github-projects/store'
 import { desktopGithubProjects } from '../github-projects/binding'
+import { desktopTeamChangesInstruction, teamModelOptions } from './team-changes-binding'
 import { foremanIntakeMessage } from './intake'
 import { hideDesktopForemanIntakeKickoff } from './intake-history'
 import type { DesktopApprovalAnswer } from '../../approvals'
@@ -161,7 +162,8 @@ async function createBinding(runtime: DesktopRuntime) {
         setup: creation.setup,
         events: { publish },
         collectDiscovery: async ({ binding, discoveryId, url, signal, emit }) => { await companyDiscovery.collectForForeman({ binding, discoveryId, url, signal, emit }) },
-    }, async () => String((await db.execute('SELECT name FROM desktop_workspace WHERE id=1')).rows[0]?.name ?? 'My workspace'))
+    }, async () => String((await db.execute('SELECT name FROM desktop_workspace WHERE id=1')).rows[0]?.name ?? 'My workspace'),
+    async () => (await readDesktopProviders(runtime)).connections.filter(connection => connection.connected).map(connection => ({ connectionId: connection.id, name: connection.name, models: [...connection.models, ...(connection.extraModels ?? [])] })))
     async function intakeContext(chat: DesktopForemanChatRef, activeRequestId?: string, text?: string, existing?: Awaited<ReturnType<typeof ownedForemanChat>>, linkedNow = false) {
         const view = await runtimeCore.readView(chat)
         const owner = existing ?? await ownedForemanChat(db, chat)
@@ -404,6 +406,11 @@ async function createBinding(runtime: DesktopRuntime) {
                 }
             }
             const { view, companyProfile, siteProfile, githubProjects } = await intakeContext(chat, requestId, text, owner, linked.length > 0)
+            // What it may propose for the team, and the providers, models and efforts it may offer. A failure to read them only leaves this out.
+            const teamInstruction = await (async () => {
+                const [providers, coworkers] = await Promise.all([readDesktopProviders(runtime), listDesktopAgents(db)])
+                return desktopTeamChangesInstruction(teamModelOptions(providers.connections), coworkers.map(agent => ({ name: agent.name, enabled: agent.enabled })))
+            })().catch(() => null)
             const board = await readDesktopBoardState(db)
             const name = String((await db.execute('SELECT name FROM desktop_workspace WHERE id=1')).rows[0]?.name ?? 'My workspace')
             // The companion can still propose a new team. It never receives a confirm/build tool.
@@ -413,6 +420,7 @@ async function createBinding(runtime: DesktopRuntime) {
                 siteProfile ? desktopSiteProfileInstruction(siteProfile) : null,
                 desktopGithubProjectsInstruction(githubProjects),
                 stillReading ? desktopGithubProjectsPendingInstruction(linked) : null,
+                teamInstruction,
                 'Questions about Rerun itself must use search_docs and link the retrieved passage; do not guess features, prices or limits. Empty or unavailable documentation stays unavailable.',
                 'When the user asks to design or add coworkers, propose their jobs with show_plan. Nothing is created until they confirm the card. Never treat chat text as approval.'].filter(Boolean).join('\n\n')
             const turn: ForemanTurn = { binding: { ...chat, runId: requestId, model }, sessionId: owner.sessionId, text, brief: { instructions, tools: [] },

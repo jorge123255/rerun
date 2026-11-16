@@ -9,6 +9,8 @@ import { desktopForemanVoice } from '@/lib/desktop/server/foreman-voice/binding'
 import { readGrantedForemanWorkspaceSnapshot } from '@/lib/desktop/server/foreman-workspace-reads'
 import { authorizeForemanAlternate } from '@/lib/desktop/server/foreman-alternates/binding'
 import { materializeDesktopChatDocuments } from '@/lib/desktop/server/document-attachments/chat'
+import { recordDesktopTeamChanges } from '@/lib/desktop/server/foreman/team-changes'
+import { desktopTeamWorkspace } from '@/lib/desktop/server/foreman/team-changes-binding'
 export const runtime = 'nodejs'
 const base = z.object({ launchNonce: z.string(), binding: foremanBindingSchema })
 const turnRequest = z.strictObject({ launchNonce: z.string(), turn: desktopForemanTurnSchema })
@@ -19,6 +21,7 @@ const schema = z.discriminatedUnion('action', [
     turnRequest.extend({ action: z.literal('documents') }),
     z.strictObject({ action: z.literal('alternate'), launchNonce: z.string(), operation: z.enum(['prepare', 'lookup', 'start', 'stop']), target: foremanAlternateRequestSchema }),
     base.extend({ action: z.literal('show_plan'), toolCallId: z.string().min(1).max(256), input: z.unknown() }).strict(),
+    base.extend({ action: z.literal('team_changes'), toolCallId: z.string().min(1).max(256), input: z.unknown() }).strict(),
     base.extend({ action: z.literal('navigate'), eventId: z.string().min(1).max(128), intent: foremanNavigationIntentSchema }).strict(),
     base.extend({ action: z.literal('discover'), url: z.url().max(2048) }).strict(),
     base.extend({ action: z.literal('workspace_snapshot') }).strict(),
@@ -58,6 +61,8 @@ export async function POST(request: Request) {
             if (!await app.isLive(input.binding)) throw new DesktopHttpError(409, 'This Foreman run is no longer current.')
             return Response.json(snapshot, { headers: { 'cache-control': 'no-store' } })
         }
+        // A proposal of team changes: checked against the real workspace and kept for the card. Nothing is applied here.
+        if (input.action === 'team_changes') return Response.json(await recordDesktopTeamChanges(app.db, input.binding, input.toolCallId, input.input, await desktopTeamWorkspace(runtime, app.db)), { headers: { 'cache-control': 'no-store' } })
         if (input.action === 'show_plan') return Response.json(await app.core.recordShownPlan(input.binding, input.toolCallId, input.input))
         if (input.action === 'navigate') return Response.json(await app.core.emitNavigation(input.binding, input.intent, input.eventId))
         const discovery = await app.core.startDiscovery(input.binding, input.url)

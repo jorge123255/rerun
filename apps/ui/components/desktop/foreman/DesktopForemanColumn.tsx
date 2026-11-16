@@ -31,6 +31,7 @@ import type { DesktopForemanIntakeController } from '@/lib/desktop/foreman-intak
 import { DesktopForemanIntakeCard, DesktopForemanIntakeHeader, DesktopIntakeGithubProjects, DesktopIntakeSiteProfile } from './intake'
 import { useDesktopIntakeGithub } from '@/lib/desktop/foreman-intake/use-desktop-intake-github'
 import { DesktopForemanGithubProjects } from './DesktopForemanGithubProjects'
+import { DesktopForemanTeamChanges } from './DesktopForemanTeamChanges'
 import { DesktopStarterPack } from './starter-pack'
 import { DesktopStarterOfferCard } from './starter-pack/DesktopStarterOfferCard'
 import type { DesktopLocalStarterDecision, DesktopStarterView } from '@/lib/desktop/foreman-client/starter'
@@ -466,6 +467,7 @@ export function DesktopForemanColumn({
                             loading={retryingSend} onClick={() => void retrySend()}>{t('foreman.pendingSend.retry')}</Button>
                         {retrySendError?.requestId === pendingSend.requestId && <p className="basis-full text-destructive" role="alert">{retrySendError.text}</p>}
                     </div>}
+                    {!intake && !pendingStarter && sessionId && messages.length > 0 && <DesktopForemanTeamChanges chat={chat} refreshKey={`${messages.length}:${String(!!streaming)}`} />}
                     {!intake && !pendingStarter && <DesktopForemanGithubProjects github={github} chat={chat} onSend={send} sendDisabled={!!streaming || !!pendingSend || retryingSend || pendingRequest}
                         refreshKey={`${messages.length}:${String(!!streaming)}`} />}
                     {/* Said while the links are still in the box, so it is clear they will be read. */}

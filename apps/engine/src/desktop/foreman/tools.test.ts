@@ -36,3 +36,17 @@ test('show_plan forwards the exact binding and tool call id', async () => {
 test('the discovery tool only exists when root wires an authorized collector', () => {
     expect(Object.keys(foremanTools(ports({ discover: async () => ({}) }).value))).toContain('read_company')
 })
+
+test('team changes are only ever proposed: the tool hands the app a proposal and changes nothing itself', async () => {
+    const proposed: unknown[] = []
+    const { value } = ports({ proposeTeamChanges: async input => (proposed.push(input), { shown: 1, refused: [] }) })
+    const tools = foremanTools(value)
+    const names = Object.keys(tools)
+    expect(names).toEqual(['show_plan', 'open_panel', 'propose_team_changes'])
+    for (const forbidden of FOREMAN_FORBIDDEN_TOOL_NAMES) expect(names).not.toContain(forbidden)
+    const input = { summary: 'Switch the developer on', changes: [{ action: 'switch_on', coworker: 'Tuner Developer' }] }
+    expect(await tools.propose_team_changes!.execute!(input as never, options)).toEqual({ shown: 1, refused: [] })
+    expect(proposed).toEqual([{ binding, toolCallId: 'call-7', input }])
+    // Without the port the tool does not exist.
+    expect(Object.keys(foremanTools(ports().value))).not.toContain('propose_team_changes')
+})
