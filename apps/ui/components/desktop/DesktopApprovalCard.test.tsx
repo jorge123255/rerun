@@ -203,3 +203,24 @@ test('a late rejection from a previous batch cannot unlock or put an error on a 
     await act(async () => { finishNew() })
     expect(document.body.textContent).toContain('Decisions sent.')
 })
+
+test('a decided card settles: its actions fade into the outcome line, and a card reopened already decided is still', async () => {
+    const onDecide = vi.fn(async (_payload: DesktopApprovalAnswer) => {})
+    const root = mount()
+    await act(async () => { root.render(<DesktopApprovalCard approval={approval} onDecide={onDecide} />) })
+    const before = document.querySelector<HTMLElement>('[data-desktop-settle]')!
+    expect(before.dataset.desktopSettle).toBe('still')
+    expect(before.className).toBe('')
+    await click('[data-hitl="approve"]')
+    const after = document.querySelector<HTMLElement>('[data-desktop-settle]')!
+    expect(after.dataset.desktopSettle).toBe('settled')
+    for (const name of ['animate-in', 'fade-in-0', 'duration-200', 'motion-reduce:animate-none']) expect(after.classList.contains(name)).toBe(true)
+    expect(after.textContent).toContain('Approved')
+    expect(after.querySelector('[role=status]')!.textContent).toBe('Decisions sent.')
+
+    const reopened = mount()
+    await act(async () => { reopened.render(<DesktopApprovalCard approval={{ ...approval, id: 'b'.repeat(64), attempt: { requestId, decisions: [{ decision: 'approved' }] } }} onDecide={onDecide} />) })
+    const saved = [...document.querySelectorAll<HTMLElement>('[data-desktop-settle]')].at(-1)!
+    expect(saved.dataset.desktopSettle).toBe('still')
+    expect(saved.className).toBe('')
+})

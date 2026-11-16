@@ -1,4 +1,4 @@
-import { contextTexts, type Provider, type Verbosity } from '@rerun/contracts'
+import { contextTexts, desktopGithubRepositoryNote, type Provider, type Verbosity } from '@rerun/contracts'
 import type { ModelMessage } from 'ai'
 import { buildSkillIndex } from '../skills/index.js'
 import { buildScheduleIndex } from '../schedules/index.js'
@@ -380,6 +380,8 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
         section('identity', agent.soul.trim() || defaultSoul(agent.config)),
         section('vocabulary', vocabularyNote()),
         section('environment', desktop ? desktopToolInstruction(agent.config) : environmentNote(agent.id, cfg.sharedDb)),
+        // The Mac app: the one repository the person set for this coworker, as a labelled fact.
+        desktop && agent.config.desktopRepository ? section('repository', desktopGithubRepositoryNote(agent.config.desktopRepository)) : '',
         CLI_PROVIDERS.has(provider) ? section('bridged_tools', cliBridgeNote(provider, cfg.web)) : '',
         section('operating_notes', desktop ? desktopOperatingNotes(skillCapture, calledCoworker) : operatingNotes(skillCapture)),
         section('untrusted_content', UNTRUSTED_CONTENT_NOTE),

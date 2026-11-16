@@ -273,3 +273,14 @@ test('an inconsistent question-and-approval snapshot blocks dispatch and retries
     expect(questionPosts).toHaveLength(0)
     expect(composer().value).toBe('Draft awaiting the current request')
 })
+
+test('an approval saved with the conversation is drawn settled when the conversation is reopened, inside the one arrive wrapper', async () => {
+    await render('one')
+    const card = container.querySelector<HTMLElement>('[data-desktop-arrive]')!
+    expect(card.dataset.desktopArrive).toBe('settled')
+    expect(card.className).toBe('')
+    expect(card.textContent).toContain('Send the draft')
+    expect(card.querySelector('[data-desktop-arrive-attention]')).toBeNull()
+    // The block the "jump to request" cue points at is still the card's own group.
+    expect(card.parentElement!.getAttribute('role')).toBe('group')
+})

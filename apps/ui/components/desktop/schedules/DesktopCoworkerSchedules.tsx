@@ -31,7 +31,7 @@ import { useDesktopScheduleToolNotices } from '@/lib/desktop/use-schedule-tool-n
 import { DesktopScheduleToolNotice } from '../schedule-tools/DesktopScheduleToolNotice'
 import { DesktopTaskNotifyField } from '../DesktopTaskNotifyField'
 import { useDesktopLocale } from '../DesktopLocale'
-import { DesktopRoutineNotes, desktopRoutineOutcomeText } from './DesktopRoutineStatus'
+import { DesktopRoutineChecklistSteps, DesktopRoutineNotes, desktopRoutineOutcomeText } from './DesktopRoutineStatus'
 import type { DesktopRoutineRunOutcome, DesktopRoutineWarning } from '@rerun/contracts'
 
 type Chat = DesktopWorkspaceRoutineChat
@@ -79,7 +79,7 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
     async function change(method:string,body:unknown){const own=epoch.current;listEpoch.current++;await request(method,body);if(alive.current && own===epoch.current){navigate(null);await load()}}
     const newButton=<Button size="sm" variant="outline" disabled={loading || Boolean(error) || tasks===null} onClick={()=>{if(!loading && !error && tasks!==null)navigate('new')}}><PlusIcon className="size-3.5 mr-1"/>{t('routines.coworker.newTask')}</Button>
     return <PanelSteps stepKey={editing ? 'editor' : 'list'} depth={editing ? 1 : 0}>{editing ?
-        <ScheduleEditor stale={externalChange} key={editing==='new'?'new':editing.slug} agentId={agentId} task={editing==='new'?undefined:editing} onBack={()=>navigate(null)} onOpenSession={onOpenSession}
+        <ScheduleEditor latestResult={editing==='new'?undefined:tasks?.find(task=>task.slug===editing.slug)?.lastResult} stale={externalChange} key={editing==='new'?'new':editing.slug} agentId={agentId} task={editing==='new'?undefined:editing} onBack={()=>navigate(null)} onOpenSession={onOpenSession}
             onSave={input=>change('PUT',{slug:editing==='new'?undefined:editing.slug,input})}
             onDelete={editing==='new'?undefined:()=>change('DELETE',{slug:editing.slug,expectedRevision:editing.revision})}
             onRun={editing==='new'?undefined:async requestId=>{const own=epoch.current;const chat=await request('POST',{slug:editing.slug,action:'run',requestId,expectedRevision:editing.revision});if(alive.current && own===epoch.current){onOpenSession(chat);await load()}}}/> :
@@ -103,7 +103,7 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
             <Button size="sm" variant="ghost" disabled={loading} onClick={() => void load()}>{t('routines.coworker.reload')}</Button>
         </div>}</PanelSteps>
 }
-function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,onOpenSession,stale=false}:{stale?:boolean;agentId:string;task?:Task;onBack:()=>void;onSave:(input:DesktopScheduleInput)=>Promise<void>;onDelete?:()=>Promise<void>;onRun?:(requestId:string)=>Promise<void>;onOpenSession:(chat:Chat)=>void}) {
+function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,onOpenSession,stale=false,latestResult}:{stale?:boolean;latestResult?:Task['lastResult'];agentId:string;task?:Task;onBack:()=>void;onSave:(input:DesktopScheduleInput)=>Promise<void>;onDelete?:()=>Promise<void>;onRun?:(requestId:string)=>Promise<void>;onOpenSession:(chat:Chat)=>void}) {
     const { t } = useDesktopLocale()
     const runAtId = useId()
     const modelFieldId = useId()
@@ -174,7 +174,9 @@ function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,onOpenSession
         <MarkdownTextarea label={t('routines.editor.prompt')} dialogTitle={t('routines.editor.promptDialogTitle')} value={body} onChange={setBody} disabled={busy}/>
         {waitingForSetup && <p className="text-xs text-muted-foreground">{t('routines.editor.setupPendingStart')}</p>}
         {task && !task.revision && <p className="text-xs text-muted-foreground">{t('routines.loadFailed')}</p>}
-        {task?.lastResult?.chat && <p className="text-xs">{t('routines.lastResult', { status: resultLabel(task.lastResult, t) })}</p>}
+        {task?.lastResult?.chat && <p className="text-xs">{t('routines.lastResult', { status: resultLabel(latestResult ?? task.lastResult, t) })}</p>}
+        {/* The list is read again after a run and after a change made in chat: a result that lands then ticks in. */}
+        {task && <DesktopRoutineChecklistSteps result={latestResult ?? task.lastResult} />}
     </PanelEditorBody><PanelEditorFooter>
         {onDelete && task && <PanelDeleteButton label={t('routines.editor.delete')} busy={busy} disabled={busy || stale || !task?.revision} onClick={()=>perform(onDelete)} confirmTitle={t('routines.editor.deleteConfirm', { name: task.name })}
             confirmDescription={t('routines.editor.deleteDescription')} confirmLabel={t('routines.editor.delete')} cancelLabel={t('cancel')}/>}

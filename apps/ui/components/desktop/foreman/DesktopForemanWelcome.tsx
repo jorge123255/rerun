@@ -3,7 +3,8 @@
 import { useDesktopLocale } from '../DesktopLocale'
 
 import { motion, useReducedMotion } from 'motion/react'
-import { Orb, WELCOME_ORB_SIZE } from '@rerun/ui/foreman'
+import { WELCOME_ORB_SIZE } from '@rerun/ui/foreman'
+import { DesktopForemanOrb } from '../panel-motion/DesktopForemanOrb'
 import { Shimmer } from '@/components/ai-elements/shimmer'
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -32,7 +33,7 @@ export function DesktopForemanWelcome({
             transition={reducedMotion ? { duration: 0 } : { duration: 0.2, ease: 'easeOut' }}
         >
             <motion.div {...enter(0)}>
-                <Orb size={WELCOME_ORB_SIZE} state={thinking ? 'thinking' : 'idle'} />
+                <DesktopForemanOrb role="welcome" size={WELCOME_ORB_SIZE} fallback={thinking ? 'thinking' : 'idle'} />
             </motion.div>
             <motion.div className="space-y-1" {...enter(0.12)}>
                 <h3 className="text-sm font-medium">{title ?? t('foreman.welcome.title')}</h3>

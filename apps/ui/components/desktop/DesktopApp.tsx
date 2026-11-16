@@ -285,6 +285,7 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
     const [templateToReview, setTemplateToReview] = useState<DesktopTemplateIdentity | null>(null)
     const templatesActive = templatesOpen || templateFlowActive
     const [agents, setAgents] = useState(initialData.agents)
+    const [teamPlacedSignal, setTeamPlacedSignal] = useState(0)
     // A coworker made outside this window, such as one an outside agent imports through a key, is
     // picked up here: the activity read names every coworker, so one this window does not know
     // prompts a read of the list. No timer of its own.
@@ -761,6 +762,8 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
             cache: 'no-store', signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
         }))
         if (!current() || !await boardState.refresh(signal) || !current()) return false
+        // With the coworkers it brings: the board celebrates the ones that arrive for this build.
+        setTeamPlacedSignal(value => value + 1)
         mergeBoardAgents(agents)
         return true
     }
@@ -971,7 +974,7 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
                 <DesktopBoard inboxSlot={simple ? simpleInboxSlot : null} onUnseenAgents={setUnseenAgents} tileAction={tileAction} activitySnapshot={boardActivity} routineCountdowns={routineCountdowns} agents={agents} workspaceName={workspaceName} workspaceMenu={simple ? null : workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
                     workspaceId={runtimeWorkspaceId} launchNonce={initialData.runtimeLaunchNonce} onOpenNotificationSettings={openNotifications}
                     cameraMountKey={camera.mountKey} initialCamera={camera.initialCamera} onCameraChange={camera.onCameraChange}
-                    newBoxSignal={newBoxSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
+                    newBoxSignal={newBoxSignal} teamPlacedSignal={teamPlacedSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
                     board={boardState.board} onBoardCommand={initialData.board ? boardState.command : undefined}
                     boardSaving={boardState.saving} boardError={boardState.error} onRetryBoard={boardState.retry}
                     newCoworker={creation.placement} onPlaceCoworker={creation.place} onCancelCoworker={creation.cancel}
@@ -985,7 +988,7 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
                     onRename={renameCoworker} onShare={agent => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting() && currentAgents.current.some(current => current.id === agent.id)) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) } }} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
                 )}</FxBoardCameraBoundary> : <DesktopBoard inboxSlot={simple ? simpleInboxSlot : null} onUnseenAgents={setUnseenAgents} tileAction={tileAction} activitySnapshot={boardActivity} routineCountdowns={routineCountdowns} agents={agents} workspaceName={workspaceName} workspaceMenu={simple ? null : workspaceMenu} gettingStarted={gettingStarted} recenterSignal={recenterSignal}
-                    newBoxSignal={newBoxSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
+                    newBoxSignal={newBoxSignal} teamPlacedSignal={teamPlacedSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
                     board={boardState.board} onBoardCommand={initialData.board ? boardState.command : undefined}
                     boardSaving={boardState.saving} boardError={boardState.error} onRetryBoard={boardState.retry}
                     newCoworker={creation.placement} onPlaceCoworker={creation.place} onCancelCoworker={creation.cancel}

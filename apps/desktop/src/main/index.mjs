@@ -7,7 +7,7 @@ import { DesktopSecureStorageError, loadBundle, loadIdentityFromSafeStorage, wor
 import { RuntimeSupervisor } from './supervisor.mjs'
 import { createDesktopNotifications } from './notifications.mjs'
 import { createNotificationClickHandoff, createNotificationClickRouter } from './notification-click-handoff.mjs'
-import { swapWorkspaceWindow } from './window-swap.mjs'
+import { prefersReducedMotion, swapWorkspaceWindow } from './window-swap.mjs'
 import { completeDesktopQuit } from './before-quit.mjs'
 import { createDesktopTemplateFiles } from './templates.mjs'
 import { createDesktopCoworkerShareFiles } from './coworker-share-files.mjs'
@@ -35,7 +35,7 @@ import { createMacPhonePairingService } from './mac-phone-pairing/index.mjs'
 import { pairingQrImage } from './mac-phone-pairing/qr.mjs'
 import { createPhonePairingWindow } from './mac-phone-pairing-window.mjs'
 
-const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, screen, shell, session, Tray, WebContentsView } = electron
+const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, screen, shell, session, systemPreferences, Tray, WebContentsView } = electron
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const resources = app.isPackaged ? process.resourcesPath : resolve(directory, '../../resources')
 const startup = resolve(directory, 'startup.html')
@@ -155,6 +155,8 @@ function reportStartupError(error) {
             retryLabel: t('startup.restartToRetry') })
     } else publishBootStatus({ state: 'error', messageKey: 'setupFailed' })
 }
+// The local and cloud windows cross-fade when they swap, unless the Mac asks for less motion.
+const swapFades = () => !prefersReducedMotion({ nativeTheme, systemPreferences })
 function showMainWindow() {
     showWindowOnReady = true
     revealWorkspaceWindow(window)
@@ -165,7 +167,7 @@ function selectLocalWorkspace(from) {
     if (quitting) return
     showWindowOnReady = true
     const leaving = from && connectedHubs?.ownsWindow(from) ? from : null
-    if (!swapWorkspaceWindow(leaving, window)) showMainWindow()
+    if (!swapWorkspaceWindow(leaving, window, { fade: swapFades() })) showMainWindow()
     if (runtimeScope()) void startupWorkspace.remember('local')
     else if (bootStatus.state === 'choose') void openLocalWorkspace()
 }
@@ -175,10 +177,17 @@ async function openRerunCloud(owner) {
     if (quitting || !connectedHubs) return false
     reopeningHub?.controller.abort()
     openingStartupCloud?.abort()
-    const result = await connectedHubs.openCloud().catch(() => ({ ok: false }))
+    // Coming from a board, the cloud window is brought on screen by the swap, so it can fade in over it.
+    const fromBoard = () => !!owner && !owner.isDestroyed() && !!boardContext(owner)
+    const swapping = fromBoard()
+    const result = await connectedHubs.openCloud(undefined, swapping ? { reveal: () => false } : undefined).catch(() => ({ ok: false }))
     if (!result.ok && !quitting) connectedHubs.openPicker(owner && !owner.isDestroyed() ? owner : window)
-    // The cloud window takes the place of the local board the person came from, which stays running, hidden.
-    else if (result.ok && !quitting && owner && boardContext(owner)) swapWorkspaceWindow(owner, connectedHubs.windowFor(RERUN_CLOUD_ORIGIN))
+    else if (result.ok && !quitting) {
+        const cloud = connectedHubs.windowFor(RERUN_CLOUD_ORIGIN)
+        // The cloud window takes the place of the local board the person came from, which stays running, hidden.
+        if (fromBoard()) swapWorkspaceWindow(owner, cloud, { fade: swapFades() })
+        else if (swapping) revealWorkspaceWindow(cloud)
+    }
     return result.ok
 }
 function reopenRememberedHub() {

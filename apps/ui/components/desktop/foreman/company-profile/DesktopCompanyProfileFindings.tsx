@@ -1,11 +1,12 @@
 'use client'
 
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { INTAKE_INDUSTRIES, type DesktopCompanyProfileEvidence, type DesktopCompanyProfileProjection } from '@rerun/contracts'
 import { Icon } from '@/components/ui/icon'
 import { DESKTOP_DISCOVERY_SOURCE_LABELS } from '@/lib/desktop/foreman-client'
 import { Building2, GlobeIcon, Package, UsersIcon, type LucideIcon } from '@/lib/icons'
 import { DISCOVERY_CARD_CLASS } from '../discoveries/DesktopDiscoveryCard'
+import { DesktopArrive } from '../../panel-motion/DesktopArrive'
 
 function Evidence({ evidence }: { evidence: DesktopCompanyProfileEvidence[] }) {
     if (!evidence.length) return null
@@ -18,14 +19,16 @@ function Evidence({ evidence }: { evidence: DesktopCompanyProfileEvidence[] }) {
     </details>
 }
 
-function Card({ icon, label, source, children, evidence }: {
+function Card({ arrive, icon, label, source, children, evidence }: {
+    /** Set by the list: which finding this is, and whether it was found while the person watched. */
+    arrive?: { id: string; live: boolean }
     icon: LucideIcon
     label: string
     source: DesktopCompanyProfileEvidence['source'] | 'profile'
     children: ReactNode
     evidence: DesktopCompanyProfileEvidence[]
 }) {
-    return <section className={DISCOVERY_CARD_CLASS}>
+    return <DesktopArrive as="section" id={arrive?.id ?? `company-profile:${label}`} live={!!arrive?.live} className={DISCOVERY_CARD_CLASS}>
         <div className="mb-2 flex items-center gap-2">
             <Icon icon={icon} size="xs" />
             <span className="text-[11px] font-medium text-muted-foreground">{label}</span>
@@ -33,30 +36,40 @@ function Card({ icon, label, source, children, evidence }: {
         </div>
         {children}
         <Evidence evidence={evidence} />
-    </section>
+    </DesktopArrive>
 }
 
-export function DesktopCompanyProfileFindings({ profile, limit }: { profile: DesktopCompanyProfileProjection; limit?: number }) {
+export function DesktopCompanyProfileFindings({ profile, limit, scope = '', digging = false }: {
+    profile: DesktopCompanyProfileProjection; limit?: number
+    /** The conversation these findings belong to. */
+    scope?: string
+    /** The research is still running: what it finds now is news. */
+    digging?: boolean
+}) {
+    // What a saved profile already held is drawn settled; a finding that lands afterwards slides in.
+    const shown = useRef(false)
+    useEffect(() => { shown.current = true }, [])
+    const arrive = (key: string) => ({ id: `company-profile:${scope}:${key}`, live: shown.current || digging })
     const cards: ReactNode[] = []
     const source = (evidence: DesktopCompanyProfileEvidence[]) => evidence[0]?.source ?? 'profile'
     if (profile.name.value || profile.description.value) cards.push(
-        <Card key="identity" icon={GlobeIcon} label="Found you" source={source([...profile.name.evidence, ...profile.description.evidence])} evidence={[...profile.name.evidence, ...profile.description.evidence]}>
+        <Card key="identity" arrive={arrive('identity')} icon={GlobeIcon} label="Found you" source={source([...profile.name.evidence, ...profile.description.evidence])} evidence={[...profile.name.evidence, ...profile.description.evidence]}>
             {profile.name.value && <p className="truncate font-heading text-sm font-medium">{profile.name.value}</p>}
             {profile.description.value && <p className="line-clamp-3 text-xs leading-relaxed text-muted-foreground">{profile.description.value}</p>}
         </Card>,
     )
     if (profile.offering.value) cards.push(
-        <Card key="offering" icon={Package} label="What you sell" source={source(profile.offering.evidence)} evidence={profile.offering.evidence}>
+        <Card key="offering" arrive={arrive('offering')} icon={Package} label="What you sell" source={source(profile.offering.evidence)} evidence={profile.offering.evidence}>
             <p className="text-xs leading-relaxed">{profile.offering.value}</p>
         </Card>,
     )
     if (profile.audience.value) cards.push(
-        <Card key="audience" icon={UsersIcon} label="Who you sell to" source={source(profile.audience.evidence)} evidence={profile.audience.evidence}>
+        <Card key="audience" arrive={arrive('audience')} icon={UsersIcon} label="Who you sell to" source={source(profile.audience.evidence)} evidence={profile.audience.evidence}>
             <p className="text-xs leading-relaxed">{profile.audience.value}</p>
         </Card>,
     )
     if (profile.industry.value) cards.push(
-        <Card key="industry" icon={Building2} label="Industry" source={source(profile.industry.evidence)} evidence={profile.industry.evidence}>
+        <Card key="industry" arrive={arrive('industry')} icon={Building2} label="Industry" source={source(profile.industry.evidence)} evidence={profile.industry.evidence}>
             <p className="text-xs leading-relaxed">{INTAKE_INDUSTRIES.find(option => option.value === profile.industry.value)?.label ?? profile.industry.value}</p>
             <p className="mt-1 text-[10px] text-muted-foreground">{profile.industry.origin}{profile.industry.confidence !== null ? ` · ${Math.round(profile.industry.confidence * 100)}% confidence` : ''}</p>
         </Card>,

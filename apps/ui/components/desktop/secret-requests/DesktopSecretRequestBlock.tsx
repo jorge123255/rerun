@@ -1,5 +1,6 @@
 'use client'
 
+import { DesktopSettle } from '../panel-motion/DesktopArrive'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@rerun/ui/primitives'
 import { submitDesktopSecretRequestDecision } from '@/lib/desktop/secret-requests-client'
@@ -75,12 +76,12 @@ export function DesktopSecretRequestBlock({ sessionId, request, active = true, i
         }
     }
 
-    if (request.receipt || request.pendingAttempt) return <div className="space-y-2">
+    if (request.receipt || request.pendingAttempt) return <DesktopSettle stateKey="outcome" className="space-y-2">
         {request.receipt ? <DesktopSecretRequestReceipt request={request} /> : <p className="text-xs text-muted-foreground">An encrypted credential decision is waiting to finish.</p>}
         {!request.receipt?.accepted && <Button type="button" size="sm" disabled={!active || sessionId !== request.source.sessionId || recovering} onClick={() => { void recover() }}>{recovering ? 'Resuming…' : 'Resume saved decision'}</Button>}
         {recoveryError && <p role="alert" className="break-words text-xs text-destructive">{recoveryError}</p>}
-    </div>
-    return <DesktopSecretRequestForm
+    </DesktopSettle>
+    return <DesktopSettle stateKey="actions"><DesktopSecretRequestForm
         key={owner}
         fields={request.fields}
         reason={request.reason}
@@ -90,5 +91,5 @@ export function DesktopSecretRequestBlock({ sessionId, request, active = true, i
         onSubmit={values => decide('save', values)}
         onSkip={() => decide('skip')}
         onDismiss={() => decide('dismiss')}
-    />
+    /></DesktopSettle>
 }

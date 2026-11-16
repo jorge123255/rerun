@@ -21,7 +21,7 @@ import {
     type DesktopForemanRevision,
 } from '@rerun/contracts'
 import { ForemanRefusal, requireAuthorities, type ForemanAuthorities, type ForemanReceipt } from './authority'
-import { digestOf, firstInstall, firstSoul, sealShownPlan, titleOf, type SealedAgentItem } from './seal'
+import { digestOf, firstInstall, firstSoul, sealShownPlan, titleOf, type AcceptedGithubProjects, type SealedAgentItem } from './seal'
 import type { ForemanBuildIntents, ForemanStore, ForemanTx } from './store'
 
 export class ForemanError extends Error {
@@ -44,7 +44,11 @@ const sharedWork = () => ((globalThis as unknown as Record<symbol, WeakMap<objec
 
 export type ForemanRuntime = ReturnType<typeof createForemanRuntime>
 
-export function createForemanRuntime(input: { store: ForemanStore; authorities: Partial<ForemanAuthorities>; companyName: () => Promise<string> }) {
+export function createForemanRuntime(input: {
+    store: ForemanStore; authorities: Partial<ForemanAuthorities>; companyName: () => Promise<string>
+    /** The GitHub repositories the owner accepted in a conversation's intake. Absent or failing means none: no coworker gets a repository. */
+    githubProjects?: (chat: DesktopForemanChatRef) => Promise<AcceptedGithubProjects | null>
+}) {
     const store = input.store
     const auth = requireAuthorities(input.authorities)
     const now = () => (auth.now?.() ?? new Date()).toISOString()
@@ -74,9 +78,11 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
     // tells the model a confirmation is taken by the app, so it has nothing to call after it.
     async function recordShownPlan(binding: DesktopForemanBinding, toolCallId: string, raw: unknown) {
         await assertLive(binding)
-        const sealed = sealShownPlan(raw)
-        if (!sealed.ok) throw new ForemanError('invalid_plan', sealed.message)
         const chat = { workspaceId: binding.workspaceId, chatId: binding.chatId }
+        // A coworker keeps the repository the model named only when the owner accepted it in this conversation's intake.
+        const accepted = await input.githubProjects?.(chat).catch(() => null) ?? null
+        const sealed = sealShownPlan(raw, accepted)
+        if (!sealed.ok) throw new ForemanError('invalid_plan', sealed.message)
         const revision = await tx(async db => {
             const existing = await db.revisionByCall(binding.chatId, binding.runId, toolCallId)
             if (existing) {
@@ -369,7 +375,8 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
                 item.kind === 'agent'
                     ? await attempt(async () => {
                           if (!model) throw new ForemanRefusal('model_unavailable', 'This plan needs a connected model.')
-                          const created = await auth.creation.createCoworker({ requestId, spaceId: space.spaceId!, name: item.name, description: item.role, soulMd: firstSoul(item as SealedAgentItem, revision.plan, company, asked), installMd: firstInstall(item as SealedAgentItem, asked), model })
+                          const created = await auth.creation.createCoworker({ requestId, spaceId: space.spaceId!, name: item.name, description: item.role, soulMd: firstSoul(item as SealedAgentItem, revision.plan, company, asked), installMd: firstInstall(item as SealedAgentItem, asked), model,
+                              ...((item as SealedAgentItem).github && { repository: (item as SealedAgentItem).github!.repository }) })
                           return { agentIds: [created.agentId], spaceId: space.spaceId!, sessionId: null }
                       })
                     : await attempt(async () => {
@@ -384,7 +391,30 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
             })
             if (result.kind === 'uncertain') break
         }
+        await allowLinkedCalls(buildId, revision)
         await finalize(buildId)
+    }
+
+    // Linked GitHub projects: each coworker may be allowed to call the coworker its instructions name
+    // in the other project. Only between coworkers this very build created, named by the request ids
+    // the build reserved. It adds names to the allowed list and nothing else: calling still needs the
+    // Call coworkers permission, which stays off until the owner turns it on. A failure here leaves the
+    // list as it was; the owner can add the coworker in Tools.
+    async function allowLinkedCalls(buildId: string, revision: DesktopForemanRevision) {
+        const allow = auth.creation.allowCalls
+        if (!allow) return
+        const row = await loadBuild(buildId)
+        if (row.build.state !== 'running') return
+        const made = new Set(row.build.items.filter(item => item.state === 'created').map(item => item.itemKey))
+        const pairs: { callerRequestId: string; targetRequestId: string }[] = []
+        for (const item of revision.plan.items) {
+            if (item.kind !== 'agent' || !item.github || !made.has(item.key)) continue
+            for (const link of item.github.links) {
+                const caller = row.intents.items[item.key], target = row.intents.items[link.contactKey]
+                if (link.contactKey !== item.key && made.has(link.contactKey) && caller && target) pairs.push({ callerRequestId: caller, targetRequestId: target })
+            }
+        }
+        if (pairs.length) await attempt(() => allow({ pairs }))
     }
 
     async function finalize(buildId: string) {

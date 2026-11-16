@@ -47,6 +47,7 @@ export type {
     BuddyMouth,
     BuddyMood,
     BuddyLook,
+    BuddyMotion,
     Tile,
     ContainerVariant,
     Container,

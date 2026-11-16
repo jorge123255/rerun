@@ -25,6 +25,7 @@ import { Message, MessageContent, Suggestion, Suggestions } from '@rerun/ui/chat
 import { FloatingPill } from '@/components/agent/sheet/floating'
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton, type ConversationHandle } from '@/components/ai-elements/conversation'
 import { bringBlockIn, useArriveByTop } from '@/hooks/useArriveByTop'
+import { DesktopArrive, useDesktopLiveGate } from './panel-motion/DesktopArrive'
 import type { DesktopChatRequest } from '@/lib/desktop/chat-request'
 import { summarizePendingHitl } from '@/lib/chat/hitl-cue'
 import type { HitlKind } from '@rerun/contracts'
@@ -1548,6 +1549,9 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
             <DesktopConnectorApprovals sessionId={sessionId} coworkerName={agent.name} generating={generating || stopping} disabled={draft.quitting || inactive || !ready}
                 onAnswered={text => { void sendMessage({ text }, { body: { agentId: agent.id, sessionId } }) }} />)
     }
+    // A request saved with the conversation is drawn settled; one that comes while it is open slides in.
+    const arriveScope = JSON.stringify([workspaceId, agent.id, sessionId, tabUid])
+    const arrivesLive = useDesktopLiveGate(arriveScope, ready && active)
     const waitingCard = ready && !generating && !stopping && !draft.quitting
         ? requestCards.find(card => card.cue) : undefined
     const cueKey = waitingCard ? JSON.stringify([workspaceId, agent.id, sessionId, tabUid, waitingCard.key]) : null
@@ -1798,7 +1802,9 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                         <div key={card.key} ref={waitingCard === card ? pendingBlock : undefined}
                             tabIndex={card.cue ? -1 : undefined} role={card.cue ? 'group' : undefined} aria-label={card.cue?.label}
                             className="min-w-0 focus-visible:outline-1 focus-visible:outline-ring">
-                            {card.node}
+                            {/* The connector list is always mounted and tells its own arrivals apart. */}
+                            {card.key.startsWith('connector-approvals:') ? card.node
+                                : <DesktopArrive id={`${arriveScope}:${card.key}`} live={arrivesLive()}>{card.node}</DesktopArrive>}
                         </div>
                     ))}
                 </ConversationContent>

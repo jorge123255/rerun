@@ -670,7 +670,8 @@ export function createConnectedHubs({ app, BrowserWindow, WebContentsView, openL
             else if (focused !== picker) return false
             return true
         },
-        openCloud: signal => connect(RERUN_CLOUD_ORIGIN, { signal }),
+        // `reveal` lets the caller bring the window on screen itself (the local and cloud swap fades it in).
+        openCloud: (signal, { reveal } = {}) => connect(RERUN_CLOUD_ORIGIN, { signal, reveal }),
         async reopenRemembered(options) {
             const origin = await savedOrigin()
             if (!origin || !available() || picker || openingLink || pendingOpen || connecting) return false

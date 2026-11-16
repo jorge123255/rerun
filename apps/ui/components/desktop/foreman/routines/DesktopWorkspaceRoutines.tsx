@@ -192,6 +192,7 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, dock
             <DesktopWorkspaceRoutineEditor
                 key={`${editing.routine.agentId}:${editing.routine.slug}:${editing.generation}`}
                 routine={editing.routine}
+                latestResult={latest?.lastResult}
                 active={active}
                 externalChange={editing.externalChange}
                 onBack={() => setEditing(null)}

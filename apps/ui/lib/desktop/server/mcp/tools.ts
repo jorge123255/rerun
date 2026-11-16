@@ -3,6 +3,8 @@ import { abortable, type remoteMcpRuntime } from './remote'
 import type { RemoteMcpStore } from './store'
 
 /** Adapter-neutral definitions for root's local Codex dynamic-tool bridge. Never send credentials. */
+const hostOf = (url:string) => { try { return new URL(url).hostname } catch { return undefined } }
+
 export async function remoteMcpTools(agent: string, store: Pick<RemoteMcpStore, 'list'>, runtime: ReturnType<typeof remoteMcpRuntime>, signal: AbortSignal) {
     const definitions = []
     const currentCatalog: (()=>void)[] = []
@@ -34,6 +36,8 @@ export async function remoteMcpTools(agent: string, store: Pick<RemoteMcpStore, 
             names.add(name)
             definitions.push({ name, description:tool.description ?? tool.name, inputSchema:tool.inputSchema,
                 destructive:tool.destructive === true,
+                // Where the tool comes from, for the check on changes to a GitHub repository.
+                server:{ host:hostOf(server.url), name:server.name, tool:tool.name },
                 execute:async (args:Record<string,unknown>, stop:AbortSignal = signal) => {
                     current()
                     const combined=AbortSignal.any([signal,stop])

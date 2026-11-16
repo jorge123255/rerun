@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { DesktopForemanChatRef } from '@rerun/contracts'
 import { Icon } from '@/components/ui/icon'
 import { readDesktopIntakeSiteProfile } from '@/lib/desktop/foreman-intake/client'
@@ -8,6 +8,7 @@ import type { DesktopIntakeSiteProfile as SiteProfile } from '@/lib/desktop/fore
 import type { DesktopForemanIntakeController } from '@/lib/desktop/foreman-intake'
 import { GlobeIcon } from '@/lib/icons'
 import { DISCOVERY_CARD_CLASS } from '../discoveries/DesktopDiscoveryCard'
+import { DesktopArrive } from '../../panel-motion/DesktopArrive'
 
 function domainOf(website: string): string {
     try { return new URL(/^https?:\/\//i.test(website) ? website : `https://${website}`).hostname.replace(/^www\./i, '') } catch { return website }
@@ -38,6 +39,9 @@ export function DesktopIntakeSiteProfile({ chat, intake, active = true, read = r
     const key = JSON.stringify([chat.workspaceId, chat.chatId])
     const hasWebsite = !!website
     const ready = intake.siteRead === 'ready'
+    // The card slides in after a read the person watched; a saved intake reopened shows it settled.
+    const watched = useRef(false)
+    if (intake.siteRead === 'reading') watched.current = true
     useEffect(() => {
         if (!active || !intake.restored || !hasWebsite) return
         const controller = new AbortController()
@@ -51,7 +55,7 @@ export function DesktopIntakeSiteProfile({ chat, intake, active = true, read = r
     const profile = found?.key === key ? found.profile : null
     if (intake.finished || !intake.restored || !profile || profile.website !== website) return null
     return (
-        <section data-intake-site-profile aria-label="Read from your website" className={`${DISCOVERY_CARD_CLASS} pointer-events-auto mx-auto max-w-[22rem] text-left`}>
+        <DesktopArrive as="section" key={profile.website} id={`site-profile:${key}:${profile.website}`} live={watched.current} data-intake-site-profile aria-label="Read from your website" className={`${DISCOVERY_CARD_CLASS} pointer-events-auto mx-auto max-w-[22rem] text-left`}>
             <div className="mb-2 flex items-center gap-2">
                 <Icon icon={GlobeIcon} size="xs" />
                 <span className="text-[11px] font-medium text-muted-foreground">Read from your website</span>
@@ -64,6 +68,6 @@ export function DesktopIntakeSiteProfile({ chat, intake, active = true, read = r
                 <Line label="Who you sell to" value={profile.audience} />
             </dl>
             <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground/80">Your Chief of Staff starts from this. If something is wrong, say so in the chat and your answer wins.</p>
-        </section>
+        </DesktopArrive>
     )
 }

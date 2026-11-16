@@ -3,6 +3,7 @@
 @import "shadcn/tailwind.css";
 @import "streamdown/styles.css";
 @import "../../../packages/ui/src/styles.css";
+@import "./desktop-panel-motion.css";
 
 @source "../../../packages/ui/src";
 @source "../node_modules/streamdown/dist/*.js";

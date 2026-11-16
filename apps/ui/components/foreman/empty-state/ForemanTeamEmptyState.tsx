@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { Orb, shortCountdown, WELCOME_ORB_SIZE } from '@rerun/ui/foreman'
 import { AgentBuddy } from '@rerun/ui/iso-grid'
 
@@ -33,15 +34,17 @@ type ForemanTeamEmptyStateProps = {
     className?: string
     disabled?: boolean
     pulseLabels?: (count: number, working: number) => { coworkers: string; working: string }
+    /** Takes the place of the default orb. */
+    orb?: ReactNode
 }
 
-export function ForemanTeamEmptyState({ model, now, onSend, onPrefill, onAction, className, disabled, pulseLabels }: ForemanTeamEmptyStateProps) {
+export function ForemanTeamEmptyState({ model, now, onSend, onPrefill, onAction, className, disabled, pulseLabels, orb }: ForemanTeamEmptyStateProps) {
     const run = (action: TeamEmptyStateAction) => (action.type === 'send' ? onSend : onPrefill)?.(action.text)
 
     return (
         <div className={cn('my-auto flex flex-col items-center gap-4 p-4 text-center', SHORT_STACK, className)}>
             <div className={SHORT_HIDDEN}>
-                <Orb size={WELCOME_ORB_SIZE} />
+                {orb ?? <Orb size={WELCOME_ORB_SIZE} />}
             </div>
             <div className="space-y-1">
                 <h3 className="text-sm font-medium text-balance text-foreground">{model.title}</h3>

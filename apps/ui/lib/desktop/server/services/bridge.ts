@@ -9,10 +9,10 @@ import type {remoteMcpTools} from '../mcp/tools'
 import type {DesktopMcpCallAdmission} from '../mcp/bridge'
 import type {DesktopActivityDecision} from '@rerun/contracts'
 type RemoteTool = Awaited<ReturnType<typeof remoteMcpTools>>[number]
-type VaultTool = Omit<RemoteTool, 'execute' | 'destructive'> & { destructive?: boolean } & {
+type VaultTool = Omit<RemoteTool, 'execute' | 'destructive' | 'server'> & { destructive?: boolean; server?: RemoteTool['server'] } & {
  execute(args:Record<string,unknown>,signal:AbortSignal,toolCallId:string):ReturnType<RemoteTool['execute']>
 }
-type ServiceCapability = {key:string;revision:string;name:string} | {vault:VaultTool}
+type ServiceCapability = {key:string;revision:string;name:string;serverName:string} | {vault:VaultTool}
 const id=z.string().min(1).max(200),run=z.object({engineAgentId:id,sessionId:id,runId:id})
 const bodySchema=z.discriminatedUnion('action',[
  run.extend({action:z.literal('catalog')}).strict(),run.extend({action:z.literal('call'),catalogId:z.string().uuid(),capabilityId:z.string().uuid(),toolCallId:id,arguments:z.record(z.string(),z.unknown())}).strict(),run.extend({action:z.literal('release'),catalogId:z.string().uuid().optional()}).strict(),
@@ -40,7 +40,7 @@ export function serviceEngineBridge(store:ServiceStore,service:LocalServices,own
       const active=AbortSignal.any([signal,controller.signal])
       const result=await service.discover(record,body,active)
       await service.current(owner,'use',body,active)
-      for(const tool of result.tools){const name=`${record.plan.serverName}_${tool.name}`;if(names.has(name)||names.size>=256)throw new Error('Service tool collision');names.add(name);const capabilityId=randomUUID();tools.set(capabilityId,{key:record.key,revision:record.revision,name:tool.name});output.push({capabilityId,name,description:tool.description??tool.name,inputSchema:tool.inputSchema})}
+      for(const tool of result.tools){const name=`${record.plan.serverName}_${tool.name}`;if(names.has(name)||names.size>=256)throw new Error('Service tool collision');names.add(name);const capabilityId=randomUUID();tools.set(capabilityId,{key:record.key,revision:record.revision,name:tool.name,serverName:record.plan.serverName});output.push({capabilityId,name,description:tool.description??tool.name,inputSchema:tool.inputSchema})}
      }
      for(const tool of await abortable(vaultTools?.(owner,body,controller.signal) ?? Promise.resolve([]),signal)){
       if(names.has(tool.name)||names.size>=256)throw new Error('Service tool collision')
@@ -62,7 +62,7 @@ export function serviceEngineBridge(store:ServiceStore,service:LocalServices,own
    const runtime=record && service.transport(record,body,active)
    // An action that asks first is answered here, before the call is claimed or anything reaches the app.
    let trail:DesktopActivityDecision|undefined
-   const held=await admit?.({owner,sessionId:body.sessionId,tool:'vault' in capability?capability.vault.name:capability.name,destructive:'vault' in capability&&capability.vault.destructive===true,arguments:body.arguments},active,said=>{trail=said})
+   const held=await admit?.({owner,sessionId:body.sessionId,tool:'vault' in capability?capability.vault.name:capability.name,destructive:'vault' in capability&&capability.vault.destructive===true,arguments:body.arguments,server:'vault' in capability?capability.vault.server:{name:capability.serverName,tool:capability.name}},active,said=>{trail=said})
    active.throwIfAborted()
    if(typeof held==='string')return Response.json({toolCallId:body.toolCallId,result:{source:'local_service',untrusted:true,result:{isError:true,content:[{type:'text',text:held}]}},...(trail&&{trail})})
    const claimed=await store.db.execute({sql:'INSERT INTO desktop_service_calls(owner,run_id,call_id) VALUES(?,?,?) ON CONFLICT DO NOTHING',args:[owner,body.runId,body.toolCallId]});if(claimed.rowsAffected!==1)throw new Error('Call already submitted; it will not be replayed')

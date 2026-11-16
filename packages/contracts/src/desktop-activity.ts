@@ -189,7 +189,7 @@ export function desktopActivityPermissionRuleOf(tool: string): string | null {
 }
 
 const ASK_FIRST: Readonly<Record<DesktopConnectorActionKind, string>> = {
-    delete: 'deleting', send: 'sending to other people', share: 'sharing with other people', post: 'posting or publishing', pay: 'paying or moving money', credential: 'changing a credential',
+    delete: 'deleting', send: 'sending to other people', share: 'sharing with other people', post: 'posting or publishing', pay: 'paying or moving money', credential: 'changing a credential', repository: 'changing a GitHub repository',
 }
 const POLICIES: Readonly<Record<string, string>> = {
     'too-many-waiting': 'too many actions were already waiting for your answer',

@@ -1,4 +1,4 @@
-import { DESKTOP_PRESET_NOTE_HEADER } from '@rerun/contracts'
+import { DESKTOP_PRESET_NOTE_HEADER, desktopGithubRepositoryUrl, readDesktopGithubRepository } from '@rerun/contracts'
 import type { DesktopDocumentSendSelection } from '@rerun/contracts'
 import { admitDesktopChatDocuments } from './document-attachments/chat'
 import { consumeDesktopDocumentAdmission } from './document-attachments/binding'
@@ -80,8 +80,12 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
     // This registry contains only user-created local coworkers. Cloud template agents, whose
     // system prompts can be sealed, cannot be resolved by their engine IDs through this route.
     const engine = engineOf(runtime)
+    // Only a well-formed owner/name is ever saved; an empty field removes the repository.
+    const typed = patch?.repository
+    const desktopRepository = typed === undefined ? undefined : typed ? readDesktopGithubRepository(typed) : null
+    if (typed && !desktopRepository) throw new DesktopHttpError(400, 'Use owner/name or a link like https://github.com/owner/name.')
     try {
-        const { memoryEnabled, autoMemory, suggestedReplies, workspaceReadEnabled, ...textSettings } = patch ?? {}
+        const { memoryEnabled, autoMemory, suggestedReplies, workspaceReadEnabled, repository: _repository, ...textSettings } = patch ?? {}
         const tools = {
             ...(workspaceReadEnabled !== undefined && { desktopToolGrants: { workspaceRead: workspaceReadEnabled } }),
             ...(memoryEnabled !== undefined && { memory: memoryEnabled }),
@@ -89,6 +93,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
         }
         const detail = patch ? await patchAgent(engine, agent.engineAgentId, {
             ...textSettings,
+            ...(desktopRepository !== undefined && { desktopRepository }),
             ...(Object.keys(tools).length > 0 && { tools }),
             ...(autoMemory !== undefined && { selfImprovement: { autoMemory } }),
         }) : await getAgent(engine, agent.engineAgentId)
@@ -99,6 +104,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
             suggestedReplies: detail.config.tools.quickReplies,
             autoMemory: detail.config.selfImprovement.autoMemory,
             selfImprovementEnabled: detail.config.selfImprovement.enabled,
+            repository: detail.config.desktopRepository ? { ...detail.config.desktopRepository, url: desktopGithubRepositoryUrl(detail.config.desktopRepository) } : null,
         }
     } catch (error) {
         if (error instanceof EngineRequestError && error.status === 404) throw new DesktopHttpError(404, 'Coworker not found')

@@ -3,7 +3,8 @@
 import { useDesktopLocale } from '../DesktopLocale'
 
 import type { PointerEvent, ReactNode } from 'react'
-import { ForemanHeaderBar, type ForemanAnchor, type OrbActivity } from '@rerun/ui/foreman'
+import { ForemanHeaderBar, HEADER_ORB_SIZE, type ForemanAnchor, type OrbActivity } from '@rerun/ui/foreman'
+import { DesktopForemanOrb } from '../panel-motion/DesktopForemanOrb'
 import { DesktopForemanTabs } from './DesktopForemanTabs'
 import type { DesktopForemanUiTab } from '@/lib/desktop/foreman-client'
 
@@ -39,6 +40,7 @@ export function DesktopForemanHeader({
             anchor={anchor}
             orbState={orbState}
             orbPaused={!open}
+            orb={<DesktopForemanOrb role="header" size={HEADER_ORB_SIZE} fallback={orbState} facing="right" paused={!open} />}
             onClose={onClose}
             closeLabel={t('foreman.closeChat')}
             closeTooltip={t('foreman.close')}
