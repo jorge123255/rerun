@@ -33,6 +33,9 @@ const LABEL_STATUS_HOLD_MS = 2200
 const LABEL_SLIDE = '380ms cubic-bezier(0.22, 1, 0.36, 1)'
 const STATE_MOODS: ReadonlySet<BuddyMood> = new Set(['working', 'error', 'waiting'])
 
+// How long the look of the mood being left takes to fade out over the new one (`buddyMotion.crossFade`).
+const MOOD_FADE_MS = 260
+
 const POOL_STRENGTH: Record<BuddyMood, number> = { idle: 0.32, working: 0.55, error: 0.5, waiting: 0.5, asleep: 0.06 }
 // A resting buddy under the pointer or selected lights its floor the way a busy one does.
 const ACTIVE_POOL_STRENGTH = 0.6
@@ -77,6 +80,13 @@ export function TileBuddy({ id, style, width, height, floorOffset, active, stret
     const labelTop = floor.y - BUDDY_GEOMETRY.depth * unit * (stretched ? 1 + SELECTED_STRETCH : 1)
 
     const motion = reducedMotion ? undefined : MOTION[mood]
+    const cue = reducedMotion || ghost ? undefined : style.buddyMotion?.cue
+    // The mood being left stays drawn over the new one for the length of its fade. Derived while
+    // rendering, so the first frame of a new mood already carries the old look above it.
+    const crossFade = !!style.buddyMotion?.crossFade && !reducedMotion && !ghost
+    const [shown, setShown] = useState<{ mood: BuddyMood; leaving: BuddyMood | null; turn: number }>({ mood, leaving: null, turn: 0 })
+    if (shown.mood !== mood) setShown({ mood, leaving: crossFade ? shown.mood : null, turn: shown.turn + 1 })
+    const leaving = crossFade && shown.mood === mood ? shown.leaving : null
     const poolMotion = reducedMotion ? undefined : POOL_MOTION[mood]
     const poolStrength = active && mood === 'idle' ? ACTIVE_POOL_STRENGTH : POOL_STRENGTH[mood]
     const pinned = ghost ? null : style.status?.pinned ?? null
@@ -125,6 +135,7 @@ export function TileBuddy({ id, style, width, height, floorOffset, active, stret
             <div
                 className="absolute pointer-events-none"
                 data-buddy-motion={motion}
+                data-buddy-cue={cue}
                 data-buddy-stretched={stretched ? '' : undefined}
                 style={{
                     ['--buddy-stretch' as string]: SELECTED_STRETCH,
@@ -136,11 +147,29 @@ export function TileBuddy({ id, style, width, height, floorOffset, active, stret
                     ['--buddy-delay' as string]: delay,
                     ['--buddy-blink-delay' as string]: `${(-hashUnit(id, 9) * 4.6).toFixed(2)}s`,
                     filter: mood === 'asleep' && !ghost ? 'saturate(0.2) brightness(0.75)' : undefined,
+                    transition: crossFade ? `filter ${MOOD_FADE_MS}ms ease` : undefined,
                 }}
             >
                 <svg viewBox={`${BUDDY_VIEW.x} ${BUDDY_VIEW.y} ${BUDDY_VIEW.w} ${BUDDY_VIEW.h}`} width="100%" height="100%" style={{ overflow: 'visible' }}>
                     <BuddyArt uid={uid} id={id} mood={mood} look={look} plain={plain} />
                 </svg>
+                {leaving && (
+                    <svg
+                        key={shown.turn}
+                        aria-hidden
+                        data-buddy-leaving={leaving}
+                        className="iso-buddy-leaving absolute inset-0"
+                        viewBox={`${BUDDY_VIEW.x} ${BUDDY_VIEW.y} ${BUDDY_VIEW.w} ${BUDDY_VIEW.h}`}
+                        width="100%"
+                        height="100%"
+                        style={{ overflow: 'visible', animationDuration: `${MOOD_FADE_MS}ms` }}
+                        onAnimationEnd={event => {
+                            if (event.target === event.currentTarget) setShown(current => (current.leaving ? { ...current, leaving: null } : current))
+                        }}
+                    >
+                        <BuddyArt uid={`${uid}leaving`} id={id} mood={leaving} look={look} />
+                    </svg>
+                )}
             </div>
 
             {(style.label != null || statusRow) && (

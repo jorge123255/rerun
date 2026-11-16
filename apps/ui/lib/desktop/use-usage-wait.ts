@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { DesktopUsageWaitKey, DesktopUsageWaitStatus } from './server/usage-waits'
 
 const ROUTE = '/api/desktop/usage-waits'
@@ -14,12 +14,24 @@ const keyOf = (agentId: string, sessionId: string | null) => `${agentId}\0${sess
 let holding = new Set<string>()
 const listeners = new Set<() => void>()
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } }
+// The coworkers behind those conversations, as one stable string for the board to read.
+let holdingAgents = ''
 function setHolding(next: Set<string>) {
     if (next.size === holding.size && [...next].every(key => holding.has(key))) return
     holding = next
+    holdingAgents = [...new Set([...next].map(key => key.split('\0')[0]))].sort().join('\0')
     for (const listener of listeners) listener()
 }
 export function seedDesktopUsageWaits(keys: readonly DesktopUsageWaitKey[]) { setHolding(new Set(keys.map(key => keyOf(key.agentId, key.sessionId)))) }
+
+/**
+ * The coworkers holding a message until their plan resets. Read from what the window already
+ * knows (the app's seed, each queued message and the minute clock's answers): it asks nothing.
+ */
+export function useDesktopUsageWaitAgents(): ReadonlySet<string> {
+    const joined = useSyncExternalStore(subscribe, () => holdingAgents, () => '')
+    return useMemo(() => new Set(joined ? joined.split('\0') : []), [joined])
+}
 
 async function post(body: unknown): Promise<unknown> {
     const response = await fetch(ROUTE, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })

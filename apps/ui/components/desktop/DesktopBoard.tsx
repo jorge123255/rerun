@@ -2,13 +2,16 @@ import { useDesktopLocale } from './DesktopLocale'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { CHROME_SIZE, ChromeBar, ChromeButton, ChromeDivider } from '@rerun/ui/chrome'
-import type { ContainerCellRect, GridPosition, IsoCamera, ResizePatch, TileCountdown, TileResults, TileStyle } from '@rerun/ui/iso-grid'
+import type { BuddyMotion, ContainerCellRect, GridPosition, IsoCamera, ResizePatch, TileCountdown, TileResults, TileStyle } from '@rerun/ui/iso-grid'
 import { IsoGrid, SPACE_COLOR, agentTileStyle, disabledAgentTileStyle, DISABLED_AGENT_LABEL, type Container, type Tile } from '@rerun/ui/iso-grid'
 import { Plus } from 'lucide-react'
 import type { DesktopAgentView } from './DesktopApp'
 import type { DesktopCreationPlacement } from './useDesktopCreation'
 import { templatePlacementBoard, type DesktopTemplatePlacement } from './templates/useDesktopTemplatePlacement'
 import { useBoardActivity } from './useBoardActivity'
+import { useBoardBounces, useBoardEntrances } from './useDesktopBoardMotion'
+import { fireBoardConfetti } from '@/lib/desktop/board-confetti'
+import { useDesktopUsageWaitAgents } from '@/lib/desktop/use-usage-wait'
 import { latestBoardAttention, type BoardActivityStatus, type BoardActivitySnapshot } from '@/lib/desktop/board-activity'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { DesktopBoardMenu } from './DesktopBoardMenu'
@@ -30,6 +33,8 @@ import { DesktopSpaceDialogs, type DesktopSpaceDialogTarget } from './DesktopSpa
 import { desktopSpaceAt, desktopSpaceLabel, desktopSpaceRectAllowed, firstDesktopSpacePosition, previewDesktopSpace } from './desktop-space-layout'
 
 const ACTIVITY_LABEL: Record<BoardActivityStatus, string> = { working: 'Working', waiting_human: 'Needs you', idle: 'Idle', unreachable: 'Activity unavailable', unknown: 'Checking activity' }
+// A coworker holding a message until its plan has usage again: it rests, asleep, until then.
+const PLAN_WAIT_LABEL = 'Waiting for its plan to reset'
 
 type CopyPlacement = {
     sourceId: string
@@ -41,7 +46,7 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ inboxSlot, onUnseenAgents, tileAction, activitySnapshot, routineCountdowns, agents, workspaceName, workspaceMenu, gettingStarted, selectedAgentId, visibleSessionId, workspaceId, launchNonce, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onOpenSettings, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
+export function DesktopBoard({ inboxSlot, onUnseenAgents, tileAction, activitySnapshot, routineCountdowns, agents, workspaceName, workspaceMenu, gettingStarted, selectedAgentId, visibleSessionId, workspaceId, launchNonce, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onOpenSettings, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange, teamPlacedSignal }: {
     activitySnapshot?: BoardActivitySnapshot
     routineCountdowns?: ReadonlyMap<string, TileCountdown>
     agents: DesktopAgentView[]
@@ -96,6 +101,9 @@ export function DesktopBoard({ inboxSlot, onUnseenAgents, tileAction, activitySn
     cameraMountKey?: string
     initialCamera?: IsoCamera | null
     onCameraChange?: (camera: IsoCamera) => void
+    // Changes when the Chief of Staff has finished placing a team: the coworkers that arrived for it
+    // are celebrated once. A coworker added by hand or copied arrives the same way, without it.
+    teamPlacedSignal?: number
 }) {
     const localActivity = useBoardActivity(useMemo(() => agents.map(agent => agent.id), [agents]), !activitySnapshot)
     const { statuses: activity, attention } = activitySnapshot ?? localActivity
@@ -104,6 +112,8 @@ export function DesktopBoard({ inboxSlot, onUnseenAgents, tileAction, activitySn
         for (const item of attention.items) counts.set(item.agentId, (counts.get(item.agentId) ?? 0) + 1)
         return counts
     }, [attention])
+    const bouncing = useBoardBounces(activity)
+    const planWaiting = useDesktopUsageWaitAgents()
     const [copyPlacement, setPlacement] = useState<CopyPlacement | null>(null)
     const placement: CopyPlacement | null = templatePlacement ? { sourceId: '', requestId: templatePlacement.id,
         name: templatePlacement.template.agents[Math.min(templatePlacement.positions.length, templatePlacement.template.agents.length - 1)]?.name ?? templatePlacement.template.title,
@@ -197,8 +207,12 @@ export function DesktopBoard({ inboxSlot, onUnseenAgents, tileAction, activitySn
         const tilePresentation = (agent: DesktopAgentView) => {
             const status = activity[agent.id] ?? 'unknown'
             const results = status === 'idle' ? resultsByAgent.get(agent.id)?.results : undefined
-            const style = agent.enabled === false ? disabledAgentTileStyle(agent.name)
-                : tileStyle(status, agent.name, attentionCounts.get(agent.id) ?? 0, routineCountdowns?.get(agent.id), results)
+            const base = agent.enabled === false ? disabledAgentTileStyle(agent.name)
+                : tileStyle(status, agent.name, attentionCounts.get(agent.id) ?? 0, routineCountdowns?.get(agent.id), results, planWaiting.has(agent.id))
+            // What the figure does about its state: one bounce as a run finishes, a sparse nudge while
+            // it needs the person, and a fade between looks. Asleep and idle figures stay still.
+            const cue: BuddyMotion['cue'] = agent.enabled === false ? undefined : bouncing.has(agent.id) ? 'bounce' : base.pingRings ? 'nudge' : undefined
+            const style: TileStyle = { ...base, buddyMotion: { crossFade: true, ...(cue && { cue }) } }
             return {
                 style,
                 ariaLabel: t('openCoworker', { name: agent.name }) + (attentionCounts.has(agent.id) ? ', ' + t('needs') : '')
@@ -234,7 +248,17 @@ export function DesktopBoard({ inboxSlot, onUnseenAgents, tileAction, activitySn
             placeholderLabel: t('creation.first'),
         }
         return { tiles, containers: [box] }
-    }, [agents, workspaceName, activity, attentionCounts, routineCountdowns, resultsByAgent, layout, renderedBoard, preview, board, t])
+    }, [agents, workspaceName, activity, attentionCounts, routineCountdowns, resultsByAgent, layout, renderedBoard, preview, board, t, bouncing, planWaiting])
+    // What appeared while the board was open draws or drops in; what was there when it opened does not.
+    const entrances = useBoardEntrances({
+        scope: String(workspaceId ?? ''),
+        tileIds: useMemo(() => tiles.map(tile => tile.id), [tiles]),
+        boxIds: useMemo(() => renderedBoard ? renderedBoard.spaces.map(space => space.id) : [], [renderedBoard]),
+        celebrateSignal: teamPlacedSignal,
+        onCelebrate: () => { void fireBoardConfetti(section.current) },
+    })
+    const arrivingTiles = useMemo(() => entrances.tiles.size ? tiles.map(tile => entrances.tiles.has(tile.id) ? { ...tile, justPlaced: true, dropDelay: entrances.tiles.get(tile.id) } : tile) : tiles, [tiles, entrances.tiles])
+    const arrivingContainers = useMemo(() => entrances.boxes.size ? containers.map(box => entrances.boxes.has(box.id) ? { ...box, justPlaced: true, dropStyle: 'draw' as const, dropDelay: entrances.boxes.get(box.id) } : box) : containers, [containers, entrances.boxes])
 
     useEffect(() => { if (placement?.requestId) placeButton.current?.focus({ preventScroll: true }) }, [placement?.requestId])
 
@@ -447,8 +471,8 @@ export function DesktopBoard({ inboxSlot, onUnseenAgents, tileAction, activitySn
                     key={cameraMountKey}
                     initialCamera={initialCamera ?? undefined}
                     onCameraChange={onCameraChange}
-                    tiles={placedTemplateTiles.length ? [...tiles, ...placedTemplateTiles] : tiles}
-                    containers={containers}
+                    tiles={placedTemplateTiles.length ? [...arrivingTiles, ...placedTemplateTiles] : arrivingTiles}
+                    containers={arrivingContainers}
                     onTileContextMenu={placement || gridBlocked ? undefined : onTileContextMenu}
                     onContainerContextMenu={canEditBoard ? onContainerContextMenu : undefined}
                     selectedContainerId={selectedSpaceId}
@@ -561,7 +585,7 @@ export function DesktopBoard({ inboxSlot, onUnseenAgents, tileAction, activitySn
             <ul aria-label="Coworker activity" className="sr-only" aria-live="polite">
                 {agents.map(agent => {
                     const status = agent.enabled === false ? 'inactive' : activity[agent.id] ?? 'unknown'
-                    return <li key={agent.id} data-board-activity={agent.name} data-status={status}>{agent.name}: {status === 'inactive' ? DISABLED_AGENT_LABEL : ACTIVITY_LABEL[status]}{status !== 'waiting_human' && attentionCounts.has(agent.id) ? '; Needs you' : ''}</li>
+                    return <li key={agent.id} data-board-activity={agent.name} data-status={status}>{agent.name}: {status === 'inactive' ? DISABLED_AGENT_LABEL : ACTIVITY_LABEL[status]}{status !== 'waiting_human' && attentionCounts.has(agent.id) ? '; Needs you' : ''}{restsForPlan(status, planWaiting.has(agent.id)) ? `; ${PLAN_WAIT_LABEL}` : ''}</li>
                 })}
             </ul>
         </section>
@@ -569,8 +593,15 @@ export function DesktopBoard({ inboxSlot, onUnseenAgents, tileAction, activitySn
 }
 
 // Rerun's agentTileStyle: working shimmers amber, a failed read uses the offline tile with an honest label.
-function tileStyle(status: BoardActivityStatus, name: string, attentionCount: number, countdown?: TileCountdown, results?: TileResults): TileStyle {
+// A coworker that is working or needs the person shows that; only one at rest shows the wait.
+const restsForPlan = (status: BoardActivityStatus | 'inactive', planWaiting: boolean) => planWaiting && (status === 'idle' || status === 'unknown')
+
+function tileStyle(status: BoardActivityStatus, name: string, attentionCount: number, countdown?: TileCountdown, results?: TileResults, planWaiting = false): TileStyle {
     if (status === 'working' || status === 'waiting_human') return { ...agentTileStyle(status, name, attentionCount), countdown }
+    if (restsForPlan(status, planWaiting)) {
+        const style = agentTileStyle('offline', name)
+        return { ...style, status: { label: PLAN_WAIT_LABEL, tone: style.status?.tone ?? 'neutral' }, countdown, results }
+    }
     if (status === 'unreachable' || status === 'unknown') {
         const style = agentTileStyle('offline', name)
         return { ...style, status: { label: ACTIVITY_LABEL[status], tone: style.status?.tone ?? 'neutral' } }

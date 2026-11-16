@@ -271,6 +271,60 @@
     animation: iso-buddy-shudder-wall 2.4s ease-in-out var(--buddy-delay, 0s) infinite;
 }
 
+/* Movements a host asks for (`buddyMotion.cue`). A bounce is the working bob played once, for
+   something that just landed. A nudge is a smaller one that spends most of its cycle still: it asks
+   for attention every few seconds without shaking. Declared after the mood motions, so a cue wins
+   while it is set. */
+@keyframes iso-buddy-nudge-top {
+    0%, 14%, 100% { transform: translateY(0); }
+    5% { transform: translateY(calc(var(--buddy-depth) * -0.14px)); }
+    10% { transform: translateY(calc(var(--buddy-depth) * 0.05px)); }
+}
+
+@keyframes iso-buddy-nudge-wall {
+    0%, 14%, 100% { transform: scaleY(1); }
+    5% { transform: scaleY(1.14); }
+    10% { transform: scaleY(0.95); }
+}
+
+[data-buddy-cue='bounce'] .iso-buddy-top {
+    animation: iso-buddy-bob-top 560ms cubic-bezier(0.3, 0, 0.3, 1) 1;
+}
+
+[data-buddy-cue='bounce'] .iso-buddy-wall {
+    animation: iso-buddy-bob-wall 560ms cubic-bezier(0.3, 0, 0.3, 1) 1;
+}
+
+[data-buddy-cue='nudge'] .iso-buddy-top {
+    animation: iso-buddy-nudge-top 4.8s ease-in-out var(--buddy-delay, 0s) infinite;
+}
+
+[data-buddy-cue='nudge'] .iso-buddy-wall {
+    animation: iso-buddy-nudge-wall 4.8s ease-in-out var(--buddy-delay, 0s) infinite;
+}
+
+/* The look of the mood a buddy is leaving, drawn over the new one and fading out
+   (`buddyMotion.crossFade`). `forwards` holds it invisible until React takes it away. */
+@keyframes iso-buddy-mood-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
+.iso-buddy-leaving {
+    pointer-events: none;
+    animation: iso-buddy-mood-out 260ms ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    [data-buddy-cue] .iso-buddy-top,
+    [data-buddy-cue] .iso-buddy-wall {
+        animation: none;
+    }
+    .iso-buddy-leaving {
+        display: none;
+    }
+}
+
 /* The pool of light a buddy casts on the floor dims as its top rises, swells as it sinks back. */
 @keyframes iso-buddy-pool {
     0%, 62%, 100% { opacity: 1; transform: scale(1); }

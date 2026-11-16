@@ -62,6 +62,18 @@ export type TileStyle = {
     // Draws the tile as a buddy: a thick rounded block with a face, its top in the agent's colour,
     // its name in a frosted label. `true` takes every trait from the tile id; an object pins some.
     buddy?: true | BuddyLook
+    // Small movements the host asks of a buddy on top of what its mood already does. Left out, a
+    // buddy moves exactly as before. All of it is skipped under prefers-reduced-motion.
+    buddyMotion?: BuddyMotion
+}
+
+export type BuddyMotion = {
+    // 'bounce' plays once: the host sets it when something lands (a run finishing) and takes it
+    // away when it is done. 'nudge' repeats sparsely for as long as it is set, most of each cycle
+    // spent still: a call for attention, not a shake.
+    cue?: 'bounce' | 'nudge'
+    // The look of the mood being left fades out over the new one instead of snapping to it.
+    crossFade?: boolean
 }
 
 export type BuddyEyes =
