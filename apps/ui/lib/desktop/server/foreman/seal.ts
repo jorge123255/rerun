@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto'
-import { DESKTOP_FOREMAN_LIMITS, foremanShowPlanInputSchema, type DesktopForemanPlanItem, type DesktopForemanSealedPlan } from '@rerun/contracts'
+import {
+    DESKTOP_FOREMAN_LIMITS, DESKTOP_GITHUB_ROLE_INSTRUCTIONS, desktopGithubRepositoryId, desktopGithubRepositoryLabel, foremanShowPlanInputSchema, readDesktopGithubRepository, readDesktopGithubRole,
+    type DesktopForemanPlanItem, type DesktopForemanSealedPlan, type DesktopGithubPlanItem, type DesktopGithubProject, type DesktopGithubProjectLink,
+} from '@rerun/contracts'
 
 const nameKey = (name: string) => name.trim().toLowerCase()
 
@@ -15,7 +18,47 @@ export type SealResult = { ok: true; plan: DesktopForemanSealedPlan; digest: str
 
 // The card's divisions, then any Box an item names that the list forgot, in reading order
 // (original build-team.ts boxNamesOf). A plan with no Box at all lands in one named after it.
-export function sealShownPlan(raw: unknown): SealResult {
+/** The repositories the owner accepted in this conversation's intake, with the links between them. */
+export type AcceptedGithubProjects = { projects: readonly Pick<DesktopGithubProject, 'id' | 'owner' | 'name'>[]; links: readonly Pick<DesktopGithubProjectLink, 'from' | 'to' | 'kind'>[] }
+
+/**
+ * What the app writes on each coworker proposed from a GitHub project. The model only names a
+ * repository and a role. The repository is kept when it is one the owner accepted in the intake
+ * of this conversation, and dropped otherwise: the model cannot point a coworker at a repository
+ * the owner did not list. Links are the owner's reviewed ones, and each names a coworker of the
+ * other project on the same card.
+ */
+function githubOf(items: readonly (DesktopForemanPlanItem & { key: string })[], accepted: AcceptedGithubProjects | null | undefined): Map<string, DesktopGithubPlanItem> {
+    const found = new Map<string, DesktopGithubPlanItem>()
+    if (!accepted) return found
+    for (const item of items) {
+        if (item.kind !== 'agent' || !item.repository) continue
+        const named = readDesktopGithubRepository(item.repository)
+        const project = named && accepted.projects.find(entry => entry.id === desktopGithubRepositoryId(named))
+        // The owner's own spelling is kept, never the model's.
+        if (project) found.set(item.key, { repository: { owner: project.owner, name: project.name }, project: project.name, role: readDesktopGithubRole(item.projectRole), links: [] })
+    }
+    const nameOf = new Map(items.map(item => [item.key, titleOf(item)]))
+    for (const [key, own] of found) {
+        const id = desktopGithubRepositoryId(own.repository)
+        for (const link of accepted.links) {
+            if (link.from === link.to || (link.from !== id && link.to !== id) || own.links.length >= 8) continue
+            const otherId = link.from === id ? link.to : link.from
+            const there = [...found].filter(([otherKey, other]) => otherKey !== key && desktopGithubRepositoryId(other.repository) === otherId)
+            // Whom to ask there: the same role, else the developer, else the first on the card.
+            const contact = there.find(([, other]) => own.role && other.role === own.role) ?? there.find(([, other]) => other.role === 'developer') ?? there[0]
+            if (!contact || own.links.some(entry => entry.contactKey === contact[0] && desktopGithubRepositoryId(entry.repository) === otherId)) continue
+            own.links.push({
+                project: contact[1].project, repository: contact[1].repository,
+                relation: link.kind === 'companion' ? 'companion' : link.from === id ? 'depends-on' : 'depended-on-by',
+                contactKey: contact[0], contactName: (nameOf.get(contact[0]) ?? contact[1].project).slice(0, 60),
+            })
+        }
+    }
+    return found
+}
+
+export function sealShownPlan(raw: unknown, accepted?: AcceptedGithubProjects | null): SealResult {
     const parsed = foremanShowPlanInputSchema.safeParse(raw)
     if (!parsed.success) return { ok: false, message: parsed.error.issues.map(issue => issue.message).join(' ') }
     const input = parsed.data
@@ -25,7 +68,15 @@ export function sealShownPlan(raw: unknown): SealResult {
     if (laid.length > DESKTOP_FOREMAN_LIMITS.maxBoxes) return { ok: false, message: `A plan holds ${DESKTOP_FOREMAN_LIMITS.maxBoxes} Boxes at most, and this one has ${laid.length}.` }
     const boxes = laid.map((box, index) => ({ ...box, key: `box-${index}` }))
     const keyOf = (item: DesktopForemanPlanItem) => (item.box ? boxes.find(box => nameKey(box.name) === nameKey(item.box!))!.key : boxes[0].key)
-    const plan: DesktopForemanSealedPlan = { title: input.title, boxes, items: input.items.map((item, index) => ({ ...item, key: `item-${index}`, boxKey: keyOf(item) })) }
+    const keyed = input.items.map((item, index) => ({ ...item, key: `item-${index}`, boxKey: keyOf(item) }))
+    const github = githubOf(keyed, accepted)
+    const plan: DesktopForemanSealedPlan = { title: input.title, boxes, items: keyed.map(item => {
+        if (item.kind !== 'agent') return item
+        // What the model asked for is never kept as such: only what the app accepted, under `github`.
+        const { repository: _repository, projectRole: _projectRole, ...rest } = item
+        const own = github.get(item.key)
+        return own ? { ...rest, github: own } : rest
+    }) }
     return { ok: true, plan, digest: digestOf(plan) }
 }
 
@@ -45,10 +96,30 @@ export function firstSoul(item: AgentItem, plan: DesktopForemanSealedPlan, compa
         item.need ? `Why they hired you: ${item.need}.` : null,
         asked ? `What they asked for when they changed the plan, in their own words:\n<brief>\n${asked}\n</brief>` : null,
         promised.length ? `What the plan they confirmed promised you hand back:\n${promised.join('\n')}` : null,
+        ...githubSoul(item),
         team.length ? `The rest of the team, so you do not do their work:\n${team.join('\n')}` : null,
         'This is a first draft, written the moment you were hired. Once you have done your job once with the user and know their apps and how they work, rewrite these instructions: what you do for them, how you decide, what you must never do, and the format of what you hand back.',
         'Talk to the user in the language they write in, keep your answers short, and never make up data you did not read.',
     ].filter(Boolean).join('\n\n')
+}
+
+const RELATION = { 'depends-on': 'your project depends on it', 'depended-on-by': 'it depends on your project', companion: 'it pairs with your project' } as const
+
+/** The starting instructions for the item's role, and the linked projects with whom to ask there. */
+function githubSoul(item: AgentItem): string[] {
+    const github = item.github
+    if (!github) return []
+    const links = github.links.map(link => `- ${link.project} (${desktopGithubRepositoryLabel(link.repository)}): ${RELATION[link.relation]}. Ask ${link.contactName} about it.`)
+    return [
+        github.role ? DESKTOP_GITHUB_ROLE_INSTRUCTIONS[github.role] : null,
+        links.length ? `Linked projects. When your work touches one, ask the coworker named for it instead of guessing or changing that project yourself: use call_agent once the user has turned on Call coworkers for you, and until then tell the user what you need from them.\n${links.join('\n')}` : null,
+    ].filter((text): text is string => !!text)
+}
+
+/** The first conversation of a coworker built for a repository: GitHub is offered, never attached. */
+function githubInstall(item: AgentItem): string {
+    if (!item.github) return ''
+    return `\n\nYou were set up for the GitHub repository ${desktopGithubRepositoryLabel(item.github.repository)}, and no GitHub account is attached to you yet. In your first reply, offer the GitHub app (catalog slug github) with suggest_service, so the user attaches an account to you from the Vault or declines. Attaching is the user's act: attach nothing yourself and never ask for a token or a password in chat. If suggest_service is not available to you, tell the user in one line that they can attach GitHub to you from your Vault panel. Until an account is attached you cannot read the repository: work from what the user gives you and say so. You cannot change the repository until the user also turns on Change GitHub repositories for you, and even then every change asks them first.`
 }
 
 export function firstInstall(item: AgentItem, asked: string | null): string {
@@ -65,5 +136,5 @@ export function firstInstall(item: AgentItem, asked: string | null): string {
 5. Then settle in: rewrite your instructions now that you know how they work, propose a schedule if this job runs on its own, and record what you learned.
 6. Mark setup complete with a one line summary of what is now set up.
 
-If a step fails, say so plainly. Keep any action that requires a missing permission or credential gated until it is granted. Only mark setup complete for the agreed scope once its required steps are done.`
+If a step fails, say so plainly. Keep any action that requires a missing permission or credential gated until it is granted. Only mark setup complete for the agreed scope once its required steps are done.${githubInstall(item)}`
 }

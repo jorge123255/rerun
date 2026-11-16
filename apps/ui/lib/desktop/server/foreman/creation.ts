@@ -2,12 +2,13 @@ import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Client, Transaction } from '@libsql/client'
 import { z } from 'zod'
-import { foremanImportedSetupPrompt, desktopTemplateDetailSchema, desktopTemplateInstallResultSchema, desktopTemplateOperationSchema, desktopTemplateRevisionSchema, desktopSetupMutationResultSchema, foremanModelRefSchema, providerSchema, type DesktopTemplateOperation } from '@rerun/contracts'
-import { EngineRequestError, getAgent, request } from '@/lib/engine/client'
+import { desktopGithubRepositorySchema, foremanImportedSetupPrompt, desktopTemplateDetailSchema, desktopTemplateInstallResultSchema, desktopTemplateOperationSchema, desktopTemplateRevisionSchema, desktopSetupMutationResultSchema, foremanModelRefSchema, providerSchema, type DesktopTemplateOperation } from '@rerun/contracts'
+import { EngineRequestError, getAgent, patchAgent, request } from '@/lib/engine/client'
 import { usableConnection } from '../../chat-model'
 import type { DesktopSpaceWrite } from '../../spaces'
 import { DesktopHttpError } from '../auth'
 import { assertCoworkerNotDeleting } from '../coworker-delete'
+import { replaceDesktopCoworkerCallAllows } from '../coworker-calls/authority'
 import { setDesktopCoworkerEnabled } from '../coworker-enabled'
 import { withRosterWrite } from '../roster-writes'
 import { readDesktopRuntime, type DesktopRuntime } from '../runtime'
@@ -30,7 +31,7 @@ CREATE TABLE IF NOT EXISTS desktop_foreman_creation_receipts (
 );`
 const uuid = z.uuid()
 const boxBody = z.strictObject({ requestId: uuid, name: z.string().trim().min(1).max(60), order: z.number().int().nonnegative() })
-const coworkerBody = z.strictObject({ requestId: uuid, spaceId: uuid, name: z.string().min(1).max(60), description: z.string().max(2000), soulMd: z.string().min(1).refine(text => Buffer.byteLength(text,'utf8') <= 24*1024), installMd: z.string().min(1).refine(text => Buffer.byteLength(text,'utf8') <= 24*1024), model: foremanModelRefSchema })
+const coworkerBody = z.strictObject({ requestId: uuid, spaceId: uuid, name: z.string().min(1).max(60), description: z.string().max(2000), soulMd: z.string().min(1).refine(text => Buffer.byteLength(text,'utf8') <= 24*1024), installMd: z.string().min(1).refine(text => Buffer.byteLength(text,'utf8') <= 24*1024), model: foremanModelRefSchema, repository: desktopGithubRepositorySchema.optional() })
 const templateBody = z.strictObject({ requestId: uuid, templateId: z.string().regex(/^[a-f0-9]{32}$/), templateRevision: desktopTemplateRevisionSchema.optional(), spaceId: uuid, focus: z.string().min(1).max(2000).optional() })
 const setupBody = z.strictObject({ requestId: uuid, agentId: uuid })
 const boxResult = z.strictObject({ spaceId: uuid })
@@ -300,6 +301,12 @@ export async function createDesktopForemanCreationAuthority(runtime: DesktopRunt
                 await current()
                 const created = z.object({id:z.string(),config:z.object({enabled:z.boolean(),connectionId:z.string(),model:z.string(),setup:z.object({required:z.boolean(),completedAt:z.null(),sessionId:z.null()})}),soul:z.string(),install:z.string()}).parse(await engineClient.post('/desktop/agents/foreman-create',exactInput))
                 if (created.id !== engineAgentId || created.config.enabled || created.config.connectionId !== body.model.connectionId || created.config.model !== body.model.model || !created.config.setup.required || created.soul !== body.soulMd || created.install !== body.installMd) throw changed()
+                // The repository the owner accepted for this coworker's project: a fact kept with the coworker.
+                // Nothing else is set: no GitHub account is attached and every permission stays off.
+                if (body.repository) {
+                    const named = await patchAgent(engine,engineAgentId,{desktopRepository:body.repository})
+                    if (named.id !== engineAgentId || named.config.enabled || named.config.desktopRepository?.owner !== body.repository.owner || named.config.desktopRepository?.name !== body.repository.name) throw changed()
+                }
                 await current()
                 const tx = await db.transaction('write')
                 try {
@@ -315,6 +322,29 @@ export async function createDesktopForemanCreationAuthority(runtime: DesktopRunt
                 return {agentId}
             })
         }),
+        async allowCalls(input) {
+            await current()
+            // Only coworkers these exact saved creations made: an id from anywhere else is ignored.
+            const made = new Map<string,string>()
+            for (const requestId of new Set(input.pairs.flatMap(pair => [pair.callerRequestId,pair.targetRequestId]))) {
+                const found = await lookupCoworker(requestId)
+                if (found.state === 'present') made.set(requestId,found.value.agentId)
+            }
+            const wanted = new Map<string,Set<string>>()
+            for (const pair of input.pairs) {
+                const caller = made.get(pair.callerRequestId), target = made.get(pair.targetRequestId)
+                if (!caller || !target || caller === target) continue
+                wanted.set(caller,(wanted.get(caller) ?? new Set()).add(target))
+            }
+            for (const [caller,targets] of wanted) await withRosterWrite(async () => {
+                await current()
+                await assertCoworkerNotDeleting(db,caller)
+                // The existing list is kept: names are added through the same checked write the Tools panel uses.
+                const saved = (await db.execute({sql:"SELECT target_agent_id FROM desktop_coworker_call_allows WHERE caller_agent_id=?",args:[caller]}).catch(() => ({rows:[]}))).rows.map(row => String(row.target_agent_id))
+                const next = [...new Set([...saved,...targets])]
+                if (next.length !== saved.length) await replaceDesktopCoworkerCallAllows(db,caller,next)
+            })
+        },
         installTemplate: raw => exclusive(runtime.dataRoot,raw.requestId,async () => {
             await current(); const body = templateBody.parse(raw), row = await reserve(db,'template',body)
             if (row.state === 'complete') {

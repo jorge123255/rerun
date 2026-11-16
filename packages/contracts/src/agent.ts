@@ -1,5 +1,6 @@
 import { desktopCodexGrantsSchema, desktopRerunGrantsSchema } from './desktop-tool-grants.js'
 import { z } from 'zod'
+import { desktopGithubRepositorySchema } from './desktop-github-repository.js'
 import { desktopSubscriptionProvider } from './desktop-subscription-login.js'
 
 // Tools surface as "<server>_<tool>" and CLI providers key their config records by server name, so
@@ -178,6 +179,9 @@ export const agentConfigSchema = z.object({
     mcpServers: z.array(mcpServerSchema).default([]),
     selfImprovement: selfImprovementSchema.prefault({}),
     setup: agentSetupSchema.prefault({}),
+    // The Mac app: the one GitHub repository this coworker works on, set by the person. A fact for
+    // its prompt and its settings; it attaches no account and grants no permission.
+    desktopRepository: desktopGithubRepositorySchema.nullable().optional(),
 })
 export type AgentConfig = z.infer<typeof agentConfigSchema>
 

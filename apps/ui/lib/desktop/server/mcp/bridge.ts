@@ -1,7 +1,7 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import type { DesktopActivityDecision } from '@rerun/contracts'
+import type { DesktopActivityDecision, DesktopGithubToolServer } from '@rerun/contracts'
 import { remoteMcpTools } from './tools'
 import type { RemoteMcpStore } from './store'
 import type { remoteMcpRuntime } from './remote'
@@ -16,13 +16,13 @@ export const desktopMcpBridgeRequest = z.discriminatedUnion('action', [
     z.object({ action: z.literal('shutdown') }).strict(),
 ])
 type RequestBody = z.infer<typeof desktopMcpBridgeRequest>
-type Definition = { name: string; description: string; inputSchema: Record<string, unknown>; destructive?: boolean; execute(args: Record<string, unknown>, signal: AbortSignal, toolCallId: string): Promise<unknown> }
+type Definition = { name: string; description: string; inputSchema: Record<string, unknown>; destructive?: boolean; server?: DesktopGithubToolServer; execute(args: Record<string, unknown>, signal: AbortSignal, toolCallId: string): Promise<unknown> }
 export type DesktopMcpBridgeExtension = {
     tools(owner: string, run: McpRunIdentity, signal: AbortSignal): Promise<Definition[]>
     releaseRun(owner: string, run: McpRunIdentity): Promise<void>
 }
 /** Holds a call that asks the person first. `null` lets it run; a string is told to the coworker instead. */
-export type DesktopMcpCallAdmission = (call: { owner: string; sessionId: string; tool: string; destructive: boolean; arguments: Record<string, unknown> }, signal: AbortSignal, note?: (trail: DesktopActivityDecision) => void) => Promise<string | null>
+export type DesktopMcpCallAdmission = (call: { owner: string; sessionId: string; tool: string; destructive: boolean; arguments: Record<string, unknown>; /** Where the tool comes from, when the bridge knows: the GitHub check reads it. */ server?: DesktopGithubToolServer }, signal: AbortSignal, note?: (trail: DesktopActivityDecision) => void) => Promise<string | null>
 type PublicTool = { capabilityId: string; name: string; description: string; inputSchema: Record<string, unknown> }
 type Catalog = {
     id: string; owner: string; identity: McpRunIdentity; controller: AbortController;
@@ -125,7 +125,7 @@ export function desktopMcpBridge(store: RemoteMcpStore, runtime: ReturnType<type
         // An action that asks first is answered here, before anything reaches the connector.
         // What was decided travels back beside the result, for the engine's activity trail.
         let trail: DesktopActivityDecision | undefined
-        const held = await admit?.({ owner: catalog.owner, sessionId: catalog.identity.sessionId, tool: definition.name, destructive: definition.destructive === true, arguments: body.arguments }, combined, said => { trail = said })
+        const held = await admit?.({ owner: catalog.owner, sessionId: catalog.identity.sessionId, tool: definition.name, destructive: definition.destructive === true, arguments: body.arguments, ...(definition.server && { server: definition.server }) }, combined, said => { trail = said })
         current(catalog); combined.throwIfAborted()
         if (typeof held === 'string') return { toolCallId: body.toolCallId, result: { source: 'remote_mcp', untrusted: true, result: { isError: true, content: [{ type: 'text', text: held }] } }, ...(trail && { trail }) }
         const result = await definition.execute(body.arguments, combined, body.toolCallId)
