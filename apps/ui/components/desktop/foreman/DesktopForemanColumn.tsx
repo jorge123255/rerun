@@ -170,6 +170,7 @@ export function DesktopForemanColumn({
         if (openOnMount && foreman.restored && !opened.current) { opened.current = true; foreman.setOpen(true) }
     }, [openOnMount, foreman.restored, foreman.setOpen])
     const { ui } = foreman
+    const draftRepositories = githubRepositoryLinksInText(ui.draft ?? '').length
     // Replies read aloud: offered when an ElevenLabs key is saved; the voice stops when this conversation is left or closed.
     const speech = useDesktopSpeechSettings(!hidden)
     useEffect(() => {
@@ -458,6 +459,10 @@ export function DesktopForemanColumn({
                         {retrySendError?.requestId === pendingSend.requestId && <p className="basis-full text-destructive" role="alert">{retrySendError.text}</p>}
                     </div>}
                     {!intake && !pendingStarter && <DesktopForemanGithubProjects github={github} />}
+                    {/* Said while the links are still in the box, so it is clear they will be read. */}
+                    {!intake && !pendingStarter && draftRepositories > 0 && <p data-foreman-github-hint role="status" className="mx-3 mt-2 text-[11px] text-muted-foreground">
+                        {draftRepositories === 1 ? '1 GitHub repository' : `${draftRepositories} GitHub repositories`} will be read when you send. Nothing is cloned or run.
+                    </p>}
                     <DesktopForemanComposer
                         mentions={mentions}
                         trailing={intake || pendingStarter ? undefined : composerTrailing}
