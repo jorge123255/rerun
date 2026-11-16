@@ -63,3 +63,23 @@ test('an account saved without a key is not dialed', async () => {
     expect(response.status).toBe(200)
     expect(state.checks).toEqual([])
 })
+
+const replace = () => import('./route').then(({ POST }) => POST(new Request('http://127.0.0.1/api/desktop/vault', { method: 'POST',
+    body: JSON.stringify({ operation: 'replace-server-bearer', id: id(1), revision: id(101), bearer: 'synthetic-new-key' }) })))
+
+test('a replaced key the app refuses stays saved and the person is told now', async () => {
+    state.receipt = { state: 'error', credentialRejected: true }
+    const response = await replace()
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'AgentMail refused the new key. It is saved, but AgentMail will not work until you replace it with the right one.' })
+    expect(state.checks).toEqual([id(1)])
+    expect(state.mutations.map(change => change.operation)).toEqual(['replace-server-bearer'])
+    expect(state.entries.map(entry => entry.id)).toEqual([id(1)])
+})
+
+test('a replaced key the app accepts, or an app that does not answer, saves quietly', async () => {
+    state.receipt = { state: 'healthy' }
+    expect((await replace()).status).toBe(200)
+    state.receipt = new Error('offline')
+    expect((await replace()).status).toBe(200)
+})
